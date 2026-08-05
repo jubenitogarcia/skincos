@@ -208,6 +208,119 @@ export async function handleInsumosRoutes({
             }
         }
 
+        // Guided physical count: snapshot, append-only reads, conflict-aware
+        // close and manager-governed recount. The route derives the actor from
+        // the authenticated session; request bodies never supply a user.
+        if (url.pathname === '/insumos/contagens' && request.method === 'POST') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'COUNT_START',
+                    idempotencyKey,
+                    command: { unidade, body: { observacoes: body?.observacoes || body?.nota || '' } },
+                    execute: () => d1.iniciarContagem({ unidade, actor: auth.user, observacoes: body?.observacoes || body?.nota }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out?.code, error: out?.error, sessionId: out?.sessionId }), { status: out?.status || 400 }, appOrigin);
+                if (!command.replayed) {
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: 'COUNT_START',
+                        entity: 'CONTAGEM_FISICA',
+                        entityId: out.id || out.session?.id,
+                        unidade,
+                        before: null,
+                        after: { status: out.status || out.session?.status, snapshotAt: out.snapshotAt || out.session?.snapshotAt, totalLines: out.totalLines || out.session?.totalLines },
+                    });
+                }
+                return withCORS(JSON.stringify({ success: true, data: out, idempotent: !!command.replayed }), { status: 201 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // GET /insumos/contagens/:id
+        if (url.pathname.startsWith('/insumos/contagens/') && request.method === 'GET') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+                if (!auth.ok) return auth.response;
+                const parts = url.pathname.split('/').filter(Boolean);
+                const countId = decodeURIComponent(parts[2] || '').trim();
+                if (!countId || parts.length !== 3) return withCORS(JSON.stringify({ success: false, code: 'COUNT_NOT_FOUND', error: 'Contagem não encontrada' }), { status: 404 }, appOrigin);
+                const out = await d1.getContagem({ id: countId, actor: auth.user, unidade });
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out?.code, error: out?.error }), { status: out?.status || 400 }, appOrigin);
+                return withCORS(JSON.stringify({ success: true, data: out.session || out }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /insumos/contagens/:id/leituras|fechar|recontar
+        if (url.pathname.startsWith('/insumos/contagens/') && request.method === 'POST') {
+            try {
+                const parts = url.pathname.split('/').filter(Boolean);
+                const countId = decodeURIComponent(parts[2] || '').trim();
+                const action = String(parts[3] || '').trim().toLowerCase();
+                if (!countId || !['leituras', 'fechar', 'recontar'].includes(action)) {
+                    return withCORS(JSON.stringify({ success: false, code: 'COUNT_NOT_FOUND', error: 'Rota de contagem não encontrada' }), { status: 404 }, appOrigin);
+                }
+                const managerAction = action === 'fechar' || action === 'recontar';
+                const auth = await requireRoles(managerAction ? ['ADMIN', 'GESTOR', 'GERENTE'] : ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const actionName = action === 'leituras' ? 'COUNT_READ' : action === 'fechar' ? 'COUNT_CLOSE' : 'COUNT_RECOUNT';
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: actionName,
+                    idempotencyKey,
+                    command: { id: countId, unidade, body },
+                    execute: () => action === 'leituras'
+                        ? d1.registrarContagem({ id: countId, actor: auth.user, unidade, body })
+                        : action === 'fechar'
+                            ? d1.fecharContagem({ id: countId, actor: auth.user, unidade })
+                            : d1.recontarContagem({ id: countId, actor: auth.user, unidade, observacoes: body?.observacoes || body?.nota }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out?.code, error: out?.error, pendingLines: out?.pendingLines, movements: out?.movements }), { status: out?.status || 400 }, appOrigin);
+                if (!command.replayed) {
+                    const session = out.session || out;
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: actionName,
+                        entity: 'CONTAGEM_FISICA',
+                        entityId: countId,
+                        unidade,
+                        before: null,
+                        after: {
+                            status: session.status,
+                            registro: out.line?.registro || null,
+                            quantidade: out.line?.physicalQuantity ?? null,
+                            adjustments: out.adjustments || [],
+                        },
+                    });
+                    if (action !== 'leituras') ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                }
+                return withCORS(JSON.stringify({ success: true, data: out, idempotent: !!command.replayed }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
         // POST /insumos/entrada
         if (url.pathname === "/insumos/entrada" && request.method === "POST") {
             try {
