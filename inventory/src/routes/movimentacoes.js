@@ -42,92 +42,50 @@ export async function handleMovimentacoesRoutes({
             }
         }
 
-        if (url.pathname.startsWith("/movimentacoes/") && request.method === "PUT") {
-            try {
-                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
-                if (!auth.ok) return auth.response;
-
-                const id = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
-                if (!id) {
-                    return withCORS(JSON.stringify({ success: false, error: 'Movimentação inválida' }), { status: 400 }, appOrigin);
-                }
-
-                const body = await request.json().catch(() => ({}));
-                const out = await d1.updateMovimentacao({ id, body });
-                if (!out.ok) {
-                    return withCORS(JSON.stringify({ success: false, error: out.error }), { status: out.status || 400 }, appOrigin);
-                }
-
-                await appendAuditLog({
-                    env,
-                    actor: auth.user.username,
-                    role: auth.user.role,
-                    ip,
-                    userAgent,
-                    idempotencyKey,
-                    action: 'UPDATE',
-                    entity: 'MOVIMENTACAO',
-                    entityId: id,
-                    unidade: String(url.searchParams.get('unidade') || unidade || '').trim(),
-                    before: null,
-                    after: { payload: body, registro: out.registro, transferId: out.transferId || null }
-                });
-
-                if (out?.estoqueAtual && typeof out.estoqueAtual === 'object') {
-                    const units = Array.from(new Set(Object.keys(out.estoqueAtual).map((v) => String(v || '').trim()).filter(Boolean)));
-                    for (const unit of units) {
-                        ctx.waitUntil(enqueueNotificationsRefresh(env, unit));
-                    }
-                } else {
-                    ctx.waitUntil(enqueueNotificationsRefresh(env, String(url.searchParams.get('unidade') || unidade || '').trim()));
-                }
-
-                return withCORS(JSON.stringify({ success: true, data: out.movimentos || [] }), { status: 200 }, appOrigin);
-            } catch (err) {
-                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
-            }
+        if (url.pathname.startsWith("/movimentacoes/") && (request.method === "PUT" || request.method === "DELETE")) {
+            return withCORS(JSON.stringify({ success: false, code: 'LEDGER_IMMUTABLE', error: 'Movimentações são imutáveis; use o estorno compensatório' }), { status: 405, headers: { allow: 'GET, POST' } }, appOrigin);
         }
 
-        if (url.pathname.startsWith("/movimentacoes/") && request.method === "DELETE") {
+        if (url.pathname.startsWith("/movimentacoes/") && request.method === "POST") {
             try {
+                const parts = url.pathname.split('/').filter(Boolean);
+                const id = decodeURIComponent(parts[1] || '').trim();
+                const action = String(parts[2] || '').trim().toLowerCase();
+                if (!id || action !== 'estorno') {
+                    return withCORS(JSON.stringify({ success: false, code: 'NOT_FOUND', error: 'Rota de movimentação não encontrada' }), { status: 404 }, appOrigin);
+                }
                 const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
                 if (!auth.ok) return auth.response;
-
-                const id = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
-                if (!id) {
-                    return withCORS(JSON.stringify({ success: false, error: 'Movimentação inválida' }), { status: 400 }, appOrigin);
-                }
-
-                const out = await d1.deleteMovimentacao({ id });
-                if (!out.ok) {
-                    return withCORS(JSON.stringify({ success: false, error: out.error }), { status: out.status || 400 }, appOrigin);
-                }
-
-                await appendAuditLog({
-                    env,
-                    actor: auth.user.username,
-                    role: auth.user.role,
-                    ip,
-                    userAgent,
+                const body = await request.json().catch(() => ({}));
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'MOVIMENTACAO_ESTORNO',
                     idempotencyKey,
-                    action: 'DELETE',
-                    entity: 'MOVIMENTACAO',
-                    entityId: id,
-                    unidade: String(url.searchParams.get('unidade') || unidade || '').trim(),
-                    before: { transferId: out.transferId || null, deletedIds: out.deletedIds || [id], registro: out.registro },
-                    after: null
+                    command: { id, unidade, body },
+                    execute: () => d1.estornarMovimentacao({ id, actor: auth.user, justificativa: body?.justificativa || body?.motivo }),
                 });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out?.code, error: out?.error }), { status: out?.status || 400 }, appOrigin);
 
-                if (out?.estoqueAtual && typeof out.estoqueAtual === 'object') {
-                  const units = Array.from(new Set(Object.keys(out.estoqueAtual).map((v) => String(v || '').trim()).filter(Boolean)));
-                  for (const unit of units) {
-                    ctx.waitUntil(enqueueNotificationsRefresh(env, unit));
-                  }
-                } else {
-                  ctx.waitUntil(enqueueNotificationsRefresh(env, String(url.searchParams.get('unidade') || unidade || '').trim()));
+                if (!command.replayed) {
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: 'ESTORNO',
+                        entity: 'MOVIMENTACAO',
+                        entityId: id,
+                        unidade: String(url.searchParams.get('unidade') || unidade || '').trim(),
+                        before: { movimentoOriginal: id, transferId: out.transferId || null },
+                        after: { estornoIds: out.estornoIds || [], motivo: body?.justificativa || body?.motivo || '' }
+                    });
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, String(url.searchParams.get('unidade') || unidade || '').trim()));
                 }
-
-                return withCORS(JSON.stringify({ success: true, data: { deletedIds: out.deletedIds || [id] } }), { status: 200 }, appOrigin);
+                return withCORS(JSON.stringify({ success: true, data: out, idempotent: !!command.replayed }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
             }

@@ -33,6 +33,7 @@ param(
         "CrmMetaAds",
         "CrmFinance",
         "CrmAtendimento",
+        "CrmAtendimentoMirrorPreflight",
         "CrmAtendimentoMirrorStatus",
         "CrmAtendimentoMirrorSync",
         "CrmLocalStop",
@@ -1318,6 +1319,7 @@ $atendimentoLog = Join-Path $logRoot "crm-atendimento-local.log"
 $efAppStateRoot = Join-Path $localStateRoot "espacofacial-app"
 $efAppArtifactRoot = Join-Path $operatorRuntimeRoot "scraper"
 $efAppOutputRoot = Join-Path $efAppArtifactRoot "report"
+$efAppClientRegistrationRunRoot = Join-Path $efAppArtifactRoot "client-registration"
 $efAppDebugRoot = Join-Path $efAppArtifactRoot "debug"
 $efAppLogRoot = Join-Path $efAppArtifactRoot "logs"
 $efAppChromeProfileRoot = Join-Path $efAppStateRoot "chrome-profile"
@@ -2678,6 +2680,7 @@ function Show-CrmThreadPreviewMenu {
 foreach ($path in @(
     $efAppStateRoot,
     $efAppOutputRoot,
+    $efAppClientRegistrationRunRoot,
     $efAppDebugRoot,
     $efAppLogRoot,
     $efAppChromeProfileRoot
@@ -2804,6 +2807,47 @@ function Ensure-EfAppLoginCredentials {
     return $true
 }
 
+function New-EfAppClientRegistrationOutputDirectory {
+    <#
+    Client Registration uses a checkpoint CSV.  A shared report directory can
+    silently make a first run look like a resume, so ordinary menu launches
+    always receive their own operator-private directory.  Resume remains
+    possible only with an explicit private directory selected by the operator.
+    #>
+    $resumeOutputDirectory = ([string]$env:EF_CLIENT_REGISTRATION_RESUME_OUTPUT_DIR).Trim()
+    $runRoot = (Resolve-Path -LiteralPath $efAppClientRegistrationRunRoot).Path.TrimEnd([char]'\', [char]'/')
+    if (-not [string]::IsNullOrWhiteSpace($resumeOutputDirectory)) {
+        if (-not (Test-Path -LiteralPath $resumeOutputDirectory -PathType Container)) {
+            throw "O diretório de retomada do cadastro de clientes não existe: '$resumeOutputDirectory'."
+        }
+        $resolvedResumeDirectory = (Resolve-Path -LiteralPath $resumeOutputDirectory).Path.TrimEnd([char]'\', [char]'/')
+        if (-not (Test-WindowsPathWithinRoot -Path $resolvedResumeDirectory -Root $runRoot) -or
+            $resolvedResumeDirectory.Equals($runRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "O diretório de retomada do cadastro de clientes deve ser uma execução privada abaixo de '$runRoot'."
+        }
+        $runId = [IO.Path]::GetFileName($resolvedResumeDirectory)
+        if ([string]::IsNullOrWhiteSpace($runId)) {
+            throw "O diretório de retomada do cadastro de clientes não possui um identificador de execução válido."
+        }
+        return [pscustomobject]@{
+            OutputDirectory = $resolvedResumeDirectory
+            RunId = $runId
+            LaunchMode = 'explicit_resume'
+        }
+    }
+
+    $runId = "{0}-{1}" -f `
+        (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmssfff'Z'"), `
+        ([Guid]::NewGuid().ToString('N').Substring(0, 12))
+    $outputDirectory = Join-Path $runRoot $runId
+    New-Item -ItemType Directory -Path $outputDirectory -ErrorAction Stop | Out-Null
+    return [pscustomobject]@{
+        OutputDirectory = $outputDirectory
+        RunId = $runId
+        LaunchMode = 'fresh'
+    }
+}
+
 function Get-EfAppUnitOptions {
     $configuredOptions = [string]$env:EF_UNIT_OPTIONS
     if ([string]::IsNullOrWhiteSpace($configuredOptions)) {
@@ -2897,16 +2941,17 @@ function Invoke-EfAppPythonMode {
         [switch]$Headed
     )
 
+    $normalizedMode = $Mode.Trim().ToLowerInvariant()
     $headlessValue = if ($Headed) { "HEADLESS=0" } else { "HEADLESS=1" }
     $modeEnvVars = @("EF_MODE=$Mode", $headlessValue)
-    if ($Mode.Trim().ToLowerInvariant() -in @("caixa", "cash", "agenda_delta")) {
+    if ($normalizedMode -in @("caixa", "cash", "agenda_delta")) {
         $unitName = Select-EfAppUnitName -Mode $Mode
         if ([string]::IsNullOrWhiteSpace($unitName)) {
             return
         }
         $modeEnvVars += "EF_UNIT_NAME=$unitName"
     }
-    if ($Mode.Trim().ToLowerInvariant() -in @("caixa", "cash")) {
+    if ($normalizedMode -in @("caixa", "cash")) {
         $dateRange = Read-EfAppCashDateRange
         $modeEnvVars += @(
             "EF_CASH_START_DATE=$($dateRange.Start)",
@@ -2916,10 +2961,25 @@ function Invoke-EfAppPythonMode {
     if (-not (Ensure-EfAppLoginCredentials)) {
         return
     }
+    $modeSpecificEnvVars = @()
+    $launcherEnvVars = $efAppEnvVars
+    if ($normalizedMode -eq "client_registration") {
+        if ($ExtraEnvVar | Where-Object { $_ -like "EF_OUTPUT_DIR=*" }) {
+            throw "EF_OUTPUT_DIR não pode sobrescrever a execução isolada de Client Registration. Use EF_CLIENT_REGISTRATION_RESUME_OUTPUT_DIR para uma retomada explícita."
+        }
+        $clientRegistrationRun = New-EfAppClientRegistrationOutputDirectory
+        $launcherEnvVars = @($efAppEnvVars | Where-Object { $_ -notlike "EF_OUTPUT_DIR=*" })
+        $modeSpecificEnvVars = @(
+            "EF_OUTPUT_DIR=$(Convert-WindowsPathToWsl -Path $clientRegistrationRun.OutputDirectory)",
+            "EF_CLIENT_REGISTRATION_RUN_ID=$($clientRegistrationRun.RunId)",
+            "EF_CLIENT_REGISTRATION_LAUNCH_MODE=$($clientRegistrationRun.LaunchMode)"
+        )
+        Write-Host "[ef-app] Client Registration: saída privada $($clientRegistrationRun.LaunchMode) em $($clientRegistrationRun.OutputDirectory)"
+    }
     Invoke-ShortcutWsl `
         -ScriptPath "integration/ef/scripts/run-local-python.sh" `
         -ArgumentList @("run_scraper.py") `
-        -EnvVar ($efAppEnvVars + $modeEnvVars + $ExtraEnvVar) `
+        -EnvVar ($launcherEnvVars + $modeEnvVars + $modeSpecificEnvVars + $ExtraEnvVar) `
         -SkipNodeCheck `
         -SkipNpmCheck
 }
@@ -3077,6 +3137,9 @@ function Invoke-ShortcutActionInternal {
         "CrmAtendimento" {
             Invoke-CrmModuleAction -Role Gestor -Module "atendimento"
         }
+        "CrmAtendimentoMirrorPreflight" {
+            Invoke-ShortcutWsl -NpmScript "codex:crm:atendimento-mirror-preflight"
+        }
         "CrmAtendimentoMirrorStatus" {
             Invoke-ShortcutWsl -NpmScript "codex:crm:atendimento-mirror-status"
         }
@@ -3129,9 +3192,7 @@ function Invoke-ShortcutActionInternal {
         }
         "EfAppBookingApi" { Invoke-EfAppPythonMode -Mode "booking_api" }
         "EfAppProcedures" { Invoke-EfAppPythonMode -Mode "procedures" }
-        "EfAppClientRegistration" {
-            throw "The client registration export is still documented in integration/ef/README.md, but no runnable implementation is wired in run_scraper.py yet."
-        }
+        "EfAppClientRegistration" { Invoke-EfAppPythonMode -Mode "client_registration" }
         "EfAppRecorder" { Invoke-EfAppPythonMode -Mode "recorder" -Headed }
         "EfAppRotateAgendaSyncToken" {
             Invoke-ShortcutWsl `

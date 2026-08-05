@@ -526,6 +526,10 @@ export async function fetchAtendimentoReferences() {
   return api<AtendimentoReferences>('/references')
 }
 
+export async function fetchCommercialReferences() {
+  return api<AtendimentoReferences>('/commercial/references')
+}
+
 export async function fetchAtendimentoClientSuggestions(unit: string, query: string, limit = 8) {
   const params = new URLSearchParams({ unit, q: query, limit: String(limit) })
   return api<{ clients: AtendimentoClientSuggestion[] }>(`/clients?${params.toString()}`)
@@ -778,11 +782,28 @@ export type CommercialSegment = {
   evidence: Record<string, number>
 }
 
+export type CommercialContactEligibility = {
+  channel: 'whatsapp'
+  status: 'eligible' | 'review_required' | 'blocked'
+  contactAllowed: boolean
+  reason: string
+  controlsReady: boolean
+  contactWriteControlsReady: boolean
+  harmoniaChecked: boolean
+  hasPhone: boolean
+  optOutRecorded: boolean
+  permissionStatus: 'granted' | 'denied' | 'unknown'
+  evidenceSource: string
+  evidenceReference: string
+  expiresAt: string | null
+  permissionRevision: number
+  recordedBy: string
+  updatedAt: string | null
+}
+
 export type CommercialProfile = {
   identityId: string
   name: string
-  phone: string
-  email: string
   sourceTypes: string[]
   identityQuality: string
   units: string[]
@@ -804,6 +825,7 @@ export type CommercialProfile = {
   recommendedAction: string
   activeActionCount: number
   lastActionAt: string | null
+  contactEligibility: CommercialContactEligibility
 }
 
 export type CommercialAction = {
@@ -813,6 +835,7 @@ export type CommercialAction = {
   unitName: string
   segmentKey: string
   actionType: 'contact' | 'follow_up' | 'appointment' | 'relationship'
+  contactChannel: 'whatsapp'
   status: 'open' | 'contacted' | 'responded' | 'scheduled' | 'won_sale' | 'returned' | 'closed' | 'cancelled'
   owner: string
   dueDate: string | null
@@ -820,6 +843,7 @@ export type CommercialAction = {
   outcomeNotes: string
   createdBy: string
   completedAt: string | null
+  contactedAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -827,17 +851,81 @@ export type CommercialAction = {
 export type CommercialPolicy = {
   activeContactCooldownDays: number
   returnRiskThresholds: number[]
+  commercialContactWritesEnabled: boolean
+  commercialContactCanaryIdentityIds: string[]
+  commercialContactWriteControlsReady: boolean
+  policyVersion: string
   updatedBy: string
   updatedAt: string | null
+}
+
+export type CommercialDataQualitySeverity = 'critical' | 'high' | 'medium' | 'low'
+export type CommercialDataQualityStatus = 'open' | 'acknowledged' | 'in_progress' | 'resolved' | 'suppressed'
+
+export type CommercialDataQualityFinding = {
+  id: string
+  findingKey: string
+  severity: CommercialDataQualitySeverity
+  status: CommercialDataQualityStatus
+  owner: string
+  observedCount: number
+  // The API deliberately limits this object to aggregate safety/freshness values.
+  metrics: {
+    thresholdHours?: number
+    mirrorSyncedAgeHours?: number
+    latestImportAgeHours?: number
+    currentSnapshotCount?: number
+    residualRegistrationCount?: number
+    controlsReady?: boolean
+    snapshotVerified?: boolean
+  }
+  slaDueAt: string | null
+  firstDetectedAt: string | null
+  lastObservedAt: string | null
+  lastEvaluatedAt: string | null
+  acknowledgedAt: string | null
+  resolvedAt: string | null
+  revision: number
+  updatedAt: string | null
+}
+
+export type CommercialDataQualityQueue = {
+  total: number
+  limit: number
+  offset: number
+  metrics: {
+    findings: number
+    currentFindings: number
+    overdue: number
+    unassigned: number
+    bySeverity: Partial<Record<CommercialDataQualitySeverity, number>>
+    byStatus: Partial<Record<CommercialDataQualityStatus, number>>
+  }
+  sourceFreshness: CommercialDataQualityFinding['metrics']
+  findings: CommercialDataQualityFinding[]
+}
+
+export type CommercialDataQualityFindingMutation = {
+  // The queue is shared. The server rejects writes based on a stale revision.
+  expectedRevision: number
+  owner?: string
+  status?: CommercialDataQualityStatus
 }
 
 export type CommercialOverview = {
   asOf: string
   policy: CommercialPolicy
   summary: { profiles: number; returnAtRisk: number; highValueInactive: number; frequent: number; balancedVip: number; reactivationPotential: number; averageTicket: number }
-  actions: { actions: number; recoveredSalesClients: number; clinicalReturnClients: number }
-  coverage: { confirmedIdentities: number; classifiedSaleItems: number; saleItems: number }
-  dataQuality: { futureAttendancesExcluded: number; recencySource: 'completed_attendance_only'; saleItemsWithoutClassification: number }
+  actions: { actions: number; contactedActions: number; recoveredSalesClients: number; clinicalReturnClients: number }
+  coverage: { identitiesVisible: number; confirmedMultiSourceIdentities: number; unresolvedSingleSourceIdentities: number; classifiedSaleItems: number; saleItems: number }
+  dataQuality: {
+    futureAttendancesExcluded: number
+    recencySource: 'completed_attendance_only'
+    saleItemsWithoutClassification: number
+    activeAttendanceClientsWithoutIdentity: number
+    identityDataUpdatedAt: string | null
+    contactEligibility: { eligible: number; blocked: number; reviewRequired: number; controlsReady: boolean; contactWriteControlsReady: boolean }
+  }
   total: number
   limit: number
   offset: number
@@ -855,7 +943,11 @@ export type CommercialProfileDetail = {
 export type ClientIdentityReviewItem = {
   id: string
   type: 'attendance_name_merge' | 'attendance_caixa' | 'app_attendance' | 'app_caixa' | 'lead_app' | 'lead_caixa'
-  status: 'pending' | 'suggested' | 'ambiguous'
+  sourceId: string
+  targetId: string
+  status: 'pending' | 'suggested' | 'ambiguous' | 'confirmed' | 'rejected'
+  version: string
+  decisionState: 'resolved' | 'stale' | null
   confidence: number
   primaryName: string
   secondaryName: string
@@ -863,7 +955,34 @@ export type ClientIdentityReviewItem = {
   context: Record<string, unknown>
 }
 
-export type ClientIdentityReviewQueue = { total: number; limit: number; offset: number; items: ClientIdentityReviewItem[] }
+export type ClientIdentityReviewQueue = {
+  total: number
+  limit: number
+  offset: number
+  items: ClientIdentityReviewItem[]
+  workflow?: { writesReady: boolean }
+}
+
+export type ClientIdentityReviewDecision = {
+  id: string
+  state: 'confirmed' | 'rejected' | 'reversed'
+  sourceVersion: string
+  reversesDecisionId?: string
+}
+
+export type ClientIdentityMaterialization = {
+  id: string
+  createdAt?: string
+  summary: {
+    membersMoved?: number
+    sourceIdentityId?: string
+    targetIdentityId?: string
+    survivorIdentityId?: string
+    retiredIdentityId?: string | null
+    manualCanonicalMerge?: { sourceClientId: string; survivorClientId: string } | null
+    [key: string]: unknown
+  }
+}
 
 export function fetchCommercialOverview(filters: { asOf?: string; unit?: string; segment?: string; priority?: string; q?: string; limit?: number; offset?: number } = {}) {
   const params = new URLSearchParams()
@@ -872,11 +991,57 @@ export function fetchCommercialOverview(filters: { asOf?: string; unit?: string;
   return api<CommercialOverview>(`/commercial/overview${qs ? `?${qs}` : ''}`)
 }
 
-export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityReviewItem['type']; q?: string; limit?: number; offset?: number } = {}) {
+export function fetchCommercialDataQuality(filters: {
+  status?: CommercialDataQualityStatus
+  severity?: CommercialDataQualitySeverity
+  limit?: number
+  offset?: number
+} = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => { if (value !== undefined) params.set(key, String(value)) })
+  const qs = params.toString()
+  return api<CommercialDataQualityQueue>(`/commercial/data-quality${qs ? `?${qs}` : ''}`)
+}
+
+export function updateCommercialDataQualityFinding(id: string, payload: CommercialDataQualityFindingMutation) {
+  return api<{ finding: CommercialDataQualityFinding }>(`/commercial/data-quality/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+}
+
+export function isCommercialDataQualityScopeDenied(error: string | undefined) {
+  return error === 'COMMERCIAL_DATA_QUALITY_UNIT_SCOPE_UNSUPPORTED' || error === 'FORBIDDEN'
+}
+
+export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityReviewItem['type']; q?: string; limit?: number; offset?: number; includeResolved?: boolean } = {}) {
   const params = new URLSearchParams()
   Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)) })
   const qs = params.toString()
   return api<ClientIdentityReviewQueue>(`/commercial/review${qs ? `?${qs}` : ''}`)
+}
+
+export function decideClientIdentityReview(type: ClientIdentityReviewItem['type'], payload: {
+  sourceId: string
+  targetId: string
+  expectedVersion: string
+  decision: 'confirmed' | 'rejected'
+  reason: string
+  survivorClientId?: string
+}) {
+  return api<{ decision: ClientIdentityReviewDecision; materialization: ClientIdentityMaterialization }>(
+    `/commercial/review/${encodeURIComponent(type)}/decision`,
+    { method: 'POST', body: payload },
+  )
+}
+
+export function undoClientIdentityReview(type: ClientIdentityReviewItem['type'], payload: {
+  sourceId: string
+  targetId: string
+  expectedVersion: string
+  reason: string
+}) {
+  return api<{ decision: ClientIdentityReviewDecision; materialization: ClientIdentityMaterialization }>(
+    `/commercial/review/${encodeURIComponent(type)}/undo`,
+    { method: 'POST', body: payload },
+  )
 }
 
 export function fetchCommercialProfile(identityId: string, filters: { asOf?: string; unit?: string } = {}) {
@@ -887,19 +1052,29 @@ export function fetchCommercialProfile(identityId: string, filters: { asOf?: str
   return api<CommercialProfileDetail>(`/commercial/profiles/${encodeURIComponent(identityId)}${qs ? `?${qs}` : ''}`)
 }
 
-export function createCommercialAction(payload: { identityId: string; segmentKey: string; actionType: CommercialAction['actionType']; owner?: string; unit?: string; dueDate?: string; notes?: string }) {
-  return api<{ id: string }>('/commercial/actions', { method: 'POST', body: payload })
+export function createCommercialAction(payload: { identityId: string; segmentKey: string; actionType: CommercialAction['actionType']; contactChannel?: 'whatsapp'; owner?: string; unit?: string; dueDate?: string; notes?: string }) {
+  return api<{ id: string; contactEligibility: CommercialContactEligibility }>('/commercial/actions', { method: 'POST', body: payload })
 }
 
 export function updateCommercialAction(id: string, payload: { status: CommercialAction['status']; owner?: string; outcomeNotes?: string }) {
-  return api<{ id: string; status: CommercialAction['status'] }>(`/commercial/actions/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+  return api<{ id: string; status: CommercialAction['status']; contactEligibility: CommercialContactEligibility }>(`/commercial/actions/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+}
+
+export type CommercialContactPermissionMutation =
+  | { status: 'granted'; source: string; evidenceReference: string; expectedRevision: number; expiresAt?: string }
+  | { status: 'denied'; source: string; evidenceReference: string; expectedRevision?: number; expiresAt?: string }
+
+export function recordCommercialContactPermission(identityId: string, payload: CommercialContactPermissionMutation) {
+  return api<{ contactEligibility: CommercialContactEligibility }>(`/commercial/contact-permissions/${encodeURIComponent(identityId)}`, { method: 'PUT', body: payload })
 }
 
 export function fetchCommercialPolicy() {
   return api<{ policy: CommercialPolicy }>('/commercial/policy')
 }
 
-export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'>) {
+export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'> &
+  Partial<Pick<CommercialPolicy, 'commercialContactWritesEnabled' | 'commercialContactCanaryIdentityIds'>> &
+  { expectedPolicyVersion: string }) {
   return api<{ policy: CommercialPolicy }>('/commercial/policy', { method: 'PUT', body: payload })
 }
 
@@ -907,7 +1082,10 @@ export function fetchCommercialCadences() {
   return api<{ cadences: Array<{ id: string; procedureId: string; procedureName: string; cadenceDays: number; status: string; notes: string; approvedBy: string; approvedAt: string | null; updatedBy: string; updatedAt: string | null; unitSlug: string; unitName: string }> }>('/commercial/cadences')
 }
 
-export function upsertCommercialCadence(payload: { procedureId: string; unit?: string; cadenceDays: number; status: 'draft' | 'approved' | 'disabled'; notes?: string }) {
+export const commercialCadenceManagerStatuses = ['draft', 'disabled'] as const
+export type CommercialCadenceManagerStatus = (typeof commercialCadenceManagerStatuses)[number]
+
+export function upsertCommercialCadence(payload: { procedureId: string; unit?: string; cadenceDays: number; status: CommercialCadenceManagerStatus; notes?: string }) {
   return api<{ id: string }>('/commercial/cadences', { method: 'PUT', body: payload })
 }
 

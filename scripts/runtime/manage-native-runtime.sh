@@ -6,6 +6,7 @@ units=(
   orb-proxy.service
   messaging-whatsapp.service
   crm.service
+  crm-atendimento-staging.service
   booking.service
   cloudflare-orb.service
   cloudflare-runtime.service

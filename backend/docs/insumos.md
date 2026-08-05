@@ -35,11 +35,28 @@ Observação: o Worker faz o *mount* em `/insumos/*` e mantém as rotas internas
 - Listar/buscar: `GET /insumos/insumos?unidade=<slug>&q=<texto>&pagina=1&limite=200`
 - Criar: `POST /insumos/insumos?unidade=<slug>`
 - Atualizar: `PUT /insumos/insumos/:registro?unidade=<slug>`
-- Excluir: `DELETE /insumos/insumos/:registro?unidade=<slug>`
+- Arquivar: `POST /insumos/insumos/:registro/arquivar?unidade=<slug>` (bloqueia saldo positivo ou transferência pendente)
+- Excluir: `DELETE /insumos/insumos/:registro?unidade=<slug>` → `405 ARCHIVE_REQUIRED` (não há exclusão física)
 - Entrada: `POST /insumos/insumos/entrada?unidade=<slug>`
 - Saída: `POST /insumos/insumos/baixa?unidade=<slug>`
 - Ajuste: `POST /insumos/insumos/ajuste?unidade=<slug>`
 - Transferência: `POST /insumos/insumos/transferir?unidade=<origem>`
+
+Todas as mutações exigem `Idempotency-Key`. O responsável é obtido da sessão no
+Worker; campos `usuario`/`actor` enviados pelo cliente são ignorados.
+
+### Guardrails transacionais
+
+- A migração `inventory/migrations/0019_insumos_ledger_guardrails.sql` materializa
+  `SALDO_INICIAL` para saldos legados e cria a tabela de idempotência.
+- `insumos_movements` é append-only no código e no D1 (PUT/DELETE retornam
+  `405 LEDGER_IMMUTABLE` e os gatilhos impedem alteração direta).
+- Saídas e transferências recusam saldo insuficiente com `409 INSUFFICIENT_STOCK`.
+  A exceção de saldo negativo só existe para saída direta executada por
+  `GERENTE`, `GESTOR` ou `ADMIN`, com justificativa; o resultado e a auditoria
+  registram a quebra.
+- Correções são feitas em `POST /insumos/movimentacoes/:id/estorno` com motivo
+  obrigatório, preservando o movimento original e marcando o compensatório.
 
 ### Categorias (políticas)
 
@@ -64,6 +81,7 @@ Observação: o Worker faz o *mount* em `/insumos/*` e mantém as rotas internas
 ### Movimentações e exports
 
 - Movimentações: `GET /insumos/movimentacoes?unidade=<slug>&tipo=TODOS&pagina=1&limite=50`
+- Estorno compensatório: `POST /insumos/movimentacoes/:id/estorno?unidade=<slug>`
 - CSV Insumos: `GET /insumos/export/insumos.csv?unidade=<slug>`
 - CSV Movimentações: `GET /insumos/export/movimentacoes.csv?unidade=<slug>`
 
