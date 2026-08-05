@@ -244,6 +244,9 @@ Depois reinicie:
 - Compras internas: fornecedores arquiváveis, pedidos por unidade, recebimentos
   parciais e custo unitário em centavos. O recebimento gera uma entrada no
   ledger e não chama financeiro ou qualquer provedor externo.
+- Reposição inteligente: políticas por unidade (mínimo, alvo, estoque de
+  segurança e lead time) e sugestões server-side que permanecem rascunhos de
+  transferência ou pedido até uma ação explícita do operador.
 - Políticas por categoria (`requires_lot`, `requires_expiry`, `fefo`) e enforcement no backend.
 - Alertas (estoque baixo, vencendo, expirado com estoque) + insights (tendências/giro/ROI/qualidade).
 - Offline queue no frontend para mutações quando cair a rede.
@@ -253,8 +256,8 @@ Depois reinicie:
 
 - P0: UX “selecionar lote” mais amigável (mostrar lote+validade em vez de “registro”) em todos os fluxos.
 - P0: tela/admin de usuários e permissões (hoje existe “Usuários” mas fica bloqueado).
-- P1: custo médio e políticas de reposição por unidade ainda podem evoluir sobre
-  o agregado de compras já disponível.
+- P1: custo médio e previsão de consumo ainda podem evoluir sobre o agregado de
+  compras e as políticas de reposição já disponíveis.
 - P1: inventário avançado (reorder por unidade, múltiplos mínimos, consumo por procedimento, custo médio).
 - P2: importação em massa, etiquetas/barcode print, auditoria avançada (filtros/retention), integrações.
 

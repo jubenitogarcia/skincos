@@ -28,6 +28,8 @@ function hasBackupPayloadInsumos(payload) {
             Array.isArray(payload.d1.insumosPurchaseOrders) ||
             Array.isArray(payload.d1.insumosPurchaseOrderLines) ||
             Array.isArray(payload.d1.insumosPurchaseReceipts) ||
+            Array.isArray(payload.d1.insumosReplenishmentPolicies) ||
+            Array.isArray(payload.d1.insumosReplenishmentSuggestions) ||
             Array.isArray(payload.d1.insumosCountSessions) ||
             Array.isArray(payload.d1.insumosCountLines) ||
             Array.isArray(payload.d1.insumosCountReads))
@@ -55,6 +57,8 @@ export async function buildBackupPayload({ env }) {
         insumosPurchaseOrders: [],
         insumosPurchaseOrderLines: [],
         insumosPurchaseReceipts: [],
+        insumosReplenishmentPolicies: [],
+        insumosReplenishmentSuggestions: [],
         insumosCountSessions: [],
         insumosCountLines: [],
         insumosCountReads: [],
@@ -208,6 +212,35 @@ export async function buildBackupPayload({ env }) {
             // Older databases may not have procurement tables yet.
         }
         try {
+            const rp = await env.DB.prepare(
+                `SELECT id, unidade, registro_insumo as registroInsumo,
+                        estoque_minimo as estoqueMinimo, estoque_alvo as estoqueAlvo,
+                        estoque_seguranca as estoqueSeguranca, lead_time_dias as leadTimeDias,
+                        ativo, created_at as createdAt, created_by as createdBy,
+                        updated_at as updatedAt, updated_by as updatedBy
+                 FROM insumos_replenishment_policies`
+            ).all();
+            d1Dump.insumosReplenishmentPolicies = rp?.results || [];
+        } catch {
+            // Older databases may not have replenishment tables yet.
+        }
+        try {
+            const rs = await env.DB.prepare(
+                `SELECT id, unidade, registro_insumo as registroInsumo, tipo, status,
+                        quantidade, saldo_atual as saldoAtual, saldo_projetado as saldoProjetado,
+                        estoque_alvo as estoqueAlvo, estoque_seguranca as estoqueSeguranca,
+                        lead_time_dias as leadTimeDias, unidade_origem as unidadeOrigem,
+                        unidade_destino as unidadeDestino, codigo_barras as codigoBarras,
+                        produto, lote, data_validade as dataValidade, suggestion_key as suggestionKey,
+                        draft_json as draftJson, generated_at as generatedAt, generated_by as generatedBy,
+                        dismissed_at as dismissedAt, dismissed_by as dismissedBy, dismiss_reason as dismissReason
+                 FROM insumos_replenishment_suggestions`
+            ).all();
+            d1Dump.insumosReplenishmentSuggestions = rs?.results || [];
+        } catch {
+            // Older databases may not have replenishment tables yet.
+        }
+        try {
             const cs = await env.DB.prepare(
                 `SELECT id, unidade, status, snapshot_at as snapshotAt, started_at as startedAt,
                         started_by as startedBy, closed_at as closedAt, closed_by as closedBy,
@@ -261,6 +294,8 @@ export async function buildBackupPayload({ env }) {
                 insumosPurchaseOrdersCount: d1Dump.insumosPurchaseOrders.length,
                 insumosPurchaseOrderLinesCount: d1Dump.insumosPurchaseOrderLines.length,
                 insumosPurchaseReceiptsCount: d1Dump.insumosPurchaseReceipts.length,
+                insumosReplenishmentPoliciesCount: d1Dump.insumosReplenishmentPolicies.length,
+                insumosReplenishmentSuggestionsCount: d1Dump.insumosReplenishmentSuggestions.length,
                 insumosCountSessionsCount: d1Dump.insumosCountSessions.length,
                 insumosCountLinesCount: d1Dump.insumosCountLines.length,
                 insumosCountReadsCount: d1Dump.insumosCountReads.length,
@@ -450,6 +485,45 @@ export async function restoreBackupPayload({ env, payload }) {
                     row.registroInsumo || '', row.codigoBarras || '', row.lote || null, row.dataValidade || null,
                     Number(row.quantidade || 0), Number(row.custoUnitarioCentavos || 0), row.movementId || '',
                     row.receivedAt || new Date().toISOString(), row.receivedBy || '', row.observacoes || null,
+                ).run();
+            }
+            // Replenishment policy and suggestion state is restored additively.
+            // Suggestions are draft/audit evidence and must never be deleted or
+            // rewritten during recovery.
+            for (const row of (p.d1.insumosReplenishmentPolicies || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT OR IGNORE INTO insumos_replenishment_policies
+                     (id, unidade, registro_insumo, estoque_minimo, estoque_alvo,
+                      estoque_seguranca, lead_time_dias, ativo, created_at, created_by,
+                      updated_at, updated_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ).bind(
+                    row.id || crypto.randomUUID(), row.unidade || '', row.registroInsumo || '',
+                    Number(row.estoqueMinimo || 0), Number(row.estoqueAlvo || 0),
+                    Number(row.estoqueSeguranca || 0), Number(row.leadTimeDias || 0),
+                    Number(row.ativo) ? 1 : 0,
+                    row.createdAt || new Date().toISOString(), row.createdBy || '',
+                    row.updatedAt || new Date().toISOString(), row.updatedBy || row.createdBy || '',
+                ).run();
+            }
+            for (const row of (p.d1.insumosReplenishmentSuggestions || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT OR IGNORE INTO insumos_replenishment_suggestions
+                     (id, unidade, registro_insumo, tipo, status, quantidade, saldo_atual,
+                      saldo_projetado, estoque_alvo, estoque_seguranca, lead_time_dias,
+                      unidade_origem, unidade_destino, codigo_barras, produto, lote,
+                      data_validade, suggestion_key, draft_json, generated_at, generated_by,
+                      dismissed_at, dismissed_by, dismiss_reason)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ).bind(
+                    row.id || crypto.randomUUID(), row.unidade || '', row.registroInsumo || '',
+                    row.tipo || 'PURCHASE_DRAFT', row.status || 'DRAFT', Number(row.quantidade || 0),
+                    Number(row.saldoAtual || 0), Number(row.saldoProjetado || 0),
+                    Number(row.estoqueAlvo || 0), Number(row.estoqueSeguranca || 0),
+                    Number(row.leadTimeDias || 0), row.unidadeOrigem || null, row.unidadeDestino || null,
+                    row.codigoBarras || '', row.produto || '', row.lote || null, row.dataValidade || null,
+                    row.suggestionKey || '', row.draftJson || '{}', row.generatedAt || new Date().toISOString(),
+                    row.generatedBy || '', row.dismissedAt || null, row.dismissedBy || null, row.dismissReason || null,
                 ).run();
             }
             if (Array.isArray(p.d1.insumosTransfers)) {

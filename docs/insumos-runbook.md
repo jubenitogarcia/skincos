@@ -118,6 +118,33 @@ Todos os `POST` exigem `Idempotency-Key`, derivam o responsável da sessão e
 produzem auditoria. Fornecedor com pedido pendente não pode ser arquivado;
 recebimento acima do saldo pendente retorna `409 RECEIPT_EXCEEDS_PENDING`.
 
+### 3.6 Reposição inteligente (rascunhos)
+
+As políticas são mantidas por registro e unidade. O cálculo server-side soma o
+saldo atual e entradas pendentes (transferências e pedidos) antes de comparar o
+mínimo mais a segurança com o alvo. Quando falta saldo, cria somente uma
+sugestão `TRANSFER_DRAFT` (se houver excedente seguro em outra unidade do
+escopo) ou `PURCHASE_DRAFT`. Nenhuma sugestão despacha transferência, altera
+estoque, cria pedido ou chama financeiro/serviço externo.
+
+`leadTimeDias` é preservado no snapshot e no rascunho para ordenar a fila de
+revisão (quanto maior o prazo, maior a antecedência operacional). Um saldo
+negativo decorrente de uma saída excepcional governada não é normalizado no
+cálculo: ele aumenta a necessidade sugerida; o snapshot persistido permanece
+não negativo apenas por proteção de integridade da tabela de rascunhos.
+
+```text
+GET  /api/insumos/reposicao/politicas?unidade=<unidade>
+POST /api/insumos/reposicao/politicas?unidade=<unidade>
+GET  /api/insumos/reposicao/sugestoes?unidade=<unidade>&status=DRAFT
+POST /api/insumos/reposicao/sugestoes/gerar?unidade=<unidade>
+POST /api/insumos/reposicao/sugestoes/:id/descartar?unidade=<unidade>
+```
+
+Os `POST` exigem `Idempotency-Key`, derivam o responsável da sessão e geram
+auditoria. Descartes exigem justificativa; a tabela de sugestões é append-only
+para exclusão física e mantém a evidência da recomendação.
+
 ## 4) Diagnóstico de incidentes (500/503/travamento)
 
 ### 4.1 Sinais comuns
