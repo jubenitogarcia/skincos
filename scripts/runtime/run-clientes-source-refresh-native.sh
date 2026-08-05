@@ -67,10 +67,23 @@ if [[ "$ACTION" == '--apply' ]]; then
   # private backup connection string; DATABASE_URL itself remains unchanged
   # for the application runner.
   backup_database_url="$(printf '%s' "$DATABASE_URL" | sed -E 's/([?&])uselibpqcompat=[^&]*&?/\1/g; s/[?&]$//')"
-  # The staging application role is intentionally not a database-wide dump
-  # role.  This import only mutates crm_atendimento, so scope the rollback
-  # artifact to that schema instead of requesting unrelated CRM/legacy schemas.
-  pg_dump --format=custom --no-owner --schema=crm_atendimento --file="$checkpoint" "$backup_database_url"
+  # The runtime role is intentionally not a database-wide dump role.  This
+  # import mutates only the source-backed tables below, so scope the rollback
+  # artifact to those tables instead of requesting unrelated CRM/legacy or
+  # contact-governance tables that the role must not read.
+  backup_table_args=(
+    --table=crm_atendimento.units
+    --table=crm_atendimento.professionals
+    --table=crm_atendimento.professional_aliases
+    --table=crm_atendimento.procedures
+    --table=crm_atendimento.procedure_price_codes
+    --table=crm_atendimento.schedule_days
+    --table=crm_atendimento.clients
+    --table=crm_atendimento.attendances
+    --table=crm_atendimento.audit_events
+    --table=crm_atendimento.import_batches
+  )
+  pg_dump --format=custom --no-owner "${backup_table_args[@]}" --file="$checkpoint" "$backup_database_url"
   chmod 0640 "$checkpoint"
   echo "checkpoint=$checkpoint sha256=$(sha256sum "$checkpoint" | awk '{print $1}')"
 fi
