@@ -88,12 +88,118 @@ function assertCountActor(actor) {
   return { ok: true };
 }
 
+function assertProcurementRole(actor, roles) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const role = String(actor?.role || '').trim().toUpperCase();
+  if (!roles.includes(role)) {
+    return { ok: false, status: 403, code: 'PROCUREMENT_ROLE_DENIED', error: 'Sem permissão para esta operação de compras' };
+  }
+  return { ok: true };
+}
+
 function parseCountQuantity(value) {
   if (typeof value === 'number') return Number.isInteger(value) && value >= 0 ? value : NaN;
   const raw = String(value ?? '').trim();
   if (!/^\d+$/.test(raw)) return NaN;
   const parsed = Number(raw);
   return Number.isSafeInteger(parsed) ? parsed : NaN;
+}
+
+function parseCents(value, { required = true } = {}) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return required ? NaN : null;
+  }
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 0 ? value : NaN;
+  }
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) return NaN;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : NaN;
+}
+
+function mapSupplier(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    nome: String(row.nome || '').trim(),
+    documento: String(row.documento || '').trim(),
+    email: String(row.email || '').trim(),
+    telefone: String(row.telefone || '').trim(),
+    observacoes: String(row.observacoes || '').trim(),
+    archivedAt: row.archived_at ? String(row.archived_at) : null,
+    archivedBy: row.archived_by ? String(row.archived_by) : null,
+    createdAt: row.created_at ? String(row.created_at) : null,
+    createdBy: String(row.created_by || '').trim(),
+    updatedAt: row.updated_at ? String(row.updated_at) : null,
+    updatedBy: String(row.updated_by || '').trim(),
+    active: !String(row.archived_at || '').trim(),
+  };
+}
+
+function mapPurchaseLine(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    pedidoId: String(row.pedido_id || '').trim(),
+    registro: String(row.registro_insumo || '').trim(),
+    codigoBarras: String(row.codigo_barras || '').trim(),
+    produto: String(row.produto || '').trim(),
+    lote: row.lote ? String(row.lote) : null,
+    dataValidade: row.data_validade ? String(row.data_validade) : null,
+    quantidadePedida: toInt(row.quantidade_pedida, 0),
+    quantidadeRecebida: toInt(row.quantidade_recebida, 0),
+    quantidadePendente: Math.max(0, toInt(row.quantidade_pedida, 0) - toInt(row.quantidade_recebida, 0)),
+    custoUnitarioCentavos: toInt(row.custo_unitario_centavos, 0),
+  };
+}
+
+function mapPurchaseReceipt(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    pedidoId: String(row.pedido_id || '').trim(),
+    linhaId: String(row.linha_id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    registro: String(row.registro_insumo || '').trim(),
+    codigoBarras: String(row.codigo_barras || '').trim(),
+    lote: row.lote ? String(row.lote) : null,
+    dataValidade: row.data_validade ? String(row.data_validade) : null,
+    quantidade: toInt(row.quantidade, 0),
+    custoUnitarioCentavos: toInt(row.custo_unitario_centavos, 0),
+    movementId: String(row.movement_id || '').trim(),
+    receivedAt: row.received_at ? String(row.received_at) : null,
+    receivedBy: String(row.received_by || '').trim(),
+    observacoes: String(row.observacoes || '').trim(),
+  };
+}
+
+function mapPurchaseOrder(row, lines = [], receipts = []) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    fornecedorId: row.fornecedor_id ? String(row.fornecedor_id) : null,
+    fornecedorNome: String(row.fornecedor_nome || '').trim() || null,
+    status: String(row.status || 'DRAFT').trim().toUpperCase(),
+    expectedAt: row.expected_at ? String(row.expected_at) : null,
+    observacoes: String(row.observacoes || '').trim(),
+    createdAt: row.created_at ? String(row.created_at) : null,
+    createdBy: String(row.created_by || '').trim(),
+    updatedAt: row.updated_at ? String(row.updated_at) : null,
+    updatedBy: String(row.updated_by || '').trim(),
+    cancelledAt: row.cancelled_at ? String(row.cancelled_at) : null,
+    cancelledBy: row.cancelled_by ? String(row.cancelled_by) : null,
+    cancelReason: row.cancel_reason ? String(row.cancel_reason) : null,
+    lines,
+    receipts,
+    totalLines: lines.length,
+    totalQuantity: lines.reduce((sum, line) => sum + toInt(line.quantidadePedida, 0), 0),
+    totalReceived: lines.reduce((sum, line) => sum + toInt(line.quantidadeRecebida, 0), 0),
+    totalCostCentavos: lines.reduce((sum, line) => sum + (toInt(line.quantidadePedida, 0) * toInt(line.custoUnitarioCentavos, 0)), 0),
+  };
 }
 
 function mapCountLine(row) {
@@ -2312,6 +2418,416 @@ export async function d1RecontarContagem({ env, id, actor, unidade, observacoes 
     return { ok: false, status: 409, code: 'COUNT_RECOUNT_CONFLICT', error: 'A recontagem não pôde ser aplicada com segurança' };
   }
   return d1GetContagem({ env, id: sessionId, actor, unidade: scope.unit });
+}
+
+async function loadProcurementItem({ env, registro, codigoBarras }) {
+  const reg = String(registro || '').trim();
+  const code = String(codigoBarras || '').trim();
+  if (reg) {
+    return env.DB.prepare(
+      `SELECT registro, codigo_barras, produto, lote, data_validade, archived_at
+       FROM insumos_items WHERE registro = ? LIMIT 1`
+    ).bind(reg).first();
+  }
+  if (!code) return null;
+  const found = await env.DB.prepare(
+    `SELECT i.registro, i.codigo_barras, i.produto, i.lote, i.data_validade, i.archived_at
+     FROM insumos_items i
+     WHERE i.codigo_barras = ?
+        OR EXISTS (SELECT 1 FROM insumos_barcodes b WHERE b.registro = i.registro AND b.codigo_barras = ?)
+     ORDER BY i.registro ASC`
+  ).bind(code, code).all();
+  const rows = found?.results || [];
+  if (rows.length === 1) return rows[0];
+  if (rows.length > 1) return { ambiguous: true, candidates: rows };
+  return null;
+}
+
+export async function d1ListFornecedores({ env, unidade, actor, includeArchived = false }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const sql = `SELECT id, unidade, nome, documento, email, telefone, observacoes,
+                      archived_at, archived_by, created_at, created_by, updated_at, updated_by
+               FROM insumos_suppliers
+               WHERE unidade = ? ${includeArchived ? '' : "AND COALESCE(archived_at, '') = ''"}
+               ORDER BY CASE WHEN COALESCE(archived_at, '') = '' THEN 0 ELSE 1 END, lower(nome), id`;
+  const result = await env.DB.prepare(sql).bind(scope.unit).all();
+  return { ok: true, items: (result?.results || []).map(mapSupplier) };
+}
+
+export async function d1CreateFornecedor({ env, unidade, actor, body }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const name = String(body?.nome || body?.name || '').trim().slice(0, 160);
+  if (!name) return { ok: false, status: 400, code: 'SUPPLIER_NAME_REQUIRED', error: 'Nome do fornecedor é obrigatório' };
+  const existing = await env.DB.prepare(
+    `SELECT id, archived_at FROM insumos_suppliers WHERE unidade = ? AND lower(nome) = lower(?) LIMIT 1`
+  ).bind(scope.unit, name).first();
+  if (existing && !String(existing.archived_at || '').trim()) {
+    return { ok: false, status: 409, code: 'SUPPLIER_DUPLICATE', error: 'Já existe um fornecedor ativo com este nome', id: String(existing.id || '') };
+  }
+  const id = crypto.randomUUID();
+  const now = nowIso();
+  const actorId = actorName(actor);
+  const result = await env.DB.prepare(
+    `INSERT INTO insumos_suppliers (
+       id, unidade, nome, documento, email, telefone, observacoes,
+       archived_at, archived_by, created_at, created_by, updated_at, updated_by
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`
+  ).bind(
+    id,
+    scope.unit,
+    name,
+    String(body?.documento || body?.document || '').trim().slice(0, 80) || null,
+    String(body?.email || '').trim().slice(0, 160) || null,
+    String(body?.telefone || body?.phone || '').trim().slice(0, 60) || null,
+    String(body?.observacoes || body?.nota || '').trim().slice(0, 1000) || null,
+    now,
+    actorId,
+    now,
+    actorId,
+  ).run();
+  if (resultChanges(result) !== 1) return { ok: false, status: 409, code: 'SUPPLIER_CREATE_CONFLICT', error: 'Fornecedor não pôde ser cadastrado' };
+  const row = await env.DB.prepare(
+    `SELECT id, unidade, nome, documento, email, telefone, observacoes, archived_at, archived_by,
+            created_at, created_by, updated_at, updated_by
+     FROM insumos_suppliers WHERE id = ?`
+  ).bind(id).first();
+  return { ok: true, supplier: mapSupplier(row) };
+}
+
+export async function d1ArchiveFornecedor({ env, id, unidade, actor }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const supplierId = String(id || '').trim();
+  if (!supplierId) return { ok: false, status: 400, code: 'SUPPLIER_INVALID', error: 'Fornecedor inválido' };
+  const supplier = await env.DB.prepare(
+    `SELECT id, unidade, archived_at FROM insumos_suppliers WHERE id = ? LIMIT 1`
+  ).bind(supplierId).first();
+  if (!supplier) return { ok: false, status: 404, code: 'SUPPLIER_NOT_FOUND', error: 'Fornecedor não encontrado' };
+  if (normalizeUnitScope(supplier.unidade) !== scope.unit) return { ok: false, status: 403, code: 'RBAC_UNIT_DENIED', error: 'Sem permissão para unidade' };
+  if (String(supplier.archived_at || '').trim()) return { ok: true, alreadyArchived: true, archivedAt: supplier.archived_at };
+  const pending = await env.DB.prepare(
+    `SELECT id FROM insumos_purchase_orders
+     WHERE fornecedor_id = ? AND status IN ('DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED') LIMIT 1`
+  ).bind(supplierId).first();
+  if (pending) return { ok: false, status: 409, code: 'SUPPLIER_PENDING_ORDERS', error: 'Não é possível arquivar fornecedor com pedido pendente' };
+  const archivedAt = nowIso();
+  const archivedBy = actorName(actor);
+  const result = await env.DB.prepare(
+    `UPDATE insumos_suppliers SET archived_at = ?, archived_by = ?, updated_at = ?, updated_by = ?
+     WHERE id = ? AND unidade = ? AND COALESCE(archived_at, '') = ''`
+  ).bind(archivedAt, archivedBy, archivedAt, archivedBy, supplierId, scope.unit).run();
+  if (resultChanges(result) !== 1) return { ok: false, status: 409, code: 'SUPPLIER_ARCHIVE_CONFLICT', error: 'Fornecedor foi alterado por outra operação' };
+  return { ok: true, archivedAt };
+}
+
+async function loadPurchaseOrderRow({ env, id, unidade }) {
+  return env.DB.prepare(
+    `SELECT o.id, o.unidade, o.fornecedor_id, s.nome AS fornecedor_nome, o.status, o.expected_at,
+            o.observacoes, o.created_at, o.created_by, o.updated_at, o.updated_by,
+            o.cancelled_at, o.cancelled_by, o.cancel_reason
+     FROM insumos_purchase_orders o
+     LEFT JOIN insumos_suppliers s ON s.id = o.fornecedor_id
+     WHERE o.id = ? AND o.unidade = ? LIMIT 1`
+  ).bind(id, unidade).first();
+}
+
+async function loadPurchaseOrderDetails({ env, row }) {
+  if (!row) return null;
+  const [lineResult, receiptResult] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, pedido_id, registro_insumo, codigo_barras, produto, lote, data_validade,
+              quantidade_pedida, quantidade_recebida, custo_unitario_centavos
+       FROM insumos_purchase_order_lines WHERE pedido_id = ? ORDER BY id`
+    ).bind(row.id).all(),
+    env.DB.prepare(
+      `SELECT id, pedido_id, linha_id, unidade, registro_insumo, codigo_barras, lote, data_validade,
+              quantidade, custo_unitario_centavos, movement_id, received_at, received_by, observacoes
+       FROM insumos_purchase_receipts WHERE pedido_id = ? ORDER BY received_at, id`
+    ).bind(row.id).all(),
+  ]);
+  return mapPurchaseOrder(
+    row,
+    (lineResult?.results || []).map(mapPurchaseLine),
+    (receiptResult?.results || []).map(mapPurchaseReceipt),
+  );
+}
+
+export async function d1ListPedidosInternos({ env, unidade, actor, status = '' }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const normalizedStatus = String(status || '').trim().toUpperCase();
+  if (normalizedStatus && !['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'].includes(normalizedStatus)) {
+    return { ok: false, status: 400, code: 'PURCHASE_STATUS_INVALID', error: 'Status de pedido inválido' };
+  }
+  const result = await env.DB.prepare(
+    `SELECT o.id, o.unidade, o.fornecedor_id, s.nome AS fornecedor_nome, o.status, o.expected_at,
+            o.observacoes, o.created_at, o.created_by, o.updated_at, o.updated_by,
+            o.cancelled_at, o.cancelled_by, o.cancel_reason,
+            COUNT(l.id) AS total_linhas, COALESCE(SUM(l.quantidade_pedida), 0) AS total_quantidade,
+            COALESCE(SUM(l.quantidade_recebida), 0) AS total_recebida
+     FROM insumos_purchase_orders o
+     LEFT JOIN insumos_suppliers s ON s.id = o.fornecedor_id
+     LEFT JOIN insumos_purchase_order_lines l ON l.pedido_id = o.id
+     WHERE o.unidade = ? ${normalizedStatus ? 'AND o.status = ?' : ''}
+     GROUP BY o.id ORDER BY o.updated_at DESC, o.id DESC`
+  ).bind(...(normalizedStatus ? [scope.unit, normalizedStatus] : [scope.unit])).all();
+  return {
+    ok: true,
+    items: (result?.results || []).map((row) => ({
+      ...mapPurchaseOrder(row),
+      totalLines: toInt(row.total_linhas, 0),
+      totalQuantity: toInt(row.total_quantidade, 0),
+      totalReceived: toInt(row.total_recebida, 0),
+      totalPending: Math.max(0, toInt(row.total_quantidade, 0) - toInt(row.total_recebida, 0)),
+      totalCostCentavos: null,
+    })),
+  };
+}
+
+export async function d1GetPedidoInterno({ env, id, unidade, actor }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const orderId = String(id || '').trim();
+  if (!orderId) return { ok: false, status: 400, code: 'PURCHASE_INVALID', error: 'Pedido inválido' };
+  const row = await loadPurchaseOrderRow({ env, id: orderId, unidade: scope.unit });
+  if (!row) return { ok: false, status: 404, code: 'PURCHASE_NOT_FOUND', error: 'Pedido não encontrado' };
+  return { ok: true, order: await loadPurchaseOrderDetails({ env, row }) };
+}
+
+export async function d1CreatePedidoInterno({ env, unidade, actor, body }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const requestedStatus = String(body?.status || 'DRAFT').trim().toUpperCase();
+  if (!['DRAFT', 'ORDERED'].includes(requestedStatus)) return { ok: false, status: 400, code: 'PURCHASE_STATUS_INVALID', error: 'Um novo pedido só pode ser rascunho ou solicitado' };
+  const rawLines = Array.isArray(body?.linhas) ? body.linhas : Array.isArray(body?.lines) ? body.lines : Array.isArray(body?.itens) ? body.itens : [];
+  if (!rawLines.length || rawLines.length > 100) return { ok: false, status: 400, code: 'PURCHASE_LINES_REQUIRED', error: 'O pedido precisa de pelo menos uma linha e no máximo 100' };
+
+  const supplierId = String(body?.fornecedorId || body?.supplierId || '').trim() || null;
+  if (supplierId) {
+    const supplier = await env.DB.prepare(
+      `SELECT id, unidade, archived_at FROM insumos_suppliers WHERE id = ? LIMIT 1`
+    ).bind(supplierId).first();
+    if (!supplier) return { ok: false, status: 404, code: 'SUPPLIER_NOT_FOUND', error: 'Fornecedor não encontrado' };
+    if (normalizeUnitScope(supplier.unidade) !== scope.unit) return { ok: false, status: 403, code: 'RBAC_UNIT_DENIED', error: 'Fornecedor fora do escopo da unidade' };
+    if (String(supplier.archived_at || '').trim()) return { ok: false, status: 409, code: 'SUPPLIER_ARCHIVED', error: 'Fornecedor arquivado não pode receber novos pedidos' };
+  }
+
+  const lines = [];
+  const seenRecords = new Set();
+  for (const raw of rawLines) {
+    const quantity = toInt(raw?.quantidade ?? raw?.quantity, NaN);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) return { ok: false, status: 400, code: 'PURCHASE_QUANTITY_INVALID', error: 'Quantidade pedida deve ser um inteiro positivo' };
+    const cost = parseCents(raw?.custoUnitarioCentavos ?? raw?.unitCostCents ?? raw?.custoCentavos);
+    if (!Number.isSafeInteger(cost)) return { ok: false, status: 400, code: 'COST_CENTS_REQUIRED', error: 'Custo unitário deve ser informado em centavos inteiros' };
+    const item = await loadProcurementItem({ env, registro: raw?.registro || raw?.registroInsumo, codigoBarras: raw?.codigoBarras || raw?.codigo });
+    if (item?.ambiguous) return { ok: false, status: 409, code: 'PURCHASE_AMBIGUOUS_ITEM', error: 'Código possui múltiplos lotes; informe o registro', candidates: item.candidates.map((candidate) => String(candidate.registro || '')) };
+    if (!item) return { ok: false, status: 404, code: 'INSUMO_NOT_FOUND', error: 'Insumo não encontrado' };
+    if (String(item.archived_at || '').trim()) return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não pode entrar em novo pedido' };
+    const record = String(item.registro || '').trim();
+    if (seenRecords.has(record)) return { ok: false, status: 400, code: 'PURCHASE_DUPLICATE_LINE', error: 'O mesmo registro não pode aparecer em duas linhas do pedido' };
+    seenRecords.add(record);
+    const lot = String(raw?.lote ?? item.lote ?? '').trim() || null;
+    const expiry = String(raw?.dataValidade ?? raw?.validade ?? item.data_validade ?? '').trim() || null;
+    if (String(item.lote || '').trim() && lot !== String(item.lote).trim()) return { ok: false, status: 400, code: 'PURCHASE_LOT_MISMATCH', error: 'Lote da linha não corresponde ao registro do insumo' };
+    lines.push({ item, quantity, cost, lot, expiry });
+  }
+
+  const id = crypto.randomUUID();
+  const actorId = actorName(actor);
+  const now = nowIso();
+  const statements = [env.DB.prepare(
+    `INSERT INTO insumos_purchase_orders
+       (id, unidade, fornecedor_id, status, expected_at, observacoes, created_at, created_by, updated_at, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    id,
+    scope.unit,
+    supplierId,
+    requestedStatus,
+    String(body?.expectedAt || body?.dataEsperada || '').trim() || null,
+    String(body?.observacoes || body?.nota || '').trim().slice(0, 2000) || null,
+    now,
+    actorId,
+    now,
+    actorId,
+  )];
+  for (const line of lines) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO insumos_purchase_order_lines
+         (id, pedido_id, registro_insumo, codigo_barras, produto, lote, data_validade,
+          quantidade_pedida, quantidade_recebida, custo_unitario_centavos, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
+    ).bind(
+      crypto.randomUUID(), id, String(line.item.registro || ''), String(line.item.codigo_barras || ''), String(line.item.produto || ''),
+      line.lot, line.expiry, line.quantity, line.cost, now, actorId,
+    ));
+  }
+  await env.DB.batch(statements);
+  const created = await d1GetPedidoInterno({ env, id, unidade: scope.unit, actor });
+  return { ok: true, ...created };
+}
+
+export async function d1ReceberPedidoInterno({ env, id, unidade, actor, body }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const orderId = String(id || '').trim();
+  const row = await loadPurchaseOrderRow({ env, id: orderId, unidade: scope.unit });
+  if (!row) return { ok: false, status: 404, code: 'PURCHASE_NOT_FOUND', error: 'Pedido não encontrado' };
+  if (['CANCELLED', 'RECEIVED'].includes(String(row.status || '').toUpperCase())) return { ok: false, status: 409, code: 'PURCHASE_NOT_RECEIVABLE', error: 'Pedido não aceita recebimentos neste estado' };
+  const rawReceipts = Array.isArray(body?.linhas) ? body.linhas : Array.isArray(body?.lines) ? body.lines : Array.isArray(body?.itens) ? body.itens : [];
+  if (!rawReceipts.length) return { ok: false, status: 400, code: 'RECEIPT_LINES_REQUIRED', error: 'Informe ao menos uma linha para recebimento' };
+  const linesResult = await env.DB.prepare(
+    `SELECT id, pedido_id, registro_insumo, codigo_barras, produto, lote, data_validade,
+            quantidade_pedida, quantidade_recebida, custo_unitario_centavos
+     FROM insumos_purchase_order_lines WHERE pedido_id = ? ORDER BY id`
+  ).bind(orderId).all();
+  const lineMap = new Map((linesResult?.results || []).map((line) => [String(line.id || ''), line]));
+  const seen = new Set();
+  const receipts = [];
+  for (const raw of rawReceipts) {
+    const lineId = String(raw?.linhaId || raw?.lineId || '').trim();
+    if (!lineId || seen.has(lineId)) return { ok: false, status: 400, code: 'RECEIPT_LINE_INVALID', error: 'Linha de recebimento inválida ou repetida' };
+    seen.add(lineId);
+    const line = lineMap.get(lineId);
+    if (!line) return { ok: false, status: 404, code: 'PURCHASE_LINE_NOT_FOUND', error: 'Linha do pedido não encontrada' };
+    const quantity = toInt(raw?.quantidade ?? raw?.quantity, NaN);
+    const pending = toInt(line.quantidade_pedida, 0) - toInt(line.quantidade_recebida, 0);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0 || quantity > pending) return { ok: false, status: 409, code: 'RECEIPT_EXCEEDS_PENDING', error: 'Recebimento excede a quantidade pendente', pending, lineId };
+    const cost = raw?.custoUnitarioCentavos ?? raw?.unitCostCents ?? raw?.custoCentavos;
+    const costCents = cost === undefined ? toInt(line.custo_unitario_centavos, 0) : parseCents(cost);
+    if (!Number.isSafeInteger(costCents)) return { ok: false, status: 400, code: 'COST_CENTS_INVALID', error: 'Custo unitário deve ser um inteiro em centavos', lineId };
+    const lot = String(raw?.lote ?? line.lote ?? '').trim() || null;
+    const expiry = String(raw?.dataValidade ?? raw?.validade ?? line.data_validade ?? '').trim() || null;
+    if (String(line.lote || '').trim() && lot !== String(line.lote).trim()) return { ok: false, status: 400, code: 'RECEIPT_LOT_MISMATCH', error: 'Lote recebido não corresponde à linha do pedido', lineId };
+    receipts.push({ line, quantity, costCents, lot, expiry, id: crypto.randomUUID(), movementId: crypto.randomUUID(), receivedAt: nowIso() });
+  }
+
+  const actorId = actorName(actor);
+  const notes = String(body?.observacoes || body?.nota || '').trim().slice(0, 1000) || null;
+  const allStatements = [];
+  const offsets = [];
+  for (const receipt of receipts) {
+    const { line, quantity, costCents, lot, expiry, id: receiptId, movementId, receivedAt } = receipt;
+    const reg = String(line.registro_insumo || '').trim();
+    const code = String(line.codigo_barras || '').trim();
+    const product = String(line.produto || '').trim();
+    const reason = `Recebimento pedido ${orderId}`;
+    const stockUpdateIndex = allStatements.length;
+    allStatements.push(env.DB.prepare(
+      `UPDATE insumos_stocks
+       SET quantidade = quantidade + ?, updated_at = ?
+       WHERE registro = ? AND unidade = ?
+         AND EXISTS (
+           SELECT 1 FROM insumos_purchase_order_lines l
+           JOIN insumos_purchase_orders o ON o.id = l.pedido_id
+           JOIN insumos_items i ON i.registro = l.registro_insumo
+           WHERE l.id = ? AND l.pedido_id = ?
+             AND l.quantidade_pedida - l.quantidade_recebida >= ?
+             AND o.status NOT IN ('CANCELLED', 'RECEIVED')
+             AND COALESCE(i.archived_at, '') = ''
+         )`
+    ).bind(quantity, receivedAt, reg, scope.unit, line.id, orderId, quantity));
+    allStatements.push(env.DB.prepare(
+      `INSERT OR IGNORE INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+       SELECT ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM insumos_purchase_order_lines l
+         JOIN insumos_purchase_orders o ON o.id = l.pedido_id
+         JOIN insumos_items i ON i.registro = l.registro_insumo
+         WHERE l.id = ? AND l.pedido_id = ?
+           AND l.quantidade_pedida - l.quantidade_recebida >= ?
+           AND o.status NOT IN ('CANCELLED', 'RECEIVED')
+           AND COALESCE(i.archived_at, '') = ''
+       )`
+    ).bind(reg, scope.unit, quantity, receivedAt, line.id, orderId, quantity));
+    allStatements.push(env.DB.prepare(
+      `INSERT INTO insumos_movements (
+        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+        produto, quantidade, estoque_anterior, estoque_novo, unidade, usuario,
+        motivo, observacoes, status
+      )
+      SELECT ?, ?, 'ENTRADA', ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, 'COMPLETED'
+      FROM insumos_stocks
+      WHERE registro = ? AND unidade = ? AND updated_at = ?
+        AND EXISTS (
+          SELECT 1 FROM insumos_purchase_order_lines l
+          WHERE l.id = ? AND l.pedido_id = ? AND l.quantidade_pedida - l.quantidade_recebida >= ?
+        )`
+    ).bind(movementId, receivedAt, code, reg, lot, expiry, product, quantity, quantity, scope.unit, actorId, reason, notes, reg, scope.unit, receivedAt, line.id, orderId, quantity));
+    const movementIndex = allStatements.length - 1;
+    allStatements.push(env.DB.prepare(
+      `INSERT INTO insumos_purchase_receipts (
+        id, pedido_id, linha_id, unidade, registro_insumo, codigo_barras, lote, data_validade,
+        quantidade, custo_unitario_centavos, movement_id, received_at, received_by, observacoes
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM insumos_movements WHERE id = ?)`
+    ).bind(receiptId, orderId, line.id, scope.unit, reg, code, lot, expiry, quantity, costCents, movementId, receivedAt, actorId, notes, movementId));
+    const receiptIndex = allStatements.length - 1;
+    allStatements.push(env.DB.prepare(
+      `UPDATE insumos_purchase_order_lines
+       SET quantidade_recebida = quantidade_recebida + ?
+       WHERE id = ? AND pedido_id = ? AND quantidade_pedida - quantidade_recebida >= ?
+         AND EXISTS (SELECT 1 FROM insumos_purchase_receipts WHERE id = ?)`
+    ).bind(quantity, line.id, orderId, quantity, receiptId));
+    const lineIndex = allStatements.length - 1;
+    offsets.push({ stockUpdateIndex, movementIndex, receiptIndex, lineIndex, receipt });
+  }
+  allStatements.push(env.DB.prepare(
+    `UPDATE insumos_purchase_orders
+     SET status = CASE
+       WHEN NOT EXISTS (SELECT 1 FROM insumos_purchase_order_lines WHERE pedido_id = ? AND quantidade_recebida < quantidade_pedida) THEN 'RECEIVED'
+       WHEN EXISTS (SELECT 1 FROM insumos_purchase_order_lines WHERE pedido_id = ? AND quantidade_recebida > 0) THEN 'PARTIALLY_RECEIVED'
+       ELSE status END,
+       updated_at = ?, updated_by = ?
+     WHERE id = ? AND unidade = ? AND status NOT IN ('CANCELLED', 'RECEIVED')`
+  ).bind(orderId, orderId, nowIso(), actorId, orderId, scope.unit));
+  const results = await env.DB.batch(allStatements);
+  for (const offset of offsets) {
+    if (resultChanges(results?.[offset.movementIndex]) !== 1 || resultChanges(results?.[offset.receiptIndex]) !== 1 || resultChanges(results?.[offset.lineIndex]) !== 1) {
+      return { ok: false, status: 409, code: 'RECEIPT_CONFLICT', error: 'O recebimento foi alterado por outra operação; recarregue o pedido' };
+    }
+  }
+  const order = await d1GetPedidoInterno({ env, id: orderId, unidade: scope.unit, actor });
+  return { ok: true, ...order, received: receipts.map((receipt) => ({ lineId: String(receipt.line.id || ''), receiptId: receipt.id, movementId: receipt.movementId, quantidade: receipt.quantity, custoUnitarioCentavos: receipt.costCents })) };
+}
+
+export async function d1CancelarPedidoInterno({ env, id, unidade, actor, justificativa }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const orderId = String(id || '').trim();
+  const reason = String(justificativa || '').trim().slice(0, 1000);
+  if (!reason) return { ok: false, status: 400, code: 'CANCEL_REASON_REQUIRED', error: 'Justificativa é obrigatória para cancelar o pedido' };
+  const row = await loadPurchaseOrderRow({ env, id: orderId, unidade: scope.unit });
+  if (!row) return { ok: false, status: 404, code: 'PURCHASE_NOT_FOUND', error: 'Pedido não encontrado' };
+  if (['RECEIVED', 'CANCELLED'].includes(String(row.status || '').toUpperCase())) return { ok: false, status: 409, code: 'PURCHASE_NOT_CANCELLABLE', error: 'Pedido não pode ser cancelado neste estado' };
+  const now = nowIso();
+  const result = await env.DB.prepare(
+    `UPDATE insumos_purchase_orders
+     SET status = 'CANCELLED', cancelled_at = ?, cancelled_by = ?, cancel_reason = ?, updated_at = ?, updated_by = ?
+     WHERE id = ? AND unidade = ? AND status IN ('DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED')`
+  ).bind(now, actorName(actor), reason, now, actorName(actor), orderId, scope.unit).run();
+  if (resultChanges(result) !== 1) return { ok: false, status: 409, code: 'PURCHASE_CANCEL_CONFLICT', error: 'Pedido foi alterado por outra operação' };
+  const order = await d1GetPedidoInterno({ env, id: orderId, unidade: scope.unit, actor });
+  return { ok: true, ...order };
 }
 
 export async function d1Transfer({ env, body, actor, unidade }) {

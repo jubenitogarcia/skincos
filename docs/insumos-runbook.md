@@ -92,6 +92,32 @@ POST /api/insumos/contagens/:id/recontar?unidade=<unidade>    # gerente/gestor/a
 Depois de `recontar`, todas as linhas devem ser lidas novamente. Leituras
 anteriores permanecem em `insumos_count_reads` para auditoria.
 
+### 3.5 Compras internas
+
+Fornecedores e pedidos são sempre limitados à unidade da sessão. O valor de
+custo é aceito apenas como inteiro em centavos (`custoUnitarioCentavos`), sem
+integração financeira. Um recebimento parcial cria uma entrada no ledger e uma
+linha append-only em `insumos_purchase_receipts`; o pedido passa por
+`PARTIALLY_RECEIVED` até todas as linhas serem recebidas.
+
+```text
+GET  /api/insumos/fornecedores?unidade=<unidade>
+POST /api/insumos/fornecedores?unidade=<unidade>
+POST /api/insumos/fornecedores/:id/arquivar?unidade=<unidade>
+GET  /api/insumos/compras?unidade=<unidade>&status=ORDERED
+POST /api/insumos/compras?unidade=<unidade>
+GET  /api/insumos/compras/:id?unidade=<unidade>
+POST /api/insumos/compras/:id/receber?unidade=<unidade>
+POST /api/insumos/compras/:id/cancelar?unidade=<unidade>
+```
+
+`/api/insumos/pedidos` e seus subcaminhos são aliases compatíveis para o mesmo
+contrato de pedidos internos.
+
+Todos os `POST` exigem `Idempotency-Key`, derivam o responsável da sessão e
+produzem auditoria. Fornecedor com pedido pendente não pode ser arquivado;
+recebimento acima do saldo pendente retorna `409 RECEIPT_EXCEEDS_PENDING`.
+
 ## 4) Diagnóstico de incidentes (500/503/travamento)
 
 ### 4.1 Sinais comuns

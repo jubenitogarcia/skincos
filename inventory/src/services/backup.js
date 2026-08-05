@@ -24,6 +24,10 @@ function hasBackupPayloadInsumos(payload) {
             Array.isArray(payload.d1.insumosStocks) ||
             Array.isArray(payload.d1.insumosMovements) ||
             Array.isArray(payload.d1.insumosTransfers) ||
+            Array.isArray(payload.d1.insumosSuppliers) ||
+            Array.isArray(payload.d1.insumosPurchaseOrders) ||
+            Array.isArray(payload.d1.insumosPurchaseOrderLines) ||
+            Array.isArray(payload.d1.insumosPurchaseReceipts) ||
             Array.isArray(payload.d1.insumosCountSessions) ||
             Array.isArray(payload.d1.insumosCountLines) ||
             Array.isArray(payload.d1.insumosCountReads))
@@ -47,6 +51,10 @@ export async function buildBackupPayload({ env }) {
         insumosStocks: [],
         insumosMovements: [],
         insumosTransfers: [],
+        insumosSuppliers: [],
+        insumosPurchaseOrders: [],
+        insumosPurchaseOrderLines: [],
+        insumosPurchaseReceipts: [],
         insumosCountSessions: [],
         insumosCountLines: [],
         insumosCountReads: [],
@@ -151,6 +159,55 @@ export async function buildBackupPayload({ env }) {
             // Older databases may not have the two-phase transfer aggregate yet.
         }
         try {
+            const sp = await env.DB.prepare(
+                `SELECT id, unidade, nome, documento, email, telefone, observacoes,
+                        archived_at as archivedAt, archived_by as archivedBy,
+                        created_at as createdAt, created_by as createdBy,
+                        updated_at as updatedAt, updated_by as updatedBy
+                 FROM insumos_suppliers`
+            ).all();
+            d1Dump.insumosSuppliers = sp?.results || [];
+        } catch {
+            // Older databases may not have procurement tables yet.
+        }
+        try {
+            const po = await env.DB.prepare(
+                `SELECT o.id, o.unidade, o.fornecedor_id as fornecedorId, o.status, o.expected_at as expectedAt,
+                        o.observacoes, o.created_at as createdAt, o.created_by as createdBy,
+                        o.updated_at as updatedAt, o.updated_by as updatedBy,
+                        o.cancelled_at as cancelledAt, o.cancelled_by as cancelledBy, o.cancel_reason as cancelReason
+                 FROM insumos_purchase_orders o`
+            ).all();
+            d1Dump.insumosPurchaseOrders = po?.results || [];
+        } catch {
+            // Older databases may not have procurement tables yet.
+        }
+        try {
+            const pl = await env.DB.prepare(
+                `SELECT id, pedido_id as pedidoId, registro_insumo as registroInsumo, codigo_barras as codigoBarras,
+                        produto, lote, data_validade as dataValidade,
+                        quantidade_pedida as quantidadePedida, quantidade_recebida as quantidadeRecebida,
+                        custo_unitario_centavos as custoUnitarioCentavos, created_at as createdAt, created_by as createdBy
+                 FROM insumos_purchase_order_lines`
+            ).all();
+            d1Dump.insumosPurchaseOrderLines = pl?.results || [];
+        } catch {
+            // Older databases may not have procurement tables yet.
+        }
+        try {
+            const pr = await env.DB.prepare(
+                `SELECT id, pedido_id as pedidoId, linha_id as linhaId, unidade,
+                        registro_insumo as registroInsumo, codigo_barras as codigoBarras,
+                        lote, data_validade as dataValidade, quantidade,
+                        custo_unitario_centavos as custoUnitarioCentavos, movement_id as movementId,
+                        received_at as receivedAt, received_by as receivedBy, observacoes
+                 FROM insumos_purchase_receipts`
+            ).all();
+            d1Dump.insumosPurchaseReceipts = pr?.results || [];
+        } catch {
+            // Older databases may not have procurement tables yet.
+        }
+        try {
             const cs = await env.DB.prepare(
                 `SELECT id, unidade, status, snapshot_at as snapshotAt, started_at as startedAt,
                         started_by as startedBy, closed_at as closedAt, closed_by as closedBy,
@@ -200,6 +257,10 @@ export async function buildBackupPayload({ env }) {
                 insumosStocksCount: d1Dump.insumosStocks.length,
                 insumosMovementsCount: d1Dump.insumosMovements.length,
                 insumosTransfersCount: d1Dump.insumosTransfers.length,
+                insumosSuppliersCount: d1Dump.insumosSuppliers.length,
+                insumosPurchaseOrdersCount: d1Dump.insumosPurchaseOrders.length,
+                insumosPurchaseOrderLinesCount: d1Dump.insumosPurchaseOrderLines.length,
+                insumosPurchaseReceiptsCount: d1Dump.insumosPurchaseReceipts.length,
                 insumosCountSessionsCount: d1Dump.insumosCountSessions.length,
                 insumosCountLinesCount: d1Dump.insumosCountLines.length,
                 insumosCountReadsCount: d1Dump.insumosCountReads.length,
@@ -333,6 +394,63 @@ export async function restoreBackupPayload({ env, payload }) {
                 )
                     .bind(row.registro || '', row.unidade || '', Number(row.quantidade || 0), row.updatedAt || new Date().toISOString())
                     .run();
+            }
+            // Procurement state is restored additively. Supplier/order and
+            // receipt history are never deleted or rewritten by a restore.
+            for (const row of (p.d1.insumosSuppliers || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT OR IGNORE INTO insumos_suppliers
+                     (id, unidade, nome, documento, email, telefone, observacoes,
+                      archived_at, archived_by, created_at, created_by, updated_at, updated_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ).bind(
+                    row.id || crypto.randomUUID(), row.unidade || '', row.nome || '', row.documento || null,
+                    row.email || null, row.telefone || null, row.observacoes || null,
+                    row.archivedAt || null, row.archivedBy || null,
+                    row.createdAt || new Date().toISOString(), row.createdBy || '',
+                    row.updatedAt || new Date().toISOString(), row.updatedBy || row.createdBy || '',
+                ).run();
+            }
+            for (const row of (p.d1.insumosPurchaseOrders || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT OR IGNORE INTO insumos_purchase_orders
+                     (id, unidade, fornecedor_id, status, expected_at, observacoes,
+                      created_at, created_by, updated_at, updated_by,
+                      cancelled_at, cancelled_by, cancel_reason)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ).bind(
+                    row.id || crypto.randomUUID(), row.unidade || '', row.fornecedorId || null,
+                    row.status || 'DRAFT', row.expectedAt || null, row.observacoes || null,
+                    row.createdAt || new Date().toISOString(), row.createdBy || '',
+                    row.updatedAt || new Date().toISOString(), row.updatedBy || row.createdBy || '',
+                    row.cancelledAt || null, row.cancelledBy || null, row.cancelReason || null,
+                ).run();
+            }
+            for (const row of (p.d1.insumosPurchaseOrderLines || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT OR IGNORE INTO insumos_purchase_order_lines
+                     (id, pedido_id, registro_insumo, codigo_barras, produto, lote, data_validade,
+                      quantidade_pedida, quantidade_recebida, custo_unitario_centavos, created_at, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ).bind(
+                    row.id || crypto.randomUUID(), row.pedidoId || '', row.registroInsumo || '', row.codigoBarras || '',
+                    row.produto || '', row.lote || null, row.dataValidade || null,
+                    Number(row.quantidadePedida || 0), Number(row.quantidadeRecebida || 0), Number(row.custoUnitarioCentavos || 0),
+                    row.createdAt || new Date().toISOString(), row.createdBy || '',
+                ).run();
+            }
+            for (const row of (p.d1.insumosPurchaseReceipts || []).reverse()) {
+                await env.DB.prepare(
+                    `INSERT OR IGNORE INTO insumos_purchase_receipts
+                     (id, pedido_id, linha_id, unidade, registro_insumo, codigo_barras, lote, data_validade,
+                      quantidade, custo_unitario_centavos, movement_id, received_at, received_by, observacoes)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ).bind(
+                    row.id || crypto.randomUUID(), row.pedidoId || '', row.linhaId || '', row.unidade || '',
+                    row.registroInsumo || '', row.codigoBarras || '', row.lote || null, row.dataValidade || null,
+                    Number(row.quantidade || 0), Number(row.custoUnitarioCentavos || 0), row.movementId || '',
+                    row.receivedAt || new Date().toISOString(), row.receivedBy || '', row.observacoes || null,
+                ).run();
             }
             if (Array.isArray(p.d1.insumosTransfers)) {
                 await env.DB.prepare('DELETE FROM insumos_transfers').run();

@@ -21,6 +21,8 @@ export async function handleInsumosRoutes({
     d1,
 }) {
     if (d1?.enabled) {
+        const procurementCollectionPath = url.pathname === '/insumos/compras' || url.pathname === '/insumos/pedidos';
+        const procurementDetailPath = url.pathname.startsWith('/insumos/compras/') || url.pathname.startsWith('/insumos/pedidos/');
         // GET /insumos
         if (url.pathname === "/insumos" && request.method === "GET") {
             try {
@@ -127,6 +129,150 @@ export async function handleInsumosRoutes({
                 return withCORS(JSON.stringify({ success: true, message: "Insumo cadastrado", data: { registro: out.registro }, idempotent: !!command.replayed }), { status: 201 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // Internal procurement: suppliers and purchase orders remain within
+        // the authenticated unit. No financial or external provider call is
+        // made; receipts post stock through the D1 ledger only.
+        if (url.pathname === '/insumos/fornecedores' && request.method === 'GET') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+                if (!auth.ok) return auth.response;
+                const includeArchived = ['1', 'true', 'yes'].includes(String(url.searchParams.get('incluirArquivados') || url.searchParams.get('includeArchived') || '').toLowerCase());
+                const out = await d1.listFornecedores({ unidade, actor: auth.user, includeArchived });
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                return withCORS(JSON.stringify({ success: true, data: out.items }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (url.pathname === '/insumos/fornecedores' && request.method === 'POST') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'SUPPLIER_CREATE',
+                    idempotencyKey,
+                    command: { unidade, body },
+                    execute: () => d1.createFornecedor({ env, unidade, actor: auth.user, body }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                if (!command.replayed) {
+                    await appendAuditLog({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey, action: 'SUPPLIER_CREATE', entity: 'FORNECEDOR', entityId: out.supplier?.id, unidade, before: null, after: out.supplier });
+                }
+                return withCORS(JSON.stringify({ success: true, data: out.supplier, idempotent: !!command.replayed }), { status: 201 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (url.pathname.startsWith('/insumos/fornecedores/') && request.method === 'POST' && url.pathname.endsWith('/arquivar')) {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+                const parts = url.pathname.split('/').filter(Boolean);
+                const supplierId = decodeURIComponent(parts[2] || '').trim();
+                if (!supplierId || parts.length !== 4) return withCORS(JSON.stringify({ success: false, code: 'SUPPLIER_INVALID', error: 'Fornecedor inválido' }), { status: 400 }, appOrigin);
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'SUPPLIER_ARCHIVE',
+                    idempotencyKey,
+                    command: { supplierId, unidade },
+                    execute: () => d1.archiveFornecedor({ id: supplierId, unidade, actor: auth.user }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                if (!command.replayed) await appendAuditLog({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey, action: 'SUPPLIER_ARCHIVE', entity: 'FORNECEDOR', entityId: supplierId, unidade, before: null, after: { archivedAt: out.archivedAt, alreadyArchived: !!out.alreadyArchived } });
+                return withCORS(JSON.stringify({ success: true, data: { id: supplierId, archivedAt: out.archivedAt }, idempotent: !!command.replayed }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (procurementCollectionPath && request.method === 'GET') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+                if (!auth.ok) return auth.response;
+                const out = await d1.listPedidosInternos({ unidade, actor: auth.user, status: url.searchParams.get('status') || '' });
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                return withCORS(JSON.stringify({ success: true, data: out.items }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (procurementCollectionPath && request.method === 'POST') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'PURCHASE_CREATE',
+                    idempotencyKey,
+                    command: { unidade, body },
+                    execute: () => d1.createPedidoInterno({ env, unidade, actor: auth.user, body }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                if (!command.replayed) await appendAuditLog({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey, action: 'PURCHASE_CREATE', entity: 'PEDIDO_INTERNO', entityId: out.order?.id, unidade, before: null, after: { status: out.order?.status, totalLines: out.order?.totalLines } });
+                return withCORS(JSON.stringify({ success: true, data: out.order, idempotent: !!command.replayed }), { status: 201 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (procurementDetailPath && request.method === 'GET') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+                if (!auth.ok) return auth.response;
+                const parts = url.pathname.split('/').filter(Boolean);
+                const orderId = decodeURIComponent(parts[2] || '').trim();
+                if (!orderId || parts.length !== 3) return withCORS(JSON.stringify({ success: false, code: 'PURCHASE_NOT_FOUND', error: 'Pedido não encontrado' }), { status: 404 }, appOrigin);
+                const out = await d1.getPedidoInterno({ env, id: orderId, unidade, actor: auth.user });
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                return withCORS(JSON.stringify({ success: true, data: out.order }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (procurementDetailPath && request.method === 'POST') {
+            try {
+                const parts = url.pathname.split('/').filter(Boolean);
+                const orderId = decodeURIComponent(parts[2] || '').trim();
+                const action = String(parts[3] || '').trim().toLowerCase();
+                if (!orderId || !['receber', 'cancelar'].includes(action) || parts.length !== 4) return withCORS(JSON.stringify({ success: false, code: 'PURCHASE_ROUTE_NOT_FOUND', error: 'Rota de pedido não encontrada' }), { status: 404 }, appOrigin);
+                const auth = await requireRoles(action === 'cancelar' ? ['ADMIN', 'GESTOR', 'GERENTE'] : ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: action === 'receber' ? 'PURCHASE_RECEIPT' : 'PURCHASE_CANCEL',
+                    idempotencyKey,
+                    command: { orderId, unidade, body },
+                    execute: () => action === 'receber'
+                        ? d1.receberPedidoInterno({ env, id: orderId, unidade, actor: auth.user, body })
+                        : d1.cancelarPedidoInterno({ env, id: orderId, unidade, actor: auth.user, justificativa: body?.justificativa || body?.motivo }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error, pending: out.pending }), { status: out.status || 400 }, appOrigin);
+                if (!command.replayed) {
+                    await appendAuditLog({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey, action: action === 'receber' ? 'PURCHASE_RECEIPT' : 'PURCHASE_CANCEL', entity: 'PEDIDO_INTERNO', entityId: orderId, unidade, before: null, after: { status: out.order?.status, received: out.received || [], reason: body?.justificativa || body?.motivo || null } });
+                    if (action === 'receber') ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                }
+                return withCORS(JSON.stringify({ success: true, data: out.order, received: out.received || [], idempotent: !!command.replayed }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
             }
         }
 
