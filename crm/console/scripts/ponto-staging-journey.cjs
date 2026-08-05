@@ -191,6 +191,7 @@ async function main() {
       assert(await page.getByRole('button', { name: label, exact: true }).count() === 0, `unexpected administrative navigation: ${label}`)
     }
 
+    await waitForCandidateAffinity(page, fixture.runId)
     const me = await api(page, '/api/ponto/me')
     assert(me.status === 200 && me.json?.linked === true, `/api/ponto/me did not link the synthetic identity (${me.status})`)
     assert(me.json?.employee?.id === fixture.employeeId, `/api/ponto/me linked an unexpected synthetic employee (${String(me.json?.employee?.id || '')})`)
@@ -203,8 +204,6 @@ async function main() {
     assert(presence.status === 200 && presence.json?.data?.presenceMode === 'FLEXIBLE', `synthetic presence policy unavailable (${presence.status})`)
     const before = await api(page, `/api/ponto/me/records?unit=${encodeURIComponent(fixture.unitId)}&limit=20`)
     assert(before.status === 200 && Array.isArray(before.json?.data) && before.json.data.length === 0, 'synthetic employee was not clean before punch')
-
-    await waitForCandidateAffinity(page, fixture.runId)
 
     const invalidPinBody = { pin: '000000', unit: fixture.unitId }
     const invalidPinKey = `invalid-${fixtureKey}`
