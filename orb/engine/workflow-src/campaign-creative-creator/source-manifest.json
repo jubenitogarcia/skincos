@@ -6,7 +6,7 @@
   "source_node_count": 107,
   "source_connection_count": 117,
   "builder": "orb/engine/scripts/build-campaign-creative-creator-continuous.js",
-  "builder_version": "3.2.0",
+  "builder_version": "4.0.0",
   "baseline_reference": "private-runtime/campaign-creative-creator/source-941bec10-3e41-49be-baed-753ca60787ad.json",
   "credentials_in_repository": false,
   "publication_allowed": false,

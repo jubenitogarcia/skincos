@@ -25,6 +25,16 @@ credential bindings stripped for Git and requires credential rebinding during a
 separate reviewed n8n import. The module fixture catalog is not connected to
 the operational graph.
 
+CCG-80 now hands the immutable `production_manifest` to the native
+`orb/engine/campaign-creative-executor` through `CCG_EXECUTOR_BASE_URL`. n8n
+remains the orchestrator: it validates policy, dispatches, polls, normalizes,
+and forwards `production_execution_results` to CCG-90. The executor owns the
+adapter registry, retries, idempotency, checkpoints, artifact storage, checksum
+verification, deterministic overlays, and the allowlisted OpenAI image route.
+`DRY_RUN` uses the deterministic mock and does not write external artifacts or
+make paid calls. The service is fail-closed for `LIVE` until its runtime
+configuration explicitly enables it; publication is never performed here.
+
 Baseline reference:
 
 `C:\CodexRuntime\operator\admin\skincos\campaign-creative-creator\source-941bec10-3e41-49be-baed-753ca60787ad.json`

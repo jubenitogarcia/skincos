@@ -8,7 +8,7 @@ const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
 const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-creator-error-handler-v3';
 const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
-const BUILDER_VERSION = '3.2.0';
+const BUILDER_VERSION = '4.0.0';
 const ALL_FIXTURE_NAMES = [
   'Build CCG-00 dry-run fixture',
   'Build CCG-10 dry-run fixture',
@@ -43,6 +43,11 @@ const GENERATED_NODE_NAMES = [
   'CCG-60 Optional Skip Result',
   'CCG-70 Optional Applicability Gate',
   'CCG-70 Optional Skip Result',
+  'CCG-80 Validate Execution Policy',
+  'CCG-80 Execution Allowed?',
+  'CCG-80 Dispatch Production Manifest',
+  'CCG-80 Poll Production Manifest',
+  'CCG-80 Normalize Execution Results',
 ];
 const MODULES = ['CCG-00', 'CCG-10', 'CCG-20', 'CCG-30', 'CCG-40', 'CCG-50', 'CCG-60', 'CCG-70', 'CCG-80', 'CCG-90'];
 const REQUIRED_MODULE_NODES = [
@@ -360,6 +365,277 @@ return [{
     },
   },
   binary: input && input.binary,
+}];
+`;
+
+const EXECUTION_POLICY_CODE = String.raw`
+const item = $input.first();
+const root = item && item.json ? item.json : {};
+const data = root && root.data && typeof root.data === 'object' ? root.data : root;
+const request = data.production_request && typeof data.production_request === 'object' ? data.production_request : {};
+const context = data.ccg_context && typeof data.ccg_context === 'object' ? data.ccg_context : {};
+const moduleOutput = data.module_outputs && data.module_outputs.CCG_80 && typeof data.module_outputs.CCG_80 === 'object' ? data.module_outputs.CCG_80 : {};
+const manifest = data.production_manifest && typeof data.production_manifest === 'object'
+  ? data.production_manifest
+  : moduleOutput.production_manifest && typeof moduleOutput.production_manifest === 'object' ? moduleOutput.production_manifest : {};
+const policy = manifest.execution_policy && typeof manifest.execution_policy === 'object'
+  ? manifest.execution_policy
+  : request.provider_policy && typeof request.provider_policy === 'object' ? request.provider_policy : {};
+function text(value) { return value === undefined || value === null ? '' : String(value).trim(); }
+function object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+function list(value) { return Array.isArray(value) ? value : []; }
+function unique(values) { return Array.from(new Set(list(values).map(text).filter(Boolean))); }
+function firstDefined(...values) { return values.find((value) => value !== undefined && value !== null && value !== ''); }
+function numeric(value) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : null; }
+const ids = {
+  run_id: text(context.run_id || request.run_id),
+  production_id: text(context.production_id || request.production_id),
+  content_id: text(context.content_id || request.content_id),
+  campaign_id: text(context.campaign_id || request.campaign_id),
+  request_hash: text(context.request_hash || request.request_hash),
+  idempotency_key: text(context.idempotency_key || request.idempotency_key)
+};
+const mode = text(context.mode || request.mode || manifest.mode || 'DRY_RUN').toUpperCase() === 'LIVE' ? 'LIVE' : 'DRY_RUN';
+const jobs = list(manifest.jobs || manifest.job_plan || manifest.production_jobs);
+const allowedProviders = unique(policy.allowed_providers || manifest.allowed_providers || request.provider_policy?.allowed_providers);
+const maxJobs = numeric(firstDefined(policy.max_jobs, policy.maximum_jobs, manifest.max_jobs, manifest.budget?.max_jobs, request.budget?.max_jobs));
+const maxRevisions = numeric(firstDefined(policy.max_revisions, manifest.max_revisions, manifest.budget?.max_revisions, request.budget?.max_revisions));
+const maxCostRaw = firstDefined(policy.max_cost, policy.maximum_cost, manifest.max_cost, manifest.budget?.max_cost, manifest.budget?.maximum_cost, request.budget?.max_cost);
+const maxCost = numeric(maxCostRaw);
+const approval = object(firstDefined(data.human_approval, data.approval_record, request.human_approval, request.approval_record, policy.human_approval));
+const approvalGranted = approval.approved === true || approval.verified === true || ['APPROVED', 'VERIFIED', 'GRANTED'].includes(text(approval.status).toUpperCase());
+const blockers = [];
+for (const key of Object.keys(ids)) if (!ids[key]) blockers.push('LINEAGE_REQUIRED:' + key);
+if (!jobs.length) blockers.push('NO_JOBS');
+if (!maxJobs || jobs.length > maxJobs) blockers.push('MAX_JOBS_EXCEEDED');
+if (maxRevisions === null || maxRevisions < 0 || jobs.some((job) => numeric(job.revision || job.revision_number) > maxRevisions)) blockers.push('MAX_REVISIONS_EXCEEDED');
+if (manifest.status === 'BLOCKED' || list(manifest.review?.hard_blockers).length) blockers.push('MANIFEST_BLOCKED');
+if (data.publish_allowed === true || data.publish_requested === true || request.publish_allowed === true || request.publish_requested === true || manifest.publish_allowed === true || manifest.publish_requested === true) blockers.push('PUBLICATION_FORBIDDEN');
+if (mode === 'LIVE' && !allowedProviders.length) blockers.push('PROVIDER_ALLOWLIST_REQUIRED');
+if (mode === 'LIVE' && maxCost === null) blockers.push('MAX_COST_REQUIRED');
+if (mode === 'LIVE' && !approvalGranted) blockers.push('HUMAN_APPROVAL_REQUIRED');
+for (const job of jobs) {
+  const consent = object(firstDefined(job.consent, job.consent_record, data.consent, data.consent_record));
+  const identifiable = job.identifiable_person === true || job.requires_identifiable_consent === true || job.consent_required === true;
+  const consentGranted = job.identifiable_person === false || (!identifiable || consent.verified === true || ['VERIFIED', 'GRANTED', 'APPROVED'].includes(text(consent.status).toUpperCase()));
+  if (!consentGranted) blockers.push('CONSENT_REQUIRED:' + text(job.job_id || job.id));
+}
+const dispatchAllowed = blockers.length === 0;
+const blockedJobs = jobs.map((job, index) => ({
+  job_id: text(job.job_id || job.id || 'job-' + (index + 1)),
+  status: 'NEEDS_REVIEW',
+  provider: mode === 'DRY_RUN' ? 'mock' : text(job.provider || job.provider_id),
+  provider_id: mode === 'DRY_RUN' ? 'mock' : text(job.provider || job.provider_id),
+  attempt: 0,
+  attempts: 0,
+  started_at: null,
+  finished_at: new Date().toISOString(),
+  artifact_uri: '',
+  preview_uri: '',
+  mime_type: '',
+  width: null,
+  height: null,
+  duration_seconds: null,
+  file_size: null,
+  sha256: '',
+  cost: { amount: 0, currency: text(policy.currency || manifest.budget?.currency || 'BRL'), recorded: true, simulated: mode === 'DRY_RUN' },
+  warnings: ['NO_EXTERNAL_CALL_DISPATCH_BLOCKED'],
+  error: { code: blockers[0] || 'EXECUTION_POLICY_BLOCKED', retryable: false },
+  provenance: { executor: 'campaign-creative-executor', policy_blocked: true },
+  artifacts: [],
+  ...ids
+}));
+const blockedExecution = {
+  execution_id: text(ids.run_id) + ':policy-blocked',
+  mode,
+  dry_run: mode === 'DRY_RUN',
+  status: 'NEEDS_REVIEW',
+  jobs: blockedJobs,
+  results: blockedJobs,
+  total_cost: 0,
+  currency: text(policy.currency || manifest.budget?.currency || 'BRL'),
+  cost: { amount: 0, currency: text(policy.currency || manifest.budget?.currency || 'BRL'), recorded: true, simulated: mode === 'DRY_RUN' },
+  warnings: blockers,
+  error: blockers.length ? { code: blockers[0], retryable: false } : null,
+  external_calls: [],
+  storage_writes: [],
+  receipts: [],
+  checkpoint: { completed_job_ids: [], pending_job_ids: blockedJobs.map((job) => job.job_id), failed_job_ids: [], resume_supported: true },
+  policy: { allowed_providers: allowedProviders, max_jobs: maxJobs, max_revisions: maxRevisions, max_cost: maxCost, max_cost_configured: maxCost !== null, dispatch_allowed: false },
+  publish_allowed: false,
+  publish_requested: false,
+  ...ids
+};
+const executorManifest = {
+  ...manifest,
+  allowed_providers: allowedProviders,
+  execution_policy: {
+    ...policy,
+    allowed_providers: allowedProviders,
+    max_jobs: maxJobs,
+    max_revisions: maxRevisions,
+    max_cost: maxCost,
+    currency: text(policy.currency || manifest.budget?.currency || 'BRL')
+  },
+  publish_allowed: false,
+  publish_requested: false,
+  ...ids
+};
+return [{
+  json: {
+    ...root,
+    ...data,
+    production_manifest: executorManifest,
+    executor_dispatch_allowed: dispatchAllowed,
+    executor_request: dispatchAllowed ? {
+      manifest: executorManifest,
+      mode,
+      request_context: {
+        ...ids,
+        mode,
+        production_request: request,
+        ccg_context: context,
+        human_approval: approval,
+        consent: data.consent || data.consent_record
+      }
+    } : null,
+    production_execution_results: dispatchAllowed ? (data.production_execution_results || null) : blockedExecution,
+    execution_handoff: {
+      execution_id: dispatchAllowed ? '' : blockedExecution.execution_id,
+      dispatch_allowed: dispatchAllowed,
+      dispatch_requested: mode === 'LIVE' || mode === 'DRY_RUN',
+      executor_endpoint: text($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790'),
+      publish_allowed: false,
+      publish_requested: false,
+      policy_blockers: blockers
+    },
+    next_module: 'CCG-90',
+    status: 'DONE',
+    module_status: 'DONE',
+    output_type: 'CCG_MODULE_RESULT'
+  },
+  binary: item && item.binary
+}];
+`;
+
+const EXECUTION_NORMALIZER_CODE = String.raw`
+const item = $input.first();
+const input = item && item.json ? item.json : {};
+let base = input;
+try { base = $('CCG-80 Validate Execution Policy').first().json || input; } catch (error) { base = input; }
+const response = input && input.production_execution_results ? input : input;
+const candidate = response.production_execution_results && typeof response.production_execution_results === 'object'
+  ? response.production_execution_results
+  : response.result && response.result.production_execution_results && typeof response.result.production_execution_results === 'object'
+    ? response.result.production_execution_results
+    : base.production_execution_results && typeof base.production_execution_results === 'object' ? base.production_execution_results : {};
+function text(value) { return value === undefined || value === null ? '' : String(value).trim(); }
+function object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+function list(value) { return Array.isArray(value) ? value : []; }
+function number(value) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : null; }
+function lineageMatches(result, key, expected) { return !result[key] || !expected || text(result[key]) === text(expected); }
+const ids = {
+  run_id: text(base.ccg_context?.run_id || base.production_request?.run_id),
+  production_id: text(base.ccg_context?.production_id || base.production_request?.production_id),
+  content_id: text(base.ccg_context?.content_id || base.production_request?.content_id),
+  campaign_id: text(base.ccg_context?.campaign_id || base.production_request?.campaign_id),
+  request_hash: text(base.ccg_context?.request_hash || base.production_request?.request_hash),
+  idempotency_key: text(base.ccg_context?.idempotency_key || base.production_request?.idempotency_key)
+};
+const expectedJobs = list(base.production_manifest?.jobs || base.production_manifest?.job_plan || base.production_manifest?.production_jobs);
+const expectedIds = new Set(expectedJobs.map((job) => text(job.job_id || job.id)).filter(Boolean));
+const sourceJobs = list(candidate.jobs || candidate.results);
+const normalizedJobs = sourceJobs.map((raw) => {
+  const result = object(raw);
+  const artifacts = list(result.artifacts).map((artifact) => {
+    const value = object(artifact);
+    return {
+      ...value,
+      artifact_uri: text(value.artifact_uri || value.uri),
+      preview_uri: text(value.preview_uri || value.artifact_uri || value.uri),
+      mime_type: text(value.mime_type || value.mimeType),
+      width: number(value.width || value.dimensions?.width),
+      height: number(value.height || value.dimensions?.height),
+      duration_seconds: number(value.duration_seconds || value.duration),
+      file_size: number(value.file_size || value.size),
+      sha256: text(value.sha256 || value.checksum?.value || (typeof value.checksum === 'string' ? value.checksum : ''))
+    };
+  });
+  if (!artifacts.length && text(result.artifact_uri)) artifacts.push({ artifact_uri: text(result.artifact_uri), preview_uri: text(result.preview_uri || result.artifact_uri), mime_type: text(result.mime_type), width: number(result.width), height: number(result.height), duration_seconds: number(result.duration_seconds), file_size: number(result.file_size), sha256: text(result.sha256) });
+  const inline = Boolean(result.base64 || result.data || result.data_uri || artifacts.some((artifact) => artifact.base64 || artifact.data || text(artifact.artifact_uri).startsWith('data:')));
+  const missingArtifactEvidence = ['COMPLETED', 'FAILED'].includes(text(result.status).toUpperCase()) && text(result.status).toUpperCase() === 'COMPLETED' && artifacts.some((artifact) => !artifact.artifact_uri || !artifact.mime_type || !artifact.sha256);
+  const status = ['PLANNED', 'RUNNING', 'COMPLETED', 'FAILED', 'NEEDS_REVIEW'].includes(text(result.status).toUpperCase()) ? text(result.status).toUpperCase() : 'NEEDS_REVIEW';
+  const normalized = {
+    ...result,
+    ...ids,
+    job_id: text(result.job_id || result.id),
+    status: inline || missingArtifactEvidence ? 'NEEDS_REVIEW' : status,
+    provider: text(result.provider || result.provider_id),
+    provider_id: text(result.provider || result.provider_id),
+    provider_job_id: text(result.provider_job_id || result.provider_receipt_id || result.provider_receipt),
+    attempt: number(result.attempt || result.attempts) || 0,
+    attempts: number(result.attempts || result.attempt) || 0,
+    started_at: result.started_at || null,
+    finished_at: result.finished_at || null,
+    artifact_uri: text(result.artifact_uri || artifacts[0]?.artifact_uri),
+    preview_uri: text(result.preview_uri || artifacts[0]?.preview_uri || artifacts[0]?.artifact_uri),
+    mime_type: text(result.mime_type || artifacts[0]?.mime_type),
+    width: number(result.width || artifacts[0]?.width),
+    height: number(result.height || artifacts[0]?.height),
+    duration_seconds: number(result.duration_seconds || artifacts[0]?.duration_seconds),
+    file_size: number(result.file_size || artifacts[0]?.file_size),
+    sha256: text(result.sha256 || artifacts[0]?.sha256),
+    cost: typeof result.cost === 'object' ? result.cost : { amount: number(result.cost) || 0, currency: text(candidate.currency || 'BRL'), recorded: true },
+    warnings: [...list(result.warnings), ...(inline ? ['INLINE_ARTIFACT_FORBIDDEN'] : []), ...(missingArtifactEvidence ? ['ARTIFACT_CHECKSUM_OR_URI_MISSING'] : [])],
+    error: inline ? { code: 'INLINE_ARTIFACT_FORBIDDEN', retryable: false } : missingArtifactEvidence ? { code: 'ARTIFACT_CHECKSUM_OR_URI_MISSING', retryable: false } : (result.error || null),
+    artifacts
+  };
+  if (!expectedIds.has(normalized.job_id)) normalized.status = 'NEEDS_REVIEW';
+  for (const key of Object.keys(ids)) if (!lineageMatches(normalized, key, ids[key])) normalized.status = 'NEEDS_REVIEW';
+  return normalized;
+});
+const derivedStatus = normalizedJobs.some((job) => job.status === 'FAILED')
+  ? 'FAILED'
+  : normalizedJobs.some((job) => job.status === 'NEEDS_REVIEW')
+    ? 'NEEDS_REVIEW'
+    : normalizedJobs.some((job) => ['PLANNED', 'RUNNING'].includes(job.status))
+      ? 'RUNNING'
+      : text(candidate.status || 'COMPLETED').toUpperCase();
+const execution = {
+  ...candidate,
+  ...ids,
+  status: derivedStatus,
+  jobs: normalizedJobs,
+  results: normalizedJobs,
+  total_cost: number(candidate.total_cost || candidate.cost?.amount) || normalizedJobs.reduce((sum, job) => sum + (number(job.cost?.amount) || 0), 0),
+  mode: text(candidate.mode || base.ccg_context?.mode || 'DRY_RUN').toUpperCase(),
+  source: 'campaign-creative-executor',
+  executor_endpoint: text($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790'),
+  publish_allowed: false,
+  publish_requested: false,
+  external_calls: list(candidate.external_calls),
+  storage_writes: list(candidate.storage_writes),
+  checkpoint: object(candidate.checkpoint)
+};
+return [{
+  json: {
+    ...base,
+    production_execution_results: execution,
+    executor_handoff: {
+      ...(base.executor_handoff || {}),
+      execution_id: text(execution.execution_id),
+      status: execution.status,
+      checkpoint: execution.checkpoint,
+      dispatch_completed: true,
+      publish_allowed: false,
+      publish_requested: false
+    },
+    next_module: 'CCG-90',
+    status: 'DONE',
+    module_status: 'DONE',
+    output_type: 'CCG_MODULE_RESULT'
+  },
+  binary: item && item.binary
 }];
 `;
 
@@ -703,6 +979,334 @@ function patchCcg80Validator(code) {
     "if (!['READY', 'NEEDS_REVIEW'].includes(text(manifest?.status))) {\n    errors.push(`${name}.status não permite produção: ${text(manifest?.status, 'vazio')}.`);\n  }",
     "if (!((name === 'timeline' && timelineSkipped) || (name === 'audio_manifest' && audioSkipped)) && !['READY', 'NEEDS_REVIEW'].includes(text(manifest?.status))) {\n    errors.push(`${name}.status não permite produção: ${text(manifest?.status, 'vazio')}.`);\n  }",
   );
+  updated = updated.replace(
+    "if (request.provider_policy?.publish_allowed === true) {\n  errors.push('CCG-80 não aceita publish_allowed=true.');\n}",
+    "if (request.provider_policy?.publish_allowed === true || request.provider_policy?.publish_requested === true || data.posting_payload?.publish_allowed === true || data.posting_payload?.publish_requested === true) {\n  errors.push('CCG-80 não aceita flags de publicação habilitadas.');\n}",
+  );
+  updated = updated.replace(
+    "  if (dispatchEnabled && !text(execution.adapter_orchestrator_workflow_id)) {\n    errors.push('dispatch_enabled=true exige adapter_orchestrator_workflow_id.');\n  }",
+    "  if (dispatchEnabled && !text(execution.adapter_orchestrator_workflow_id)) {\n    warnings.push('dispatch_enabled usa o executor nativo CCG_EXECUTOR_BASE_URL.');\n  }",
+  );
+  updated = updated.replace(
+    "if (dispatchEnabled && mode !== 'LIVE') {",
+    "const maxRevisionsRaw = request.provider_policy?.max_revisions ?? request.production_execution?.max_revisions ?? data.module_outputs?.CCG_00?.intake_manifest?.limits?.max_revisions;\nconst maxRevisions = Number(maxRevisionsRaw);\nif (maxRevisionsRaw === undefined || maxRevisionsRaw === null || maxRevisionsRaw === '' || !Number.isFinite(maxRevisions) || maxRevisions < 0) {\n  errors.push('Execução exige max_revisions configurado.');\n}\nif (mode === 'LIVE') {\n  const maxCostRaw = request.provider_policy?.max_cost ?? request.production_execution?.max_cost ?? request.budget?.max_cost ?? data.module_outputs?.CCG_00?.intake_manifest?.limits?.max_cost;\n  const maxCost = Number(maxCostRaw);\n  if (maxCostRaw === undefined || maxCostRaw === null || maxCostRaw === '' || !Number.isFinite(maxCost) || maxCost < 0) errors.push('Execução LIVE exige max_cost configurado.');\n}\n\nif (dispatchEnabled && mode !== 'LIVE') {",
+  );
+  return updated;
+}
+
+function patchCcg80PrepareCode(code) {
+  let updated = code;
+  updated = replaceCode(
+    updated,
+    'const maximumJobs = Math.max(',
+    'const brief = {',
+    `const maxJobsRaw = request.provider_policy?.max_jobs ?? request.production_execution?.max_jobs ?? data.module_outputs?.CCG_00?.intake_manifest?.limits?.max_jobs ?? 120;
+const maximumJobs = Math.max(1, Number.isFinite(Number(maxJobsRaw)) ? Number(maxJobsRaw) : 120);
+const maxRevisionsRaw = request.provider_policy?.max_revisions ?? request.production_execution?.max_revisions ?? data.module_outputs?.CCG_00?.intake_manifest?.limits?.max_revisions ?? 0;
+const maximumRevisions = Math.max(0, Number.isFinite(Number(maxRevisionsRaw)) ? Number(maxRevisionsRaw) : 0);
+const maximumCostRaw = request.provider_policy?.max_cost ?? request.production_execution?.max_cost ?? request.budget?.max_cost ?? data.module_outputs?.CCG_00?.intake_manifest?.limits?.max_cost;
+const maximumCostConfigured = maximumCostRaw !== undefined && maximumCostRaw !== null && maximumCostRaw !== '' && Number.isFinite(Number(maximumCostRaw));
+const maximumCost = maximumCostConfigured ? Math.max(0, Number(maximumCostRaw)) : null;
+
+const brief = {`,
+  );
+  updated = updated.replace(
+    '    raw_job: job\n  };',
+    `    raw_job: job,
+    provider: text(job.provider || job.provider_id || job.selected_provider_id || job.selected_provider?.provider_id),
+    provider_id: text(job.provider || job.provider_id || job.selected_provider_id || job.selected_provider?.provider_id),
+    selected_model_id: text(job.selected_model_id || job.model_id),
+    estimated_cost: Number.isFinite(Number(job.estimated_cost)) ? Number(job.estimated_cost) : null,
+    max_revisions: Number.isFinite(Number(job.max_revisions)) ? Number(job.max_revisions) : null,
+    expected_artifacts: list(job.expected_artifacts || job.artifact_expectations || job.outputs)
+  };`,
+  );
+  updated = updated.replace(
+    '  execution_policy: {\n    dispatch_requested:',
+    `  execution_policy: {
+    allowed_providers: [...allowedProviders],
+    max_jobs: maximumJobs,
+    max_revisions: maximumRevisions,
+    max_cost: maximumCost,
+    max_cost_configured: maximumCostConfigured,
+    dispatch_requested:`,
+  );
+  updated = updated.replace(
+    '    maximum_jobs: maximumJobs,\n    maximum_cost: maximumCost,',
+    '    maximum_jobs: maximumJobs,\n    maximum_cost: maximumCost,',
+  );
+  return updated;
+}
+
+function patchCcg80FinalizeCode(code) {
+  let updated = code;
+  updated = updated.replace(
+    '    status: dryRun ? \'PLANNED_DRY_RUN\' : \'READY_TO_DISPATCH\',',
+    `    provider: text(selectedProvider?.provider_id, dryRun ? 'mock' : 'unresolved'),
+    provider_id: text(selectedProvider?.provider_id, dryRun ? 'mock' : 'unresolved'),
+    provider_job_id: '',
+    capability,
+    attempt: 0,
+    attempts: 0,
+    max_revisions: Number(job.max_revisions || brief.execution_policy?.max_revisions || 0),
+    estimated_cost: Number(cost.amount || 0),
+    expected_artifacts: list(job.expected_artifacts),
+    status: dryRun ? 'PLANNED' : 'PLANNED',`,
+  );
+  updated = updated.replace(
+    'const maximumCost = Number(brief.execution_policy?.maximum_cost || 0);',
+    `const maximumJobs = Number(brief.execution_policy?.max_jobs || brief.execution_policy?.maximum_jobs || 0);
+const maximumRevisions = Number(brief.execution_policy?.max_revisions || 0);
+const maximumCostConfigured = brief.execution_policy?.max_cost_configured === true || (brief.execution_policy?.maximum_cost !== undefined && brief.execution_policy?.maximum_cost !== null);
+const maximumCost = maximumCostConfigured ? Number(brief.execution_policy?.max_cost ?? brief.execution_policy?.maximum_cost) : null;`,
+  );
+  updated = updated.replace(
+    `    require_human_approval: brief.execution_policy?.require_human_approval !== false,
+    publish_allowed: false`,
+    `    allowed_providers: list(brief.execution_policy?.allowed_providers || brief.allowed_provider_ids),
+    max_jobs: maximumJobs,
+    max_revisions: maximumRevisions,
+    max_cost: maximumCost,
+    max_cost_configured: maximumCostConfigured,
+    require_human_approval: brief.execution_policy?.require_human_approval !== false,
+    publish_allowed: false,
+    publish_requested: false`,
+  );
+  updated = updated.replace(
+    '    maximum_cost: maximumCost,\n    estimated_known_cost:',
+    '    max_cost: maximumCost,\n    maximum_cost: maximumCost,\n    max_cost_configured: maximumCostConfigured,\n    max_jobs: maximumJobs,\n    max_revisions: maximumRevisions,\n    estimated_known_cost:',
+  );
+  updated = updated.replace(
+    '    within_known_budget: maximumCost <= 0 || knownCosts <= maximumCost + 1e-9',
+    '    within_known_budget: !maximumCostConfigured || knownCosts <= maximumCost + 1e-9',
+  );
+  updated = updated.replace(
+    "['FINAL_RENDER', 'AUDIO', 'VISUAL_GENERATION', 'VISUAL_COMPOSITION']",
+    "['ASSET_RETRIEVAL', 'FINAL_RENDER', 'AUDIO', 'VISUAL_GENERATION', 'VISUAL_COMPOSITION']",
+  );
+  updated = updated.replace(
+    "blocking_failure_statuses: ['FAILED_BLOCKING', 'CANCELLED', 'POLICY_BLOCKED'],",
+    "blocking_failure_statuses: ['FAILED', 'FAILED_BLOCKING', 'CANCELLED', 'POLICY_BLOCKED', 'NEEDS_REVIEW'],",
+  );
+  return updated;
+}
+
+function patchCcg90Validator(code) {
+  let updated = code;
+  updated = updated.replace(
+    "if (!['READY', 'NEEDS_REVIEW'].includes(text(manifest?.status))) {",
+    "if (!['READY', 'NEEDS_REVIEW', 'BLOCKED'].includes(text(manifest?.status))) {",
+  );
+  updated = updated.replace(
+    "if (!['PROCEED', 'PROCEED_WITH_GUARDRAILS'].includes(text(manifest?.routing_decision))) {",
+    "if (!['PROCEED', 'PROCEED_WITH_GUARDRAILS', 'HOLD_FOR_REVIEW'].includes(text(manifest?.routing_decision))) {",
+  );
+  updated = updated.replace(
+    "if (list(manifest?.review?.hard_blockers).length) {\n  errors.push(`CCG-80 possui bloqueadores críticos: ${list(manifest.review.hard_blockers).join(', ')}.`);\n}",
+    "if (list(manifest?.review?.hard_blockers).length) {\n  warnings.push(`CCG-80 bloqueadores serão selados no CONTENT_PACKAGE: ${list(manifest.review.hard_blockers).join(', ')}.`);\n}",
+  );
+  updated = updated.replace(
+    'const resultIds = new Set();',
+    "const resultIds = new Set();\nconst allowedProviders = new Set(list(manifest?.allowed_providers || manifest?.execution_policy?.allowed_providers || request.provider_policy?.allowed_providers).map((value) => text(value)));\nconst executionStatus = text(execution?.status).toUpperCase();\nif (!['PLANNED', 'RUNNING', 'COMPLETED', 'FAILED', 'NEEDS_REVIEW', 'BLOCKED'].includes(executionStatus)) warnings.push('production_execution_results.status não foi normalizado pelo executor.');",
+  );
+  updated = updated.replace(
+    "  if (!jobIds.has(id)) warnings.push(`Resultado recebido para job desconhecido: ${id}.`);",
+    "  if (!jobIds.has(id)) warnings.push(`Resultado recebido para job desconhecido: ${id}.`);\n  if (allowedProviders.size && result.provider && !allowedProviders.has(text(result.provider))) errors.push(`Provider fora da allowlist no resultado: ${text(result.provider)}.`);\n  if (!['PLANNED', 'RUNNING', 'COMPLETED', 'FAILED', 'NEEDS_REVIEW'].includes(text(result.status).toUpperCase())) errors.push(`Status de execução inválido para ${id}: ${text(result.status)}.`);",
+  );
+  return updated;
+}
+
+function patchCcg90PrepareCode(code) {
+  let updated = code;
+  updated = replaceCode(updated, 'if (dryRun && !list(execution.jobs).length) {', '\nconst moduleRegistry = [];', '');
+  updated = updated.replace(
+    '  provider_id: text(result.provider_id),\n  model_id: text(result.model_id),',
+    '  provider: text(result.provider || result.provider_id),\n  provider_id: text(result.provider || result.provider_id),\n  model_id: text(result.model_id),\n  provider_job_id: text(result.provider_job_id || result.provider_receipt_id || result.provider_receipt),',
+  );
+  updated = updated.replace(
+    '  attempts: Number(result.attempts || 0),',
+    '  attempt: Number(result.attempt || result.attempts || 0),\n  attempts: Number(result.attempts || result.attempt || 0),',
+  );
+  updated = updated.replace(
+    '  provider_receipt_id: text(result.provider_receipt_id || result.execution_receipt_id),\n  artifacts: list(result.artifacts),',
+    `  provider_receipt_id: text(result.provider_receipt_id || result.provider_job_id || result.execution_receipt_id || result.provider_receipt),
+  artifact_uri: text(result.artifact_uri || result.artifacts?.[0]?.artifact_uri || result.artifacts?.[0]?.uri),
+  preview_uri: text(result.preview_uri || result.artifacts?.[0]?.preview_uri || result.artifacts?.[0]?.artifact_uri || result.artifacts?.[0]?.uri),
+  mime_type: text(result.mime_type || result.artifacts?.[0]?.mime_type),
+  width: Number(result.width || result.artifacts?.[0]?.width || 0) || null,
+  height: Number(result.height || result.artifacts?.[0]?.height || 0) || null,
+  duration_seconds: Number(result.duration_seconds || result.artifacts?.[0]?.duration_seconds || 0) || null,
+  file_size: Number(result.file_size || result.artifacts?.[0]?.file_size || result.artifacts?.[0]?.file_size_bytes || 0) || null,
+  sha256: text(result.sha256 || result.artifacts?.[0]?.sha256 || result.artifacts?.[0]?.checksum?.value),
+  artifacts: list(result.artifacts).map((artifact) => {
+    const value = obj(artifact);
+    const checksum = obj(value.checksum);
+    const metadata = { ...obj(value.metadata), width: value.width ?? value.dimensions?.width, height: value.height ?? value.dimensions?.height, duration_seconds: value.duration_seconds ?? value.duration, mime_type: value.mime_type || value.mimeType };
+    return {
+      ...value,
+      artifact_id: text(value.artifact_id || value.id),
+      artifact_key: text(value.artifact_key || value.key),
+      uri: text(value.uri || value.artifact_uri),
+      artifact_uri: text(value.artifact_uri || value.uri),
+      preview_uri: text(value.preview_uri || value.artifact_uri || value.uri),
+      mime_type: text(value.mime_type || value.mimeType),
+      file_size_bytes: Number(value.file_size_bytes || value.file_size || value.size || 0),
+      checksum: { ...checksum, algorithm: text(checksum.algorithm || 'SHA-256'), value: text(checksum.value || value.sha256), simulated: checksum.simulated === true || value.simulated === true },
+      metadata,
+    };
+  }),`,
+  );
+  updated = updated.replace(
+    '  execution_id: text(execution.execution_id),',
+    '  execution_id: text(execution.execution_id),\n    execution_status: text(execution.status).toUpperCase(),',
+  );
+  updated = updated.replace(
+    '    totals: obj(execution.totals)',
+    "    totals: { ...obj(execution.totals), cost: Number(execution.total_cost || execution.cost?.amount || execution.totals?.cost || 0), currency: text(execution.currency, manifest.budget?.currency || 'USD') },\n    checkpoint: obj(execution.checkpoint),\n    receipts: list(execution.receipts)",
+  );
+  updated = updated.replace(
+    ": ['FAILED_BLOCKING', 'CANCELLED', 'POLICY_BLOCKED']),",
+    ": ['FAILED', 'FAILED_BLOCKING', 'CANCELLED', 'POLICY_BLOCKED', 'NEEDS_REVIEW']),",
+  );
+  return updated;
+}
+
+function patchCcg90FinalizeCode(code) {
+  let updated = code;
+  updated = updated.replace(
+    "return ['FAIL', 'FAILED', 'REJECTED', 'BLOCKED', 'FAILED_BLOCKING', 'POLICY_BLOCKED', 'CANCELLED'].includes(text(value).toUpperCase());",
+    "return ['FAIL', 'FAILED', 'REJECTED', 'BLOCKED', 'FAILED_BLOCKING', 'POLICY_BLOCKED', 'CANCELLED', 'NEEDS_REVIEW'].includes(text(value).toUpperCase());",
+  );
+  updated = updated.replace(
+    'const awaitingExecution = !dryRun && noResults;',
+    "let executionPending = ['PLANNED', 'RUNNING'].includes(text(brief.execution?.execution_status || brief.execution?.status).toUpperCase());\nconst executionStatus = text(brief.execution?.execution_status || brief.execution?.status).toUpperCase();\nconst awaitingExecution = !dryRun && (noResults || executionPending);",
+  );
+  updated = updated.replace(
+    '  if (result && !complete && !blocking) {',
+    "  if (result && ['PLANNED', 'RUNNING'].includes(status)) executionPending = true;\n  if (result && !complete && !blocking && !['PLANNED', 'RUNNING'].includes(status)) {",
+  );
+  updated = updated.replace(
+    '    provider_id: text(result?.provider_id),\n    model_id: text(result?.model_id),',
+    '    provider: text(result?.provider || result?.provider_id),\n    provider_id: text(result?.provider || result?.provider_id),\n    provider_job_id: text(result?.provider_job_id || result?.provider_receipt_id),\n    model_id: text(result?.model_id),',
+  );
+  updated = updated.replace(
+    '    attempts: Number(result?.attempts || 0),',
+    '    attempt: Number(result?.attempt || result?.attempts || 0),\n    attempts: Number(result?.attempts || result?.attempt || 0),',
+  );
+  updated = updated.replace(
+    '    provider_receipt_id: text(result?.provider_receipt_id),',
+    '    provider_receipt_id: text(result?.provider_receipt_id || result?.provider_job_id),\n    started_at: text(result?.started_at),\n    finished_at: text(result?.finished_at),',
+  );
+  updated = updated.replace(
+    'const maximumCost = Number(brief.production_manifest?.budget?.maximum_cost || 0);',
+    "const maximumCostConfigured = brief.production_manifest?.budget?.max_cost_configured === true || (brief.production_manifest?.budget?.maximum_cost !== undefined && brief.production_manifest?.budget?.maximum_cost !== null);\nconst maximumCost = maximumCostConfigured ? Number(brief.production_manifest?.budget?.max_cost ?? brief.production_manifest?.budget?.maximum_cost) : null;\nconst executorTotalCost = Number(brief.execution?.totals?.cost ?? actualCosts);",
+  );
+  updated = updated.replace(
+    'if (maximumCost > 0 && actualCosts > maximumCost + 1e-9) {',
+    'if (maximumCostConfigured && executorTotalCost > maximumCost + 1e-9) {',
+  );
+  updated = updated.replace(
+    '  if (artifact && expectation.checksum_required && !checksumValid) {',
+    "  if (artifact && (artifact.checksum_valid === false || (artifact.sha256 && checksum.value && artifact.sha256 !== checksum.value))) hardBlockers.push(`CHECKSUM_DIVERGENCE:${text(expectation.artifact_key)}`);\n  if (artifact && expectation.checksum_required && !checksumValid) {",
+  );
+  updated = updated.replace(
+    'const corePackage = {',
+    "const corePackage = {\n  execution_status: executionStatus || (dryRun ? 'COMPLETED' : 'PLANNED'),",
+  );
+  updated = updated.replace(
+    '    totals: obj(brief.execution?.totals)',
+    "    totals: { ...obj(brief.execution?.totals), cost: executorTotalCost, currency: text(brief.execution?.currency || 'USD') },\n    receipts: list(brief.execution?.receipts),\n    checkpoint: obj(brief.execution?.checkpoint)",
+  );
+  updated = updated.replace('actual_cost: Number(actualCosts.toFixed(6)),', 'actual_cost: Number(executorTotalCost.toFixed(6)),');
+  updated = updated.replace('within_budget: maximumCost <= 0 || actualCosts <= maximumCost + 1e-9,', 'within_budget: !maximumCostConfigured || executorTotalCost <= maximumCost + 1e-9,');
+  return updated;
+}
+
+function patchCcg99NormalizeCode(code) {
+  let updated = code;
+  updated = updated.replace(
+    'const failedJobId = text(',
+    `const productionExecution = obj(raw.production_execution_results || raw.data?.production_execution_results || envelope.production_execution_results || raw.execution_results);
+const executorHandoff = obj(raw.executor_handoff || raw.data?.executor_handoff || envelope.executor_handoff);
+const executorCheckpoint = obj(productionExecution.checkpoint || executorHandoff.checkpoint || context.checkpoint);
+const productionJobId = text(context.failed_job_id || productionExecution.failed_job_id || productionExecution.failed_job?.job_id || executorHandoff.failed_job_id);
+const executionJobEvidence = list(productionExecution.jobs || productionExecution.results).find((job) => text(job?.job_id) === productionJobId) || {};
+const providerJobId = text(productionExecution.provider_job_id || productionExecution.failed_job?.provider_job_id || executionJobEvidence.provider_job_id || executorHandoff.provider_job_id);
+const executorExecutionId = text(productionExecution.execution_id || executorHandoff.execution_id || executorCheckpoint.execution_id);
+const failedJobId = text(`,
+  );
+  updated = updated.replace(
+    '  context.failed_job_id ||',
+    '  productionJobId ||\n  context.failed_job_id ||',
+  );
+  updated = updated.replace(
+    "    failed_job_id: failedJobId\n  },",
+    "    failed_job_id: failedJobId,\n    provider_job_id: providerJobId,\n    executor_execution_id: executorExecutionId,\n    execution_status: text(productionExecution.status),\n    checkpoint_id: text(executorCheckpoint.execution_id || context.checkpoint_id)\n  },",
+  );
+  updated = updated.replace(
+    '    previous_checkpoint_id: text(context.checkpoint_id),\n    failed_job_id: failedJobId,',
+    "    previous_checkpoint_id: text(context.checkpoint_id || executorCheckpoint.execution_id),\n    checkpoint_id: text(executorCheckpoint.execution_id || context.checkpoint_id),\n    executor_execution_id: executorExecutionId,\n    provider_job_id: providerJobId,\n    failed_job_id: failedJobId,\n    executor_checkpoint: executorCheckpoint,\n    production_execution_results: productionExecution,",
+  );
+  updated = updated.replace(
+    '    input_has_binary: Boolean(item.binary && Object.keys(item.binary).length)\n  }',
+    "    input_has_binary: Boolean(item.binary && Object.keys(item.binary).length),\n    executor_execution_id: executorExecutionId,\n    checkpoint_id: text(executorCheckpoint.execution_id),\n    provider_job_id: providerJobId\n  }",
+  );
+  return updated;
+}
+
+function patchCcg99ClassifyCode(code) {
+  let updated = code;
+  updated = updated.replace(
+    "patterns: [/\\b429\\b/, /rate limit/, /too many requests/, /throttl/]",
+    "patterns: [/\\b429\\b/, /rate[_ -]?limit/, /executor.*429/, /too many requests/, /throttl/]",
+  );
+  updated = updated.replace(
+    "patterns: [/awaiting execution/, /missing job result/, /missing artifact/, /missing provider receipt/, /execution results?/]",
+    "patterns: [/awaiting execution/, /missing job result/, /missing artifact/, /missing provider receipt/, /checksum/, /artifact.*(?:absent|missing|diverg)/, /execution results?/]",
+  );
+  updated = updated.replace(
+    "    failed_job_id: text(source.failed_job_id || recovery.failed_job_id),\n    retry_scope:",
+    "    failed_job_id: text(source.failed_job_id || recovery.failed_job_id),\n    provider_job_id: text(source.provider_job_id || recovery.provider_job_id),\n    executor_execution_id: text(source.executor_execution_id || recovery.executor_execution_id),\n    checkpoint_id: text(source.checkpoint_id || recovery.checkpoint_id),\n    retry_scope:",
+  );
+  return updated;
+}
+
+function patchCcg99RetryHandoffCode(code) {
+  let updated = code;
+  updated = updated.replace(
+    '      maximum_attempts: decision.attempts?.maximum,',
+    "      maximum_attempts: decision.attempts?.maximum,\n      failed_job_id: decision.recovery_scope?.failed_job_id || recovery.failed_job_id || '',\n      provider_job_id: decision.recovery_scope?.provider_job_id || recovery.provider_job_id || '',\n      executor_execution_id: decision.recovery_scope?.executor_execution_id || recovery.executor_execution_id || '',\n      checkpoint_id: decision.recovery_scope?.checkpoint_id || recovery.checkpoint_id || '',",
+  );
+  updated = updated.replace(
+    '      dispatcher_contract: {',
+    "      executor_checkpoint: {\n        execution_id: recovery.executor_execution_id || '',\n        checkpoint_id: recovery.checkpoint_id || '',\n        failed_job_id: recovery.failed_job_id || '',\n        provider_job_id: recovery.provider_job_id || ''\n      },\n      dispatcher_contract: {",
+  );
+  return updated;
+}
+
+function patchCcg99ResumeHandoffCode(code) {
+  let updated = code;
+  updated = updated.replace(
+    "      previous_checkpoint_id: recovery.previous_checkpoint_id || '',",
+    "      previous_checkpoint_id: recovery.previous_checkpoint_id || recovery.checkpoint_id || '',\n      executor_execution_id: recovery.executor_execution_id || '',\n      provider_job_id: recovery.provider_job_id || '',\n      executor_checkpoint: recovery.executor_checkpoint || {},",
+  );
+  updated = updated.replace(
+    "        'execution_results_or_adapter_receipts',",
+    "        'production_execution_results_or_executor_checkpoint',\n        'execution_results_or_adapter_receipts',",
+  );
+  return updated;
+}
+
+function patchCcg99FinalizeCode(code) {
+  let updated = code;
+  updated = updated.replace(
+    '    input_has_binary: event.raw_evidence?.input_has_binary === true\n  }',
+    "    input_has_binary: event.raw_evidence?.input_has_binary === true,\n    executor_execution_id: text(event.source?.executor_execution_id || event.recovery_context?.executor_execution_id),\n    checkpoint_id: text(event.source?.checkpoint_id || event.recovery_context?.checkpoint_id),\n    provider_job_id: text(event.source?.provider_job_id || event.recovery_context?.provider_job_id),\n    failed_job_id: text(event.source?.failed_job_id || event.recovery_context?.failed_job_id)\n  }",
+  );
+  updated = updated.replace(
+    '    next_attempt: decision.attempts?.next_attempt\n  }',
+    "    next_attempt: decision.attempts?.next_attempt,\n    executor_execution_id: text(event.recovery_context?.executor_execution_id),\n    checkpoint_id: text(event.recovery_context?.checkpoint_id),\n    provider_job_id: text(event.recovery_context?.provider_job_id)\n  }",
+  );
   return updated;
 }
 
@@ -792,6 +1396,26 @@ function patchUnsafeRuntime(workflow) {
   const ccg80Validator = nodeByName(workflow.nodes, 'CCG-80 Validate CCG-70 Input');
   if (ccg80Validator?.parameters && typeof ccg80Validator.parameters.jsCode === 'string') {
     ccg80Validator.parameters.jsCode = patchCcg80Validator(ccg80Validator.parameters.jsCode);
+  }
+  const ccg80Prepare = nodeByName(workflow.nodes, 'CCG-80 Prepare Production Planning Brief');
+  if (ccg80Prepare?.parameters && typeof ccg80Prepare.parameters.jsCode === 'string') {
+    ccg80Prepare.parameters.jsCode = patchCcg80PrepareCode(ccg80Prepare.parameters.jsCode);
+  }
+  const ccg80Finalize = nodeByName(workflow.nodes, 'CCG-80 Finalize & Guardrail Production Manifest');
+  if (ccg80Finalize?.parameters && typeof ccg80Finalize.parameters.jsCode === 'string') {
+    ccg80Finalize.parameters.jsCode = patchCcg80FinalizeCode(ccg80Finalize.parameters.jsCode);
+  }
+  const ccg90Validator = nodeByName(workflow.nodes, 'CCG-90 Validate CCG-80 Input');
+  if (ccg90Validator?.parameters && typeof ccg90Validator.parameters.jsCode === 'string') {
+    ccg90Validator.parameters.jsCode = patchCcg90Validator(ccg90Validator.parameters.jsCode);
+  }
+  const ccg90Prepare = nodeByName(workflow.nodes, 'CCG-90 Prepare Evidence & Package Brief');
+  if (ccg90Prepare?.parameters && typeof ccg90Prepare.parameters.jsCode === 'string') {
+    ccg90Prepare.parameters.jsCode = patchCcg90PrepareCode(ccg90Prepare.parameters.jsCode);
+  }
+  const ccg90Finalize = nodeByName(workflow.nodes, 'CCG-90 Finalize & Seal Content Package');
+  if (ccg90Finalize?.parameters && typeof ccg90Finalize.parameters.jsCode === 'string') {
+    ccg90Finalize.parameters.jsCode = patchCcg90FinalizeCode(ccg90Finalize.parameters.jsCode);
   }
   for (const moduleName of MODULES.slice(0, 9)) {
     const returnNode = nodeByName(workflow.nodes, `${moduleName} Return Module Result`);
@@ -946,6 +1570,29 @@ function reachableNodeNames(workflow, startName) {
   return found;
 }
 
+function patchErrorWorkflow(workflow) {
+  const patches = new Map([
+    ['CCG-99 Normalize & Redact Error Event', patchCcg99NormalizeCode],
+    ['CCG-99 Classify & Decide Recovery', patchCcg99ClassifyCode],
+    ['CCG-99 Build Retry Handoff', patchCcg99RetryHandoffCode],
+    ['CCG-99 Build Resume Handoff', patchCcg99ResumeHandoffCode],
+    ['CCG-99 Finalize Incident & Ledger', patchCcg99FinalizeCode],
+  ]);
+  for (const node of workflow.nodes) {
+    const patch = patches.get(node.name);
+    if (patch && node.parameters && typeof node.parameters.jsCode === 'string') {
+      node.parameters.jsCode = patch(node.parameters.jsCode);
+    }
+  }
+  workflow.meta = {
+    ...(workflow.meta || {}),
+    executor_contract: 'v1',
+    checkpoint_resume: true,
+    idempotent_retry: true,
+  };
+  return workflow;
+}
+
 function buildErrorWorkflow(source) {
   const reachable = reachableNodeNames(source, 'Error Trigger');
   const allowedNames = ERROR_HANDLER_NODE_NAMES.filter((name) => reachable.has(name) || name === 'Error Trigger');
@@ -963,7 +1610,7 @@ function buildErrorWorkflow(source) {
     meta: {
       codex_builder: 'campaign-creative-creator-continuous',
       codex_builder_version: BUILDER_VERSION,
-      architecture: 'separate-error-workflow',
+      architecture: 'separate-error-workflow-with-executor-recovery',
       source_workflow_id: WORKFLOW_ID,
       no_publication: true,
       recovery_handoffs: ['retry', 'resume', 'review', 'termination'],
@@ -971,7 +1618,7 @@ function buildErrorWorkflow(source) {
   };
   delete handler.settings.errorWorkflow;
   delete handler.versionId;
-  return handler;
+  return patchErrorWorkflow(handler);
 }
 
 function buildFixturesWorkflow(source) {
@@ -1015,7 +1662,7 @@ function buildWorkflowPackage(source, options = {}) {
   const main = transformForOutput(transformWorkflow(source, options));
   const fixtures = transformForOutput(buildFixturesWorkflow(source));
   const manifest = {
-    package_version: '3.2.0',
+    package_version: '4.0.0',
     builder: 'campaign-creative-creator-continuous',
     builder_version: BUILDER_VERSION,
     source: {
@@ -1038,6 +1685,9 @@ function buildWorkflowPackage(source, options = {}) {
       operational_trigger: 'executeWorkflowTrigger',
       final_output_type: 'CONTENT_PACKAGE',
       credentials_stripped_for_git: true,
+      executor_endpoint: 'CCG_EXECUTOR_BASE_URL',
+      executor_contract: 'v1',
+      no_paid_calls_in_ci: true,
     },
     counts: {
       main_nodes: main.nodes.length,
@@ -1088,6 +1738,109 @@ function addOptionalNodes(workflow) {
   );
 }
 
+function executionPolicyNode(position) {
+  return {
+    parameters: { mode: 'runOnceForAllItems', jsCode: EXECUTION_POLICY_CODE },
+    id: 'ccg-80-execution-policy',
+    name: 'CCG-80 Validate Execution Policy',
+    type: 'n8n-nodes-base.code',
+    typeVersion: 2,
+    position,
+  };
+}
+
+function executionAllowedNode(position) {
+  return {
+    parameters: {
+      conditions: {
+        options: { caseSensitive: true, leftValue: '', typeValidation: 'strict', version: 2 },
+        conditions: [{
+          id: 'ccg-80-execution-allowed-condition',
+          leftValue: '={{ $json.executor_dispatch_allowed }}',
+          rightValue: true,
+          operator: { type: 'boolean', operation: 'equals', name: 'filter.operator.equals' },
+        }],
+        combinator: 'and',
+      },
+      options: {},
+    },
+    id: 'ccg-80-execution-allowed',
+    name: 'CCG-80 Execution Allowed?',
+    type: 'n8n-nodes-base.if',
+    typeVersion: 2.3,
+    position,
+  };
+}
+
+function executorHeaders() {
+  return {
+    sendHeaders: true,
+    headerParameters: {
+      parameters: [
+        { name: 'Authorization', value: "={{ $env.CCG_EXECUTOR_AUTH_TOKEN ? 'Bearer ' + $env.CCG_EXECUTOR_AUTH_TOKEN : '' }}" },
+        { name: 'Content-Type', value: 'application/json' },
+      ],
+    },
+  };
+}
+
+function executionDispatchNode(position) {
+  return {
+    parameters: {
+      method: 'POST',
+      url: "={{ ($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790') + '/v1/production-manifests' }}",
+      ...executorHeaders(),
+      sendBody: true,
+      contentType: 'raw',
+      rawContentType: 'application/json',
+      body: '={{ JSON.stringify($json.executor_request) }}',
+      options: { timeout: 120000 },
+    },
+    id: 'ccg-80-dispatch-production-manifest',
+    name: 'CCG-80 Dispatch Production Manifest',
+    type: 'n8n-nodes-base.httpRequest',
+    typeVersion: 4.2,
+    position,
+  };
+}
+
+function executionPollNode(position) {
+  return {
+    parameters: {
+      method: 'GET',
+      url: "={{ ($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790') + '/v1/production-manifests/' + encodeURIComponent($json.execution_id || $json.production_execution_results?.execution_id || '') }}",
+      ...executorHeaders(),
+      options: { timeout: 120000 },
+    },
+    id: 'ccg-80-poll-production-manifest',
+    name: 'CCG-80 Poll Production Manifest',
+    type: 'n8n-nodes-base.httpRequest',
+    typeVersion: 4.2,
+    position,
+  };
+}
+
+function executionNormalizerNode(position) {
+  return {
+    parameters: { mode: 'runOnceForAllItems', jsCode: EXECUTION_NORMALIZER_CODE },
+    id: 'ccg-80-normalize-execution-results',
+    name: 'CCG-80 Normalize Execution Results',
+    type: 'n8n-nodes-base.code',
+    typeVersion: 2,
+    position,
+  };
+}
+
+function addExecutionNodes(workflow) {
+  workflow.nodes.push(
+    executionPolicyNode([15456, 920]),
+    executionAllowedNode([15696, 920]),
+    executionDispatchNode([15936, 800]),
+    executionPollNode([16176, 800]),
+    executionNormalizerNode([16416, 920]),
+  );
+}
+
 function transformWorkflow(source, options = {}) {
   assertSourceShape(source, options);
   const workflow = JSON.parse(JSON.stringify(source));
@@ -1104,6 +1857,7 @@ function transformWorkflow(source, options = {}) {
     position: [-608, 180],
   });
   addOptionalNodes(workflow);
+  addExecutionNodes(workflow);
 
   replaceMainEdge(workflow, 'Operational Production Request', 'CCG-00 Parse & Normalize');
   replaceMainEdge(workflow, 'CCG-00 Return Module Result', 'CCG-10 Validate CCG-00 Input');
@@ -1114,7 +1868,25 @@ function transformWorkflow(source, options = {}) {
   replaceMainEdge(workflow, 'CCG-50 Return Module Result', 'CCG-60 Validate CCG-50 Input');
   replaceMainEdge(workflow, 'CCG-60 Return Module Result', 'CCG-70 Validate CCG-60 Input');
   replaceMainEdge(workflow, 'CCG-70 Return Module Result', 'CCG-80 Validate CCG-70 Input');
-  replaceMainEdge(workflow, 'CCG-80 Return Module Result', 'CCG-90 Validate CCG-80 Input');
+  replaceMainEdge(workflow, 'CCG-80 Return Module Result', 'CCG-80 Validate Execution Policy');
+  workflow.connections['CCG-80 Validate Execution Policy'] = {
+    main: [[{ node: 'CCG-80 Execution Allowed?', type: 'main', index: 0 }]],
+  };
+  workflow.connections['CCG-80 Execution Allowed?'] = {
+    main: [
+      [{ node: 'CCG-80 Dispatch Production Manifest', type: 'main', index: 0 }],
+      [{ node: 'CCG-80 Normalize Execution Results', type: 'main', index: 0 }],
+    ],
+  };
+  workflow.connections['CCG-80 Dispatch Production Manifest'] = {
+    main: [[{ node: 'CCG-80 Poll Production Manifest', type: 'main', index: 0 }]],
+  };
+  workflow.connections['CCG-80 Poll Production Manifest'] = {
+    main: [[{ node: 'CCG-80 Normalize Execution Results', type: 'main', index: 0 }]],
+  };
+  workflow.connections['CCG-80 Normalize Execution Results'] = {
+    main: [[{ node: 'CCG-90 Validate CCG-80 Input', type: 'main', index: 0 }]],
+  };
 
   replaceMainEdge(workflow, 'CCG-60 Prepare Audio Planning Brief', 'CCG-60 Optional Applicability Gate');
   workflow.connections['CCG-60 Optional Applicability Gate'] = {
@@ -1142,13 +1914,15 @@ function transformWorkflow(source, options = {}) {
     ...(workflow.meta || {}),
     codex_builder: 'campaign-creative-creator-continuous',
     codex_builder_version: BUILDER_VERSION,
-    architecture: 'continuous-inline-with-separate-error-workflow',
+    architecture: 'continuous-with-native-production-executor-and-separate-error-workflow',
     source_workflow_id: WORKFLOW_ID,
     source_version_id: source.versionId || (source.meta && source.meta.source_version_id) || null,
     no_publication: true,
     error_workflow_id: ERROR_WORKFLOW_ID,
     fixtures_catalog: 'Campaign Creative Creator - Module Fixtures',
-    live_provider_adapter: 'external-input-only-until-reviewed',
+    live_provider_adapter: 'campaign-creative-executor-registry',
+    executor_endpoint: 'CCG_EXECUTOR_BASE_URL',
+    executor_contract: 'v1',
   };
   delete workflow.versionId;
   return workflow;

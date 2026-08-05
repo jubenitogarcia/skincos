@@ -1,7 +1,7 @@
 {
-  "package_version": "3.2.0",
+  "package_version": "4.0.0",
   "builder": "campaign-creative-creator-continuous",
-  "builder_version": "3.2.0",
+  "builder_version": "4.0.0",
   "source": {
     "workflow_id": "TxE9eMS1xfE6kq38",
     "workflow_name": "Campaign Creative Creator",
@@ -21,11 +21,14 @@
     "error_workflow_id": "ccg-campaign-creative-creator-error-handler-v3",
     "operational_trigger": "executeWorkflowTrigger",
     "final_output_type": "CONTENT_PACKAGE",
-    "credentials_stripped_for_git": true
+    "credentials_stripped_for_git": true,
+    "executor_endpoint": "CCG_EXECUTOR_BASE_URL",
+    "executor_contract": "v1",
+    "no_paid_calls_in_ci": true
   },
   "counts": {
-    "main_nodes": 92,
-    "main_edges": 102,
+    "main_nodes": 97,
+    "main_edges": 108,
     "error_nodes": 10,
     "error_edges": 12,
     "fixture_nodes": 11
