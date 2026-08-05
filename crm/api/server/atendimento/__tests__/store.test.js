@@ -796,6 +796,52 @@ test('rejects a stale commercial policy version before it can overwrite the cana
     assert.match(lockedPolicyQuery, /extract\(epoch from updated_at\)::text/)
 })
 
+test('accepts only existing materialized identities in a commercial canary selection', async () => {
+    const identityId = '11111111-1111-4111-8111-111111111111'
+    const availability = {
+        permissions: 'permissions', permission_events: 'permission-events', action_events: 'action-events',
+        harmonia_contacts: 'harmonia.contacts', caixa_customers: 'caixa.customers', app_registrations: null, lead_profiles: null,
+        permission_event_trace_id: true, permission_events_immutable: true, permission_events_no_truncate: true,
+        action_events_immutable: true, action_events_no_truncate: true, action_channel: true, action_contacted_at: true,
+        rollout_enabled: true, rollout_canary: true,
+    }
+    let validIdentity = false
+    let updateIssued = false
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+            if (sql.startsWith('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,')) {
+                return { rows: [{ commercial_contact_writes_enabled: false, commercial_contact_canary_identity_ids: [], policy_version: 'b'.repeat(32) }], rowCount: 1 }
+            }
+            if (sql.startsWith('select gi.id::text as identity_id')) {
+                return { rows: validIdentity ? [{ identity_id: params[0][0] }] : [], rowCount: validIdentity ? 1 : 0 }
+            }
+            if (sql.startsWith('update crm_atendimento.commercial_policy_config')) {
+                updateIssued = true
+                return { rows: [{ active_contact_cooldown_days: 30, return_risk_thresholds: [90, 180, 365], commercial_contact_writes_enabled: false, commercial_contact_canary_identity_ids: [identityId], updated_by: 'manager-1', updated_at: '2026-08-05T12:00:00.000Z', policy_version: 'c'.repeat(32) }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const actor = { id: 'manager-1', role: 'GESTOR' }
+    const payload = {
+        activeContactCooldownDays: 30,
+        returnRiskThresholds: [90, 180, 365],
+        commercialContactWritesEnabled: false,
+        commercialContactCanaryIdentityIds: [identityId],
+        expectedPolicyVersion: 'b'.repeat(32),
+    }
+
+    await assert.rejects(() => store.updateCommercialPolicy(payload, actor), { message: 'INVALID_COMMERCIAL_CONTACT_CANARY', statusCode: 400 })
+    assert.equal(updateIssued, false)
+
+    validIdentity = true
+    const result = await store.updateCommercialPolicy(payload, actor)
+    assert.equal(updateIssued, true)
+    assert.deepEqual(result.policy.commercialContactCanaryIdentityIds, [identityId])
+})
+
 test('requires a current version for every commercial policy write', async () => {
     let policyUpdated = false
     const pool = createFakePool([
