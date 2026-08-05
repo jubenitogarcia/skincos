@@ -1,0 +1,14 @@
+{
+  "workflow_id": "TxE9eMS1xfE6kq38",
+  "workflow_name": "Campaign Creative Creator",
+  "source_version_id": "941bec10-3e41-49be-baed-753ca60787ad",
+  "source_sha256": "74a5cfd275b753d9c6dc03c4f472e92553dabbc56d0a6b15e13172fc73163c8b",
+  "source_node_count": 107,
+  "source_connection_count": 117,
+  "builder": "orb/engine/scripts/build-campaign-creative-creator-continuous.js",
+  "builder_version": "3.2.0",
+  "baseline_reference": "private-runtime/campaign-creative-creator/source-941bec10-3e41-49be-baed-753ca60787ad.json",
+  "credentials_in_repository": false,
+  "publication_allowed": false,
+  "active": false
+}
