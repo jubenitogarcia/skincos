@@ -20,6 +20,7 @@ type AtendimentoActorHeader = {
   email?: string
   name?: string
   role: string
+  isGlobalAdmin?: boolean
   allowedUnits?: string[]
   allowedModules?: string[]
 }
@@ -105,12 +106,17 @@ function stringArray(value: unknown): string[] | undefined {
 }
 
 function toAtendimentoActor(user: CrmUserLike): AtendimentoActorHeader {
+  const rawRole = String(user.role || '').trim().toUpperCase()
   return {
     id: String(user.id || ''),
     username: user.username ? String(user.username) : undefined,
     email: user.email ? String(user.email) : undefined,
     name: user.displayName ? String(user.displayName) : undefined,
     role: normalizeRole(user.role),
+    // The upstream normalizes ADMIN to GESTOR for its public module role, but
+    // Clientes needs the original break-glass provenance to distinguish it
+    // from a unit-scoped manager.
+    isGlobalAdmin: rawRole === 'ADMIN',
     allowedUnits: stringArray(user.allowedUnits),
     allowedModules: effectiveAllowedModules(user.role, user.allowedModules),
   }
@@ -208,12 +214,20 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
   }
 
   const method = (request.method || 'GET').toUpperCase()
-  const upstream: Response | Error = await fetch(new Request(buildTargetUrl(targetOrigin, request.url, rest), {
+  const body = method === 'GET' || method === 'HEAD' ? undefined : request.body
+  // Node's fetch implementation requires this marker for a streamed request
+  // body, while the Pages runtime safely ignores it.
+  const upstreamInit: RequestInit & { duplex?: 'half' } = {
     method,
     headers,
-    body: method === 'GET' || method === 'HEAD' ? undefined : request.body,
+    body,
     redirect: 'manual',
-  })).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
+  }
+  if (body) {
+    upstreamInit.duplex = 'half'
+  }
+  const upstream: Response | Error = await fetch(new Request(buildTargetUrl(targetOrigin, request.url, rest), upstreamInit))
+    .catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
 
   if (upstream instanceof Error) {
     return upstreamUnavailableResponse(requestId)

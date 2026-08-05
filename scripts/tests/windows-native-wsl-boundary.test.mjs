@@ -59,7 +59,13 @@ test('direct WSL process ownership remains limited to documented infrastructure'
       if (entry.isDirectory()) visit(absolute)
       else if (entry.name.endsWith('.ps1')) {
         const relative = path.relative(root, absolute).split(path.sep).join('/')
-        if (/\bwsl\.exe\b/i.test(fs.readFileSync(absolute, 'utf8'))) found.push(relative)
+        const contents = fs.readFileSync(absolute, 'utf8')
+        // Documentation may name wsl.exe (for example, to forbid a command
+        // shape) without owning a WSL process. Restrict this audit to actual
+        // invocation forms, including the typed gateway's resolved executable
+        // and the keepalive's Start-Process form.
+        const ownsWslProcess = /\bwsl\.exe\s+(?:--[a-z]|-[a-z])|&\s+\$wsl(?:\.Source)?\b|Start-Process[\s\S]{0,240}-FilePath\s+\$wslPath\b/i.test(contents)
+        if (ownsWslProcess) found.push(relative)
       }
     }
   }
@@ -86,9 +92,10 @@ test('EF App unit actions select the unit in PowerShell before crossing WSL', ()
   assert.match(launcher, /function Get-EfAppUnitOptions/)
   assert.match(launcher, /function Select-EfAppUnitName/)
   assert.match(launcher, /-Title \("EF App > \{0\} > Unidade" -f \$Mode\)/)
-  assert.match(launcher, /\$Mode\.Trim\(\)\.ToLowerInvariant\(\) -in @\("caixa", "cash", "agenda_delta"\)/)
+  assert.match(launcher, /\$normalizedMode = \$Mode\.Trim\(\)\.ToLowerInvariant\(\)/)
+  assert.match(launcher, /\$normalizedMode -in @\("caixa", "cash", "agenda_delta"\)/)
   assert.match(launcher, /\$modeEnvVars \+= "EF_UNIT_NAME=\$unitName"/)
-  assert.match(launcher, /-EnvVar \(\$efAppEnvVars \+ \$modeEnvVars \+ \$ExtraEnvVar\)/)
+  assert.match(launcher, /-EnvVar \(\$launcherEnvVars \+ \$modeEnvVars \+ \$modeSpecificEnvVars \+ \$ExtraEnvVar\)/)
 })
 
 test('EF App Caixa asks for a validated date range before WSL execution', () => {
@@ -99,6 +106,30 @@ test('EF App Caixa asks for a validated date range before WSL execution', () => 
   assert.match(launcher, /\[datetime\]::TryParseExact/)
   assert.match(launcher, /EF_CASH_START_DATE=\$\(\$dateRange\.Start\)/)
   assert.match(launcher, /EF_CASH_END_DATE=\$\(\$dateRange\.End\)/)
+})
+
+test('EF App Client Registration dispatches the supported checkpointed read-only exporter', () => {
+  const launcher = read('scripts/run-shared-codex-shortcut.ps1')
+  const runner = read('integration/ef/run_scraper.py')
+  const exporter = read('integration/ef/espacofacial/client_registration.py')
+  assert.match(launcher, /"EfAppClientRegistration"\s*\{\s*Invoke-EfAppPythonMode -Mode "client_registration"\s*\}/)
+  assert.doesNotMatch(launcher, /EfAppClientRegistration"\s*\{\s*throw /)
+  assert.match(runner, /if mode in \{"client_registration", "cadastro_clientes", "clientes_cadastro"\}:/)
+  assert.match(exporter, /def run_client_registration_export\(/)
+  assert.match(exporter, /_load_checkpoint\(/)
+})
+
+test('EF App Client Registration isolates new checkpoints and requires an explicit private resume', () => {
+  const launcher = read('scripts/run-shared-codex-shortcut.ps1')
+  assert.match(launcher, /\$efAppClientRegistrationRunRoot = Join-Path \$efAppArtifactRoot "client-registration"/)
+  assert.match(launcher, /function New-EfAppClientRegistrationOutputDirectory/)
+  assert.match(launcher, /EF_CLIENT_REGISTRATION_RESUME_OUTPUT_DIR/)
+  assert.match(launcher, /\[Guid\]::NewGuid\(\)\.ToString\('N'\)\.Substring\(0, 12\)/)
+  assert.match(launcher, /Test-WindowsPathWithinRoot -Path \$resolvedResumeDirectory -Root \$runRoot/)
+  assert.match(launcher, /\$normalizedMode -eq "client_registration"/)
+  assert.match(launcher, /EF_CLIENT_REGISTRATION_RUN_ID=\$\(\$clientRegistrationRun\.RunId\)/)
+  assert.match(launcher, /EF_CLIENT_REGISTRATION_LAUNCH_MODE=\$\(\$clientRegistrationRun\.LaunchMode\)/)
+  assert.match(launcher, /EF_OUTPUT_DIR não pode sobrescrever a execução isolada de Client Registration/)
 })
 
 test('EF App prompts for absent credentials and persists them only in the private login file', () => {

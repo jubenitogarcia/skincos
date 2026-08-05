@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
 import { lockContactPhone } from '../contactPhoneLock.js'
 import {
@@ -60,6 +60,23 @@ import {
     injectorPatchMatchesAttendance,
     resolveScheduledInjector,
 } from './injectorAssignment.js'
+import {
+    collectAutomaticIdentityLinkTransitions,
+} from './identityProjection.js'
+import {
+    chooseIdentitySurvivor,
+    IDENTITY_GRAPH_LOCK_KEY,
+    identityMaterializationFingerprint,
+    identityReviewError,
+    normalizeIdentityReviewDecision,
+    normalizeIdentityReviewUndo,
+    reviewComponentKey,
+} from './identityReviewWorkflow.js'
+import {
+    IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID,
+    IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS,
+    IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
+} from './identityReviewMigration.js'
 
 let pool = null
 
@@ -2007,6 +2024,37 @@ async function audit(client, eventType, actor, attendanceId, payload) {
     )
 }
 
+async function recordCommercialActionEvent(client, {
+    actionId,
+    identityId,
+    eventType,
+    previousStatus = null,
+    status,
+    traceId,
+    recordedBy,
+    contactEligibility,
+    details = {},
+}) {
+    await client.query(
+        `insert into crm_atendimento.commercial_action_events(
+            action_id, identity_id, event_type, previous_status, status, trace_id, recorded_by,
+            contact_eligibility_status, contact_eligibility_reason, details)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,
+        [
+            actionId,
+            identityId,
+            eventType,
+            previousStatus,
+            status,
+            traceId,
+            recordedBy,
+            contactEligibility?.status || null,
+            contactEligibility?.reason || null,
+            JSON.stringify(details || {}),
+        ],
+    )
+}
+
 function mapAttendance(row) {
     if (!row) return null
     return {
@@ -2590,6 +2638,7 @@ const COMMERCIAL_ACTION_STATUSES = new Set(['open', 'contacted', 'responded', 's
 const COMMERCIAL_ACTION_TYPES = new Set(['contact', 'follow_up', 'appointment', 'relationship'])
 const COMMERCIAL_ACTIVE_ACTION_STATUSES = ['open', 'contacted', 'responded', 'scheduled']
 const COMMERCIAL_CONTACT_CHANNEL = 'whatsapp'
+const COMMERCIAL_CADENCE_STATUSES = new Set(['draft', 'approved', 'disabled'])
 const COMMERCIAL_POLICY_VERSION_SQL = `md5(concat_ws('|',
     active_contact_cooldown_days::text,
     return_risk_thresholds::text,
@@ -2619,6 +2668,76 @@ function commercialAsOf(value) {
 function commercialUnit(value) {
     const raw = String(value || '').trim()
     return !raw || raw === 'all' ? '' : normalizeUnit(raw).slug
+}
+
+function commercialUnitScope(actor) {
+    const role = String(actor?.role || '').trim().toUpperCase()
+    // ADMIN is the established cross-unit break-glass role. Pages retains that
+    // provenance as isGlobalAdmin after normalizing its public role to GESTOR.
+    // Clientes otherwise honours a declared scope even for GESTOR; omitting
+    // allowedUnits retains legacy global-manager compatibility, while an
+    // explicit empty or malformed declared value intentionally denies every
+    // unit. `allowedUnitsDeclared` distinguishes old actors without a claim
+    // from a token that expressly supplied an invalid claim; direct store
+    // callers with an `allowedUnits` property receive the same fail-closed
+    // behavior even when they did not populate that parser marker.
+    if (actor?.isGlobalAdmin === true || role === 'ADMIN') return null
+    if (!Array.isArray(actor?.allowedUnits)) {
+        const scopeWasDeclared = actor?.allowedUnitsDeclared === true ||
+            Object.prototype.hasOwnProperty.call(actor || {}, 'allowedUnits')
+        return scopeWasDeclared ? [] : null
+    }
+    return [...normalizeAllowedUnitKeys(actor)].sort()
+}
+
+function commercialScopeError(code = 'COMMERCIAL_UNIT_FORBIDDEN') {
+    const error = new Error(code)
+    error.statusCode = 403
+    return error
+}
+
+function clinicalCadenceApprovalRequired() {
+    const error = new Error('CLINICAL_CADENCE_APPROVAL_REQUIRED')
+    error.statusCode = 403
+    return error
+}
+
+function commercialUnitSlugsForQuery(actor, requestedUnit) {
+    const requested = commercialUnit(requestedUnit)
+    const allowed = commercialUnitScope(actor)
+    if (allowed === null) return requested ? [requested] : null
+    if (!allowed.length) throw commercialScopeError()
+    if (requested) {
+        if (!allowed.includes(requested)) throw commercialScopeError()
+        return [requested]
+    }
+    return allowed
+}
+
+function assertCommercialUnitInScope(actor, unitSlug) {
+    const allowed = commercialUnitScope(actor)
+    if (allowed === null) return
+    const normalized = commercialUnit(unitSlug)
+    if (!normalized || !allowed.includes(normalized)) throw commercialScopeError()
+}
+
+function assertCommercialGlobalScope(actor) {
+    if (commercialUnitScope(actor) !== null) throw commercialScopeError('COMMERCIAL_GLOBAL_SCOPE_REQUIRED')
+}
+
+function commercialUnitRowsForActor(rows, actor) {
+    const allowed = commercialUnitScope(actor)
+    if (allowed === null) return rows || []
+    if (!allowed.length) throw commercialScopeError()
+    return (rows || []).filter((row) => allowed.includes(commercialUnit(row?.slug || row?.name || row)))
+}
+
+function professionalMatchesCommercialUnitScope(row, actor) {
+    const allowed = commercialUnitScope(actor)
+    if (allowed === null) return true
+    if (!allowed.length) return false
+    const units = Array.isArray(row?.units) ? row.units : []
+    return units.some((unit) => allowed.includes(commercialUnit(unit)))
 }
 
 function commercialThresholds(value) {
@@ -2736,6 +2855,7 @@ function emptyCommercialContactEligibility(reason, {
         evidenceSource: '',
         evidenceReference: '',
         expiresAt: null,
+        permissionRevision: 0,
         recordedBy: '',
         updatedAt: null,
     }
@@ -2757,6 +2877,9 @@ function commercialContactPermissionFields(row) {
         evidenceSource: row?.evidence_source || '',
         evidenceReference: row?.evidence_reference || '',
         expiresAt: row?.expires_at || null,
+        permissionRevision: Number.isInteger(Number(row?.revision)) && Number(row.revision) >= 0
+            ? Number(row.revision)
+            : 0,
         recordedBy: row?.recorded_by || '',
         updatedAt: row?.updated_at || null,
     }
@@ -2766,10 +2889,38 @@ async function readCommercialContactAvailability(pgPool) {
     const result = await pgPool.query(
         `select to_regclass('crm_atendimento.commercial_contact_permissions') as permissions,
                 to_regclass('crm_atendimento.commercial_contact_permission_events') as permission_events,
+                to_regclass('crm_atendimento.commercial_action_events') as action_events,
                 to_regclass('harmonia.contacts') as harmonia_contacts,
                 to_regclass('crm_caixa.customers') as caixa_customers,
                 to_regclass('crm_atendimento.app_client_registrations') as app_registrations,
                 to_regclass('crm_atendimento.supplemental_lead_profiles') as lead_profiles,
+                exists(select 1 from information_schema.columns
+                    where table_schema = 'crm_atendimento' and table_name = 'commercial_contact_permission_events'
+                      and column_name = 'trace_id') as permission_event_trace_id,
+                exists(select 1 from pg_trigger
+                    where tgrelid = to_regclass('crm_atendimento.commercial_contact_permission_events')
+                      and tgname = 'commercial_contact_permission_events_immutable'
+                      and tgenabled = 'O'
+                      and tgfoid = to_regprocedure('crm_atendimento.prevent_commercial_ledger_mutation()')
+                      and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as permission_events_immutable,
+                exists(select 1 from pg_trigger
+                    where tgrelid = to_regclass('crm_atendimento.commercial_contact_permission_events')
+                      and tgname = 'commercial_contact_permission_events_no_truncate'
+                      and tgenabled = 'O'
+                      and tgfoid = to_regprocedure('crm_atendimento.prevent_commercial_ledger_mutation()')
+                      and (tgtype::integer & 32) <> 0) as permission_events_no_truncate,
+                exists(select 1 from pg_trigger
+                    where tgrelid = to_regclass('crm_atendimento.commercial_action_events')
+                      and tgname = 'commercial_action_events_immutable'
+                      and tgenabled = 'O'
+                      and tgfoid = to_regprocedure('crm_atendimento.prevent_commercial_ledger_mutation()')
+                      and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as action_events_immutable,
+                exists(select 1 from pg_trigger
+                    where tgrelid = to_regclass('crm_atendimento.commercial_action_events')
+                      and tgname = 'commercial_action_events_no_truncate'
+                      and tgenabled = 'O'
+                      and tgfoid = to_regprocedure('crm_atendimento.prevent_commercial_ledger_mutation()')
+                      and (tgtype::integer & 32) <> 0) as action_events_no_truncate,
                 exists(select 1 from information_schema.columns
                     where table_schema = 'crm_atendimento' and table_name = 'commercial_actions'
                       and column_name = 'contact_channel') as action_channel,
@@ -2784,23 +2935,33 @@ async function readCommercialContactAvailability(pgPool) {
                       and column_name = 'commercial_contact_canary_identity_ids') as rollout_canary`,
     )
     const row = result.rows[0] || {}
+    const commercialLedgerReady = !!row.permission_events && !!row.action_events && !!row.permission_event_trace_id &&
+        !!row.permission_events_immutable && !!row.permission_events_no_truncate &&
+        !!row.action_events_immutable && !!row.action_events_no_truncate
     return {
         permissions: !!row.permissions,
         permissionEvents: !!row.permission_events,
+        actionEvents: !!row.action_events,
         harmoniaContacts: !!row.harmonia_contacts,
         caixaCustomers: !!row.caixa_customers,
         appRegistrations: !!row.app_registrations,
         leadProfiles: !!row.lead_profiles,
+        permissionEventTraceId: !!row.permission_event_trace_id,
+        permissionEventsImmutable: !!row.permission_events_immutable,
+        permissionEventsNoTruncate: !!row.permission_events_no_truncate,
+        actionEventsImmutable: !!row.action_events_immutable,
+        actionEventsNoTruncate: !!row.action_events_no_truncate,
+        commercialLedgerReady,
         actionChannel: !!row.action_channel,
         actionContactedAt: !!row.action_contacted_at,
         rolloutConfig: !!row.rollout_enabled && !!row.rollout_canary,
-        controlsReady: !!row.permissions && !!row.permission_events && !!row.action_channel,
-        contactWriteControlsReady: !!row.permissions && !!row.permission_events && !!row.action_channel &&
+        controlsReady: !!row.permissions && !!row.permission_events && !!row.action_channel && commercialLedgerReady,
+        contactWriteControlsReady: !!row.permissions && !!row.permission_events && !!row.action_channel && commercialLedgerReady &&
             !!row.action_contacted_at && !!row.rollout_enabled && !!row.rollout_canary,
     }
 }
 
-async function queryCommercialIdentityPhoneKeys(pgPool, identityIds, availability) {
+async function queryCommercialIdentityPhoneKeys(pgPool, identityIds, availability, unitSlugs = null) {
     const phonesByIdentity = new Map(identityIds.map((id) => [id, new Set()]))
     if (!identityIds.length) return phonesByIdentity
     const addRows = (rows) => {
@@ -2815,8 +2976,13 @@ async function queryCommercialIdentityPhoneKeys(pgPool, identityIds, availabilit
             `select member.identity_id::text as identity_id, customer.phone_key
              from crm_atendimento.global_client_identity_members member
              join crm_caixa.customers customer on customer.id = member.source_id::uuid
-             where member.identity_id = any($1::uuid[]) and member.source_type = 'caixa_customer'`,
-            [identityIds],
+             where member.identity_id = any($1::uuid[]) and member.source_type = 'caixa_customer'
+               and ($2::text[] is null or exists (
+                    select 1 from crm_caixa.sales sale
+                    join crm_atendimento.units unit on unit.id = sale.unit_id
+                    where sale.customer_id = customer.id and unit.slug = any($2::text[])
+               ))`,
+            [identityIds, unitSlugs],
         )
         addRows(result.rows)
     }
@@ -2826,8 +2992,12 @@ async function queryCommercialIdentityPhoneKeys(pgPool, identityIds, availabilit
              from crm_atendimento.global_client_identity_members member
              join crm_atendimento.app_client_registrations app on app.source_client_id = member.source_id
              cross join lateral jsonb_array_elements_text(coalesce(app.phone_keys, '[]'::jsonb)) as phone(phone_key)
-             where member.identity_id = any($1::uuid[]) and member.source_type = 'app_registration'`,
-            [identityIds],
+             where member.identity_id = any($1::uuid[]) and member.source_type = 'app_registration'
+               and ($2::text[] is null or exists (
+                    select 1 from jsonb_array_elements_text(coalesce(app.unit_slugs, '[]'::jsonb)) as scope(slug)
+                    where scope.slug = any($2::text[])
+               ))`,
+            [identityIds, unitSlugs],
         )
         addRows(result.rows)
     }
@@ -2837,15 +3007,19 @@ async function queryCommercialIdentityPhoneKeys(pgPool, identityIds, availabilit
              from crm_atendimento.global_client_identity_members member
              join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id = member.source_id
              cross join lateral jsonb_array_elements_text(coalesce(lead.phone_keys, '[]'::jsonb)) as phone(phone_key)
-             where member.identity_id = any($1::uuid[]) and member.source_type = 'lead_profile'`,
-            [identityIds],
+             where member.identity_id = any($1::uuid[]) and member.source_type = 'lead_profile'
+               and ($2::text[] is null or exists (
+                    select 1 from jsonb_array_elements_text(coalesce(lead.unit_slugs, '[]'::jsonb)) as scope(slug)
+                    where scope.slug = any($2::text[])
+               ))`,
+            [identityIds, unitSlugs],
         )
         addRows(result.rows)
     }
     return phonesByIdentity
 }
 
-async function queryCommercialContactEligibility(pgPool, identityIds, { lockHarmonia = false } = {}) {
+async function queryCommercialContactEligibility(pgPool, identityIds, { lockHarmonia = false, unitSlugs = null } = {}) {
     const ids = [...new Set((identityIds || []).map((value) => String(value || '').trim()).filter(Boolean))]
     const availability = await readCommercialContactAvailability(pgPool)
     const contactWriteControlsReady = availability.contactWriteControlsReady
@@ -2860,12 +3034,12 @@ async function queryCommercialContactEligibility(pgPool, identityIds, { lockHarm
     const [permissions, phonesByIdentity] = await Promise.all([
         pgPool.query(
             `select identity_id::text as identity_id, channel, status, evidence_source, evidence_reference,
-                    expires_at, recorded_by, updated_at
+                    expires_at, revision, recorded_by, updated_at
              from crm_atendimento.commercial_contact_permissions
              where channel = $1 and identity_id = any($2::uuid[])`,
             [COMMERCIAL_CONTACT_CHANNEL, ids],
         ),
-        queryCommercialIdentityPhoneKeys(pgPool, ids, availability),
+        queryCommercialIdentityPhoneKeys(pgPool, ids, availability, unitSlugs),
     ])
     const permissionByIdentity = new Map(permissions.rows.map((row) => [String(row.identity_id), row]))
     const allPhones = [...new Set([...phonesByIdentity.values()].flatMap((phones) => [...phones]))]
@@ -2949,6 +3123,10 @@ async function withCommercialContactTransaction(pgPool, operation) {
     // committed while it waited, rather than retain an earlier SSI snapshot.
     return withPgTransaction(pgPool, async (client) => {
         await client.query('set transaction isolation level read committed')
+        // Source reconciliation and identity review hold this lock before
+        // changing membership.  Commercial writes join it before taking a
+        // per-identity lock, so consent or an action cannot race a rebind.
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
         return operation(client)
     })
 }
@@ -2997,6 +3175,79 @@ async function assertCommercialContactCooldown(client, { identityId, actionId, c
     if (result.rows[0]?.id) throw commercialContactError('COMMERCIAL_CONTACT_COOLDOWN_ACTIVE')
 }
 
+async function assertCommercialIdentityUnitMembership(client, { identityId, unitSlug, availability }) {
+    const normalizedUnit = commercialUnit(unitSlug)
+    if (!normalizedUnit) return
+    const membershipChecks = [
+        client.query(
+            `select exists(
+                select 1
+                  from crm_atendimento.global_client_identity_members member
+                  join crm_atendimento.attendance_client_links attendance_link on attendance_link.client_id = member.source_id::uuid
+                  join crm_atendimento.attendances attendance on attendance.id = attendance_link.attendance_id
+                  join crm_atendimento.units unit on unit.id = attendance.unit_id
+                 where member.identity_id = $1::uuid and member.source_type = 'attendance_client'
+                   and attendance.deleted_at is null and unit.slug = $2
+            ) as matched`,
+            [identityId, normalizedUnit],
+        ),
+        client.query(
+            `select exists(
+                select 1
+                  from crm_atendimento.global_client_identity_members member
+                  join crm_caixa.sales sale on sale.customer_id = member.source_id::uuid
+                  join crm_atendimento.units unit on unit.id = sale.unit_id
+                 where member.identity_id = $1::uuid and member.source_type = 'caixa_customer'
+                   and unit.slug = $2
+            ) as matched`,
+            [identityId, normalizedUnit],
+        ),
+    ]
+    if (availability?.appRegistrations) {
+        membershipChecks.push(client.query(
+            `select exists(
+                select 1
+                  from crm_atendimento.global_client_identity_members member
+                  join crm_atendimento.app_client_registrations registration on registration.source_client_id = member.source_id
+                  join lateral jsonb_array_elements_text(coalesce(registration.unit_slugs, '[]'::jsonb)) scope(slug) on true
+                 where member.identity_id = $1::uuid and member.source_type = 'app_registration'
+                   and scope.slug = $2
+            ) as matched`,
+            [identityId, normalizedUnit],
+        ))
+    }
+    if (availability?.leadProfiles) {
+        membershipChecks.push(client.query(
+            `select exists(
+                select 1
+                  from crm_atendimento.global_client_identity_members member
+                  join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id = member.source_id
+                  join lateral jsonb_array_elements_text(coalesce(lead.unit_slugs, '[]'::jsonb)) scope(slug) on true
+                 where member.identity_id = $1::uuid and member.source_type = 'lead_profile'
+                   and scope.slug = $2
+            ) as matched`,
+            [identityId, normalizedUnit],
+        ))
+    }
+    const matches = await Promise.all(membershipChecks)
+    if (!matches.some((result) => result.rows[0]?.matched === true)) {
+        throw commercialScopeError('COMMERCIAL_IDENTITY_UNIT_FORBIDDEN')
+    }
+}
+
+async function resolveCommercialActionOwner(client, value, unit) {
+    const raw = String(value || '').trim()
+    if (!raw) return null
+    if (raw.length > 180 || !isValidProfessionalIdentityName(raw)) {
+        throw commercialContactError('INVALID_COMMERCIAL_ACTION_OWNER', 400)
+    }
+    const professional = await resolveAttendanceProfessional(client, { name: raw }, unit, null, {
+        allowTextResolution: true,
+        allowInactive: false,
+    })
+    return professional?.canonicalName || professional?.name || null
+}
+
 function commercialCanaryIdentityIds(value) {
     if (value === undefined) return undefined
     if (!Array.isArray(value)) throw commercialContactError('INVALID_COMMERCIAL_CONTACT_CANARY', 400)
@@ -3021,14 +3272,27 @@ function commercialExpectedPolicyVersion(value) {
     return version
 }
 
-async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
+function commercialExpectedPermissionRevision(value) {
+    if (value === undefined || value === null || String(value).trim() === '') return null
+    const revision = Number(value)
+    if (!Number.isInteger(revision) || revision < 0 || revision > 2_147_483_647) {
+        throw commercialContactError('INVALID_COMMERCIAL_CONTACT_PERMISSION_REVISION', 400)
+    }
+    return revision
+}
+
+async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) {
     const result = await pgPool.query(
         `with identities as (
             select gi.id as identity_id, gi.canonical_name, gi.source_types
             from crm_atendimento.global_client_identities gi
             where exists (select 1 from crm_atendimento.global_client_identity_members gm where gm.identity_id = gi.id)
          ), attendance_members as (
-            select distinct gm.identity_id, coalesce(cc.merged_into_id, cc.id) as client_id
+            -- Keep the physical canonical member here.  A retired S and its
+            -- survivor T are intentionally one identity component, but ACL
+            -- rows remain stored against S so coalescing to T would erase S's
+            -- attendance history from commercial coverage and segments.
+            select distinct gm.identity_id, gm.source_id::uuid as client_id
             from crm_atendimento.global_client_identity_members gm
             join crm_atendimento.canonical_clients cc on cc.id = gm.source_id::uuid
             where gm.source_type = 'attendance_client'
@@ -3039,7 +3303,8 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
             join crm_atendimento.attendances a on a.id = acl.attendance_id
             join crm_atendimento.procedures p on p.id = a.procedure_id
             join crm_atendimento.units u on u.id = a.unit_id
-            where a.deleted_at is null and a.service_date <= $1::date and ($2 = '' or u.slug = $2)
+            where a.deleted_at is null and a.service_date <= $1::date
+              and ($2::text[] is null or u.slug = any($2::text[]))
          ), attendance_aggregate as (
             select identity_id, max(service_date)::text as last_attendance,
                 count(distinct service_date)::int as visit_count, count(*)::int as procedure_count,
@@ -3052,7 +3317,8 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
             join crm_atendimento.attendance_client_links acl on acl.client_id = am.client_id
             join crm_atendimento.attendances a on a.id = acl.attendance_id
             join crm_atendimento.units u on u.id = a.unit_id
-            where a.deleted_at is null and a.service_date > $1::date and ($2 = '' or u.slug = $2)
+            where a.deleted_at is null and a.service_date > $1::date
+              and ($2::text[] is null or u.slug = any($2::text[]))
             group by am.identity_id
          ), sale_members as (
             select distinct gm.identity_id, gm.source_id::uuid as customer_id
@@ -3063,7 +3329,8 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
             from sale_members sm
             join crm_caixa.sales s on s.customer_id = sm.customer_id
             join crm_atendimento.units u on u.id = s.unit_id
-            where s.occurred_on <= $1::date and ($2 = '' or u.slug = $2)
+            where s.occurred_on <= $1::date
+              and ($2::text[] is null or u.slug = any($2::text[]))
          ), sales_aggregate as (
             select identity_id, count(*)::int as sale_count, coalesce(sum(total), 0) as lifetime_sales,
                 coalesce(sum(total) filter (where occurred_on >= ($1::date - interval '12 months')), 0) as sales_12m,
@@ -3082,9 +3349,12 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
             join crm_caixa.sale_items si on si.sale_id = sc.id and si.mapping_status = 'pending'
             group by sc.identity_id
          ), active_actions as (
-            select identity_id, count(*)::int as active_action_count, max(created_at) as last_action_at
-            from crm_atendimento.commercial_actions
-            where status = any($3::text[]) group by identity_id
+            select action.identity_id, count(*)::int as active_action_count, max(action.created_at) as last_action_at
+            from crm_atendimento.commercial_actions action
+            left join crm_atendimento.units action_unit on action_unit.id = action.unit_id
+            where action.status = any($3::text[])
+              and ($2::text[] is null or action_unit.slug = any($2::text[]))
+            group by action.identity_id
          )
          select i.identity_id, i.canonical_name, i.source_types,
              a.last_attendance, a.visit_count, a.procedure_count, a.completed_procedures, a.attendance_units,
@@ -3097,8 +3367,9 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
          left join purchased_procedures p on p.identity_id = i.identity_id
          left join pending_items pending on pending.identity_id = i.identity_id
          left join active_actions actions on actions.identity_id = i.identity_id
+         where $2::text[] is null or a.identity_id is not null or s.identity_id is not null
          order by i.canonical_name`,
-        [asOf, unitSlug, COMMERCIAL_ACTIVE_ACTION_STATUSES],
+        [asOf, unitSlugs, COMMERCIAL_ACTIVE_ACTION_STATUSES],
     )
     const profiles = segmentCommercialProfiles(result.rows.map((row) => ({
         ...row,
@@ -3121,7 +3392,7 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
         activeActionCount: Number(result.rows.find((row) => row.identity_id === profile.identityId)?.active_action_count || 0),
         lastActionAt: result.rows.find((row) => row.identity_id === profile.identityId)?.last_action_at || null,
     }))
-    const eligibilityByIdentity = await queryCommercialContactEligibility(pgPool, profiles.map((profile) => profile.identityId))
+    const eligibilityByIdentity = await queryCommercialContactEligibility(pgPool, profiles.map((profile) => profile.identityId), { unitSlugs })
     return profiles.map((profile) => ({
         ...profile,
         contactEligibility: eligibilityByIdentity.get(profile.identityId)
@@ -3136,14 +3407,48 @@ function filterCommercialProfiles(profiles, query) {
     return profiles.filter((profile) => {
         if (segment && !profile.segments.some((item) => item.key === segment)) return false
         if (priority && profile.priority !== priority) return false
-        if (search && !normalizeText(`${profile.name} ${profile.phone} ${profile.email}`).includes(search)) return false
+        // A list/search endpoint must not become an oracle for raw contact
+        // details.  Profiles are found by their commercial identity only.
+        if (search && !normalizeText(profile.name).includes(search)) return false
         return true
     })
 }
 
-async function queryCommercialActionMetrics(pgPool, availability) {
+function minimizeCommercialProfile(profile) {
+    const { phone, email, ...safeProfile } = profile || {}
+    return safeProfile
+}
+
+function commercialPolicyForActor(policy, actor) {
+    if (commercialUnitScope(actor) === null) return policy
+    // The canary is identity-scoped and globally configured.  It is not a
+    // unit-level grant, so do not disclose its identity set to a scoped user.
+    return {
+        ...policy,
+        commercialContactWritesEnabled: false,
+        commercialContactCanaryIdentityIds: [],
+    }
+}
+
+const COMMERCIAL_REVIEW_PII_KEY = /(?:phone|telefone|email|e-mail|birth|nascimento|dob|cpf|document)/i
+
+function minimizeCommercialReviewValue(value) {
+    if (Array.isArray(value)) return value.map(minimizeCommercialReviewValue)
+    if (!value || typeof value !== 'object') return value
+    return Object.fromEntries(Object.entries(value)
+        .filter(([key]) => !COMMERCIAL_REVIEW_PII_KEY.test(key))
+        .map(([key, nested]) => [key, minimizeCommercialReviewValue(nested)]))
+}
+
+async function queryCommercialActionMetrics(pgPool, availability, unitSlugs) {
     if (!availability?.actionContactedAt) {
-        const legacy = await pgPool.query(`select count(*)::int as actions from crm_atendimento.commercial_actions`)
+        const legacy = await pgPool.query(
+            `select count(*)::int as actions
+             from crm_atendimento.commercial_actions action
+             left join crm_atendimento.units unit on unit.id = action.unit_id
+             where $1::text[] is null or unit.slug = any($1::text[])`,
+            [unitSlugs],
+        )
         return {
             actions: Number(legacy.rows[0]?.actions || 0),
             contactedActions: 0,
@@ -3152,27 +3457,35 @@ async function queryCommercialActionMetrics(pgPool, availability) {
         }
     }
     const metrics = await pgPool.query(
-        `with actions as (
-            select id, identity_id, contacted_at::date as action_date
-            from crm_atendimento.commercial_actions
-            where contacted_at is not null
+        `with scoped_actions as (
+            select action.id, action.identity_id, action.contacted_at::date as action_date
+            from crm_atendimento.commercial_actions action
+            left join crm_atendimento.units unit on unit.id = action.unit_id
+            where $1::text[] is null or unit.slug = any($1::text[])
+         ), actions as (
+            select * from scoped_actions where action_date is not null
          ), action_sales as (
             select distinct action.id, action.identity_id
             from actions action
             join crm_atendimento.global_client_identity_members gm on gm.identity_id = action.identity_id and gm.source_type = 'caixa_customer'
             join crm_caixa.sales sale on sale.customer_id = gm.source_id::uuid and sale.occurred_on >= action.action_date
+            join crm_atendimento.units unit on unit.id = sale.unit_id
+            where $1::text[] is null or unit.slug = any($1::text[])
          ), action_returns as (
             select distinct action.id, action.identity_id
             from actions action
             join crm_atendimento.global_client_identity_members gm on gm.identity_id = action.identity_id and gm.source_type = 'attendance_client'
             join crm_atendimento.attendance_client_links acl on acl.client_id = gm.source_id::uuid
             join crm_atendimento.attendances attendance on attendance.id = acl.attendance_id
+            join crm_atendimento.units unit on unit.id = attendance.unit_id
             where attendance.deleted_at is null and attendance.service_date >= action.action_date
+              and ($1::text[] is null or unit.slug = any($1::text[]))
          )
-         select (select count(*)::int from crm_atendimento.commercial_actions) as actions,
+         select (select count(*)::int from scoped_actions) as actions,
                 (select count(*)::int from actions) as contacted_actions,
                 (select count(distinct identity_id)::int from action_sales) as recovered_sales_clients,
                 (select count(distinct identity_id)::int from action_returns) as clinical_return_clients`,
+        [unitSlugs],
     )
     const row = metrics.rows[0] || {}
     return {
@@ -3195,63 +3508,1001 @@ async function assertIdentityReviewSource(pgPool) {
     }
 }
 
-async function queryIdentityReviewQueue(pgPool, query = {}) {
+async function identityReviewWorkflowStatus(pgPool) {
+    const availability = await pgPool.query(`select
+        to_regclass('crm_atendimento.schema_migrations') as registry,
+        to_regclass('crm_atendimento.identity_review_decisions') as decisions,
+        to_regclass('crm_atendimento.identity_materialization_runs') as runs,
+        to_regclass('crm_atendimento.identity_member_history') as member_history,
+        to_regclass('crm_atendimento.identity_lineage') as lineage,
+        to_regclass('crm_atendimento.identity_source_link_history') as source_link_history,
+        exists(select 1 from information_schema.columns where table_schema='crm_atendimento'
+            and table_name='identity_materialization_runs' and column_name='event_order') as run_event_order,
+        exists(select 1 from information_schema.columns where table_schema='crm_atendimento'
+            and table_name='identity_member_history' and column_name='event_order') as member_history_event_order,
+        exists(select 1 from information_schema.columns where table_schema='crm_atendimento'
+            and table_name='identity_review_decisions' and column_name='resulting_status') as decision_resulting_status,
+        exists(select 1 from information_schema.columns where table_schema='crm_atendimento'
+            and table_name='identity_review_decisions' and column_name='event_order') as decision_event_order,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_review_decisions')
+            and tgname='identity_review_decisions_immutable' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as decision_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_member_history')
+            and tgname='identity_member_history_immutable' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as member_history_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_lineage')
+            and tgname='identity_lineage_immutable' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as lineage_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_source_link_history')
+            and tgname='identity_source_link_history_immutable' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as source_link_history_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_review_decisions')
+            and tgname='identity_review_decisions_no_truncate' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 32) <> 0) as decision_no_truncate,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_member_history')
+            and tgname='identity_member_history_no_truncate' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 32) <> 0) as member_history_no_truncate,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_lineage')
+            and tgname='identity_lineage_no_truncate' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 32) <> 0) as lineage_no_truncate,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_source_link_history')
+            and tgname='identity_source_link_history_no_truncate' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 32) <> 0) as source_link_history_no_truncate`)
+    const row = availability.rows[0] || {}
+    if (!row.registry || !row.decisions || !row.runs || !row.member_history || !row.lineage || !row.source_link_history
+        || !row.run_event_order
+        || !row.member_history_event_order || !row.decision_resulting_status || !row.decision_event_order
+        || !row.decision_immutable || !row.member_history_immutable || !row.lineage_immutable || !row.source_link_history_immutable
+        || !row.decision_no_truncate || !row.member_history_no_truncate || !row.lineage_no_truncate || !row.source_link_history_no_truncate) return { ready: false }
+    const migration = await pgPool.query(`select id from crm_atendimento.schema_migrations
+        where id = any($1::text[]) and rolled_back_at is null`, [IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS])
+    return { ready: migration.rows.length === IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS.length }
+}
+
+async function assertIdentityReviewWorkflowReady(pgPool) {
+    const status = await identityReviewWorkflowStatus(pgPool)
+    if (status.ready) return status
+    const error = new Error('IDENTITY_REVIEW_WORKFLOW_NOT_READY')
+    error.statusCode = 409
+    throw error
+}
+
+function reviewAttendanceUnitSource(clientReference) {
+    return `select unit.slug as unit_slug
+        from crm_atendimento.attendance_client_links attendance_link
+        join crm_atendimento.attendances attendance on attendance.id = attendance_link.attendance_id
+        join crm_atendimento.units unit on unit.id = attendance.unit_id
+        where attendance_link.client_id = ${clientReference}::uuid and attendance.deleted_at is null`
+}
+
+function reviewCaixaUnitSource(customerReference) {
+    return `select unit.slug as unit_slug
+        from crm_caixa.sales sale
+        join crm_atendimento.units unit on unit.id = sale.unit_id
+        where sale.customer_id = ${customerReference}::uuid`
+}
+
+function reviewStoredUnitSource(jsonColumn) {
+    // Imported profile sources persist canonical unit slugs.  Unknown strings
+    // deliberately do not resolve to a unit, keeping scoped review fail-closed.
+    return `select unit.slug as unit_slug
+        from crm_atendimento.units unit
+        join lateral jsonb_array_elements_text(coalesce(${jsonColumn}, '[]'::jsonb)) source(slug)
+          on unit.slug = source.slug`
+}
+
+function reviewUnitSlugs(...sources) {
+    return `coalesce(array(
+        select distinct scoped_units.unit_slug
+        from (${sources.join(' union ')}) scoped_units
+        where nullif(trim(scoped_units.unit_slug), '') is not null
+        order by scoped_units.unit_slug
+    ), '{}'::text[])`
+}
+
+function normalizeReviewUnitSlugs(value) {
+    return [...new Set((Array.isArray(value) ? value : [])
+        .map((unit) => commercialUnit(unit))
+        .filter(Boolean))].sort()
+}
+
+async function queryCommercialReviewComponentUnitEvidence(client, candidate) {
+    const result = await client.query(
+        `with affected_components as (
+            select distinct member.identity_id
+              from crm_atendimento.global_client_identity_members member
+             where (member.source_type = $1 and member.source_id = $2)
+                or (member.source_type = $3 and member.source_id = $4)
+         ), component_members as (
+            select member.identity_id, member.source_type, member.source_id
+              from crm_atendimento.global_client_identity_members member
+              join affected_components component on component.identity_id = member.identity_id
+         ), member_unit_evidence as (
+            select member.source_type, member.source_id, unit.slug as unit_slug
+              from component_members member
+              join crm_atendimento.attendance_client_links attendance_link on attendance_link.client_id = member.source_id::uuid
+              join crm_atendimento.attendances attendance on attendance.id = attendance_link.attendance_id
+              join crm_atendimento.units unit on unit.id = attendance.unit_id
+             where member.source_type = 'attendance_client' and attendance.deleted_at is null
+            union all
+            select member.source_type, member.source_id, unit.slug as unit_slug
+              from component_members member
+              join crm_caixa.sales sale on sale.customer_id = member.source_id::uuid
+              join crm_atendimento.units unit on unit.id = sale.unit_id
+             where member.source_type = 'caixa_customer'
+            union all
+            select member.source_type, member.source_id, unit.slug as unit_slug
+              from component_members member
+              join crm_atendimento.app_client_registrations registration on registration.source_client_id = member.source_id
+              join lateral jsonb_array_elements_text(coalesce(registration.unit_slugs, '[]'::jsonb)) scope(slug) on true
+              join crm_atendimento.units unit on unit.slug = scope.slug
+             where member.source_type = 'app_registration'
+            union all
+            select member.source_type, member.source_id, unit.slug as unit_slug
+              from component_members member
+              join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id = member.source_id
+              join lateral jsonb_array_elements_text(coalesce(lead.unit_slugs, '[]'::jsonb)) scope(slug) on true
+              join crm_atendimento.units unit on unit.slug = scope.slug
+             where member.source_type = 'lead_profile'
+         )
+         select member.source_type, member.source_id,
+                coalesce(array_agg(distinct evidence.unit_slug order by evidence.unit_slug)
+                    filter (where evidence.unit_slug is not null), '{}'::text[]) as unit_slugs
+           from component_members member
+           left join member_unit_evidence evidence
+             on evidence.source_type = member.source_type and evidence.source_id = member.source_id
+          group by member.source_type, member.source_id
+          order by member.source_type, member.source_id`,
+        [candidate.sourceType, candidate.sourceId, candidate.targetType, candidate.targetId],
+    )
+    return result.rows || []
+}
+
+async function assertCommercialReviewCandidateScope(client, actor, candidate) {
+    const allowed = commercialUnitScope(actor)
+    if (allowed === null) return
+    const candidateUnits = normalizeReviewUnitSlugs(candidate?.unitSlugs)
+    if (!candidateUnits.length || candidateUnits.some((unit) => !allowed.includes(unit))) {
+        throw commercialScopeError()
+    }
+    // A confirmed review can move the complete existing components, not only
+    // the two displayed endpoints. Resolve every current member before the
+    // source status is changed; unknown provenance is deliberately not enough
+    // authority for a unit-scoped manager to alter the graph.
+    const directMembers = new Set([
+        `${String(candidate?.sourceType || '')}:${String(candidate?.sourceId || '')}`,
+        `${String(candidate?.targetType || '')}:${String(candidate?.targetId || '')}`,
+    ])
+    const members = await queryCommercialReviewComponentUnitEvidence(client, candidate)
+    for (const member of members) {
+        const memberUnits = normalizeReviewUnitSlugs(member?.unit_slugs)
+        const memberKey = `${String(member?.source_type || '')}:${String(member?.source_id || '')}`
+        if (!memberUnits.length && !directMembers.has(memberKey)) throw commercialScopeError()
+        if (memberUnits.some((unit) => !allowed.includes(unit))) throw commercialScopeError()
+    }
+}
+
+async function queryIdentityReviewQueue(pgPool, query = {}, { workflowReady = false, unitSlugs = null } = {}) {
     const type = String(query.type || '').trim()
     const search = normalizeText(query.q || query.search || '')
     const limit = sanitizeLimit(query.limit, 100, 250)
     const offset = sanitizeOffset(query.offset, 0)
+    const includeResolved = String(query.includeResolved || '').trim().toLowerCase() === 'true'
+    const nameMergeStatuses = workflowReady ? "('pending','confirmed','rejected')" : "('pending')"
+    const linkStatuses = workflowReady ? "('suggested','ambiguous','confirmed','rejected')" : "('suggested','ambiguous')"
+    const decisionCte = workflowReady
+        ? `latest_decisions as (
+            select distinct on (review_type, source_id, target_id)
+                review_type, source_id, target_id, decision, resulting_status, source_version, created_at
+            from crm_atendimento.identity_review_decisions
+            order by review_type, source_id, target_id, event_order desc
+        )`
+        : `latest_decisions as (
+            select null::text as review_type, null::text as source_id, null::text as target_id,
+                null::text as decision, null::text as resulting_status, null::text as source_version,
+                null::timestamptz as created_at
+            where false
+        )`
     const result = await pgPool.query(
         `with review_items as (
-            select 'attendance_name_merge'::text as type, m.id::text as id, m.status, m.similarity::numeric as confidence,
+            select 'attendance_name_merge'::text as type, m.id::text as id, m.left_client_id::text as source_id,
+                m.right_client_id::text as target_id, m.status, m.similarity::numeric as confidence,
                 left_client.canonical_name as primary_name, right_client.canonical_name as secondary_name,
                 m.evidence, jsonb_build_object('leftAttendanceCount', left_client.attendance_count, 'rightAttendanceCount', right_client.attendance_count,
                     'leftAliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=left_client.id), '[]'::jsonb),
-                    'rightAliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=right_client.id), '[]'::jsonb)) as context
+                    'rightAliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=right_client.id), '[]'::jsonb)) as context,
+                md5(jsonb_build_object('type','attendance_name_merge','sourceId',m.left_client_id::text,
+                    'targetId',m.right_client_id::text,'status',m.status,'confidence',m.similarity,'evidence',m.evidence)::text) as review_version,
+                ${reviewUnitSlugs(reviewAttendanceUnitSource('m.left_client_id'), reviewAttendanceUnitSource('m.right_client_id'))} as unit_slugs
             from crm_atendimento.client_merge_suggestions m
             join crm_atendimento.canonical_clients left_client on left_client.id=m.left_client_id
             join crm_atendimento.canonical_clients right_client on right_client.id=m.right_client_id
-            where m.status='pending'
+            where m.status in ${nameMergeStatuses}
             union all
-            select 'attendance_caixa'::text, link.id::text, link.status, link.confidence::numeric, client.canonical_name, customer.name, link.evidence,
+            select 'attendance_caixa'::text, link.id::text, link.client_id::text, link.caixa_customer_id::text,
+                link.status, link.confidence::numeric, client.canonical_name, customer.name, link.evidence,
                 jsonb_build_object('attendanceCount', client.attendance_count, 'aliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=client.id), '[]'::jsonb),
                     'phoneKey', customer.phone_key, 'sales', coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),
-                    'salesTotal', coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0))
+                    'salesTotal', coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0)),
+                md5(jsonb_build_object('type','attendance_caixa','sourceId',link.client_id::text,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text),
+                ${reviewUnitSlugs(reviewAttendanceUnitSource('link.client_id'), reviewCaixaUnitSource('link.caixa_customer_id'))} as unit_slugs
             from crm_atendimento.client_caixa_links link join crm_atendimento.canonical_clients client on client.id=link.client_id join crm_caixa.customers customer on customer.id=link.caixa_customer_id
-            where link.status in ('suggested','ambiguous')
+            where link.status in ${linkStatuses}
             union all
-            select 'app_attendance'::text, app_link.app_registration_id||':'||app_link.client_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, client.canonical_name, app_link.evidence,
+            select 'app_attendance'::text, app_link.app_registration_id||':'||app_link.client_id::text, app_link.app_registration_id,
+                app_link.client_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, client.canonical_name, app_link.evidence,
                 jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs,'attendanceCount',client.attendance_count,
-                    'aliases',coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=client.id),'[]'::jsonb))
+                    'aliases',coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=client.id),'[]'::jsonb)),
+                md5(jsonb_build_object('type','app_attendance','sourceId',app_link.app_registration_id,
+                    'targetId',app_link.client_id::text,'status',app_link.status,'method',app_link.method,'confidence',app_link.confidence,'evidence',app_link.evidence)::text),
+                ${reviewUnitSlugs(reviewStoredUnitSource('app.unit_slugs'), reviewAttendanceUnitSource('app_link.client_id'))} as unit_slugs
             from crm_atendimento.app_registration_attendance_links app_link join crm_atendimento.app_client_registrations app on app.source_client_id=app_link.app_registration_id join crm_atendimento.canonical_clients client on client.id=app_link.client_id
-            where app_link.status in ('suggested','ambiguous')
+            where app_link.status in ${linkStatuses}
             union all
-            select 'app_caixa'::text, app_link.app_registration_id||':'||app_link.caixa_customer_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, customer.name, app_link.evidence,
+            select 'app_caixa'::text, app_link.app_registration_id||':'||app_link.caixa_customer_id::text, app_link.app_registration_id,
+                app_link.caixa_customer_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, customer.name, app_link.evidence,
                 jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs,'phoneKey',customer.phone_key,
-                    'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0))
+                    'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0)),
+                md5(jsonb_build_object('type','app_caixa','sourceId',app_link.app_registration_id,
+                    'targetId',app_link.caixa_customer_id::text,'status',app_link.status,'method',app_link.method,'confidence',app_link.confidence,'evidence',app_link.evidence)::text),
+                ${reviewUnitSlugs(reviewStoredUnitSource('app.unit_slugs'), reviewCaixaUnitSource('app_link.caixa_customer_id'))} as unit_slugs
             from crm_atendimento.app_registration_caixa_links app_link join crm_atendimento.app_client_registrations app on app.source_client_id=app_link.app_registration_id join crm_caixa.customers customer on customer.id=app_link.caixa_customer_id
-            where app_link.status in ('suggested','ambiguous')
+            where app_link.status in ${linkStatuses}
             union all
-            select 'lead_app'::text, link.source_profile_id||':'||link.app_registration_id, link.status, link.confidence::numeric, lead.canonical_name, app.canonical_name, link.evidence,
+            select 'lead_app'::text, link.source_profile_id||':'||link.app_registration_id, link.source_profile_id, link.app_registration_id,
+                link.status, link.confidence::numeric, lead.canonical_name, app.canonical_name, link.evidence,
                 jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,'leadBirthdays',lead.birthdays,
-                    'appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs)
+                    'appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs),
+                md5(jsonb_build_object('type','lead_app','sourceId',link.source_profile_id,
+                    'targetId',link.app_registration_id,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text),
+                ${reviewUnitSlugs(reviewStoredUnitSource('lead.unit_slugs'), reviewStoredUnitSource('app.unit_slugs'))} as unit_slugs
             from crm_atendimento.supplemental_lead_profile_app_links link join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id join crm_atendimento.app_client_registrations app on app.source_client_id=link.app_registration_id
-            where link.status in ('suggested','ambiguous')
+            where link.status in ${linkStatuses}
             union all
-            select 'lead_caixa'::text, link.source_profile_id||':'||link.caixa_customer_id::text, link.status, link.confidence::numeric, lead.canonical_name, customer.name, link.evidence,
+            select 'lead_caixa'::text, link.source_profile_id||':'||link.caixa_customer_id::text, link.source_profile_id,
+                link.caixa_customer_id::text, link.status, link.confidence::numeric, lead.canonical_name, customer.name, link.evidence,
                 jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,'leadBirthdays',lead.birthdays,
-                    'phoneKey',customer.phone_key,'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0))
+                    'phoneKey',customer.phone_key,'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0)),
+                md5(jsonb_build_object('type','lead_caixa','sourceId',link.source_profile_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text),
+                ${reviewUnitSlugs(reviewStoredUnitSource('lead.unit_slugs'), reviewCaixaUnitSource('link.caixa_customer_id'))} as unit_slugs
             from crm_atendimento.supplemental_lead_profile_caixa_links link join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id join crm_caixa.customers customer on customer.id=link.caixa_customer_id
-            where link.status in ('suggested','ambiguous')
+            where link.status in ${linkStatuses}
+        ), ${decisionCte}, resolved as (
+            select item.*, decision.decision as decision, decision.source_version as decision_source_version,
+                case when decision.decision in ('confirmed','rejected') and decision.source_version = item.review_version
+                          and decision.resulting_status = item.status then 'resolved'
+                    when decision.decision in ('confirmed','rejected') then 'stale'
+                    else null end as decision_state
+            from review_items item
+            left join latest_decisions decision on decision.review_type=item.type and decision.source_id=item.source_id and decision.target_id=item.target_id
         ), filtered as (
-            select *, count(*) over()::int as total from review_items
-            where ($1='' or type=$1) and ($2='' or lower(primary_name||' '||secondary_name||' '||coalesce(evidence::text,'')||' '||coalesce(context::text,'')) like '%'||$2||'%')
-        ) select * from filtered order by case status when 'ambiguous' then 0 else 1 end, confidence desc nulls last, primary_name, secondary_name limit $3 offset $4`,
-        [type, search, limit, offset],
+            select *, count(*) over()::int as total from resolved
+            where (${includeResolved ? 'true' : "decision_state is distinct from 'resolved' and (status in ('pending','suggested','ambiguous') or decision_state='stale')"})
+              and (status not in ('confirmed','rejected') or decision is not null)
+              and ($1='' or type=$1)
+              and ($2='' or lower(primary_name||' '||secondary_name) like '%'||$2||'%')
+              and ($5::text[] is null or (cardinality(unit_slugs) > 0 and unit_slugs <@ $5::text[]))
+        ) select * from filtered order by case decision_state when 'stale' then 0 else 1 end,
+            case status when 'ambiguous' then 0 else 1 end, confidence desc nulls last, primary_name, secondary_name limit $3 offset $4`,
+        [type, search, limit, offset, unitSlugs],
     )
     return { total: Number(result.rows[0]?.total || 0), limit, offset, items: result.rows.map((row) => ({
-        id: row.id, type: row.type, status: row.status, confidence: Number(row.confidence || 0), primaryName: row.primary_name,
-        secondaryName: row.secondary_name, evidence: row.evidence || {}, context: row.context || {},
+        id: row.id, type: row.type, sourceId: row.source_id, targetId: row.target_id, status: row.status,
+        version: row.review_version, decisionState: row.decision_state || null, confidence: Number(row.confidence || 0),
+        primaryName: row.primary_name, secondaryName: row.secondary_name,
+        evidence: minimizeCommercialReviewValue(row.evidence || {}), context: minimizeCommercialReviewValue(row.context || {}),
     })) }
+}
+
+const IDENTITY_REVIEW_DEFINITIONS = {
+    attendance_name_merge: { sourceType: 'attendance_client', targetType: 'attendance_client', statuses: new Set(['pending']) },
+    attendance_caixa: { sourceType: 'attendance_client', targetType: 'caixa_customer', statuses: new Set(['suggested', 'ambiguous']) },
+    app_attendance: { sourceType: 'app_registration', targetType: 'attendance_client', statuses: new Set(['suggested', 'ambiguous']) },
+    app_caixa: { sourceType: 'app_registration', targetType: 'caixa_customer', statuses: new Set(['suggested', 'ambiguous']) },
+    lead_app: { sourceType: 'lead_profile', targetType: 'app_registration', statuses: new Set(['suggested', 'ambiguous']) },
+    lead_caixa: { sourceType: 'lead_profile', targetType: 'caixa_customer', statuses: new Set(['suggested', 'ambiguous']) },
+}
+
+// Name-merge reviews operate directly on canonical identities.  The remaining
+// review types are persisted source-link edges and therefore share the same
+// automatic-topology ledger used by their importers.  Keeping this mapping
+// explicit prevents a new review type from silently acquiring link semantics.
+const IDENTITY_REVIEW_SOURCE_LINK_TYPES = Object.freeze({
+    attendance_caixa: 'attendance_caixa',
+    app_attendance: 'app_attendance',
+    app_caixa: 'app_caixa',
+    lead_app: 'lead_app',
+    lead_caixa: 'lead_caixa',
+})
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function assertIdentityReviewReferenceShape({ reviewType, sourceId, targetId }) {
+    const requiresSourceUuid = reviewType === 'attendance_name_merge' || reviewType === 'attendance_caixa'
+    const requiresTargetUuid = reviewType !== 'lead_app'
+    if ((requiresSourceUuid && !UUID_RE.test(sourceId)) || (requiresTargetUuid && !UUID_RE.test(targetId))) {
+        throw identityReviewError('INVALID_IDENTITY_REVIEW_REFERENCE')
+    }
+}
+
+function identityReviewLockKey(reviewType, sourceId, targetId) {
+    return `crm_atendimento.identity-review:${reviewType}:${sourceId}:${targetId}`
+}
+
+async function acquireIdentityReviewLocks(client, candidate) {
+    // Migration apply/rollback takes this same transaction lock.  Holding it
+    // before the graph lock prevents a decision from crossing a rollback that
+    // disables its schema and source-of-truth contract.
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID])
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID])
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [identityReviewLockKey(candidate.reviewType, candidate.sourceId, candidate.targetId)])
+    // Existing source reconcilers use this lock. Joining it keeps a reviewed
+    // decision from interleaving with an import that would replace evidence.
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, ['crm_atendimento.client_identity_reconciliation'])
+    const memberLocks = [
+        `${candidate.sourceType}:${candidate.sourceId}`,
+        `${candidate.targetType}:${candidate.targetId}`,
+    ].sort()
+    for (const member of memberLocks) {
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [`crm_atendimento.identity-member:${member}`])
+    }
+}
+
+async function readIdentityReviewCandidate(client, normalized) {
+    assertIdentityReviewReferenceShape(normalized)
+    const definition = IDENTITY_REVIEW_DEFINITIONS[normalized.reviewType]
+    let result
+    switch (normalized.reviewType) {
+    case 'attendance_name_merge':
+        result = await client.query(`select m.id::text as row_id, m.status, m.evidence,
+                md5(jsonb_build_object('type','attendance_name_merge','sourceId',m.left_client_id::text,
+                    'targetId',m.right_client_id::text,'status',m.status,'confidence',m.similarity,'evidence',m.evidence)::text) as review_version,
+                left_client.canonical_name as source_name, right_client.canonical_name as target_name,
+                ${reviewUnitSlugs(reviewAttendanceUnitSource('m.left_client_id'), reviewAttendanceUnitSource('m.right_client_id'))} as unit_slugs,
+                jsonb_build_object('leftAttendanceCount', left_client.attendance_count, 'rightAttendanceCount', right_client.attendance_count) as context
+            from crm_atendimento.client_merge_suggestions m
+            join crm_atendimento.canonical_clients left_client on left_client.id=m.left_client_id
+            join crm_atendimento.canonical_clients right_client on right_client.id=m.right_client_id
+            where m.left_client_id=$1::uuid and m.right_client_id=$2::uuid for update of m`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'attendance_caixa':
+        result = await client.query(`select link.id::text as row_id, link.status, link.evidence,
+                md5(jsonb_build_object('type','attendance_caixa','sourceId',link.client_id::text,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                attendance.canonical_name as source_name, customer.name as target_name,
+                ${reviewUnitSlugs(reviewAttendanceUnitSource('link.client_id'), reviewCaixaUnitSource('link.caixa_customer_id'))} as unit_slugs,
+                jsonb_build_object('attendanceCount', attendance.attendance_count, 'phoneKey', customer.phone_key) as context
+            from crm_atendimento.client_caixa_links link
+            join crm_atendimento.canonical_clients attendance on attendance.id=link.client_id
+            join crm_caixa.customers customer on customer.id=link.caixa_customer_id
+            where link.client_id=$1::uuid and link.caixa_customer_id=$2::uuid for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'app_attendance':
+        result = await client.query(`select link.status, link.evidence,
+                md5(jsonb_build_object('type','app_attendance','sourceId',link.app_registration_id,
+                    'targetId',link.client_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                app.canonical_name as source_name, attendance.canonical_name as target_name,
+                ${reviewUnitSlugs(reviewStoredUnitSource('app.unit_slugs'), reviewAttendanceUnitSource('link.client_id'))} as unit_slugs,
+                jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs) as context
+            from crm_atendimento.app_registration_attendance_links link
+            join crm_atendimento.app_client_registrations app on app.source_client_id=link.app_registration_id
+            join crm_atendimento.canonical_clients attendance on attendance.id=link.client_id
+            where link.app_registration_id=$1 and link.client_id=$2::uuid for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'app_caixa':
+        result = await client.query(`select link.status, link.evidence,
+                md5(jsonb_build_object('type','app_caixa','sourceId',link.app_registration_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                app.canonical_name as source_name, customer.name as target_name,
+                ${reviewUnitSlugs(reviewStoredUnitSource('app.unit_slugs'), reviewCaixaUnitSource('link.caixa_customer_id'))} as unit_slugs,
+                jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs,'phoneKey',customer.phone_key) as context
+            from crm_atendimento.app_registration_caixa_links link
+            join crm_atendimento.app_client_registrations app on app.source_client_id=link.app_registration_id
+            join crm_caixa.customers customer on customer.id=link.caixa_customer_id
+            where link.app_registration_id=$1 and link.caixa_customer_id=$2::uuid for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'lead_app':
+        result = await client.query(`select link.status, link.evidence,
+                md5(jsonb_build_object('type','lead_app','sourceId',link.source_profile_id,
+                    'targetId',link.app_registration_id,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                lead.canonical_name as source_name, app.canonical_name as target_name,
+                ${reviewUnitSlugs(reviewStoredUnitSource('lead.unit_slugs'), reviewStoredUnitSource('app.unit_slugs'))} as unit_slugs,
+                jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,
+                    'appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs) as context
+            from crm_atendimento.supplemental_lead_profile_app_links link
+            join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id
+            join crm_atendimento.app_client_registrations app on app.source_client_id=link.app_registration_id
+            where link.source_profile_id=$1 and link.app_registration_id=$2 for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'lead_caixa':
+        result = await client.query(`select link.status, link.evidence,
+                md5(jsonb_build_object('type','lead_caixa','sourceId',link.source_profile_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                lead.canonical_name as source_name, customer.name as target_name,
+                ${reviewUnitSlugs(reviewStoredUnitSource('lead.unit_slugs'), reviewCaixaUnitSource('link.caixa_customer_id'))} as unit_slugs,
+                jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,'phoneKey',customer.phone_key) as context
+            from crm_atendimento.supplemental_lead_profile_caixa_links link
+            join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id
+            join crm_caixa.customers customer on customer.id=link.caixa_customer_id
+            where link.source_profile_id=$1 and link.caixa_customer_id=$2::uuid for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    default:
+        throw identityReviewError('INVALID_IDENTITY_REVIEW_TYPE')
+    }
+    const row = result.rows[0]
+    if (!row) throw identityReviewError('IDENTITY_REVIEW_NOT_FOUND', 404)
+    const canonicalReferences = [
+        definition.sourceType === 'attendance_client' ? normalized.sourceId : null,
+        definition.targetType === 'attendance_client' ? normalized.targetId : null,
+    ].filter(Boolean)
+    if (canonicalReferences.length) {
+        const retired = await client.query(`select id::text from crm_atendimento.canonical_clients
+            where id=any($1::uuid[]) and merged_into_id is not null limit 1 for update`, [canonicalReferences])
+        if (retired.rows[0]?.id) throw identityReviewError('IDENTITY_REVIEW_CANONICAL_REFERENCE_RETIRED', 409)
+    }
+    return {
+        reviewType: normalized.reviewType,
+        sourceId: normalized.sourceId,
+        targetId: normalized.targetId,
+        sourceType: definition.sourceType,
+        targetType: definition.targetType,
+        rawStatus: row.status,
+        version: row.review_version,
+        sourceName: row.source_name || '',
+        targetName: row.target_name || '',
+        evidence: row.evidence || {},
+        context: row.context || {},
+        unitSlugs: normalizeReviewUnitSlugs(row.unit_slugs),
+        survivorClientId: normalized.survivorClientId || null,
+    }
+}
+
+function assertIdentityReviewCandidateVersion(candidate, expectedVersion) {
+    const definition = IDENTITY_REVIEW_DEFINITIONS[candidate.reviewType]
+    if (!definition?.statuses?.has(candidate.rawStatus)) throw identityReviewError('IDENTITY_REVIEW_NOT_ACTIONABLE', 409)
+    if (candidate.version !== expectedVersion) throw identityReviewError('IDENTITY_REVIEW_CONFLICT', 409)
+}
+
+function assertIdentityReviewUndoCandidateVersion(candidate, expectedVersion, latestDecision) {
+    if (candidate.version !== expectedVersion) throw identityReviewError('IDENTITY_REVIEW_CONFLICT', 409)
+    const expectedStatus = latestDecision?.decision === 'confirmed' ? 'confirmed' : 'rejected'
+    if (!expectedStatus || candidate.rawStatus !== expectedStatus) {
+        throw identityReviewError('IDENTITY_REVIEW_CONFLICT', 409)
+    }
+}
+
+async function writeIdentityReviewSourceStatus(client, candidate, nextStatus, actor) {
+    const reviewedBy = actorIdentityForMutation(actor)
+    let result
+    switch (candidate.reviewType) {
+    case 'attendance_name_merge':
+        result = await client.query(`update crm_atendimento.client_merge_suggestions
+            set status=$3,reviewed_by=$4,reviewed_at=now(),updated_at=now()
+            where left_client_id=$1::uuid and right_client_id=$2::uuid and status=$5
+            returning status,md5(jsonb_build_object('type','attendance_name_merge','sourceId',left_client_id::text,
+                'targetId',right_client_id::text,'status',status,'confidence',similarity,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, reviewedBy, candidate.rawStatus])
+        break
+    case 'attendance_caixa':
+        result = await client.query(`update crm_atendimento.client_caixa_links
+            set status=$3,reviewed_by=$4,reviewed_at=now(),updated_at=now()
+            where client_id=$1::uuid and caixa_customer_id=$2::uuid and status=$5
+            returning status,md5(jsonb_build_object('type','attendance_caixa','sourceId',client_id::text,
+                'targetId',caixa_customer_id::text,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, reviewedBy, candidate.rawStatus])
+        break
+    case 'app_attendance':
+        result = await client.query(`update crm_atendimento.app_registration_attendance_links
+            set status=$3,updated_at=now()
+            where app_registration_id=$1 and client_id=$2::uuid and status=$4
+            returning status,md5(jsonb_build_object('type','app_attendance','sourceId',app_registration_id,
+                'targetId',client_id::text,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, candidate.rawStatus])
+        break
+    case 'app_caixa':
+        result = await client.query(`update crm_atendimento.app_registration_caixa_links
+            set status=$3,updated_at=now()
+            where app_registration_id=$1 and caixa_customer_id=$2::uuid and status=$4
+            returning status,md5(jsonb_build_object('type','app_caixa','sourceId',app_registration_id,
+                'targetId',caixa_customer_id::text,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, candidate.rawStatus])
+        break
+    case 'lead_app':
+        result = await client.query(`update crm_atendimento.supplemental_lead_profile_app_links
+            set status=$3,updated_at=now()
+            where source_profile_id=$1 and app_registration_id=$2 and status=$4
+            returning status,md5(jsonb_build_object('type','lead_app','sourceId',source_profile_id,
+                'targetId',app_registration_id,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, candidate.rawStatus])
+        break
+    case 'lead_caixa':
+        result = await client.query(`update crm_atendimento.supplemental_lead_profile_caixa_links
+            set status=$3,updated_at=now()
+            where source_profile_id=$1 and caixa_customer_id=$2::uuid and status=$4
+            returning status,md5(jsonb_build_object('type','lead_caixa','sourceId',source_profile_id,
+                'targetId',caixa_customer_id::text,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, candidate.rawStatus])
+        break
+    default:
+        throw identityReviewError('INVALID_IDENTITY_REVIEW_TYPE')
+    }
+    const row = result.rows[0]
+    if (!row) throw identityReviewError('IDENTITY_REVIEW_CONFLICT', 409)
+    return { rawStatus: row.status, version: row.review_version }
+}
+
+async function readLatestIdentityReviewDecision(client, candidate) {
+    const result = await client.query(`select id::text, event_order, decision, source_status, resulting_status, source_version,
+            materialization_run_id::text, source_snapshot, created_at
+        from crm_atendimento.identity_review_decisions
+        where review_type=$1 and source_id=$2 and target_id=$3
+        order by event_order desc limit 1 for update`, [candidate.reviewType, candidate.sourceId, candidate.targetId])
+    return result.rows[0] || null
+}
+
+async function assertIdentityReviewUndoLedgerCutover(client, materializationEventOrder) {
+    const result = await client.query(`select details from crm_atendimento.schema_migrations
+        where id=$1 and rolled_back_at is null`, [IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID])
+    const details = result.rows[0]?.details || {}
+    const cutover = Number(details?.sourceLinkLedgerCutoverRunEventOrder)
+    if (!Number.isSafeInteger(cutover) || cutover < 0 || materializationEventOrder <= cutover) {
+        throw identityReviewError('IDENTITY_REVIEW_UNDO_LEGACY_LEDGER_UNSAFE', 409)
+    }
+}
+
+async function assertNoDependentIdentityReviewDecision(client, decision, candidate) {
+    if (!decision?.materialization_run_id || decision.decision !== 'confirmed') return
+    const originalRun = await client.query(`select summary,event_order from crm_atendimento.identity_materialization_runs
+        where id=$1::uuid for share`, [decision.materialization_run_id])
+    const original = originalRun.rows[0]
+    const summary = original?.summary || {}
+    const materializationEventOrder = Number(original?.event_order)
+    const identityIds = [...new Set([
+        summary.sourceIdentityId,
+        summary.targetIdentityId,
+        summary.survivorIdentityId,
+        summary.retiredIdentityId,
+        ...(Array.isArray(summary.createdIdentityIds) ? summary.createdIdentityIds : []),
+    ].map((value) => String(value || '').trim()).filter(Boolean))]
+    if (!Number.isSafeInteger(materializationEventOrder) || materializationEventOrder <= 0) {
+        throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENCY_UNAVAILABLE', 409)
+    }
+    await assertIdentityReviewUndoLedgerCutover(client, materializationEventOrder)
+    // All graph materializations use IDENTITY_GRAPH_LOCK_KEY.  Thus a later
+    // applied ledger run touching a member or identity from this confirmation
+    // is a serial dependency, whether it came from another manager decision or
+    // from an automatic source reconciler.  Run event_order is assigned only
+    // after the graph lock is acquired, unlike a transaction-start timestamp.
+    // First retain the decision event guard for later human confirmations that
+    // could be source-state changes without a physical member move.
+    const dependentDecision = await client.query(`with latest_decisions as (
+            select distinct on (review_type,source_id,target_id)
+                review_type,source_id,target_id,decision,event_order,materialization_run_id
+            from crm_atendimento.identity_review_decisions
+            order by review_type,source_id,target_id,event_order desc
+        )
+        select later.review_type,later.source_id,later.target_id
+        from latest_decisions later
+        join crm_atendimento.identity_materialization_runs run on run.id=later.materialization_run_id
+        where later.decision='confirmed' and later.event_order>$1::bigint
+          and (
+            coalesce(run.summary->>'sourceIdentityId','')=any($2::text[])
+            or coalesce(run.summary->>'targetIdentityId','')=any($2::text[])
+            or coalesce(run.summary->>'survivorIdentityId','')=any($2::text[])
+            or coalesce(run.summary->>'retiredIdentityId','')=any($2::text[])
+            or exists(select 1 from jsonb_array_elements_text(coalesce(run.summary->'createdIdentityIds','[]'::jsonb)) as created(id)
+                where created.id=any($2::text[]))
+          )
+        limit 1`, [decision.event_order, identityIds])
+    if (dependentDecision.rows[0]) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENT_DECISION', 409)
+
+    const dependentMaterialization = await client.query(`with original_members as (
+            select source_type,source_id,event_order
+            from crm_atendimento.identity_member_history
+            where materialization_run_id=$1::uuid
+        ), later_history as (
+            select run.id::text as materialization_run_id,history.source_type,history.source_id,
+                history.previous_identity_id::text as previous_identity_id,
+                history.next_identity_id::text as next_identity_id
+            from crm_atendimento.identity_materialization_runs run
+            join crm_atendimento.identity_member_history history on history.materialization_run_id=run.id
+            where run.id<>$1::uuid and run.status='applied'
+              and run.event_order>$2::bigint
+        )
+        select later.materialization_run_id,later.source_type,later.source_id
+        from later_history later
+        where exists(select 1 from original_members original
+                where original.source_type=later.source_type and original.source_id=later.source_id)
+           or later.previous_identity_id=any($3::text[])
+           or later.next_identity_id=any($3::text[])
+        limit 1`, [decision.materialization_run_id, materializationEventOrder, identityIds])
+    if (dependentMaterialization.rows[0]) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENT_DECISION', 409)
+
+    const dependentAutomaticLink = await client.query(`with original_members as (
+            select source_type,source_id
+            from crm_atendimento.identity_member_history
+            where materialization_run_id=$1::uuid
+        ), latest_source_links as (
+            select distinct on (links.link_type,links.source_type,links.source_id,links.target_type,links.target_id)
+                links.link_type,links.source_type,links.source_id,links.target_type,links.target_id,
+                links.transition,run.event_order
+            from crm_atendimento.identity_source_link_history links
+            join crm_atendimento.identity_materialization_runs run on run.id=links.materialization_run_id
+            where run.status in ('applied','not_applicable')
+            order by links.link_type,links.source_type,links.source_id,links.target_type,links.target_id,run.event_order desc
+        )
+        select links.link_type,links.source_type,links.source_id,links.target_type,links.target_id
+        from latest_source_links links
+        where links.transition='automatic_activated' and links.event_order>$2::bigint
+          and (
+            exists(select 1 from original_members original
+                where (original.source_type=links.source_type and original.source_id=links.source_id)
+                   or (original.source_type=links.target_type and original.source_id=links.target_id))
+            or (links.source_type=$3 and links.source_id=$4)
+            or (links.target_type=$3 and links.target_id=$4)
+            or (links.source_type=$5 and links.source_id=$6)
+            or (links.target_type=$5 and links.target_id=$6)
+          )
+        limit 1`, [
+        decision.materialization_run_id,
+        materializationEventOrder,
+        candidate.sourceType,
+        candidate.sourceId,
+        candidate.targetType,
+        candidate.targetId,
+    ])
+    if (dependentAutomaticLink.rows[0]) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENT_DECISION', 409)
+}
+
+function assertNoCurrentIdentityReviewDecision(latest, candidate) {
+    if (latest && latest.decision !== 'reversed' && latest.source_version === candidate.version) {
+        throw identityReviewError('IDENTITY_REVIEW_ALREADY_DECIDED', 409)
+    }
+}
+
+async function createIdentityReviewDecision(client, {
+    candidate, decision, reason, actor, sourceSnapshot = {}, materializationRunId = null,
+    resultingStatus = candidate.rawStatus, sourceVersion = candidate.version,
+}) {
+    const actorIdentity = actorIdentityForMutation(actor)
+    const result = await client.query(`insert into crm_atendimento.identity_review_decisions(
+            materialization_run_id,review_type,source_id,target_id,decision,source_status,resulting_status,source_version,reason,actor,source_snapshot)
+        values($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb) returning id::text,created_at`, [
+        materializationRunId, candidate.reviewType, candidate.sourceId, candidate.targetId, decision, candidate.rawStatus,
+        resultingStatus, sourceVersion, reason, JSON.stringify({ id: actorIdentity, role: actor?.role || '' }), JSON.stringify({
+            sourceName: candidate.sourceName,
+            targetName: candidate.targetName,
+            evidence: candidate.evidence,
+            context: candidate.context,
+            ...sourceSnapshot,
+        }),
+    ])
+    return result.rows[0]
+}
+
+async function createIdentityMaterializationRun(client, { mode, status, inputFingerprint, previousFingerprint = null, summary = {}, actor }) {
+    const actorIdentity = actorIdentityForMutation(actor)
+    const result = await client.query(`insert into crm_atendimento.identity_materialization_runs(
+            mode,status,input_fingerprint,previous_fingerprint,summary,actor)
+        values($1,$2,$3,$4,$5::jsonb,$6::jsonb) returning id::text,created_at`, [
+        mode, status, inputFingerprint, previousFingerprint, JSON.stringify(summary),
+        JSON.stringify({ id: actorIdentity, role: actor?.role || '' }),
+    ])
+    return result.rows[0]
+}
+
+export function collectIdentityReviewSourceLinkTransitions({
+    candidate,
+    previousStatus,
+    resultingStatus,
+} = {}) {
+    const linkType = IDENTITY_REVIEW_SOURCE_LINK_TYPES[candidate?.reviewType]
+    if (!linkType) return []
+    return collectAutomaticIdentityLinkTransitions({
+        effectiveLinks: [{
+            sourceId: candidate.sourceId,
+            targetId: candidate.targetId,
+            status: resultingStatus,
+        }],
+        persistedLinks: [{
+            sourceId: candidate.sourceId,
+            targetId: candidate.targetId,
+            status: previousStatus,
+        }],
+        linkType,
+        sourceType: candidate.sourceType,
+        targetType: candidate.targetType,
+        getSourceId: (link) => link.sourceId,
+        getTargetId: (link) => link.targetId,
+    })
+}
+
+async function recordIdentityReviewSourceLinkTransition(client, {
+    materializationRunId,
+    candidate,
+    previousStatus,
+    resultingStatus,
+    origin,
+}) {
+    const transitions = collectIdentityReviewSourceLinkTransitions({ candidate, previousStatus, resultingStatus })
+    if (!transitions.length) return []
+    await client.query(`insert into crm_atendimento.identity_source_link_history(
+            materialization_run_id,link_type,source_type,source_id,target_type,target_id,transition,resulting_status,origin)
+        select $1::uuid,x.link_type,x.source_type,x.source_id,x.target_type,x.target_id,x.transition,x.resulting_status,$3
+        from jsonb_to_recordset($2::jsonb) as x(
+            link_type text,source_type text,source_id text,target_type text,target_id text,transition text,resulting_status text)`, [
+        materializationRunId,
+        JSON.stringify(transitions.map((transition) => ({
+            link_type: transition.linkType,
+            source_type: transition.sourceType,
+            source_id: transition.sourceId,
+            target_type: transition.targetType,
+            target_id: transition.targetId,
+            transition: transition.transition,
+            resulting_status: transition.resultingStatus,
+        }))),
+        String(origin || 'manager_identity_review'),
+    ])
+    return transitions
+}
+
+async function updateIdentityMaterializationRun(client, runId, summary) {
+    await client.query(`update crm_atendimento.identity_materialization_runs set summary=$2::jsonb where id=$1::uuid`, [runId, JSON.stringify(summary)])
+}
+
+async function acquireCommercialIdentityLocks(client, identityIds) {
+    for (const identityId of [...new Set(identityIds.filter(Boolean).map(String))].sort()) {
+        // Keep the exact same lock namespace used by consent and commercial
+        // action writes, so a profile cannot change identity while a contact
+        // eligibility decision is being recorded.
+        await acquireCommercialContactIdentityLock(client, identityId)
+    }
+}
+
+async function assertNoCommercialIdentityHistory(client, identityIds) {
+    const ids = [...new Set(identityIds.filter(Boolean).map(String))]
+    if (!ids.length) return
+    const result = await client.query(`select
+            (select count(*)::int from crm_atendimento.commercial_actions where identity_id=any($1::uuid[])) as actions,
+            (select count(*)::int from crm_atendimento.commercial_contact_permissions where identity_id=any($1::uuid[])) as permissions,
+            (select count(*)::int from crm_atendimento.commercial_contact_permission_events where identity_id=any($1::uuid[])) as permission_events,
+            (select count(*)::int from crm_atendimento.commercial_policy_config
+                where commercial_contact_canary_identity_ids && $1::uuid[]) as canary_entries,
+            (select count(*)::int from crm_atendimento.audit_events
+                where coalesce(payload->>'identityId','')=any($1::text[])) as audit_identity_events`, [ids])
+    const row = result.rows[0] || {}
+    if (Number(row.actions || 0) || Number(row.permissions || 0) || Number(row.permission_events || 0)
+        || Number(row.canary_entries || 0) || Number(row.audit_identity_events || 0)) {
+        throw identityReviewError('IDENTITY_REVIEW_COMMERCIAL_HISTORY_PRESENT', 409)
+    }
+}
+
+async function readIdentityMembers(client, identityId, { lock = false } = {}) {
+    const result = await client.query(`select source_type,source_id from crm_atendimento.global_client_identity_members
+        where identity_id=$1::uuid order by source_type,source_id${lock ? ' for update' : ''}`, [identityId])
+    return result.rows.map((row) => ({ sourceType: row.source_type, sourceId: row.source_id }))
+}
+
+async function ensureIdentityForMember(client, { sourceType, sourceId, canonicalName, runId }) {
+    const existing = await client.query(`select identity.id::text as id, identity.canonical_name, identity.created_at
+        from crm_atendimento.global_client_identity_members member
+        join crm_atendimento.global_client_identities identity on identity.id=member.identity_id
+        where member.source_type=$1 and member.source_id=$2 for update of member, identity`, [sourceType, sourceId])
+    if (existing.rows[0]) {
+        const row = existing.rows[0]
+        return { id: row.id, canonicalName: row.canonical_name, createdAt: row.created_at, members: await readIdentityMembers(client, row.id, { lock: true }), created: false }
+    }
+    const componentKey = reviewComponentKey([{ sourceType, sourceId }])
+    // An inactive historical projection must never be silently rebound to a
+    // new source member. Retire its mutable component key and create a fresh
+    // UUID so old contact/consent evidence remains unambiguous.
+    const retired = await client.query(`select id::text from crm_atendimento.global_client_identities
+        where component_key=$1 for update`, [componentKey])
+    if (retired.rows[0]?.id) {
+        await client.query(`update crm_atendimento.global_client_identities
+            set component_key='retired:'||id::text,source_types='[]'::jsonb,updated_at=now() where id=$1::uuid`, [retired.rows[0].id])
+    }
+    const created = await client.query(`insert into crm_atendimento.global_client_identities(component_key,canonical_name,source_types)
+        values($1,$2,$3::jsonb) returning id::text,canonical_name,created_at`, [componentKey, canonicalName || 'Cliente sem nome', JSON.stringify([sourceType])])
+    const row = created.rows[0]
+    await client.query(`insert into crm_atendimento.global_client_identity_members(identity_id,source_type,source_id)
+        values($1::uuid,$2,$3)`, [row.id, sourceType, sourceId])
+    await client.query(`insert into crm_atendimento.identity_member_history(
+            materialization_run_id,source_type,source_id,previous_identity_id,next_identity_id,change_kind)
+        values($1::uuid,$2,$3,null,$4::uuid,'created')`, [runId, sourceType, sourceId, row.id])
+    return { id: row.id, canonicalName: row.canonical_name, createdAt: row.created_at, members: [{ sourceType, sourceId }], created: true }
+}
+
+async function refreshIdentityProjection(client, identityId, preferredName = '') {
+    const members = await readIdentityMembers(client, identityId, { lock: true })
+    if (!members.length) {
+        await client.query(`update crm_atendimento.global_client_identities
+            set component_key='retired:'||id::text,source_types='[]'::jsonb,updated_at=now() where id=$1::uuid`, [identityId])
+        return { members, componentKey: `retired:${identityId}` }
+    }
+    const componentKey = reviewComponentKey(members)
+    const collision = await client.query(`select id::text from crm_atendimento.global_client_identities
+        where component_key=$1 and id<>$2::uuid for update`, [componentKey, identityId])
+    if (collision.rows[0]?.id) throw identityReviewError('IDENTITY_REVIEW_COMPONENT_COLLISION', 409)
+    const sourceTypes = [...new Set(members.map((member) => member.sourceType))].sort()
+    await client.query(`update crm_atendimento.global_client_identities set component_key=$2,
+        canonical_name=case when $3<>'' then $3 else canonical_name end,source_types=$4::jsonb,updated_at=now()
+        where id=$1::uuid`, [identityId, componentKey, preferredName || '', JSON.stringify(sourceTypes)])
+    return { members, componentKey }
+}
+
+async function applyManualCanonicalMerge(client, candidate) {
+    if (candidate.reviewType !== 'attendance_name_merge') return null
+    const survivorClientId = candidate.survivorClientId
+    const sourceClientId = survivorClientId === candidate.sourceId ? candidate.targetId : candidate.sourceId
+    const result = await client.query(`select id::text,canonical_name,merged_into_id::text from crm_atendimento.canonical_clients
+        where id=any($1::uuid[]) for update`, [[sourceClientId, survivorClientId]])
+    const source = result.rows.find((row) => row.id === sourceClientId)
+    const target = result.rows.find((row) => row.id === survivorClientId)
+    if (!source || !target || source.merged_into_id || target.merged_into_id) {
+        throw identityReviewError('IDENTITY_REVIEW_CANONICAL_MERGE_NOT_ACTIONABLE', 409)
+    }
+    const dependent = await client.query(`select id from crm_atendimento.canonical_clients where merged_into_id=$1::uuid limit 1 for update`, [sourceClientId])
+    if (dependent.rows[0]?.id) throw identityReviewError('IDENTITY_REVIEW_CANONICAL_MERGE_DEPENDENT', 409)
+    await client.query(`update crm_atendimento.canonical_clients set merged_into_id=$2::uuid,updated_at=now() where id=$1::uuid`, [sourceClientId, survivorClientId])
+    return { sourceClientId, survivorClientId, survivorName: target.canonical_name || '' }
+}
+
+async function reverseManualCanonicalMerge(client, merge) {
+    if (!merge?.sourceClientId || !merge?.survivorClientId) return
+    const result = await client.query(`select id::text,merged_into_id::text from crm_atendimento.canonical_clients
+        where id=any($1::uuid[]) for update`, [[merge.sourceClientId, merge.survivorClientId]])
+    const source = result.rows.find((row) => row.id === merge.sourceClientId)
+    if (!source || source.merged_into_id !== merge.survivorClientId) {
+        throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENCY_CHANGED', 409)
+    }
+    const dependent = await client.query(`select id from crm_atendimento.canonical_clients
+        where merged_into_id=$1::uuid limit 1 for update`, [merge.sourceClientId])
+    if (dependent.rows[0]?.id) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENT_CANONICAL_MERGE', 409)
+    await client.query(`update crm_atendimento.canonical_clients set merged_into_id=null,updated_at=now() where id=$1::uuid`, [merge.sourceClientId])
+}
+
+function preferredGlobalIdentity(identities, candidate) {
+    if (candidate.survivorClientId) {
+        const explicit = identities.find((identity) => identity.members.some((member) =>
+            member.sourceType === 'attendance_client' && member.sourceId === candidate.survivorClientId))
+        if (explicit) return explicit
+    }
+    return chooseIdentitySurvivor(identities)
+}
+
+async function insertIdentityMemberHistory(client, { runId, member, previousIdentityId, nextIdentityId, changeKind }) {
+    await client.query(`insert into crm_atendimento.identity_member_history(
+            materialization_run_id,source_type,source_id,previous_identity_id,next_identity_id,change_kind)
+        values($1::uuid,$2,$3,$4::uuid,$5::uuid,$6)`, [runId, member.sourceType, member.sourceId,
+        previousIdentityId || null, nextIdentityId || null, changeKind])
+}
+
+async function materializeIdentityReviewConfirmation(client, { candidate, actor }) {
+    const inputFingerprint = identityMaterializationFingerprint({
+        reviewType: candidate.reviewType, sourceId: candidate.sourceId, targetId: candidate.targetId,
+        sourceVersion: candidate.version, survivorClientId: candidate.survivorClientId,
+    })
+    const run = await createIdentityMaterializationRun(client, {
+        mode: 'confirm', status: 'applied', inputFingerprint, actor,
+    })
+    const sourceIdentity = await ensureIdentityForMember(client, {
+        sourceType: candidate.sourceType, sourceId: candidate.sourceId, canonicalName: candidate.sourceName, runId: run.id,
+    })
+    const targetIdentity = await ensureIdentityForMember(client, {
+        sourceType: candidate.targetType, sourceId: candidate.targetId, canonicalName: candidate.targetName, runId: run.id,
+    })
+    const before = identityMaterializationFingerprint({ source: sourceIdentity, target: targetIdentity })
+    const identities = sourceIdentity.id === targetIdentity.id ? [sourceIdentity] : [sourceIdentity, targetIdentity]
+    let manualCanonicalMerge = null
+    let survivor = preferredGlobalIdentity(identities, candidate)
+    let loser = null
+    const movedMembers = []
+    if (sourceIdentity.id !== targetIdentity.id) {
+        await acquireCommercialIdentityLocks(client, [sourceIdentity.id, targetIdentity.id])
+        await assertNoCommercialIdentityHistory(client, [sourceIdentity.id, targetIdentity.id])
+        manualCanonicalMerge = candidate.reviewType === 'attendance_name_merge'
+            ? await applyManualCanonicalMerge(client, candidate)
+            : null
+        loser = identities.find((identity) => identity.id !== survivor.id)
+        for (const member of loser.members) {
+            await client.query(`update crm_atendimento.global_client_identity_members set identity_id=$3::uuid,updated_at=now()
+                where source_type=$1 and source_id=$2 and identity_id=$4::uuid`, [member.sourceType, member.sourceId, survivor.id, loser.id])
+            await insertIdentityMemberHistory(client, {
+                runId: run.id, member, previousIdentityId: loser.id, nextIdentityId: survivor.id, changeKind: 'moved',
+            })
+            movedMembers.push(member)
+        }
+        await client.query(`insert into crm_atendimento.identity_lineage(
+                materialization_run_id,predecessor_identity_id,successor_identity_id,relation)
+            values($1::uuid,$2::uuid,$3::uuid,'merged_into'),($1::uuid,$3::uuid,$3::uuid,'retained')`, [run.id, loser.id, survivor.id])
+    }
+    if (sourceIdentity.id === targetIdentity.id && candidate.reviewType === 'attendance_name_merge') {
+        await acquireCommercialIdentityLocks(client, [sourceIdentity.id])
+        await assertNoCommercialIdentityHistory(client, [sourceIdentity.id])
+        manualCanonicalMerge = await applyManualCanonicalMerge(client, candidate)
+    }
+    const preferredName = manualCanonicalMerge?.survivorName || survivor.canonicalName || candidate.sourceName || candidate.targetName
+    const survivorProjection = await refreshIdentityProjection(client, survivor.id, preferredName)
+    const loserProjection = loser ? await refreshIdentityProjection(client, loser.id) : null
+    const summary = {
+        sourceIdentityId: sourceIdentity.id,
+        targetIdentityId: targetIdentity.id,
+        survivorIdentityId: survivor.id,
+        retiredIdentityId: loser?.id || null,
+        createdIdentityIds: identities.filter((identity) => identity.created).map((identity) => identity.id),
+        membersMoved: movedMembers.length,
+        survivorComponentKey: survivorProjection.componentKey,
+        retiredComponentKey: loserProjection?.componentKey || null,
+        manualCanonicalMerge,
+    }
+    await client.query(`update crm_atendimento.identity_materialization_runs set previous_fingerprint=$2,summary=$3::jsonb where id=$1::uuid`,
+        [run.id, before, JSON.stringify(summary)])
+    return { ...run, summary }
+}
+
+async function materializeIdentityReviewReversal(client, { candidate, reversesDecision, actor }) {
+    const originalRunId = String(reversesDecision.materialization_run_id || '').trim()
+    if (!originalRunId) throw identityReviewError('IDENTITY_REVIEW_UNDO_NOT_MATERIALIZED', 409)
+    const originalRun = await client.query(`select id::text,status,summary from crm_atendimento.identity_materialization_runs
+        where id=$1::uuid for update`, [originalRunId])
+    if (originalRun.rows[0]?.status !== 'applied') throw identityReviewError('IDENTITY_REVIEW_UNDO_NOT_MATERIALIZED', 409)
+    const history = await client.query(`select event_order,source_type,source_id,previous_identity_id::text,next_identity_id::text,change_kind
+        from crm_atendimento.identity_member_history where materialization_run_id=$1::uuid
+        order by event_order desc for update`, [originalRunId])
+    const originalSummary = originalRun.rows[0]?.summary || {}
+    const identityIds = [...new Set([
+        ...history.rows.flatMap((row) => [row.previous_identity_id, row.next_identity_id]),
+        originalSummary.sourceIdentityId,
+        originalSummary.targetIdentityId,
+        originalSummary.survivorIdentityId,
+        originalSummary.retiredIdentityId,
+    ].filter(Boolean))]
+    await acquireCommercialIdentityLocks(client, identityIds)
+    await assertNoCommercialIdentityHistory(client, identityIds)
+    const inputFingerprint = identityMaterializationFingerprint({ reverse: originalRunId, sourceVersion: candidate.version })
+    const run = await createIdentityMaterializationRun(client, {
+        mode: 'reverse', status: 'applied', inputFingerprint,
+        previousFingerprint: originalRunId, actor,
+    })
+    for (const row of history.rows) {
+        if (row.change_kind === 'moved') {
+            const restored = await client.query(`update crm_atendimento.global_client_identity_members set identity_id=$3::uuid,updated_at=now()
+                where source_type=$1 and source_id=$2 and identity_id=$4::uuid`, [row.source_type, row.source_id, row.previous_identity_id, row.next_identity_id])
+            if (restored.rowCount !== 1) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENCY_CHANGED', 409)
+            await insertIdentityMemberHistory(client, {
+                runId: run.id, member: { sourceType: row.source_type, sourceId: row.source_id },
+                previousIdentityId: row.next_identity_id, nextIdentityId: row.previous_identity_id, changeKind: 'restored',
+            })
+            await client.query(`insert into crm_atendimento.identity_lineage(
+                materialization_run_id,predecessor_identity_id,successor_identity_id,relation)
+                values($1::uuid,$2::uuid,$3::uuid,'split_from')`, [run.id, row.next_identity_id, row.previous_identity_id])
+        } else if (row.change_kind === 'created') {
+            const removed = await client.query(`delete from crm_atendimento.global_client_identity_members
+                where source_type=$1 and source_id=$2 and identity_id=$3::uuid`, [row.source_type, row.source_id, row.next_identity_id])
+            if (removed.rowCount !== 1) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENCY_CHANGED', 409)
+            await insertIdentityMemberHistory(client, {
+                runId: run.id, member: { sourceType: row.source_type, sourceId: row.source_id },
+                previousIdentityId: row.next_identity_id, nextIdentityId: null, changeKind: 'restored',
+            })
+        }
+    }
+    await reverseManualCanonicalMerge(client, originalSummary.manualCanonicalMerge)
+    for (const identityId of identityIds) await refreshIdentityProjection(client, identityId)
+    const summary = { reversesRunId: originalRunId, restoredMembers: history.rows.length, manualCanonicalMergeReversed: !!originalSummary.manualCanonicalMerge }
+    await updateIdentityMaterializationRun(client, run.id, summary)
+    return { ...run, summary }
 }
 
 export function createAtendimentoStore(options = {}) {
@@ -3429,15 +4680,44 @@ export function createAtendimentoStore(options = {}) {
             }
         },
 
+        async commercialReferences(actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const [units, professionals, procedures] = await Promise.all([
+                pgPool.query(`select slug, name from crm_atendimento.units order by name`),
+                readProfessionalIdentityRows(pgPool),
+                pgPool.query(
+                    `select p.id, p.name, p.aliases, coalesce(json_agg(c.code order by c.code) filter (where c.code is not null), '[]'::json) as codes
+                     from crm_atendimento.procedures p
+                     left join crm_atendimento.procedure_price_codes c on c.procedure_id = p.id and c.allowed = true
+                     group by p.id, p.name, p.aliases
+                     order by p.name`,
+                ),
+            ])
+            const visibleUnits = commercialUnitRowsForActor(units.rows, actor)
+                .map((row) => ({ slug: row.slug, name: row.name }))
+            const visibleProfessionals = professionals.filter((row) => professionalMatchesCommercialUnitScope(row, actor))
+            return {
+                units: visibleUnits,
+                professionals: consolidateProfessionalReferences(visibleProfessionals, false),
+                actorConsultantByUnit: actorConsultantReferenceByUnit(actor, visibleUnits, professionals),
+                procedures: procedures.rows.map((row) => ({
+                    id: row.id,
+                    name: row.name,
+                    aliases: Array.isArray(row.aliases) ? row.aliases : [],
+                    codes: Array.isArray(row.codes) ? row.codes : [],
+                })),
+            }
+        },
+
         async commercialOffers(query, actor) {
             await ensureReady()
             const where = []
             const params = []
-            applyActorUnitFilter(where, params, actor)
-            const unit = String(query?.unit || '').trim()
-            if (unit && unit !== 'all') {
-                params.push(normalizeUnit(unit).slug)
-                where.push(`u.slug = $${params.length}`)
+            const unitSlugs = commercialUnitSlugsForQuery(actor, query?.unit)
+            if (unitSlugs !== null) {
+                params.push(unitSlugs)
+                where.push(`u.slug = any($${params.length}::text[])`)
             }
             const status = String(query?.status || '').trim().toLowerCase()
             if (status && status !== 'all') {
@@ -3456,6 +4736,7 @@ export function createAtendimentoStore(options = {}) {
             const normalized = normalizeCommercialOfferPayload(payload)
             const unitSlug = normalizeUnit(payload?.unitSlug || '').slug
             if (!unitSlug) throw commercialOfferError('UNIT_REQUIRED')
+            assertCommercialUnitInScope(actor, unitSlug)
             return withPgTransaction(pgPool, async (client) => {
                 const unit = await client.query(
                     `select id, slug from crm_atendimento.units where slug = $1 limit 1`,
@@ -3542,34 +4823,65 @@ export function createAtendimentoStore(options = {}) {
             assertCommercialManager(actor)
             await assertCommercialIdentitySource(pgPool)
             const asOf = commercialAsOf(query?.asOf)
+            const unitSlugs = commercialUnitSlugsForQuery(actor, query?.unit)
             const [policy, commercialContactAvailability] = await Promise.all([
                 readCommercialPolicy(pgPool),
                 readCommercialContactAvailability(pgPool),
             ])
             const profiles = await queryCommercialProfiles(pgPool, {
                 asOf,
-                unitSlug: commercialUnit(query?.unit),
+                unitSlugs,
                 thresholds: policy.returnRiskThresholds,
             })
             const filtered = filterCommercialProfiles(profiles, query)
             const limit = sanitizeLimit(query?.limit, 100, 250)
             const offset = sanitizeOffset(query?.offset, 0)
             const [quality, mappedItems, allItems, actions, unlinkedAttendance, identityFreshness] = await Promise.all([
-                pgPool.query(`select count(*)::int as future_attendances from crm_atendimento.attendances where deleted_at is null and service_date > $1::date`, [asOf]),
-                pgPool.query(`select count(*)::int as count from crm_caixa.sale_items where mapping_status = 'mapped'`),
-                pgPool.query(`select count(*)::int as count from crm_caixa.sale_items`),
-                queryCommercialActionMetrics(pgPool, commercialContactAvailability),
+                pgPool.query(
+                    `select count(*)::int as future_attendances
+                     from crm_atendimento.attendances attendance
+                     join crm_atendimento.units unit on unit.id = attendance.unit_id
+                     where attendance.deleted_at is null and attendance.service_date > $1::date
+                       and ($2::text[] is null or unit.slug = any($2::text[]))`,
+                    [asOf, unitSlugs],
+                ),
+                pgPool.query(
+                    `select count(*)::int as count
+                     from crm_caixa.sale_items item
+                     join crm_caixa.sales sale on sale.id = item.sale_id
+                     join crm_atendimento.units unit on unit.id = sale.unit_id
+                     where item.mapping_status = 'mapped'
+                       and ($1::text[] is null or unit.slug = any($1::text[]))`,
+                    [unitSlugs],
+                ),
+                pgPool.query(
+                    `select count(*)::int as count
+                     from crm_caixa.sale_items item
+                     join crm_caixa.sales sale on sale.id = item.sale_id
+                     join crm_atendimento.units unit on unit.id = sale.unit_id
+                     where $1::text[] is null or unit.slug = any($1::text[])`,
+                    [unitSlugs],
+                ),
+                queryCommercialActionMetrics(pgPool, commercialContactAvailability, unitSlugs),
                 pgPool.query(
                     `select count(distinct canonical.id)::int as count
                      from crm_atendimento.canonical_clients canonical
                      where canonical.merged_into_id is null
-                       and exists (select 1 from crm_atendimento.attendance_client_links link where link.client_id = canonical.id)
+                       and exists (
+                           select 1 from crm_atendimento.attendance_client_links link
+                           join crm_atendimento.attendances attendance on attendance.id = link.attendance_id
+                           join crm_atendimento.units unit on unit.id = attendance.unit_id
+                           where link.client_id = canonical.id and attendance.deleted_at is null
+                             and ($1::text[] is null or unit.slug = any($1::text[]))
+                       )
                        and not exists (
                            select 1 from crm_atendimento.global_client_identity_members member
                            where member.source_type = 'attendance_client' and member.source_id = canonical.id::text
-                       )`,
+                       )`, [unitSlugs],
                 ),
-                pgPool.query(`select max(updated_at) as updated_at from crm_atendimento.global_client_identities`),
+                profiles.length
+                    ? pgPool.query(`select max(updated_at) as updated_at from crm_atendimento.global_client_identities where id = any($1::uuid[])`, [profiles.map((profile) => profile.identityId)])
+                    : Promise.resolve({ rows: [] }),
             ])
             const contactEligibility = profiles.reduce((summary, profile) => {
                 const status = profile.contactEligibility?.status || 'review_required'
@@ -3588,7 +4900,7 @@ export function createAtendimentoStore(options = {}) {
             })
             return {
                 asOf,
-                policy,
+                policy: commercialPolicyForActor(policy, actor),
                 summary: summarizeCommercialProfiles(profiles),
                 actions,
                 coverage: {
@@ -3609,7 +4921,7 @@ export function createAtendimentoStore(options = {}) {
                 total: filtered.length,
                 limit,
                 offset,
-                profiles: filtered.slice(offset, offset + limit),
+                profiles: filtered.slice(offset, offset + limit).map(minimizeCommercialProfile),
             }
         },
 
@@ -3617,7 +4929,156 @@ export function createAtendimentoStore(options = {}) {
             await ensureReady()
             assertCommercialManager(actor)
             await assertIdentityReviewSource(pgPool)
-            return queryIdentityReviewQueue(pgPool, query)
+            const workflow = await identityReviewWorkflowStatus(pgPool)
+            const unitSlugs = commercialUnitSlugsForQuery(actor)
+            return {
+                ...(await queryIdentityReviewQueue(pgPool, query, { workflowReady: workflow.ready, unitSlugs })),
+                workflow: { writesReady: workflow.ready },
+            }
+        },
+
+        async decideIdentityReview(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            await assertIdentityReviewWorkflowReady(pgPool)
+            const normalized = normalizeIdentityReviewDecision(payload || {})
+            return withPgTransaction(pgPool, async (client) => {
+                await acquireIdentityReviewLocks(client, {
+                    ...normalized,
+                    ...IDENTITY_REVIEW_DEFINITIONS[normalized.reviewType],
+                })
+                await assertIdentityReviewWorkflowReady(client)
+                const candidate = await readIdentityReviewCandidate(client, normalized)
+                await assertCommercialReviewCandidateScope(client, actor, candidate)
+                assertIdentityReviewCandidateVersion(candidate, normalized.expectedVersion)
+                const latest = await readLatestIdentityReviewDecision(client, candidate)
+                assertNoCurrentIdentityReviewDecision(latest, candidate)
+                const sourceState = await writeIdentityReviewSourceStatus(client, candidate, normalized.decision, actor)
+                let materialization
+                if (normalized.decision === 'confirmed') {
+                    materialization = await materializeIdentityReviewConfirmation(client, {
+                        candidate, actor,
+                    })
+                    const sourceLinkTransitions = await recordIdentityReviewSourceLinkTransition(client, {
+                        materializationRunId: materialization.id,
+                        candidate,
+                        previousStatus: candidate.rawStatus,
+                        resultingStatus: sourceState.rawStatus,
+                        origin: 'manager_identity_review',
+                    })
+                    const decision = await createIdentityReviewDecision(client, {
+                        candidate, decision: normalized.decision, reason: normalized.reason, actor,
+                        materializationRunId: materialization.id, resultingStatus: sourceState.rawStatus,
+                        sourceVersion: sourceState.version,
+                        sourceSnapshot: {
+                            survivorClientId: normalized.survivorClientId,
+                            previousSourceVersion: candidate.version,
+                        },
+                    })
+                    await audit(client, 'client-identity.review.confirmed', actor, null, {
+                        reviewType: candidate.reviewType,
+                        sourceId: candidate.sourceId,
+                        targetId: candidate.targetId,
+                        decisionId: decision.id,
+                        materializationRunId: materialization.id,
+                        membersMoved: materialization.summary.membersMoved,
+                        sourceLinkTransitions: sourceLinkTransitions.length,
+                    })
+                    return { decision: { id: decision.id, state: 'confirmed', sourceVersion: sourceState.version }, materialization }
+                }
+                materialization = await createIdentityMaterializationRun(client, {
+                    mode: 'reject', status: 'not_applicable',
+                    inputFingerprint: identityMaterializationFingerprint({
+                        reviewType: candidate.reviewType, sourceId: candidate.sourceId, targetId: candidate.targetId,
+                        sourceVersion: candidate.version, decision: normalized.decision,
+                    }),
+                    summary: { reason: 'rejected_without_graph_mutation' }, actor,
+                })
+                const sourceLinkTransitions = await recordIdentityReviewSourceLinkTransition(client, {
+                    materializationRunId: materialization.id,
+                    candidate,
+                    previousStatus: candidate.rawStatus,
+                    resultingStatus: sourceState.rawStatus,
+                    origin: 'manager_identity_review',
+                })
+                const decision = await createIdentityReviewDecision(client, {
+                    candidate, decision: normalized.decision, reason: normalized.reason, actor,
+                    materializationRunId: materialization.id, resultingStatus: sourceState.rawStatus,
+                    sourceVersion: sourceState.version,
+                    sourceSnapshot: { previousSourceVersion: candidate.version },
+                })
+                await audit(client, 'client-identity.review.rejected', actor, null, {
+                    reviewType: candidate.reviewType,
+                    sourceId: candidate.sourceId,
+                    targetId: candidate.targetId,
+                    decisionId: decision.id,
+                    materializationRunId: materialization.id,
+                    sourceLinkTransitions: sourceLinkTransitions.length,
+                })
+                return { decision: { id: decision.id, state: 'rejected', sourceVersion: sourceState.version }, materialization }
+            })
+        },
+
+        async undoIdentityReviewDecision(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            await assertIdentityReviewWorkflowReady(pgPool)
+            const normalized = normalizeIdentityReviewUndo(payload || {})
+            return withPgTransaction(pgPool, async (client) => {
+                await acquireIdentityReviewLocks(client, {
+                    ...normalized,
+                    ...IDENTITY_REVIEW_DEFINITIONS[normalized.reviewType],
+                })
+                await assertIdentityReviewWorkflowReady(client)
+                const candidate = await readIdentityReviewCandidate(client, normalized)
+                await assertCommercialReviewCandidateScope(client, actor, candidate)
+                const latest = await readLatestIdentityReviewDecision(client, candidate)
+                if (!latest || latest.decision === 'reversed') throw identityReviewError('IDENTITY_REVIEW_NOT_DECIDED', 409)
+                assertIdentityReviewUndoCandidateVersion(candidate, normalized.expectedVersion, latest)
+                await assertNoDependentIdentityReviewDecision(client, latest, candidate)
+                // A source refresh may update evidence while retaining the human
+                // terminal status.  It cannot silently re-materialize the graph,
+                // but a manager may explicitly undo that stale decision before
+                // making a fresh one with the new evidence.
+                const sourceState = await writeIdentityReviewSourceStatus(client, candidate, latest.source_status, actor)
+                let materialization
+                if (latest.decision === 'confirmed') {
+                    materialization = await materializeIdentityReviewReversal(client, {
+                        candidate, reversesDecision: latest, actor,
+                    })
+                } else {
+                    materialization = await createIdentityMaterializationRun(client, {
+                        mode: 'reverse', status: 'not_applicable',
+                        inputFingerprint: identityMaterializationFingerprint({ reversesDecisionId: latest.id, sourceVersion: candidate.version }),
+                        summary: { reversesDecisionId: latest.id, reason: 'rejected_without_graph_mutation' }, actor,
+                    })
+                }
+                const sourceLinkTransitions = await recordIdentityReviewSourceLinkTransition(client, {
+                    materializationRunId: materialization.id,
+                    candidate,
+                    previousStatus: candidate.rawStatus,
+                    resultingStatus: sourceState.rawStatus,
+                    origin: 'manager_identity_review_undo',
+                })
+                const reversal = await createIdentityReviewDecision(client, {
+                    candidate, decision: 'reversed', reason: normalized.reason, actor,
+                    materializationRunId: materialization.id, resultingStatus: sourceState.rawStatus,
+                    sourceVersion: sourceState.version,
+                    sourceSnapshot: { reversesDecisionId: latest.id, previousSourceVersion: candidate.version },
+                })
+                await audit(client, 'client-identity.review.reversed', actor, null, {
+                    reviewType: candidate.reviewType,
+                    sourceId: candidate.sourceId,
+                    targetId: candidate.targetId,
+                    decisionId: reversal.id,
+                    reversesDecisionId: latest.id,
+                    materializationRunId: materialization.id,
+                    sourceLinkTransitions: sourceLinkTransitions.length,
+                })
+                return { decision: { id: reversal.id, state: 'reversed', sourceVersion: sourceState.version, reversesDecisionId: latest.id }, materialization }
+            })
         },
 
         async commercialProfile(identityId, query, actor) {
@@ -3631,10 +5092,11 @@ export function createAtendimentoStore(options = {}) {
                 throw error
             }
             const asOf = commercialAsOf(query?.asOf)
+            const unitSlugs = commercialUnitSlugsForQuery(actor, query?.unit)
             const policy = await readCommercialPolicy(pgPool)
             const profiles = await queryCommercialProfiles(pgPool, {
                 asOf,
-                unitSlug: commercialUnit(query?.unit),
+                unitSlugs,
                 thresholds: policy.returnRiskThresholds,
             })
             const profile = profiles.find((item) => item.identityId === id)
@@ -3648,8 +5110,10 @@ export function createAtendimentoStore(options = {}) {
                     `select action.*, unit.slug as unit_slug, unit.name as unit_name
                      from crm_atendimento.commercial_actions action
                      left join crm_atendimento.units unit on unit.id = action.unit_id
-                     where action.identity_id = $1 order by action.created_at desc limit 100`,
-                    [id],
+                     where action.identity_id = $1
+                       and ($2::text[] is null or unit.slug = any($2::text[]))
+                     order by action.created_at desc limit 100`,
+                    [id, unitSlugs],
                 ),
                 pgPool.query(
                     `select procedure.id, procedure.name, cadence.cadence_days, cadence.status, cadence.notes,
@@ -3659,14 +5123,15 @@ export function createAtendimentoStore(options = {}) {
                         on cadence.procedure_id = procedure.id and cadence.status = 'approved'
                      left join crm_atendimento.units unit on unit.id = cadence.unit_id
                      where procedure.name = any($1::text[])
+                       and ($2::text[] is null or unit.slug is null or unit.slug = any($2::text[]))
                      order by procedure.name`,
-                    [profile.completedProcedures],
+                    [profile.completedProcedures, unitSlugs],
                 ),
             ])
             return {
                 asOf,
-                policy,
-                profile,
+                policy: commercialPolicyForActor(policy, actor),
+                profile: minimizeCommercialProfile(profile),
                 actions: actions.rows.map(mapCommercialAction),
                 clinicalCadences: cadences.rows.map((row) => ({
                     procedureId: row.id,
@@ -3685,6 +5150,9 @@ export function createAtendimentoStore(options = {}) {
         async recordCommercialContactPermission(payload, actor) {
             await ensureReady()
             assertCommercialManager(actor)
+            // Consent is identity-wide, not unit-bound.  A scoped manager
+            // must not change a customer's permission for another unit.
+            assertCommercialGlobalScope(actor)
             await assertCommercialIdentitySource(pgPool)
             await assertCommercialContactControls(pgPool)
             const actorIdentity = actorIdentityForMutation(actor)
@@ -3700,6 +5168,14 @@ export function createAtendimentoStore(options = {}) {
                 throw commercialContactError('INVALID_COMMERCIAL_CONTACT_PERMISSION', 400)
             }
             const permission = validation.permission
+            const expectedRevision = commercialExpectedPermissionRevision(payload?.expectedRevision)
+            // A stale affirmative consent must never reopen a contact channel
+            // after a newer denial. Denials may still be recorded without a
+            // version as a fail-closed stop action, but the UI always sends the
+            // revision it rendered for both directions.
+            if (permission.status === 'granted' && expectedRevision === null) {
+                throw commercialContactError('COMMERCIAL_CONTACT_PERMISSION_VERSION_REQUIRED', 409)
+            }
             if (permission.status === 'granted') await assertCommercialContactCooldownControls(pgPool)
             return withCommercialContactTransaction(pgPool, async (client) => {
                 // The same transaction-scoped lock is acquired when an action is
@@ -3718,12 +5194,17 @@ export function createAtendimentoStore(options = {}) {
                     await assertCommercialContactWriteRollout(client, identityId)
                 }
                 const previous = await client.query(
-                    `select status from crm_atendimento.commercial_contact_permissions
+                    `select status, revision from crm_atendimento.commercial_contact_permissions
                      where identity_id = $1 and channel = $2 for update`,
                     [identityId, channel],
                 )
                 const previousStatus = previous.rows[0]?.status || null
-                await client.query(
+                const previousRevision = Number(previous.rows[0]?.revision || 0)
+                if (expectedRevision !== null && previousRevision !== expectedRevision) {
+                    throw commercialContactError('COMMERCIAL_CONTACT_PERMISSION_CONFLICT')
+                }
+                const traceId = randomUUID()
+                const persisted = await client.query(
                     `insert into crm_atendimento.commercial_contact_permissions(
                         identity_id, channel, status, evidence_source, evidence_reference, expires_at, recorded_by)
                      values ($1,$2,$3,$4,$5,$6,$7)
@@ -3732,21 +5213,26 @@ export function createAtendimentoStore(options = {}) {
                         evidence_reference = excluded.evidence_reference, expires_at = excluded.expires_at,
                         recorded_by = excluded.recorded_by,
                         revision = crm_atendimento.commercial_contact_permissions.revision + 1,
-                        updated_at = now()`,
+                        updated_at = now()
+                     returning revision`,
                     [identityId, channel, permission.status, permission.source, permission.evidenceReference, permission.expiresAt, actorIdentity],
                 )
+                const nextRevision = Number(persisted.rows[0]?.revision || (previousRevision + 1))
                 await client.query(
                     `insert into crm_atendimento.commercial_contact_permission_events(
-                        identity_id, channel, previous_status, status, evidence_source, evidence_reference, expires_at, recorded_by)
-                     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-                    [identityId, channel, previousStatus, permission.status, permission.source, permission.evidenceReference, permission.expiresAt, actorIdentity],
+                        identity_id, channel, previous_status, status, evidence_source, evidence_reference, expires_at, recorded_by, trace_id)
+                     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                    [identityId, channel, previousStatus, permission.status, permission.source, permission.evidenceReference, permission.expiresAt, actorIdentity, traceId],
                 )
                 const contactEligibility = await readCommercialContactEligibility(client, identityId)
                 await audit(client, 'commercial.contact_permission.recorded', actor, null, {
+                    traceId,
                     identityId,
                     channel,
                     status: permission.status,
                     previousStatus,
+                    previousRevision,
+                    nextRevision,
                     evidenceSource: permission.source,
                     evidenceReferenceRecorded: true,
                     expiresAt: permission.expiresAt,
@@ -3761,12 +5247,14 @@ export function createAtendimentoStore(options = {}) {
         async commercialPolicy(actor) {
             await ensureReady()
             assertCommercialManager(actor)
+            assertCommercialGlobalScope(actor)
             return { policy: await readCommercialPolicy(pgPool) }
         },
 
         async updateCommercialPolicy(payload, actor) {
             await ensureReady()
             assertCommercialManager(actor)
+            assertCommercialGlobalScope(actor)
             const cooldown = Number(payload?.activeContactCooldownDays)
             if (!Number.isInteger(cooldown) || cooldown < 1 || cooldown > 180) {
                 const error = new Error('INVALID_ACTIVE_CONTACT_COOLDOWN')
@@ -3777,6 +5265,10 @@ export function createAtendimentoStore(options = {}) {
             const requestedWritesEnabled = commercialContactWritesEnabled(payload?.commercialContactWritesEnabled)
             const requestedCanaryIdentityIds = commercialCanaryIdentityIds(payload?.commercialContactCanaryIdentityIds)
             const expectedPolicyVersion = commercialExpectedPolicyVersion(payload?.expectedPolicyVersion)
+            // Policy changes control an outbound-contact rollout. Every write
+            // is compare-and-swap, including legacy-only cooldown changes, so
+            // a stale manager form cannot silently replace a newer decision.
+            if (!expectedPolicyVersion) throw commercialContactError('COMMERCIAL_POLICY_VERSION_REQUIRED', 409)
             const changesRollout = requestedWritesEnabled !== undefined || requestedCanaryIdentityIds !== undefined
             const availability = await readCommercialContactAvailability(pgPool)
             if (changesRollout && !availability.contactWriteControlsReady) {
@@ -3788,7 +5280,7 @@ export function createAtendimentoStore(options = {}) {
                         `select ${LEGACY_COMMERCIAL_POLICY_VERSION_SQL} as policy_version
                          from crm_atendimento.commercial_policy_config where singleton = true for update`,
                     )
-                    if (expectedPolicyVersion && current.rows[0]?.policy_version !== expectedPolicyVersion) {
+                    if (current.rows[0]?.policy_version !== expectedPolicyVersion) {
                         throw commercialContactError('COMMERCIAL_POLICY_CONFLICT')
                     }
                     const legacy = await client.query(
@@ -3825,7 +5317,7 @@ export function createAtendimentoStore(options = {}) {
                      from crm_atendimento.commercial_policy_config where singleton = true for update`,
                 )
                 const currentRow = current.rows[0] || {}
-                if (expectedPolicyVersion && currentRow.policy_version !== expectedPolicyVersion) {
+                if (currentRow.policy_version !== expectedPolicyVersion) {
                     throw commercialContactError('COMMERCIAL_POLICY_CONFLICT')
                 }
                 const writesEnabled = requestedWritesEnabled === undefined
@@ -3877,6 +5369,7 @@ export function createAtendimentoStore(options = {}) {
         async commercialCadences(actor) {
             await ensureReady()
             assertCommercialManager(actor)
+            const unitSlugs = commercialUnitSlugsForQuery(actor)
             const result = await pgPool.query(
                 `select cadence.id, cadence.procedure_id, procedure.name as procedure_name, cadence.cadence_days, cadence.status,
                         cadence.notes, cadence.approved_by, cadence.approved_at, cadence.updated_by, cadence.updated_at,
@@ -3884,7 +5377,9 @@ export function createAtendimentoStore(options = {}) {
                  from crm_atendimento.commercial_procedure_cadences cadence
                  join crm_atendimento.procedures procedure on procedure.id = cadence.procedure_id
                  left join crm_atendimento.units unit on unit.id = cadence.unit_id
+                 where $1::text[] is null or unit.slug = any($1::text[])
                  order by procedure.name, unit.name nulls first`,
+                [unitSlugs],
             )
             return { cadences: result.rows.map((row) => ({
                 id: row.id, procedureId: row.procedure_id, procedureName: row.procedure_name,
@@ -3901,38 +5396,53 @@ export function createAtendimentoStore(options = {}) {
             const procedureId = String(payload?.procedureId || '').trim()
             const status = String(payload?.status || 'draft').trim()
             const cadenceDays = Number(payload?.cadenceDays)
-            if (!procedureId || !['draft', 'approved', 'disabled'].includes(status) || !Number.isInteger(cadenceDays) || cadenceDays < 1 || cadenceDays > 1095) {
+            if (!procedureId || !COMMERCIAL_CADENCE_STATUSES.has(status) || !Number.isInteger(cadenceDays) || cadenceDays < 1 || cadenceDays > 1095) {
                 const error = new Error('INVALID_CLINICAL_CADENCE')
                 error.statusCode = 400
                 throw error
             }
+            // Clientes has no verified clinical approver or attestation contract.
+            // A commercial manager may maintain drafts, but never create or
+            // re-approve a cadence that the UI could present as clinical advice.
+            if (status === 'approved') throw clinicalCadenceApprovalRequired()
             const unitSlug = commercialUnit(payload?.unit)
+            if (commercialUnitScope(actor) !== null) assertCommercialUnitInScope(actor, unitSlug)
             const unit = unitSlug ? await pgPool.query(`select id from crm_atendimento.units where slug = $1`, [unitSlug]) : { rows: [] }
             if (unitSlug && !unit.rows[0]?.id) {
                 const error = new Error('COMMERCIAL_UNIT_NOT_FOUND')
                 error.statusCode = 404
                 throw error
             }
+            // Preserve legacy approved records as read-only. `is not distinct
+            // from` also covers the global (null unit) legacy records.
+            const existing = await pgPool.query(
+                `select id, status from crm_atendimento.commercial_procedure_cadences
+                 where procedure_id = $1 and unit_id is not distinct from $2`,
+                [procedureId, unit.rows[0]?.id || null],
+            )
+            if (existing.rows.some((row) => row.status === 'approved')) throw clinicalCadenceApprovalRequired()
             const result = await pgPool.query(
                 `insert into crm_atendimento.commercial_procedure_cadences(
                     procedure_id, unit_id, cadence_days, status, notes, approved_by, approved_at, updated_by)
-                 values ($1, $2, $3, $4, $5, $6, case when $4 = 'approved' then now() else null end, $6)
+                 values ($1, $2, $3, $4, $5, null, null, $6)
                  on conflict(procedure_id, unit_id) do update set cadence_days = excluded.cadence_days, status = excluded.status,
-                    notes = excluded.notes, approved_by = case when excluded.status = 'approved' then excluded.approved_by else null end,
-                    approved_at = case when excluded.status = 'approved' then now() else null end,
+                    notes = excluded.notes, approved_by = null, approved_at = null,
                     updated_by = excluded.updated_by, updated_at = now()
+                 where crm_atendimento.commercial_procedure_cadences.status <> 'approved'
                  returning id`,
                 [procedureId, unit.rows[0]?.id || null, cadenceDays, status, String(payload?.notes || '').trim() || null, actorLabel(actor)],
             )
-            await audit(pgPool, 'commercial.cadence.upserted', actor, null, { cadenceId: result.rows[0]?.id, procedureId, unitSlug, status, cadenceDays })
-            return { id: result.rows[0]?.id }
+            const cadenceId = result.rows[0]?.id
+            // The conditional update is an atomic backstop if a clinical flow
+            // ever approves the same scoped row after the read above.
+            if (!cadenceId) throw clinicalCadenceApprovalRequired()
+            await audit(pgPool, 'commercial.cadence.upserted', actor, null, { cadenceId, procedureId, unitSlug, status, cadenceDays })
+            return { id: cadenceId }
         },
 
         async createCommercialAction(payload, actor) {
             await ensureReady()
             assertCommercialManager(actor)
-            await assertCommercialIdentitySource(pgPool)
-            await assertCommercialContactCooldownControls(pgPool)
             const identityId = String(payload?.identityId || '').trim()
             const segmentKey = String(payload?.segmentKey || '').trim()
             const actionType = String(payload?.actionType || 'contact').trim()
@@ -3946,6 +5456,9 @@ export function createAtendimentoStore(options = {}) {
                 throw error
             }
             const unitSlug = commercialUnit(payload?.unit)
+            if (commercialUnitScope(actor) !== null) assertCommercialUnitInScope(actor, unitSlug)
+            await assertCommercialIdentitySource(pgPool)
+            const contactAvailability = await assertCommercialContactCooldownControls(pgPool)
             return withCommercialContactTransaction(pgPool, async (client) => {
                 // Creation joins the same per-identity lock as `contacted`.
                 // This prevents two queue writes from both observing an empty
@@ -3967,6 +5480,15 @@ export function createAtendimentoStore(options = {}) {
                     error.statusCode = 404
                     throw error
                 }
+                // An action cannot manufacture its own unit authorization. A
+                // scoped manager may only route an identity to a unit that is
+                // supported by current attendance, sales, app, or lead evidence.
+                await assertCommercialIdentityUnitMembership(client, {
+                    identityId,
+                    unitSlug,
+                    availability: contactAvailability,
+                })
+                const canonicalOwner = await resolveCommercialActionOwner(client, owner, { slug: unitSlug })
                 const contactEligibility = await readCommercialContactEligibility(client, identityId)
                 const cooldown = Number(policy.rows[0]?.active_contact_cooldown_days || 30)
                 await assertCommercialContactCooldown(client, { identityId, actionId: null, cooldownDays: cooldown })
@@ -3985,11 +5507,25 @@ export function createAtendimentoStore(options = {}) {
                     `insert into crm_atendimento.commercial_actions(
                         identity_id, unit_id, segment_key, action_type, contact_channel, owner, due_date, notes, created_by, updated_by)
                      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
-                     returning id`,
-                    [identityId, unit.rows[0]?.id || null, segmentKey, actionType, contactChannel, owner || null, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor)],
+                     returning id, status`,
+                    [identityId, unit.rows[0]?.id || null, segmentKey, actionType, contactChannel, canonicalOwner, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor)],
                 )
+                const traceId = randomUUID()
+                const actionId = created.rows[0]?.id
+                const actionStatus = created.rows[0]?.status || 'open'
+                await recordCommercialActionEvent(client, {
+                    actionId,
+                    identityId,
+                    eventType: 'created',
+                    status: actionStatus,
+                    traceId,
+                    recordedBy: actorLabel(actor),
+                    contactEligibility,
+                    details: { segmentKey, actionType, contactChannel, unitSlug },
+                })
                 await audit(client, 'commercial.action.created', actor, null, {
-                    actionId: created.rows[0]?.id,
+                    traceId,
+                    actionId,
                     identityId,
                     segmentKey,
                     actionType,
@@ -3998,7 +5534,7 @@ export function createAtendimentoStore(options = {}) {
                     eligibilityStatus: contactEligibility.status,
                     eligibilityReason: contactEligibility.reason,
                 })
-                return { id: created.rows[0]?.id, contactEligibility }
+                return { id: actionId, contactEligibility }
             })
         },
 
@@ -4014,20 +5550,35 @@ export function createAtendimentoStore(options = {}) {
                 throw error
             }
             const availability = await readCommercialContactAvailability(pgPool)
+            if (!availability.commercialLedgerReady) {
+                throw commercialContactError('COMMERCIAL_ACTION_LEDGER_NOT_READY')
+            }
             if (status === 'contacted' && !availability.contactWriteControlsReady) {
                 throw commercialContactError('COMMERCIAL_CONTACT_COOLDOWN_CONTROLS_NOT_READY')
             }
+            const actorUnitScope = commercialUnitScope(actor)
             return withCommercialContactTransaction(pgPool, async (client) => {
                 const contactedAtSelection = availability.actionContactedAt
-                    ? ', contacted_at'
+                    ? ', action.contacted_at'
                     : ', null::timestamptz as contacted_at'
                 const action = await client.query(
-                    `select id, identity_id, status${contactedAtSelection}
-                     from crm_atendimento.commercial_actions where id = $1 for update`,
+                    `select action.id, action.identity_id, action.status${contactedAtSelection}, unit.slug as unit_slug
+                     from crm_atendimento.commercial_actions action
+                     left join crm_atendimento.units unit on unit.id = action.unit_id
+                     where action.id = $1 for update of action`,
                     [id],
                 )
                 const current = action.rows[0]
                 if (!current?.id) throw commercialContactError('COMMERCIAL_ACTION_NOT_FOUND', 404)
+                if (actorUnitScope !== null) {
+                    // The action row is locked above, so the unit used for the
+                    // authorization decision cannot change before this write.
+                    assertCommercialUnitInScope(actor, current.unit_slug)
+                }
+                const requestedOwner = String(payload?.owner || '').trim()
+                const canonicalOwner = requestedOwner
+                    ? await resolveCommercialActionOwner(client, requestedOwner, { slug: current.unit_slug })
+                    : ''
                 const recordingContact = status === 'contacted' && !current.contacted_at
                 // An action records at most one outbound contact. Reopening it
                 // may track follow-up work, but a later contact must be a new
@@ -4075,6 +5626,7 @@ export function createAtendimentoStore(options = {}) {
                 const contactedAtUpdate = availability.actionContactedAt
                     ? `contacted_at = case when $2 = 'contacted' and contacted_at is null then now() else contacted_at end,`
                     : ''
+                const traceId = randomUUID()
                 await client.query(
                     `update crm_atendimento.commercial_actions
                      set status = $2, owner = coalesce(nullif($3, ''), owner), outcome_notes = coalesce(nullif($4, ''), outcome_notes),
@@ -4082,9 +5634,25 @@ export function createAtendimentoStore(options = {}) {
                           ${contactedAtUpdate}
                           updated_by = $5, updated_at = now()
                      where id = $1`,
-                    [id, status, String(payload?.owner || '').trim(), String(payload?.outcomeNotes || '').trim(), actorIdentity],
+                    [id, status, canonicalOwner, String(payload?.outcomeNotes || '').trim(), actorIdentity],
                 )
+                await recordCommercialActionEvent(client, {
+                    actionId: id,
+                    identityId: current.identity_id,
+                    eventType: 'updated',
+                    previousStatus: current.status,
+                    status,
+                    traceId,
+                    recordedBy: actorIdentity,
+                    contactEligibility,
+                    details: {
+                        statusChanged: current.status !== status,
+                        contactedAtRecorded: recordingContact,
+                        ownerChanged: !!canonicalOwner,
+                    },
+                })
                 await audit(client, 'commercial.action.updated', actor, null, {
+                    traceId,
                     actionId: id,
                     status,
                     contactedAtRecorded: recordingContact,

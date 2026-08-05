@@ -1,0 +1,3 @@
+-- Non-destructive rollback: keep the append-only decision and lineage evidence.
+-- Mark 20260805_identity_review_workflow_v1 as rolled back in
+-- crm_atendimento.schema_migrations to disable mutations.

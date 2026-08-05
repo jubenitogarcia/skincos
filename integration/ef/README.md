@@ -47,14 +47,6 @@ Runner único via ações do Codex (sem menu).
 - `EF_PROCEDURES_MAX_CLIENTS_PER_UNIT` (opcional; limita clientes por unidade no modo `procedures`, útil para smoke test)
 - `EF_CLIENT_REGISTRATION_MAX_PAGES` (opcional; limita páginas no modo `client_registration`, útil para smoke test)
 - `EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT` (opcional; limita clientes por unidade no modo `client_registration`, útil para smoke test)
-- `EF_CLIENT_REGISTRATION_TARGETS` (opcional; lista separada por vírgula, `;` ou quebra de linha para export seletivo por cliente)
-- `EF_CLIENT_REGISTRATION_TARGETS_FILE` (opcional; arquivo `.txt`, `.csv`, `.tsv`, `.xlsx` ou `.json` com a lista de clientes)
-- `EF_CLIENT_REGISTRATION_TARGETS_FILE_SHEET` (opcional; aba do Excel quando `EF_CLIENT_REGISTRATION_TARGETS_FILE` for `.xlsx`)
-- `EF_CLIENT_REGISTRATION_TARGETS_SPREADSHEET_URL` (opcional; URL da planilha Google Sheets com a lista de clientes)
-- `EF_CLIENT_REGISTRATION_TARGETS_SPREADSHEET_ID` (opcional; Google Sheets com a lista de clientes)
-- `EF_CLIENT_REGISTRATION_TARGETS_WORKSHEET` (opcional; nome da aba no Google Sheets com a lista de clientes)
-- `EF_CLIENT_REGISTRATION_TARGETS_WORKSHEET_GID` (opcional; `gid` da aba no Google Sheets; útil quando você só tem a URL)
-- `EF_CLIENT_REGISTRATION_SYNC_SHEETS` (default: `1`; quando a origem é Google Sheets, preenche as colunas C:K da própria aba com os dados extraídos)
 - `EF_AGENDA_SYNC_URL` (endpoint de sync, ex.: `https://espacofacial.com/api/agenda/sync`)
 - `EF_AGENDA_SYNC_ALLOWED_HOSTS` (opcional; hosts de staging explicitamente aprovados, separados por vírgula, sem esquema, porta ou caminho)
 - `EF_AGENDA_SYNC_TOKEN` (Bearer token do endpoint de sync)
@@ -159,18 +151,21 @@ diretamente na janela do Chrome e não recebe nem grava senha.
 
 Saídas:
 
-- `report/cadastro_clientes_espacofacial.csv`
-- `report/cadastro_clientes_espacofacial.xlsx`
-- `report/cadastro_clientes_espacofacial_resumo.json`
+- `<EF_OUTPUT_DIR>/cadastro_clientes_espacofacial.csv`
+- `<EF_OUTPUT_DIR>/cadastro_clientes_espacofacial.xlsx`
+- `<EF_OUTPUT_DIR>/cadastro_clientes_espacofacial_resumo.json`
 
 Observações:
 
 - O modo `client_registration` percorre todas as unidades configuradas em `EF_UNITS` e atualiza os arquivos parciais durante a execução.
 - `EF_CLIENT_REGISTRATION_MAX_PAGES` e `EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT` limitam a execução para smoke tests; sem eles, o export percorre todas as páginas e as duas unidades de `EF_UNITS`.
 - O CSV é um checkpoint de retomada: uma nova execução reutiliza clientes já exportados por unidade+nome (somente quando o nome é único naquela unidade), preserva os dados já lidos e retoma os demais. Quedas de aba do Chrome disparam reinício automático da sessão até o limite de `EF_CLIENT_REGISTRATION_MAX_SESSION_RETRIES`.
+- A ação compartilhada `Client Registration` cria, por padrão, uma pasta privada nova em `C:\CodexRuntime\operator\admin\skincos\scraper\client-registration\<run-id>`. Assim, uma execução nova não mistura silenciosamente o seu checkpoint com um export anterior. Uma retomada pelo menu exige definir `EF_CLIENT_REGISTRATION_RESUME_OUTPUT_DIR` para uma pasta de execução privada já existente; em execução direta, escolha explicitamente um `EF_OUTPUT_DIR` privado existente somente quando quiser retomar aquele checkpoint.
 - Para estabilidade em lotes longos, a sessão é reciclada preventivamente a cada 40 novos cadastros (`EF_CLIENT_REGISTRATION_SESSION_MAX_CLIENTS`), depois de atualizar o checkpoint.
 - O extrator lê os campos da aba `Cadastro` por rótulo visível, cobrindo dados pessoais, contatos e endereço.
 - Erros pontuais por cliente vão para `client_errors` no JSON de resumo, sem derrubar o restante do lote. Os arquivos CSV/XLSX/JSON são atualizados após cada página.
+- O resumo contém `sourceCoverage` versionado e vinculado ao hash/contagem do CSV: identifica início novo ou retomado, limites, reciclos, término por unidade e erros. `visible_pagination_exhausted` comprova somente que a paginação visível terminou; filtros e escopo de status permanecem não verificados. Por isso `snapshotComplete` e `absenceIsRetirementEvidence` são sempre `false`: ausência no CSV não autoriza marcar um cadastro histórico como aposentado.
+- O reconciliador de Clientes lê esse resumo na mesma pasta do CSV (ou em `CLIENT_REGISTRATION_SOURCE_COVERAGE_FILE`), confere o hash e a contagem de linhas e inclui a cobertura no fingerprint do checkpoint. Um `--apply` exige cobertura válida, nova, sem limites e sem erros na lista visível; dados ausentes, retomados ou limitados continuam úteis para diagnóstico/dry-run, mas não liberam apply.
 
 ## Self-test
 
