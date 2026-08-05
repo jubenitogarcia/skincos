@@ -447,6 +447,7 @@ export default function AppFunctionalNeatlab() {
             () => (siteTrackingHeaderState?.sites || []).find((site) => site.id === siteTrackingHeaderState?.selectedSiteId) || null,
             [siteTrackingHeaderState],
         )
+				    const [insumosHeaderState, setInsumosHeaderState] = useState<InsumosHeaderState | null>(null)
 				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<InsumosHeaderState['status']>(null)
 				    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<InsumosHeaderState['stock']>(null)
                     const defaultEstoqueThresholds = React.useMemo(() => ({ warning: 50000, critical: 20000 }), [])
@@ -779,6 +780,7 @@ export default function AppFunctionalNeatlab() {
 
                 React.useEffect(() => {
                     return subscribeInsumosHeaderState((detail) => {
+                        setInsumosHeaderState(detail)
                         setInsumosHeaderStatus(detail?.status || null)
                         setInsumosHeaderEstoque(detail?.stock || null)
                         if (detail?.selectedUnit && detail.selectedUnit !== effectiveUnitRef.current) {
@@ -865,6 +867,7 @@ export default function AppFunctionalNeatlab() {
 
 				    React.useEffect(() => {
 				        if (active !== 'insumos' || !isAuthenticated) {
+				            setInsumosHeaderState(null)
 				            setInsumosHeaderStatus(null)
 				            setInsumosHeaderEstoque(null)
 				        }
