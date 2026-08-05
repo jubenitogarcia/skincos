@@ -16,7 +16,7 @@ const INSUMOS_LEGACY_LAYOUT_EVENT = 'skincos:insumos:layout'
 const INSUMOS_LEGACY_STOCK_EVENT = 'skincos:insumos:estoque'
 
 function isOverviewPeriod(value: unknown): value is InsumosOverviewPeriod {
-  return value === '7d' || value === '30d' || value === '1y' || value === 'custom'
+  return value === 'currentWeek' || value === 'currentMonth' || value === '7d' || value === '30d' || value === '1y' || value === 'custom'
 }
 
 function isQuickOperation(value: unknown): value is InsumosQuickOperation {
@@ -67,6 +67,7 @@ export function normalizeInsumosHeaderState(detail: unknown): InsumosHeaderState
     status,
     stock,
     selectedUnit: String(payload.selectedUnit || ''),
+    layoutExpanded: payload.layoutExpanded == null ? undefined : Boolean(payload.layoutExpanded),
     overview: {
       period: overview.period,
       from: overview.from,

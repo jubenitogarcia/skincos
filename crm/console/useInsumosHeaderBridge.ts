@@ -13,6 +13,7 @@ type UseInsumosHeaderBridgeArgs = {
   loadInsights: (opts?: { force?: boolean }) => Promise<void>
   loadOverview: (opts?: { force?: boolean }) => Promise<void>
   loadingPercent: number
+  layoutExpanded: boolean
   openQuickOperation: (op: InsumosQuickOperation) => void
   overviewCustomFrom: string
   overviewCustomTo: string
@@ -38,6 +39,7 @@ export function useInsumosHeaderBridge({
   loadInsights,
   loadOverview,
   loadingPercent,
+  layoutExpanded,
   openQuickOperation,
   overviewCustomFrom,
   overviewCustomTo,
@@ -92,6 +94,7 @@ export function useInsumosHeaderBridge({
         saidaValor: Number.isFinite(Number(overviewMovResumo?.saidaValor)) ? Number(overviewMovResumo?.saidaValor) : null,
       },
       selectedUnit,
+      layoutExpanded,
       overview: {
         period: overviewPeriod,
         from: overviewCustomFrom,
@@ -99,6 +102,7 @@ export function useInsumosHeaderBridge({
       },
     })
   }, [
+    layoutExpanded,
     loadingPercent,
     overviewCustomFrom,
     overviewCustomTo,

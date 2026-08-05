@@ -245,7 +245,12 @@ export type OfflineQueueItem = {
   body?: unknown
 }
 
-export type InsumosOverviewPeriod = '7d' | '30d' | '1y' | 'custom'
+/**
+ * Presets shown in the Insumos header keep the same vocabulary as Atendimento.
+ * The rolling values remain accepted so saved links/events from older builds do
+ * not stop working while users move to the current-week/current-month presets.
+ */
+export type InsumosOverviewPeriod = 'currentWeek' | 'currentMonth' | '7d' | '30d' | '1y' | 'custom'
 export type InsumosQuickOperation = 'ENTRADA' | 'BAIXA' | 'AJUSTE' | 'TRANSFERENCIA'
 export type InsumosLayoutAction = 'expandAll' | 'collapseAll' | 'reset'
 export type InsumosUiSection =
@@ -312,6 +317,7 @@ export type InsumosHeaderState = {
   status: InsumosHeaderStatus | null
   stock: InsumosHeaderStockState | null
   selectedUnit: string
+  layoutExpanded?: boolean
   overview: Required<Pick<InsumosOverviewQuery, 'period'>> & Pick<InsumosOverviewQuery, 'from' | 'to'>
 }
 

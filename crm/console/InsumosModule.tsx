@@ -762,6 +762,13 @@ export function InsumosModule() {
 
   const chartsPanelOpen = detailsOpen[OVERVIEW_PANEL_OPEN_KEYS.charts] ?? true
   const chartsPanelVisible = visibleOverviewPanels.includes('charts')
+  const layoutExpanded = React.useMemo(() => {
+    const keys = [
+      ...visibleMainPanels.map((panelId) => MAIN_PANEL_OPEN_KEYS[panelId]),
+      ...visibleOverviewPanels.map((panelId) => OVERVIEW_PANEL_OPEN_KEYS[panelId]),
+    ]
+    return keys.length > 0 && keys.every((key) => detailsOpen[key] ?? true)
+  }, [detailsOpen, visibleMainPanels.join('|'), visibleOverviewPanels.join('|')])
 
   const {
     autoSyncRemainingSeconds,
@@ -2742,6 +2749,7 @@ export function InsumosModule() {
     loadInsights,
     loadOverview,
     loadingPercent,
+    layoutExpanded,
     openQuickOperation,
     overviewCustomFrom,
     overviewCustomTo,

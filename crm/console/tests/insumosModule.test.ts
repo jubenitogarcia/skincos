@@ -33,6 +33,11 @@ describe('Insumos module helpers', () => {
       type: 'set-overview',
       value: { action: 'reload', period: '30d' },
     })
+
+    expect(normalizeInsumosHeaderAction({ type: 'set-overview', period: 'currentMonth' })).toEqual({
+      type: 'set-overview',
+      value: { period: 'currentMonth' },
+    })
   })
 
   it('normalizes the header state emitted to App', () => {
@@ -207,6 +212,32 @@ describe('Insumos module helpers', () => {
       de: '2026-04-10',
       ate: '2026-05-10',
       days: 30,
+    })
+
+    expect(
+      resolveOverviewDateRange({
+        period: 'currentWeek',
+        customFrom: '',
+        customTo: '',
+        now: new Date('2026-05-10T12:00:00.000Z'),
+      })
+    ).toEqual({
+      de: '2026-05-04',
+      ate: '2026-05-10',
+      days: 7,
+    })
+
+    expect(
+      resolveOverviewDateRange({
+        period: 'currentMonth',
+        customFrom: '',
+        customTo: '',
+        now: new Date('2026-05-10T12:00:00.000Z'),
+      })
+    ).toEqual({
+      de: '2026-05-01',
+      ate: '2026-05-10',
+      days: 10,
     })
 
     expect(
