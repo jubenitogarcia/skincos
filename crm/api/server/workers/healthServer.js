@@ -13,8 +13,10 @@ function readStatus(getStatus) {
     try {
         const value = typeof getStatus === 'function' ? getStatus() : getStatus
         return value && typeof value === 'object' ? value : { ready: false, error: 'status unavailable' }
-    } catch (error) {
-        return { ready: false, error: error?.message || String(error) }
+    } catch {
+        // Health is a public operational boundary. Never reflect exception
+        // messages or stack details into its response.
+        return { ready: false, error: 'status_unavailable' }
     }
 }
 

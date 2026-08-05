@@ -25,3 +25,16 @@ test('continuous worker health and readiness endpoints expose safe status', asyn
     assert.equal(missing.status, 404)
     await health.close()
 })
+
+test('health never reflects an exception message', async () => {
+    const health = createWorkerHealthServer({
+        getStatus: () => { throw new Error('database password or stack detail') },
+        port: 0,
+    })
+    const address = await health.listen()
+    const response = await fetch(`http://127.0.0.1:${address.port}/health`)
+    const body = await response.json()
+    assert.equal(body.status.error, 'status_unavailable')
+    assert.equal(JSON.stringify(body).includes('database password'), false)
+    await health.close()
+})

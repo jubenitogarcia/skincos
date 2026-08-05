@@ -197,9 +197,10 @@ export function startHarmoniaWorker({
     status.startedAt = new Date().toISOString()
 
     function recordError(error) {
-        const message = error?.message || String(error)
+        const rawCode = String(error?.code || '').trim().toUpperCase()
+        const safeCode = /^[A-Z][A-Z0-9_]{0,63}$/.test(rawCode) ? rawCode : 'WORKER_LOOP_FAILED'
         status.lastErrorAt = new Date().toISOString()
-        status.lastError = message.slice(0, 500)
+        status.lastError = safeCode
         status.errorCount += 1
         status.ready = false
     }
