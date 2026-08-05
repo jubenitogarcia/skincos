@@ -1,5 +1,42 @@
 # Current state
 
+## Snapshot terminal do Ponto — `origin/main` `6daa6eaee7c4c49f047e97944e70ea1aa320ca61` — 2026-08-05T01:59:29Z
+
+O objetivo governado desta thread está concluído no escopo de staging. As PRs
+#1105 e #1106 estão mergeadas em `main`; o SHA imutável da prova é
+`6daa6eaee7c4c49f047e97944e70ea1aa320ca61`.
+
+### Ponto / Workforce
+
+- `ENABLE_PONTO_CORE_WORKERS_DEPLOY=true` está configurada em `staging`.
+  `IDENTITY_BACKUP_PASSPHRASE` está presente em custódia por nome; não foi lido,
+  gerado nem reutilizado de produção.
+- Preview `30964961715` e staging `30966781527` passaram. Publishers:
+  Timekeeping `30967083529`, Identity/Workforce `30967181403`, Core API
+  `30967306808` e CRM Pages `30967397392`. A coordenação única terminou sem
+  publisher duplicado.
+- Jornada `30967591913` passou a autenticação, `/me`, perfil, presença, PIN
+  inválido 401, punch 201, idempotência 200, negação cross-unit 403, correção,
+  negação administrativa e onboarding Identity; teardown: resíduos Core e
+  Timekeeping zero, auditorias preservadas.
+- Rollback drill `30967800519` passou: preflight, compatibilidade do incumbent,
+  afinidade candidata, `journeyFence`, contrato protegido, jornada candidata,
+  restauração, teardown e manutenção final. `failures=[]`, recuperação
+  `candidate-restored-under-maintenance` e latch falso antes/depois.
+- Health final: HTTP 200, `ok=false`, `ready=false`, `availability.state=maintenance`,
+  `source=control`, `schemaVersion=2`, D1 saudável, gateway affinity saudável e
+  release SHA `6daa6eaee7c4c49f047e97944e70ea1aa320ca61`. O estado fail-closed sob
+  manutenção é intencional.
+
+### Limites e reconciliação
+
+Produção, pilot e canary não foram ativados; não houve escrita em produção nem
+alteração de grants, usuários ou dados reais. A tentativa intermediária
+`30965421701` foi encerrada antes de publishers por uma coordenação duplicada
+cancelada e seus watchdogs; ela não é evidência final e não reabre auditoria.
+Os artefatos sanitizados finais estão em
+`C:\CodexRuntime\operator\admin\skincos\ponto-final-evidence-30966781527`.
+
 ## Snapshot autoritativo de fechamento — `origin/main` `fd91be5ff00dcc311bedc205d3bab9efbae82258` — 2026-08-02T13:46:45Z
 
 As PRs Ponto #1039, #1040 e #1042 estão integradas. O preview

@@ -1,5 +1,25 @@
 # Current blockers
 
+## Snapshot terminal do Ponto — 2026-08-05T01:59:29Z — main `6daa6eaee7c4c49f047e97944e70ea1aa320ca61`
+
+Não há blocker humano ou técnico para o objetivo desta thread. A flag de
+staging está verdadeira e `IDENTITY_BACKUP_PASSPHRASE` está presente em
+custódia; não houve necessidade de credencial desconhecida, geração de segredo
+ou MFA/reautenticação manual.
+
+- Preview `30964961715`, staging `30966781527`, jornada autenticada
+  `30967591913` e rollback/restauração `30967800519` passaram no SHA final.
+- O health final está em `maintenance`, `source=control`, schema 2, D1 e
+  afinidade saudáveis, com latch falso e teardown sem resíduos/auditoria
+  preservada.
+- Produção, pilot e canary permanecem deliberadamente não ativados e não são
+  bloqueio deste encerramento; nenhuma mutação de produção ocorreu.
+- Evidência privada: `C:\CodexRuntime\operator\admin\skincos\ponto-final-evidence-30966781527`.
+
+O estado terminal é staging verde sob manutenção, reconciliado e pronto para
+arquivamento. Os snapshots posteriores abaixo são históricos e não reabrem
+este objetivo.
+
 ## Snapshot autoritativo de fechamento — 2026-08-02T13:46:45Z — main `fd91be5ff00dcc311bedc205d3bab9efbae82258`
 
 - **Ponto — configuração de staging:** a prévia `30747329164` do SHA avaliado

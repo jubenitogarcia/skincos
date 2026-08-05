@@ -1,33 +1,39 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-08-02T13:46:45Z",
-  "source_main_sha": "fd91be5ff00dcc311bedc205d3bab9efbae82258",
-  "source_main_state": "current-main-ponto-recovery-green-incumbent-restored-staging-blocked-identity-config-finance-disabled",
+  "authoritative_at": "2026-08-05T01:59:29Z",
+  "source_main_sha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+  "source_main_state": "current-main-ponto-staging-terminal-green-maintenance-latch-false-finance-disabled",
   "current_snapshot": {
-    "authoritative_at": "2026-08-02T13:46:45Z",
-    "executable_item": "Ponto staging blocked on external Identity environment provisioning",
+    "authoritative_at": "2026-08-05T01:59:29Z",
+    "executable_item": "Ponto staging objective terminal; preserve evidence and do not activate production",
     "finance": { "maturity": "experimental", "release_sha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c", "module_enabled": false, "pilot": false },
-    "ponto": { "maturity": "experimental", "release_sha": null, "evaluated_sha": "ae6cab22d7fa4ce5d1a2f38f0d3d5a4315249d23", "active_incumbent_sha": "50872352329446521a84efa44b098f0e3e038497", "preview_run": 30747329164, "preview_evidence_sha256": "819b51a88aeca6fcb8993b68c885efa189eec3c76c667792ee21d1f716b82770", "staging_run": 30747573120, "staging_green": false, "recovery_run": 30750613086, "recovery_green": true, "functional_journey": "not-executed", "blocker": "staging Identity guard lacks ENABLE_PONTO_CORE_WORKERS_DEPLOY and IDENTITY_BACKUP_PASSPHRASE; full staging, Core/CRM publication and authenticated journey remain unproven while the restored incumbent stays fail-closed" },
+    "ponto": { "maturity": "staging-terminal", "release_sha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61", "evaluated_sha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61", "active_incumbent_sha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61", "preview_run": 30964961715, "staging_run": 30966781527, "staging_green": true, "journey_run": 30967591913, "rollback_drill_run": 30967800519, "close_run": 30966601192, "reset_run": 30966662655, "final_health": "maintenance-control-schema-v2-latch-false", "functional_journey": "passed", "teardown": "zero-residuals-audit-preserved", "blocker": null },
     "insumos": { "p0": "resolved" },
     "identity": { "mode": "compatibility", "physical_cutover": "blocked-human-escrow" },
-    "allowed_actions": ["document final evidence", "run read-only health/readiness checks", "resume staging-only validation after approved Ponto environment provisioning"],
+    "allowed_actions": ["preserve final evidence", "run read-only health/readiness checks", "prepare a separately authorized future pilot/production sequence"],
     "prohibited_actions": ["production deploy", "pilot activation", "reset emergency latch to fabricate a journey", "invent or copy secrets", "Finance flags", "grants", "users", "data", "Organization transfer"],
-    "completion_criteria": ["Ponto staging run success on an explicit main SHA after capability custody/configuration and propagation gates", "Finance nominal pilot approval remains separate", "Identity PII key escrow owner recorded"]
+    "completion_criteria": ["Ponto preview/staging, authenticated synthetic journey, teardown, rollback/restoration and final maintenance on one explicit main SHA", "Finance nominal pilot approval remains separate", "Identity PII key escrow owner remains separate from this staging terminal state"]
   },
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
       "objective": "Complete the governed Workforce Timekeeping release through preview, staging, pilot, canary and production on one immutable source SHA.",
       "priority": 1100,
-      "state": "preview-passed-staging-blocked-identity-config-recovery-green-incumbent-restored",
+      "state": "staging-terminal-green-maintenance-latch-false-no-production",
       "dependencies": [
         "ponto-release-prerequisites"
       ],
-      "blockers": [
-        "origin/main fd91be5ff00dcc311bedc205d3bab9efbae82258 integra #1039/#1040/#1042; selected_release_sha continua null porque a staging completa 30747573120 nao ficou verde",
-        "preview 30747329164 passou nos quatro surfaces, mas Identity/Workforce child 30747791111 parou antes da mutacao pela ausencia de ENABLE_PONTO_CORE_WORKERS_DEPLOY e IDENTITY_BACKUP_PASSPHRASE no environment staging",
-        "recovery 30750613086 passou fresh-close, custodia agregada, KV direto, restauração e prova pós-rollback; candidate c8864c8f-3625-44ab-bd30-bc25e5e44213 ficou em 0% e incumbent 30d4f35b-584b-40a7-95ad-d00ca747e057 em 100%",
-        "health 200 com ok=false/ready=false, releaseSha 50872352329446521a84efa44b098f0e3e038497, emergency-latch-active, MODULE_MAINTENANCE e RELEASE_AFFINITY_MISMATCH; readiness e release-readiness 503; Core API, CRM Pages e jornada autenticada nao foram executados",
+      "blockers": [],
+      "resolved_gates": [
+        "ENABLE_PONTO_CORE_WORKERS_DEPLOY=true and IDENTITY_BACKUP_PASSPHRASE present by name in staging custody; no secret value was read or copied from production",
+        "preview 30964961715 and staging 30966781527 passed on 6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+        "authenticated journey 30967591913 passed and teardown preserved audit with zero residual rows",
+        "rollback drill 30967800519 passed exact affinity, candidate journey, idempotent restoration, final maintenance and latch false",
+        "final health is maintenance/control/schema-v2 with D1 and gateway healthy; production, pilot and canary were not activated",
+        "final sanitized evidence is retained privately under C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-final-evidence-30966781527"
+      ],
+      "historical_context": [
+        "the canceled staging attempt 30965421701 was before publishers and is not final release evidence",
         "broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI and endpoint are now live and functionally attested for both targets; staging latch/maintenance exercise 910001/910002 passed. JIT runner and independent external automatic freeze/recovery SLO proof remain absent",
         "seven historical Timekeeping child runs and CRM Pages attempt-2 run 30491926800 retain their old definitions; live dispatch fences and both disabled legacy Ponto smokes must remain through expiry or reviewed replacement",
         "required WAF enforcement and the three immutable rule identifiers are unproven: CLOUDFLARE_ZONE_ID is present by name, Cloudflare API permission-groups returned 9109 Unauthorized, and no least-privilege WAF token or custom entrypoint attestation is available",
@@ -36,7 +42,7 @@
         "scheduled production Ponto Smoke run 30521686413 correctly detects ready=false under maintenance but is not successful external production SLO evidence; UI Smoke run 30518888970 is not an authenticated authorized-user journey",
         "profile-key, shared root-attestation, Pages-intent, capability and emergency broker secret names are present in the approved GitHub environments and encrypted operator vault; values remain undisclosed and no release has consumed them",
         "the historical GESTOR account behind the removed legacy repository smoke credentials has not been identified or revoked",
-        "the emergency environments expose only fail-closed close mode; broker URLs, custody references, response key IDs/SPKI and credentials are now provisioned and attested, while WAF/runner/Workforce remain external gates"
+        "the emergency environments expose only fail-closed close mode; future production/pilot gates remain separate"
       ],
       "environment": "staging-then-production",
       "permitted_actions": [
@@ -74,18 +80,28 @@
         "PONTO_ROOT_ATTESTATION_KEY_SHARED present only in protected target environments with one effective version, repository metadata PONTO_ROOT_ATTESTATION_KEY_ID, target-environment-only PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY, distinct approved-vault references and durable producer run/artifact provenance",
         "production checkpoint, deployment/version, health/readiness, authenticated pilot and post-release observation"
       ],
-      "done_definition": "A single immutable release has complete preview, staging, pilot, canary and production evidence, an authenticated authorized-user journey, proven rollback and post-release observation.",
+      "done_definition": "For this governed closure, one immutable SHA has complete preview, staging, authenticated synthetic journey, teardown, rollback/restoration and final maintenance evidence; pilot, canary and production remain a separately authorized scope.",
       "next_item": null,
-      "last_verified": "2026-08-02T13:46:45Z",
+      "last_verified": "2026-08-05T01:59:29Z",
       "evidence": {
         "base_sha": "f202e29f4178bba8966edf71539c942618254de0",
         "merge_sha": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
-        "selected_release_sha": null,
-        "origin_main_last_verified": "fd91be5ff00dcc311bedc205d3bab9efbae82258",
-        "origin_main_last_verified_state": "current-origin-main-confirmed-after-ponto-pr-1042-merge",
-        "recovery_run": 30750613086,
-        "active_incumbent_sha": "50872352329446521a84efa44b098f0e3e038497",
-        "functional_journey": "not-executed",
+        "selected_release_sha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+        "origin_main_last_verified": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+        "origin_main_last_verified_state": "current-origin-main-confirmed-after-ponto-pr-1106-merge",
+        "preview_run": 30964961715,
+        "staging_run": 30966781527,
+        "journey_run": 30967591913,
+        "rollback_drill_run": 30967800519,
+        "close_run": 30966601192,
+        "reset_run": 30966662655,
+        "recovery_run": 30967800519,
+        "active_incumbent_sha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+        "functional_journey": "passed-authenticated-synthetic-teardown-zero-residuals",
+        "final_health": "maintenance-control-schema-v2-latch-false",
+        "evidence_root": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-final-evidence-30966781527",
+        "credentials_included": false,
+        "pii_included": false,
         "technical_controls_merge_sha": "aa9bfa6595b9cb12e7228f67f9606527bb375de2",
         "post_pr_886_delta": {
           "base_sha": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
