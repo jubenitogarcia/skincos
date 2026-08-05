@@ -3087,6 +3087,7 @@ type InsumosAlertsPanelProps = {
   emptyContent: React.ReactNode
   onToggleOpen: () => void
   onOpenPurchaseDialog: () => void
+  onOpenGuidedCount: () => void
   onAlertasStatusChange: (value: AlertasStatusFilter) => void
   onAlertasCategoriaChange: (value: string) => void
   onAlertasFluxoChange: (value: AlertasFluxoFilter) => void
@@ -3124,6 +3125,7 @@ export function InsumosAlertsPanel({
   emptyContent,
   onToggleOpen,
   onOpenPurchaseDialog,
+  onOpenGuidedCount,
   onAlertasStatusChange,
   onAlertasCategoriaChange,
   onAlertasFluxoChange,
@@ -3261,6 +3263,22 @@ export function InsumosAlertsPanel({
                     <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                     <circle cx="9" cy="20" r="1.6" fill="currentColor" />
                     <circle cx="17" cy="20" r="1.6" fill="currentColor" />
+                  </svg>
+                </Button>
+              </TooltipButton>
+              <TooltipButton label="Contagem física">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={onOpenGuidedCount}
+                  disabled={!isAuthed}
+                  aria-label="Contagem física"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M5 4h14v16H5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                    <path d="M8 8h8M8 12h8M8 16h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="m15 16 1.5 1.5L19 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </Button>
               </TooltipButton>

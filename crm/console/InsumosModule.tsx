@@ -22,6 +22,7 @@ import {
   InsumosQuickOperationDialog,
   InsumosSafeModeBanner,
 } from '@/insumosPanels'
+import { InsumosGuidedCountDialog } from '@/InsumosGuidedCountDialog'
 import {
   CHART_PRESETS,
   CHARTS_SLOTS_KEY,
@@ -480,6 +481,7 @@ export function InsumosModule() {
 	  const [overviewNotifications, setOverviewNotifications] = React.useState<NotificationsSummary | null>(null)
 	  const [overviewActionables, setOverviewActionables] = React.useState<Actionables | null>(null)
 	  const [purchaseDialogOpen, setPurchaseDialogOpen] = React.useState(false)
+  const [guidedCountDialogOpen, setGuidedCountDialogOpen] = React.useState(false)
   const [overviewPeriod, setOverviewPeriod] = React.useState<'7d' | '30d' | '1y' | 'custom'>('30d')
   const [overviewCustomFrom, setOverviewCustomFrom] = React.useState<string>('')
   const [overviewCustomTo, setOverviewCustomTo] = React.useState<string>('')
@@ -4180,6 +4182,19 @@ export function InsumosModule() {
         unit={unidade}
         unitLabel={unidadeLabel}
       />
+      <InsumosGuidedCountDialog
+        open={guidedCountDialogOpen}
+        onOpenChange={setGuidedCountDialogOpen}
+        dialogClassName={dialogWideClass}
+        isAuthed={isAuthed}
+        managerRole={['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())}
+        unit={unidade}
+        unitLabel={unidadeLabel}
+        apiJson={apiJson}
+        onRefresh={() => {
+          void Promise.allSettled([loadOverview({ force: true }), loadInsights({ force: true }), refreshInsumos()])
+        }}
+      />
 
       <InsumosSafeModeBanner visible={!!proxyStatus?.mutationsBlocked} />
 
@@ -4271,6 +4286,7 @@ export function InsumosModule() {
                               emptyContent={renderListPlaceholder(insightsLoading, 'Sem alertas.')}
                               onToggleOpen={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.alerts, !panelOpen)}
                               onOpenPurchaseDialog={() => setPurchaseDialogOpen(true)}
+                              onOpenGuidedCount={() => setGuidedCountDialogOpen(true)}
                               onAlertasStatusChange={setAlertasStatus}
                               onAlertasCategoriaChange={setAlertasCategoria}
                               onAlertasFluxoChange={setAlertasFluxo}
