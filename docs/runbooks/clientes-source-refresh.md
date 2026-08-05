@@ -67,3 +67,28 @@ Após um apply, execute o refresh de qualidade comercial do mesmo alvo e
 confirme que `source.local_mirror_stale` reconhece o novo checkpoint. O rollback
 operacional é parar/desabilitar o timer, preservar o dump e restaurar o banco
 com o procedimento PostgreSQL aprovado; não existe reverse migration destrutiva.
+
+O refresh de qualidade é fail-closed para o papel de runtime: quando ele não
+possui `SELECT` nas tabelas de governança de contato, não tenta ler linhas
+protegidas, registra `commercial.contact_controls_unready` e mantém a fila
+acionável. Não conceda acesso amplo apenas para obter a contagem agregada. No
+alvo local de produção, o comando operacional deve usar o socket sem usuário
+(`postgresql:///skincos_crm_local?host=/var/run/postgresql`) e executar como o
+papel técnico autorizado; assim a verificação de destino permanece estrita.
+
+As migrations de Clientes também reconciliam os grants mínimos do runtime,
+separados por responsabilidade:
+
+- consentimento: `SELECT`/`INSERT`/`UPDATE` no estado atual e `SELECT`/`INSERT`
+  no ledger imutável de eventos;
+- ações: `SELECT`/`INSERT` no ledger imutável de eventos e acesso à sequência;
+- qualidade: `SELECT`/`INSERT`/`UPDATE` apenas na fila agregada e
+  `SELECT`/`INSERT` no ledger de eventos;
+- identidade: `SELECT`/`INSERT` nos ledgers de revisão, membros, linhagem e
+  links, `SELECT`/`INSERT`/`UPDATE` nas execuções de materialização e acesso às
+  sequências de ordenação.
+
+Nenhuma dessas migrations concede `DELETE` ou `TRUNCATE` nos ledgers, nem
+acesso amplo a fontes protegidas. Reexecute o runner de migration com o mesmo
+release quando o estado de grants estiver incompleto; a reconciliação é
+idempotente e o relatório registra o papel técnico e cada grant aplicado.

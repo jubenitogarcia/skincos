@@ -10,6 +10,11 @@ export const IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS = [
     IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID,
 ]
 
+const IDENTITY_REVIEW_RUNTIME_ROLES = Object.freeze({
+    [ATENDIMENTO_MIGRATION_TARGETS.LOCAL]: 'skincos',
+    [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
+})
+
 const PREREQUISITE_TABLES = [
     'client_merge_suggestions',
     'client_caixa_links',
@@ -170,6 +175,22 @@ function migrationError(code) {
     return error
 }
 
+function runtimeGrantStatements(target) {
+    const role = IDENTITY_REVIEW_RUNTIME_ROLES[target]
+    if (!role) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_RUNTIME_ROLE_UNKNOWN')
+    return [
+        `grant usage on schema crm_atendimento to ${role}`,
+        `grant select, insert on table crm_atendimento.identity_review_decisions to ${role}`,
+        `grant select, insert, update on table crm_atendimento.identity_materialization_runs to ${role}`,
+        `grant select, insert on table crm_atendimento.identity_member_history to ${role}`,
+        `grant select, insert on table crm_atendimento.identity_lineage to ${role}`,
+        `grant select, insert on table crm_atendimento.identity_source_link_history to ${role}`,
+        `grant usage, select on sequence crm_atendimento.identity_review_decisions_event_order_seq to ${role}`,
+        `grant usage, select on sequence crm_atendimento.identity_materialization_runs_event_order_seq to ${role}`,
+        `grant usage, select on sequence crm_atendimento.identity_member_history_event_order_seq to ${role}`,
+    ]
+}
+
 async function assertLocalDestination(client, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL) {
     if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_DESTINATION_UNSAFE')
     try {
@@ -226,6 +247,7 @@ export function identityReviewWorkflowMigrationPlan() {
         ],
         decisionPolicy: 'Append-only decisions preserve raw matching evidence, source state and an expected source version.',
         ledgerIntegrityPolicy: 'Every identity-review evidence table rejects UPDATE, DELETE and TRUNCATE through the append-only ledger guard.',
+        runtimeAccess: 'The dedicated runtime role receives only review-ledger SELECT/INSERT, materialization-run SELECT/INSERT/UPDATE, and generated event-order sequence access; immutable ledgers remain non-destructible.',
         materializationPolicy: 'Confirmation reuses a deterministic active identity, orders member and automatic-link evidence in one ledger, and fails closed when commercial history would need to move or pre-ledger history is ambiguous.',
         rollback: 'Non-destructive: preserves decisions, materialization history and lineage, then marks the workflow unavailable.',
     }
@@ -255,7 +277,12 @@ export async function applyIdentityReviewWorkflowMigration({ pool, databaseUrl, 
         for (const sql of STATEMENTS) await client.query(sql)
         for (const sql of SOURCE_LINK_LEDGER_STATEMENTS) await client.query(sql)
         for (const sql of LEDGER_INTEGRITY_STATEMENTS) await client.query(sql)
+        const runtimeRole = IDENTITY_REVIEW_RUNTIME_ROLES[target]
+        const grants = runtimeGrantStatements(target)
+        for (const sql of grants) await client.query(sql)
         report.sourceLinkLedgerCutoverRunEventOrder = await sourceLinkLedgerCutoverEventOrder(client)
+        report.runtimeRole = runtimeRole
+        report.runtimeGrants = grants
         report.tables = ['identity_review_decisions', 'identity_materialization_runs', 'identity_member_history', 'identity_lineage', 'identity_source_link_history']
         report.indexes = ['identity_review_decisions_lookup_idx', 'identity_review_decisions_event_order_idx', 'identity_materialization_runs_created_idx', 'identity_materialization_runs_event_order_idx', 'identity_member_history_run_idx', 'identity_lineage_predecessor_idx', 'identity_source_link_history_run_idx', 'identity_source_link_history_target_idx']
         report.applied = true
