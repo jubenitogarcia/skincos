@@ -2,11 +2,15 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
-const BUILDER_VERSION = '3.1.0';
-const INTERMEDIATE_FIXTURES = [
+const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-creator-error-handler-v3';
+const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
+const BUILDER_VERSION = '3.2.0';
+const ALL_FIXTURE_NAMES = [
+  'Build CCG-00 dry-run fixture',
   'Build CCG-10 dry-run fixture',
   'Build CCG-20 dry-run fixture',
   'Build CCG-30 dry-run fixture',
@@ -16,7 +20,31 @@ const INTERMEDIATE_FIXTURES = [
   'Build CCG-70 dry-run fixture',
   'Build CCG-80 dry-run fixture',
   'Build CCG-90 dry-run fixture',
+  'Build CCG-99 retryable fixture',
 ];
+const INTERMEDIATE_FIXTURES = [
+  ...ALL_FIXTURE_NAMES.slice(1, 10),
+];
+const ERROR_HANDLER_NODE_NAMES = [
+  'Error Trigger',
+  'CCG-99 Normalize & Redact Error Event',
+  'CCG-99 Classify & Decide Recovery',
+  'CCG-99 Switch Recovery Action',
+  'CCG-99 Build Retry Handoff',
+  'CCG-99 Build Resume Handoff',
+  'CCG-99 Build Review Handoff',
+  'CCG-99 Build Termination Handoff',
+  'CCG-99 Finalize Incident & Ledger',
+  'CCG-99 Return Error Handler Result',
+];
+const GENERATED_NODE_NAMES = [
+  'Operational Production Request',
+  'CCG-60 Optional Applicability Gate',
+  'CCG-60 Optional Skip Result',
+  'CCG-70 Optional Applicability Gate',
+  'CCG-70 Optional Skip Result',
+];
+const MODULES = ['CCG-00', 'CCG-10', 'CCG-20', 'CCG-30', 'CCG-40', 'CCG-50', 'CCG-60', 'CCG-70', 'CCG-80', 'CCG-90'];
 const REQUIRED_MODULE_NODES = [
   'CCG-00 Parse & Normalize',
   'CCG-00 Return Module Result',
@@ -339,8 +367,15 @@ function parseArgs(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--input' || arg === '--output') {
-      result[arg.slice(2)] = argv[++index];
+    if (['--input', '--output', '--error-output', '--fixtures-output', '--manifest-output'].includes(arg)) {
+      const key = {
+        '--input': 'input',
+        '--output': 'output',
+        '--error-output': 'errorOutput',
+        '--fixtures-output': 'fixturesOutput',
+        '--manifest-output': 'manifestOutput',
+      }[arg];
+      result[key] = argv[++index];
     } else if (arg === '--allow-noncanonical-source') {
       result.allowNoncanonicalSource = true;
     }
@@ -368,24 +403,30 @@ function assertSourceShape(source, options = {}) {
     if (!nodeByName(source.nodes, name)) throw new Error('Missing required source node: ' + name);
   }
   if (options.strictSource !== false) {
-    for (const name of INTERMEDIATE_FIXTURES) {
-      if (!nodeByName(source.nodes, name)) throw new Error('Missing intermediate fixture: ' + name);
+    for (const name of ALL_FIXTURE_NAMES) {
+      if (!nodeByName(source.nodes, name)) throw new Error('Missing source fixture: ' + name);
     }
+    if (!nodeByName(source.nodes, 'Error Trigger')) throw new Error('Missing source Error Trigger');
   }
 }
 
 function removeNodesAndEdges(workflow, names) {
-  const removed = new Set(names);
-  workflow.nodes = workflow.nodes.filter((node) => !removed.has(node.name) && node.name !== 'Operational Production Request' && node.name !== 'CCG-80 Production Executor');
+  const removed = new Set([
+    ...names,
+    ...GENERATED_NODE_NAMES,
+    ...ERROR_HANDLER_NODE_NAMES,
+    'CCG-80 Production Executor',
+  ]);
+  workflow.nodes = workflow.nodes.filter((node) => !removed.has(node.name));
   for (const [source, output] of Object.entries(workflow.connections || {})) {
-    if (removed.has(source) || source === 'Operational Production Request' || source === 'CCG-80 Production Executor') {
+    if (removed.has(source)) {
       delete workflow.connections[source];
       continue;
     }
     for (const [connectionType, branches] of Object.entries(output || {})) {
       if (!Array.isArray(branches)) continue;
       output[connectionType] = branches.map((branch) => Array.isArray(branch)
-        ? branch.filter((edge) => edge && !removed.has(edge.node) && edge.node !== 'Operational Production Request' && edge.node !== 'CCG-80 Production Executor')
+        ? branch.filter((edge) => edge && !removed.has(edge.node))
         : branch);
     }
   }
@@ -481,6 +522,236 @@ if (!suppliedChecksum) {
   return code.slice(0, unsafeStart) + checksumBlock + code.slice(unsafeEnd + (lineEnd < 0 ? 0 : 1));
 }
 
+function replaceAllText(code, search, replacement) {
+  return code.split(search).join(replacement);
+}
+
+function patchCcg50Code(code) {
+  let updated = code;
+  updated = updated.replace(
+    "const sceneType = contentMode === 'SHORT_VIDEO' ? 'VIDEO_SCENE' : contentMode === 'CAROUSEL' ? 'CAROUSEL_PAGE' : 'STATIC_FRAME';",
+    "const sceneType = ['SHORT_VIDEO', 'HYBRID'].includes(contentMode) ? 'VIDEO_SCENE' : contentMode === 'CAROUSEL' ? 'CAROUSEL_PAGE' : 'STATIC_FRAME';",
+  );
+  updated = replaceAllText(
+    updated,
+    "contentMode === 'SHORT_VIDEO' ? Math.max(1, Number(job.duration_seconds || frame.duration_seconds || 3)) : 0",
+    "['SHORT_VIDEO', 'HYBRID'].includes(contentMode) ? Math.max(1, Number(job.duration_seconds || frame.duration_seconds || 3)) : 0",
+  );
+  return updated;
+}
+
+function patchCcg50Validator(code) {
+  return code.replace(
+    "const validModes = new Set(['STATIC_SINGLE','CAROUSEL','SHORT_VIDEO']);",
+    "const validModes = new Set(['STATIC_SINGLE','CAROUSEL','SHORT_VIDEO','HYBRID']);",
+  );
+}
+
+function patchCcg60PrepareCode(code) {
+  let updated = code.replace(
+    "const applicable = mode === 'SHORT_VIDEO';",
+    "const applicable = ['SHORT_VIDEO', 'HYBRID'].includes(mode);",
+  );
+  if (!updated.includes('const ccgOptionalSkip =')) {
+    updated = updated.replace(
+      'const brief = {',
+      `const ccgOptionalSkip = productions.length > 0 && !productions.some((production) => production.audio_applicable === true);
+
+const brief = {`,
+    );
+  }
+  if (!updated.includes('CCG_60: ccgOptionalSkip')) {
+    updated = updated.replace(
+      '...data,\n    audio_planning_brief: brief,',
+      `...data,
+    ccg_optional_modules: {
+      ...(data.ccg_optional_modules || {}),
+      CCG_60: ccgOptionalSkip
+        ? { status: 'SKIPPED_NOT_REQUIRED', reason_code: 'CONTENT_MODE_NOT_APPLICABLE', module: 'CCG-60' }
+        : { status: 'REQUIRED', module: 'CCG-60' }
+    },
+    audio_planning_brief: brief,`,
+    );
+  }
+  return updated;
+}
+
+function patchCcg70PrepareCode(code) {
+  let updated = code;
+  updated = updated.replace(
+    "if (text(production.content_mode) !== 'SHORT_VIDEO') {",
+    "if (!['SHORT_VIDEO', 'HYBRID'].includes(text(production.content_mode))) {",
+  );
+  updated = updated.replace(
+    `const timelineType = mode === 'SHORT_VIDEO'
+    ? 'TEMPORAL_VIDEO'
+    : mode === 'CAROUSEL'
+      ? 'FRAME_SEQUENCE'
+      : 'STILL_FRAME';`,
+    `const timelineType = ['SHORT_VIDEO', 'HYBRID'].includes(mode)
+    ? 'TEMPORAL_VIDEO'
+    : mode === 'CAROUSEL'
+      ? 'FRAME_SEQUENCE'
+      : 'STILL_FRAME';`,
+  );
+  updated = replaceAllText(
+    updated,
+    "mode === 'SHORT_VIDEO'\n      ? quantize(Number(production.total_duration_seconds || 0))\n      : scenes.length",
+    "['SHORT_VIDEO', 'HYBRID'].includes(mode)\n      ? quantize(Number(production.total_duration_seconds || 0))\n      : scenes.length",
+  );
+  updated = replaceAllText(
+    updated,
+    "mode === 'SHORT_VIDEO'\n      ? Number((quantize(Number(production.total_duration_seconds || 0)) / fps).toFixed(6))\n      : 0",
+    "['SHORT_VIDEO', 'HYBRID'].includes(mode)\n      ? Number((quantize(Number(production.total_duration_seconds || 0)) / fps).toFixed(6))\n      : 0",
+  );
+  if (!updated.includes('const ccgOptionalSkip =')) {
+    updated = updated.replace(
+      'const brief = {',
+      `const ccgOptionalSkip = productions.length > 0 && productions.every((production) => text(production.content_mode) === 'STATIC_SINGLE');
+
+const brief = {`,
+    );
+  }
+  if (!updated.includes('CCG_70: ccgOptionalSkip')) {
+    updated = updated.replace(
+      '...data,\n    timeline_planning_brief: brief,',
+      `...data,
+    ccg_optional_modules: {
+      ...(data.ccg_optional_modules || {}),
+      CCG_70: ccgOptionalSkip
+        ? { status: 'SKIPPED_NOT_REQUIRED', reason_code: 'CONTENT_MODE_NOT_APPLICABLE', module: 'CCG-70' }
+        : { status: 'REQUIRED', module: 'CCG-70' }
+    },
+    timeline_planning_brief: brief,`,
+    );
+  }
+  return updated;
+}
+
+function patchCcg60ReturnCode(code) {
+  let updated = code.replace(
+    "if (!output || output.status !== 'DONE' || !manifest) {",
+    "if (!output || !['DONE', 'SKIPPED_NOT_REQUIRED'].includes(output.status) || !manifest) {",
+  );
+  updated = updated.replace(
+    "module: 'CCG-60',\n      status: 'DONE',",
+    "module: 'CCG-60',\n      status: output.status,",
+  );
+  return updated;
+}
+
+function patchCcg70ReturnCode(code) {
+  let updated = code.replace(
+    "if (!output || output.status !== 'DONE' || !timeline) {",
+    "if (!output || !['DONE', 'SKIPPED_NOT_REQUIRED'].includes(output.status) || !timeline) {",
+  );
+  updated = updated.replace(
+    "module: 'CCG-70',\n      status: 'DONE',",
+    "module: 'CCG-70',\n      status: output.status,",
+  );
+  return updated;
+}
+
+function patchCcg70Validator(code) {
+  let updated = code;
+  updated = updated.replace(
+    "if (!output || output.status !== 'DONE') errors.push('CCG-60 não foi concluído.');",
+    "if (!output || !['DONE', 'SKIPPED_NOT_REQUIRED'].includes(output.status)) errors.push('CCG-60 não foi concluído.');",
+  );
+  updated = updated.replace(
+    "const errors = [];\nconst warnings = [];",
+    "const errors = [];\nconst warnings = [];\nconst audioSkipped = output?.status === 'SKIPPED_NOT_REQUIRED' || text(audioManifest?.status) === 'SKIPPED_NOT_REQUIRED';",
+  );
+  updated = updated.replace(
+    "if (!['READY', 'NEEDS_REVIEW'].includes(text(audioManifest?.status))) {",
+    "if (!audioSkipped && !['READY', 'NEEDS_REVIEW'].includes(text(audioManifest?.status))) {",
+  );
+  updated = updated.replace(
+    "if (!['PROCEED', 'PROCEED_WITH_GUARDRAILS'].includes(text(audioManifest?.routing_decision))) {",
+    "if (!audioSkipped && !['PROCEED', 'PROCEED_WITH_GUARDRAILS'].includes(text(audioManifest?.routing_decision))) {",
+  );
+  updated = updated.replace(
+    "if (list(audioManifest?.review?.hard_blockers).length) {",
+    "if (!audioSkipped && list(audioManifest?.review?.hard_blockers).length) {",
+  );
+  updated = updated.replace(
+    'for (const [productionId, production] of sceneProductions.entries()) {',
+    'if (!audioSkipped) for (const [productionId, production] of sceneProductions.entries()) {',
+  );
+  updated = updated.replace(
+    "if (['cloned', 'custom_identity', 'voice_clone'].includes(voiceMode) && text(consent.status).toUpperCase() !== 'GRANTED') {",
+    "if (!audioSkipped && ['cloned', 'custom_identity', 'voice_clone'].includes(voiceMode) && text(consent.status).toUpperCase() !== 'GRANTED') {",
+  );
+  updated = updated.replace(
+    "if (text(data.ccg_context?.mode) === 'LIVE') {\n  const providers = list(request.provider_policy?.allowed_providers).map((value) => text(value).toLowerCase());",
+    "if (!audioSkipped && text(data.ccg_context?.mode) === 'LIVE') {\n  const providers = list(request.provider_policy?.allowed_providers).map((value) => text(value).toLowerCase());",
+  );
+  return updated;
+}
+
+function patchCcg80Validator(code) {
+  let updated = code;
+  updated = updated.replace(
+    "if (!output || output.status !== 'DONE') errors.push('CCG-70 não foi concluído.');",
+    "if (!output || !['DONE', 'SKIPPED_NOT_REQUIRED'].includes(output.status)) errors.push('CCG-70 não foi concluído.');",
+  );
+  updated = updated.replace(
+    "const errors = [];\nconst warnings = [];",
+    "const errors = [];\nconst warnings = [];\nconst timelineSkipped = output?.status === 'SKIPPED_NOT_REQUIRED' || text(timeline?.status) === 'SKIPPED_NOT_REQUIRED';\nconst audioSkipped = text(audioManifest?.status) === 'SKIPPED_NOT_REQUIRED';",
+  );
+  updated = updated.replace(
+    "if (!['READY', 'NEEDS_REVIEW'].includes(text(manifest?.status))) {\n    errors.push(`${name}.status não permite produção: ${text(manifest?.status, 'vazio')}.`);\n  }",
+    "if (!((name === 'timeline' && timelineSkipped) || (name === 'audio_manifest' && audioSkipped)) && !['READY', 'NEEDS_REVIEW'].includes(text(manifest?.status))) {\n    errors.push(`${name}.status não permite produção: ${text(manifest?.status, 'vazio')}.`);\n  }",
+  );
+  return updated;
+}
+
+function patchModuleReturnCode(code, moduleName, options = {}) {
+  let updated = code;
+  if (options.allowSkipped) {
+    updated = updated.replace(
+      options.guard,
+      options.guard.replace("output.status !== 'DONE'", "!['DONE', 'SKIPPED_NOT_REQUIRED'].includes(output.status)"),
+    );
+    updated = updated.replace(
+      `module: '${moduleName}',\n      status: 'DONE',`,
+      `module: '${moduleName}',\n      status: output.status,`,
+    );
+  }
+  if (options.finalOutputType) {
+    updated = updated.replace("output_type: 'CONTENT_PACKAGE_RESULT'", `output_type: '${options.finalOutputType}'`);
+  }
+  const continuityMarker = `event_id: (data.ccg_context?.run_id || 'unknown') + ':${moduleName}'`;
+  if (options.addContinuity !== false && !updated.includes(continuityMarker)) {
+    const marker = '...data,';
+    const index = updated.indexOf(marker);
+    if (index >= 0) {
+      const continuity = `...data,
+    module_trace: [
+      ...(data.module_trace || []),
+      ...((data.module_trace || []).some((entry) => entry && entry.module === '${moduleName}') ? [] : [{
+        module: '${moduleName}',
+        status: output?.status || 'DONE',
+        run_id: data.ccg_context?.run_id,
+        idempotency_key: data.ccg_context?.idempotency_key
+      }])
+    ],
+    ledger_events: [
+      ...(data.ledger_events || []),
+      ...((data.ledger_events || []).some((entry) => entry && (entry.module === '${moduleName}' || entry.event_id === data.ccg_context?.run_id + ':${moduleName}')) ? [] : [{
+        event_name: 'ccg.module.completed',
+        event_id: (data.ccg_context?.run_id || 'unknown') + ':${moduleName}',
+        module: '${moduleName}',
+        status: output?.status || 'DONE',
+        idempotency_key: data.ccg_context?.idempotency_key
+      }])
+    ],`;
+      updated = updated.slice(0, index) + continuity + updated.slice(index + marker.length);
+    }
+  }
+  return updated;
+}
+
 function patchUnsafeRuntime(workflow) {
   const ccg10 = nodeByName(workflow.nodes, 'CCG-10 Prepare Evidence Dossier');
   if (ccg10 && ccg10.parameters && typeof ccg10.parameters.jsCode === 'string') {
@@ -490,13 +761,338 @@ function patchUnsafeRuntime(workflow) {
   if (ccg40 && ccg40.parameters && typeof ccg40.parameters.jsCode === 'string') {
     ccg40.parameters.jsCode = patchCcg40Code(ccg40.parameters.jsCode);
   }
+  const ccg50Prepare = nodeByName(workflow.nodes, 'CCG-50 Prepare Scene Planning Brief');
+  if (ccg50Prepare?.parameters && typeof ccg50Prepare.parameters.jsCode === 'string') {
+    ccg50Prepare.parameters.jsCode = patchCcg50Code(ccg50Prepare.parameters.jsCode);
+  }
+  const ccg50Validator = nodeByName(workflow.nodes, 'CCG-50 Validate CCG-40 Input');
+  if (ccg50Validator?.parameters && typeof ccg50Validator.parameters.jsCode === 'string') {
+    ccg50Validator.parameters.jsCode = patchCcg50Validator(ccg50Validator.parameters.jsCode);
+  }
+  const ccg60Prepare = nodeByName(workflow.nodes, 'CCG-60 Prepare Audio Planning Brief');
+  if (ccg60Prepare?.parameters && typeof ccg60Prepare.parameters.jsCode === 'string') {
+    ccg60Prepare.parameters.jsCode = patchCcg60PrepareCode(ccg60Prepare.parameters.jsCode);
+  }
+  const ccg60Return = nodeByName(workflow.nodes, 'CCG-60 Return Module Result');
+  if (ccg60Return?.parameters && typeof ccg60Return.parameters.jsCode === 'string') {
+    ccg60Return.parameters.jsCode = patchCcg60ReturnCode(ccg60Return.parameters.jsCode);
+  }
+  const ccg70Prepare = nodeByName(workflow.nodes, 'CCG-70 Prepare Timeline Planning Brief');
+  if (ccg70Prepare?.parameters && typeof ccg70Prepare.parameters.jsCode === 'string') {
+    ccg70Prepare.parameters.jsCode = patchCcg70PrepareCode(ccg70Prepare.parameters.jsCode);
+  }
+  const ccg70Validator = nodeByName(workflow.nodes, 'CCG-70 Validate CCG-60 Input');
+  if (ccg70Validator?.parameters && typeof ccg70Validator.parameters.jsCode === 'string') {
+    ccg70Validator.parameters.jsCode = patchCcg70Validator(ccg70Validator.parameters.jsCode);
+  }
+  const ccg70Return = nodeByName(workflow.nodes, 'CCG-70 Return Module Result');
+  if (ccg70Return?.parameters && typeof ccg70Return.parameters.jsCode === 'string') {
+    ccg70Return.parameters.jsCode = patchCcg70ReturnCode(ccg70Return.parameters.jsCode);
+  }
+  const ccg80Validator = nodeByName(workflow.nodes, 'CCG-80 Validate CCG-70 Input');
+  if (ccg80Validator?.parameters && typeof ccg80Validator.parameters.jsCode === 'string') {
+    ccg80Validator.parameters.jsCode = patchCcg80Validator(ccg80Validator.parameters.jsCode);
+  }
+  for (const moduleName of MODULES.slice(0, 9)) {
+    const returnNode = nodeByName(workflow.nodes, `${moduleName} Return Module Result`);
+    if (!returnNode?.parameters || typeof returnNode.parameters.jsCode !== 'string') continue;
+    const guard = moduleName === 'CCG-60'
+      ? "if (!output || output.status !== 'DONE' || !manifest) {"
+      : moduleName === 'CCG-70'
+        ? "if (!output || output.status !== 'DONE' || !timeline) {"
+        : null;
+    returnNode.parameters.jsCode = moduleName === 'CCG-60'
+      ? patchModuleReturnCode(returnNode.parameters.jsCode, moduleName, {
+        allowSkipped: true,
+        guard,
+      })
+      : moduleName === 'CCG-70'
+        ? patchModuleReturnCode(returnNode.parameters.jsCode, moduleName, {
+          allowSkipped: true,
+          guard,
+        })
+        : patchModuleReturnCode(returnNode.parameters.jsCode, moduleName);
+  }
+  const ccg90Return = nodeByName(workflow.nodes, 'CCG-90 Return Content Package');
+  if (ccg90Return?.parameters && typeof ccg90Return.parameters.jsCode === 'string') {
+    ccg90Return.parameters.jsCode = patchModuleReturnCode(ccg90Return.parameters.jsCode, 'CCG-90', {
+      finalOutputType: 'CONTENT_PACKAGE',
+    });
+  }
+}
+
+function optionalGateNode(moduleName, position) {
+  const suffix = moduleName.replace('CCG-', '').toLowerCase();
+  return {
+    parameters: {
+      conditions: {
+        options: { caseSensitive: true, leftValue: '', typeValidation: 'strict', version: 2 },
+        conditions: [{
+          id: `ccg-${suffix}-optional-condition`,
+          leftValue: `={{ $json.ccg_optional_modules && $json.ccg_optional_modules.CCG_${moduleName.slice(4)} && $json.ccg_optional_modules.CCG_${moduleName.slice(4)}.status }}`,
+          rightValue: 'SKIPPED_NOT_REQUIRED',
+          operator: { type: 'string', operation: 'equals', name: 'filter.operator.equals' },
+        }],
+        combinator: 'and',
+      },
+      options: {},
+    },
+    id: `ccg-${suffix}-optional-applicability-gate`,
+    name: `${moduleName} Optional Applicability Gate`,
+    type: 'n8n-nodes-base.if',
+    typeVersion: 2.3,
+    position,
+  };
+}
+
+function optionalSkipCode(moduleName, manifestKey, outputType, nextModule, reason) {
+  const moduleKey = moduleName.replace('-', '_');
+  return String.raw`
+const item = $input.first();
+const data = item.json || {};
+const now = new Date().toISOString();
+const ids = {
+  run_id: data.ccg_context?.run_id,
+  production_id: data.ccg_context?.production_id || data.production_request?.production_id,
+  content_id: data.ccg_context?.content_id || data.production_request?.content_id,
+  campaign_id: data.ccg_context?.campaign_id || data.production_request?.campaign_id,
+  request_hash: data.ccg_context?.request_hash || data.production_request?.request_hash,
+  idempotency_key: data.ccg_context?.idempotency_key
+};
+const manifest = {
+  status: 'SKIPPED_NOT_REQUIRED',
+  routing_decision: 'PROCEED',
+  next_module: '${nextModule}',
+  module: '${moduleName}',
+  skip_reason: '${reason}',
+  productions: [],
+  ${manifestKey === 'audio_manifest' ? 'audio_job_registry: [],' : 'timeline_job_registry: [],'}
+  review: { required: false, reasons: ['${reason}'], hard_blockers: [] },
+  publish_allowed: false,
+  publish_requested: false,
+  ...ids
+};
+const moduleOutput = {
+  status: 'SKIPPED_NOT_REQUIRED',
+  output_type: '${outputType}',
+  ${manifestKey}: manifest,
+  ...ids,
+  started_at: now,
+  finished_at: now
+};
+return [{
+  json: {
+    ...data,
+    module_outputs: { ...(data.module_outputs || {}), ${moduleKey}: moduleOutput },
+    ${manifestKey}: manifest,
+    ccg_optional_modules: {
+      ...(data.ccg_optional_modules || {}),
+      ${moduleKey}: { status: 'SKIPPED_NOT_REQUIRED', reason_code: 'CONTENT_MODE_NOT_APPLICABLE', module: '${moduleName}' }
+    },
+    module_trace: [
+      ...(data.module_trace || []),
+      { module: '${moduleName}', status: 'SKIPPED_NOT_REQUIRED', reason_code: 'CONTENT_MODE_NOT_APPLICABLE', run_id: ids.run_id, idempotency_key: ids.idempotency_key }
+    ],
+    ledger_events: [
+      ...(data.ledger_events || []),
+      { event_name: 'ccg.module.skipped', event_id: (ids.run_id || 'unknown') + ':${moduleName}:skipped', module: '${moduleName}', status: 'SKIPPED_NOT_REQUIRED', idempotency_key: ids.idempotency_key }
+    ],
+    next_module: '${nextModule}',
+    status: 'SKIPPED_NOT_REQUIRED',
+    module_status: 'SKIPPED_NOT_REQUIRED',
+    ccg_module: '${moduleName}',
+    output_type: 'CCG_MODULE_RESULT',
+    posting_payload: { ...(data.posting_payload || {}), publish_allowed: false, publish_requested: false }
+  },
+  binary: item.binary
+}];
+`;
+}
+
+function connectionsForNodes(workflow, allowedNames) {
+  const allowed = new Set(allowedNames);
+  const connections = {};
+  for (const [source, output] of Object.entries(workflow.connections || {})) {
+    if (!allowed.has(source)) continue;
+    const filteredOutput = {};
+    for (const [connectionType, branches] of Object.entries(output || {})) {
+      if (!Array.isArray(branches)) continue;
+      filteredOutput[connectionType] = branches.map((branch) => Array.isArray(branch)
+        ? branch.filter((edge) => edge && allowed.has(edge.node))
+        : branch);
+    }
+    connections[source] = filteredOutput;
+  }
+  return connections;
+}
+
+function reachableNodeNames(workflow, startName) {
+  const found = new Set();
+  const queue = [startName];
+  while (queue.length) {
+    const source = queue.shift();
+    if (found.has(source)) continue;
+    found.add(source);
+    const output = workflow.connections?.[source] || {};
+    for (const branches of Object.values(output)) {
+      if (!Array.isArray(branches)) continue;
+      for (const branch of branches) {
+        for (const edge of Array.isArray(branch) ? branch : []) {
+          if (edge?.node && !found.has(edge.node)) queue.push(edge.node);
+        }
+      }
+    }
+  }
+  return found;
+}
+
+function buildErrorWorkflow(source) {
+  const reachable = reachableNodeNames(source, 'Error Trigger');
+  const allowedNames = ERROR_HANDLER_NODE_NAMES.filter((name) => reachable.has(name) || name === 'Error Trigger');
+  const nodes = source.nodes.filter((node) => allowedNames.includes(node.name));
+  if (!nodes.some((node) => node.name === 'Error Trigger')) {
+    throw new Error('Cannot build error workflow without Error Trigger');
+  }
+  const handler = {
+    id: ERROR_WORKFLOW_ID,
+    name: ERROR_WORKFLOW_NAME,
+    active: false,
+    nodes,
+    connections: connectionsForNodes(source, new Set(nodes.map((node) => node.name))),
+    settings: { ...(source.settings || {}) },
+    meta: {
+      codex_builder: 'campaign-creative-creator-continuous',
+      codex_builder_version: BUILDER_VERSION,
+      architecture: 'separate-error-workflow',
+      source_workflow_id: WORKFLOW_ID,
+      no_publication: true,
+      recovery_handoffs: ['retry', 'resume', 'review', 'termination'],
+    },
+  };
+  delete handler.settings.errorWorkflow;
+  delete handler.versionId;
+  return handler;
+}
+
+function buildFixturesWorkflow(source) {
+  return {
+    id: 'ccg-campaign-creative-creator-module-fixtures-v3',
+    name: 'Campaign Creative Creator - Module Fixtures',
+    active: false,
+    nodes: source.nodes.filter((node) => ALL_FIXTURE_NAMES.includes(node.name)),
+    connections: {},
+    settings: {},
+    meta: {
+      codex_builder: 'campaign-creative-creator-continuous',
+      codex_builder_version: BUILDER_VERSION,
+      architecture: 'versioned-fixture-catalog',
+      source_workflow_id: WORKFLOW_ID,
+      no_publication: true,
+      fixture_names: ALL_FIXTURE_NAMES,
+    },
+  };
+}
+
+function sanitizeWorkflow(value) {
+  if (Array.isArray(value)) return value.map(sanitizeWorkflow);
+  if (!value || typeof value !== 'object') return value;
+  const output = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (/^credentials?$/i.test(key) || /credential.*id/i.test(key)) continue;
+    output[key] = sanitizeWorkflow(child);
+  }
+  return output;
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function buildWorkflowPackage(source, options = {}) {
+  assertSourceShape(source, options);
+  const sourceSha256 = options.sourceSha256 || sha256(Buffer.from(JSON.stringify(source)));
+  const errorHandler = transformForOutput(buildErrorWorkflow(source));
+  const main = transformForOutput(transformWorkflow(source, options));
+  const fixtures = transformForOutput(buildFixturesWorkflow(source));
+  const manifest = {
+    package_version: '3.2.0',
+    builder: 'campaign-creative-creator-continuous',
+    builder_version: BUILDER_VERSION,
+    source: {
+      workflow_id: WORKFLOW_ID,
+      workflow_name: WORKFLOW_NAME,
+      version_id: source.versionId || source.meta?.source_version_id || null,
+      sha256: sourceSha256,
+      baseline_reference: 'private-runtime/campaign-creative-creator/source-941bec10-3e41-49be-baed-753ca60787ad.json',
+    },
+    outputs: {
+      main: 'campaign-creative-creator.v3.json',
+      error_handler: 'campaign-creative-creator-error-handler.v3.json',
+      fixtures: 'campaign-creative-creator.module-fixtures.v3.json',
+    },
+    contracts: {
+      active: false,
+      publish_allowed: false,
+      publish_requested: false,
+      error_workflow_id: ERROR_WORKFLOW_ID,
+      operational_trigger: 'executeWorkflowTrigger',
+      final_output_type: 'CONTENT_PACKAGE',
+      credentials_stripped_for_git: true,
+    },
+    counts: {
+      main_nodes: main.nodes.length,
+      main_edges: countConnectionEdges(main),
+      error_nodes: errorHandler.nodes.length,
+      error_edges: countConnectionEdges(errorHandler),
+      fixture_nodes: fixtures.nodes.length,
+    },
+  };
+  return { main, errorHandler, fixtures, manifest };
+}
+
+function transformForOutput(workflow) {
+  const output = sanitizeWorkflow(workflow);
+  output.meta = { ...(output.meta || {}), credentials_stripped_for_git: true };
+  return output;
+}
+
+function countConnectionEdges(workflow) {
+  return Object.values(workflow.connections || {}).reduce((total, output) => total + Object.values(output || {}).reduce(
+    (connectionTotal, branches) => connectionTotal + (Array.isArray(branches)
+      ? branches.reduce((branchTotal, branch) => branchTotal + (Array.isArray(branch) ? branch.length : 0), 0)
+      : 0),
+    0,
+  ), 0);
+}
+
+function addOptionalNodes(workflow) {
+  workflow.nodes.push(
+    optionalGateNode('CCG-60', [13520, 640]),
+    {
+      parameters: { mode: 'runOnceForAllItems', jsCode: optionalSkipCode('CCG-60', 'audio_manifest', 'AUDIO_MANIFEST', 'CCG-70', 'CONTENT_MODE_NOT_APPLICABLE') },
+      id: 'ccg-60-optional-skip-result',
+      name: 'CCG-60 Optional Skip Result',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [13760, 560],
+    },
+    optionalGateNode('CCG-70', [14800, 640]),
+    {
+      parameters: { mode: 'runOnceForAllItems', jsCode: optionalSkipCode('CCG-70', 'timeline', 'TIMELINE', 'CCG-80', 'CONTENT_MODE_NOT_APPLICABLE') },
+      id: 'ccg-70-optional-skip-result',
+      name: 'CCG-70 Optional Skip Result',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [15040, 560],
+    },
+  );
 }
 
 function transformWorkflow(source, options = {}) {
   assertSourceShape(source, options);
   const workflow = JSON.parse(JSON.stringify(source));
   workflow.connections = workflow.connections && typeof workflow.connections === 'object' ? workflow.connections : {};
-  removeNodesAndEdges(workflow, INTERMEDIATE_FIXTURES);
+  removeNodesAndEdges(workflow, [...INTERMEDIATE_FIXTURES, 'Build CCG-99 retryable fixture']);
   patchUnsafeRuntime(workflow);
 
   workflow.nodes.push({
@@ -507,14 +1103,7 @@ function transformWorkflow(source, options = {}) {
     typeVersion: 1.1,
     position: [-608, 180],
   });
-  workflow.nodes.push({
-    parameters: { mode: 'runOnceForAllItems', jsCode: EXECUTOR_CODE },
-    id: 'ccg-production-executor',
-    name: 'CCG-80 Production Executor',
-    type: 'n8n-nodes-base.code',
-    typeVersion: 2,
-    position: [15520, 520],
-  });
+  addOptionalNodes(workflow);
 
   replaceMainEdge(workflow, 'Operational Production Request', 'CCG-00 Parse & Normalize');
   replaceMainEdge(workflow, 'CCG-00 Return Module Result', 'CCG-10 Validate CCG-00 Input');
@@ -525,18 +1114,40 @@ function transformWorkflow(source, options = {}) {
   replaceMainEdge(workflow, 'CCG-50 Return Module Result', 'CCG-60 Validate CCG-50 Input');
   replaceMainEdge(workflow, 'CCG-60 Return Module Result', 'CCG-70 Validate CCG-60 Input');
   replaceMainEdge(workflow, 'CCG-70 Return Module Result', 'CCG-80 Validate CCG-70 Input');
-  replaceMainEdge(workflow, 'CCG-80 Return Module Result', 'CCG-80 Production Executor');
-  replaceMainEdge(workflow, 'CCG-80 Production Executor', 'CCG-90 Validate CCG-80 Input');
+  replaceMainEdge(workflow, 'CCG-80 Return Module Result', 'CCG-90 Validate CCG-80 Input');
+
+  replaceMainEdge(workflow, 'CCG-60 Prepare Audio Planning Brief', 'CCG-60 Optional Applicability Gate');
+  workflow.connections['CCG-60 Optional Applicability Gate'] = {
+    main: [
+      [{ node: 'CCG-60 Optional Skip Result', type: 'main', index: 0 }],
+      [{ node: 'CCG-60 Switch Audio Direction Mode', type: 'main', index: 0 }],
+    ],
+  };
+  replaceMainEdge(workflow, 'CCG-60 Optional Skip Result', 'CCG-60 Return Module Result');
+  replaceMainEdge(workflow, 'CCG-70 Prepare Timeline Planning Brief', 'CCG-70 Optional Applicability Gate');
+  workflow.connections['CCG-70 Optional Applicability Gate'] = {
+    main: [
+      [{ node: 'CCG-70 Optional Skip Result', type: 'main', index: 0 }],
+      [{ node: 'CCG-70 Switch Timeline Mode', type: 'main', index: 0 }],
+    ],
+  };
+  replaceMainEdge(workflow, 'CCG-70 Optional Skip Result', 'CCG-70 Return Module Result');
 
   workflow.active = false;
+  workflow.settings = {
+    ...(workflow.settings || {}),
+    errorWorkflow: ERROR_WORKFLOW_ID,
+  };
   workflow.meta = {
     ...(workflow.meta || {}),
     codex_builder: 'campaign-creative-creator-continuous',
     codex_builder_version: BUILDER_VERSION,
-    architecture: 'continuous-inline',
+    architecture: 'continuous-inline-with-separate-error-workflow',
     source_workflow_id: WORKFLOW_ID,
     source_version_id: source.versionId || (source.meta && source.meta.source_version_id) || null,
     no_publication: true,
+    error_workflow_id: ERROR_WORKFLOW_ID,
+    fixtures_catalog: 'Campaign Creative Creator - Module Fixtures',
     live_provider_adapter: 'external-input-only-until-reviewed',
   };
   delete workflow.versionId;
@@ -548,13 +1159,28 @@ function main() {
   const inputPath = args.input || process.env.CCG_SOURCE_FILE;
   const outputPath = args.output || process.env.CCG_OUTPUT_FILE;
   if (!inputPath || !outputPath) {
-    throw new Error('Usage: build... --input <export.json> --output <candidate.json>');
+    throw new Error('Usage: build... --input <export.json> --output <candidate.json> [--error-output <error.json> --fixtures-output <fixtures.json> --manifest-output <manifest.json>]');
   }
-  const source = JSON.parse(fs.readFileSync(path.resolve(inputPath), 'utf8').replace(/^\uFEFF/, ''));
-  const output = transformWorkflow(source, { allowNoncanonicalSource: args.allowNoncanonicalSource });
-  fs.mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true });
-  fs.writeFileSync(path.resolve(outputPath), JSON.stringify(output, null, 2) + '\n');
-  process.stdout.write('Built inactive continuous candidate: ' + outputPath + ' (' + output.nodes.length + ' nodes)\n');
+  const sourceBuffer = fs.readFileSync(path.resolve(inputPath));
+  const source = JSON.parse(sourceBuffer.toString('utf8').replace(/^\uFEFF/, ''));
+  const outputDirectory = path.dirname(path.resolve(outputPath));
+  const packageValue = buildWorkflowPackage(source, {
+    allowNoncanonicalSource: args.allowNoncanonicalSource,
+    sourceSha256: sha256(sourceBuffer),
+  });
+  const errorOutput = args.errorOutput || path.join(outputDirectory, 'campaign-creative-creator-error-handler.v3.json');
+  const fixturesOutput = args.fixturesOutput || path.join(outputDirectory, 'campaign-creative-creator.module-fixtures.v3.json');
+  const manifestOutput = args.manifestOutput || path.join(outputDirectory, 'campaign-creative-creator.package.json');
+  for (const [target, value] of [
+    [outputPath, packageValue.main],
+    [errorOutput, packageValue.errorHandler],
+    [fixturesOutput, packageValue.fixtures],
+    [manifestOutput, packageValue.manifest],
+  ]) {
+    fs.mkdirSync(path.dirname(path.resolve(target)), { recursive: true });
+    fs.writeFileSync(path.resolve(target), JSON.stringify(value, null, 2) + '\n');
+  }
+  process.stdout.write('Built inactive Campaign Creative Creator package: ' + outputPath + ' (' + packageValue.main.nodes.length + ' nodes)\n');
 }
 
 if (require.main === module) {
@@ -567,12 +1193,22 @@ if (require.main === module) {
 }
 
 module.exports = {
+  ALL_FIXTURE_NAMES,
   BUILDER_VERSION,
   EXECUTOR_CODE,
+  ERROR_HANDLER_NODE_NAMES,
+  ERROR_WORKFLOW_ID,
+  ERROR_WORKFLOW_NAME,
   INTERMEDIATE_FIXTURES,
+  MODULES,
   REQUIRED_MODULE_NODES,
   WORKFLOW_ID,
   WORKFLOW_NAME,
   assertSourceShape,
+  buildErrorWorkflow,
+  buildFixturesWorkflow,
+  buildWorkflowPackage,
+  optionalSkipCode,
+  sanitizeWorkflow,
   transformWorkflow,
 };
