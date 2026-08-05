@@ -86,6 +86,16 @@ test('accepts a recent mirror checkpoint when the latest import is stale', () =>
 
 test('requires the full enabled immutable contact ledger and ignores deleted attendance links', () => {
     const core = COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES.core
+    assert.match(core, /case when has_table_privilege\(current_user, 'crm_atendimento\.commercial_contact_permissions', 'SELECT'\)/)
+    for (const table of [
+        'commercial_contact_permissions',
+        'commercial_contact_permission_events',
+        'commercial_actions',
+        'commercial_action_events',
+        'commercial_policy_config',
+    ]) {
+        assert.match(core, new RegExp(`has_table_privilege\\(current_user, 'crm_atendimento\\.${table}', 'SELECT'\\)`))
+    }
     assert.match(core, /commercial_contact_permission_events'[\s\S]*trace_id/)
     for (const { trigger, requiredBits } of [
         { trigger: 'commercial_contact_permission_events_immutable', requiredBits: [2, 8, 16] },
@@ -179,6 +189,9 @@ test('reads aggregate observations serially inside one database transaction clie
             calls.push(sql)
             await new Promise((resolve) => setImmediate(resolve))
             activeQueries -= 1
+            if (sql.startsWith('select has_table_privilege(current_user')) {
+                return { rows: [{ can_read_contact_permissions: true }] }
+            }
             if (sql.includes('from crm_atendimento.canonical_clients')) {
                 return { rows: [{ attendance_membership_gap: 0, unclassified_sale_items: 0, future_attendances: 0, identities_without_permission: 0, contact_controls_unready: 0 }] }
             }
@@ -191,8 +204,32 @@ test('reads aggregate observations serially inside one database transaction clie
     const observations = await __testables.querySourceObservations(client)
 
     assert.equal(peakQueries, 1)
-    assert.equal(calls.length, 3)
+    assert.equal(calls.length, 4)
     assert.equal(observations.find((item) => item.key === 'source.local_mirror_stale')?.observedCount, 0)
+})
+
+test('avoids unauthorized contact rows and keeps the quality refresh fail-closed', async () => {
+    const calls = []
+    const client = {
+        async query(sql) {
+            calls.push(sql)
+            if (sql.startsWith('select has_table_privilege(current_user')) {
+                return { rows: [{ can_read_contact_permissions: false }] }
+            }
+            if (sql.includes('from crm_atendimento.canonical_clients')) {
+                assert.doesNotMatch(sql, /from crm_atendimento\.commercial_contact_permissions permission/)
+                return { rows: [{ attendance_membership_gap: 0, unclassified_sale_items: 0, future_attendances: 0, identities_without_permission: 0, contact_controls_unready: 1 }] }
+            }
+            if (sql.includes("identity_review.name_merge_pending")) return { rows: [] }
+            if (sql.includes('with mirror as')) return { rows: [{ mirror_synced_age_hours: 1, latest_import_age_hours: 2 }] }
+            throw new Error('Unexpected aggregate quality query')
+        },
+    }
+
+    const observations = await __testables.querySourceObservations(client)
+
+    assert.equal(calls.length, 4)
+    assert.equal(observations.find((item) => item.key === 'commercial.contact_controls_unready')?.observedCount, 1)
 })
 
 test('fails closed for a unit-scoped GESTOR but retains the ADMIN global exception', () => {
