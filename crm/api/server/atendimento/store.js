@@ -3259,6 +3259,26 @@ function commercialCanaryIdentityIds(value) {
     return ids
 }
 
+async function assertCommercialCanaryIdentities(client, identityIds) {
+    const ids = [...new Set((Array.isArray(identityIds) ? identityIds : []).map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))]
+    if (!ids.length) return
+    const result = await client.query(
+        `select gi.id::text as identity_id
+         from crm_atendimento.global_client_identities gi
+         where gi.id = any($1::uuid[])
+           and exists (
+               select 1
+                 from crm_atendimento.global_client_identity_members member
+                where member.identity_id = gi.id
+           )`,
+        [ids],
+    )
+    const found = new Set(result.rows.map((row) => String(row.identity_id || '').trim().toLowerCase()).filter(Boolean))
+    if (found.size !== ids.length || ids.some((id) => !found.has(id))) {
+        throw commercialContactError('INVALID_COMMERCIAL_CONTACT_CANARY', 400)
+    }
+}
+
 function commercialContactWritesEnabled(value) {
     if (value === undefined) return undefined
     if (typeof value !== 'boolean') throw commercialContactError('INVALID_COMMERCIAL_CONTACT_ROLLOUT', 400)
@@ -5330,6 +5350,7 @@ export function createAtendimentoStore(options = {}) {
                         ? currentRow.commercial_contact_canary_identity_ids.map(String).filter(Boolean)
                         : [])
                     : requestedCanaryIdentityIds
+                await assertCommercialCanaryIdentities(client, canaryIdentityIds)
                 if (writesEnabled && !canaryIdentityIds.length) {
                     throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED', 400)
                 }
