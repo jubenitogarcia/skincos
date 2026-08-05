@@ -1,5 +1,42 @@
 # TASKS
 
+## Snapshot terminal do Ponto — `origin/main` `6daa6eaee7c4c49f047e97944e70ea1aa320ca61` — 2026-08-05T01:59:29Z
+
+Este snapshot encerra o objetivo governado desta thread e supersede os
+bloqueios de configuração descritos nos snapshots históricos abaixo. A PR
+#1105 (timeout limitado do Ponto Core/Timekeeping) e a PR #1106 (probe de
+afinidade antes do primeiro `/api/ponto/me`) estão mergeadas em `main`; a
+proveniência do SHA é o merge da #1106
+(`6daa6eaee7c4c49f047e97944e70ea1aa320ca61`).
+
+- **Configuração de staging:** `ENABLE_PONTO_CORE_WORKERS_DEPLOY=true` está
+  presente no environment `staging`; `IDENTITY_BACKUP_PASSPHRASE` existe em
+  custódia por nome desde 2026-08-02. A custódia não exigiu geração nem leitura
+  do valor; nenhum segredo de produção foi reutilizado.
+- **Cadeia final:** preview `30964961715` e staging `30966781527` passaram.
+  Os publishers Timekeeping/Core/Identity/CRM Pages passaram nos runs
+  `30967083529`, `30967306808`, `30967181403` e `30967397392`; manutenção,
+  ativação e restauração foram atestadas pelos runs `30966900345`,
+  `30967520840` e `30967739714`.
+- **Jornada autenticada sintética:** child `30967591913` passou com `/me`,
+  perfil, presença, PIN inválido 401, punch 201, retry idempotente 200,
+  negação cross-unit 403, correção 201, negação administrativa 403 e
+  onboarding Identity 201/200. O teardown comprovou zero resíduos e auditoria
+  preservada.
+- **Rollback/restauração:** drill `30967800519` passou com afinidade e
+  `journeyFence` exatos, contrato protegido, jornada candidata, restauração
+  idempotente e manutenção final; o latch permaneceu falso. O health live final
+  é `maintenance`, `source=control`, schema 2, D1 saudável e sem produção
+  ativada. A evidência sanitizada está somente em
+  `C:\CodexRuntime\operator\admin\skincos\ponto-final-evidence-30966781527`.
+- **Limite deliberado:** não houve pilot, canary ou produção; nenhum dado,
+  grant, usuário ou secret produtivo foi alterado. Isso não é blocker desta
+  thread: o estado terminal requerido era staging governado, jornada,
+  restauração/rollback e reconciliação.
+
+**Estado terminal:** Ponto staging verde, restaurado sob manutenção, com latch
+falso, registros reconciliados e evidência privada preservada.
+
 ## Snapshot autoritativo de fechamento — `origin/main` `fd91be5ff00dcc311bedc205d3bab9efbae82258` — 2026-08-02T13:46:45Z
 
 Esta seção substitui o snapshot anterior deste ciclo. As correções Ponto
@@ -543,9 +580,12 @@ jornada autenticada atual continue válida.
   `GITHUB_TOKEN` não pode aprovar reviews e nenhum app/bot autorizado foi
   identificado. Os `required_approvals=0` da PR #921 pertencem à governança de
   código e não substituem deployment/pilot approval.
-- [ ] Executar `preview` e depois `staging` do mesmo `GITHUB_SHA` corrente,
+- [x] Executar `preview` e depois `staging` do mesmo `GITHUB_SHA` corrente,
   incluindo checkpoints, migrations, jornada CONSULTOR autenticada,
   `maintenance → active → maintenance`, teardown e drill real de rollback.
+  No SHA `6daa6eaee7c4c49f047e97944e70ea1aa320ca61`, preview `30964961715`,
+  staging `30966781527`, jornada `30967591913` e rollback `30967800519`
+  passaram; o estado final ficou em manutenção com latch falso.
 - [ ] Somente depois do staging verde, provisionar um
   `PONTO_PROFILE_DATA_KEY` distinto e separadamente custodiado em `production`,
   com referências de cofre próprias e não reutilizadas; obter a designação
@@ -562,8 +602,9 @@ jornada autenticada atual continue válida.
   apenas no estágio autorizado.
 - [ ] Completar pilot, canary, produção, observação pós-release e cleanup
   somente com predecessores, health/version/gateway, SLO e jornada
-  autenticada do mesmo SHA. Até lá, a thread e produção permanecem abertas e
-  fail-closed.
+  autenticada do mesmo SHA. Esse é um escopo produtivo separado; produção
+  permanece não ativada e o objetivo terminal de staging desta thread está
+  encerrado.
 
 ## External/product follow-up
 

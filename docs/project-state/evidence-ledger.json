@@ -2,6 +2,47 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-08-05T01:59:29Z",
+      "surface": "github-ponto-terminal-staging-closure",
+      "scope": "Close the authorized Ponto staging objective on one immutable main SHA with authenticated synthetic journey, teardown, rollback/restoration and final maintenance; no production activation",
+      "state": "staging-terminal-green-maintenance-control-schema-v2-latch-false",
+      "method": "Verified merged PRs #1105/#1106 and main SHA; confirmed staging flag and secret custody by name only; ran preview 30964961715 and staging 30966781527; downloaded sanitized child evidence; verified live health and D1 teardown/audit signals",
+      "result": "SHA 6daa6eaee7c4c49f047e97944e70ea1aa320ca61 passed Timekeeping 30967083529, Identity/Workforce 30967181403, Core API 30967306808, CRM Pages 30967397392, activation, authenticated journey 30967591913 and rollback drill 30967800519. Journey returned /me/profile/presence 200, invalid PIN 401, punch 201, idempotent retry 200, cross-unit denial 403, correction 201, administrative denial 403 and Identity onboarding 201/200. Teardown had zero Core/Timekeeping residuals and preserved both audit streams. Rollback passed affinity, journeyFence, protected contract, candidate journey, idempotent restoration and final maintenance; final live health is maintenance/control/schemaVersion 2 with D1 and gateway healthy and emergency latch false.",
+      "limitation": "Pilot, canary and production were intentionally not activated; no production data, grants, users or secrets were changed. The earlier staging attempt 30965421701 was canceled before publishers after a duplicate coordinator/watchdog race and is not final release evidence. No secret value was read, generated or copied from production.",
+      "sha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+      "candidateSha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+      "selected_release_sha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+      "active_incumbent_sha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+      "runs": [30964961715, 30965433779, 30966601192, 30966662655, 30966781527, 30966900345, 30967083529, 30967181403, 30967306808, 30967397392, 30967520840, 30967591913, 30967739714, 30967800519],
+      "evidence_refs": [
+        "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-final-evidence-6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+        "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-final-evidence-30966781527"
+      ],
+      "deployments": {
+        "timekeeping_version": "8cd83baf-8bbd-44a1-932d-9144ab51278c",
+        "core_api_version": "e71704e3-0d6d-4327-83cf-3121010995b1",
+        "identity_workforce_version": "1ceb933d-3668-40ed-af1d-90f56218937c",
+        "crm_pages_deployment": "9075d7fd-3565-48cf-8458-61ec55b1408e",
+        "production_mutation": false
+      },
+      "validation": {
+        "merged_prs": [1105, 1106],
+        "preview": "passed",
+        "staging": "passed",
+        "authenticated_journey": "passed",
+        "teardown": "passed-zero-residuals-audit-preserved",
+        "rollback": "passed-candidate-restored-under-maintenance",
+        "final_health": "200-ok-false-ready-false-maintenance-control-schema-v2",
+        "emergency_latch": "false-before-and-after-drill",
+        "flag_present": true,
+        "identity_backup_passphrase_custody_present": true,
+        "secret_values_read": false,
+        "production_mutation": false,
+        "credentials_included": false,
+        "pii_included": false
+      }
+    },
+    {
       "observed_at": "2026-08-02T13:46:45Z",
       "surface": "github-ponto-final-recovery-and-live-fail-close",
       "scope": "Close the governed Ponto staging recovery line without production mutation and reconcile the final live state",
