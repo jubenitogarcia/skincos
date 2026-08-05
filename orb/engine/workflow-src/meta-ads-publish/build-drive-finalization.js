@@ -1,6 +1,13 @@
 function text(value) { return String(value ?? '').trim(); }
 function list(value) { return Array.isArray(value) ? value : []; }
 function unique(values) { return [...new Set(list(values).map(text).filter(Boolean))]; }
+function isCommercialFinalization(jobs) {
+  return list(jobs).length > 0 && list(jobs).every((job) =>
+    text(job.publication_mode) === 'commercial' &&
+    text(job.desired_status).toUpperCase() === 'ACTIVE' &&
+    !text(job.calibration_marker)
+  );
+}
 
 const input = $input.first()?.json || {};
 let runId = text(input.run_id);
@@ -8,16 +15,37 @@ let jobs = [];
 if (input.resume_drive_only === true) {
   runId = text(input.run_id || input.run?.id);
   jobs = list(input.run?.summary?.jobs);
+  if (text(input.run?.summary?.publication_mode) !== 'commercial' || !isCommercialFinalization(jobs)) {
+    throw new Error(`Build Drive Finalization recusou retomada sem contrato comercial explicito: ${JSON.stringify(input.run?.summary || {})}`);
+  }
 } else {
   if (input.ok !== true || input.operation?.status !== 'completed') {
     throw new Error(`Activate Ad Batch falhou: ${JSON.stringify(input.detail || input.error || input)}`);
   }
   const result = input.operation.result || {};
+  if (result.status === 'calibration_paused') {
+    const calibrationJobs = list(result.jobs);
+    const calibrationIsSafe = calibrationJobs.length > 0 && calibrationJobs.every((job) =>
+      text(job.publication_mode) === 'calibration_paused' &&
+      text(job.desired_status).toUpperCase() === 'PAUSED' &&
+      /^\[TEST-(VIDEO-ONLY|CAROUSEL)\]$/.test(text(job.calibration_marker).toUpperCase()) &&
+      text(job.action) === 'create_new'
+    );
+    if (!calibrationIsSafe) {
+      throw new Error(`Activate Ad Batch retornou calibracao pausada sem contrato seguro: ${JSON.stringify(result)}`);
+    }
+    // A calibration intentionally stops here: it must not mark Drive files as
+    // published or send a commercial completion notification.
+    return [];
+  }
   if (result.status !== 'meta_completed_drive_pending') {
     throw new Error(`Activate Ad Batch retornou estado inesperado: ${JSON.stringify(result)}`);
   }
   runId = text(($items('Build Activate Batch')[0]?.json || {}).run_id);
   jobs = list(result.jobs);
+  if (!isCommercialFinalization(jobs)) {
+    throw new Error(`Activate Ad Batch retornou finalizacao comercial sem contrato seguro: ${JSON.stringify(result)}`);
+  }
 }
 if (!runId || !jobs.length) throw new Error('Build Drive Finalization sem run_id ou jobs persistidos.');
 

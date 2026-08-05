@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 const {
   effectiveResponsesApiEnabled,
   executionSummaryForWorkflow,
@@ -101,8 +102,181 @@ test('gateway parameters reject a Token Vault contract revision mismatch before 
     path.join(__dirname, '..', 'workflow-src', 'meta-ads-publish', 'build-meta-api-params-from-vault.js'),
     'utf8',
   );
-  assert.match(source, /const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta'/);
+  assert.match(source, /const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v21_video_916_global_copy_calibration_terminal'/);
   assert.match(source, /gatewayContractRevision !== WORKFLOW_CONTRACT_REVISION/);
+});
+
+test('video-only source sends an auto-crop request and keeps five global copy variants', () => {
+  const engineRoot = path.join(__dirname, '..');
+  const buildJobs = fs.readFileSync(
+    path.join(engineRoot, 'workflow-src', 'meta-ads-publish', 'build-jobs.js'),
+    'utf8',
+  );
+  const validator = fs.readFileSync(
+    path.join(engineRoot, 'workflow-src', 'meta-ads-publish', 'validate-meta-creative-payload.js'),
+    'utf8',
+  );
+  const workflow = JSON.parse(fs.readFileSync(
+    path.join(engineRoot, 'workflows', 'meta-ads-publish.current.json'),
+    'utf8',
+  ));
+  const embeddedBuildJobs = workflow.nodes.find((node) => node.name === 'Build Jobs')?.parameters?.jsCode;
+
+  assert.match(buildJobs, /creativeFeaturesSpec\.video_auto_crop = \{ enroll_status: 'OPT_IN' \}/);
+  assert.match(buildJobs, /const videoOnlyUsesGlobalTextVariants = mediaMode === 'video_only';/);
+  assert.match(buildJobs, /videoOnlyPlacementRules[\s\S]*?video_label: videoLabel,[\s\S]*?priority: 1,/);
+  assert.doesNotMatch(buildJobs, /body_label: videoOnlyBodyLabels/);
+  assert.match(validator, /video_only_global_bodies_invalid/);
+  assert.match(validator, /video_only_rule_body_label_forbidden/);
+  assert.equal(String(embeddedBuildJobs).trim(), buildJobs.trim());
+});
+
+test('creative fallbacks fail closed when Meta rejects the mandatory video auto-crop opt-in', () => {
+  const engineRoot = path.join(__dirname, '..');
+  for (const filename of ['prepare-creative-fallback-1.js', 'prepare-creative-fallback-2.js']) {
+    const source = fs.readFileSync(
+      path.join(engineRoot, 'workflow-src', 'meta-ads-publish', filename),
+      'utf8',
+    );
+    assert.throws(
+      () => vm.runInNewContext(`(() => {\n${source}\n})()`, {
+        $input: {
+          all: () => [{
+            json: {
+              ok: false,
+              detail: { error: 'video_auto_crop is unsupported for this creative' },
+              job_key: 'synthetic-video-only',
+              creativePayload: {
+                degrees_of_freedom_spec: {
+                  creative_features_spec: { video_auto_crop: { enroll_status: 'OPT_IN' } },
+                },
+              },
+            },
+          }],
+        },
+      }),
+      /video_auto_crop; o workflow recusa fallback para formato Original/,
+    );
+  }
+});
+
+test('paused calibration batches stop before Drive finalization and cannot mix with commercial jobs', () => {
+  const engineRoot = path.join(__dirname, '..');
+  const stageSource = fs.readFileSync(
+    path.join(engineRoot, 'workflow-src', 'meta-ads-publish', 'build-stage-batch.js'),
+    'utf8',
+  );
+  const runStage = (items) => vm.runInNewContext(`(() => {\n${stageSource}\n})()`, {
+    $input: { all: () => items },
+  });
+  const calibration = {
+    json: {
+      run_id: 'run-synthetic-calibration',
+      creative_id: '10000000001',
+      action: 'create_new',
+      destination_adset_id: '20000000001',
+      destination_group: 'synthetic',
+      creative_group_key: 'synthetic-video',
+      media_variant: 'video_only',
+      token_id: 'facebook_synthetic',
+      account_id: '30000000001',
+      api_version: 'v25.0',
+      desired_final_status: 'PAUSED',
+      calibration_mode: true,
+      calibration_marker: '[TEST-VIDEO-ONLY]',
+      adPayload: {
+        name: '[TEST-VIDEO-ONLY] Synthetic 9:16 calibration',
+        status: 'PAUSED',
+        adset_id: '20000000001',
+      },
+      asset_ids: { vertical_video: 'drive-synthetic' },
+      asset_names: { vertical_video: 'synthetic.mp4' },
+    },
+  };
+  const batch = runStage([calibration])[0].json;
+  assert.equal(batch.publication_mode, 'calibration_paused');
+  assert.equal(batch.gateway_request.jobs[0].publication_mode, 'calibration_paused');
+  assert.equal(batch.gateway_request.jobs[0].desired_status, 'PAUSED');
+
+  const commercial = structuredClone(calibration);
+  commercial.json.destination_adset_id = '20000000002';
+  commercial.json.creative_group_key = 'synthetic-commercial';
+  commercial.json.desired_final_status = 'ACTIVE';
+  commercial.json.calibration_mode = false;
+  commercial.json.calibration_marker = '';
+  commercial.json.adPayload = {
+    name: 'Synthetic commercial publication',
+    status: 'ACTIVE',
+    adset_id: '20000000002',
+  };
+  assert.throws(
+    () => runStage([calibration, commercial]),
+    /lote misto de calibracao e publicacao comercial/,
+  );
+
+  const finalizationSource = fs.readFileSync(
+    path.join(engineRoot, 'workflow-src', 'meta-ads-publish', 'build-drive-finalization.js'),
+    'utf8',
+  );
+  const finalization = vm.runInNewContext(`(() => {\n${finalizationSource}\n})()`, {
+    $input: {
+      first: () => ({ json: {
+        ok: true,
+        operation: { status: 'completed', result: { status: 'calibration_paused', jobs: batch.gateway_request.jobs } },
+      } }),
+    },
+    $items: () => { throw new Error('Drive finalization must not be reached for calibration.'); },
+  });
+  assert.equal(Array.isArray(finalization), true);
+  assert.equal(finalization.length, 0);
+
+  assert.throws(
+    () => vm.runInNewContext(`(() => {\n${finalizationSource}\n})()`, {
+      $input: { first: () => ({ json: {
+        resume_drive_only: true,
+        run: { id: 'run-synthetic-calibration', summary: { publication_mode: 'calibration_paused', jobs: batch.gateway_request.jobs } },
+      } }) },
+    }),
+    /recusou retomada sem contrato comercial explicito/,
+  );
+
+  const commercialJobs = batch.gateway_request.jobs.map((job) => ({
+    ...job,
+    desired_status: 'ACTIVE',
+    publication_mode: 'commercial',
+    calibration_marker: '',
+  }));
+  const commercialResume = vm.runInNewContext(`(() => {\n${finalizationSource}\n})()`, {
+    $input: { first: () => ({ json: {
+      resume_drive_only: true,
+      run: { id: 'run-synthetic-commercial', summary: { publication_mode: 'commercial', jobs: commercialJobs } },
+    } }) },
+    $execution: { id: 'execution-synthetic-commercial' },
+  });
+  assert.equal(Array.isArray(commercialResume), true);
+  assert.equal(commercialResume.length, 1);
+
+  const restoreSource = fs.readFileSync(
+    path.join(engineRoot, 'workflow-src', 'meta-ads-publish', 'restore-publish-groups.js'),
+    'utf8',
+  );
+  assert.throws(
+    () => vm.runInNewContext(`(() => {\n${restoreSource}\n})()`, {
+      $input: { first: () => ({ json: { ok: true, run: { id: 'run-synthetic-calibration', status: 'calibration_paused' } } }) },
+      $items: () => [],
+    }),
+    /ja terminou com status calibration_paused/,
+  );
+  assert.throws(
+    () => vm.runInNewContext(`(() => {\n${restoreSource}\n})()`, {
+      $input: { first: () => ({ json: {
+        ok: true,
+        run: { id: 'run-ambiguous-drive', status: 'meta_completed_drive_pending', summary: { jobs: commercialJobs } },
+      } }) },
+      $items: () => [],
+    }),
+    /pendente no Drive sem contrato comercial explicito/,
+  );
 });
 
 test('video upload replay key includes normalized bytes and rejects the legacy v4 key', () => {

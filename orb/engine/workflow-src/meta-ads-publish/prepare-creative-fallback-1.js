@@ -16,6 +16,9 @@ function responseText(response) {
   try { return JSON.stringify(response || {}).toLowerCase(); }
   catch { return text(response).toLowerCase(); }
 }
+function isMandatoryVideoAutoCropRejection(response) {
+  return /video[ _-]?auto[ _-]?crop/.test(responseText(response));
+}
 function chooseRemoval(features, response) {
   const available = OPTIONAL_REMOVAL_PRIORITY.filter((feature) => Object.prototype.hasOwnProperty.call(features, feature));
   const detail = responseText(response);
@@ -50,6 +53,9 @@ return $input.all().map((item, index) => {
   }
   const payload = clone(object(source.creativePayload));
   const features = object(object(payload.degrees_of_freedom_spec).creative_features_spec);
+  if (isMandatoryVideoAutoCropRejection(response)) {
+    throw new Error(`Create AdCreative rejeitou o opt-in obrigatorio video_auto_crop; o workflow recusa fallback para formato Original em ${source.job_key || index}.`);
+  }
   const removedFeature = chooseRemoval(features, response);
   if (!removedFeature) throw new Error(`Create AdCreative falhou por erro estrutural ou nao mapeado; fallback de Advantage+ nao aplicado em ${source.job_key || index}.`);
   delete features[removedFeature];

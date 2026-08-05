@@ -72,6 +72,7 @@ const ALLOWED_CREATIVE_FEATURES = new Set([
   'show_destination_blurbs',
   'image_animation',
   'site_extensions',
+  'video_auto_crop',
 ]);
 const FORBIDDEN_CREATIVE_FEATURES = new Set([
   'image_template',
@@ -91,7 +92,10 @@ const REQUIRED_CREATIVE_FEATURES = Object.freeze([
   'show_destination_blurbs',
   'image_animation',
 ]);
-const TERMINAL_RUN_STATES = new Set(['completed', 'rolled_back']);
+const CALIBRATION_PUBLICATION_MODE = 'calibration_paused';
+const COMMERCIAL_PUBLICATION_MODE = 'commercial';
+const CALIBRATION_MARKERS = new Set(['[TEST-VIDEO-ONLY]', '[TEST-CAROUSEL]']);
+const TERMINAL_RUN_STATES = new Set(['completed', 'rolled_back', CALIBRATION_PUBLICATION_MODE]);
 const VIDEO_UPLOAD_ACTIONS = Object.freeze([
   'start_video_upload',
   'transfer_video_chunk',
@@ -102,7 +106,7 @@ const VIDEO_UPLOAD_ACTIONS = Object.freeze([
 // capabilities.  The workflow rejects a mismatch before it can open a publish
 // run, so a partial rollout cannot silently mix producer, checkpoint and
 // gateway behavior.
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v21_video_916_global_copy_calibration_terminal';
 const MUTATING_ACTIONS = new Set([
   'upload_image',
   'start_video_upload',
@@ -430,9 +434,13 @@ async function getRun(runId, env, requestId) {
 async function updateRun(runId, request, env, requestId) {
   const run = await loadRun(env, runId);
   if (!run) return response({ ok: false, error: 'run_not_found', requestId }, 404);
+  if (TERMINAL_RUN_STATES.has(clean(run.status))) {
+    return response({ ok: false, error: 'run_already_terminal', status: run.status, requestId }, 409);
+  }
   const body = await readObject(request);
   const allowedStatuses = new Set([
     'processing', 'creatives_ready', 'staged', 'meta_completed_drive_pending',
+    CALIBRATION_PUBLICATION_MODE,
     'completed', 'failed', 'rolled_back', 'reconciliation_required',
   ]);
   const status = clean(body.status);
@@ -953,6 +961,25 @@ async function stageBatch(body, context) {
 
 async function activateBatch(body, context) {
   const staged = await loadStagedOperation(body.stage_operation_key, context);
+  const publicationMode = validateStagedPublicationBatch(staged.jobs);
+  if (publicationMode === CALIBRATION_PUBLICATION_MODE) {
+    const paused = staged.jobs.map((record) => ({
+      ...record,
+      activation_result: {
+        status: 'PAUSED',
+        skipped_graph_activation: true,
+        reason: 'synthetic_calibration',
+      },
+    }));
+    for (const record of paused) {
+      await updateJobStatus(context.env, record.operation_key, CALIBRATION_PUBLICATION_MODE, stripJobForSummary(record));
+    }
+    await setRunState(context.env, context.runId, CALIBRATION_PUBLICATION_MODE, {
+      publication_mode: CALIBRATION_PUBLICATION_MODE,
+      jobs: paused.map(stripJobForSummary),
+    });
+    return { status: CALIBRATION_PUBLICATION_MODE, job_count: paused.length, jobs: paused };
+  }
   const activated = [];
   try {
     for (const record of staged.jobs) {
@@ -969,6 +996,7 @@ async function activateBatch(body, context) {
     throw Object.assign(new Error(normalized.message || 'activate_batch_failed'), normalized);
   }
   await setRunState(context.env, context.runId, 'meta_completed_drive_pending', {
+    publication_mode: COMMERCIAL_PUBLICATION_MODE,
     jobs: activated.map(stripJobForSummary),
   });
   return { status: 'meta_completed_drive_pending', job_count: activated.length, jobs: activated };
@@ -1212,6 +1240,16 @@ function validateFlexibleCreativePayload(payload, operationKey) {
   const bodyLabels = new Set(safeArray(feed.bodies).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
   const titleLabels = new Set(safeArray(feed.titles).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
   const descriptionLabels = new Set(safeArray(feed.descriptions).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
+  const hasFiveGlobalTextVariants = (assets) => {
+    const values = safeArray(assets);
+    const copy = values.map((asset) => clean(asset?.text));
+    return values.length === 5 && copy.every(Boolean) &&
+      new Set(copy.map((value) => value.toLowerCase())).size === 5 &&
+      values.every((asset) => safeArray(asset?.adlabels).length === 0);
+  };
+  if (videoOnly && ![feed.bodies, feed.titles, feed.descriptions].every(hasFiveGlobalTextVariants)) {
+    throw failure('creative_video_only_global_text_variants_invalid', { classification: 'permanent', http_status: 400 });
+  }
   const rules = safeArray(feed.asset_customization_rules);
   if (!rules.length) throw failure('creative_customization_rules_required');
   const claimedPlacements = new Set();
@@ -1226,7 +1264,11 @@ function validateFlexibleCreativePayload(payload, operationKey) {
     if (imageLabel && !mediaLabels.has(imageLabel)) throw failure(`creative_rule_image_label_invalid:${index}`);
     if (videoLabel && !videoLabels.has(videoLabel)) throw failure(`creative_rule_video_label_invalid:${index}`);
     if (imageLabel && videoLabel) throw failure(`creative_rule_multiple_media_labels:${index}`);
-    if (!bodyLabels.has(bodyLabel) || !titleLabels.has(titleLabel) || !descriptionLabels.has(descriptionLabel)) {
+    if (videoOnly) {
+      if (bodyLabel || titleLabel || descriptionLabel) {
+        throw failure(`creative_video_only_rule_text_label_forbidden:${index}`);
+      }
+    } else if (!bodyLabels.has(bodyLabel) || !titleLabels.has(titleLabel) || !descriptionLabels.has(descriptionLabel)) {
       throw failure(`creative_rule_text_label_invalid:${index}`);
     }
     if (videoLabel) videoRuleCount += 1;
@@ -1276,6 +1318,9 @@ function validateFlexibleCreativePayload(payload, operationKey) {
     if (!Object.prototype.hasOwnProperty.call(features, feature)) {
       throw failure(`creative_feature_required:${feature}`, { classification: 'permanent', http_status: 400 });
     }
+  }
+  if ((videoOnly || mixed) && !Object.prototype.hasOwnProperty.call(features, 'video_auto_crop')) {
+    throw failure('creative_video_auto_crop_required', { classification: 'permanent', http_status: 400 });
   }
   const siteLinks = safeArray(asObject(payload.creative_sourcing_spec).site_links_spec);
   if (Boolean(features.site_extensions) !== (siteLinks.length >= 2 && siteLinks.length <= 4)) {
@@ -1427,7 +1472,7 @@ function validateBatchJobs(value) {
     throw failure('batch_job_count_invalid', { classification: 'permanent', http_status: 400 });
   }
   const targets = new Set();
-  return jobs.map((raw, index) => {
+  const validated = jobs.map((raw, index) => {
     const job = asObject(raw);
     const action = clean(job.action);
     if (!['create_new', 'replace_existing'].includes(action)) {
@@ -1441,6 +1486,7 @@ function validateBatchJobs(value) {
       throw failure(`duplicate_batch_target:${resourceKey}`, { classification: 'permanent', http_status: 409 });
     }
     targets.add(resourceKey);
+    const publication = validatePublicationContract({ ...job, action }, `job_${index}`, false);
     return {
       ...sanitizeGraphValue(job),
       action,
@@ -1448,8 +1494,68 @@ function validateBatchJobs(value) {
       resource_key: resourceKey,
       destination_group: clean(job.destination_group),
       creative_group_key: clean(job.creative_group_key),
+      ...publication,
     };
   });
+  const modes = new Set(validated.map((job) => job.publication_mode));
+  if (modes.size !== 1) {
+    throw failure('batch_publication_mode_mixed', { classification: 'permanent', http_status: 400 });
+  }
+  return validated;
+}
+
+function validatePublicationContract(value, label, staged) {
+  const record = asObject(value);
+  const action = clean(record.action);
+  const publicationMode = clean(record.publication_mode);
+  const desiredStatus = clean(record.desired_status).toUpperCase();
+  const calibrationMarker = clean(record.calibration_marker).toUpperCase();
+  if (![COMMERCIAL_PUBLICATION_MODE, CALIBRATION_PUBLICATION_MODE].includes(publicationMode)) {
+    throw failure(`${label}_publication_mode_invalid`, { classification: 'permanent', http_status: 400 });
+  }
+  if (!['ACTIVE', 'PAUSED'].includes(desiredStatus)) {
+    throw failure(`${label}_desired_status_invalid`, { classification: 'permanent', http_status: 400 });
+  }
+  if (!staged) {
+    const payloadStatus = clean(asObject(record.ad_payload).status).toUpperCase();
+    if (payloadStatus !== desiredStatus) {
+      throw failure(`${label}_payload_status_mismatch`, { classification: 'permanent', http_status: 400 });
+    }
+  }
+  if (publicationMode === COMMERCIAL_PUBLICATION_MODE) {
+    const adName = clean(asObject(record.ad_payload).name).toUpperCase();
+    const calibrationNamed = !staged && [...CALIBRATION_MARKERS].some((marker) => adName.startsWith(marker));
+    if (desiredStatus !== 'ACTIVE' || calibrationMarker || calibrationNamed) {
+      throw failure(`${label}_commercial_contract_invalid`, { classification: 'permanent', http_status: 400 });
+    }
+  } else if (
+    action !== 'create_new' ||
+    desiredStatus !== 'PAUSED' ||
+    !CALIBRATION_MARKERS.has(calibrationMarker) ||
+    (!staged && !clean(asObject(record.ad_payload).name).toUpperCase().startsWith(calibrationMarker)) ||
+    (staged && record.created_new !== true)
+  ) {
+    throw failure(`${label}_calibration_contract_invalid`, { classification: 'permanent', http_status: 400 });
+  }
+  return {
+    desired_status: desiredStatus,
+    publication_mode: publicationMode,
+    calibration_marker: publicationMode === CALIBRATION_PUBLICATION_MODE ? calibrationMarker : '',
+  };
+}
+
+function validateStagedPublicationBatch(value) {
+  const records = safeArray(value);
+  if (!records.length) {
+    throw failure('staged_jobs_missing', { classification: 'permanent', http_status: 409 });
+  }
+  const modes = new Set(records.map((record, index) =>
+    validatePublicationContract(record, `staged_job_${index}`, true).publication_mode
+  ));
+  if (modes.size !== 1) {
+    throw failure('staged_publication_mode_mixed', { classification: 'permanent', http_status: 409 });
+  }
+  return [...modes][0];
 }
 
 function buildStagedRecord(job, adId, previousState, result, createdNew) {
@@ -1463,6 +1569,9 @@ function buildStagedRecord(job, adId, previousState, result, createdNew) {
     creative_id: clean(job.creative_id || job.ad_payload?.creative?.creative_id),
     action: job.action,
     resource_key: job.resource_key,
+    desired_status: job.desired_status,
+    publication_mode: job.publication_mode,
+    calibration_marker: job.calibration_marker,
     ad_id: adId,
     created_new: createdNew,
     files: safeArray(job.files).map((file) => ({
@@ -1527,6 +1636,7 @@ async function setRunState(env, runId, status, summary) {
     `UPDATE meta_ads_publish_runs SET status = ?, summary_json = ?, updated_at = ? WHERE id = ?`,
     status, limitedJson(summary), nowIso(), runId,
   );
+  if (TERMINAL_RUN_STATES.has(status)) await releaseRunLocks(env, runId);
 }
 
 async function acquireLocks(env, runId, operationKey, resourceKeys) {
@@ -2037,6 +2147,9 @@ function stripJobForSummary(record) {
     destination_group: record.destination_group,
     creative_group_key: record.creative_group_key,
     action: record.action,
+    desired_status: record.desired_status,
+    publication_mode: record.publication_mode,
+    calibration_marker: record.calibration_marker,
     ad_id: record.ad_id,
     creative_id: record.creative_id,
     created_new: record.created_new,
@@ -2219,6 +2332,7 @@ export const __test = Object.freeze({
   parseLandingUrl,
   previousStatePayload,
   sanitizeGraphValue,
+  activateBatch,
   stageBatch,
   stableStringify,
   validateAdPayload,
@@ -2230,4 +2344,5 @@ export const __test = Object.freeze({
   validateLandingPagesOnline,
   validatePagingUrl,
   updateAdWithReconciliation,
+  updateRun,
 });

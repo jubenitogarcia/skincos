@@ -70,6 +70,7 @@ function verifyMixedCreativeReadback(source, creative, placementItems) {
   const videoHeight = Number(source.video_height || 0);
   const thumbnailWidth = Number(source.video_thumbnail_width || 0);
   const thumbnailHeight = Number(source.video_thumbnail_height || 0);
+  const videoAutoCrop = object(object(object(creative.degrees_of_freedom_spec).creative_features_spec).video_auto_crop);
   // Graph keeps the WhatsApp publisher platform but canonicalizes the sole
   // supported subposition (Status) by omitting whatsapp_positions. This is
   // equivalent only when the effective ad-set targeting independently proves
@@ -96,11 +97,10 @@ function verifyMixedCreativeReadback(source, creative, placementItems) {
     rewarded_video_source_dimensions: `${videoWidth}x${videoHeight}`,
     rewarded_video_thumbnail_dimensions: `${thumbnailWidth}x${thumbnailHeight}`,
     rewarded_video_delivery_aspect_ratio: '9x16',
-    rewarded_video_format_status: 'recommended_9x16_satisfied_by_exact_original_source',
-    ads_manager_format_label: 'original',
-    ads_manager_format_label_status: 'exact_9x16_semantic_equivalent_to_recommended',
-    ads_manager_crop_control_semantics: 'original_is_exact_9x16_and_recommended_crop_is_a_no_op',
-    video_auto_crop_calibration: 'graph_acknowledged_opt_in_but_ads_manager_remained_original',
+    video_auto_crop_requested: unique(source.advantage_plus_requested_features).includes('video_auto_crop'),
+    video_auto_crop_graph_acknowledged: text(videoAutoCrop.enroll_status).toUpperCase() === 'OPT_IN',
+    ads_manager_format_label: 'not_available_from_graph_readback',
+    ads_manager_format_label_status: 'requires_ads_manager_ui_calibration',
     graph_video_crop_field_available: false,
     whatsapp_status_scope: whatsappScopeNormalized ? 'graph_normalized_to_effective_adset_status' : 'explicit',
   };
@@ -111,9 +111,6 @@ function verifyVideoOnlyCreativeReadback(source, creative, placementItems) {
   const images = list(feed.images);
   const videos = list(feed.videos);
   const videoLabels = labels(videos);
-  const bodyLabels = labels(feed.bodies);
-  const titleLabels = labels(feed.titles);
-  const descriptionLabels = labels(feed.descriptions);
   const formats = list(feed.ad_formats).map((value) => text(value).toUpperCase()).filter(Boolean);
   const rules = list(feed.asset_customization_rules);
   const placementScopeVerified = effectiveVideoOnlyPlacementScope(placementItems, source);
@@ -121,6 +118,7 @@ function verifyVideoOnlyCreativeReadback(source, creative, placementItems) {
   const rewardedRule = object(rules[1]);
   const mainSpec = object(mainRule.customization_spec);
   const rewardedSpec = object(rewardedRule.customization_spec);
+  const videoAutoCrop = object(object(object(creative.degrees_of_freedom_spec).creative_features_spec).video_auto_crop);
   const whatsappScopeNormalized = contains(mainSpec.publisher_platforms, ['whatsapp'])
     && list(mainSpec.whatsapp_positions).length === 0
     && effectiveWhatsAppStatus(placementItems, source);
@@ -128,15 +126,21 @@ function verifyVideoOnlyCreativeReadback(source, creative, placementItems) {
   if (images.length !== 0) failures.push('video_only_readback_images_present');
   if (videos.length !== 1 || videoLabels.size !== 1 || !videoLabels.has('vertical_video')) failures.push('video_only_readback_video_invalid');
   if (formats.length !== 1 || formats[0] !== 'SINGLE_VIDEO') failures.push('video_only_readback_ad_format_invalid');
-  const exactlyFiveUnique = (assets, labels) => list(assets).length === 5 && labels.size === 5 && list(assets).every((asset) => list(asset && asset.adlabels).length === 1);
-  if (!exactlyFiveUnique(feed.bodies, bodyLabels)) failures.push('video_only_readback_body_labels_invalid');
-  if (!exactlyFiveUnique(feed.titles, titleLabels)) failures.push('video_only_readback_title_labels_invalid');
-  if (!exactlyFiveUnique(feed.descriptions, descriptionLabels)) failures.push('video_only_readback_description_labels_invalid');
-  const labelsValid = rules.length === 2 && rules.every((rule) => text(rule.video_label && rule.video_label.name) === 'vertical_video' && bodyLabels.has(text(rule.body_label && rule.body_label.name)) && titleLabels.has(text(rule.title_label && rule.title_label.name)) && descriptionLabels.has(text(rule.description_label && rule.description_label.name)) && !text(rule.image_label && rule.image_label.name)) &&
-    text(mainRule.body_label && mainRule.body_label.name) !== text(rewardedRule.body_label && rewardedRule.body_label.name) &&
-    text(mainRule.title_label && mainRule.title_label.name) !== text(rewardedRule.title_label && rewardedRule.title_label.name) &&
-    text(mainRule.description_label && mainRule.description_label.name) !== text(rewardedRule.description_label && rewardedRule.description_label.name);
-  if (!labelsValid) failures.push('video_only_readback_rule_labels_invalid');
+  const exactlyFiveGlobalTextVariants = (assets) => {
+    const values = list(assets);
+    const copy = values.map((asset) => text(asset && asset.text));
+    return values.length === 5 && copy.every(Boolean) && new Set(copy.map((value) => value.toLowerCase())).size === 5 &&
+      values.every((asset) => list(asset && asset.adlabels).length === 0);
+  };
+  if (!exactlyFiveGlobalTextVariants(feed.bodies)) failures.push('video_only_readback_global_bodies_invalid');
+  if (!exactlyFiveGlobalTextVariants(feed.titles)) failures.push('video_only_readback_global_titles_invalid');
+  if (!exactlyFiveGlobalTextVariants(feed.descriptions)) failures.push('video_only_readback_global_descriptions_invalid');
+  const rulesValid = rules.length === 2 && rules.every((rule) => text(rule.video_label && rule.video_label.name) === 'vertical_video' &&
+    !text(rule.image_label && rule.image_label.name) &&
+    !text(rule.body_label && rule.body_label.name) &&
+    !text(rule.title_label && rule.title_label.name) &&
+    !text(rule.description_label && rule.description_label.name));
+  if (!rulesValid) failures.push('video_only_readback_global_copy_rules_invalid');
   if (!contains(mainSpec.publisher_platforms, ['facebook', 'instagram', 'audience_network', 'whatsapp']) || list(mainSpec.publisher_platforms).length !== 4) failures.push('video_only_readback_publishers_invalid');
   if (!contains(mainSpec.facebook_positions, ['feed', 'instream_video', 'story', 'search', 'facebook_reels', 'facebook_reels_overlay', 'notification']) || list(mainSpec.facebook_positions).length !== 7) failures.push('video_only_readback_facebook_positions_invalid');
   if (!contains(mainSpec.instagram_positions, ['stream', 'story', 'reels']) || list(mainSpec.instagram_positions).length !== 3) failures.push('video_only_readback_instagram_positions_invalid');
@@ -154,8 +158,16 @@ function verifyVideoOnlyCreativeReadback(source, creative, placementItems) {
     description_count: 5,
     placement_rule_count: 2,
     placement_scope: 'two_explicit_video_rules_match_effective_adset_targeting',
+    copy_variation_binding: 'five_global_unlabelled_variants',
+    body_variation_count: 5,
+    title_variation_count: 5,
+    description_variation_count: 5,
+    video_auto_crop_requested: unique(source.advantage_plus_requested_features).includes('video_auto_crop'),
+    video_auto_crop_graph_acknowledged: text(videoAutoCrop.enroll_status).toUpperCase() === 'OPT_IN',
+    ads_manager_format_label: 'not_available_from_graph_readback',
+    ads_manager_format_label_status: 'requires_ads_manager_ui_calibration',
     whatsapp_status_scope: whatsappScopeNormalized ? 'graph_normalized_to_effective_adset_status' : 'explicit',
-    aspect_ratio_semantics: 'single_uploaded_source_verified_9x16_no_video_crop_field_in_graph_schema',
+    aspect_ratio_semantics: 'single_uploaded_source_verified_9x16_with_video_auto_crop_opt_in_requested',
   };
 }
 function verifyCarouselCreativeReadback(source, creative) {
@@ -247,6 +259,7 @@ function buildEffectiveReport(source, reportedOptIn, removedOrIneligible, notRep
     main: updateFeatureGroup(groups.main, reportedOptIn, removedOrIneligible, notReported),
     essential: updateFeatureGroup(groups.essential, reportedOptIn, removedOrIneligible, notReported),
     supplemental: updateFeatureGroup(groups.supplemental, reportedOptIn, removedOrIneligible, notReported),
+    video: updateFeatureGroup(groups.video, reportedOptIn, removedOrIneligible, notReported),
     graph_acknowledged_features: reportedOptIn,
     ui_confirmed_features: [],
     rejected_features: removedOrIneligible,

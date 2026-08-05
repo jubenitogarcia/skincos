@@ -29,7 +29,7 @@ const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
 const REQUIRED_CTA = 'BOOK_NOW';
 const OUTCOME_LEADS_CTA = 'LEARN_MORE';
 const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v21_video_916_global_copy_calibration_terminal';
 const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'add_text_overlay',
   'image_touchups',
@@ -43,6 +43,7 @@ const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'show_destination_blurbs',
   'image_animation',
   'site_extensions',
+  'video_auto_crop',
 ]);
 const FORBIDDEN_ADVANTAGE_PLUS_FEATURES = new Set([
   'image_template',
@@ -199,16 +200,19 @@ function validateFeedFourByFiveCrop(image, index) {
 function validateVideoOnlyPlacementRules(feed) {
   const imageLabels = labelNames(feed.images);
   const videoLabels = labelNames(feed.videos);
-  const bodyLabels = labelNames(feed.bodies);
-  const titleLabels = labelNames(feed.titles);
-  const descriptionLabels = labelNames(feed.descriptions);
   const rules = safeArray(feed.asset_customization_rules);
   assert(imageLabels.size === 0, 'video_only_images_forbidden', { actual: imageLabels.size });
   assert(videoLabels.size === 1 && videoLabels.has('vertical_video'), 'video_only_video_label_invalid', { labels: [...videoLabels] });
-  const exactUniqueLabels = (assets, labels) => safeArray(assets).length === 5 && labels.size === 5 && safeArray(assets).every((asset) => safeArray(asset && asset.adlabels).length === 1);
-  assert(exactUniqueLabels(feed.bodies, bodyLabels), 'video_only_body_labels_invalid', { labels: [...bodyLabels] });
-  assert(exactUniqueLabels(feed.titles, titleLabels), 'video_only_title_labels_invalid', { labels: [...titleLabels] });
-  assert(exactUniqueLabels(feed.descriptions, descriptionLabels), 'video_only_description_labels_invalid', { labels: [...descriptionLabels] });
+  const hasFiveGlobalTextVariants = (assets) => {
+    const values = safeArray(assets);
+    const copy = values.map((asset) => safeString(asset && asset.text));
+    return values.length === 5 && copy.every(Boolean) &&
+      new Set(copy.map((value) => value.toLowerCase())).size === 5 &&
+      values.every((asset) => safeArray(asset && asset.adlabels).length === 0);
+  };
+  assert(hasFiveGlobalTextVariants(feed.bodies), 'video_only_global_bodies_invalid', {});
+  assert(hasFiveGlobalTextVariants(feed.titles), 'video_only_global_titles_invalid', {});
+  assert(hasFiveGlobalTextVariants(feed.descriptions), 'video_only_global_descriptions_invalid', {});
   assert(rules.length === 2, 'video_only_placement_rule_count_invalid', { actual: rules.length });
   const mainRule = asObject(rules[0]);
   const rewardedRule = asObject(rules[1]);
@@ -217,13 +221,10 @@ function validateVideoOnlyPlacementRules(feed) {
   for (const rule of [mainRule, rewardedRule]) {
     assert(!safeString(rule.image_label && rule.image_label.name), 'video_only_image_label_forbidden', {});
     assert(safeString(rule.video_label && rule.video_label.name) === 'vertical_video', 'video_only_rule_video_label_invalid', {});
-    assert(bodyLabels.has(safeString(rule.body_label && rule.body_label.name)), 'video_only_rule_body_label_invalid', {});
-    assert(titleLabels.has(safeString(rule.title_label && rule.title_label.name)), 'video_only_rule_title_label_invalid', {});
-    assert(descriptionLabels.has(safeString(rule.description_label && rule.description_label.name)), 'video_only_rule_description_label_invalid', {});
+    assert(!safeString(rule.body_label && rule.body_label.name), 'video_only_rule_body_label_forbidden', {});
+    assert(!safeString(rule.title_label && rule.title_label.name), 'video_only_rule_title_label_forbidden', {});
+    assert(!safeString(rule.description_label && rule.description_label.name), 'video_only_rule_description_label_forbidden', {});
   }
-  assert(safeString(mainRule.body_label && mainRule.body_label.name) !== safeString(rewardedRule.body_label && rewardedRule.body_label.name), 'video_only_rule_body_label_reused', {});
-  assert(safeString(mainRule.title_label && mainRule.title_label.name) !== safeString(rewardedRule.title_label && rewardedRule.title_label.name), 'video_only_rule_title_label_reused', {});
-  assert(safeString(mainRule.description_label && mainRule.description_label.name) !== safeString(rewardedRule.description_label && rewardedRule.description_label.name), 'video_only_rule_description_label_reused', {});
   assert(containsAll(mainSpec.publisher_platforms, [...REQUIRED_VIDEO_ONLY_SOCIAL_PLATFORMS, ...REQUIRED_VIDEO_ONLY_NETWORK_PLATFORMS]), 'video_only_publishers_incomplete', {});
   assert(safeArray(mainSpec.publisher_platforms).length === 4, 'video_only_publishers_not_exclusive', {});
   assert(containsAll(mainSpec.facebook_positions, REQUIRED_VIDEO_ONLY_FACEBOOK_POSITIONS), 'video_only_facebook_positions_incomplete', {});
@@ -357,6 +358,13 @@ function validateAdvantagePlus(payload, source, hosts) {
   }
   for (const feature of requested) {
     assert(Object.prototype.hasOwnProperty.call(features, feature), 'advantage_plus_requested_feature_missing', { feature });
+  }
+  if (['video_single', 'mixed_flexible'].includes(safeString(source.media_variant))) {
+    assert(
+      safeString(asObject(features.video_auto_crop).enroll_status).toUpperCase() === 'OPT_IN',
+      'video_auto_crop_opt_in_required',
+      {},
+    );
   }
 
   for (const feature of FORBIDDEN_ADVANTAGE_PLUS_FEATURES) {
@@ -630,9 +638,13 @@ return $input.all().map((item) => {
         video_count: videos.length,
         video_status: safeString(source.video_status),
         video_delivery_aspect_ratio: expectsAssetFeedVideo ? '9x16' : '',
-        video_delivery_format_semantics: safeString(source.media_variant) === 'mixed_flexible'
-          ? 'rewarded_video_recommended_9x16_satisfied_by_exact_original_source'
-          : (expectsAssetFeedVideo ? 'recommended_9x16_satisfied_by_exact_original_source' : ''),
+        video_delivery_format_semantics: expectsAssetFeedVideo
+          ? 'normalized_9x16_source_with_video_auto_crop_opt_in_requested'
+          : '',
+        video_auto_crop_requested: expectsAssetFeedVideo,
+        ads_manager_format_label_status: expectsAssetFeedVideo
+          ? 'requires_ads_manager_ui_calibration'
+          : 'not_applicable',
         vertical_crop_key: VERTICAL_CROP_KEY,
         media_variant: safeString(source.media_variant || 'static_flexible'),
         destination_contract_kind: destinationKind,

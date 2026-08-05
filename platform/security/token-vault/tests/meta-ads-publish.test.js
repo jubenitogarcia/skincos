@@ -87,10 +87,44 @@ test('config exposes metadata and opaque token ids without token material', asyn
   assert.equal(body.destinations[0].carousel_native_route_active, true);
   assert.equal(body.destinations[0].landing_pages_by_creative_group.BOTOX_35UI_PRICE_DOSE_AVISTA_ANIVERSARIO_7_ANOS, 'https://espacofacial.com/campanhas/aniversario-7-anos/botox');
   assert.match(body.config_revision, /^[a-f0-9]{64}$/);
-  assert.equal(body.capabilities.workflow_contract_revision, 'meta_destination_contract_v18_live_campaign_cta');
+  assert.equal(body.capabilities.workflow_contract_revision, 'meta_destination_contract_v21_video_916_global_copy_calibration_terminal');
   assert.deepEqual(body.capabilities.video_upload.supported_actions, __test.videoUploadActions);
   assert.equal(body.capabilities.video_upload.max_file_bytes, 90 * 1024 * 1024);
   assert.equal(body.capabilities.video_upload.max_chunk_bytes, 16 * 1024 * 1024);
+});
+
+test('a terminal calibration run cannot be reopened by a delayed update', async () => {
+  const db = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async first() {
+          if (sql.includes('FROM meta_ads_publish_runs')) {
+            return { id: 'run-calibration', status: 'calibration_paused' };
+          }
+          return null;
+        },
+        async run() { throw new Error('terminal run must not be updated'); },
+      };
+    },
+  };
+  const response = await __test.updateRun(
+    'run-calibration',
+    new Request('https://api.skincos.com.br/v1/meta-ads-publish/runs/run-calibration', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'meta_completed_drive_pending', summary: { publication_mode: 'commercial' } }),
+    }),
+    { TOKEN_VAULT_DB: db },
+    'test-request',
+  );
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    error: 'run_already_terminal',
+    status: 'calibration_paused',
+    requestId: 'test-request',
+  });
 });
 
 function flexibleStaticFeed() {
@@ -115,12 +149,14 @@ function flexibleStaticFeed() {
   };
 }
 
-function requiredCreativeFeatures() {
-  return Object.fromEntries([
+function requiredCreativeFeatures({ video = false } = {}) {
+  const features = [
     'add_text_overlay', 'image_touchups', 'text_optimizations', 'inline_comment',
     'enhance_cta', 'image_brightness_and_contrast', 'reveal_details_over_time',
     'show_destination_blurbs', 'image_animation', 'music_generation', 'pac_relaxation',
-  ].map((feature) => [feature, { enroll_status: 'OPT_IN' }]));
+  ];
+  if (video) features.push('video_auto_crop');
+  return Object.fromEntries(features.map((feature) => [feature, { enroll_status: 'OPT_IN' }]));
 }
 
 test('flexible creative quality gate requires 3 images, 5 bodies, 5 titles and 5 descriptions', () => {
@@ -156,8 +192,7 @@ test('flexible creative quality gate accepts an explicit WhatsApp destination', 
   assert.doesNotThrow(() => __test.validateCreativePayload(payload, 'creative:whatsapp:unit'));
 });
 
-test('video-only flexible creative accepts the labeled 9:16 contract', () => {
-  const label = (prefix, index) => ({ name: `${prefix}_${index}` });
+test('video-only flexible creative accepts five global text variants and auto-crop opt-in', () => {
   const payload = {
     name: 'Video vertical',
     object_story_spec: { page_id: '123456789' },
@@ -165,20 +200,41 @@ test('video-only flexible creative accepts the labeled 9:16 contract', () => {
       ad_formats: ['SINGLE_VIDEO'],
       optimization_type: 'PLACEMENT',
       videos: [{ video_id: '123456789', thumbnail_hash: 'thumbhash0123456789', adlabels: [{ name: 'vertical_video' }] }],
-      bodies: Array.from({ length: 5 }, (_, index) => ({ text: `body-${index}`, adlabels: [label('body', index)] })),
-      titles: Array.from({ length: 5 }, (_, index) => ({ text: `title-${index}`, adlabels: [label('title', index)] })),
-      descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `description-${index}`, adlabels: [label('description', index)] })),
+      bodies: Array.from({ length: 5 }, (_, index) => ({ text: `body-${index}` })),
+      titles: Array.from({ length: 5 }, (_, index) => ({ text: `title-${index}` })),
+      descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `description-${index}` })),
       link_urls: [{ website_url: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' }],
       call_to_action_types: ['BOOK_NOW'],
       asset_customization_rules: [
-        { video_label: { name: 'vertical_video' }, body_label: label('body', 0), title_label: label('title', 0), description_label: label('description', 0), customization_spec: { publisher_platforms: ['facebook'], facebook_positions: ['feed'] } },
-        { video_label: { name: 'vertical_video' }, body_label: label('body', 1), title_label: label('title', 1), description_label: label('description', 1), customization_spec: { publisher_platforms: ['audience_network'], audience_network_positions: ['rewarded_video'] } },
+        { video_label: { name: 'vertical_video' }, customization_spec: { publisher_platforms: ['facebook'], facebook_positions: ['feed'] } },
+        { video_label: { name: 'vertical_video' }, customization_spec: { publisher_platforms: ['audience_network'], audience_network_positions: ['rewarded_video'] } },
       ],
     },
     creative_sourcing_spec: { source_url: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' },
-    degrees_of_freedom_spec: { creative_features_spec: requiredCreativeFeatures() },
+    degrees_of_freedom_spec: { creative_features_spec: requiredCreativeFeatures({ video: true }) },
   };
   assert.doesNotThrow(() => __test.validateCreativePayload(payload, 'creative:video:unit'));
+
+  const labeledLegacyCopy = structuredClone(payload);
+  labeledLegacyCopy.asset_feed_spec.bodies[0].adlabels = [{ name: 'body_0' }];
+  assert.throws(
+    () => __test.validateCreativePayload(labeledLegacyCopy, 'creative:video:legacy-copy'),
+    /creative_video_only_global_text_variants_invalid/,
+  );
+
+  const duplicateGlobalCopy = structuredClone(payload);
+  duplicateGlobalCopy.asset_feed_spec.titles[4].text = duplicateGlobalCopy.asset_feed_spec.titles[0].text;
+  assert.throws(
+    () => __test.validateCreativePayload(duplicateGlobalCopy, 'creative:video:duplicate-copy'),
+    /creative_video_only_global_text_variants_invalid/,
+  );
+
+  const missingAutoCrop = structuredClone(payload);
+  delete missingAutoCrop.degrees_of_freedom_spec.creative_features_spec.video_auto_crop;
+  assert.throws(
+    () => __test.validateCreativePayload(missingAutoCrop, 'creative:video:missing-auto-crop'),
+    /creative_video_auto_crop_required/,
+  );
 });
 
 test('native carousel contract accepts labeled card attachments and rejects flexible-only fields', () => {
@@ -353,12 +409,53 @@ test('batch validation rejects duplicate replacement targets', () => {
     token_id: 'facebook_barra',
     account_id: '123456789',
     api_version: 'v25.0',
+    desired_status: 'ACTIVE',
+    publication_mode: 'commercial',
+    calibration_marker: '',
     ad_payload: {
       name: 'Botox | BarraShoppingSul',
+      status: 'ACTIVE',
       creative: { creative_id: '1024340013785371' },
     },
   };
   assert.throws(() => __test.validateBatchJobs([job, { ...job, operation_key: 'job:barra:botox:2' }]), /duplicate_batch_target/);
+});
+
+test('batch validation rejects legacy or mixed publication modes before staging', () => {
+  const commercial = replacementJob('120246883241450157', 'job:commercial:one');
+  const legacy = structuredClone(commercial);
+  delete legacy.publication_mode;
+  assert.throws(
+    () => __test.validateBatchJobs([legacy]),
+    /job_0_publication_mode_invalid/,
+  );
+
+  const disguisedCalibration = structuredClone(commercial);
+  disguisedCalibration.ad_payload.name = '[TEST-VIDEO-ONLY] bypass commercial';
+  assert.throws(
+    () => __test.validateBatchJobs([disguisedCalibration]),
+    /job_0_commercial_contract_invalid/,
+  );
+
+  const calibration = {
+    ...commercial,
+    operation_key: 'job:calibration:one',
+    action: 'create_new',
+    target_ad_id: undefined,
+    desired_status: 'PAUSED',
+    publication_mode: 'calibration_paused',
+    calibration_marker: '[TEST-VIDEO-ONLY]',
+    ad_payload: {
+      name: '[TEST-VIDEO-ONLY] Synthetic calibration',
+      status: 'PAUSED',
+      adset_id: '323456790',
+      creative: { creative_id: '9120246883241450158' },
+    },
+  };
+  assert.throws(
+    () => __test.validateBatchJobs([commercial, calibration]),
+    /batch_publication_mode_mixed/,
+  );
 });
 
 test('error classification retries only transient Meta failures', () => {
@@ -498,7 +595,13 @@ class GatewayStatement {
   async first() {
     if (this.sql.includes('FROM credential_tokens')) return this.db.credential;
     if (this.sql.includes('FROM meta_ads_publish_locks')) return null;
-    if (this.sql.includes('FROM meta_ads_publish_operations')) return null;
+    if (this.sql.includes('FROM meta_ads_publish_operations')) {
+      return this.db.stagedOperation ? {
+        result_json: JSON.stringify(this.db.stagedOperation),
+        status: 'completed',
+        action: 'stage_batch',
+      } : null;
+    }
     return null;
   }
 
@@ -513,8 +616,9 @@ class GatewayStatement {
 }
 
 class GatewayDb {
-  constructor() {
+  constructor({ stagedOperation = null } = {}) {
     this.statements = [];
+    this.stagedOperation = stagedOperation;
     this.credential = {
       id: 'facebook_barra',
       provider: 'facebook',
@@ -536,8 +640,8 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-function gatewayContext(fetchImpl) {
-  const db = new GatewayDb();
+function gatewayContext(fetchImpl, options = {}) {
+  const db = new GatewayDb(options);
   return {
     db,
     context: {
@@ -567,9 +671,12 @@ function replacementJob(adId, operationKey) {
     destination_group: `unit-${adId}`,
     creative_group_key: `group-${adId}`,
     creative_id: `9${adId}`,
+    desired_status: 'ACTIVE',
+    publication_mode: 'commercial',
+    calibration_marker: '',
     ad_payload: {
       name: `New ad ${adId}`,
-      status: 'PAUSED',
+      status: 'ACTIVE',
       creative: { creative_id: `9${adId}` },
       adset_id: '323456789',
     },
@@ -606,6 +713,75 @@ test('stage batch compensates earlier ads when a later permanent mutation fails'
   assert.equal(firstAdPosts.length, 2);
   assert.equal(firstAdPosts[1].body.name, 'Old ad 11111');
   assert.equal(firstAdPosts[1].body.creative.creative_id, '811111');
+});
+
+test('paused synthetic calibration never calls Graph activation', async () => {
+  const calls = [];
+  const stagedOperation = {
+    jobs: [{
+      operation_key: 'job:calibration:one',
+      action: 'create_new',
+      token_id: 'facebook_barra',
+      account_id: '123456789',
+      api_version: 'v25.0',
+      destination_group: 'unit-calibration',
+      creative_group_key: 'group-calibration',
+      creative_id: '912345',
+      resource_key: 'adset:323456789:name:calibration',
+      desired_status: 'PAUSED',
+      publication_mode: 'calibration_paused',
+      calibration_marker: '[TEST-VIDEO-ONLY]',
+      ad_id: '11223344',
+      created_new: true,
+      files: [{ id: 'drive-calibration', name: 'calibration.mp4', ratio: '9x16' }],
+      previous_state: {},
+    }],
+  };
+  const { context, db } = gatewayContext(async (...args) => {
+    calls.push(args);
+    return jsonResponse({ success: true });
+  }, { stagedOperation });
+
+  const result = await __test.activateBatch({ stage_operation_key: 'stage:run-test' }, context);
+
+  assert.equal(result.status, 'calibration_paused');
+  assert.equal(result.jobs[0].activation_result.skipped_graph_activation, true);
+  assert.equal(calls.length, 0);
+  assert.ok(db.statements.some((statement) =>
+    statement.sql.includes('UPDATE meta_ads_publish_jobs SET status') && statement.values[0] === 'calibration_paused'
+  ));
+  assert.ok(db.statements.some((statement) =>
+    statement.sql.includes('UPDATE meta_ads_publish_runs SET status') && statement.values[0] === 'calibration_paused'
+  ));
+  assert.ok(db.statements.some((statement) => statement.sql.includes('DELETE FROM meta_ads_publish_locks')));
+});
+
+test('commercial staged batch still activates explicitly', async () => {
+  const calls = [];
+  const stagedOperation = {
+    jobs: [{
+      ...replacementJob('11223344', 'job:commercial:one'),
+      resource_key: 'ad:11223344',
+      ad_id: '11223344',
+      created_new: false,
+      previous_state: { status: 'PAUSED' },
+    }],
+  };
+  const { context, db } = gatewayContext(async (url, init) => {
+    calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return jsonResponse({ success: true });
+  }, { stagedOperation });
+
+  const result = await __test.activateBatch({ stage_operation_key: 'stage:run-test' }, context);
+
+  assert.equal(result.status, 'meta_completed_drive_pending');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.deepEqual(calls[0].body, { status: 'ACTIVE' });
+  const runUpdate = db.statements.find((statement) =>
+    statement.sql.includes('UPDATE meta_ads_publish_runs SET status') && statement.values[0] === 'meta_completed_drive_pending'
+  );
+  assert.equal(JSON.parse(runUpdate.values[1]).publication_mode, 'commercial');
 });
 
 test('ambiguous update timeout reconciles by reading the final ad state', async () => {

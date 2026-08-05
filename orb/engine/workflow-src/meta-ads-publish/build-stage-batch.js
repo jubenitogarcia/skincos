@@ -2,6 +2,7 @@ function text(value) { return String(value ?? '').trim(); }
 function object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function key(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_.:-]+/g, '_').slice(0, 190); }
 function targetNameKey(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_.:-]+/g, '_'); }
+const CALIBRATION_MARKERS = new Set(['[TEST-VIDEO-ONLY]', '[TEST-CAROUSEL]']);
 
 const inputs = $input.all();
 if (!inputs.length) throw new Error('Build Stage Batch recebeu zero creatives verificados.');
@@ -28,6 +29,9 @@ const jobs = inputs.map((item, index) => {
   if (!['ACTIVE', 'PAUSED'].includes(desiredStatus)) {
     throw new Error(`Status final invalido no job ${job.job_key || index}: ${desiredStatus}`);
   }
+  const calibrationMode = job.calibration_mode === true;
+  const calibrationMarker = text(job.calibration_marker).toUpperCase();
+  const publicationMode = calibrationMode ? 'calibration_paused' : 'commercial';
   const adPayload = {
     ...object(job.adPayload),
     // Commercial jobs stay ACTIVE. Explicit calibration jobs carry PAUSED
@@ -35,6 +39,16 @@ const jobs = inputs.map((item, index) => {
     status: desiredStatus,
     creative: { creative_id: creativeId },
   };
+  if (publicationMode === 'calibration_paused') {
+    if (action !== 'create_new' || desiredStatus !== 'PAUSED' || !CALIBRATION_MARKERS.has(calibrationMarker)) {
+      throw new Error(`Calibracao pausada invalida no job ${job.job_key || index}.`);
+    }
+    if (!text(adPayload.name).toUpperCase().startsWith(calibrationMarker)) {
+      throw new Error(`Nome da calibracao sem marcador explicito no job ${job.job_key || index}.`);
+    }
+  } else if (desiredStatus !== 'ACTIVE' || calibrationMarker) {
+    throw new Error(`Job comercial com contrato de publicacao invalido no job ${job.job_key || index}.`);
+  }
   // Updating an existing ad must not resend adset_id.  Meta treats it as an
   // ad-set mutation and rejects the creative against the campaign objective,
   // even when the value is unchanged.
@@ -51,6 +65,8 @@ const jobs = inputs.map((item, index) => {
     media_variant: text(job.media_variant || 'static_flexible'),
     creative_id: creativeId,
     desired_status: desiredStatus,
+    publication_mode: publicationMode,
+    calibration_marker: publicationMode === 'calibration_paused' ? calibrationMarker : '',
     ad_payload: adPayload,
     files: Object.entries(object(job.asset_ids)).map(([ratio, id]) => ({
       id: text(id),
@@ -59,6 +75,11 @@ const jobs = inputs.map((item, index) => {
     })).filter((file) => file.id),
   };
 });
+
+const publicationModes = [...new Set(jobs.map((job) => job.publication_mode))];
+if (publicationModes.length !== 1) {
+  throw new Error(`Build Stage Batch recusou lote misto de calibracao e publicacao comercial: ${JSON.stringify(publicationModes)}`);
+}
 
 return [{
   json: {
@@ -70,5 +91,6 @@ return [{
       jobs,
     },
     job_count: jobs.length,
+    publication_mode: publicationModes[0],
   },
 }];

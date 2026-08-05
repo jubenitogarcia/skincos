@@ -7,7 +7,7 @@ const CALIBRATION_FILE_PREFIXES = ['[TEST-VIDEO-ONLY]', '[TEST-CAROUSEL]'];
 // Increment this whenever a persisted creative body becomes incompatible. The
 // resume path deliberately reuses an existing mutation body, so the revision
 // is a hard boundary rather than merely descriptive metadata.
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v21_video_916_global_copy_calibration_terminal';
 // The CTA is selected from the live campaign objective. Meta rejects BOOK_NOW
 // on dynamic OUTCOME_LEADS ad sets, while the other website contracts retain
 // the booking CTA. WhatsApp remains a URL destination, not a CTA policy.
@@ -613,6 +613,11 @@ const ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES = Object.freeze({
   image_animation: 'Animacao de imagem',
   site_extensions: 'Extensoes do site',
 });
+const ADVANTAGE_PLUS_VIDEO_FEATURES = Object.freeze({
+  // This is the only documented Graph feature for requesting automatic video
+  // framing. It is a request, not a guarantee of an Ads Manager UI label.
+  video_auto_crop: 'Ajuste automatico de video',
+});
 const ADVANTAGE_PLUS_BASELINE_FEATURES = [
   'add_text_overlay',
   'image_touchups',
@@ -665,7 +670,7 @@ function normalizeSiteLinks(list) {
   return out;
 }
 
-function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEligible, mediaMode, sourceUrl }) {
+function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEligible, mediaMode, sourceUrl, videoAutoCropEligible }) {
   if (parseApiVersionMajor(apiVersion) < 25) {
     throw new Error(`Advantage+ Creative completo exige Marketing API v25.0; recebido ${safeString(apiVersion) || 'vazio'}.`);
   }
@@ -677,9 +682,12 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
   const supplementalFeatures = videoOnly
     ? VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES
     : ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES;
-  const desiredFeatures = videoOnly
-    ? [...VIDEO_ADVANTAGE_PLUS_BASELINE_FEATURES, ...VIDEO_ADVANTAGE_PLUS_CONDITIONAL_FEATURES]
-    : [...ADVANTAGE_PLUS_BASELINE_FEATURES, ...ADVANTAGE_PLUS_CONDITIONAL_FEATURES];
+  const desiredFeatures = [
+    ...(videoOnly
+      ? [...VIDEO_ADVANTAGE_PLUS_BASELINE_FEATURES, ...VIDEO_ADVANTAGE_PLUS_CONDITIONAL_FEATURES]
+      : [...ADVANTAGE_PLUS_BASELINE_FEATURES, ...ADVANTAGE_PLUS_CONDITIONAL_FEATURES]),
+    ...(hasVideo ? ['video_auto_crop'] : []),
+  ];
   const creativeFeaturesSpec = {};
   const eligibleFeatures = [...baselineFeatures];
   const skippedFeatures = [];
@@ -706,15 +714,16 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
       : 'multiple_ratios_or_explicit_placement_rules_missing';
   }
 
-  if (hasVideo) {
-    // Asset-feed video has no supported per-placement crop field. Live paused
-    // calibration with video_auto_crop=OPT_IN was acknowledged by Graph, but
-    // Ads Manager still rendered the exact 1080x1920 source as "Original".
-    // Keep those verified 9:16 pixels authoritative instead of allowing Meta
-    // to silently crop or generatively expand the source.
-    skippedFeatures.push('video_auto_crop', 'video_uncrop');
-    skipReasons.video_auto_crop = 'exact_9x16_source_already_satisfies_recommended_format_and_live_opt_in_calibration_kept_ads_manager_label_original';
-    skipReasons.video_uncrop = 'disabled_to_preserve_verified_9x16_source_without_silent_expansion';
+  if (hasVideo && videoAutoCropEligible) {
+    // There is no per-video crop/aspect-ratio selector in asset_feed_spec.
+    // The input has already passed the strict normalized 9:16 gate below, so
+    // explicitly request Meta's documented automatic video framing rather
+    // than silently shipping the source as the old "Original" policy did.
+    creativeFeaturesSpec.video_auto_crop = { enroll_status: 'OPT_IN' };
+    eligibleFeatures.push('video_auto_crop');
+  } else if (hasVideo) {
+    skippedFeatures.push('video_auto_crop');
+    skipReasons.video_auto_crop = 'video_geometry_not_verified_as_normalized_9x16';
   }
 
   const siteLinksEligible = siteLinks.length >= ADVANTAGE_PLUS_SITE_LINKS_MIN;
@@ -759,6 +768,14 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
         eligible: eligibleFeatures.includes(apiKey),
         status: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey) ? 'requested' : 'ineligible',
         reason: skipReasons[apiKey] || '',
+      })),
+      video: Object.entries(ADVANTAGE_PLUS_VIDEO_FEATURES).map(([apiKey, label]) => ({
+        api_key: apiKey,
+        label,
+        requested: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey),
+        eligible: eligibleFeatures.includes(apiKey),
+        status: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey) ? 'requested' : 'ineligible',
+        reason: skipReasons[apiKey] || (hasVideo ? '' : 'creative_without_video'),
       })),
     },
     creativeFeaturesSpec,
@@ -1516,18 +1533,23 @@ function isCurrentVideoOnlyResumeContract(row) {
   const mediaMode = normalizeMediaMode(row && row.media_mode, row || {});
   if (mediaMode !== 'video_only') return true;
   const feed = asObject(asObject(row && row.creativePayload).asset_feed_spec);
+  const features = asObject(asObject(asObject(row && row.creativePayload).degrees_of_freedom_spec).creative_features_spec);
   const rules = safeArray(feed.asset_customization_rules);
   if (safeArray(feed.images).length || safeArray(feed.videos).length !== 1 || rules.length !== 2) return false;
-  const labelsFrom = (assets) => safeArray(assets).map((asset) => safeString(asset && asset.adlabels && asset.adlabels[0] && asset.adlabels[0].name)).filter(Boolean);
-  const bodyLabels = labelsFrom(feed.bodies);
-  const titleLabels = labelsFrom(feed.titles);
-  const descriptionLabels = labelsFrom(feed.descriptions);
-  if ([bodyLabels, titleLabels, descriptionLabels].some((labels) => labels.length !== 5 || new Set(labels).size !== 5)) return false;
-  const hasExpectedLabels = (rule) => safeString(rule && rule.video_label && rule.video_label.name) === 'vertical_video' &&
-    bodyLabels.includes(safeString(rule && rule.body_label && rule.body_label.name)) &&
-    titleLabels.includes(safeString(rule && rule.title_label && rule.title_label.name)) &&
-    descriptionLabels.includes(safeString(rule && rule.description_label && rule.description_label.name)) &&
-    !safeString(rule && rule.image_label && rule.image_label.name);
+  const hasFiveGlobalTextVariants = (assets) => {
+    const values = safeArray(assets);
+    const copy = values.map((asset) => safeString(asset && asset.text));
+    return values.length === 5 && copy.every(Boolean) &&
+      new Set(copy.map((value) => value.toLowerCase())).size === 5 &&
+      values.every((asset) => !safeArray(asset && asset.adlabels).length);
+  };
+  if (![feed.bodies, feed.titles, feed.descriptions].every(hasFiveGlobalTextVariants)) return false;
+  if (safeString(asObject(features.video_auto_crop).enroll_status).toUpperCase() !== 'OPT_IN') return false;
+  const hasExpectedVideoRule = (rule) => safeString(rule && rule.video_label && rule.video_label.name) === 'vertical_video' &&
+    !safeString(rule && rule.image_label && rule.image_label.name) &&
+    !safeString(rule && rule.body_label && rule.body_label.name) &&
+    !safeString(rule && rule.title_label && rule.title_label.name) &&
+    !safeString(rule && rule.description_label && rule.description_label.name);
   const mainRule = rules.find((rule) => {
     const spec = asObject(rule && rule.customization_spec);
     return safeArray(spec.publisher_platforms).map(safeString).sort().join(',') === 'audience_network,facebook,instagram,whatsapp' &&
@@ -1538,10 +1560,7 @@ function isCurrentVideoOnlyResumeContract(row) {
     return safeArray(spec.publisher_platforms).map(safeString).join(',') === 'audience_network' &&
       safeArray(spec.audience_network_positions).map(safeString).join(',') === 'rewarded_video';
   });
-  return Boolean(mainRule && rewardedRule && hasExpectedLabels(mainRule) && hasExpectedLabels(rewardedRule) &&
-    safeString(mainRule.body_label && mainRule.body_label.name) !== safeString(rewardedRule.body_label && rewardedRule.body_label.name) &&
-    safeString(mainRule.title_label && mainRule.title_label.name) !== safeString(rewardedRule.title_label && rewardedRule.title_label.name) &&
-    safeString(mainRule.description_label && mainRule.description_label.name) !== safeString(rewardedRule.description_label && rewardedRule.description_label.name));
+  return Boolean(mainRule && rewardedRule && hasExpectedVideoRule(mainRule) && hasExpectedVideoRule(rewardedRule));
 }
 
 function isCurrentCarouselResumeContract(row) {
@@ -2202,13 +2221,6 @@ for (const entry of jobEntries) {
   const bodyRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'body_rule', index + 1));
   const titleRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'title_rule', index + 1));
   const descriptionRuleLabels = normalizedDescriptions.map((asset, index) => createLabel(sourceAdName, 'description_rule', index + 1));
-  // In a placement-customized video feed Meta applies every unlabelled text
-  // asset to every rule. Give every variant its own label and bind one exact
-  // variant to each of the two video scopes. The remaining variants stay
-  // preserved in the feed but never form a multi-asset rule.
-  const videoOnlyBodyLabels = normalizedBodies.map((asset, index) => createLabel(sourceAdName, 'video_body_rule', index + 1));
-  const videoOnlyTitleLabels = normalizedTitles.map((asset, index) => createLabel(sourceAdName, 'video_title_rule', index + 1));
-  const videoOnlyDescriptionLabels = normalizedDescriptions.map((asset, index) => createLabel(sourceAdName, 'video_description_rule', index + 1));
 
     const imageAssets = orderedAssets.map((asset, index) => ({
       hash: safeString(asset.hash) || undefined,
@@ -2254,19 +2266,24 @@ for (const entry of jobEntries) {
       continue;
     }
 
-  const bodyAssets = normalizedBodies.map((asset, index) => ({
+  // Text labels would bind a variation to a single placement rule. A
+  // video-only creative has two non-overlapping placement scopes, which left
+  // variations 3–5 unreachable. Keep all five copy variants global so Meta
+  // can select them on every eligible video placement.
+  const videoOnlyUsesGlobalTextVariants = mediaMode === 'video_only';
+  const bodyAssets = normalizedBodies.map((asset) => ({
     text: safeString(asset.text),
-    adlabels: mediaMode === 'video_only' ? [videoOnlyBodyLabels[index]] : bodyRuleLabels,
+    adlabels: videoOnlyUsesGlobalTextVariants ? undefined : bodyRuleLabels,
   }));
 
-  const titleAssets = normalizedTitles.map((asset, index) => ({
+  const titleAssets = normalizedTitles.map((asset) => ({
     text: safeString(asset.text).slice(0, 80),
-    adlabels: mediaMode === 'video_only' ? [videoOnlyTitleLabels[index]] : titleRuleLabels,
+    adlabels: videoOnlyUsesGlobalTextVariants ? undefined : titleRuleLabels,
   }));
 
   const descriptionAssets = normalizedDescriptions.map((asset, index) => ({
     text: safeString(asset.text),
-    adlabels: mediaMode === 'video_only' ? [videoOnlyDescriptionLabels[index]] : [descriptionRuleLabels[index]],
+    adlabels: videoOnlyUsesGlobalTextVariants ? undefined : [descriptionRuleLabels[index]],
     }));
 
     const feedIndex = orderedAssets.findIndex((asset) => !['2x1', '9x16'].includes(asset.ratio));
@@ -2316,10 +2333,9 @@ for (const entry of jobEntries) {
       },
     ] : staticPlacementRules;
 
-    // Meta requires at least two customization rules when placement
-    // personalization is enabled, and each rule may receive only one text
-    // asset of each type. The labels select one of the five preserved variants
-    // for each scope instead of letting every global variant match both rules.
+    // Meta requires two non-overlapping video placement scopes. Do not attach
+    // text labels here: their presence turns five global variants into at most
+    // two reachable variants (one per rule).
     const videoOnlyPlacementRules = mediaMode === 'video_only' ? [
       {
         customization_spec: {
@@ -2330,9 +2346,6 @@ for (const entry of jobEntries) {
           whatsapp_positions: VIDEO_ONLY_WHATSAPP_POSITIONS,
         },
         video_label: videoLabel,
-        body_label: videoOnlyBodyLabels[0],
-        title_label: videoOnlyTitleLabels[0],
-        description_label: videoOnlyDescriptionLabels[0],
         priority: 1,
       },
       {
@@ -2341,9 +2354,6 @@ for (const entry of jobEntries) {
           audience_network_positions: VERTICAL_REWARDED_VIDEO_POSITIONS,
         },
         video_label: videoLabel,
-        body_label: videoOnlyBodyLabels[1],
-        title_label: videoOnlyTitleLabels[1],
-        description_label: videoOnlyDescriptionLabels[1],
         priority: 2,
       },
     ] : [];
@@ -2358,6 +2368,7 @@ for (const entry of jobEntries) {
       pacEligible: mediaMode !== 'carousel' && orderedAssets.length > 1 && mixedPlacementRules.length > 1,
       mediaMode,
       sourceUrl: primaryLinkUrl,
+      videoAutoCropEligible: requiresVideo && videoGeometryValid,
     });
 
     const creativeRootExtras = removeEmptyFields({
@@ -2681,6 +2692,7 @@ for (const entry of jobEntries) {
           main: deepClone(reportedAdvantage.featureGroups.main),
           essential: deepClone(reportedAdvantage.featureGroups.essential),
           supplemental: deepClone(reportedAdvantage.featureGroups.supplemental),
+          video: deepClone(reportedAdvantage.featureGroups.video),
           graph_acknowledged_features: [],
           ui_confirmed_features: [],
           rejected_features: [],

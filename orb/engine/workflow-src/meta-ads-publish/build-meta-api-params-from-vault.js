@@ -13,7 +13,7 @@ const SAFE_LANDING_PAGE_BY_DESTINATION = Object.freeze({
   novohamburgo: 'https://espacofacial.com/agendamento?unit=novo-hamburgo',
 });
 const SAFE_WHATSAPP_DESTINATION_URL = 'https://api.whatsapp.com/send';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v21_video_916_global_copy_calibration_terminal';
 
 const root = $input.first()?.json || {};
 if (root.ok !== true || root.ready !== true) {

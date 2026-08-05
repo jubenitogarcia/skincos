@@ -11,6 +11,7 @@ function stableHash(value) { let hash = 2166136261; for (const char of text(valu
 function unique(values) { return [...new Set(list(values).map(text).filter(Boolean))]; }
 function responseSucceeded(response) { return response.ok === true && response.operation && response.operation.status === 'completed' && text(response.operation.result && response.operation.result.id); }
 function responseText(response) { try { return JSON.stringify(response || {}).toLowerCase(); } catch { return text(response).toLowerCase(); } }
+function isMandatoryVideoAutoCropRejection(response) { return /video[ _-]?auto[ _-]?crop/.test(responseText(response)); }
 function chooseRemoval(features, response) {
   const available = OPTIONAL_REMOVAL_PRIORITY.filter((feature) => Object.prototype.hasOwnProperty.call(features, feature));
   const detail = responseText(response);
@@ -34,6 +35,7 @@ return $input.all().map((item, index) => {
   if (succeeded) return { json: { ...source, creative_id: resolvedCreativeId, creative_fallback_attempts: list(source.creative_fallback_attempts), gateway_request: { action: 'get_creative', operation_key: key(`fallback-read-${ATTEMPT}:${source.run_id}:${resolvedCreativeId}`), token_id: text(source.token_id), account_id: text(source.account_id), api_version: text(source.api_version || 'v25.0'), object_id: resolvedCreativeId } }, binary: item.binary, pairedItem: { item: index } };
   const payload = clone(object(source.creativePayload));
   const features = object(object(payload.degrees_of_freedom_spec).creative_features_spec);
+  if (isMandatoryVideoAutoCropRejection(response)) throw new Error(`Create AdCreative rejeitou o opt-in obrigatorio video_auto_crop; o workflow recusa fallback para formato Original em ${source.job_key || index}.`);
   const removedFeature = chooseRemoval(features, response);
   if (!removedFeature) throw new Error(`Create AdCreative falhou por erro estrutural ou nao mapeado apos fallbacks seletivos em ${source.job_key || index}.`);
   delete features[removedFeature];
