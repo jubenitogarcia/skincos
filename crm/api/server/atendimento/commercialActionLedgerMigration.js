@@ -2,6 +2,11 @@ import { assertAtendimentoMigrationDestination, isStrictAtendimentoMigrationDest
 
 export const COMMERCIAL_ACTION_LEDGER_MIGRATION_ID = '20260805_commercial_action_ledger_v1'
 
+const COMMERCIAL_ACTION_LEDGER_RUNTIME_ROLES = Object.freeze({
+    [ATENDIMENTO_MIGRATION_TARGETS.LOCAL]: 'skincos',
+    [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
+})
+
 const PREREQUISITE_TABLES = [
     'commercial_actions',
     'commercial_contact_permission_events',
@@ -87,6 +92,16 @@ const INDEXES = [
     },
 ]
 
+function runtimeGrantStatements(target) {
+    const role = COMMERCIAL_ACTION_LEDGER_RUNTIME_ROLES[target]
+    if (!role) throw migrationError('COMMERCIAL_ACTION_LEDGER_MIGRATION_RUNTIME_ROLE_UNKNOWN')
+    return [
+        `grant usage on schema crm_atendimento to ${role}`,
+        `grant select, insert on table crm_atendimento.commercial_action_events to ${role}`,
+        `grant usage, select on sequence crm_atendimento.commercial_action_events_event_order_seq to ${role}`,
+    ]
+}
+
 function migrationError(code) {
     const error = new Error(code)
     error.code = code
@@ -152,6 +167,7 @@ export function commercialActionLedgerMigrationPlan() {
         id: COMMERCIAL_ACTION_LEDGER_MIGRATION_ID,
         adds: ['commercial_contact_permission_events.trace_id', 'commercial_action_events'],
         appendOnlyTables: ['commercial_contact_permission_events', 'commercial_action_events'],
+        runtimeAccess: 'The dedicated runtime role receives only commercial action-event SELECT/INSERT and event-order sequence access; immutable evidence cannot be updated, deleted or truncated.',
         tracePolicy: 'Every post-cutover permission event and action ledger event carries one UUID trace_id; legacy evidence remains preserved without synthetic backfill.',
         auditScope: 'The migration leaves crm_atendimento.audit_events mutable and uses trace_id in its payload only for commercial correlation.',
         rollback: 'Non-destructive: retains commercial ledger evidence, trace links and append-only guards, then marks the migration rolled back.',
@@ -189,6 +205,11 @@ export async function applyCommercialActionLedgerMigration({ pool, databaseUrl, 
             await query(client, index.sql)
             report.indexes.push(index.name)
         }
+        const runtimeRole = COMMERCIAL_ACTION_LEDGER_RUNTIME_ROLES[target]
+        const grants = runtimeGrantStatements(target)
+        for (const sql of grants) await query(client, sql)
+        report.runtimeRole = runtimeRole
+        report.runtimeGrants = grants
         report.applied = true
         await query(client, `insert into crm_atendimento.schema_migrations(id, applied_at, rolled_back_at, details)
             values ($1, now(), null, $2::jsonb)

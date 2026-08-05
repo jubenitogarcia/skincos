@@ -2,6 +2,11 @@ import { assertAtendimentoMigrationDestination, isStrictAtendimentoMigrationDest
 
 export const COMMERCIAL_CONTACT_MIGRATION_ID = '20260804_commercial_contact_controls_v1'
 
+const COMMERCIAL_CONTACT_RUNTIME_ROLES = Object.freeze({
+    [ATENDIMENTO_MIGRATION_TARGETS.LOCAL]: 'skincos',
+    [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
+})
+
 const CONTACT_TABLES = [
     `create extension if not exists pgcrypto`,
     `create schema if not exists crm_atendimento`,
@@ -54,6 +59,16 @@ function migrationError(code) {
     return error
 }
 
+function runtimeGrantStatements(target) {
+    const role = COMMERCIAL_CONTACT_RUNTIME_ROLES[target]
+    if (!role) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_RUNTIME_ROLE_UNKNOWN')
+    return [
+        `grant usage on schema crm_atendimento to ${role}`,
+        `grant select, insert, update on table crm_atendimento.commercial_contact_permissions to ${role}`,
+        `grant select, insert on table crm_atendimento.commercial_contact_permission_events to ${role}`,
+    ]
+}
+
 async function query(client, sql, params = []) {
     return client.query(sql, params)
 }
@@ -79,6 +94,7 @@ export function commercialContactMigrationPlan() {
         id: COMMERCIAL_CONTACT_MIGRATION_ID,
         tables: ['commercial_contact_permissions', 'commercial_contact_permission_events'],
         indexes: [...INDEXES],
+        runtimeAccess: 'The dedicated runtime role receives only consent-state SELECT/INSERT/UPDATE and immutable permission-event SELECT/INSERT; DELETE, TRUNCATE and unrelated source access remain denied.',
         rollback: 'Non-destructive: retains permissions and immutable events, removes only lookup indexes and marks the migration rolled back.',
     }
 }
@@ -99,6 +115,11 @@ export async function applyCommercialContactMigration({ pool, databaseUrl, targe
             await query(client, sql)
             report.indexes.push(sql.match(/exists\s+([^\s]+)/i)?.[1] || sql)
         }
+        const runtimeRole = COMMERCIAL_CONTACT_RUNTIME_ROLES[target]
+        const grants = runtimeGrantStatements(target)
+        for (const sql of grants) await query(client, sql)
+        report.runtimeRole = runtimeRole
+        report.runtimeGrants = grants
         report.applied = true
         await query(client, `insert into crm_atendimento.schema_migrations(id, applied_at, rolled_back_at, details)
             values ($1, now(), null, $2::jsonb)
