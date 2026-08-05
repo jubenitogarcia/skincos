@@ -3,6 +3,7 @@ set -euo pipefail
 
 units=(
   orb.service
+  orb-ccg-executor.service
   orb-proxy.service
   messaging-whatsapp.service
   crm.service
