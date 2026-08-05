@@ -76,6 +76,29 @@ alvo local de produção, o comando operacional deve usar o socket sem usuário
 (`postgresql:///skincos_crm_local?host=/var/run/postgresql`) e executar como o
 papel técnico autorizado; assim a verificação de destino permanece estrita.
 
+## Projeção global após reconciliação legada
+
+`reconcile-client-identities.mjs` mantém a camada histórica de clientes e
+vínculos Atendimento↔Caixa. Para rematerializar o grafo global a partir das
+fontes já persistidas, use
+`reconcile-persisted-client-identities.mjs`. O runner reutiliza o mesmo builder
+de componentes confirmados, lock do grafo, guard de histórico comercial e
+ledger de materialização; não importa planilhas, não cria links novos e não
+remove identidades históricas.
+
+Faça primeiro o dry-run com um checkpoint privado:
+
+```bash
+DATABASE_URL='postgresql:///skincos_crm_local?host=/var/run/postgresql' \
+CLIENT_IDENTITY_PROJECTION_CHECKPOINT_OUTPUT=/mnt/c/CodexRuntime/operator/admin/skincos/client-identity-projection-checkpoint.json \
+node crm/api/scripts/reconcile-persisted-client-identities.mjs
+```
+
+O apply exige o checkpoint, `CLIENT_IDENTITY_PROJECTION_APPLY_CONFIRM=UNIFICAR`
+e `CLIENT_IDENTITY_PROJECTION_APPLY_TARGET=skincos_crm_local`. A operação é
+transacional e falha fechada se o fingerprint das fontes mudar ou se a
+projeção tentar mover uma identidade com histórico comercial.
+
 As migrations de Clientes também reconciliam os grants mínimos do runtime,
 separados por responsabilidade:
 
