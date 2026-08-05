@@ -96,28 +96,35 @@ export async function handleInsumosRoutes({
 
                 const body = await request.json().catch(() => ({}));
 
-                const out = await d1.createInsumo({ unidade, body });
-                if (!out.ok) {
-                    return withCORS(JSON.stringify({ success: false, error: out.error }), { status: out.status || 400 }, appOrigin);
-                }
-
-                await appendAuditLog({
-                    env,
-                    actor: auth.user.username,
-                    role: auth.user.role,
-                    ip,
-                    userAgent,
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'INSUMO_CREATE',
                     idempotencyKey,
-                    action: 'CREATE',
-                    entity: 'INSUMO',
-                    entityId: out.registro,
-                    unidade,
-                    before: null,
-                    after: { registro: out.registro, payload: body }
+                    command: { unidade, body },
+                    execute: () => d1.createInsumo({ unidade, body, actor: auth.user }),
                 });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
 
-                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
-                return withCORS(JSON.stringify({ success: true, message: "Insumo cadastrado", data: { registro: out.registro } }), { status: 201 }, appOrigin);
+                if (!command.replayed) {
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: 'CREATE',
+                        entity: 'INSUMO',
+                        entityId: out.registro,
+                        unidade,
+                        before: null,
+                        after: { registro: out.registro, payload: body, saldoInicial: body?.estoqueInicial || 0 }
+                    });
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                }
+                return withCORS(JSON.stringify({ success: true, message: "Insumo cadastrado", data: { registro: out.registro }, idempotent: !!command.replayed }), { status: 201 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
             }
@@ -133,26 +140,35 @@ export async function handleInsumosRoutes({
                 if (!registro) return withCORS(JSON.stringify({ success: false, error: "Registro inválido" }), { status: 400 }, appOrigin);
 
                 const body = await request.json().catch(() => ({}));
-                const out = await d1.updateInsumo({ registro, body });
-                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error }), { status: out.status || 400 }, appOrigin);
-
-                await appendAuditLog({
-                    env,
-                    actor: auth.user.username,
-                    role: auth.user.role,
-                    ip,
-                    userAgent,
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'INSUMO_UPDATE',
                     idempotencyKey,
-                    action: 'UPDATE',
-                    entity: 'INSUMO',
-                    entityId: registro,
-                    unidade,
-                    before: null,
-                    after: { payload: body }
+                    command: { registro, unidade, body },
+                    execute: () => d1.updateInsumo({ registro, body }),
                 });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
 
-                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
-                return withCORS(JSON.stringify({ success: true, message: "Insumo atualizado" }), { status: 200 }, appOrigin);
+                if (!command.replayed) {
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: 'UPDATE',
+                        entity: 'INSUMO',
+                        entityId: registro,
+                        unidade,
+                        before: null,
+                        after: { payload: body }
+                    });
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                }
+                return withCORS(JSON.stringify({ success: true, message: "Insumo atualizado", idempotent: !!command.replayed }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
             }
@@ -160,30 +176,33 @@ export async function handleInsumosRoutes({
 
         // DELETE /insumos/:registro
         if (url.pathname.startsWith("/insumos/") && request.method === "DELETE") {
+            return withCORS(JSON.stringify({ success: false, code: 'ARCHIVE_REQUIRED', error: 'Exclusão física de insumos é proibida; use o arquivamento' }), { status: 405, headers: { allow: 'GET, PUT, POST' } }, appOrigin);
+        }
+
+        // POST /insumos/:registro/arquivar
+        if (url.pathname.startsWith("/insumos/") && request.method === "POST" && url.pathname.endsWith('/arquivar')) {
             try {
                 const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
                 if (!auth.ok) return auth.response;
-
-                const registro = decodeURIComponent(url.pathname.split('/')[2] || '').trim();
-                const out = await d1.deleteInsumo({ registro });
-                if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error }), { status: out.status || 400 }, appOrigin);
-
-                await appendAuditLog({
-                    env,
-                    actor: auth.user.username,
-                    role: auth.user.role,
-                    ip,
-                    userAgent,
+                const parts = url.pathname.split('/').filter(Boolean);
+                const registro = decodeURIComponent(parts[1] || '').trim();
+                if (!registro) return withCORS(JSON.stringify({ success: false, code: 'REGISTRO_INVALID', error: 'Registro inválido' }), { status: 400 }, appOrigin);
+                const body = await request.json().catch(() => ({}));
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'INSUMO_ARCHIVE',
                     idempotencyKey,
-                    action: 'DELETE',
-                    entity: 'INSUMO',
-                    entityId: registro,
-                    unidade,
-                    before: null,
-                    after: null
+                    command: { registro, unidade, body },
+                    execute: () => d1.archiveInsumo({ registro }),
                 });
-                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
-                return withCORS(JSON.stringify({ success: true, message: "Insumo removido" }), { status: 200 }, appOrigin);
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                if (!command.replayed) {
+                    await appendAuditLog({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey, action: 'ARCHIVE', entity: 'INSUMO', entityId: registro, unidade, before: null, after: { archivedAt: out.archivedAt, alreadyArchived: !!out.alreadyArchived } });
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                }
+                return withCORS(JSON.stringify({ success: true, data: { registro, archivedAt: out.archivedAt }, idempotent: !!command.replayed }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
             }
@@ -195,31 +214,42 @@ export async function handleInsumosRoutes({
                 const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
                 if (!auth.ok) return auth.response;
                 const body = await request.json().catch(() => ({}));
-                const out = await d1.entradaBaixa({ unidade, body, kind: 'ENTRADA' });
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'INSUMO_ENTRADA',
+                    idempotencyKey,
+                    command: { unidade, body },
+                    execute: () => d1.entradaBaixa({ unidade, body, kind: 'ENTRADA', actor: auth.user }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
                 if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [], candidates: out.candidates || [] }), { status: out.status || 400 }, appOrigin);
 
-                await appendAuditLog({
-                    env,
-                    actor: auth.user.username,
-                    role: auth.user.role,
-                    ip,
-                    userAgent,
-                    idempotencyKey,
-                    action: 'ENTRADA',
-                    entity: 'INSUMO',
-                    entityId: `${body?.codigoBarras || ''}:${out.registro}`,
-                    unidade,
-                    before: { estoqueAnterior: out.estoqueAnterior },
-                    after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro }
-                });
-                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                if (!command.replayed) {
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: 'ENTRADA',
+                        entity: 'INSUMO',
+                        entityId: `${body?.codigoBarras || ''}:${out.registro}`,
+                        unidade,
+                        before: { estoqueAnterior: out.estoqueAnterior },
+                        after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro }
+                    });
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                }
                 return withCORS(
                     JSON.stringify({
                         success: true,
                         estoqueAnterior: out.estoqueAnterior,
                         novoEstoque: out.novoEstoque,
                         quebraEstoque: !!out.quebraEstoque,
-                        deficit: Number(out.deficit || 0)
+                        deficit: Number(out.deficit || 0),
+                        idempotent: !!command.replayed
                     }),
                     { status: 200 },
                     appOrigin
@@ -235,31 +265,58 @@ export async function handleInsumosRoutes({
                 const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
                 if (!auth.ok) return auth.response;
                 const body = await request.json().catch(() => ({}));
-                const out = await d1.entradaBaixa({ unidade, body, kind: 'BAIXA' });
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'INSUMO_BAIXA',
+                    idempotencyKey,
+                    command: { unidade, body },
+                    execute: () => d1.entradaBaixa({ unidade, body, kind: 'BAIXA', actor: auth.user }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
                 if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [], candidates: out.candidates || [] }), { status: out.status || 400 }, appOrigin);
 
-                await appendAuditLog({
-                    env,
-                    actor: auth.user.username,
-                    role: auth.user.role,
-                    ip,
-                    userAgent,
-                    idempotencyKey,
-                    action: 'BAIXA',
-                    entity: 'INSUMO',
-                    entityId: `${body?.codigoBarras || ''}:${out.registro}`,
-                    unidade,
-                    before: { estoqueAnterior: out.estoqueAnterior },
-                    after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro }
-                });
-                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                if (!command.replayed) {
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: 'BAIXA',
+                        entity: 'INSUMO',
+                        entityId: `${body?.codigoBarras || ''}:${out.registro}`,
+                        unidade,
+                        before: { estoqueAnterior: out.estoqueAnterior },
+                        after: { quantidade: body?.quantidade, novoEstoque: out.novoEstoque, registro: out.registro, negativeOverride: !!out.negativeOverride }
+                    });
+                    if (out.negativeOverride) {
+                        await appendAuditLog({
+                            env,
+                            actor: auth.user.username,
+                            role: auth.user.role,
+                            ip,
+                            userAgent,
+                            idempotencyKey,
+                            action: 'NEGATIVE_STOCK_OVERRIDE',
+                            entity: 'INSUMO',
+                            entityId: `${body?.codigoBarras || ''}:${out.registro}`,
+                            unidade,
+                            before: { estoqueAnterior: out.estoqueAnterior },
+                            after: { saldoResultante: out.novoEstoque, deficit: out.deficit, justificativa: out.negativeJustification }
+                        });
+                    }
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                }
                 return withCORS(
                     JSON.stringify({
                         success: true,
                         estoqueAnterior: out.estoqueAnterior,
                         novoEstoque: out.novoEstoque,
                         quebraEstoque: !!out.quebraEstoque,
-                        deficit: Number(out.deficit || 0)
+                        deficit: Number(out.deficit || 0),
+                        idempotent: !!command.replayed
                     }),
                     { status: 200 },
                     appOrigin
@@ -275,25 +332,35 @@ export async function handleInsumosRoutes({
                 const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
                 if (!auth.ok) return auth.response;
                 const body = await request.json().catch(() => ({}));
-                const out = await d1.transfer({ body });
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'INSUMO_TRANSFERENCIA',
+                    idempotencyKey,
+                    command: { unidade, body },
+                    execute: () => d1.transfer({ body, actor: auth.user, unidade }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
                 if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [], candidates: out.candidates || [] }), { status: out.status || 400 }, appOrigin);
 
-                await appendAuditLog({
-                    env,
-                    actor: auth.user.username,
-                    role: auth.user.role,
-                    ip,
-                    userAgent,
-                    idempotencyKey,
-                    action: 'TRANSFERENCIA',
-                    entity: 'INSUMO',
-                    entityId: `${body?.codigoBarras || ''}:${out.registro}`,
-                    unidade: body?.fromUnidade || unidade,
-                    before: null,
-                    after: { transferId: out.transferId, quantidade: body?.quantidade, registro: out.registro, from: body?.fromUnidade, to: body?.toUnidade }
-                });
-                ctx.waitUntil(enqueueNotificationsRefresh(env, body?.fromUnidade || unidade));
-                ctx.waitUntil(enqueueNotificationsRefresh(env, body?.toUnidade || unidade));
+                if (!command.replayed) {
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: 'TRANSFERENCIA',
+                        entity: 'INSUMO',
+                        entityId: `${body?.codigoBarras || ''}:${out.registro}`,
+                        unidade: body?.fromUnidade || unidade,
+                        before: null,
+                        after: { transferId: out.transferId, quantidade: body?.quantidade, registro: out.registro, from: body?.fromUnidade, to: body?.toUnidade }
+                    });
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, body?.fromUnidade || unidade));
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, body?.toUnidade || unidade));
+                }
                 return withCORS(JSON.stringify({
                     success: true,
                     transferId: out.transferId,
@@ -302,7 +369,8 @@ export async function handleInsumosRoutes({
                     estoqueAnteriorDestino: out.estoqueAnteriorDestino,
                     estoqueNovoDestino: out.estoqueNovoDestino,
                     quebraEstoqueOrigem: out.quebraEstoqueOrigem,
-                    deficitOrigem: out.deficitOrigem
+                    deficitOrigem: out.deficitOrigem,
+                    idempotent: !!command.replayed
                 }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
@@ -315,25 +383,35 @@ export async function handleInsumosRoutes({
                 const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
                 if (!auth.ok) return auth.response;
                 const body = await request.json().catch(() => ({}));
-                const out = await d1.ajuste({ unidade, body });
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'INSUMO_AJUSTE',
+                    idempotencyKey,
+                    command: { unidade, body },
+                    execute: () => d1.ajuste({ unidade, body, actor: auth.user }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
                 if (!out.ok) return withCORS(JSON.stringify({ success: false, error: out.error, code: out.code, registros: out.registros || [], candidates: out.candidates || [] }), { status: out.status || 400 }, appOrigin);
 
-                await appendAuditLog({
-                    env,
-                    actor: auth.user.username,
-                    role: auth.user.role,
-                    ip,
-                    userAgent,
-                    idempotencyKey,
-                    action: 'AJUSTE',
-                    entity: 'MOVIMENTACAO',
-                    entityId: `${body?.codigoBarras || ''}:${out.registro}`,
-                    unidade,
-                    before: { estoqueAnterior: out.estoqueAnterior },
-                    after: { motivo: body?.motivo, novoEstoque: out.novoEstoque, registro: out.registro }
-                });
-                ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
-                return withCORS(JSON.stringify({ success: true, estoqueAnterior: out.estoqueAnterior, novoEstoque: out.novoEstoque }), { status: 200 }, appOrigin);
+                if (!command.replayed) {
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: 'AJUSTE',
+                        entity: 'MOVIMENTACAO',
+                        entityId: `${body?.codigoBarras || ''}:${out.registro}`,
+                        unidade,
+                        before: { estoqueAnterior: out.estoqueAnterior },
+                        after: { motivo: body?.motivo, novoEstoque: out.novoEstoque, registro: out.registro }
+                    });
+                    ctx.waitUntil(enqueueNotificationsRefresh(env, unidade));
+                }
+                return withCORS(JSON.stringify({ success: true, estoqueAnterior: out.estoqueAnterior, novoEstoque: out.novoEstoque, idempotent: !!command.replayed }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message }), { status: 500 }, appOrigin);
             }
