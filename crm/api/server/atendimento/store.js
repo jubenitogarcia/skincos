@@ -3391,7 +3391,21 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
          order by i.canonical_name`,
         [asOf, unitSlugs, COMMERCIAL_ACTIVE_ACTION_STATUSES],
     )
-    const profiles = segmentCommercialProfiles(result.rows.map((row) => ({
+    const profiles = segmentCommercialProfiles(result.rows.map(commercialProfileRowInput), { asOf, thresholds }).map((profile) => ({
+        ...profile,
+        activeActionCount: Number(result.rows.find((row) => row.identity_id === profile.identityId)?.active_action_count || 0),
+        lastActionAt: result.rows.find((row) => row.identity_id === profile.identityId)?.last_action_at || null,
+    }))
+    const eligibilityByIdentity = await queryCommercialContactEligibility(pgPool, profiles.map((profile) => profile.identityId), { unitSlugs })
+    return profiles.map((profile) => ({
+        ...profile,
+        contactEligibility: eligibilityByIdentity.get(profile.identityId)
+            || emptyCommercialContactEligibility('commercial_contact_controls_not_ready'),
+    }))
+}
+
+function commercialProfileRowInput(row) {
+    return {
         ...row,
         identityId: row.identity_id,
         name: row.canonical_name,
@@ -3407,17 +3421,7 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
         units: [...(row.attendance_units || []), ...(row.sales_units || [])],
         purchasedProcedures: row.purchased_procedures,
         pendingSaleItems: row.pending_sale_items,
-    })), { asOf, thresholds }).map((profile) => ({
-        ...profile,
-        activeActionCount: Number(result.rows.find((row) => row.identity_id === profile.identityId)?.active_action_count || 0),
-        lastActionAt: result.rows.find((row) => row.identity_id === profile.identityId)?.last_action_at || null,
-    }))
-    const eligibilityByIdentity = await queryCommercialContactEligibility(pgPool, profiles.map((profile) => profile.identityId), { unitSlugs })
-    return profiles.map((profile) => ({
-        ...profile,
-        contactEligibility: eligibilityByIdentity.get(profile.identityId)
-            || emptyCommercialContactEligibility('commercial_contact_controls_not_ready'),
-    }))
+    }
 }
 
 function filterCommercialProfiles(profiles, query) {
@@ -3432,6 +3436,260 @@ function filterCommercialProfiles(profiles, query) {
         if (search && !normalizeText(profile.name).includes(search)) return false
         return true
     })
+}
+
+const COMMERCIAL_PROFILE_SORT_COLUMNS = Object.freeze({
+    priority: 'priority_rank',
+    recency: 'recency_days',
+    lifetime_sales: 'lifetime_sales',
+    visits: 'visit_count',
+    sales: 'sale_count',
+    last_attendance: 'last_attendance',
+    name: 'canonical_name',
+})
+
+function commercialProfileSort(query) {
+    const requested = String(query?.sort || 'priority').trim().toLowerCase()
+    const key = Object.hasOwn(COMMERCIAL_PROFILE_SORT_COLUMNS, requested) ? requested : 'priority'
+    const direction = String(query?.direction || 'desc').trim().toLowerCase() === 'asc' ? 'asc' : 'desc'
+    const column = COMMERCIAL_PROFILE_SORT_COLUMNS[key]
+    return { key, direction, orderBy: `${column} ${direction} nulls ${direction === 'asc' ? 'first' : 'last'}, identity_id asc` }
+}
+
+/**
+ * The legacy commercial read deliberately remains available for compatibility
+ * with callers that do not opt into pagination. The Clientes console opts into
+ * this bounded path: aggregation, percentile benchmarks, filtering, ordering,
+ * total count and page slicing all happen in PostgreSQL before identity
+ * contact eligibility is hydrated for the visible page.
+ */
+async function queryCommercialProfilesServerPage(pgPool, { asOf, unitSlugs, thresholds, query }) {
+    const [returnRisk, longAbsence, veryLongAbsence] = [...thresholds].map(Number).sort((left, right) => left - right)
+    const limit = sanitizeLimit(query?.limit, 50, 100)
+    const offset = sanitizeOffset(query?.offset, 0)
+    const search = normalizeText(query?.q || query?.search || '')
+    const segment = String(query?.segment || '').trim()
+    const priority = String(query?.priority || '').trim()
+    const { key: sort, direction, orderBy } = commercialProfileSort(query)
+    const result = await pgPool.query(
+        `with identities as (
+            select gi.id as identity_id, gi.canonical_name, gi.source_types
+            from crm_atendimento.global_client_identities gi
+            where exists (select 1 from crm_atendimento.global_client_identity_members gm where gm.identity_id = gi.id)
+         ), attendance_members as (
+            select distinct gm.identity_id, gm.source_id::uuid as client_id
+            from crm_atendimento.global_client_identity_members gm
+            join crm_atendimento.canonical_clients cc on cc.id = gm.source_id::uuid
+            where gm.source_type = 'attendance_client'
+         ), attendance_core as (
+            select am.identity_id, a.id, a.service_date, p.name as procedure_name, u.name as unit_name
+            from attendance_members am
+            join crm_atendimento.attendance_client_links acl on acl.client_id = am.client_id
+            join crm_atendimento.attendances a on a.id = acl.attendance_id
+            join crm_atendimento.procedures p on p.id = a.procedure_id
+            join crm_atendimento.units u on u.id = a.unit_id
+            where a.deleted_at is null and a.service_date <= $1::date
+              and ($2::text[] is null or u.slug = any($2::text[]))
+         ), attendance_aggregate as (
+            select identity_id, max(service_date)::text as last_attendance,
+                count(distinct service_date)::int as visit_count, count(*)::int as procedure_count,
+                array_agg(distinct procedure_name order by procedure_name) as completed_procedures,
+                array_agg(distinct unit_name order by unit_name) as attendance_units
+            from attendance_core group by identity_id
+         ), future_attendance as (
+            select am.identity_id, count(*)::int as future_attendance_count
+            from attendance_members am
+            join crm_atendimento.attendance_client_links acl on acl.client_id = am.client_id
+            join crm_atendimento.attendances a on a.id = acl.attendance_id
+            join crm_atendimento.units u on u.id = a.unit_id
+            where a.deleted_at is null and a.service_date > $1::date
+              and ($2::text[] is null or u.slug = any($2::text[]))
+            group by am.identity_id
+         ), sale_members as (
+            select distinct gm.identity_id, gm.source_id::uuid as customer_id
+            from crm_atendimento.global_client_identity_members gm
+            where gm.source_type = 'caixa_customer'
+         ), sale_core as (
+            select sm.identity_id, s.id, s.occurred_on, s.total, s.phone_raw, u.name as unit_name
+            from sale_members sm
+            join crm_caixa.sales s on s.customer_id = sm.customer_id
+            join crm_atendimento.units u on u.id = s.unit_id
+            where s.occurred_on <= $1::date
+              and ($2::text[] is null or u.slug = any($2::text[]))
+         ), sales_aggregate as (
+            select identity_id, count(*)::int as sale_count, coalesce(sum(total), 0) as lifetime_sales,
+                coalesce(sum(total) filter (where occurred_on >= ($1::date - interval '12 months')), 0) as sales_12m,
+                array_agg(distinct unit_name order by unit_name) as sales_units,
+                (array_agg(phone_raw order by occurred_on desc) filter (where nullif(trim(phone_raw), '') is not null))[1] as phone
+            from sale_core group by identity_id
+         ), purchased_procedures as (
+            select sc.identity_id, array_agg(distinct p.name order by p.name) as purchased_procedures
+            from sale_core sc
+            join crm_caixa.sale_items si on si.sale_id = sc.id and si.mapping_status = 'mapped' and si.procedure_id is not null
+            join crm_atendimento.procedures p on p.id = si.procedure_id
+            group by sc.identity_id
+         ), pending_items as (
+            select sc.identity_id, count(*)::int as pending_sale_items
+            from sale_core sc
+            join crm_caixa.sale_items si on si.sale_id = sc.id and si.mapping_status = 'pending'
+            group by sc.identity_id
+         ), active_actions as (
+            select action.identity_id, count(*)::int as active_action_count, max(action.created_at) as last_action_at
+            from crm_atendimento.commercial_actions action
+            left join crm_atendimento.units action_unit on action_unit.id = action.unit_id
+            where action.status = any($3::text[])
+              and ($2::text[] is null or action_unit.slug = any($2::text[]))
+            group by action.identity_id
+         ), raw_profiles as (
+            select i.identity_id, i.canonical_name, i.source_types,
+                a.last_attendance, coalesce(a.visit_count, 0)::int as visit_count,
+                coalesce(a.procedure_count, 0)::int as procedure_count, a.completed_procedures, a.attendance_units,
+                coalesce(f.future_attendance_count, 0)::int as future_attendance_count,
+                coalesce(s.sale_count, 0)::int as sale_count, coalesce(s.lifetime_sales, 0)::numeric as lifetime_sales,
+                coalesce(s.sales_12m, 0)::numeric as sales_12m, s.sales_units, s.phone,
+                p.purchased_procedures, coalesce(pending.pending_sale_items, 0)::int as pending_sale_items,
+                coalesce(actions.active_action_count, 0)::int as active_action_count, actions.last_action_at
+            from identities i
+            left join attendance_aggregate a on a.identity_id = i.identity_id
+            left join future_attendance f on f.identity_id = i.identity_id
+            left join sales_aggregate s on s.identity_id = i.identity_id
+            left join purchased_procedures p on p.identity_id = i.identity_id
+            left join pending_items pending on pending.identity_id = i.identity_id
+            left join active_actions actions on actions.identity_id = i.identity_id
+            where $2::text[] is null or a.identity_id is not null or s.identity_id is not null
+         ), benchmarks as (
+            select coalesce(percentile_disc(0.75) within group (order by lifetime_sales) filter (where lifetime_sales > 0), 0)::numeric as sales_p75,
+                   coalesce(percentile_disc(0.75) within group (order by visit_count) filter (where visit_count > 0), 0)::numeric as visits_p75
+            from raw_profiles
+         ), scored as (
+            select raw.*, benchmarks.sales_p75, benchmarks.visits_p75,
+                case when raw.last_attendance is null then null else ($1::date - raw.last_attendance::date) end::int as recency_days
+            from raw_profiles raw cross join benchmarks
+         ), classified as (
+            select scored.*,
+                (recency_days is not null and recency_days >= $9) as return_at_risk,
+                (last_attendance is null and sale_count > 0) as no_recorded_attendance,
+                (recency_days is not null and recency_days >= $9 and sales_p75 > 0 and lifetime_sales >= sales_p75) as high_value_inactive,
+                (visits_p75 > 0 and visit_count >= visits_p75 and (recency_days is null or recency_days < $10)) as frequent,
+                (sales_p75 > 0 and visits_p75 > 0 and lifetime_sales >= sales_p75 and visit_count >= visits_p75 and (recency_days is null or recency_days < $10)) as balanced_vip,
+                (recency_days is not null and recency_days >= $9 and sale_count <= 1 and visit_count <= 1 and last_attendance is not null) as first_return,
+                (recency_days is not null and recency_days >= $9 and lifetime_sales > 0 and visit_count > 0) as reactivation_potential
+            from scored
+         ), ranked as (
+            select classified.*,
+                case when (recency_days is not null and recency_days >= $11)
+                          or high_value_inactive
+                          or (reactivation_potential and sales_p75 > 0 and lifetime_sales >= sales_p75) then 3
+                     when (recency_days is not null and recency_days >= $10) or reactivation_potential then 2
+                     else 1 end as priority_rank,
+                array_remove(array[
+                    case when return_at_risk then 'return_at_risk' end,
+                    case when no_recorded_attendance then 'no_recorded_attendance' end,
+                    case when high_value_inactive then 'high_value_inactive' end,
+                    case when frequent then 'frequent' end,
+                    case when balanced_vip then 'balanced_vip' end,
+                    case when first_return then 'first_return' end,
+                    case when reactivation_potential then 'reactivation_potential' end
+                ], null) as segment_keys
+            from classified
+         ), filtered as (
+            select ranked.*
+            from ranked
+            where ($4::text = '' or position($4::text in lower(ranked.canonical_name)) > 0
+                   or position($4::text in translate(lower(ranked.canonical_name),
+                       'áàâãäåéèêëíìîïóòôõöúùûüçñ',
+                       'aaaaaaeeeeiiiiooooouuuucn')) > 0)
+              and ($5::text = '' or $5::text = any(ranked.segment_keys))
+              and ($6::text = '' or ranked.priority_rank = case $6::text when 'high' then 3 when 'medium' then 2 when 'normal' then 1 else 0 end)
+         ), stats as (
+            select count(*)::int as filtered_total,
+                count(*) filter (where return_at_risk)::int as return_at_risk_total,
+                count(*) filter (where high_value_inactive)::int as high_value_inactive_total,
+                count(*) filter (where frequent)::int as frequent_total,
+                count(*) filter (where balanced_vip)::int as balanced_vip_total,
+                count(*) filter (where reactivation_potential)::int as reactivation_potential_total,
+                count(*) filter (where cardinality(source_types) >= 2)::int as confirmed_multi_source_total,
+                count(*) filter (where cardinality(source_types) < 2)::int as unresolved_single_source_total,
+                coalesce(sum(lifetime_sales), 0)::numeric as lifetime_sales_total,
+                coalesce(sum(sale_count), 0)::int as sale_count_total
+            from filtered
+         ), page as (
+            select filtered.*
+            from filtered
+            order by ${orderBy}
+            limit $7 offset $8
+         )
+         select page.*, stats.*
+         from stats
+         left join page on true`,
+        [asOf, unitSlugs, COMMERCIAL_ACTIVE_ACTION_STATUSES, search, segment, priority, limit, offset, returnRisk, longAbsence, veryLongAbsence],
+    )
+    const rows = result.rows || []
+    const first = rows[0] || {}
+    const profileRows = rows.filter((row) => row.identity_id)
+    const benchmarks = {
+        salesP75: Number(first.sales_p75 || 0),
+        visitsP75: Number(first.visits_p75 || 0),
+    }
+    const byIdentity = new Map(profileRows.map((row) => [String(row.identity_id), row]))
+    const profiles = segmentCommercialProfiles(profileRows.map(commercialProfileRowInput), { asOf, thresholds, benchmarks }).map((profile) => ({
+        ...profile,
+        activeActionCount: Number(byIdentity.get(profile.identityId)?.active_action_count || 0),
+        lastActionAt: byIdentity.get(profile.identityId)?.last_action_at || null,
+    }))
+    const eligibilityByIdentity = await queryCommercialContactEligibility(pgPool, profiles.map((profile) => profile.identityId), { unitSlugs })
+    const hydratedProfiles = profiles.map((profile) => ({
+        ...profile,
+        contactEligibility: eligibilityByIdentity.get(profile.identityId)
+            || emptyCommercialContactEligibility('commercial_contact_controls_not_ready'),
+    }))
+    const contactEligibility = hydratedProfiles.reduce((summary, profile) => {
+        const status = profile.contactEligibility?.status || 'review_required'
+        if (status === 'eligible') summary.eligible += 1
+        else if (status === 'blocked') summary.blocked += 1
+        else summary.reviewRequired += 1
+        summary.controlsReady = summary.controlsReady && !!profile.contactEligibility?.controlsReady
+        summary.contactWriteControlsReady = summary.contactWriteControlsReady && !!profile.contactEligibility?.contactWriteControlsReady
+        return summary
+    }, {
+        eligible: 0,
+        blocked: 0,
+        reviewRequired: 0,
+        controlsReady: profiles.length > 0,
+        contactWriteControlsReady: profiles.length > 0,
+        scope: 'page',
+    })
+    const total = Number(first.filtered_total || 0)
+    const saleCountTotal = Number(first.sale_count_total || 0)
+    const lifetimeSalesTotal = Number(first.lifetime_sales_total || 0)
+    return {
+        profiles: hydratedProfiles,
+        total,
+        limit,
+        offset,
+        summary: {
+            profiles: total,
+            returnAtRisk: Number(first.return_at_risk_total || 0),
+            highValueInactive: Number(first.high_value_inactive_total || 0),
+            frequent: Number(first.frequent_total || 0),
+            balancedVip: Number(first.balanced_vip_total || 0),
+            reactivationPotential: Number(first.reactivation_potential_total || 0),
+            averageTicket: saleCountTotal ? Math.round((lifetimeSalesTotal / saleCountTotal) * 100) / 100 : 0,
+        },
+        coverage: {
+            identitiesVisible: total,
+            confirmedMultiSourceIdentities: Number(first.confirmed_multi_source_total || 0),
+            unresolvedSingleSourceIdentities: Number(first.unresolved_single_source_total || 0),
+        },
+        contactEligibility,
+        pagination: {
+            mode: 'sql',
+            sort,
+            direction,
+            hasPrevious: offset > 0,
+            hasNext: offset + profiles.length < total,
+        },
+    }
 }
 
 function minimizeCommercialProfile(profile) {
@@ -4850,14 +5108,22 @@ export function createAtendimentoStore(options = {}) {
                 readCommercialPolicy(pgPool),
                 readCommercialContactAvailability(pgPool),
             ])
-            const profiles = await queryCommercialProfiles(pgPool, {
+            const serverPage = String(query?.server || '').trim() === '1'
+                ? await queryCommercialProfilesServerPage(pgPool, {
+                    asOf,
+                    unitSlugs,
+                    thresholds: policy.returnRiskThresholds,
+                    query,
+                })
+                : null
+            const profiles = serverPage?.profiles || await queryCommercialProfiles(pgPool, {
                 asOf,
                 unitSlugs,
                 thresholds: policy.returnRiskThresholds,
             })
-            const filtered = filterCommercialProfiles(profiles, query)
-            const limit = sanitizeLimit(query?.limit, 100, 250)
-            const offset = sanitizeOffset(query?.offset, 0)
+            const filtered = serverPage ? profiles : filterCommercialProfiles(profiles, query)
+            const limit = serverPage?.limit || sanitizeLimit(query?.limit, 100, 250)
+            const offset = serverPage?.offset || sanitizeOffset(query?.offset, 0)
             const [quality, mappedItems, allItems, actions, unlinkedAttendance, identityFreshness] = await Promise.all([
                 pgPool.query(
                     `select count(*)::int as future_attendances
@@ -4901,9 +5167,11 @@ export function createAtendimentoStore(options = {}) {
                            where member.source_type = 'attendance_client' and member.source_id = canonical.id::text
                        )`, [unitSlugs],
                 ),
-                profiles.length
-                    ? pgPool.query(`select max(updated_at) as updated_at from crm_atendimento.global_client_identities where id = any($1::uuid[])`, [profiles.map((profile) => profile.identityId)])
-                    : Promise.resolve({ rows: [] }),
+                serverPage
+                    ? pgPool.query('select max(updated_at) as updated_at from crm_atendimento.global_client_identities')
+                    : profiles.length
+                        ? pgPool.query(`select max(updated_at) as updated_at from crm_atendimento.global_client_identities where id = any($1::uuid[])`, [profiles.map((profile) => profile.identityId)])
+                        : Promise.resolve({ rows: [] }),
             ])
             const contactEligibility = profiles.reduce((summary, profile) => {
                 const status = profile.contactEligibility?.status || 'review_required'
@@ -4923,12 +5191,12 @@ export function createAtendimentoStore(options = {}) {
             return {
                 asOf,
                 policy: commercialPolicyForActor(policy, actor),
-                summary: summarizeCommercialProfiles(profiles),
+                summary: serverPage?.summary || summarizeCommercialProfiles(profiles),
                 actions,
                 coverage: {
-                    identitiesVisible: profiles.length,
-                    confirmedMultiSourceIdentities: profiles.filter((profile) => profile.identityQuality === 'confirmed_multi_source').length,
-                    unresolvedSingleSourceIdentities: profiles.filter((profile) => profile.identityQuality === 'unresolved_single_source').length,
+                    identitiesVisible: serverPage?.coverage.identitiesVisible ?? profiles.length,
+                    confirmedMultiSourceIdentities: serverPage?.coverage.confirmedMultiSourceIdentities ?? profiles.filter((profile) => profile.identityQuality === 'confirmed_multi_source').length,
+                    unresolvedSingleSourceIdentities: serverPage?.coverage.unresolvedSingleSourceIdentities ?? profiles.filter((profile) => profile.identityQuality === 'unresolved_single_source').length,
                     classifiedSaleItems: Number(mappedItems.rows[0]?.count || 0),
                     saleItems: Number(allItems.rows[0]?.count || 0),
                 },
@@ -4938,12 +5206,19 @@ export function createAtendimentoStore(options = {}) {
                     saleItemsWithoutClassification: Math.max(0, Number(allItems.rows[0]?.count || 0) - Number(mappedItems.rows[0]?.count || 0)),
                     activeAttendanceClientsWithoutIdentity: Number(unlinkedAttendance.rows[0]?.count || 0),
                     identityDataUpdatedAt: identityFreshness.rows[0]?.updated_at || null,
-                    contactEligibility,
+                    contactEligibility: serverPage?.contactEligibility || contactEligibility,
                 },
-                total: filtered.length,
+                total: serverPage?.total ?? filtered.length,
                 limit,
                 offset,
-                profiles: filtered.slice(offset, offset + limit).map(minimizeCommercialProfile),
+                pagination: serverPage?.pagination || {
+                    mode: 'legacy',
+                    sort: 'priority',
+                    direction: 'desc',
+                    hasPrevious: offset > 0,
+                    hasNext: offset + limit < filtered.length,
+                },
+                profiles: (serverPage ? filtered : filtered.slice(offset, offset + limit)).map(minimizeCommercialProfile),
             }
         },
 

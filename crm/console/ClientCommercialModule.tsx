@@ -468,6 +468,12 @@ export function ClientCommercialModule() {
   const [segment, setSegment] = useState('')
   const [priority, setPriority] = useState('')
   const [search, setSearch] = useState('')
+  const [pageOffset, setPageOffset] = useState(0)
+  const [sort, setSort] = useState('priority')
+  const [direction, setDirection] = useState<'asc' | 'desc'>('desc')
+  const [savedViewName, setSavedViewName] = useState('')
+  const [savedViews, setSavedViews] = useState<Array<{ name: string; unit: string; segment: string; priority: string; search: string; sort: string; direction: 'asc' | 'desc' }>>([])
+  const pageSize = 50
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -505,12 +511,31 @@ export function ClientCommercialModule() {
     }
   }, [])
 
-  const load = useCallback(async (next?: { selectIdentityId?: string }) => {
+  const load = useCallback(async (next?: {
+    selectIdentityId?: string
+    offset?: number
+    unit?: string
+    segment?: string
+    priority?: string
+    search?: string
+    sort?: string
+    direction?: 'asc' | 'desc'
+  }) => {
     try {
       setBusy(true); setError('')
-      const [commercial, references] = await Promise.all([fetchCommercialOverview({ unit, segment, priority, q: search, limit: 100 }), fetchCommercialReferences()])
+      const requestOffset = next?.offset ?? pageOffset
+      const requestUnit = next?.unit ?? unit
+      const requestSegment = next?.segment ?? segment
+      const requestPriority = next?.priority ?? priority
+      const requestSearch = next?.search ?? search
+      const requestSort = next?.sort ?? sort
+      const requestDirection = next?.direction ?? direction
+      const [commercial, references] = await Promise.all([fetchCommercialOverview({ unit: requestUnit, segment: requestSegment, priority: requestPriority, q: requestSearch, limit: pageSize, offset: requestOffset, server: true, sort: requestSort, direction: requestDirection }), fetchCommercialReferences()])
       if (!commercial.ok) throw new Error(commercial.error || 'Não foi possível carregar a inteligência comercial.')
       if (!references.ok) throw new Error(references.error || 'Não foi possível carregar referências do CRM.')
+      setPageOffset(requestOffset)
+      setSort(requestSort)
+      setDirection(requestDirection)
       setOverview(commercial); setUnits(references.units); setProfessionals(references.professionals.map((person) => ({ name: person.name }))); setProcedureOptions(references.procedures.map((procedure) => ({ id: procedure.id, name: procedure.name })))
       setCooldown(commercial.policy.activeContactCooldownDays); setThresholds(commercial.policy.returnRiskThresholds.join(','))
       setCommercialContactWritesEnabled(commercial.policy.commercialContactWritesEnabled === true)
@@ -523,7 +548,7 @@ export function ClientCommercialModule() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível carregar a inteligência comercial.') } finally { setBusy(false) }
   // Filters are deliberately applied only with the button, so typing does not trigger a request per keystroke.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unit, segment, priority, search, detail?.profile.identityId])
+  }, [unit, segment, priority, search, pageOffset, sort, direction, detail?.profile.identityId])
 
   const loadDetail = useCallback(async (identityId: string, asOf?: string) => {
     const result = await fetchCommercialProfile(identityId, { asOf, unit })
@@ -534,6 +559,34 @@ export function ClientCommercialModule() {
   // Initial load intentionally runs once; changing filters is explicit through “Aplicar”.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void load() }, [])
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('skincos:clientes:saved-views')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed)) setSavedViews(parsed.filter((item) => item && typeof item.name === 'string').slice(0, 12))
+      }
+    } catch { /* local view persistence is best-effort and never blocks the module */ }
+  }, [])
+
+  const persistSavedViews = (next: typeof savedViews) => {
+    setSavedViews(next)
+    try { window.localStorage.setItem('skincos:clientes:saved-views', JSON.stringify(next)) } catch { /* ignore unavailable storage */ }
+  }
+
+  const saveCurrentView = () => {
+    const name = savedViewName.trim()
+    if (!name) { setError('Informe um nome para salvar esta visão.'); return }
+    const next = [{ name, unit, segment, priority, search, sort, direction }, ...savedViews.filter((view) => view.name !== name)].slice(0, 12)
+    persistSavedViews(next)
+    setSavedViewName('')
+  }
+
+  const applySavedView = (view: typeof savedViews[number]) => {
+    setUnit(view.unit); setSegment(view.segment); setPriority(view.priority); setSearch(view.search); setSort(view.sort); setDirection(view.direction); setPageOffset(0)
+    void load({ unit: view.unit, segment: view.segment, priority: view.priority, search: view.search, sort: view.sort, direction: view.direction, offset: 0 })
+  }
 
   const refreshDetail = useCallback(async () => {
     if (!detail) return
@@ -600,20 +653,22 @@ export function ClientCommercialModule() {
   }
 
   const segmentOptions = useMemo(() => [{ key: '', label: 'Todos os segmentos' }, { key: 'return_at_risk', label: 'Retorno em risco' }, { key: 'high_value_inactive', label: 'Alto valor inativo' }, { key: 'frequent', label: 'Assíduos' }, { key: 'balanced_vip', label: 'VIP equilibrado' }, { key: 'first_return', label: 'Primeiro retorno' }, { key: 'reactivation_potential', label: 'Potencial de reativação' }], [])
+  const contactScopeSuffix = contactSummary.scope === 'page' ? ' na página atual' : ''
 
   return <section className="space-y-6 text-white">
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h1 className="text-2xl font-bold tracking-tight">Clientes</h1><p className="mt-1 text-sm text-slate-400">Prioridades comerciais baseadas em presença registrada, vendas e procedimentos confirmados.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className={`mr-2 h-4 w-4 ${busy ? 'animate-spin' : ''}`} />Atualizar</Button><Button variant="outline" onClick={() => setSettingsOpen((value) => !value)}><ShieldCheck className="mr-2 h-4 w-4" />Políticas clínicas</Button></div></header>
     {error ? <div className="rounded-xl border border-rose-300/30 bg-rose-500/10 p-4 text-sm text-rose-100">{error}</div> : null}
-    {overview ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100"><div className="flex gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><div><b>Uso comercial seguro:</b> a recência considera apenas o último atendimento realizado. Compras antecipadas não representam procedimento realizado. {overview.dataQuality.futureAttendancesExcluded ? `${overview.dataQuality.futureAttendancesExcluded} atendimento(s) futuro(s) foram excluídos desta métrica. ` : ''}{overview.dataQuality.activeAttendanceClientsWithoutIdentity ? `${overview.dataQuality.activeAttendanceClientsWithoutIdentity} cliente(s) de Atendimento ainda não têm identidade comercial. ` : ''}{contactSummary.controlsReady ? `${contactSummary.eligible} apto(s), ${contactSummary.blocked} bloqueado(s) e ${contactSummary.reviewRequired} em revisão para WhatsApp. ` : 'Os controles de contato ainda não foram migrados; nenhum contato pode ser marcado. '}{!contactSummary.contactWriteControlsReady ? 'A cadência de contato aguarda a migration explícita; filas novas, concessões e registros de contato seguem bloqueados. ' : overview.policy.commercialContactWritesEnabled ? `Canário de contato ativo para ${overview.policy.commercialContactCanaryIdentityIds?.length || 0} identidade(s).` : 'Registro de contato e novas permissões concedidas seguem bloqueados até a abertura explícita de um canário.'}</div></div></div> : null}
+    {overview ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100"><div className="flex gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><div><b>Uso comercial seguro:</b> a recência considera apenas o último atendimento realizado. Compras antecipadas não representam procedimento realizado. {overview.dataQuality.futureAttendancesExcluded ? `${overview.dataQuality.futureAttendancesExcluded} atendimento(s) futuro(s) foram excluídos desta métrica. ` : ''}{overview.dataQuality.activeAttendanceClientsWithoutIdentity ? `${overview.dataQuality.activeAttendanceClientsWithoutIdentity} cliente(s) de Atendimento ainda não têm identidade comercial. ` : ''}{contactSummary.controlsReady ? `${contactSummary.eligible} apto(s), ${contactSummary.blocked} bloqueado(s) e ${contactSummary.reviewRequired} em revisão para WhatsApp${contactScopeSuffix}. ` : 'Os controles de contato ainda não foram migrados; nenhum contato pode ser marcado. '}{!contactSummary.contactWriteControlsReady ? 'A cadência de contato aguarda a migration explícita; filas novas, concessões e registros de contato seguem bloqueados. ' : overview.policy.commercialContactWritesEnabled ? `Canário de contato ativo para ${overview.policy.commercialContactCanaryIdentityIds?.length || 0} identidade(s).` : 'Registro de contato e novas permissões concedidas seguem bloqueados até a abertura explícita de um canário.'}</div></div></div> : null}
     {settingsOpen ? <section className="grid gap-4 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 xl:grid-cols-2"><div><h2 className="font-semibold text-white">Política de reativação</h2><p className="mt-1 text-sm text-slate-500">Define o intervalo entre contatos assistidos e as faixas de ausência, sem alterar o histórico clínico.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs text-slate-400">Intervalo mínimo de contato (dias)<input type="number" value={cooldown} onChange={(event) => setCooldown(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label><label className="text-xs text-slate-400">Faixas de ausência<input value={thresholds} onChange={(event) => setThresholds(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label></div>{!policyWriteControlsReady ? <p className="mt-4 text-xs text-amber-200">A migration de rollout ainda não está presente neste ambiente. As faixas podem ser salvas, mas o canário permanece indisponível.</p> : null}<label className="mt-4 flex items-start gap-2 text-xs text-amber-100"><input type="checkbox" checked={commercialContactWritesEnabled} disabled={!policyWriteControlsReady} onChange={(event) => setCommercialContactWritesEnabled(event.target.checked)} className="mt-0.5" />Abrir somente o canário de registros de contato. Isto não envia mensagens.</label><CanarySelection profiles={overview?.profiles || []} selectedIds={selectedCanaryIdentityIds} disabled={!policyWriteControlsReady} onToggle={toggleCanaryIdentity} onClear={() => setSelectedCanaryIdentityIds([])} /><Button size="sm" onClick={() => void savePolicy()} disabled={busy} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar política</Button></div><div className="border-t border-slate-800 pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"><h2 className="font-semibold text-white">Cadência clínica</h2><p className="mt-1 text-sm text-slate-500">Gestores podem manter rascunhos ou desativar regras não aprovadas. A aprovação clínica exige um fluxo verificado e não está disponível neste módulo.</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><select value={cadenceProcedure} onChange={(event) => setCadenceProcedure(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"><option value="">Procedimento</option>{procedureOptions.map((procedure) => <option key={procedure.id} value={procedure.id}>{procedure.name}</option>)}</select><input type="number" min="1" placeholder="Dias" value={cadenceDays} onChange={(event) => setCadenceDays(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><select value={cadenceStatus} onChange={(event) => setCadenceStatus(event.target.value as CommercialCadenceManagerStatus)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white">{commercialCadenceManagerStatuses.map((status) => <option key={status} value={status}>{commercialCadenceStatusLabels[status]}</option>)}</select></div><Button size="sm" variant="outline" onClick={() => void saveCadence()} disabled={busy || !cadenceProcedure || !cadenceDays} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar cadência</Button>{cadenceNotice ? <div className="mt-2 text-xs text-slate-400">{cadenceNotice}</div> : null}</div></section> : null}
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Metric label="Retorno em risco" value={overview?.summary.returnAtRisk ?? '—'} detail="Sem presença registrada na faixa configurada" icon={CalendarClock} /><Metric label="Alto valor inativo" value={overview?.summary.highValueInactive ?? '—'} detail="Valor e ausência combinados" icon={CircleDollarSign} /><Metric label="Potencial de reativação" value={overview?.summary.reactivationPotential ?? '—'} detail="Prioridade para a equipe" icon={UserRoundCheck} /><Metric label="Aptos para WhatsApp" value={overview ? contactSummary.eligible : '—'} detail="Permissão explícita e bloqueios verificados" icon={UsersRound} /></div>
     {commercialDataQualityError ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100">{commercialDataQualityError}</div> : null}
     {commercialDataQuality ? <CommercialDataQualityPanel queue={commercialDataQuality} loading={commercialDataQualityBusy} onRefresh={loadCommercialDataQuality} /> : null}
-    <div className="flex flex-wrap gap-2 rounded-xl border border-slate-800/80 bg-slate-950/45 p-3"><select aria-label="Unidade" value={unit} onChange={(event) => setUnit(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="all">Todas as unidades</option>{units.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select><select aria-label="Segmento" value={segment} onChange={(event) => setSegment(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100">{segmentOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select><select aria-label="Prioridade" value={priority} onChange={(event) => setPriority(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Todas as prioridades</option><option value="high">Alta</option><option value="medium">Média</option><option value="normal">Normal</option></select><input aria-label="Buscar cliente" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente" className="min-w-48 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><Button size="sm" onClick={() => void load()} disabled={busy}>Aplicar</Button></div>
+    <div className="flex flex-wrap gap-2 rounded-xl border border-slate-800/80 bg-slate-950/45 p-3"><select aria-label="Unidade" value={unit} onChange={(event) => setUnit(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="all">Todas as unidades</option>{units.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select><select aria-label="Segmento" value={segment} onChange={(event) => setSegment(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100">{segmentOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select><select aria-label="Prioridade" value={priority} onChange={(event) => setPriority(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Todas as prioridades</option><option value="high">Alta</option><option value="medium">Média</option><option value="normal">Normal</option></select><input aria-label="Buscar cliente" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente" className="min-w-48 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><select aria-label="Ordenar clientes" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="priority">Prioridade</option><option value="recency">Recência</option><option value="lifetime_sales">Faturamento</option><option value="visits">Visitas</option><option value="sales">Compras</option><option value="last_attendance">Último atendimento</option><option value="name">Nome</option></select><select aria-label="Direção da ordenação" value={direction} onChange={(event) => setDirection(event.target.value as 'asc' | 'desc')} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="desc">Maior primeiro</option><option value="asc">Menor primeiro</option></select><Button size="sm" onClick={() => void load({ offset: 0 })} disabled={busy}>Aplicar</Button><div className="flex w-full flex-wrap gap-2 border-t border-slate-800/80 pt-3"><input aria-label="Nome da visão salva" value={savedViewName} onChange={(event) => setSavedViewName(event.target.value)} placeholder="Nome da visão" className="min-w-48 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><Button size="sm" variant="outline" onClick={saveCurrentView} disabled={busy}>Salvar visão</Button>{savedViews.length ? <select aria-label="Visões salvas" defaultValue="" onChange={(event) => { const view = savedViews.find((item) => item.name === event.target.value); if (view) applySavedView(view); event.currentTarget.value = '' }} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Abrir visão salva</option>{savedViews.map((view) => <option key={view.name} value={view.name}>{view.name}</option>)}</select> : null}</div></div>
     <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.7fr)_minmax(22rem,0.8fr)]">
       <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/55 shadow-[0_20px_60px_rgba(2,6,23,0.28)]">
         <div className="flex items-center justify-between border-b border-slate-800/80 p-5"><div><h2 className="font-semibold text-white">Prioridades de reativação</h2><p className="mt-1 text-xs text-slate-500">{overview ? `${overview.total} clientes na seleção atual` : 'Carregando clientes…'}</p></div><div className="text-xs text-slate-500">Fila: {overview?.actions.actions ?? 0} · Contatos: {overview?.actions.contactedActions ?? 0}</div></div>
         <div className="overflow-x-auto"><table className="w-full min-w-190 text-sm"><thead className="bg-white/[0.025] text-left text-xs font-medium text-slate-400"><tr><th className="p-3">Cliente</th><th className="p-3">Último atendimento</th><th className="p-3 text-right">Faturamento</th><th className="p-3">Frequência</th><th className="p-3">Próxima ação</th><th className="p-3">Prioridade</th><th className="p-3" /></tr></thead><tbody>{overview?.profiles.map((profile) => <tr key={profile.identityId} onClick={() => void loadDetail(profile.identityId, overview.asOf)} className={`cursor-pointer border-t border-slate-800/70 transition hover:bg-sky-500/[0.05] ${detail?.profile.identityId === profile.identityId ? 'bg-sky-500/[0.08]' : ''}`}><td className="p-3"><div className="font-medium text-slate-100">{profile.name}</div><div className="mt-0.5 text-xs text-slate-500">{profile.identityQuality.replace(/_/g, ' ')}</div><div className={`mt-1 text-[11px] ${contactEligibilityTextStyle(profile.contactEligibility)}`}>{contactEligibilityLabel(profile.contactEligibility)}</div></td><td className="p-3"><div className="text-slate-200">{formatDate(profile.lastAttendance)}</div><div className={`mt-0.5 text-xs ${profile.recencyDays != null && profile.recencyDays >= 180 ? 'text-rose-300' : 'text-slate-500'}`}>{profile.recencyDays == null ? 'Sem presença confirmada' : `${profile.recencyDays} dias`}</div></td><td className="p-3 text-right"><div className="font-medium text-slate-100">{currency.format(profile.lifetimeSales)}</div><div className="mt-0.5 text-xs text-slate-500">{profile.saleCount} compra(s)</div></td><td className="p-3"><div className="text-slate-200">{profile.visitCount} visita(s)</div><div className="mt-0.5 text-xs text-slate-500">{profile.procedureCount} procedimento(s)</div></td><td className="max-w-56 p-3 text-slate-300">{profile.recommendedAction}</td><td className="p-3"><SegmentBadge profile={profile} /></td><td className="p-3 text-right"><ChevronRight className="inline h-4 w-4 text-slate-500" /></td></tr>)}</tbody></table>{overview && !overview.profiles.length ? <div className="p-8 text-center text-sm text-slate-500">Nenhum cliente encontrado para os filtros selecionados.</div> : null}</div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 p-4 text-xs text-slate-500"><span>{overview ? `${overview.total ? pageOffset + 1 : 0}–${Math.min(pageOffset + overview.profiles.length, overview.total)} de ${overview.total}` : 'Carregando…'}{overview?.pagination?.mode === 'sql' ? ' · paginação SQL' : ''}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy || !overview?.pagination?.hasPrevious} onClick={() => void load({ offset: Math.max(0, pageOffset - pageSize) })}>Anterior</Button><Button size="sm" variant="outline" disabled={busy || !overview?.pagination?.hasNext} onClick={() => void load({ offset: pageOffset + pageSize })}>Próxima</Button></div></div>
       </section>
       <ProfilePanel detail={detail} units={units} professionals={professionals} onRefresh={refreshDetail} />
     </div>

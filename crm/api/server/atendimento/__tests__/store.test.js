@@ -231,6 +231,75 @@ test('scopes Clientes commercial reads, queues, actions, cadences and offers to 
     assert.equal(captured.filter((entry) => entry.kind === 'profiles').at(-1)?.params[1], null)
 })
 
+test('uses bounded SQL pagination and global percentile benchmarks for the commercial overview', async () => {
+    const identityId = '11111111-1111-4111-8111-111111111111'
+    const availability = {
+        permissions: 'permissions', permission_events: 'permission-events', action_events: 'action-events',
+        harmonia_contacts: 'harmonia.contacts', caixa_customers: 'caixa.customers', app_registrations: null, lead_profiles: null,
+        permission_event_trace_id: true, permission_events_immutable: true, permission_events_no_truncate: true,
+        action_events_immutable: true, action_events_no_truncate: true, action_channel: true, action_contacted_at: true,
+        rollout_enabled: true, rollout_canary: true,
+    }
+    const captured = []
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
+                return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance_links', sales: 'sales' }], rowCount: 1 }
+            }
+            if (sql.startsWith('select active_contact_cooldown_days,')) {
+                return { rows: [{ active_contact_cooldown_days: 30, return_risk_thresholds: [90, 180, 365], commercial_contact_writes_enabled: false, commercial_contact_canary_identity_ids: [], updated_by: 'manager', updated_at: '2026-08-05T12:00:00.000Z', policy_version: 'a'.repeat(32) }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+            if (sql.includes('with identities as') && sql.includes('limit $7 offset $8')) {
+                captured.push({ sql, params })
+                const stats = {
+                    sales_p75: 1000, visits_p75: 3, filtered_total: 2, return_at_risk_total: 1, high_value_inactive_total: 1,
+                    frequent_total: 1, balanced_vip_total: 1, reactivation_potential_total: 1,
+                    confirmed_multi_source_total: 2, unresolved_single_source_total: 0, lifetime_sales_total: 2200, sale_count_total: 3,
+                }
+                if (Number(params[7]) >= 100) return { rows: [{ identity_id: null, ...stats }], rowCount: 1 }
+                return {
+                    rows: [{
+                        identity_id: identityId, canonical_name: 'Cliente paginado', source_types: ['attendance_client', 'caixa_customer'],
+                        last_attendance: '2026-01-01', visit_count: 4, procedure_count: 4, completed_procedures: ['Botox'], attendance_units: ['Novo Hamburgo'],
+                        future_attendance_count: 0, sale_count: 2, lifetime_sales: 1200, sales_12m: 1200, sales_units: ['Novo Hamburgo'], phone: '5551999991111',
+                        purchased_procedures: ['Botox'], pending_sale_items: 0, active_action_count: 1, last_action_at: '2026-08-01T12:00:00.000Z',
+                        ...stats,
+                    }], rowCount: 1,
+                }
+            }
+            if (sql.startsWith('select identity_id::text as identity_id, channel')) return { rows: [], rowCount: 0 }
+            if (sql.includes('from crm_atendimento.global_client_identity_members member') && sql.includes('crm_caixa.customers customer')) return { rows: [{ identity_id: identityId, phone_key: '5551999991111' }], rowCount: 1 }
+            if (sql.startsWith('select phone_raw, opted_out_at')) return { rows: [], rowCount: 0 }
+            if (sql.includes('count(*)::int as future_attendances')) return { rows: [{ future_attendances: 0 }], rowCount: 1 }
+            if (sql.includes('where item.mapping_status = \'mapped\'')) return { rows: [{ count: 1 }], rowCount: 1 }
+            if (sql.includes('from crm_caixa.sale_items item') && sql.includes('where $1::text[] is null')) return { rows: [{ count: 2 }], rowCount: 1 }
+            if (sql.includes('select count(distinct canonical.id)::int as count')) return { rows: [{ count: 0 }], rowCount: 1 }
+            if (sql.startsWith('select max(updated_at) as updated_at')) return { rows: [{ updated_at: '2026-08-05T12:00:00.000Z' }], rowCount: 1 }
+            if (sql.includes('with scoped_actions as')) return { rows: [{ actions: 1, contacted_actions: 0, recovered_sales_clients: 0, clinical_return_clients: 0 }], rowCount: 1 }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const result = await store.commercialOverview({ server: '1', limit: 1, offset: 1, sort: 'lifetime_sales', direction: 'asc', q: 'cliente' }, { id: 'manager', role: 'GESTOR' })
+    assert.equal(captured.length, 1)
+    assert.deepEqual(captured[0].params.slice(3, 8), ['cliente', '', '', 1, 1])
+    assert.equal(result.pagination.mode, 'sql')
+    assert.equal(result.pagination.sort, 'lifetime_sales')
+    assert.equal(result.pagination.direction, 'asc')
+    assert.equal(result.total, 2)
+    assert.equal(result.profiles.length, 1)
+    assert.equal(result.summary.profiles, 2)
+    assert.equal(result.summary.highValueInactive, 1)
+    assert.equal(result.coverage.confirmedMultiSourceIdentities, 2)
+    assert.equal(result.dataQuality.contactEligibility.scope, 'page')
+    const emptyPage = await store.commercialOverview({ server: '1', limit: 1, offset: 100, q: 'cliente' }, { id: 'manager', role: 'GESTOR' })
+    assert.equal(emptyPage.total, 2)
+    assert.equal(emptyPage.profiles.length, 0)
+    assert.equal(emptyPage.pagination.hasPrevious, true)
+    assert.equal(emptyPage.pagination.hasNext, false)
+})
+
 test('returns commercial-only references filtered to the declared manager units', async () => {
     const pool = createFakePool([
         (sql) => sql.includes('select slug, name from crm_atendimento.units order by name') && {
