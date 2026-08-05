@@ -1167,7 +1167,10 @@ if (DEV_AUTH_ENABLED) {
         if (!email || !generated) return false
         const local = email.slice(0, email.indexOf('@'))
         const generatedLocal = generated.slice(0, generated.indexOf('@'))
-        return local === generatedLocal || new RegExp(`^${generatedLocal}\\d+$`).test(local)
+        if (local === generatedLocal) return true
+        if (!local.startsWith(generatedLocal)) return false
+        const suffix = local.slice(generatedLocal.length)
+        return suffix.length > 0 && Array.from(suffix).every((character) => character >= '0' && character <= '9')
     }
 
     const localNormalizePersonalEmail = (value) => {
