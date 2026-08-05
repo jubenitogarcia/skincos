@@ -56,13 +56,13 @@ export async function loadOptionalSupplementalLeadSources(client) {
         throw materializationError('IDENTITY_MATERIALIZATION_SUPPLEMENTAL_LEAD_SCHEMA_INCOMPLETE')
     }
 
-    const [leadProfiles, leadAppLinks, leadCaixaLinks] = await Promise.all([
-        client.query(`select source_profile_id as id,canonical_name as name from crm_atendimento.supplemental_lead_profiles`),
-        client.query(`select source_profile_id as "profileId",app_registration_id as "registrationId",status
-            from crm_atendimento.supplemental_lead_profile_app_links`),
-        client.query(`select source_profile_id as "profileId",caixa_customer_id::text as "caixaCustomerId",status
-            from crm_atendimento.supplemental_lead_profile_caixa_links`),
-    ])
+    // A checked-out pg client serializes protocol messages. Keep these reads
+    // explicit and sequential so pg 9 does not reject concurrent query calls.
+    const leadProfiles = await client.query(`select source_profile_id as id,canonical_name as name from crm_atendimento.supplemental_lead_profiles`)
+    const leadAppLinks = await client.query(`select source_profile_id as "profileId",app_registration_id as "registrationId",status
+        from crm_atendimento.supplemental_lead_profile_app_links`)
+    const leadCaixaLinks = await client.query(`select source_profile_id as "profileId",caixa_customer_id::text as "caixaCustomerId",status
+        from crm_atendimento.supplemental_lead_profile_caixa_links`)
     return {
         availability: 'available',
         profiles: leadProfiles.rows,

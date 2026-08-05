@@ -73,3 +73,21 @@ test('loads all supplemental lead sources only when their schema is complete', a
     })
     assert.equal(queries.length, 4)
 })
+
+test('serializes supplemental lead reads on one checked-out PostgreSQL client', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const sources = await loadOptionalSupplementalLeadSources({
+        async query(sql) {
+            inFlight += 1
+            maxInFlight = Math.max(maxInFlight, inFlight)
+            await new Promise((resolve) => setTimeout(resolve, 0))
+            inFlight -= 1
+            if (sql.includes('to_regclass')) return { rows: [{ profiles: true, app_links: true, caixa_links: true }] }
+            if (sql.includes('supplemental_lead_profiles')) return { rows: [] }
+            return { rows: [] }
+        },
+    })
+    assert.equal(maxInFlight, 1)
+    assert.equal(sources.availability, 'available')
+})
