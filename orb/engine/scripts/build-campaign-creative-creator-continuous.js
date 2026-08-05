@@ -1031,10 +1031,6 @@ const brief = {`,
     max_cost_configured: maximumCostConfigured,
     dispatch_requested:`,
   );
-  updated = updated.replace(
-    '    maximum_jobs: maximumJobs,\n    maximum_cost: maximumCost,',
-    '    maximum_jobs: maximumJobs,\n    maximum_cost: maximumCost,',
-  );
   return updated;
 }
 
