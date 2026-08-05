@@ -12,15 +12,17 @@ import {
   InsumosCategoryPoliciesPanel,
   InsumosEditDialog,
   InsumosLotDialog,
-  InsumosMovementEditDialog,
   InsumosMovementsPanel,
   InsumosOfflineQueueDialog,
   InsumosInventoryDialog,
   InsumosPurchaseDialog,
+  InsumosContextualHistoryDialog,
+  InsumosMovementReversalDialog,
   InsumosQualityMatchesDialog,
   InsumosQuickOperationDialog,
   InsumosSafeModeBanner,
 } from '@/insumosPanels'
+import { InsumosGuidedCountDialog } from '@/InsumosGuidedCountDialog'
 import {
   CHART_PRESETS,
   CHARTS_SLOTS_KEY,
@@ -67,7 +69,6 @@ import {
   brToIsoDate,
   buildTagStyle,
   calcularStatusEstoque,
-  combineLocalDateTimeToIso,
   dateInputToIso,
   estoqueStatusBadgeVariant,
   estoqueStatusLabel,
@@ -85,10 +86,7 @@ import {
   getMarcaBgColor,
   isoDayWeekStart,
   isoToBrDate,
-  isoToLocalDateInput,
-  isoToLocalTimeInput,
   normalizeAlertTags,
-  normalizeMovimentacaoTipo,
   normalizeText,
   normalizeTimeInput,
   normalizeTipoUnidadeToCanonical,
@@ -108,6 +106,7 @@ import type {
   EstoqueResumo,
   Insumo,
   InsumosHealth,
+  InsumosOperationContext,
   InsumosProxyStatus,
   InsumosQuickOperation,
   InsumosUser,
@@ -206,6 +205,7 @@ async function apiJson<T>(
       ex.requestId = requestId || null
       ex.registros = Array.isArray(err.registros) ? err.registros : []
       ex.candidates = Array.isArray((err as any).candidates) ? (err as any).candidates : []
+      ex.sessionId = (err as any).sessionId || null
       throw ex
     })
 
@@ -281,6 +281,7 @@ export function InsumosModule() {
   const [insightsLoaded, setInsightsLoaded] = React.useState(false)
 
   const [quickOp, setQuickOp] = React.useState<InsumosQuickOperation | null>(null)
+  const [quickContext, setQuickContext] = React.useState<InsumosOperationContext | null>(null)
   const [quickCodigo, setQuickCodigo] = React.useState('')
   const [quickSearch, setQuickSearch] = React.useState('')
   const [quickRegistro, setQuickRegistro] = React.useState('')
@@ -466,18 +467,12 @@ export function InsumosModule() {
   const [movSortKey, setMovSortKey] = React.useState<MovementSortKey>('dataHora')
   const [movSortDir, setMovSortDir] = React.useState<'asc' | 'desc'>('desc')
   const movListContainerRef = React.useRef<HTMLDivElement | null>(null)
-  const [editMovOpen, setEditMovOpen] = React.useState(false)
-  const [editMovTarget, setEditMovTarget] = React.useState<Movimentacao | null>(null)
-  const [editMovProduto, setEditMovProduto] = React.useState('')
-  const [editMovData, setEditMovData] = React.useState('')
-  const [editMovHora, setEditMovHora] = React.useState('')
-  const [editMovUnidade, setEditMovUnidade] = React.useState('')
-  const [editMovQuantidade, setEditMovQuantidade] = React.useState('1')
-  const [editMovNovoEstoque, setEditMovNovoEstoque] = React.useState('')
-  const [editMovObservacoes, setEditMovObservacoes] = React.useState('')
-  const [editMovMotivo, setEditMovMotivo] = React.useState('')
-  const [editMovSaving, setEditMovSaving] = React.useState(false)
-  const [editMovDeleting, setEditMovDeleting] = React.useState(false)
+  const [contextHistoryOpen, setContextHistoryOpen] = React.useState(false)
+  const [contextHistory, setContextHistory] = React.useState<InsumosOperationContext | null>(null)
+  const [reverseMovOpen, setReverseMovOpen] = React.useState(false)
+  const [reverseMovTarget, setReverseMovTarget] = React.useState<Movimentacao | null>(null)
+  const [reverseMovReason, setReverseMovReason] = React.useState('')
+  const [reverseMovSaving, setReverseMovSaving] = React.useState(false)
 
   // Backups/auditoria foram movidos para o módulo Status do sistema.
 
@@ -487,6 +482,7 @@ export function InsumosModule() {
 	  const [overviewNotifications, setOverviewNotifications] = React.useState<NotificationsSummary | null>(null)
 	  const [overviewActionables, setOverviewActionables] = React.useState<Actionables | null>(null)
 	  const [purchaseDialogOpen, setPurchaseDialogOpen] = React.useState(false)
+  const [guidedCountDialogOpen, setGuidedCountDialogOpen] = React.useState(false)
   const [overviewPeriod, setOverviewPeriod] = React.useState<'7d' | '30d' | '1y' | 'custom'>('30d')
   const [overviewCustomFrom, setOverviewCustomFrom] = React.useState<string>('')
   const [overviewCustomTo, setOverviewCustomTo] = React.useState<string>('')
@@ -1378,6 +1374,7 @@ export function InsumosModule() {
   })
 
   const resetQuickOperationState = React.useCallback((opts?: { keepFeedback?: boolean }) => {
+    setQuickContext(null)
     setQuickSearch('')
     setQuickCodigo('')
     setQuickSelectedSnapshot(null)
@@ -1411,12 +1408,30 @@ export function InsumosModule() {
         obs?: string | null
         fromUnidade?: string | null
         toUnidade?: string | null
+        context?: InsumosOperationContext | null
       }
     ) => {
       resetQuickOperationState()
+      const context = prefill?.context || null
+      if (context) {
+        const item = context.item
+        const code = String(context.codigoBarras || getInsumoBarcodes(item)[0] || '').trim()
+        const stock = context.unidade && item.estoques ? Number(item.estoques?.[context.unidade] ?? 0) : Number(item.estoqueAtual ?? 0)
+        setQuickContext(context)
+        setQuickSelectedSnapshot(item)
+        setQuickLookupItems([item])
+        setQuickLookupCode(code || null)
+        setQuickLookupCtxUnidade(context.unidade)
+        setQuickCodigo(code)
+        setQuickSearch(String(item.produto || code))
+        setQuickRegistro(String(item.registro || ''))
+        setQuickAutoFefo(false)
+        if (op === 'AJUSTE' && Number.isFinite(stock)) setQuickNovoEstoque(String(stock))
+        if (op === 'TRANSFERENCIA') setTransferFrom(context.unidade)
+      }
       if (prefill?.codigoBarras) {
         const code = String(prefill.codigoBarras).trim()
-        selectQuickCodigo(code, { setSearch: true, snapshot: null })
+        selectQuickCodigo(code, { setSearch: !context, snapshot: context?.item || null })
       }
       if (prefill?.quantidade != null) setQuickQuantidade(String(prefill.quantidade))
       if (prefill?.obs) setQuickObs(String(prefill.obs))
@@ -1429,17 +1444,25 @@ export function InsumosModule() {
 
   React.useEffect(() => {
     if (!quickOp) return
+    if (quickContext) {
+      setQuickRegistro(String(quickContext.item.registro || ''))
+      return
+    }
     setQuickRegistros([])
     setQuickCandidates([])
     setQuickRegistro('')
-  }, [quickOp])
+  }, [quickContext, quickOp])
 
   React.useEffect(() => {
     if (!quickOp) return
+    if (quickContext) {
+      setQuickRegistro(String(quickContext.item.registro || ''))
+      return
+    }
     setQuickRegistros([])
     setQuickCandidates([])
     setQuickRegistro('')
-  }, [quickCodigo])
+  }, [quickCodigo, quickContext, quickOp])
 
   useInsumosCreateLookupController({
     canUseApi,
@@ -2307,26 +2330,6 @@ export function InsumosModule() {
     setEditOpen(true)
   }, [getPolicyForItem])
 
-  const openMovementEditDialog = React.useCallback((m: Movimentacao) => {
-    const movementId = String(m?.id || '').trim()
-    if (!movementId) {
-      toast.error('Movimentação sem identificador para edição.')
-      return
-    }
-    const tipo = normalizeMovimentacaoTipo(m?.tipo)
-    setEditMovTarget(m)
-    setEditMovProduto(String(m?.produto || ''))
-    setEditMovData(isoToLocalDateInput(m?.dataHora))
-    setEditMovHora(isoToLocalTimeInput(m?.dataHora))
-    setEditMovUnidade(String(m?.unidade || unidade))
-    setEditMovQuantidade(String(Math.max(1, Number(m?.quantidade) || 1)))
-    setEditMovNovoEstoque(String(Number.isFinite(Number(m?.estoqueNovo)) ? Number(m.estoqueNovo) : 0))
-    setEditMovObservacoes(m?.transferId ? extractTransferMovementNote(m?.observacoes) : String(m?.observacoes || ''))
-    setEditMovMotivo(String(m?.motivo || ''))
-    if (tipo !== 'AJUSTE') setEditMovMotivo('')
-    setEditMovOpen(true)
-  }, [unidade])
-
   const openQualityFix = React.useCallback(
     async (issue: QualityIssue) => {
       if (!isAuthed) {
@@ -2537,22 +2540,9 @@ export function InsumosModule() {
     if (el.scrollHeight <= el.clientHeight + 80) loadMoreInsumos()
   }, [insumosHasMore, insumosLoading, insumos.length, loadMoreInsumos, insumosListModalOpen])
 
-  const {
-    deleteMovementEdit,
-    loadMovimentacoes,
-    saveMovementEdit,
-  } = useInsumosMovementsController({
+  const { loadMovimentacoes } = useInsumosMovementsController({
     apiJson,
     canUseApi,
-    editMovData,
-    editMovHora,
-    editMovMotivo,
-    editMovNovoEstoque,
-    editMovObservacoes,
-    editMovProduto,
-    editMovQuantidade,
-    editMovTarget,
-    editMovUnidade,
     isAuthed,
     movAte,
     movDe,
@@ -2560,20 +2550,88 @@ export function InsumosModule() {
     movFilterMarca,
     movListContainerRef,
     movTipo,
-    mutateJson,
-    refreshInsumos,
-    schedulePostMutationRefresh,
     selectedCodigoBarras,
-    setEditMovDeleting,
-    setEditMovOpen,
-    setEditMovSaving,
-    setEditMovTarget,
     setMovLoaded,
     setMovLoading,
     setMovLoadError,
     setMovimentacoes,
     unidade,
   })
+
+  const contextHistoryMovements = React.useMemo(() => {
+    const context = contextHistory
+    if (!context) return []
+    const code = String(context.codigoBarras || '').trim()
+    const registro = String(context.item?.registro || '').trim()
+    return (movimentacoes || [])
+      .filter((movement) => {
+        const sameCode = !!code && String(movement.codigoBarras || '').trim() === code
+        const sameRegistro = !!registro && String(movement.registroInsumo || '').trim() === registro
+        return sameCode || sameRegistro
+      })
+      .sort((left, right) => new Date(right.dataHora || 0).getTime() - new Date(left.dataHora || 0).getTime())
+  }, [contextHistory, movimentacoes])
+
+  const openMovementReversal = React.useCallback((movement: Movimentacao) => {
+    setReverseMovTarget(movement)
+    setReverseMovReason('')
+    setReverseMovOpen(true)
+  }, [])
+
+  const reverseMovement = React.useCallback(async () => {
+    const movement = reverseMovTarget
+    const movementId = String(movement?.id || '').trim()
+    const motivo = reverseMovReason.trim()
+    if (!movementId) {
+      toast.error('Movimentação inválida.')
+      return
+    }
+    if (!motivo) {
+      toast.error('Informe o motivo do estorno.')
+      return
+    }
+    if (!canUseApi || !isAuthed) return
+    setReverseMovSaving(true)
+    try {
+      const out = await mutateJson<{ success?: boolean }>(
+        `/movimentacoes/${encodeURIComponent(movementId)}/estorno?unidade=${encodeURIComponent(String(movement?.unidade || unidade || '').trim() || unidade)}`,
+        {
+          method: 'POST',
+          body: { motivo },
+          queueLabel: 'Estorno de movimentação',
+        }
+      )
+      if ((out as any)?.queued) {
+        toast.message('Estorno salvo na fila offline.')
+      } else {
+        toast.success('Estorno registrado.')
+      }
+      setReverseMovOpen(false)
+      setReverseMovTarget(null)
+      setReverseMovReason('')
+      setContextHistoryOpen(false)
+      await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
+      schedulePostMutationRefresh({ overview: true, insights: true })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setReverseMovSaving(false)
+    }
+  }, [canUseApi, isAuthed, loadMovimentacoes, mutateJson, refreshInsumos, reverseMovReason, reverseMovTarget, schedulePostMutationRefresh, unidade])
+
+  const openContextHistory = React.useCallback(
+    (context: InsumosOperationContext) => {
+      const code = String(context.codigoBarras || '').trim()
+      setContextHistory(context)
+      setSelectedCodigoBarras(code)
+      setMovSearch('')
+      setMovFilterCategoria('')
+      setMovFilterMarca('')
+      setContextHistoryOpen(true)
+      if (canUseApi && isAuthed) void loadMovimentacoes()
+    },
+    [canUseApi, isAuthed, loadMovimentacoes]
+  )
   const {
     deleteEdit,
     deleteInsumoByRegistro,
@@ -3957,7 +4015,8 @@ export function InsumosModule() {
         insumosLoading={insumosLoading}
         insumosLoadError={insumosLoadError}
         emptyContent={renderListPlaceholder(insumosLoading, 'Sem itens.')}
-        onEditItem={openEditDialog}
+        onOpenQuickOperation={(operation, context) => openQuickOperation(operation, { context })}
+        onOpenHistory={openContextHistory}
       />
       <InsumosOfflineQueueDialog
         open={offlineDialogOpen}
@@ -3994,6 +4053,7 @@ export function InsumosModule() {
       <InsumosQuickOperationDialog
         open={quickOp != null}
         operation={quickOp}
+        context={quickContext}
         dialogClassName={dialogLargeClass}
         isAuthed={isAuthed}
         shouldShowDashboardLoading={shouldShowDashboardLoading}
@@ -4026,7 +4086,7 @@ export function InsumosModule() {
         onApplySelection={applyQuickSelection}
         isSameInsumo={isSameInsumo}
         onSelectCode={(value, item) => selectQuickCodigo(value, { snapshot: item ?? null })}
-        loteNeedsPick={quickLoteNeedsPick}
+        loteNeedsPick={quickContext ? false : quickLoteNeedsPick}
         lotesForPicker={quickLotesForPicker}
         selectedRegistro={quickRegistro}
         onRegistroChange={(value) => {
@@ -4070,50 +4130,44 @@ export function InsumosModule() {
           const ok = await runQuickOperation(operation)
           if (ok) resetQuickOperationState({ keepFeedback: true })
         }}
-        onEditItem={openEditDialog}
       />
 
-      <InsumosMovementEditDialog
-        open={editMovOpen}
-        dialogClassName={dialogSmallClass}
-        target={editMovTarget}
+      <InsumosContextualHistoryDialog
+        open={contextHistoryOpen}
+        dialogClassName={dialogLargeClass}
+        context={contextHistory}
+        movements={contextHistoryMovements}
         isAuthed={isAuthed}
-        saving={editMovSaving}
-        deleting={editMovDeleting}
-        produto={editMovProduto}
-        data={editMovData}
-        hora={editMovHora}
-        unidade={editMovUnidade}
-        quantidade={editMovQuantidade}
-        novoEstoque={editMovNovoEstoque}
-        motivo={editMovMotivo}
-        unitOptions={unidadeOptions}
-        insumosProdutos={insumosProdutos}
+        reversingId={reverseMovTarget?.id ? String(reverseMovTarget.id) : null}
         unitLabel={unidadeLabel}
         onOpenChange={(open) => {
-          setEditMovOpen(open)
+          setContextHistoryOpen(open)
+          if (!open) setContextHistory(null)
+        }}
+        onReverse={openMovementReversal}
+      />
+
+      <InsumosMovementReversalDialog
+        open={reverseMovOpen}
+        dialogClassName={dialogSmallClass}
+        target={reverseMovTarget}
+        reason={reverseMovReason}
+        saving={reverseMovSaving}
+        isAuthed={isAuthed}
+        onOpenChange={(open) => {
+          setReverseMovOpen(open)
           if (!open) {
-            setEditMovTarget(null)
-            setEditMovSaving(false)
-            setEditMovDeleting(false)
+            setReverseMovTarget(null)
+            setReverseMovReason('')
           }
         }}
-        onProdutoChange={setEditMovProduto}
-        onDataChange={(value) => {
-          const iso = dateInputToIso(value)
-          setEditMovData(iso || value)
-        }}
-        onHoraChange={setEditMovHora}
-        onUnidadeChange={setEditMovUnidade}
-        onQuantidadeChange={setEditMovQuantidade}
-        onNovoEstoqueChange={setEditMovNovoEstoque}
-        onMotivoChange={setEditMovMotivo}
+        onReasonChange={setReverseMovReason}
         onCancel={() => {
-          setEditMovOpen(false)
-          setEditMovTarget(null)
+          setReverseMovOpen(false)
+          setReverseMovTarget(null)
+          setReverseMovReason('')
         }}
-        onSave={() => void saveMovementEdit()}
-        onDelete={() => void deleteMovementEdit()}
+        onConfirm={() => void reverseMovement()}
       />
 
       <InsumosPurchaseDialog
@@ -4128,6 +4182,19 @@ export function InsumosModule() {
         renderLoadingText={renderLoadingText}
         unit={unidade}
         unitLabel={unidadeLabel}
+      />
+      <InsumosGuidedCountDialog
+        open={guidedCountDialogOpen}
+        onOpenChange={setGuidedCountDialogOpen}
+        dialogClassName={dialogWideClass}
+        isAuthed={isAuthed}
+        managerRole={['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())}
+        unit={unidade}
+        unitLabel={unidadeLabel}
+        apiJson={apiJson}
+        onRefresh={() => {
+          void Promise.allSettled([loadOverview({ force: true }), loadInsights({ force: true }), refreshInsumos()])
+        }}
       />
 
       <InsumosSafeModeBanner visible={!!proxyStatus?.mutationsBlocked} />
@@ -4220,6 +4287,7 @@ export function InsumosModule() {
                               emptyContent={renderListPlaceholder(insightsLoading, 'Sem alertas.')}
                               onToggleOpen={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.alerts, !panelOpen)}
                               onOpenPurchaseDialog={() => setPurchaseDialogOpen(true)}
+                              onOpenGuidedCount={() => setGuidedCountDialogOpen(true)}
                               onAlertasStatusChange={setAlertasStatus}
                               onAlertasCategoriaChange={setAlertasCategoria}
                               onAlertasFluxoChange={setAlertasFluxo}
@@ -4307,7 +4375,6 @@ export function InsumosModule() {
         dialogClassName={dialogMediumClass}
         issue={qualityMatchesIssue}
         items={qualityMatchesItems}
-        savingRegistro={qualityMatchesSavingRegistro}
         isAuthed={isAuthed}
         unit={unidade}
         unitLabel={unidadeLabel}
@@ -4319,11 +4386,14 @@ export function InsumosModule() {
             setQualityMatchesSavingRegistro('')
           }
         }}
-        onEditItem={(item) => {
+        onOpenHistory={(item) => {
           setQualityMatchesOpen(false)
-          openEditDialog(item)
+          openContextHistory({
+            item,
+            codigoBarras: String(item.codigoBarras || getInsumoBarcodes(item)[0] || ''),
+            unidade,
+          })
         }}
-        onDeleteRegistro={(registro) => void deleteInsumoByRegistro(registro)}
       />
 
       <InsumosEditDialog
@@ -4499,7 +4569,7 @@ export function InsumosModule() {
                 setMovSearch('')
                 setMovFilterMarca((prev) => (normalizeText(prev) === normalizeText(brand) ? '' : brand))
               }}
-              onEditMovement={openMovementEditDialog}
+              onReverseMovement={openMovementReversal}
             />
 	      </div>
 	    )}

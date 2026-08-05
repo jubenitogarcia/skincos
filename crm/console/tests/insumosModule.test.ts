@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { normalizeInsumosHeaderAction, normalizeInsumosHeaderState } from '../insumosBridge'
 import { getNextChartPresetPatch, getNextMovementsGroupByPatch, parseChartSlots } from '../insumosCharts'
 import { resolveOverviewDateRange } from '../insumosDashboardController'
-import { buildMovimentacoesView } from '../insumosDerivations'
+import { buildMovimentacoesView, isMovementReversed } from '../insumosDerivations'
 import { brToIsoDate, calcularStatusEstoque, normalizeTipoUnidadeToCanonical, parseBarcodeInput } from '../insumosShared'
 import { buildMovimentacoesQuery } from '../useInsumosMovementsController'
 
@@ -147,6 +147,13 @@ describe('Insumos module helpers', () => {
       id: '3',
       codigoBarras: '222',
     })
+  })
+
+  it('blocks reversal for compensating or cancelled ledger entries', () => {
+    expect(isMovementReversed({ id: 'm-1', tipo: 'ESTORNO' })).toBe(true)
+    expect(isMovementReversed({ id: 'm-2', tipo: 'ENTRADA', estornoDe: 'm-0' })).toBe(true)
+    expect(isMovementReversed({ id: 'm-3', tipo: 'ENTRADA', status: 'CANCELADO' })).toBe(true)
+    expect(isMovementReversed({ id: 'm-4', tipo: 'ENTRADA', status: 'PENDING_RECEIPT' })).toBe(false)
   })
 
   it('normalizes legacy chart slots and clamps invalid values', () => {

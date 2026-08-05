@@ -1,0 +1,170 @@
+name: Prepare isolated Atendimento release
+run-name: Atendimento ${{ inputs.operation }} ${{ inputs.target }} ${{ inputs.release_sha }}
+
+# This remains dispatch-only and main-custodied. The native release scripts run
+# on the approved operator runtime; this workflow records the immutable source,
+# validates the API in preview, and attests the already-provisioned isolated
+# runtime over its public health endpoint. It never restarts shared crm.service
+# or evaluates an environment-provided command string.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Immutable promotion target
+        required: true
+        default: preview
+        type: choice
+        options: [preview, staging, production]
+      release_sha:
+        description: Full immutable main SHA to validate or restore
+        required: true
+        type: string
+      operation:
+        description: Native operation already performed by the approved runtime; workflow attests resulting state
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback]
+      preview_run_id:
+        description: Successful Atendimento preview evidence required for staging
+        required: false
+        type: string
+      staging_run_id:
+        description: Successful Atendimento staging evidence required for production
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-atendimento-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  custody:
+    name: Require main-custodied release control
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse non-main or replayed release control
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+          WORKFLOW_CONTROL_SHA: ${{ github.workflow_sha }}
+          REQUESTED_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DISPATCH_REF" == "refs/heads/main" ]] || { echo 'Atendimento release control may only be dispatched from main.'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]] || { echo 'Atendimento release control cannot be replayed; dispatch a new run.'; exit 1; }
+          [[ "$WORKFLOW_CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Workflow control SHA must be immutable.'; exit 1; }
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full 40-character SHA.'; exit 1; }
+
+  promotion:
+    needs: custody
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: atendimento
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+      emit_preview_evidence: false
+
+  preview:
+    needs: promotion
+    if: ${{ inputs.target == 'preview' }}
+    runs-on: ubuntu-latest
+    environment: preview
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact immutable Atendimento source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+      - name: Setup pinned Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: crm/api/package-lock.json
+      - name: Validate isolated Atendimento API source
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'Checked out source differs from immutable promotion identity.'; exit 1; }
+          npm --prefix crm/api ci --ignore-scripts
+          npm --prefix crm/api test
+      - name: Write preview promotion evidence after API validation
+        env:
+          PROMOTION_UNIT: atendimento
+          PROMOTION_TARGET: preview
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" \
+            node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/atendimento-preview-evidence/promotion-evidence.json"
+      - name: Upload immutable Atendimento preview evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-atendimento
+          path: ${{ runner.temp }}/atendimento-preview-evidence/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error
+
+  configuration:
+    needs: promotion
+    if: ${{ inputs.target != 'preview' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted main release-control validator
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 1
+          path: control
+      - name: Attest isolated native release contract
+        env:
+          CONTRACT_KIND: deploy
+          CONTRACT_TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          ATENDIMENTO_OPERATION: ${{ inputs.operation }}
+          ENABLE_ATENDIMENTO_DEPLOY: ${{ vars.ENABLE_ATENDIMENTO_DEPLOY }}
+          CRM_MODULE_CONTROL_FILE: ${{ vars.CRM_MODULE_CONTROL_FILE }}
+          CRM_ATENDIMENTO_DEPLOY_COMMAND: ${{ vars.CRM_ATENDIMENTO_DEPLOY_COMMAND }}
+          CRM_ATENDIMENTO_ROLLBACK_COMMAND: ${{ vars.CRM_ATENDIMENTO_ROLLBACK_COMMAND }}
+          CRM_ATENDIMENTO_CONTROL_COMMAND: ${{ vars.CRM_ATENDIMENTO_CONTROL_COMMAND }}
+          CRM_ATENDIMENTO_HEALTH_URL: ${{ vars.CRM_ATENDIMENTO_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          node control/.github/scripts/atendimento-deployment-contract.mjs \
+            --output "$RUNNER_TEMP/atendimento-deployment-contract/preflight.json"
+      - name: Upload sanitized Atendimento release preflight
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: atendimento-release-preflight-${{ inputs.target }}-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/atendimento-deployment-contract/preflight.json
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Verify staged native Atendimento runtime health
+        if: ${{ inputs.target == 'staging' }}
+        env:
+          CRM_ATENDIMENTO_HEALTH_URL: ${{ vars.CRM_ATENDIMENTO_HEALTH_URL }}
+          ATENDIMENTO_EXPECTED_STATE: ${{ inputs.operation == 'deploy' && 'active' || 'maintenance' }}
+          ATENDIMENTO_HEALTH_OUTPUT: ${{ runner.temp }}/atendimento-deployment-contract/health.json
+        run: |
+          set -euo pipefail
+          node control/.github/scripts/verify-atendimento-health.mjs
+      - name: Upload sanitized Atendimento runtime health
+        if: ${{ inputs.target == 'staging' && always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: atendimento-runtime-health-${{ inputs.target }}-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/atendimento-deployment-contract/health.json
+          retention-days: 30
+          if-no-files-found: warn

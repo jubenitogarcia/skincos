@@ -20,6 +20,7 @@ type AtendimentoActorHeader = {
   email?: string
   name?: string
   role: string
+  isGlobalAdmin?: boolean
   allowedUnits?: string[]
   allowedModules?: string[]
 }
@@ -105,12 +106,17 @@ function stringArray(value: unknown): string[] | undefined {
 }
 
 function toAtendimentoActor(user: CrmUserLike): AtendimentoActorHeader {
+  const rawRole = String(user.role || '').trim().toUpperCase()
   return {
     id: String(user.id || ''),
     username: user.username ? String(user.username) : undefined,
     email: user.email ? String(user.email) : undefined,
     name: user.displayName ? String(user.displayName) : undefined,
     role: normalizeRole(user.role),
+    // The upstream normalizes ADMIN to GESTOR for its public module role, but
+    // Clientes needs the original break-glass provenance to distinguish it
+    // from a unit-scoped manager.
+    isGlobalAdmin: rawRole === 'ADMIN',
     allowedUnits: stringArray(user.allowedUnits),
     allowedModules: effectiveAllowedModules(user.role, user.allowedModules),
   }
@@ -123,6 +129,14 @@ function hasModuleAccess(user: CrmUserLike): boolean {
   const allowed = effectiveAllowedModules(user?.role, user?.allowedModules)
   if (!allowed.length) return true
   return allowed.includes('atendimento')
+}
+
+function hasCommercialAccess(user: CrmUserLike, restPath: string): boolean {
+  const path = String(restPath || '')
+  if (path !== '/commercial' && !path.startsWith('/commercial/')) return true
+  // The module registry exposes Clientes only to GESTOR. Reject at the edge
+  // as well, before minting a signed actor header for the upstream API.
+  return normalizeRole(user?.role) === 'GESTOR'
 }
 
 function shouldAllowUnsignedLocalProxy(context: AtendimentoProxyContext, actorKey: string): boolean {
@@ -151,6 +165,10 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
   const unsignedLocalProxyAllowed = shouldAllowUnsignedLocalProxy(context, actorKey)
   const prefix = '/api/atendimento'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
+
+  if (!hasCommercialAccess(userOrRes, rest)) {
+    return json(403, { ok: false, error: 'FORBIDDEN' }, { 'x-request-id': requestId })
+  }
 
   if ((rest === '/local-mirror/status' || rest === '/local-mirror/status/') && !isLocalDevAuthBypassEnabled(context)) {
     return json(404, { ok: false, error: 'NOT_FOUND' }, { 'x-request-id': requestId })
@@ -196,12 +214,20 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
   }
 
   const method = (request.method || 'GET').toUpperCase()
-  const upstream: Response | Error = await fetch(new Request(buildTargetUrl(targetOrigin, request.url, rest), {
+  const body = method === 'GET' || method === 'HEAD' ? undefined : request.body
+  // Node's fetch implementation requires this marker for a streamed request
+  // body, while the Pages runtime safely ignores it.
+  const upstreamInit: RequestInit & { duplex?: 'half' } = {
     method,
     headers,
-    body: method === 'GET' || method === 'HEAD' ? undefined : request.body,
+    body,
     redirect: 'manual',
-  })).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
+  }
+  if (body) {
+    upstreamInit.duplex = 'half'
+  }
+  const upstream: Response | Error = await fetch(new Request(buildTargetUrl(targetOrigin, request.url, rest), upstreamInit))
+    .catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
 
   if (upstream instanceof Error) {
     return upstreamUnavailableResponse(requestId)
@@ -220,6 +246,7 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
 export const __testables = {
   buildUpstreamHeaders,
   buildTargetUrl,
+  hasCommercialAccess,
   hasModuleAccess,
   normalizeRole,
   resolveAtendimentoActorHmacKey,

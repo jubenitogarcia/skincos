@@ -1,83 +1,35 @@
 import pg from 'pg'
 import { buildClientIdentityPlan } from '../server/atendimento/clientIdentity.js'
+import { IDENTITY_GRAPH_LOCK_KEY } from '../server/atendimento/identityReviewWorkflow.js'
+import {
+    buildCanonicalClientAliasLinks,
+    collectAutomaticIdentityLinkTransitions,
+    createCanonicalClientAliasResolver,
+    guardAutoConfirmedIdentityLinkProposals,
+    recordIdentityProjectionMaterialization,
+} from '../server/atendimento/identityProjection.js'
+import {
+    asRecoverableIdentityMaterializationError,
+    configureIdentityMaterializationTimeouts,
+} from '../server/atendimento/identityMaterializationRuntime.js'
+import {
+    assertIdentityMaterializationApplyCheckpoint,
+    assertIdentityMaterializationDatabase,
+    assertIdentityMaterializationDestination,
+    assertIdentityMaterializationSchemaReady,
+    fingerprintIdentityMaterializationSource,
+    identityMaterializationCheckpoint,
+    writeIdentityMaterializationCheckpoint,
+} from '../server/atendimento/identityMaterializationSafety.js'
 
 const apply = process.argv.includes('--apply')
 const databaseUrl = String(process.env.DATABASE_URL || '').trim()
+const checkpointFile = String(process.env.CLIENT_IDENTITY_CHECKPOINT || '').trim()
+const checkpointOutput = String(process.env.CLIENT_IDENTITY_CHECKPOINT_OUTPUT || '').trim()
 if (!databaseUrl) throw new Error('DATABASE_URL_not_configured')
+assertIdentityMaterializationDestination(databaseUrl)
 
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 2, application_name: 'crm-client-identity-reconciliation' })
-
-const schemaStatements = [
-    `create table if not exists crm_atendimento.client_identity_runs (
-        id uuid primary key default gen_random_uuid(),
-        mode text not null,
-        summary jsonb not null,
-        created_at timestamptz not null default now()
-    )`,
-    `create table if not exists crm_atendimento.canonical_clients (
-        id uuid primary key default gen_random_uuid(),
-        canonical_name text not null,
-        name_key text unique not null,
-        attendance_count int not null default 0,
-        created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now()
-    )`,
-    `alter table crm_atendimento.canonical_clients add column if not exists merged_into_id uuid references crm_atendimento.canonical_clients(id) on delete restrict`,
-    `create table if not exists crm_atendimento.client_aliases (
-        id uuid primary key default gen_random_uuid(),
-        client_id uuid not null references crm_atendimento.canonical_clients(id) on delete cascade,
-        alias_name text not null,
-        alias_key text not null,
-        usage_count int not null default 0,
-        source text not null default 'attendance',
-        created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now(),
-        unique(client_id, alias_name)
-    )`,
-    `create table if not exists crm_atendimento.attendance_client_links (
-        attendance_id uuid primary key references crm_atendimento.attendances(id) on delete cascade,
-        client_id uuid not null references crm_atendimento.canonical_clients(id) on delete restrict,
-        original_name text not null,
-        method text not null,
-        confidence numeric(5,4) not null,
-        run_id uuid references crm_atendimento.client_identity_runs(id) on delete set null,
-        created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now()
-    )`,
-    `create table if not exists crm_atendimento.client_merge_suggestions (
-        id uuid primary key default gen_random_uuid(),
-        left_client_id uuid not null references crm_atendimento.canonical_clients(id) on delete cascade,
-        right_client_id uuid not null references crm_atendimento.canonical_clients(id) on delete cascade,
-        similarity numeric(5,4) not null,
-        evidence jsonb not null default '{}'::jsonb,
-        status text not null default 'pending',
-        run_id uuid references crm_atendimento.client_identity_runs(id) on delete set null,
-        reviewed_by text,
-        reviewed_at timestamptz,
-        created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now(),
-        unique(left_client_id, right_client_id)
-    )`,
-    `create table if not exists crm_atendimento.client_caixa_links (
-        id uuid primary key default gen_random_uuid(),
-        client_id uuid not null references crm_atendimento.canonical_clients(id) on delete cascade,
-        caixa_customer_id uuid not null references crm_caixa.customers(id) on delete cascade,
-        method text not null,
-        confidence numeric(5,4) not null,
-        evidence jsonb not null default '{}'::jsonb,
-        status text not null,
-        run_id uuid references crm_atendimento.client_identity_runs(id) on delete set null,
-        reviewed_by text,
-        reviewed_at timestamptz,
-        created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now(),
-        unique(client_id, caixa_customer_id)
-    )`,
-    `create index if not exists crm_atendimento_client_aliases_key_idx on crm_atendimento.client_aliases(alias_key)`,
-    `create index if not exists crm_atendimento_attendance_client_links_client_idx on crm_atendimento.attendance_client_links(client_id)`,
-    `create index if not exists crm_atendimento_client_merge_suggestions_status_idx on crm_atendimento.client_merge_suggestions(status, similarity desc)`,
-    `create index if not exists crm_atendimento_client_caixa_links_status_idx on crm_atendimento.client_caixa_links(status, confidence desc)`,
-]
 
 function chunks(values, size = 750) {
     const output = []
@@ -87,12 +39,12 @@ function chunks(values, size = 750) {
 
 async function loadInputs(client) {
     const attendances = await client.query(`select id, client_name as "clientName", unit_id as "unitId", procedure_id as "procedureId"
-        from crm_atendimento.attendances where deleted_at is null and nullif(trim(client_name), '') is not null`)
-    const customers = await client.query(`select id, name from crm_caixa.customers`)
+        from crm_atendimento.attendances where deleted_at is null and nullif(trim(client_name), '') is not null order by id`)
+    const customers = await client.query(`select id, name from crm_caixa.customers order by id`)
     const sales = await client.query(`select s.customer_id as "customerId", s.unit_id as "unitId",
             coalesce(array_agg(distinct i.procedure_id) filter (where i.procedure_id is not null), '{}') as "procedureIds"
         from crm_caixa.sales s left join crm_caixa.sale_items i on i.sale_id = s.id
-        where s.customer_id is not null group by s.customer_id, s.unit_id`)
+        where s.customer_id is not null group by s.customer_id, s.unit_id order by s.customer_id, s.unit_id`)
     return { attendances: attendances.rows, caixaCustomers: customers.rows, caixaSales: sales.rows }
 }
 
@@ -100,9 +52,19 @@ async function insertJsonChunks(client, values, sql) {
     for (const batch of chunks(values)) await client.query(sql, [JSON.stringify(batch)])
 }
 
+async function upsertJsonChunksReturning(client, values, sql) {
+    const rows = []
+    for (const batch of chunks(values)) {
+        const result = await client.query(sql, [JSON.stringify(batch)])
+        rows.push(...(result.rows || []))
+    }
+    return rows
+}
+
 async function persistPlan(client, plan) {
+    await configureIdentityMaterializationTimeouts(client)
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
     await client.query(`select pg_advisory_xact_lock(hashtext('crm_atendimento.client_identity_reconciliation'))`)
-    for (const statement of schemaStatements) await client.query(statement)
     const run = await client.query(`insert into crm_atendimento.client_identity_runs(mode, summary) values('apply', $1::jsonb) returning id`, [JSON.stringify(plan.summary)])
     const runId = run.rows[0].id
 
@@ -116,8 +78,9 @@ async function persistPlan(client, plan) {
         on conflict(name_key) do update set canonical_name=excluded.canonical_name,
             attendance_count=excluded.attendance_count, updated_at=now()`)
 
-    const persistedClients = await client.query(`select id, name_key from crm_atendimento.canonical_clients`)
-    const idsByKey = new Map(persistedClients.rows.map((row) => [row.name_key, row.id]))
+    const persistedClients = await client.query(`select id, name_key as "nameKey",merged_into_id as "mergedIntoId"
+        from crm_atendimento.canonical_clients`)
+    const idsByKey = new Map(persistedClients.rows.map((row) => [row.nameKey, row.id]))
 
     const aliases = plan.clients.flatMap((item) => item.aliases.map((alias) => ({
         client_id: idsByKey.get(item.nameKey),
@@ -168,7 +131,21 @@ async function persistPlan(client, plan) {
         status: item.status,
         run_id: runId,
     }))
-    await insertJsonChunks(client, caixaLinks, `insert into crm_atendimento.client_caixa_links(
+    const persistedCaixaLinks = await client.query(`select client_id::text as "clientId",
+        caixa_customer_id::text as "caixaCustomerId",status from crm_atendimento.client_caixa_links`)
+    const canonicalAliases = buildCanonicalClientAliasLinks({ canonicalClients: persistedClients.rows })
+    const resolveCanonicalClient = createCanonicalClientAliasResolver({ canonicalAliases })
+    const guardedCaixaLinks = guardAutoConfirmedIdentityLinkProposals({
+        proposals: caixaLinks,
+        persistedLinks: persistedCaixaLinks.rows,
+        getSourceId: (link) => link.clientId ?? link.client_id,
+        getTargetId: (link) => link.caixaCustomerId ?? link.caixa_customer_id,
+        normalizeSourceId: resolveCanonicalClient,
+    })
+    const automaticLinkGuards = {
+        attendanceCaixaDemoted: guardedCaixaLinks.filter((link) => link?.evidence?.identityLinkGuard).length,
+    }
+    const effectiveCaixaLinks = await upsertJsonChunksReturning(client, guardedCaixaLinks, `insert into crm_atendimento.client_caixa_links(
             client_id, caixa_customer_id, method, confidence, evidence, status, run_id)
         select x.client_id::uuid, x.caixa_customer_id::uuid, x.method, x.confidence, x.evidence, x.status, x.run_id::uuid
         from jsonb_to_recordset($1::jsonb) as x(client_id text, caixa_customer_id text, method text, confidence numeric, evidence jsonb, status text, run_id text)
@@ -176,29 +153,64 @@ async function persistPlan(client, plan) {
             confidence=excluded.confidence, evidence=excluded.evidence,
             status=case when crm_atendimento.client_caixa_links.status in ('confirmed','rejected','auto_confirmed_spelling')
                 then crm_atendimento.client_caixa_links.status else excluded.status end,
-            run_id=excluded.run_id, updated_at=now()`)
-    return runId
+            run_id=excluded.run_id, updated_at=now()
+        returning client_id::text as "clientId",caixa_customer_id::text as "caixaCustomerId",status`)
+    const sourceLinkTransitions = collectAutomaticIdentityLinkTransitions({
+        effectiveLinks: effectiveCaixaLinks,
+        persistedLinks: persistedCaixaLinks.rows,
+        linkType: 'attendance_caixa',
+        sourceType: 'attendance_client',
+        targetType: 'caixa_customer',
+        getSourceId: (link) => link.clientId ?? link.client_id,
+        getTargetId: (link) => link.caixaCustomerId ?? link.caixa_customer_id,
+    })
+    const identityProjectionLedger = await recordIdentityProjectionMaterialization(client, {
+        origin: 'client_identity_reconciliation',
+        sourceLinkTransitions,
+    })
+    await client.query(`update crm_atendimento.client_identity_runs set summary=$2::jsonb where id=$1::uuid`, [
+        runId,
+        JSON.stringify({ ...plan.summary, automaticLinkGuards, identityProjectionLedger }),
+    ])
+    return { runId, identityProjectionLedger }
 }
 
 const connection = await pool.connect()
 try {
+    await assertIdentityMaterializationDatabase(connection, databaseUrl)
+    await assertIdentityMaterializationSchemaReady(connection)
     const input = await loadInputs(connection)
     const plan = buildClientIdentityPlan(input)
-    let runId = null
+    const sourceFingerprint = fingerprintIdentityMaterializationSource(input)
+    const checkpoint = identityMaterializationCheckpoint({ operation: 'client_identity_reconciliation', sourceFingerprint })
+    const writtenCheckpoint = !apply
+        ? await writeIdentityMaterializationCheckpoint({ outputFile: checkpointOutput, checkpoint })
+        : null
+    let persisted = null
     if (apply) {
+        await assertIdentityMaterializationApplyCheckpoint({
+            operation: 'client_identity_reconciliation',
+            confirmation: process.env.CLIENT_IDENTITY_APPLY_CONFIRM,
+            targetConfirmation: process.env.CLIENT_IDENTITY_APPLY_TARGET,
+            checkpointFile,
+            sourceFingerprint,
+        })
         await connection.query('begin')
         try {
-            runId = await persistPlan(connection, plan)
+            persisted = await persistPlan(connection, plan)
             await connection.query('commit')
         } catch (error) {
             await connection.query('rollback')
-            throw error
+            throw asRecoverableIdentityMaterializationError(error)
         }
     }
     console.log(JSON.stringify({
         ok: true,
         dryRun: !apply,
-        runId,
+        runId: persisted?.runId || null,
+        identityProjectionLedger: persisted?.identityProjectionLedger || null,
+        checkpoint,
+        checkpointOutput: writtenCheckpoint,
         dateDistanceUsed: false,
         policy: {
             automaticAttendanceUnification: 'exact normalized name only',

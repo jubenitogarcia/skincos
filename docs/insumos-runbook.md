@@ -13,6 +13,10 @@ Este documento descreve como validar, diagnosticar e operar o módulo **Insumos*
 - `zero demo` por padrão: dados simulados só com flag explícita.
 - Auto-sync resiliente: pausa temporária após falhas repetidas de API.
 - Políticas (lote/validade/FEFO) são **por item**; categorias são apenas sugestão/organização.
+- Contagem física é uma sessão por unidade: o snapshot é imutável como referência,
+  cada leitura é append-only e qualquer movimentação posterior exige recontagem.
+- Fechamento de contagem aplica somente ajustes compensatórios pelo ledger; não
+  altera nem exclui movimentos históricos.
 - Overview/Insights com endpoints agregados:
   - `/api/insumos/analytics/overview`
   - `/api/insumos/analytics/insights`
@@ -70,6 +74,76 @@ Esperado:
 1. Abrir o módulo **Insumos**.
 2. Confirmar ausência do banner **DADOS SIMULADOS** por padrão.
 3. Confirmar cards/alertas carregando com dados reais.
+
+### 3.4 Contagem física guiada
+
+Rotas autenticadas (todas exigem `unidade` e `Idempotency-Key` nos `POST`):
+
+```text
+POST /api/insumos/contagens?unidade=<unidade>                 # abre snapshot
+GET  /api/insumos/contagens/:id?unidade=<unidade>             # sessão e linhas
+POST /api/insumos/contagens/:id/leituras?unidade=<unidade>    # { registro|lineId, quantidade }
+POST /api/insumos/contagens/:id/fechar?unidade=<unidade>      # gerente/gestor/admin
+POST /api/insumos/contagens/:id/recontar?unidade=<unidade>    # gerente/gestor/admin
+```
+
+`COUNT_CONFLICT` é retornado quando há movimento no mesmo escopo após
+`snapshotAt`; o servidor marca a sessão como `CONFLICT` e não aplica ajustes.
+Depois de `recontar`, todas as linhas devem ser lidas novamente. Leituras
+anteriores permanecem em `insumos_count_reads` para auditoria.
+
+### 3.5 Compras internas
+
+Fornecedores e pedidos são sempre limitados à unidade da sessão. O valor de
+custo é aceito apenas como inteiro em centavos (`custoUnitarioCentavos`), sem
+integração financeira. Um recebimento parcial cria uma entrada no ledger e uma
+linha append-only em `insumos_purchase_receipts`; o pedido passa por
+`PARTIALLY_RECEIVED` até todas as linhas serem recebidas.
+
+```text
+GET  /api/insumos/fornecedores?unidade=<unidade>
+POST /api/insumos/fornecedores?unidade=<unidade>
+POST /api/insumos/fornecedores/:id/arquivar?unidade=<unidade>
+GET  /api/insumos/compras?unidade=<unidade>&status=ORDERED
+POST /api/insumos/compras?unidade=<unidade>
+GET  /api/insumos/compras/:id?unidade=<unidade>
+POST /api/insumos/compras/:id/receber?unidade=<unidade>
+POST /api/insumos/compras/:id/cancelar?unidade=<unidade>
+```
+
+`/api/insumos/pedidos` e seus subcaminhos são aliases compatíveis para o mesmo
+contrato de pedidos internos.
+
+Todos os `POST` exigem `Idempotency-Key`, derivam o responsável da sessão e
+produzem auditoria. Fornecedor com pedido pendente não pode ser arquivado;
+recebimento acima do saldo pendente retorna `409 RECEIPT_EXCEEDS_PENDING`.
+
+### 3.6 Reposição inteligente (rascunhos)
+
+As políticas são mantidas por registro e unidade. O cálculo server-side soma o
+saldo atual e entradas pendentes (transferências e pedidos) antes de comparar o
+mínimo mais a segurança com o alvo. Quando falta saldo, cria somente uma
+sugestão `TRANSFER_DRAFT` (se houver excedente seguro em outra unidade do
+escopo) ou `PURCHASE_DRAFT`. Nenhuma sugestão despacha transferência, altera
+estoque, cria pedido ou chama financeiro/serviço externo.
+
+`leadTimeDias` é preservado no snapshot e no rascunho para ordenar a fila de
+revisão (quanto maior o prazo, maior a antecedência operacional). Um saldo
+negativo decorrente de uma saída excepcional governada não é normalizado no
+cálculo: ele aumenta a necessidade sugerida; o snapshot persistido permanece
+não negativo apenas por proteção de integridade da tabela de rascunhos.
+
+```text
+GET  /api/insumos/reposicao/politicas?unidade=<unidade>
+POST /api/insumos/reposicao/politicas?unidade=<unidade>
+GET  /api/insumos/reposicao/sugestoes?unidade=<unidade>&status=DRAFT
+POST /api/insumos/reposicao/sugestoes/gerar?unidade=<unidade>
+POST /api/insumos/reposicao/sugestoes/:id/descartar?unidade=<unidade>
+```
+
+Os `POST` exigem `Idempotency-Key`, derivam o responsável da sessão e geram
+auditoria. Descartes exigem justificativa; a tabela de sugestões é append-only
+para exclusão física e mantém a evidência da recomendação.
 
 ## 4) Diagnóstico de incidentes (500/503/travamento)
 

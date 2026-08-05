@@ -4,10 +4,12 @@ import json
 import os
 import re
 import time
+from hashlib import sha256
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pandas as pd
 from selenium.webdriver.common.by import By
@@ -34,7 +36,17 @@ REGISTRATION_TAB_TEXT = "Cadastro"
 
 
 class SessionRecycleRequested(RuntimeError):
-    """Signal a controlled browser restart after a safe checkpoint."""
+    """Signal a controlled browser restart after a safe checkpoint.
+
+    The checkpoint CSV retains the records, while this object retains the
+    in-memory operational counters.  Carrying both across a deliberate
+    browser recycle prevents the final summary from looking like only the
+    final (partial) session ran.
+    """
+
+    def __init__(self, message: str, *, summary: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.summary = summary
 
 
 @dataclass(frozen=True)
@@ -100,6 +112,297 @@ def _max_pages() -> int | None:
 
 def _max_clients_per_unit() -> int | None:
     return _positive_int_env("EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT")
+
+
+_SUMMARY_TOTALS = (
+    "units_processed",
+    "pages_processed",
+    "clients_attempted",
+    "clients_processed",
+    "records_exported",
+    "resumed_records",
+    "client_errors",
+)
+
+_UNIT_SUMMARY_TOTALS = (
+    "pages_processed",
+    "clients_attempted",
+    "clients_processed",
+    "records_exported",
+    "client_errors",
+    "resumed_records",
+)
+
+
+_SOURCE_COVERAGE_VERSION = 1
+
+
+def _source_coverage_run_id() -> str:
+    configured = os.getenv("EF_CLIENT_REGISTRATION_RUN_ID", "").strip()
+    if configured:
+        return configured
+    return f"direct-{datetime.now().strftime('%Y%m%dT%H%M%S%fZ')}-{uuid4().hex[:12]}"
+
+
+def _prepare_source_coverage(
+    summary: dict[str, Any],
+    *,
+    records_by_key: dict[tuple[str, str], ClientRegistrationRecord],
+    unit_names: list[str],
+    page_limit: int | None,
+    client_limit: int | None,
+) -> dict[str, Any]:
+    """Create conservative, run-scoped provenance for the resume checkpoint.
+
+    The visible UI list is the only source observed here.  Reaching the end of
+    its pagination does not establish whether the product view includes every
+    historical client, so the all-historical and retirement fields are fixed
+    fail-closed values rather than conclusions derived from page counts.
+    """
+
+    coverage = summary.get("sourceCoverage")
+    if not isinstance(coverage, dict):
+        coverage = {}
+        summary["sourceCoverage"] = coverage
+
+    coverage.setdefault("version", _SOURCE_COVERAGE_VERSION)
+    coverage.setdefault("artifactKind", "resume_checkpoint")
+    coverage.setdefault("runId", _source_coverage_run_id())
+    launch_mode = os.getenv("EF_CLIENT_REGISTRATION_LAUNCH_MODE", "").strip().lower()
+    coverage.setdefault("launchMode", launch_mode if launch_mode in {"fresh", "explicit_resume"} else "direct")
+    coverage.setdefault("sourceMode", "ef_app_visible_ui")
+    coverage.setdefault("route", CLIENTS_URL_PATH)
+    if not isinstance(coverage.get("unitsRequested"), list):
+        coverage["unitsRequested"] = list(unit_names)
+
+    limits = coverage.get("limits")
+    if not isinstance(limits, dict):
+        limits = {}
+        coverage["limits"] = limits
+    limits["maxPages"] = page_limit
+    limits["maxClientsPerUnit"] = client_limit
+
+    checkpoint = coverage.get("checkpoint")
+    if not isinstance(checkpoint, dict):
+        checkpoint = {}
+        coverage["checkpoint"] = checkpoint
+    checkpoint.setdefault("initialRecords", len(records_by_key))
+    checkpoint.setdefault("resumed", bool(records_by_key))
+
+    if not isinstance(coverage.get("unitOutcomes"), dict):
+        coverage["unitOutcomes"] = {}
+    coverage.setdefault("controlledSessionRecycles", 0)
+    coverage.setdefault("finalized", False)
+    if not coverage["finalized"]:
+        coverage["executionState"] = "running"
+
+    # These values must never be inferred from this UI traversal.  An absent
+    # record is not proof that a historical registration was retired.
+    coverage["sourceTraversalUnbounded"] = page_limit is None and client_limit is None
+    coverage["uiScope"] = {"filters": "unverified", "statusScope": "unknown"}
+    coverage["snapshotComplete"] = False
+    coverage["absenceIsRetirementEvidence"] = False
+    coverage["allHistoricalSemantics"] = "not_proven"
+    return coverage
+
+
+def _prepare_source_coverage_unit(
+    summary: dict[str, Any],
+    *,
+    unit_name: str,
+    resumed_records: int,
+) -> dict[str, Any]:
+    coverage = summary["sourceCoverage"]
+    outcomes = coverage["unitOutcomes"]
+    outcome = outcomes.setdefault(unit_name, {})
+    outcome.setdefault("initialCheckpointRecords", resumed_records)
+    outcome.setdefault("pagesProcessed", 0)
+    outcome.setdefault("lastPageProcessed", 0)
+    outcome.setdefault("maxPageObserved", 0)
+    outcome.setdefault("recordsExportedThisRun", 0)
+    outcome.setdefault("clientsSkippedCheckpoint", 0)
+    outcome.setdefault("clientErrors", 0)
+    outcome.setdefault("termination", "in_progress")
+    outcome.setdefault("visiblePaginationExhausted", False)
+    outcome.setdefault("traversalFinalized", False)
+    return outcome
+
+
+def _mark_source_coverage_termination(outcome: dict[str, Any], termination: str) -> None:
+    outcome["termination"] = termination
+    outcome["visiblePaginationExhausted"] = termination == "pagination_exhausted"
+    outcome["traversalFinalized"] = True
+
+
+def _completed_unit_can_be_skipped(summary: dict[str, Any], unit_name: str) -> bool:
+    """Avoid replaying a clean, exhausted unit after a controlled session recycle.
+
+    The resume checkpoint remains intentionally conservative for units that are
+    partial, limited, or contain extraction errors: those keep being revisited
+    so a later session can collect their still-missing visible records.  A
+    clean unit whose visible pagination was exhausted is different: replaying
+    it cannot add a checkpoint record and made each new unit progressively
+    slower after the browser was recycled.
+    """
+
+    coverage = summary.get("sourceCoverage")
+    if not isinstance(coverage, dict):
+        return False
+    # A completed historical summary is not an in-flight controlled recycle.
+    # Explicit reuse must keep the normal traversal path instead of silently
+    # treating every former unit as a no-op.
+    if bool(coverage.get("finalized")) or coverage.get("executionState") == "completed":
+        return False
+    outcomes = coverage.get("unitOutcomes")
+    if not isinstance(outcomes, dict):
+        return False
+    outcome = outcomes.get(unit_name)
+    if not isinstance(outcome, dict):
+        return False
+    try:
+        client_errors = int(outcome.get("clientErrors") or 0)
+    except (TypeError, ValueError):
+        return False
+    return (
+        outcome.get("termination") == "pagination_exhausted"
+        and bool(outcome.get("traversalFinalized"))
+        and client_errors == 0
+    )
+
+
+def _refresh_source_coverage(summary: dict[str, Any]) -> None:
+    """Derive a safe status without upgrading UI evidence to historical scope."""
+
+    coverage = summary.get("sourceCoverage")
+    if not isinstance(coverage, dict):
+        return
+
+    outcomes = coverage.get("unitOutcomes")
+    if not isinstance(outcomes, dict):
+        outcomes = {}
+        coverage["unitOutcomes"] = outcomes
+    requested_units = coverage.get("unitsRequested")
+    if not isinstance(requested_units, list):
+        requested_units = []
+        coverage["unitsRequested"] = requested_units
+
+    all_visible_pagination_exhausted = bool(requested_units) and all(
+        isinstance(outcomes.get(unit_name), dict)
+        and outcomes[unit_name].get("termination") == "pagination_exhausted"
+        for unit_name in requested_units
+    )
+    limited = any(
+        isinstance(outcome, dict) and outcome.get("termination") in {"page_limit", "client_limit"}
+        for outcome in outcomes.values()
+    )
+    totals = summary.get("totals") if isinstance(summary.get("totals"), dict) else {}
+    no_client_errors = totals.get("client_errors", 0) == 0
+    finalized = bool(coverage.get("finalized"))
+    execution_state = coverage.get("executionState")
+
+    coverage["allVisiblePaginationExhausted"] = all_visible_pagination_exhausted
+    coverage["noClientErrors"] = no_client_errors
+    # Only the shared launcher can attest that a run received a newly-created
+    # private directory.  A direct run or an explicit resume is still useful
+    # for additive evidence, but it must never look like a fresh apply source
+    # just because its checkpoint happened to contain zero rows.
+    coverage["freshStart"] = bool(
+        coverage.get("launchMode") == "fresh"
+        and not bool(coverage.get("checkpoint", {}).get("resumed"))
+    )
+    coverage["freshUnboundedNoErrorVisibleTraversal"] = bool(
+        finalized
+        and execution_state == "completed"
+        and coverage.get("freshStart")
+        and coverage.get("sourceTraversalUnbounded")
+        and no_client_errors
+        and all_visible_pagination_exhausted
+    )
+
+    if execution_state == "failed":
+        coverage["traversalOutcome"] = "incomplete_failed"
+    elif not finalized:
+        coverage["traversalOutcome"] = "incomplete"
+    elif limited:
+        coverage["traversalOutcome"] = "limited"
+    elif all_visible_pagination_exhausted:
+        coverage["traversalOutcome"] = "visible_pagination_exhausted"
+    else:
+        coverage["traversalOutcome"] = "completed_without_visible_pagination_exhaustion"
+
+    # Keep the fail-closed scope result intact even when all currently visible
+    # pages were traversed without errors.
+    coverage["snapshotComplete"] = False
+    coverage["absenceIsRetirementEvidence"] = False
+    coverage["allHistoricalSemantics"] = "not_proven"
+
+
+def _mark_source_coverage_failed(summary: dict[str, Any]) -> None:
+    coverage = summary.get("sourceCoverage")
+    if not isinstance(coverage, dict):
+        return
+    coverage["executionState"] = "failed"
+    coverage["finalized"] = False
+    _refresh_source_coverage(summary)
+
+
+def _prepare_summary(
+    records_by_key: dict[tuple[str, str], ClientRegistrationRecord],
+    cumulative_summary: dict[str, Any] | None,
+    *,
+    unit_names: list[str] | None = None,
+    page_limit: int | None = None,
+    client_limit: int | None = None,
+) -> dict[str, Any]:
+    """Return one summary that survives controlled browser session recycles."""
+
+    summary = cumulative_summary if cumulative_summary is not None else {}
+    if not summary:
+        summary.update({
+            "units": {},
+            "totals": {
+                "units_processed": 0,
+                "pages_processed": 0,
+                "clients_attempted": 0,
+                "clients_processed": 0,
+                "records_exported": 0,
+                "resumed_records": len(records_by_key),
+                "client_errors": 0,
+            },
+            "client_errors": [],
+        })
+
+    summary.setdefault("units", {})
+    totals = summary.setdefault("totals", {})
+    for key in _SUMMARY_TOTALS:
+        totals.setdefault(key, 0)
+    summary.setdefault("client_errors", [])
+    _prepare_source_coverage(
+        summary,
+        records_by_key=records_by_key,
+        unit_names=unit_names or [],
+        page_limit=page_limit,
+        client_limit=client_limit,
+    )
+    return summary
+
+
+def _prepare_unit_summary(
+    summary: dict[str, Any],
+    *,
+    unit_name: str,
+    resumed_records: int,
+) -> dict[str, Any]:
+    """Reuse the unit counters accumulated before a session recycle."""
+
+    units = summary.setdefault("units", {})
+    unit_summary = units.setdefault(unit_name, {})
+    for key in _UNIT_SUMMARY_TOTALS:
+        unit_summary.setdefault(key, resumed_records if key == "resumed_records" else 0)
+    # A prior session can already have traversed a unit before a recycle while
+    # processing another unit.  Count each source unit only once in totals.
+    unit_summary.setdefault("completed", False)
+    return unit_summary
 
 
 def _wait_for_clients_page(driver: WebDriver, *, timeout_seconds: int) -> None:
@@ -510,12 +813,24 @@ def write_outputs(
     records: list[ClientRegistrationRecord],
     summary: dict[str, Any],
 ) -> dict[str, str]:
+    _refresh_source_coverage(summary)
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / "cadastro_clientes_espacofacial.csv"
     xlsx_path = output_dir / "cadastro_clientes_espacofacial.xlsx"
     summary_path = output_dir / "cadastro_clientes_espacofacial_resumo.json"
     frame = _records_to_dataframe(records)
     frame.to_csv(csv_path, index=False, encoding="utf-8")
+    source_coverage = summary.get("sourceCoverage")
+    if isinstance(source_coverage, dict):
+        digest = sha256()
+        with csv_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        source_coverage["sourceArtifact"] = {
+            "version": 1,
+            "csvSha256": f"sha256:{digest.hexdigest()}",
+            "csvRowCount": int(len(frame)),
+        }
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
         frame.to_excel(writer, index=False, sheet_name="Cadastros")
     format_workbook(xlsx_path)
@@ -570,6 +885,7 @@ def run_client_registration_export(
     output_dir: Path,
     debug_dir: Path,
     timeout_seconds: int = 20,
+    cumulative_summary: dict[str, Any] | None = None,
 ) -> tuple[list[ClientRegistrationRecord], dict[str, Any]]:
     records_by_key = _load_checkpoint(output_dir)
     existing_by_name = _unique_existing_by_name(records_by_key)
@@ -578,44 +894,44 @@ def run_client_registration_export(
         resumed_per_unit[record.unidade] = resumed_per_unit.get(record.unidade, 0) + 1
     if records_by_key:
         log(f"Client registration: resuming {len(records_by_key)} checkpoint records")
-    summary: dict[str, Any] = {
-        "units": {},
-        "totals": {
-            "units_processed": 0,
-            "pages_processed": 0,
-            "clients_attempted": 0,
-            "clients_processed": 0,
-            "records_exported": 0,
-            "resumed_records": len(records_by_key),
-            "client_errors": 0,
-        },
-        "client_errors": [],
-    }
     page_limit = _max_pages()
     client_limit = _max_clients_per_unit()
+    summary = _prepare_summary(
+        records_by_key,
+        cumulative_summary,
+        unit_names=unit_names,
+        page_limit=page_limit,
+        client_limit=client_limit,
+    )
+    source_coverage = summary["sourceCoverage"]
     session_client_limit = _positive_int_env("EF_CLIENT_REGISTRATION_SESSION_MAX_CLIENTS") or 40
     session_clients_processed = 0
 
     for unit_name in unit_names:
+        if _completed_unit_can_be_skipped(summary, unit_name):
+            log(f"Client registration: preserving completed clean unit {unit_name} after session recycle")
+            continue
         log(f"Client registration: starting unit {unit_name}")
         if not login_and_select_unit(driver, base_url=base_url, creds=creds, unit_name=unit_name, timeout_seconds=timeout_seconds):
             raise RuntimeError(f"could not login/select unit {unit_name}")
         driver.get(f"{base_url.rstrip('/')}{CLIENTS_URL_PATH}")
         _wait_for_clients_page(driver, timeout_seconds=timeout_seconds)
-        unit_summary = {
-            "pages_processed": 0,
-            "clients_attempted": 0,
-            "clients_processed": 0,
-            "records_exported": 0,
-            "client_errors": 0,
-            "resumed_records": resumed_per_unit.get(unit_name, 0),
-        }
-        summary["units"][unit_name] = unit_summary
+        unit_summary = _prepare_unit_summary(
+            summary,
+            unit_name=unit_name,
+            resumed_records=resumed_per_unit.get(unit_name, 0),
+        )
+        unit_coverage = _prepare_source_coverage_unit(
+            summary,
+            unit_name=unit_name,
+            resumed_records=resumed_per_unit.get(unit_name, 0),
+        )
 
         page_number = 1
         while True:
             if page_limit is not None and page_number > page_limit:
                 log(f"Client registration: page limit reached for {unit_name} ({page_limit})")
+                _mark_source_coverage_termination(unit_coverage, "page_limit")
                 break
             clients = _visible_clients(driver)
             if not clients:
@@ -623,16 +939,22 @@ def run_client_registration_export(
             page_signature = _client_signature(clients)
             unit_summary["pages_processed"] += 1
             summary["totals"]["pages_processed"] += 1
+            unit_coverage["pagesProcessed"] += 1
+            unit_coverage["lastPageProcessed"] = page_number
+            unit_coverage["maxPageObserved"] = max(unit_coverage["maxPageObserved"], page_number)
 
             for client in clients:
                 if session_clients_processed >= session_client_limit:
+                    source_coverage["controlledSessionRecycles"] += 1
                     _flush_checkpoint(output_dir, records_by_key, summary)
                     raise SessionRecycleRequested(
-                        f"controlled session recycle after {session_clients_processed} newly exported clients"
+                        f"controlled session recycle after {session_clients_processed} newly exported clients",
+                        summary=summary,
                     )
                 existing_key = (unit_name, _normalized_client_name(client.name))
                 if existing_key in existing_by_name:
                     unit_summary["clients_skipped_checkpoint"] = unit_summary.get("clients_skipped_checkpoint", 0) + 1
+                    unit_coverage["clientsSkippedCheckpoint"] += 1
                     continue
                 if client_limit is not None and unit_summary["clients_attempted"] >= client_limit:
                     break
@@ -668,6 +990,7 @@ def run_client_registration_export(
                     unit_summary["records_exported"] += 1
                     summary["totals"]["clients_processed"] += 1
                     summary["totals"]["records_exported"] += 1
+                    unit_coverage["recordsExportedThisRun"] += 1
                     session_clients_processed += 1
                     log(f"Client registration: exported {record.cliente} ({client_id or 'sem_id'})")
                 except Exception as exc:
@@ -675,6 +998,7 @@ def run_client_registration_export(
                         summary, unit_summary, unidade=unit_name, cliente=client.name, cliente_id=client_id,
                         pagina_lista=page_number, etapa=stage, erro=str(exc), url_cliente=client_url,
                     )
+                    unit_coverage["clientErrors"] += 1
                     log(f"ERROR: Client registration: {unit_name} {client.name} stage {stage}: {exc}")
                     capture_artifacts(
                         driver,
@@ -694,15 +1018,21 @@ def run_client_registration_export(
 
             _flush_checkpoint(output_dir, records_by_key, summary)
             if client_limit is not None and unit_summary["clients_attempted"] >= client_limit:
+                _mark_source_coverage_termination(unit_coverage, "client_limit")
                 break
             if not _click_next_page(driver, previous_signature=page_signature, timeout_seconds=timeout_seconds):
+                _mark_source_coverage_termination(unit_coverage, "pagination_exhausted")
                 break
             page_number += 1
             time.sleep(0.5)
 
-        summary["totals"]["units_processed"] += 1
+        if not unit_summary["completed"]:
+            summary["totals"]["units_processed"] += 1
+            unit_summary["completed"] = True
         _flush_checkpoint(output_dir, records_by_key, summary)
 
+    source_coverage["executionState"] = "completed"
+    source_coverage["finalized"] = True
     outputs = _flush_checkpoint(output_dir, records_by_key, summary)
     summary["outputs"] = outputs
     return list(records_by_key.values()), summary
@@ -722,6 +1052,9 @@ def run_with_runtime(
 
     max_session_retries = _positive_int_env("EF_CLIENT_REGISTRATION_MAX_SESSION_RETRIES") or 8
     session_attempt = 0
+    # Keep one mutable summary object so an unhandled browser failure can leave
+    # a checkpoint explicitly marked incomplete instead of looking final.
+    cumulative_summary: dict[str, Any] = {}
     while True:
         driver = create_driver(headless=headless, user_data_dir=user_data_dir)
         try:
@@ -733,16 +1066,33 @@ def run_with_runtime(
                 output_dir=output_dir,
                 debug_dir=debug_dir,
                 timeout_seconds=timeout_seconds,
+                cumulative_summary=cumulative_summary,
             )
         except SessionRecycleRequested as exc:
+            cumulative_summary = exc.summary
             log(f"Client registration: {exc}; restarting from checkpoint")
             time.sleep(1)
         except Exception as exc:
             message = str(exc).lower()
             if "tab crashed" not in message or session_attempt >= max_session_retries:
+                _mark_source_coverage_failed(cumulative_summary)
+                if cumulative_summary:
+                    try:
+                        _flush_checkpoint(output_dir, _load_checkpoint(output_dir), cumulative_summary)
+                    except Exception:
+                        pass
                 capture_artifacts(driver, output_dir=debug_dir, label="error_client_registration_export")
                 raise
             session_attempt += 1
+            coverage = cumulative_summary.get("sourceCoverage")
+            if isinstance(coverage, dict):
+                coverage["crashSessionRetries"] = coverage.get("crashSessionRetries", 0) + 1
+                coverage["executionState"] = "retrying"
+                _refresh_source_coverage(cumulative_summary)
+                try:
+                    _flush_checkpoint(output_dir, _load_checkpoint(output_dir), cumulative_summary)
+                except Exception:
+                    pass
             log(
                 "WARNING: Client registration: Chrome tab crashed; "
                 f"restarting session ({session_attempt}/{max_session_retries}) from checkpoint"

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('insumos', () => {
-  test('edit modal shows categoria/marca options and surfaces policy validation errors', async ({ page }) => {
+  test('product row opens contextual operation with locked product identity and history', async ({ page }) => {
     await page.route('**/api/insumos/**', async (route) => {
       const reqUrl = new URL(route.request().url())
       const path = reqUrl.pathname
@@ -75,11 +75,6 @@ test.describe('insumos', () => {
         return
       }
 
-      if (route.request().method() === 'PUT' && path.includes('/api/insumos/insumos/')) {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) })
-        return
-      }
-
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [] }) })
     })
 
@@ -97,29 +92,23 @@ test.describe('insumos', () => {
     await insumosNav.click()
 
     await page.getByRole('button', { name: 'Abrir lista de insumos' }).click()
-    await page.getByRole('button', { name: 'Editar' }).first().click()
-    await expect(page.getByText('Editar insumo')).toBeVisible()
+    await expect(page.getByTestId('insumos-product-row-r-001')).toBeVisible()
 
-    const categoriaInput = page.getByTestId('insumos-edit-categoria')
-    const marcaInput = page.getByTestId('insumos-edit-marca')
-    await expect(categoriaInput).toBeVisible()
-    await expect(marcaInput).toBeVisible()
+    const operations = ['Entrada', 'Saída', 'Ajuste', 'Transferência']
+    for (const operation of operations) {
+      await page.getByRole('button', { name: `${operation} de Lift Plus` }).click()
+      const context = page.getByTestId('insumos-operation-context')
+      await expect(context).toBeVisible()
+      await expect(context).toContainText('Lift Plus')
+      await expect(context).toContainText('7898615311337')
+      await expect(context).toContainText('r-001')
+      await expect(context).toContainText('Saldo atual')
+      await expect(page.getByText('Contexto do produto · campos travados')).toBeVisible()
+      await page.getByRole('button', { name: 'Cancelar' }).last().click()
+    }
 
-    await categoriaInput.focus()
-    await expect(page.getByRole('button', { name: 'Preenchedor' })).toBeVisible()
-    await page.getByRole('button', { name: 'Preenchedor' }).click()
-    await expect(categoriaInput).toHaveValue('Preenchedor')
-
-    await marcaInput.focus()
-    await expect(page.getByRole('button', { name: 'Rennova' })).toBeVisible()
-    await page.getByRole('button', { name: 'Rennova' }).click()
-    await expect(marcaInput).toHaveValue('Rennova')
-
-    // Trip policy validation: require expiry but leave date empty.
-    await page.getByText('Validade obrigatória').click()
-    await page.getByRole('button', { name: 'Salvar' }).click()
-
-    await expect(page.getByText(/exige Data de validade/i)).toBeVisible()
-    await expect(page.locator('input[aria-label="Validade"]')).toHaveClass(/border-red-500/)
+    await page.getByRole('button', { name: 'Histórico de Lift Plus' }).click()
+    await expect(page.getByText('Histórico contextual')).toBeVisible()
+    await expect(page.getByText(/registro/i).last()).toBeVisible()
   })
 })
