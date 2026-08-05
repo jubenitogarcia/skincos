@@ -1,10 +1,11 @@
 import { createHash } from 'crypto'
 import { createPgPool, withPgTransaction } from './pg.js'
+import { lockContactPhone, normalizeContactPhoneKey } from '../../contactPhoneLock.js'
 import { harmoniaMigrationStatements, defaultUnitsSeedRows } from './migrate.js'
 import { defaultWorkingHoursForUnitSlug } from '../util/workingHours.js'
 
 function onlyDigits(s) {
-    return String(s || '').replace(/\\D+/g, '')
+    return normalizeContactPhoneKey(s)
 }
 
 export function createHarmoniaStore({ databaseUrl }) {
@@ -146,6 +147,13 @@ export function createHarmoniaStore({ databaseUrl }) {
     }
 
     async function markOptOut(tx, contactId) {
+        const contact = await tx.query(
+            `select phone_raw from harmonia.contacts where id=$1 limit 1`,
+            [contactId],
+        )
+        const phoneRaw = contact.rows?.[0]?.phone_raw
+        if (!phoneRaw) return null
+        await lockContactPhone(tx, phoneRaw)
         const r = await tx.query(
             `update harmonia.contacts set opted_out_at=coalesce(opted_out_at, now()), updated_at=now()
              where id=$1 returning *`,
@@ -514,6 +522,7 @@ export function createHarmoniaStore({ databaseUrl }) {
             return withPgTransaction(pool, fn)
         },
         lockForKey,
+        lockContactPhone,
         getOrCreateUnit,
         upsertContact,
         getOrCreateConversation,

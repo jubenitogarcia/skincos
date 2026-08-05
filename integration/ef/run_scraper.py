@@ -1547,7 +1547,13 @@ def _run_client_registration(headless: bool, output_dir: Path, persist_session: 
             user_data_dir=cfg.chrome_user_data_dir,
             timeout_seconds=cfg.timeout_seconds,
         )
-        details = {"records": len(records), "totals": summary.get("totals", {})}
+        details = {
+            "records": len(records),
+            "totals": summary.get("totals", {}),
+            # Deliberately contains only aggregate provenance/status; no
+            # client fields are duplicated into the runner sidecar.
+            "sourceCoverage": summary.get("sourceCoverage", {}),
+        }
         _write_run_summary(
             mode="client_registration",
             unit_name="",

@@ -75,3 +75,85 @@ test('builds one global identity only from confirmed cross-source links', () => 
         sourceTypes: ['app_registration', 'attendance_client', 'caixa_customer'],
     }])
 })
+
+test('keeps app, attendance, Caixa and lead single-source components when links are unconfirmed', () => {
+    const components = buildConfirmedGlobalIdentityComponents({
+        registrations: [{ id: 'app-1', name: 'Ana App' }],
+        leadProfiles: [{ id: 'lead-1', name: 'Lia Lead' }],
+        canonicalClients: [{ id: 'attendance-1', name: 'Bia Atendimento' }],
+        caixaCustomers: [{ id: 'cash-1', name: 'Carla Caixa' }],
+        registrationCaixaLinks: [{ registrationId: 'app-1', caixaCustomerId: 'cash-1', status: 'suggested' }],
+        registrationAttendanceLinks: [{ registrationId: 'app-1', attendanceClientId: 'attendance-1', status: 'ambiguous' }],
+        leadProfileRegistrationLinks: [{ profileId: 'lead-1', registrationId: 'app-1', status: 'suggested' }],
+        leadProfileCaixaLinks: [{ profileId: 'lead-1', caixaCustomerId: 'cash-1', status: 'ambiguous' }],
+    })
+    assert.deepEqual(components, [
+        {
+            componentKey: 'app_registration:app-1',
+            preferredName: 'Ana App',
+            members: [{ sourceType: 'app_registration', sourceId: 'app-1', name: 'Ana App' }],
+            sourceTypes: ['app_registration'],
+        },
+        {
+            componentKey: 'lead_profile:lead-1',
+            preferredName: 'Lia Lead',
+            members: [{ sourceType: 'lead_profile', sourceId: 'lead-1', name: 'Lia Lead' }],
+            sourceTypes: ['lead_profile'],
+        },
+        {
+            componentKey: 'attendance_client:attendance-1',
+            preferredName: 'Bia Atendimento',
+            members: [{ sourceType: 'attendance_client', sourceId: 'attendance-1', name: 'Bia Atendimento' }],
+            sourceTypes: ['attendance_client'],
+        },
+        {
+            componentKey: 'caixa_customer:cash-1',
+            preferredName: 'Carla Caixa',
+            members: [{ sourceType: 'caixa_customer', sourceId: 'cash-1', name: 'Carla Caixa' }],
+            sourceTypes: ['caixa_customer'],
+        },
+    ])
+})
+
+test('preserves a confirmed lead-to-app link in a registration projection that includes leads', () => {
+    const components = buildConfirmedGlobalIdentityComponents({
+        registrations: [{ id: 'app-42', name: 'Cliente no App' }],
+        leadProfiles: [{ id: 'lead-42', name: 'Lead de Origem' }],
+        leadProfileRegistrationLinks: [{ profileId: 'lead-42', registrationId: 'app-42', status: 'confirmed' }],
+    })
+
+    assert.deepEqual(components, [{
+        componentKey: 'app_registration:app-42|lead_profile:lead-42',
+        preferredName: 'Cliente no App',
+        members: [
+            { sourceType: 'app_registration', sourceId: 'app-42', name: 'Cliente no App' },
+            { sourceType: 'lead_profile', sourceId: 'lead-42', name: 'Lead de Origem' },
+        ],
+        sourceTypes: ['app_registration', 'lead_profile'],
+    }])
+})
+
+test('keeps the normalized canonical target in a confirmed registration projection', () => {
+    // Both reconcilers project coalesce(merged_into_id, id) as the canonical
+    // member id. Components must retain that resolved target, never recreate
+    // a membership for the retired source client.
+    const components = buildConfirmedGlobalIdentityComponents({
+        registrations: [{ id: 'app-42', name: 'Cliente no App' }],
+        canonicalClients: [{ id: 'canonical-target', name: 'Cliente Canônico' }],
+        registrationAttendanceLinks: [{
+            registrationId: 'app-42',
+            attendanceClientId: 'canonical-target',
+            status: 'confirmed',
+        }],
+    })
+
+    assert.deepEqual(components, [{
+        componentKey: 'app_registration:app-42|attendance_client:canonical-target',
+        preferredName: 'Cliente Canônico',
+        members: [
+            { sourceType: 'app_registration', sourceId: 'app-42', name: 'Cliente no App' },
+            { sourceType: 'attendance_client', sourceId: 'canonical-target', name: 'Cliente Canônico' },
+        ],
+        sourceTypes: ['app_registration', 'attendance_client'],
+    }])
+})

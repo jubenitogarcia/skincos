@@ -1,0 +1,159 @@
+name: Prepare Atendimento availability transition
+run-name: Atendimento availability ${{ inputs.state }} ${{ inputs.target }} ${{ inputs.release_sha }}
+
+# This workflow is an immutable, main-custodied control-plane preflight only.
+# It does not write CRM_MODULE_CONTROL_FILE until a dedicated native executor
+# exists. In particular, it never falls back to crm.service or evaluates an
+# environment-provided command string.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Immutable promotion target
+        required: true
+        default: preview
+        type: choice
+        options: [preview, staging, production]
+      release_sha:
+        description: Full immutable main SHA associated with this transition
+        required: true
+        type: string
+      state:
+        description: Intended isolated Atendimento availability state; no remote state is written yet
+        required: true
+        default: disabled
+        type: choice
+        options: [disabled, maintenance, active]
+      preview_run_id:
+        description: Successful availability preview evidence required for staging
+        required: false
+        type: string
+      staging_run_id:
+        description: Successful availability staging evidence required for production
+        required: false
+        type: string
+
+concurrency:
+  group: atendimento-availability-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  custody:
+    name: Require main-custodied availability control
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse non-main or replayed availability control
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+          WORKFLOW_CONTROL_SHA: ${{ github.workflow_sha }}
+          REQUESTED_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DISPATCH_REF" == "refs/heads/main" ]] || { echo 'Atendimento availability control may only be dispatched from main.'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]] || { echo 'Atendimento availability control cannot be replayed; dispatch a new run.'; exit 1; }
+          [[ "$WORKFLOW_CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Workflow control SHA must be immutable.'; exit 1; }
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full 40-character SHA.'; exit 1; }
+
+  promotion:
+    needs: custody
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: atendimento-availability
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+      emit_preview_evidence: false
+
+  preview:
+    needs: promotion
+    if: ${{ inputs.target == 'preview' }}
+    runs-on: ubuntu-latest
+    environment: preview
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted main availability validator
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 1
+          path: control
+      - name: Checkout exact immutable Atendimento source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+          path: source
+      - name: Validate preview-only availability transition
+        env:
+          CONTRACT_KIND: availability
+          CONTRACT_TARGET: preview
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          ATENDIMENTO_AVAILABILITY_STATE: ${{ inputs.state }}
+        run: |
+          set -euo pipefail
+          node control/.github/scripts/atendimento-deployment-contract.mjs \
+            --output "$RUNNER_TEMP/atendimento-availability-contract/preflight.json"
+      - name: Write preview availability evidence
+        env:
+          PROMOTION_UNIT: atendimento-availability
+          PROMOTION_TARGET: preview
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          PROMOTION_SOURCE_TREE="$(git -C source rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" \
+            node control/.github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/atendimento-availability-evidence/promotion-evidence.json"
+      - name: Upload immutable availability preview evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-atendimento-availability
+          path: ${{ runner.temp }}/atendimento-availability-evidence/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error
+
+  configuration:
+    needs: promotion
+    if: ${{ inputs.target != 'preview' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted main availability validator
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 1
+          path: control
+      - name: Attest disabled-by-default availability contract
+        env:
+          CONTRACT_KIND: availability
+          CONTRACT_TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          ATENDIMENTO_AVAILABILITY_STATE: ${{ inputs.state }}
+          ENABLE_ATENDIMENTO_DEPLOY: ${{ vars.ENABLE_ATENDIMENTO_DEPLOY }}
+          CRM_MODULE_CONTROL_FILE: ${{ vars.CRM_MODULE_CONTROL_FILE }}
+          CRM_ATENDIMENTO_DEPLOY_COMMAND: ${{ vars.CRM_ATENDIMENTO_DEPLOY_COMMAND }}
+          CRM_ATENDIMENTO_ROLLBACK_COMMAND: ${{ vars.CRM_ATENDIMENTO_ROLLBACK_COMMAND }}
+          CRM_ATENDIMENTO_CONTROL_COMMAND: ${{ vars.CRM_ATENDIMENTO_CONTROL_COMMAND }}
+          CRM_ATENDIMENTO_HEALTH_URL: ${{ vars.CRM_ATENDIMENTO_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          node control/.github/scripts/atendimento-deployment-contract.mjs \
+            --output "$RUNNER_TEMP/atendimento-availability-contract/preflight.json"
+      - name: Upload sanitized Atendimento availability preflight
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: atendimento-availability-preflight-${{ inputs.target }}-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/atendimento-availability-contract/preflight.json
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Stop before remote control execution
+        run: |
+          echo '::error::No trusted native Atendimento executor is configured. This contract workflow intentionally does not execute CRM_ATENDIMENTO_CONTROL_COMMAND or restart crm.service.'
+          exit 1

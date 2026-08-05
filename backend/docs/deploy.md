@@ -10,7 +10,7 @@
 
 O CRM API ativo roda como `crm.service` no filesystem Linux, a partir de `/opt/skincos/current/source`. O release é promovido somente pelo procedimento controlado de runtime em `docs/runbooks/lifecycle-runtime-cutover.md`, com backup e rollback prévios.
 
-Não existe workflow GitHub de deploy do CRM API. A antiga via SSH foi removida para evitar um segundo publisher; a promoção nativa é a fonte de verdade neste host.
+Não existe workflow GitHub que publique ou reinicie o CRM API. A antiga via SSH foi removida para evitar um segundo publisher; a promoção nativa é a fonte de verdade neste host. Os workflows `deploy-atendimento.yml` e `atendimento-availability.yml` são apenas preflights main-custodiados para a futura unidade isolada: não executam comandos remotos, não alteram disponibilidade e falham fechados até existir um executor nativo allowlisted.
 
 Não existe modo de deploy ou restart por HTTP. O CRM não pode executar `git checkout`, `git reset` ou reiniciar serviços a partir de uma requisição de aplicação.
 

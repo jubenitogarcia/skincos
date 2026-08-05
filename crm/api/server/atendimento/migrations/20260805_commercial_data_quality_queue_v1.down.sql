@@ -1,0 +1,2 @@
+-- Non-destructive rollback. Do not delete the queue or its append-only audit
+-- evidence. The guarded runner only records the migration as rolled back.
