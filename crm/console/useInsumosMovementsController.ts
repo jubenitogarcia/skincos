@@ -1,33 +1,15 @@
 import React from 'react'
 import { toast } from 'sonner'
 
-import { combineLocalDateTimeToIso, dateInputToIso, normalizeMovimentacaoTipo } from '@/insumosShared'
+import { dateInputToIso } from '@/insumosShared'
 import type { Movimentacao } from '@/insumosTypes'
 
 type ApiJsonFn = <T>(path: string, opts?: { signal?: AbortSignal }) => Promise<T>
-type MutateJsonFn = <T>(
-  path: string,
-  opts: {
-    method?: string
-    body?: unknown
-    queueLabel?: string
-  }
-) => Promise<T | { queued: true }>
-
 type MovementLoadError = { message: string; status: number; code?: string } | null
 
 type UseInsumosMovementsControllerArgs = {
   apiJson: ApiJsonFn
   canUseApi: boolean
-  editMovData: string
-  editMovHora: string
-  editMovMotivo: string
-  editMovNovoEstoque: string
-  editMovObservacoes: string
-  editMovProduto: string
-  editMovQuantidade: string
-  editMovTarget: Movimentacao | null
-  editMovUnidade: string
   isAuthed: boolean
   movAte: string
   movDe: string
@@ -35,14 +17,7 @@ type UseInsumosMovementsControllerArgs = {
   movFilterMarca: string
   movListContainerRef: React.RefObject<HTMLDivElement | null>
   movTipo: 'TODOS' | 'ENTRADA' | 'SAÍDA' | 'AJUSTE'
-  mutateJson: MutateJsonFn
-  refreshInsumos: () => Promise<void>
-  schedulePostMutationRefresh: (opts?: { overview?: boolean; insights?: boolean }) => void
   selectedCodigoBarras: string
-  setEditMovDeleting: React.Dispatch<React.SetStateAction<boolean>>
-  setEditMovOpen: React.Dispatch<React.SetStateAction<boolean>>
-  setEditMovSaving: React.Dispatch<React.SetStateAction<boolean>>
-  setEditMovTarget: React.Dispatch<React.SetStateAction<Movimentacao | null>>
   setMovLoaded: React.Dispatch<React.SetStateAction<boolean>>
   setMovLoading: React.Dispatch<React.SetStateAction<boolean>>
   setMovLoadError: React.Dispatch<React.SetStateAction<MovementLoadError>>
@@ -78,15 +53,6 @@ export function buildMovimentacoesQuery(args: {
 export function useInsumosMovementsController({
   apiJson,
   canUseApi,
-  editMovData,
-  editMovHora,
-  editMovMotivo,
-  editMovNovoEstoque,
-  editMovObservacoes,
-  editMovProduto,
-  editMovQuantidade,
-  editMovTarget,
-  editMovUnidade,
   isAuthed,
   movAte,
   movDe,
@@ -94,14 +60,7 @@ export function useInsumosMovementsController({
   movFilterMarca,
   movListContainerRef,
   movTipo,
-  mutateJson,
-  refreshInsumos,
-  schedulePostMutationRefresh,
   selectedCodigoBarras,
-  setEditMovDeleting,
-  setEditMovOpen,
-  setEditMovSaving,
-  setEditMovTarget,
   setMovLoaded,
   setMovLoading,
   setMovLoadError,
@@ -189,165 +148,7 @@ export function useInsumosMovementsController({
     return () => window.clearTimeout(timeoutId)
   }, [canUseApi, isAuthed, loadMovimentacoes, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
 
-  const saveMovementEdit = React.useCallback(async () => {
-    const target = editMovTarget
-    const movementId = String(target?.id || '').trim()
-    if (!movementId) {
-      toast.error('Movimentação inválida.')
-      return
-    }
-    if (!canUseApi || !isAuthed) return
-
-    const tipo = normalizeMovimentacaoTipo(target?.tipo)
-    const produto = editMovProduto.trim()
-    if (!produto) {
-      toast.error('Informe o produto.')
-      return
-    }
-    const dataHora = combineLocalDateTimeToIso(editMovData, editMovHora)
-    if (!dataHora) {
-      toast.error('Informe uma data e hora válidas.')
-      return
-    }
-
-    const body: Record<string, unknown> = {
-      produto,
-      dataHora,
-      observacoes: editMovObservacoes.trim(),
-    }
-
-    if (!String(target?.transferId || '').trim()) {
-      const nextUnidade = String(editMovUnidade || '').trim()
-      if (!nextUnidade) {
-        toast.error('Informe a unidade.')
-        return
-      }
-      body.unidade = nextUnidade
-    }
-
-    if (String(target?.transferId || '').trim()) {
-      const quantidade = parseInt(editMovQuantidade, 10)
-      if (!Number.isFinite(quantidade) || quantidade < 1) {
-        toast.error('Informe uma quantidade válida.')
-        return
-      }
-      body.quantidade = quantidade
-    } else if (tipo === 'AJUSTE') {
-      const estoqueNovo = parseInt(editMovNovoEstoque, 10)
-      if (!Number.isFinite(estoqueNovo) || estoqueNovo < 0) {
-        toast.error('Informe o novo estoque.')
-        return
-      }
-      const motivo = editMovMotivo.trim()
-      if (!motivo) {
-        toast.error('Informe o motivo do ajuste.')
-        return
-      }
-      body.estoqueNovo = estoqueNovo
-      body.motivo = motivo
-    } else {
-      const quantidade = parseInt(editMovQuantidade, 10)
-      if (!Number.isFinite(quantidade) || quantidade < 1) {
-        toast.error('Informe uma quantidade válida.')
-        return
-      }
-      body.quantidade = quantidade
-    }
-
-    setEditMovSaving(true)
-    try {
-      await mutateJson<{ success?: boolean }>(
-        `/movimentacoes/${encodeURIComponent(movementId)}?unidade=${encodeURIComponent(
-          String(target?.unidade || unidade || '').trim() || unidade
-        )}`,
-        {
-          method: 'PUT',
-          body,
-          queueLabel: 'Edição de movimentação',
-        }
-      )
-      toast.success('Lançamento atualizado.')
-      setEditMovOpen(false)
-      setEditMovTarget(null)
-      await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
-      schedulePostMutationRefresh({ overview: true, insights: true })
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error))
-    } finally {
-      setEditMovSaving(false)
-    }
-  }, [
-    canUseApi,
-    editMovData,
-    editMovHora,
-    editMovMotivo,
-    editMovNovoEstoque,
-    editMovObservacoes,
-    editMovProduto,
-    editMovQuantidade,
-    editMovTarget,
-    editMovUnidade,
-    isAuthed,
-    loadMovimentacoes,
-    mutateJson,
-    refreshInsumos,
-    schedulePostMutationRefresh,
-    setEditMovOpen,
-    setEditMovSaving,
-    setEditMovTarget,
-    unidade,
-  ])
-
-  const deleteMovementEdit = React.useCallback(async () => {
-    const target = editMovTarget
-    const movementId = String(target?.id || '').trim()
-    if (!movementId) {
-      toast.error('Movimentação inválida.')
-      return
-    }
-    if (!canUseApi || !isAuthed) return
-
-    const confirmed = window.confirm('Excluir este lançamento? Essa ação recalcula o estoque do insumo.')
-    if (!confirmed) return
-
-    setEditMovDeleting(true)
-    try {
-      await mutateJson<{ success?: boolean }>(
-        `/movimentacoes/${encodeURIComponent(movementId)}?unidade=${encodeURIComponent(
-          String(target?.unidade || unidade || '').trim() || unidade
-        )}`,
-        {
-          method: 'DELETE',
-          queueLabel: 'Exclusão de movimentação',
-        }
-      )
-      toast.success('Lançamento excluído.')
-      setEditMovOpen(false)
-      setEditMovTarget(null)
-      await Promise.allSettled([refreshInsumos(), loadMovimentacoes()])
-      schedulePostMutationRefresh({ overview: true, insights: true })
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error))
-    } finally {
-      setEditMovDeleting(false)
-    }
-  }, [
-    canUseApi,
-    editMovTarget,
-    isAuthed,
-    loadMovimentacoes,
-    mutateJson,
-    refreshInsumos,
-    schedulePostMutationRefresh,
-    setEditMovDeleting,
-    setEditMovOpen,
-    setEditMovTarget,
-    unidade,
-  ])
-
   return {
-    deleteMovementEdit,
     loadMovimentacoes,
-    saveMovementEdit,
   }
 }
