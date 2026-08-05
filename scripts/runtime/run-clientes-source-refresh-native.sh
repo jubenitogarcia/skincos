@@ -62,7 +62,12 @@ if [[ "$ACTION" == '--apply' ]]; then
   }
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   checkpoint="$BACKUP_ROOT/clientes-source-refresh-${TARGET}-${stamp}.dump"
-  pg_dump --format=custom --no-owner --file="$checkpoint" "$DATABASE_URL"
+  # libpq does not understand the application-only `uselibpqcompat` query
+  # parameter used by the Node pg adapter.  Remove only that parameter from the
+  # private backup connection string; DATABASE_URL itself remains unchanged
+  # for the application runner.
+  backup_database_url="$(printf '%s' "$DATABASE_URL" | sed -E 's/([?&])uselibpqcompat=[^&]*&?/\1/g; s/[?&]$//')"
+  pg_dump --format=custom --no-owner --file="$checkpoint" "$backup_database_url"
   chmod 0640 "$checkpoint"
   echo "checkpoint=$checkpoint sha256=$(sha256sum "$checkpoint" | awk '{print $1}')"
 fi
