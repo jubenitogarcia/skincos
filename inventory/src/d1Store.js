@@ -1524,7 +1524,7 @@ export async function d1ArchiveInsumo({ env, registro }) {
 
   const pending = await env.DB.prepare(
     `SELECT 1
-     FROM insumos_movements
+     FROM insumos_transfers
      WHERE registro_insumo = ?
        AND status = 'PENDING_RECEIPT'
      LIMIT 1`
@@ -1874,9 +1874,9 @@ export async function d1Transfer({ env, body, actor, unidade }) {
   const estoqueAnteriorDestino = toInt(beforeDest?.quantidade, 0);
   const ts = nowIso();
   const transferId = crypto.randomUUID();
+  const dispatchMovementId = crypto.randomUUID();
 
   const obsSaida = `Transferência para ${toScope.unit}${observacoes ? ` | ${observacoes}` : ''}`;
-  const obsEntrada = `Transferência de ${fromScope.unit}${observacoes ? ` | ${observacoes}` : ''}`;
   const actorId = actorName(actor);
 
   const stmts = [];
@@ -1889,16 +1889,33 @@ export async function d1Transfer({ env, body, actor, unidade }) {
   );
   stmts.push(
     env.DB.prepare(
-      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
-       SELECT ?, ?, ?, ?
+      `INSERT INTO insumos_transfers (
+        id, registro_insumo, codigo_barras, lote, data_validade, produto,
+        quantidade, unidade_origem, unidade_destino, status, dispatched_at,
+        dispatched_by, dispatch_movement_id
+      )
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_RECEIPT', ?, ?, ?
        WHERE EXISTS (
          SELECT 1 FROM insumos_stocks
          WHERE registro = ? AND unidade = ? AND updated_at = ?
-       )
-       ON CONFLICT(registro, unidade) DO UPDATE SET
-         quantidade = insumos_stocks.quantidade + excluded.quantidade,
-         updated_at = excluded.updated_at`
-    ).bind(reg, toScope.unit, quantidade, ts, reg, fromScope.unit, ts)
+       )`
+    ).bind(
+      transferId,
+      reg,
+      codigo,
+      String(item.lote || ''),
+      String(item.data_validade || ''),
+      String(item.produto || ''),
+      quantidade,
+      fromScope.unit,
+      toScope.unit,
+      ts,
+      actorId,
+      dispatchMovementId,
+      reg,
+      fromScope.unit,
+      ts,
+    )
   );
 
   const produto = String(item.produto || '');
@@ -1911,11 +1928,15 @@ export async function d1Transfer({ env, body, actor, unidade }) {
         id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto,
         quantidade, estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia, usuario, observacoes, status
       )
-      SELECT ?, ?, 'SAÍDA', ?, ?, ?, ?, ?, ?, quantidade + ?, quantidade, ?, ?, ?, ?, ?, ?, 'COMPLETED'
+      SELECT ?, ?, 'SAÍDA', ?, ?, ?, ?, ?, ?, quantidade + ?, quantidade, ?, ?, ?, ?, ?, ?, 'PENDING_RECEIPT'
       FROM insumos_stocks
-      WHERE registro = ? AND unidade = ? AND updated_at = ?`
+      WHERE registro = ? AND unidade = ? AND updated_at = ?
+        AND EXISTS (
+          SELECT 1 FROM insumos_transfers
+          WHERE id = ? AND status = 'PENDING_RECEIPT' AND dispatched_at = ?
+        )`
     ).bind(
-      crypto.randomUUID(),
+      dispatchMovementId,
       ts,
       codigo,
       reg,
@@ -1932,49 +1953,14 @@ export async function d1Transfer({ env, body, actor, unidade }) {
       obsSaida,
       reg,
       fromScope.unit,
-      ts
-    )
-  );
-  stmts.push(
-    env.DB.prepare(
-      `INSERT INTO insumos_movements (
-        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto,
-        quantidade, estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia, usuario, observacoes, status
-      )
-      SELECT ?, ?, 'ENTRADA', ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, ?, ?, 'COMPLETED'
-      FROM insumos_stocks
-      WHERE registro = ? AND unidade = ? AND updated_at = ?
-        AND EXISTS (
-          SELECT 1 FROM insumos_stocks
-          WHERE registro = ? AND unidade = ? AND updated_at = ?
-        )`
-    ).bind(
-      crypto.randomUUID(),
       ts,
-      codigo,
-      reg,
-      lote,
-      dataValidade,
-      produto,
-      quantidade,
-      quantidade,
-      toScope.unit,
-      fromScope.unit,
-      toScope.unit,
       transferId,
-      actorId,
-      obsEntrada,
-      reg,
-      toScope.unit,
-      ts,
-      reg,
-      fromScope.unit,
       ts
     )
   );
 
   const results = await env.DB.batch(stmts);
-  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1 || resultChanges(results?.[3]) !== 1) {
+  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1) {
     const current = await env.DB.prepare(
       `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
     ).bind(reg, fromScope.unit).first();
@@ -1988,6 +1974,11 @@ export async function d1Transfer({ env, body, actor, unidade }) {
   return {
     ok: true,
     transferId,
+    dispatchMovementId,
+    status: 'PENDING_RECEIPT',
+    pendingReceipt: true,
+    unidadeOrigem: fromScope.unit,
+    unidadeDestino: toScope.unit,
     estoqueAnteriorOrigem,
     estoqueNovoOrigem,
     estoqueAnteriorDestino,
@@ -1995,6 +1986,250 @@ export async function d1Transfer({ env, body, actor, unidade }) {
     quebraEstoqueOrigem: false,
     deficitOrigem: 0,
     registro: reg
+  };
+}
+
+export async function d1ReceberTransferencia({ env, id, actor, unidade, observacoes }) {
+  const transferId = String(id || '').trim();
+  if (!transferId) return { ok: false, status: 400, code: 'TRANSFER_INVALID', error: 'Transferência inválida' };
+
+  const transfer = await env.DB.prepare(
+    `SELECT id, registro_insumo, codigo_barras, lote, data_validade, produto,
+            quantidade, unidade_origem, unidade_destino, status, dispatched_at,
+            dispatched_by, received_at, received_by, dispatch_movement_id,
+            receipt_movement_id
+     FROM insumos_transfers
+     WHERE id = ?
+     LIMIT 1`
+  ).bind(transferId).first();
+  if (!transfer) return { ok: false, status: 404, code: 'TRANSFER_NOT_FOUND', error: 'Transferência não encontrada' };
+
+  const destinationScope = assertActorUnitScope(actor, transfer.unidade_destino);
+  if (!destinationScope.ok) return destinationScope;
+  if (unidade && normalizeUnitScope(unidade) !== destinationScope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_DESTINATION_MISMATCH', error: 'A unidade da rota deve ser o destino da transferência' };
+  }
+  const status = String(transfer.status || '').toUpperCase();
+  if (status === 'RECEIVED') return { ok: false, status: 409, code: 'TRANSFER_ALREADY_RECEIVED', error: 'A transferência já foi recebida', receivedAt: transfer.received_at || null };
+  if (status === 'CANCELLED') return { ok: false, status: 409, code: 'TRANSFER_CANCELLED', error: 'A transferência foi cancelada' };
+
+  const item = await env.DB.prepare(
+    `SELECT archived_at FROM insumos_items WHERE registro = ? LIMIT 1`
+  ).bind(transfer.registro_insumo).first();
+  if (String(item?.archived_at || '').trim()) {
+    return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não aceita recebimento' };
+  }
+
+  const quantity = Math.max(1, toInt(transfer.quantidade, 0));
+  if (!quantity) return { ok: false, status: 409, code: 'TRANSFER_INVALID', error: 'Quantidade de transferência inválida' };
+  const ts = nowIso();
+  const actorId = actorName(actor);
+  const receiptMovementId = crypto.randomUUID();
+  const note = String(observacoes || '').trim();
+  const receiptNote = `Recebimento de transferência de ${normalizeUnitScope(transfer.unidade_origem)}${note ? ` | ${note}` : ''}`;
+
+  const statements = [
+    env.DB.prepare(
+      `UPDATE insumos_transfers
+       SET status = 'RECEIVED', received_at = ?, received_by = ?, receipt_movement_id = ?
+       WHERE id = ? AND status = 'PENDING_RECEIPT' AND unidade_destino = ?`
+    ).bind(ts, actorId, receiptMovementId, transferId, destinationScope.unit),
+    env.DB.prepare(
+      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+       SELECT ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM insumos_transfers
+         WHERE id = ? AND status = 'RECEIVED' AND received_at = ?
+       )
+       ON CONFLICT(registro, unidade) DO UPDATE SET
+         quantidade = insumos_stocks.quantidade + excluded.quantidade,
+         updated_at = excluded.updated_at`
+    ).bind(transfer.registro_insumo, destinationScope.unit, quantity, ts, transferId, ts),
+    env.DB.prepare(
+      `INSERT INTO insumos_movements (
+        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+        produto, quantidade, estoque_anterior, estoque_novo, unidade,
+        unidade_origem, unidade_destino, id_transferencia, usuario, observacoes, status
+      )
+      SELECT ?, ?, 'ENTRADA', ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, ?, ?, 'COMPLETED'
+      FROM insumos_stocks
+      WHERE registro = ? AND unidade = ? AND updated_at = ?
+        AND EXISTS (
+          SELECT 1 FROM insumos_transfers
+          WHERE id = ? AND status = 'RECEIVED' AND received_at = ?
+        )`
+    ).bind(
+      receiptMovementId,
+      ts,
+      transfer.codigo_barras || '',
+      transfer.registro_insumo || '',
+      transfer.lote || '',
+      transfer.data_validade || '',
+      transfer.produto || '',
+      quantity,
+      quantity,
+      destinationScope.unit,
+      transfer.unidade_origem || '',
+      transfer.unidade_destino || '',
+      transferId,
+      actorId,
+      receiptNote,
+      transfer.registro_insumo,
+      destinationScope.unit,
+      ts,
+      transferId,
+      ts,
+    ),
+  ];
+
+  const results = await env.DB.batch(statements);
+  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1) {
+    const current = await env.DB.prepare(
+      `SELECT status, received_at FROM insumos_transfers WHERE id = ? LIMIT 1`
+    ).bind(transferId).first();
+    if (String(current?.status || '').toUpperCase() === 'RECEIVED') {
+      return { ok: false, status: 409, code: 'TRANSFER_ALREADY_RECEIVED', error: 'A transferência já foi recebida', receivedAt: current.received_at || null };
+    }
+    return { ok: false, status: 409, code: 'TRANSFER_RECEIPT_CONFLICT', error: 'O recebimento não pôde ser efetivado com segurança' };
+  }
+
+  const destinationAfter = await env.DB.prepare(
+    `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
+  ).bind(transfer.registro_insumo, destinationScope.unit).first();
+  return {
+    ok: true,
+    transferId,
+    receiptMovementId,
+    status: 'RECEIVED',
+    receivedBy: actorId,
+    receivedAt: ts,
+    unidadeOrigem: normalizeUnitScope(transfer.unidade_origem),
+    unidadeDestino: destinationScope.unit,
+    registro: transfer.registro_insumo,
+    estoqueNovoDestino: toInt(destinationAfter?.quantidade, 0),
+  };
+}
+
+export async function d1CancelarTransferencia({ env, id, actor, unidade, justificativa }) {
+  const transferId = String(id || '').trim();
+  const reason = String(justificativa || '').trim();
+  if (!transferId) return { ok: false, status: 400, code: 'TRANSFER_INVALID', error: 'Transferência inválida' };
+  if (reason.length < 3) return { ok: false, status: 400, code: 'JUSTIFICATION_REQUIRED', error: 'Motivo do cancelamento é obrigatório' };
+
+  const transfer = await env.DB.prepare(
+    `SELECT id, registro_insumo, codigo_barras, lote, data_validade, produto,
+            quantidade, unidade_origem, unidade_destino, status, dispatched_at,
+            dispatched_by, dispatch_movement_id
+     FROM insumos_transfers WHERE id = ? LIMIT 1`
+  ).bind(transferId).first();
+  if (!transfer) return { ok: false, status: 404, code: 'TRANSFER_NOT_FOUND', error: 'Transferência não encontrada' };
+
+  const originScope = assertActorUnitScope(actor, transfer.unidade_origem);
+  if (!originScope.ok) return originScope;
+  if (unidade && normalizeUnitScope(unidade) !== originScope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_ORIGIN_MISMATCH', error: 'A unidade da rota deve ser a origem da transferência' };
+  }
+  const status = String(transfer.status || '').toUpperCase();
+  if (status === 'CANCELLED') return { ok: false, status: 409, code: 'TRANSFER_ALREADY_CANCELLED', error: 'A transferência já foi cancelada' };
+  if (status === 'RECEIVED') return { ok: false, status: 409, code: 'TRANSFER_ALREADY_RECEIVED', error: 'A transferência já foi recebida; use estorno compensatório' };
+
+  const dispatchMovement = transfer.dispatch_movement_id
+    ? await env.DB.prepare(
+      `SELECT id, tipo, unidade, unidade_origem, unidade_destino, quantidade
+       FROM insumos_movements WHERE id = ? LIMIT 1`
+    ).bind(transfer.dispatch_movement_id).first()
+    : await env.DB.prepare(
+      `SELECT id, tipo, unidade, unidade_origem, unidade_destino, quantidade
+       FROM insumos_movements
+       WHERE id_transferencia = ? AND UPPER(tipo) IN ('SAÍDA', 'SAIDA')
+       ORDER BY data_hora ASC, id ASC LIMIT 1`
+    ).bind(transferId).first();
+  if (!dispatchMovement?.id) return { ok: false, status: 409, code: 'TRANSFER_INVALID', error: 'Despacho da transferência não encontrado' };
+
+  const quantity = Math.max(1, toInt(transfer.quantidade, dispatchMovement.quantidade));
+  const ts = nowIso();
+  const actorId = actorName(actor);
+  const reversalId = crypto.randomUUID();
+  const note = `Cancelamento da transferência para ${normalizeUnitScope(transfer.unidade_destino)} | ${reason}`;
+
+  const statements = [
+    env.DB.prepare(
+      `UPDATE insumos_transfers
+       SET status = 'CANCELLED', cancelled_at = ?, cancelled_by = ?, reason = ?
+       WHERE id = ? AND status = 'PENDING_RECEIPT' AND unidade_origem = ?`
+    ).bind(ts, actorId, reason, transferId, originScope.unit),
+    env.DB.prepare(
+      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+       SELECT ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM insumos_transfers
+         WHERE id = ? AND status = 'CANCELLED' AND cancelled_at = ?
+       )
+       ON CONFLICT(registro, unidade) DO UPDATE SET
+         quantidade = insumos_stocks.quantidade + excluded.quantidade,
+         updated_at = excluded.updated_at`
+    ).bind(transfer.registro_insumo, originScope.unit, quantity, ts, transferId, ts),
+    env.DB.prepare(
+      `INSERT INTO insumos_movements (
+        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+        produto, quantidade, estoque_anterior, estoque_novo, unidade,
+        unidade_origem, unidade_destino, id_transferencia, usuario, motivo,
+        observacoes, status, estorno_de, tipo_compensacao
+      )
+      SELECT ?, ?, 'ESTORNO', ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, 'ENTRADA'
+      FROM insumos_stocks
+      WHERE registro = ? AND unidade = ? AND updated_at = ?
+        AND EXISTS (
+          SELECT 1 FROM insumos_transfers
+          WHERE id = ? AND status = 'CANCELLED' AND cancelled_at = ?
+        )`
+    ).bind(
+      reversalId,
+      ts,
+      transfer.codigo_barras || '',
+      transfer.registro_insumo || '',
+      transfer.lote || '',
+      transfer.data_validade || '',
+      transfer.produto || '',
+      quantity,
+      quantity,
+      originScope.unit,
+      transfer.unidade_origem || '',
+      transfer.unidade_destino || '',
+      transferId,
+      actorId,
+      reason,
+      note,
+      dispatchMovement.id,
+      transfer.registro_insumo,
+      originScope.unit,
+      ts,
+      transferId,
+      ts,
+    ),
+  ];
+  const results = await env.DB.batch(statements);
+  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1) {
+    const current = await env.DB.prepare('SELECT status FROM insumos_transfers WHERE id = ? LIMIT 1').bind(transferId).first();
+    if (String(current?.status || '').toUpperCase() === 'CANCELLED') {
+      return { ok: false, status: 409, code: 'TRANSFER_ALREADY_CANCELLED', error: 'A transferência já foi cancelada' };
+    }
+    return { ok: false, status: 409, code: 'TRANSFER_CANCEL_CONFLICT', error: 'O cancelamento não pôde ser aplicado com segurança' };
+  }
+  const originAfter = await env.DB.prepare(
+    `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
+  ).bind(transfer.registro_insumo, originScope.unit).first();
+  return {
+    ok: true,
+    transferId,
+    reversalId,
+    status: 'CANCELLED',
+    cancelledBy: actorId,
+    cancelledAt: ts,
+    unidadeOrigem: originScope.unit,
+    unidadeDestino: normalizeUnitScope(transfer.unidade_destino),
+    registro: transfer.registro_insumo,
+    estoqueNovoOrigem: toInt(originAfter?.quantidade, 0),
   };
 }
 
@@ -2237,6 +2472,24 @@ export async function d1EstornarMovimentacao({ env, id, actor, justificativa }) 
   const actorId = actorName(actor);
   const ts = nowIso();
   const transferId = String(original.id_transferencia || '').trim();
+  const transferRecord = transferId
+    ? await env.DB.prepare(
+      `SELECT id, status, unidade_origem, unidade_destino
+       FROM insumos_transfers WHERE id = ? LIMIT 1`
+    ).bind(transferId).first()
+    : null;
+  if (transferRecord && String(transferRecord.status || '').toUpperCase() === 'PENDING_RECEIPT') {
+    return d1CancelarTransferencia({
+      env,
+      id: transferId,
+      actor,
+      unidade: original.unidade,
+      justificativa: reason,
+    });
+  }
+  if (transferRecord && String(transferRecord.status || '').toUpperCase() === 'CANCELLED') {
+    return { ok: false, status: 409, code: 'TRANSFER_ALREADY_CANCELLED', error: 'A transferência já foi cancelada' };
+  }
 
   const pairRows = transferId
     ? ((await env.DB.prepare(
@@ -2249,7 +2502,8 @@ export async function d1EstornarMovimentacao({ env, id, actor, justificativa }) 
   if (pairRows.some((row) => String(row.estorno_de || '').trim())) {
     return { ok: false, status: 409, code: 'ALREADY_REVERSED', error: 'Transferência já possui estorno' };
   }
-  if (pairRows.some((row) => String(row.status || 'COMPLETED').toUpperCase() !== 'COMPLETED')) {
+  if ((!transferRecord || String(transferRecord.status || '').toUpperCase() !== 'RECEIVED')
+    && pairRows.some((row) => String(row.status || 'COMPLETED').toUpperCase() !== 'COMPLETED')) {
     return { ok: false, status: 409, code: 'TRANSFER_NOT_EFFECTIVE', error: 'A transferência ainda não está efetivada' };
   }
   for (const row of pairRows) {
@@ -2634,6 +2888,14 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
         m.unidade_origem AS unidadeOrigem,
         m.unidade_destino AS unidadeDestino,
         m.id_transferencia AS transferId,
+        t.status AS transferStatus,
+        t.dispatched_at AS transferDispatchedAt,
+        t.dispatched_by AS transferDispatchedBy,
+        t.received_at AS transferReceivedAt,
+        t.received_by AS transferReceivedBy,
+        t.cancelled_at AS transferCancelledAt,
+        t.cancelled_by AS transferCancelledBy,
+        t.reason AS transferReason,
         m.usuario AS usuario,
         m.motivo AS motivo,
         m.observacoes AS observacoes,
@@ -2642,7 +2904,7 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
         m.tipo_compensacao AS tipoCompensacao,
         CASE WHEN EXISTS (
           SELECT 1 FROM insumos_movements reversal WHERE reversal.estorno_de = m.id
-        ) THEN 'ESTORNADO' ELSE COALESCE(m.status, 'COMPLETED') END AS status,
+        ) THEN 'ESTORNADO' ELSE COALESCE(t.status, m.status, 'COMPLETED') END AS status,
         m.registro_insumo AS registroInsumo,
         m.lote AS lote,
         m.data_validade AS dataValidade,
@@ -2652,6 +2914,8 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
      FROM insumos_movements m
      LEFT JOIN insumos_items i
        ON i.registro = m.registro_insumo
+     LEFT JOIN insumos_transfers t
+       ON t.id = m.id_transferencia
      ${whereSql}
      ORDER BY m.data_hora DESC
      LIMIT ? OFFSET ?`

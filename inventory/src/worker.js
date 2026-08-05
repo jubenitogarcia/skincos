@@ -27,6 +27,8 @@ import {
     d1EntradaBaixa,
     d1Ajuste,
     d1Transfer,
+    d1ReceberTransferencia,
+    d1CancelarTransferencia,
     d1EstornarMovimentacao,
     d1ExecuteIdempotent,
     d1ListMovimentacoes,
@@ -1650,6 +1652,8 @@ export default {
             entradaBaixa: ({ unidade, body, kind, actor }) => d1EntradaBaixa({ env, unidade, body, kind, actor }),
             ajuste: ({ unidade, body, actor }) => d1Ajuste({ env, unidade, body, actor }),
             transfer: ({ body, actor, unidade }) => d1Transfer({ env, body, actor, unidade }),
+            receberTransferencia: ({ id, actor, unidade, observacoes }) => d1ReceberTransferencia({ env, id, actor, unidade, observacoes }),
+            cancelarTransferencia: ({ id, actor, unidade, justificativa }) => d1CancelarTransferencia({ env, id, actor, unidade, justificativa }),
             estornarMovimentacao: ({ id, actor, justificativa }) => d1EstornarMovimentacao({ env, id, actor, justificativa }),
             executeIdempotent: (args) => d1ExecuteIdempotent({ env, ...args }),
             listMovimentacoes: ({ unidade, tipo, de, ate, pagina, limite, codigoBarras }) =>

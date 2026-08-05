@@ -22,7 +22,8 @@ function hasBackupPayloadInsumos(payload) {
             Array.isArray(payload.d1.crmUsers) ||
             Array.isArray(payload.d1.insumosUsers) ||
             Array.isArray(payload.d1.insumosStocks) ||
-            Array.isArray(payload.d1.insumosMovements))
+            Array.isArray(payload.d1.insumosMovements) ||
+            Array.isArray(payload.d1.insumosTransfers))
     );
 }
 
@@ -42,6 +43,7 @@ export async function buildBackupPayload({ env }) {
         insumosItems: [],
         insumosStocks: [],
         insumosMovements: [],
+        insumosTransfers: [],
     };
 
     if (env?.DB) {
@@ -126,6 +128,22 @@ export async function buildBackupPayload({ env }) {
         } catch {
             // ignore
         }
+        try {
+            const tr = await env.DB.prepare(
+                `SELECT id, registro_insumo as registroInsumo, codigo_barras as codigoBarras,
+                        lote, data_validade as dataValidade, produto, quantidade,
+                        unidade_origem as unidadeOrigem, unidade_destino as unidadeDestino,
+                        status, dispatched_at as dispatchedAt, dispatched_by as dispatchedBy,
+                        received_at as receivedAt, received_by as receivedBy,
+                        cancelled_at as cancelledAt, cancelled_by as cancelledBy,
+                        reason, dispatch_movement_id as dispatchMovementId,
+                        receipt_movement_id as receiptMovementId
+                 FROM insumos_transfers`
+            ).all();
+            d1Dump.insumosTransfers = tr?.results || [];
+        } catch {
+            // Older databases may not have the two-phase transfer aggregate yet.
+        }
     }
 
     return {
@@ -141,6 +159,7 @@ export async function buildBackupPayload({ env }) {
                 insumosItemsCount: d1Dump.insumosItems.length,
                 insumosStocksCount: d1Dump.insumosStocks.length,
                 insumosMovementsCount: d1Dump.insumosMovements.length,
+                insumosTransfersCount: d1Dump.insumosTransfers.length,
             },
         },
         d1: d1Dump,
@@ -271,6 +290,39 @@ export async function restoreBackupPayload({ env, payload }) {
                 )
                     .bind(row.registro || '', row.unidade || '', Number(row.quantidade || 0), row.updatedAt || new Date().toISOString())
                     .run();
+            }
+            if (Array.isArray(p.d1.insumosTransfers)) {
+                await env.DB.prepare('DELETE FROM insumos_transfers').run();
+                for (const row of p.d1.insumosTransfers) {
+                    await env.DB.prepare(
+                        `INSERT OR REPLACE INTO insumos_transfers
+                         (id, registro_insumo, codigo_barras, lote, data_validade, produto,
+                          quantidade, unidade_origem, unidade_destino, status, dispatched_at,
+                          dispatched_by, received_at, received_by, cancelled_at, cancelled_by,
+                          reason, dispatch_movement_id, receipt_movement_id)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    ).bind(
+                        row.id || crypto.randomUUID(),
+                        row.registroInsumo || '',
+                        row.codigoBarras || '',
+                        row.lote || '',
+                        row.dataValidade || '',
+                        row.produto || '',
+                        Number(row.quantidade || 0),
+                        row.unidadeOrigem || '',
+                        row.unidadeDestino || '',
+                        row.status || 'PENDING_RECEIPT',
+                        row.dispatchedAt || new Date().toISOString(),
+                        row.dispatchedBy || '',
+                        row.receivedAt || null,
+                        row.receivedBy || null,
+                        row.cancelledAt || null,
+                        row.cancelledBy || null,
+                        row.reason || null,
+                        row.dispatchMovementId || null,
+                        row.receiptMovementId || null,
+                    ).run();
+                }
             }
             for (const row of (p.d1.insumosMovements || []).reverse()) {
                 await env.DB.prepare(
