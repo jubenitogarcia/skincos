@@ -94,6 +94,7 @@ group write for that service identity, then run the native launcher as
 
 ```sh
 sudo install -d -o root -g skincos -m 0770 /var/backups/skincos/clientes
+sudo setfacl -m u:skincos:--x /var/backups/skincos
 sudo -u skincos env \
   HARMONIA_MIGRATION_TARGET=production \
   HARMONIA_MIGRATION_ACTION=dry-run \
