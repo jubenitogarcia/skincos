@@ -12,6 +12,7 @@ import {
     CLIENT_IDENTITY_MATERIALIZATION_TARGET,
     fingerprintIdentityMaterializationSource,
     identityMaterializationCheckpoint,
+    prepareIdentityMaterializationOutputDirectory,
 } from '../identityMaterializationSafety.js'
 
 const LOCAL_SOCKET_URL = 'postgresql:///skincos_crm_local?host=/var/run/postgresql'
@@ -21,6 +22,51 @@ test('allows only the dedicated private mirror socket for materialization', () =
     assert.throws(
         () => assertIdentityMaterializationDestination('postgresql://admin@127.0.0.1:5432/skincos_crm_local'),
         (error) => error?.code === 'IDENTITY_MATERIALIZATION_DESTINATION_UNSAFE',
+    )
+})
+
+test('prepares reconciliation artifacts only under the private operator runtime', async () => {
+    const directory = '/mnt/c/CodexRuntime/operator/admin/skincos/evidence/clientes/test-run'
+    const mkdirCalls = []
+    const mkdir = async (...args) => { mkdirCalls.push(args) }
+    const realpath = async (value) => value
+
+    assert.equal(
+        await prepareIdentityMaterializationOutputDirectory({ outputDirectory: directory, mkdir, realpath }),
+        directory,
+    )
+    assert.deepEqual(mkdirCalls, [[directory, { recursive: true, mode: 0o700 }]])
+
+    for (const unsafeDirectory of [
+        '/tmp/clientes',
+        '/mnt/c/CodexRuntime/operator/admin/skincos',
+        '/mnt/c/CodexRuntime/operator/admin/skincos-other/clientes',
+        '/mnt/c/CodexRuntime/operator/admin/skincos/../outside',
+    ]) {
+        await assert.rejects(
+            () => prepareIdentityMaterializationOutputDirectory({ outputDirectory: unsafeDirectory, mkdir, realpath }),
+            (error) => error?.code === 'IDENTITY_MATERIALIZATION_RECONCILIATION_OUTPUT_UNSAFE',
+        )
+    }
+    assert.equal(mkdirCalls.length, 1)
+
+    assert.equal(
+        await prepareIdentityMaterializationOutputDirectory({
+            outputDirectory: '/mnt/c/CodexRuntime/operator/admin/skincos',
+            allowRoot: true,
+            mkdir,
+            realpath,
+        }),
+        '/mnt/c/CodexRuntime/operator/admin/skincos',
+    )
+
+    await assert.rejects(
+        () => prepareIdentityMaterializationOutputDirectory({
+            outputDirectory: directory,
+            mkdir,
+            realpath: async (value) => value === directory ? '/tmp/escaped' : value,
+        }),
+        (error) => error?.code === 'IDENTITY_MATERIALIZATION_RECONCILIATION_OUTPUT_UNSAFE',
     )
 })
 

@@ -27,6 +27,7 @@ import {
     assertIdentityMaterializationSchemaReady,
     fingerprintIdentityMaterializationSource,
     identityMaterializationCheckpoint,
+    prepareIdentityMaterializationOutputDirectory,
     writeIdentityMaterializationCheckpoint,
 } from '../server/atendimento/identityMaterializationSafety.js'
 import {
@@ -45,6 +46,10 @@ if (!inputFile) throw new Error('CLIENT_REGISTRATION_CSV_not_configured')
 if (!outputDirectory) throw new Error('CLIENT_REGISTRATION_RECONCILIATION_OUTPUT_not_configured')
 if (!databaseUrl) throw new Error('DATABASE_URL_not_configured')
 assertIdentityMaterializationDestination(databaseUrl)
+// Prepare the private artifact directory before reading the source or opening
+// a transaction. An apply must not commit only to discover that its required
+// recovery evidence cannot be written under the operator runtime.
+const preparedOutputDirectory = await prepareIdentityMaterializationOutputDirectory({ outputDirectory })
 
 function parseCsv(text) {
     const rows = []; let row = []; let value = ''; let quoted = false
@@ -65,6 +70,14 @@ function parseCsv(text) {
 function toCsv(rows, header) {
     const escape = (value) => `"${(typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')).replaceAll('"', '""')}"`
     return [header.map(escape).join(','), ...rows.map((row) => header.map((key) => escape(row[key])).join(','))].join('\n') + '\n'
+}
+
+async function writeReconciliationArtifacts({ output, outputs, registrationCaixaLinks, attendanceLinks }) {
+    await Promise.all([
+        fs.writeFile(outputs.summary, `${JSON.stringify(output, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' }),
+        fs.writeFile(outputs.caixaLinks, toCsv(registrationCaixaLinks, ['registrationId', 'caixaCustomerId', 'method', 'confidence', 'status', 'evidence']), { encoding: 'utf8', mode: 0o600, flag: 'wx' }),
+        fs.writeFile(outputs.attendanceLinks, toCsv(attendanceLinks, ['registrationId', 'attendanceClientId', 'attendanceNameKey', 'method', 'confidence', 'status', 'evidence']), { encoding: 'utf8', mode: 0o600, flag: 'wx' }),
+    ])
 }
 
 function chunks(values, size = 500) {
@@ -289,6 +302,12 @@ const sourceCoverage = await loadClientRegistrationSourceCoverage({
     sidecarFile: sourceCoverageFile,
     sourceArtifact,
 })
+const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-')
+const outputs = {
+    summary: path.join(preparedOutputDirectory, `reconciliacao-clientes-resumo-${stamp}.json`),
+    caixaLinks: path.join(preparedOutputDirectory, `reconciliacao-cadastro-caixa-${stamp}.csv`),
+    attendanceLinks: path.join(preparedOutputDirectory, `reconciliacao-cadastro-atendimento-${stamp}.csv`),
+}
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 2, application_name: 'crm-client-registration-reconciliation' })
 try {
     const verificationClient = await pool.connect()
@@ -307,6 +326,15 @@ try {
         ? await writeIdentityMaterializationCheckpoint({ outputFile: checkpointOutput, checkpoint })
         : null
     let persisted = null
+    const buildOutput = ({ commitState = apply ? 'pending_ledger_confirmation' : 'not_applicable' } = {}) => ({
+        ok: true, dryRun: !apply, persisted,
+        transaction: { commitState },
+        checkpoint,
+        checkpointOutput: writtenCheckpoint,
+        sourceCoverage,
+        source: { registrationRows: registrationRows.length, attendances: input.attendances.length, caixaCustomers: input.customers.length, caixaSales: input.saleCount, caixaCustomerUnitGroups: input.sales.length },
+        ...plan.summary,
+    })
     if (apply) {
         const client = await pool.connect()
         try {
@@ -322,6 +350,16 @@ try {
             assertClientRegistrationSourceCoverageEligibleForApply(sourceCoverage)
             await client.query('begin')
             persisted = await persistPlan(client, { plan, sourceFile: inputFile, sourceCoverage })
+            // The evidence contains source-link identifiers. Persist it before
+            // committing, so a permissions, quota, or write failure rolls the
+            // database transaction back instead of leaving an applied run
+            // without its private recovery artifacts.
+            await writeReconciliationArtifacts({
+                output: buildOutput(),
+                outputs,
+                registrationCaixaLinks: plan.registrationCaixaLinks,
+                attendanceLinks,
+            })
             await client.query('commit')
         } catch (error) {
             await client.query('rollback')
@@ -330,25 +368,16 @@ try {
             client.release()
         }
     }
-    await fs.mkdir(outputDirectory, { recursive: true })
-    const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-')
-    const summaryFile = path.join(outputDirectory, `reconciliacao-clientes-resumo-${stamp}.json`)
-    const caixaFile = path.join(outputDirectory, `reconciliacao-cadastro-caixa-${stamp}.csv`)
-    const attendanceFile = path.join(outputDirectory, `reconciliacao-cadastro-atendimento-${stamp}.csv`)
-    const output = {
-        ok: true, dryRun: !apply, persisted,
-        checkpoint,
-        checkpointOutput: writtenCheckpoint,
-        sourceCoverage,
-        source: { registrationRows: registrationRows.length, attendances: input.attendances.length, caixaCustomers: input.customers.length, caixaSales: input.saleCount, caixaCustomerUnitGroups: input.sales.length },
-        ...plan.summary,
+    const output = buildOutput({ commitState: apply ? 'committed' : 'not_applicable' })
+    if (!apply) {
+        await writeReconciliationArtifacts({
+            output,
+            outputs,
+            registrationCaixaLinks: plan.registrationCaixaLinks,
+            attendanceLinks,
+        })
     }
-    await Promise.all([
-        fs.writeFile(summaryFile, `${JSON.stringify(output, null, 2)}\n`),
-        fs.writeFile(caixaFile, toCsv(plan.registrationCaixaLinks, ['registrationId', 'caixaCustomerId', 'method', 'confidence', 'status', 'evidence'])),
-        fs.writeFile(attendanceFile, toCsv(attendanceLinks, ['registrationId', 'attendanceClientId', 'attendanceNameKey', 'method', 'confidence', 'status', 'evidence'])),
-    ])
-    console.log(JSON.stringify({ ...output, outputs: { summary: summaryFile, caixaLinks: caixaFile, attendanceLinks: attendanceFile } }, null, 2))
+    console.log(JSON.stringify({ ...output, outputs }, null, 2))
 } finally {
     await pool.end()
 }
