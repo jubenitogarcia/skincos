@@ -435,6 +435,8 @@ export default function AppFunctionalNeatlab() {
         const [atendimentoPeriodDraft, setAtendimentoPeriodDraft] = useState({ from: '', to: '' })
         const [insumosPeriodPickerOpen, setInsumosPeriodPickerOpen] = useState(false)
         const [insumosPeriodDraft, setInsumosPeriodDraft] = useState({ from: '', to: '' })
+        const [insumosMobilePeriodPickerOpen, setInsumosMobilePeriodPickerOpen] = useState(false)
+        const [insumosMobilePeriodDraft, setInsumosMobilePeriodDraft] = useState({ from: '', to: '' })
         const [escalaHeaderState, setEscalaHeaderState] = useState<EscalaHeaderState | null>(null)
         const [metaAdsHeaderState, setMetaAdsHeaderState] = useState<MetaAdsHeaderState | null>(null)
         const [siteTrackingHeaderState, setSiteTrackingHeaderState] = useState<SiteTrackingHeaderState | null>(null)
@@ -622,6 +624,8 @@ export default function AppFunctionalNeatlab() {
                     setInsumosOverviewPeriod(preset)
                     setInsumosOverviewFrom('')
                     setInsumosOverviewTo('')
+                    setInsumosPeriodPickerOpen(false)
+                    setInsumosMobilePeriodPickerOpen(false)
                     try {
                         localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, preset)
                         localStorage.removeItem(INSUMOS_OVERVIEW_FROM_KEY)
@@ -634,6 +638,7 @@ export default function AppFunctionalNeatlab() {
                     try { localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, period) } catch { /* ignore */ }
                     dispatchInsumosHeaderAction({ type: 'set-overview', value: { period, from: insumosOverviewFrom, to: insumosOverviewTo } })
                     setInsumosPeriodPickerOpen(false)
+                    setInsumosMobilePeriodPickerOpen(false)
                 }, [insumosOverviewFrom, insumosOverviewTo])
                 const openInsumosPeriodPicker = React.useCallback((open: boolean) => {
                     setInsumosPeriodPickerOpen(open)
@@ -641,23 +646,42 @@ export default function AppFunctionalNeatlab() {
                         setInsumosPeriodDraft({ from: insumosOverviewFrom, to: insumosOverviewTo })
                     }
                 }, [insumosOverviewFrom, insumosOverviewTo])
-                const applyInsumosCustomPeriod = React.useCallback(() => {
-                    if (!insumosPeriodDraft.from || !insumosPeriodDraft.to || insumosPeriodDraft.from > insumosPeriodDraft.to) return
+                const openInsumosMobilePeriodPicker = React.useCallback((open: boolean) => {
+                    setInsumosMobilePeriodPickerOpen(open)
+                    if (open) {
+                        setInsumosMobilePeriodDraft({ from: insumosOverviewFrom, to: insumosOverviewTo })
+                    }
+                }, [insumosOverviewFrom, insumosOverviewTo])
+                const commitInsumosCustomPeriod = React.useCallback((draft: { from: string; to: string }) => {
+                    if (!draft.from || !draft.to || draft.from > draft.to) return false
                     setInsumosOverviewPeriod('custom')
-                    setInsumosOverviewFrom(insumosPeriodDraft.from)
-                    setInsumosOverviewTo(insumosPeriodDraft.to)
+                    setInsumosOverviewFrom(draft.from)
+                    setInsumosOverviewTo(draft.to)
                     try {
                         localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, 'custom')
-                        localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, insumosPeriodDraft.from)
-                        localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, insumosPeriodDraft.to)
+                        localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, draft.from)
+                        localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, draft.to)
                     } catch { /* ignore */ }
                     dispatchInsumosHeaderAction({
                         type: 'set-overview',
-                        value: { period: 'custom', from: insumosPeriodDraft.from, to: insumosPeriodDraft.to },
+                        value: { period: 'custom', from: draft.from, to: draft.to },
                     })
-                    setInsumosPeriodPickerOpen(false)
-                }, [insumosPeriodDraft])
-                const renderInsumosPeriodControls = React.useCallback((compact = false) => (
+                    return true
+                }, [])
+                const applyInsumosCustomPeriod = React.useCallback(() => {
+                    if (commitInsumosCustomPeriod(insumosPeriodDraft)) setInsumosPeriodPickerOpen(false)
+                }, [commitInsumosCustomPeriod, insumosPeriodDraft])
+                const applyInsumosMobileCustomPeriod = React.useCallback(() => {
+                    if (commitInsumosCustomPeriod(insumosMobilePeriodDraft)) setInsumosMobilePeriodPickerOpen(false)
+                }, [commitInsumosCustomPeriod, insumosMobilePeriodDraft])
+                const renderInsumosPeriodControls = React.useCallback((compact = false) => {
+                    const pickerOpen = compact ? insumosMobilePeriodPickerOpen : insumosPeriodPickerOpen
+                    const pickerDraft = compact ? insumosMobilePeriodDraft : insumosPeriodDraft
+                    const openPicker = compact ? openInsumosMobilePeriodPicker : openInsumosPeriodPicker
+                    const closePicker = compact ? setInsumosMobilePeriodPickerOpen : setInsumosPeriodPickerOpen
+                    const setPickerDraft = compact ? setInsumosMobilePeriodDraft : setInsumosPeriodDraft
+                    const applyPicker = compact ? applyInsumosMobileCustomPeriod : applyInsumosCustomPeriod
+                    return (
                     <div className={compact ? 'flex flex-wrap items-center gap-1.5' : 'flex items-center gap-1.5'}>
                         <div className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] p-1">
                             {INSUMOS_QUICK_PRESETS.map((preset) => (
@@ -685,7 +709,7 @@ export default function AppFunctionalNeatlab() {
                                     </TooltipContent>
                                 </Tooltip>
                             ))}
-                            <DropdownMenu open={insumosPeriodPickerOpen} onOpenChange={openInsumosPeriodPicker}>
+                            <DropdownMenu open={pickerOpen} onOpenChange={openPicker}>
                                 <DropdownMenuTrigger asChild>
                                     <button
                                         type="button"
@@ -707,7 +731,7 @@ export default function AppFunctionalNeatlab() {
                                             type="button"
                                             className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-300 transition hover:bg-white/10 hover:text-white"
                                             aria-label="Fechar seletor de período"
-                                            onClick={() => setInsumosPeriodPickerOpen(false)}
+                                            onClick={() => closePicker(false)}
                                         >
                                             <X className="size-4" aria-hidden="true" />
                                         </button>
@@ -738,15 +762,15 @@ export default function AppFunctionalNeatlab() {
                                         <div className="grid grid-cols-2 gap-2">
                                             <Input
                                                 type="date"
-                                                value={insumosPeriodDraft.from}
-                                                onChange={(event) => setInsumosPeriodDraft((current) => ({ ...current, from: event.target.value }))}
+                                                value={pickerDraft.from}
+                                                onChange={(event) => setPickerDraft((current) => ({ ...current, from: event.target.value }))}
                                                 className="h-8 bg-white/[0.06] border-white/20 text-white"
                                                 aria-label="Data inicial"
                                             />
                                             <Input
                                                 type="date"
-                                                value={insumosPeriodDraft.to}
-                                                onChange={(event) => setInsumosPeriodDraft((current) => ({ ...current, to: event.target.value }))}
+                                                value={pickerDraft.to}
+                                                onChange={(event) => setPickerDraft((current) => ({ ...current, to: event.target.value }))}
                                                 className="h-8 bg-white/[0.06] border-white/20 text-white"
                                                 aria-label="Data final"
                                             />
@@ -754,8 +778,8 @@ export default function AppFunctionalNeatlab() {
                                         <Button
                                             type="button"
                                             className="h-8 w-full bg-sky-500/90 text-slate-950 hover:bg-sky-400"
-                                            onClick={applyInsumosCustomPeriod}
-                                            disabled={!insumosPeriodDraft.from || !insumosPeriodDraft.to || insumosPeriodDraft.from > insumosPeriodDraft.to}
+                                            onClick={applyPicker}
+                                            disabled={!pickerDraft.from || !pickerDraft.to || pickerDraft.from > pickerDraft.to}
                                         >
                                             Aplicar período
                                         </Button>
@@ -769,7 +793,8 @@ export default function AppFunctionalNeatlab() {
                             ) : null}
                         </div>
                     </div>
-                ), [applyInsumosCustomPeriod, insumosCustomPeriodLabel, insumosLegacyPeriodLabel, insumosOverviewPeriod, insumosPeriodDraft.from, insumosPeriodDraft.to, insumosPeriodPickerOpen, openInsumosPeriodPicker, setInsumosLegacyPeriod, setInsumosQuickPeriod])
+                    )
+                }, [applyInsumosCustomPeriod, applyInsumosMobileCustomPeriod, insumosCustomPeriodLabel, insumosLegacyPeriodLabel, insumosMobilePeriodDraft.from, insumosMobilePeriodDraft.to, insumosMobilePeriodPickerOpen, insumosOverviewPeriod, insumosPeriodDraft.from, insumosPeriodDraft.to, insumosPeriodPickerOpen, openInsumosMobilePeriodPicker, openInsumosPeriodPicker, setInsumosLegacyPeriod, setInsumosQuickPeriod])
 			    const lastInsumosUnitRef = React.useRef<string | null>(null)
 			    React.useEffect(() => {
 			        if (!insumosMounted) return
