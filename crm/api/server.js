@@ -1090,10 +1090,27 @@ if (DEV_AUTH_ENABLED) {
         }
     }
 
+    // The local Pages Function auth bypass does not mint the backend cookie
+    // used by this loopback adapter. Accept its explicitly encoded synthetic
+    // actor only while the adapter itself is running in DEV_AUTH_ENABLED.
+    const getLocalProxySession = (req) => {
+        try {
+            const raw = String(req.headers['x-skincos-local-crm-actor'] || '').trim()
+            if (!raw) return null
+            const payload = JSON.parse(base64urlDecode(raw))
+            const user = payload?.user || null
+            const csrfToken = String(payload?.csrfToken || req.headers['x-skincos-local-crm-csrf'] || '').trim()
+            if (!user?.email || !csrfToken) return null
+            return { user, csrfToken }
+        } catch {
+            return null
+        }
+    }
+
     const requireDevAdmin = (req, res) => {
-        const session = getDevSession(req)
+        const session = getDevSession(req) || getLocalProxySession(req)
         const role = normalizeRole(session?.user?.role)
-        const ok = role === 'GESTOR' || role === 'GERENTE'
+        const ok = role === 'ADMIN' || role === 'GESTOR' || role === 'GERENTE'
         if (!ok) {
             res.status(401).json({ ok: false, success: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
             return null
@@ -1107,9 +1124,182 @@ if (DEV_AUTH_ENABLED) {
     }
     devAuthRequireAdmin = requireDevAdmin
 
+    const LOCAL_CRM_SEED_FILE = process.env.LOCAL_CRM_SEED_FILE || path.join(__dirname, 'fixtures', 'local-unified-team.v1.json')
+    const LOCAL_CRM_TEAM_SEED_ENABLED = isTruthyEnv(process.env.LOCAL_CRM_TEAM_SEED)
+    const LOCAL_TEAM_UNIT_KEYS = new Set(['novo-hamburgo', 'barra-shopping-sul'])
+    const LOCAL_TEAM_PROFILE_RANKS = { GESTOR: 4, GERENTE: 3, SUPERVISOR: 2, INJETOR: 1, CONSULTOR: 1 }
+    const LOCAL_TEAM_TITLE_PROFILES = {
+        gestor: 'GESTOR',
+        admin: 'GESTOR',
+        gerente: 'GERENTE',
+        coordenador: 'SUPERVISOR',
+        supervisor: 'SUPERVISOR',
+        'responsavel tecnico': 'INJETOR',
+        injetor: 'INJETOR',
+        operador: 'INJETOR',
+        consultor: 'CONSULTOR',
+    }
+    const LOCAL_TEAM_DISPLAY_TITLES = {
+        GESTOR: 'Gestor',
+        GERENTE: 'Gerente',
+        SUPERVISOR: 'Coordenador',
+        INJETOR: 'Injetor',
+        CONSULTOR: 'Consultor',
+    }
+
+    const localNormalizeKey = (value) => String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+
+    const localNormalizeUsername = (value) => localNormalizeKey(value)
+        .replace(/[^a-z0-9._-]+/g, '')
+        .replace(/^[._-]+|[._-]+$/g, '')
+        .slice(0, 40)
+
+    const localBuildCorporateEmail = (fullName) => {
+        const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean)
+        if (!parts.length) return ''
+        const slug = (value) => localNormalizeKey(value).replace(/[^a-z0-9]+/g, '')
+        const first = slug(parts[0])
+        const last = parts.length > 1 ? slug(parts[parts.length - 1]) : ''
+        return first && (parts.length === 1 || last) ? `${first}${last}@espacofacial.com` : ''
+    }
+
+    const localNormalizeCorporateEmail = (value) => {
+        const email = String(value || '').trim().toLowerCase()
+        return /^[^\s@]+@espacofacial\.com$/.test(email) ? email : ''
+    }
+
+    const localIsAllowedCorporateEmail = (fullName, corporateEmail) => {
+        const email = localNormalizeCorporateEmail(corporateEmail)
+        const generated = localBuildCorporateEmail(fullName)
+        if (!email || !generated) return false
+        const local = email.slice(0, email.indexOf('@'))
+        const generatedLocal = generated.slice(0, generated.indexOf('@'))
+        return local === generatedLocal || new RegExp(`^${generatedLocal}\\d+$`).test(local)
+    }
+
+    const localNormalizePersonalEmail = (value) => {
+        const email = String(value || '').trim().toLowerCase()
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
+    }
+
+    const localNormalizePhone = (value) => {
+        const digits = String(value || '').replace(/\D/g, '')
+        if (!digits) return ''
+        const e164 = digits.startsWith('55') ? digits : `55${digits}`
+        return e164.length >= 12 && e164.length <= 13 ? `+${e164}` : ''
+    }
+
+    const localNormalizeUnits = (value) => {
+        const values = Array.isArray(value) ? value : String(value || '').split(',')
+        return Array.from(new Set(values.map((item) => String(item || '').trim()).filter((item) => LOCAL_TEAM_UNIT_KEYS.has(item))))
+    }
+
+    const localProfileForTitle = (value) => LOCAL_TEAM_TITLE_PROFILES[localNormalizeKey(value)] || ''
+    const localDisplayJobTitle = (profile, fallback = '') => LOCAL_TEAM_DISPLAY_TITLES[String(profile || '').toUpperCase()] || String(fallback || '').trim()
+
+    const localNormalizeSchedule = (value, fallbackUnits = [], current = {}) => {
+        const input = value && typeof value === 'object' ? value : {}
+        const clean = (item, max = 160) => String(item ?? '').trim().slice(0, max)
+        return {
+            professionalId: clean(input.professionalId ?? input.scheduleProfessionalId ?? current.professionalId, 120) || null,
+            status: clean(input.status ?? current.status, 40),
+            role: clean(input.role ?? current.role, 80),
+            shift: clean(input.shift ?? current.shift, 120),
+            nickname: clean(input.nickname ?? current.nickname, 120),
+            instagram: clean(input.instagram ?? current.instagram, 160),
+            color: clean(input.color ?? current.color, 20),
+            units: localNormalizeUnits(input.units ?? fallbackUnits ?? current.units),
+        }
+    }
+
+    const localNormalizeTeamMember = (member) => {
+        if (!member || typeof member !== 'object') return null
+        const profile = String(member.profile || localProfileForTitle(member.jobTitle) || 'CONSULTOR').toUpperCase()
+        const units = localNormalizeUnits(member.units)
+        return {
+            ...member,
+            id: String(member.id || `local-team-${randomUUID()}`),
+            fullName: String(member.fullName || '').trim(),
+            username: localNormalizeUsername(member.username),
+            corporateEmail: localNormalizeCorporateEmail(member.corporateEmail),
+            personalEmail: localNormalizePersonalEmail(member.personalEmail),
+            mobilePhone: localNormalizePhone(member.mobilePhone),
+            workforceEmployeeId: String(member.workforceEmployeeId || '').trim() || null,
+            profile,
+            jobTitle: localDisplayJobTitle(profile, member.jobTitle),
+            department: String(member.department || '').trim(),
+            units,
+            accountStatus: String(member.accountStatus || 'INVITED').trim().toUpperCase(),
+            inviteId: String(member.inviteId || '').trim() || null,
+            provisioningState: String(member.provisioningState || 'COMPLETED').trim(),
+            schedule: localNormalizeSchedule(member.schedule, units),
+            identityLinks: Array.isArray(member.identityLinks) ? member.identityLinks : [],
+            createdAt: member.createdAt || new Date().toISOString(),
+            updatedAt: member.updatedAt || member.createdAt || new Date().toISOString(),
+            createdBy: String(member.createdBy || 'seed-local'),
+        }
+    }
+
+    const localPublicIdentityLink = (link) => ({
+        id: String(link?.id || ''),
+        source: String(link?.source || ''),
+        sourceId: String(link?.sourceId || ''),
+        matchMethod: String(link?.matchMethod || ''),
+        confidence: String(link?.confidence || ''),
+        reviewStatus: String(link?.reviewStatus || ''),
+        metadata: link?.metadata && typeof link.metadata === 'object' ? link.metadata : {},
+        createdBy: String(link?.createdBy || ''),
+        createdAt: link?.createdAt || null,
+    })
+
+    const localPublicTeamMember = (member) => ({
+        id: member.id,
+        fullName: member.fullName,
+        username: member.username || null,
+        corporateEmail: member.corporateEmail,
+        workforceEmployeeId: member.workforceEmployeeId || null,
+        profile: member.profile,
+        jobTitle: member.jobTitle,
+        department: member.department,
+        units: member.units,
+        accountStatus: member.accountStatus,
+        inviteId: member.inviteId || null,
+        provisioningState: member.provisioningState || null,
+        createdAt: member.createdAt || null,
+        updatedAt: member.updatedAt || null,
+        schedule: localNormalizeSchedule(member.schedule, member.units),
+        identityLinks: (member.identityLinks || []).map(localPublicIdentityLink),
+    })
+
+    const localTeamUnitsVisible = (session, member) => {
+        const role = normalizeRole(session?.user?.role)
+        if (role === 'ADMIN') return true
+        const allowed = localNormalizeUnits(session?.user?.allowedUnits)
+        return allowed.length > 0 && member.units.some((unit) => allowed.includes(unit))
+    }
+
+    const localTeamHierarchyError = (session, profile, units) => {
+        const actorRole = normalizeRole(session?.user?.role)
+        if (actorRole === 'ADMIN') return ''
+        const actorRank = LOCAL_TEAM_PROFILE_RANKS[actorRole] || 0
+        const targetRank = LOCAL_TEAM_PROFILE_RANKS[String(profile || '').toUpperCase()] || 0
+        if (!actorRank || !targetRank || targetRank >= actorRank) return 'ROLE_DENIED'
+        const allowed = localNormalizeUnits(session?.user?.allowedUnits)
+        if (!allowed.length) return 'INVITER_SCOPE_REQUIRED'
+        if (units.some((unit) => !allowed.includes(unit))) return 'INVITE_UNITS_DENIED'
+        return ''
+    }
+
     const normalizeCrmStore = (store) => {
         const usersIn = Array.isArray(store?.users) ? store.users : []
         const invitesIn = Array.isArray(store?.invites) ? store.invites : []
+        const teamIn = Array.isArray(store?.team) ? store.team : []
+        const auditIn = Array.isArray(store?.audit) ? store.audit : []
         let changed = false
         const users = usersIn.map((user) => {
             if (!user || typeof user !== 'object') return user
@@ -1125,7 +1315,9 @@ if (DEV_AUTH_ENABLED) {
             if ((role && role !== invite.role) || JSON.stringify(allowedModules) !== JSON.stringify(invite.allowedModules || [])) changed = true
             return { ...invite, role: role || invite.role, allowedModules }
         })
-        return { store: { users, invites }, changed }
+        const team = teamIn.map(localNormalizeTeamMember).filter(Boolean)
+        if (JSON.stringify(team) !== JSON.stringify(teamIn)) changed = true
+        return { store: { version: 2, users, invites, team, audit: auditIn }, changed }
     }
 
     const loadLocalCrmStore = async () => {
@@ -1133,24 +1325,387 @@ if (DEV_AUTH_ENABLED) {
             const raw = await fs.readFile(LOCAL_CRM_STORE_FILE, 'utf8')
             const json = raw ? JSON.parse(raw) : {}
             const normalized = normalizeCrmStore({
+                version: json?.version,
                 users: Array.isArray(json?.users) ? json.users : [],
                 invites: Array.isArray(json?.invites) ? json.invites : [],
+                team: Array.isArray(json?.team) ? json.team : [],
+                audit: Array.isArray(json?.audit) ? json.audit : [],
             })
             if (normalized.changed) {
                 await fs.writeFile(LOCAL_CRM_STORE_FILE, JSON.stringify(normalized.store, null, 2), 'utf8')
             }
             return normalized.store
         } catch {
-            return { users: [], invites: [] }
+            if (LOCAL_CRM_TEAM_SEED_ENABLED) {
+                try {
+                    const seedRaw = await fs.readFile(LOCAL_CRM_SEED_FILE, 'utf8')
+                    const seed = normalizeCrmStore(JSON.parse(seedRaw || '{}'))
+                    await fs.writeFile(LOCAL_CRM_STORE_FILE, JSON.stringify(seed.store, null, 2), 'utf8')
+                    return seed.store
+                } catch {
+                    // Keep an empty local store if the optional fixture is unavailable.
+                }
+            }
+            return { version: 2, users: [], invites: [], team: [], audit: [] }
         }
     }
     const saveLocalCrmStore = async (store) => {
         try {
+            await fs.mkdir(path.dirname(LOCAL_CRM_STORE_FILE), { recursive: true })
             await fs.writeFile(LOCAL_CRM_STORE_FILE, JSON.stringify(store, null, 2), 'utf8')
         } catch {
             // ignore
         }
     }
+
+    // The unified team API is owned by the inventory Worker in the hosted
+    // environment. The isolated CRM preview can opt into a file-backed local
+    // implementation so the Users flow has realistic rows and reversible CRUD
+    // without falling through to a remote API or pretending to send invites.
+    const localUnifiedTeamEnabled = ['1', 'true', 'yes'].includes(
+        String(process.env.UNIFIED_TEAM_ENABLED || '').trim().toLowerCase(),
+    )
+    const localTeamInput = (body = {}, current = null) => {
+        const fullName = String(body.fullName ?? current?.fullName ?? '').trim().replace(/\s+/g, ' ')
+        const generatedCorporateEmail = localBuildCorporateEmail(fullName)
+        const corporateEmail = localNormalizeCorporateEmail(body.corporateEmail ?? current?.corporateEmail ?? generatedCorporateEmail)
+        const requestedUsername = localNormalizeUsername(body.username ?? body.requestedUsername ?? current?.username ?? generatedCorporateEmail.split('@')[0])
+        const personalEmail = body.personalEmail === undefined
+            ? localNormalizePersonalEmail(current?.personalEmail)
+            : localNormalizePersonalEmail(body.personalEmail)
+        const mobilePhone = body.mobilePhone === undefined && body.phone === undefined
+            ? localNormalizePhone(current?.mobilePhone)
+            : localNormalizePhone(body.mobilePhone ?? body.phone)
+        const department = String(body.department ?? current?.department ?? '').trim().replace(/\s+/g, ' ').slice(0, 120)
+        const jobTitle = String(body.jobTitle ?? current?.jobTitle ?? '').trim()
+        const profile = localProfileForTitle(jobTitle) || String(current?.profile || '').toUpperCase()
+        const units = localNormalizeUnits(body.units ?? current?.units)
+        const keepsExistingCorporateEmail = Boolean(current?.corporateEmail) && corporateEmail === current.corporateEmail
+        if (!fullName || !generatedCorporateEmail || !corporateEmail || (!localIsAllowedCorporateEmail(fullName, corporateEmail) && !keepsExistingCorporateEmail) || !requestedUsername || !/^[a-z0-9][a-z0-9._-]{2,39}$/.test(requestedUsername) || !personalEmail || !mobilePhone || !department || !profile || !units.length) {
+            return { error: 'TEAM_INPUT_INVALID' }
+        }
+        return {
+            fullName,
+            generatedCorporateEmail,
+            corporateEmail,
+            requestedUsername,
+            personalEmail,
+            mobilePhone,
+            department,
+            profile,
+            jobTitle: localDisplayJobTitle(profile, jobTitle),
+            units,
+            schedule: localNormalizeSchedule(body.team, units, current?.schedule || {}),
+        }
+    }
+
+    const localAudit = (store, session, action, entityId, after) => {
+        const audit = Array.isArray(store.audit) ? store.audit : []
+        audit.unshift({
+            id: `local-audit-${randomUUID()}`,
+            action,
+            entity: 'EMPLOYEE_TEAM',
+            entityId,
+            actor: session?.user?.username || session?.user?.email || 'gestor-local',
+            createdAt: new Date().toISOString(),
+            after,
+        })
+        store.audit = audit.slice(0, 250)
+    }
+
+    app.get(['/api/crm/admin/team', '/admin/team'], async (req, res) => {
+        const session = getDevSession(req) || getLocalProxySession(req)
+        const role = normalizeRole(session?.user?.role)
+        if (!['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)) {
+            return res.status(401).json({ ok: false, success: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
+        }
+        if (String(req.query?.mode || '') === 'config') {
+            return res.status(200).set('cache-control', 'no-store').json({
+                success: true,
+                data: {
+                    enabled: localUnifiedTeamEnabled,
+                    legacyEscalaEditor: !localUnifiedTeamEnabled,
+                },
+            })
+        }
+        const store = await loadLocalCrmStore()
+        if (!localUnifiedTeamEnabled) {
+            return res.status(200).set('cache-control', 'no-store').json({ success: true, data: [] })
+        }
+        const requestedStatus = String(req.query?.status || 'active').trim().toUpperCase()
+        const query = String(req.query?.q || '').trim().toLowerCase()
+        const data = store.team
+          .filter((member) => requestedStatus === 'ALL'
+              ? true
+              : requestedStatus === 'ACTIVE'
+                  ? ['INVITED', 'ACTIVE'].includes(String(member.accountStatus || '').toUpperCase())
+                  : String(member.accountStatus || '').toUpperCase() === requestedStatus)
+          .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle]
+              .some((value) => String(value || '').toLowerCase().includes(query)))
+          .filter((member) => role === 'ADMIN' || localTeamUnitsVisible(session, member))
+      // The Pages Function already authenticates and scopes this loopback
+      // response. Applying the unit filter again here would make the local
+      // preview dependent on a second process' session serialization.
+      .map(localPublicTeamMember)
+        return res.status(200).set('cache-control', 'no-store').json({
+            success: true,
+            data,
+            activeOnly: requestedStatus !== 'ALL',
+            status: requestedStatus,
+            summary: {
+                members: data.length,
+                pendingInvites: data.filter((member) => member.accountStatus === 'INVITED').length,
+                pendingLinks: data.reduce((total, member) => total + (member.identityLinks || []).filter((link) => link.reviewStatus === 'PENDING_REVIEW').length, 0),
+                pendingProvisioning: data.filter((member) => ['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(String(member.provisioningState || '').toUpperCase())).length,
+            },
+        })
+    })
+    app.post(['/api/crm/admin/team', '/admin/team'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const input = localTeamInput(req.body && typeof req.body === 'object' ? req.body : {})
+        if (input.error) return res.status(400).json({ success: false, error: 'Dados de cadastro inválidos', code: input.error })
+        const hierarchyError = localTeamHierarchyError(session, input.profile, input.units)
+        if (hierarchyError) return res.status(403).json({ success: false, error: 'Sem permissão para cadastrar este cargo ou unidade', code: hierarchyError })
+
+        const generatedCollision = store.team.some((member) => String(member.corporateEmail || '').toLowerCase() === input.generatedCorporateEmail.toLowerCase()) ||
+            store.users.some((user) => String(user.email || '').toLowerCase() === input.generatedCorporateEmail.toLowerCase()) ||
+            store.invites.some((invite) => String(invite.corporateEmail || invite.inviteeEmail || '').toLowerCase() === input.generatedCorporateEmail.toLowerCase() && !invite.revoked)
+        const emailOwner = store.team.find((member) => String(member.corporateEmail || '').toLowerCase() === input.corporateEmail.toLowerCase()) ||
+            store.users.find((user) => String(user.email || '').toLowerCase() === input.corporateEmail.toLowerCase()) ||
+            store.invites.find((invite) => String(invite.corporateEmail || invite.inviteeEmail || '').toLowerCase() === input.corporateEmail.toLowerCase() && !invite.revoked)
+        if (emailOwner) return res.status(409).json({ success: false, error: 'Este e-mail corporativo já está cadastrado', code: 'EMAIL_TAKEN' })
+        if (input.corporateEmail !== input.generatedCorporateEmail && !generatedCollision) {
+            return res.status(409).json({ success: false, error: 'O ajuste do e-mail só é aceito após uma colisão confirmada', code: 'CORPORATE_EMAIL_OVERRIDE_REQUIRES_COLLISION' })
+        }
+        const usernameTaken = store.team.some((member) => String(member.username || '').toLowerCase() === input.requestedUsername.toLowerCase()) ||
+            store.users.some((user) => String(user.username || '').toLowerCase() === input.requestedUsername.toLowerCase())
+        if (usernameTaken) return res.status(409).json({ success: false, error: 'Este nome de usuário já está reservado', code: 'USERNAME_TAKEN' })
+
+        const at = new Date().toISOString()
+        const id = `local-team-${randomUUID()}`
+        const inviteId = `local-invite-${randomUUID()}`
+        const member = localNormalizeTeamMember({
+            id,
+            fullName: input.fullName,
+            username: input.requestedUsername,
+            corporateEmail: input.corporateEmail,
+            personalEmail: input.personalEmail,
+            mobilePhone: input.mobilePhone,
+            workforceEmployeeId: `local-wf-${randomUUID()}`,
+            profile: input.profile,
+            jobTitle: input.jobTitle,
+            department: input.department,
+            units: input.units,
+            accountStatus: 'INVITED',
+            inviteId,
+            provisioningState: 'COMPLETED',
+            schedule: input.schedule,
+            identityLinks: [],
+            createdAt: at,
+            updatedAt: at,
+            createdBy: session.user.username || session.user.email || 'gestor-local',
+        })
+        store.team.unshift(member)
+        store.invites.unshift({
+            id: inviteId,
+            inviteeEmail: input.personalEmail,
+            corporateEmail: input.corporateEmail,
+            tokenHint: 'local…preview',
+            role: input.profile,
+            allowedUnits: input.units,
+            allowedModules: effectiveAllowedModules(input.profile),
+            status: 'LOCAL_PREVIEW',
+            maxUses: 1,
+            usesCount: 0,
+            revoked: false,
+            note: `Convite local de ${input.department}`,
+            createdBy: session.user.username || session.user.email || 'gestor-local',
+            createdAt: at,
+        })
+        localAudit(store, session, 'EMPLOYEE_TEAM_CREATED', id, { profile: input.profile, units: input.units, inviteIssued: true, localPreview: true })
+        await saveLocalCrmStore(store)
+        return res.status(201).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
+    })
+    app.put(['/api/crm/admin/team/:id', '/admin/team/:id'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const id = String(req.params.id || '').trim()
+        const index = store.team.findIndex((member) => member.id === id)
+        if (index < 0) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        const current = store.team[index]
+        if (!localTeamUnitsVisible(session, current)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        if (body.username !== undefined && localNormalizeUsername(body.username) !== current.username) return res.status(409).json({ success: false, error: 'O nome de usuário não pode ser trocado depois do convite', code: 'TEAM_USERNAME_IMMUTABLE' })
+        if (body.corporateEmail !== undefined && localNormalizeCorporateEmail(body.corporateEmail) !== current.corporateEmail) return res.status(409).json({ success: false, error: 'O e-mail corporativo não pode ser trocado neste fluxo', code: 'TEAM_EMAIL_IMMUTABLE' })
+        const input = localTeamInput(body, current)
+        if (input.error) return res.status(400).json({ success: false, error: 'Dados de edição inválidos', code: 'TEAM_UPDATE_INVALID' })
+        const hierarchyError = localTeamHierarchyError(session, input.profile, input.units)
+        if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia ou unidade não autorizada', code: hierarchyError })
+        const emailOwner = store.team.find((member) => member.id !== id && String(member.corporateEmail || '').toLowerCase() === input.corporateEmail.toLowerCase())
+        if (emailOwner) return res.status(409).json({ success: false, error: 'Este e-mail corporativo já está cadastrado', code: 'EMAIL_TAKEN' })
+        const updated = localNormalizeTeamMember({
+            ...current,
+            fullName: input.fullName,
+            department: input.department,
+            profile: input.profile,
+            jobTitle: input.jobTitle,
+            units: input.units,
+            personalEmail: input.personalEmail,
+            mobilePhone: input.mobilePhone,
+            schedule: input.schedule,
+            updatedAt: new Date().toISOString(),
+        })
+        store.team[index] = updated
+        localAudit(store, session, 'EMPLOYEE_TEAM_UPDATED', id, { fullName: updated.fullName, profile: updated.profile, units: updated.units, localPreview: true })
+        await saveLocalCrmStore(store)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(updated) })
+    })
+    app.post(['/api/crm/admin/team/:id/status', '/admin/team/:id/status'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const id = String(req.params.id || '').trim()
+        const member = store.team.find((row) => row.id === id)
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const nextStatus = String(req.body?.accountStatus || '').trim().toUpperCase()
+        if (!['INVITED', 'ACTIVE', 'SUSPENDED', 'TERMINATED', 'PENDING_ACCESS'].includes(nextStatus)) return res.status(400).json({ success: false, error: 'Estado da conta inválido', code: 'ACCOUNT_STATUS_INVALID' })
+        const currentStatus = String(member.accountStatus || '').trim().toUpperCase()
+        const validTransition = currentStatus === nextStatus ||
+            nextStatus === 'TERMINATED' && currentStatus !== 'TERMINATED' ||
+            currentStatus !== 'TERMINATED' && nextStatus === 'SUSPENDED' ||
+            currentStatus === 'SUSPENDED' && nextStatus === 'ACTIVE' ||
+            currentStatus === 'INVITED' && nextStatus === 'ACTIVE'
+        if (!validTransition) return res.status(409).json({ success: false, error: 'Transição de estado não permitida', code: 'ACCOUNT_STATUS_TRANSITION_DENIED' })
+        member.accountStatus = nextStatus
+        member.updatedAt = new Date().toISOString()
+        if (nextStatus === 'SUSPENDED' || nextStatus === 'TERMINATED' || nextStatus === 'PENDING_ACCESS') {
+            const invite = store.invites.find((row) => row.id === member.inviteId)
+            if (invite && !invite.revoked) invite.revoked = true
+        }
+        localAudit(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', id, { beforeStatus: currentStatus, accountStatus: nextStatus, historyPreserved: true, localPreview: true })
+        await saveLocalCrmStore(store)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
+    })
+    app.post(['/api/crm/admin/team/:id/invite/resend', '/admin/team/:id/invite/resend'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const id = String(req.params.id || '').trim()
+        const member = store.team.find((row) => row.id === id)
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        if (!['INVITED', 'PENDING_ACCESS'].includes(String(member.accountStatus || '').toUpperCase())) return res.status(409).json({ success: false, error: 'Somente convites pendentes podem ser reenviados', code: 'TEAM_INVITE_NOT_PENDING' })
+        store.invites.forEach((invite) => { if (invite.id === member.inviteId && !invite.revoked) invite.revoked = true })
+        const at = new Date().toISOString()
+        const inviteId = `local-invite-${randomUUID()}`
+        member.inviteId = inviteId
+        member.accountStatus = 'INVITED'
+        member.updatedAt = at
+        store.invites.unshift({
+            id: inviteId,
+            inviteeEmail: member.personalEmail,
+            corporateEmail: member.corporateEmail,
+            tokenHint: 'local…preview',
+            role: member.profile,
+            allowedUnits: member.units,
+            allowedModules: effectiveAllowedModules(member.profile),
+            status: 'LOCAL_PREVIEW',
+            maxUses: 1,
+            usesCount: 0,
+            revoked: false,
+            note: `Reenvio local de ${member.department}`,
+            createdBy: session.user.username || session.user.email || 'gestor-local',
+            createdAt: at,
+        })
+        localAudit(store, session, 'EMPLOYEE_TEAM_INVITE_RESENT', id, { inviteIssued: true, localPreview: true })
+        await saveLocalCrmStore(store)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
+    })
+    app.post(['/api/crm/admin/team/:id/invite/revoke', '/admin/team/:id/invite/revoke'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const id = String(req.params.id || '').trim()
+        const member = store.team.find((row) => row.id === id)
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const invite = store.invites.find((row) => row.id === member.inviteId)
+        if (!invite || invite.revoked || !['INVITED', 'PENDING_ACCESS'].includes(String(member.accountStatus || '').toUpperCase())) return res.status(409).json({ success: false, error: 'Convite pendente não encontrado', code: 'TEAM_INVITE_NOT_PENDING' })
+        invite.revoked = true
+        member.accountStatus = 'PENDING_ACCESS'
+        member.updatedAt = new Date().toISOString()
+        localAudit(store, session, 'EMPLOYEE_TEAM_INVITE_REVOKED', id, { inviteRevoked: true, localPreview: true })
+        await saveLocalCrmStore(store)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
+    })
+    app.get(['/api/crm/admin/team/:id/links', '/admin/team/:id/links'], async (req, res) => {
+        const session = getDevSession(req) || getLocalProxySession(req)
+        const store = await loadLocalCrmStore()
+        const member = store.team.find((row) => row.id === String(req.params.id || '').trim())
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (session && !localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: (member.identityLinks || []).map(localPublicIdentityLink) })
+    })
+    app.post(['/api/crm/admin/team/:id/links', '/admin/team/:id/links'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const member = store.team.find((row) => row.id === String(req.params.id || '').trim())
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const source = String(req.body?.source || '').trim().toUpperCase()
+        const sourceId = String(req.body?.sourceId || req.body?.source_id || '').trim().slice(0, 160)
+        const matchMethod = String(req.body?.matchMethod || req.body?.match_method || 'EXPLICIT_WORKFORCE_ID').trim().toUpperCase()
+        const confidence = String(req.body?.confidence || 'HIGH').trim().toUpperCase()
+        const reviewStatus = String(req.body?.reviewStatus || 'CONFIRMED').trim().toUpperCase()
+        if (!['ESCALA', 'ATENDIMENTO'].includes(source) || !sourceId || ['NAME', 'NAME_ONLY', 'SIMILAR_NAME'].includes(matchMethod)) return res.status(400).json({ success: false, error: 'Vínculo exige identificador explícito; nome não é suficiente', code: 'TEAM_LINK_EXPLICIT_ID_REQUIRED' })
+        if (!['HIGH', 'MEDIUM', 'LOW'].includes(confidence) || !['PENDING_REVIEW', 'CONFIRMED', 'REJECTED'].includes(reviewStatus)) return res.status(400).json({ success: false, error: 'Estado de revisão do vínculo inválido', code: 'TEAM_LINK_REVIEW_INVALID' })
+        const boundElsewhere = store.team.find((row) => row.id !== member.id && (row.identityLinks || []).some((link) => link.source === source && link.sourceId === sourceId))
+        if (boundElsewhere) return res.status(409).json({ success: false, error: 'Este identificador já está vinculado a outro funcionário', code: 'TEAM_LINK_CONFLICT' })
+        const existing = (member.identityLinks || []).find((link) => link.source === source)
+        if (existing) return res.status(200).json({ success: true, data: localPublicIdentityLink(existing), replayed: true })
+        const link = {
+            id: `local-link-${randomUUID()}`,
+            source,
+            sourceId,
+            matchMethod,
+            confidence,
+            reviewStatus,
+            metadata: { explicit: true, localPreview: true },
+            createdBy: session.user.username || session.user.email || 'gestor-local',
+            createdAt: new Date().toISOString(),
+        }
+        member.identityLinks = [...(member.identityLinks || []), link]
+        if (source === 'ESCALA' && reviewStatus === 'CONFIRMED') member.schedule = { ...member.schedule, professionalId: sourceId }
+        member.updatedAt = new Date().toISOString()
+        localAudit(store, session, 'EMPLOYEE_IDENTITY_LINK_CREATED', member.id, { source, sourceId, reviewStatus, localPreview: true })
+        await saveLocalCrmStore(store)
+        return res.status(201).set('cache-control', 'no-store').json({ success: true, data: localPublicIdentityLink(link) })
+    })
+    app.get(['/api/crm/admin/onboarding', '/admin/onboarding'], async (req, res) => {
+        const session = getDevSession(req) || getLocalProxySession(req)
+        const role = normalizeRole(session?.user?.role)
+        if (!['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)) return res.status(401).json({ success: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
+        const store = await loadLocalCrmStore()
+        const requestedStatus = String(req.query?.status || 'ALL').trim().toUpperCase()
+        const query = String(req.query?.q || '').trim().toLowerCase()
+        const data = store.team
+            .filter((member) => requestedStatus === 'ALL' || String(member.accountStatus || '').toUpperCase() === requestedStatus)
+            .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle].some((value) => String(value || '').toLowerCase().includes(query)))
+            .filter((member) => role === 'ADMIN' || localTeamUnitsVisible(session, member))
+            .map(localPublicTeamMember)
+        res.status(200).set('cache-control', 'no-store').json({ success: true, data, activeOnly: false, status: requestedStatus, summary: { members: data.length, pendingInvites: data.filter((member) => member.accountStatus === 'INVITED').length } })
+    })
 
     app.get('/api/crm/admin/users', async (_req, res) => {
         const store = await loadLocalCrmStore()
