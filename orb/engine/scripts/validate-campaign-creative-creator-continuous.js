@@ -3,8 +3,12 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  ALL_FIXTURE_NAMES,
   BUILDER_VERSION,
+  ERROR_HANDLER_NODE_NAMES,
+  ERROR_WORKFLOW_ID,
   INTERMEDIATE_FIXTURES,
+  MODULES,
   REQUIRED_MODULE_NODES,
   WORKFLOW_ID,
   WORKFLOW_NAME,
@@ -25,6 +29,8 @@ function parseArgs(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--input') result.input = argv[++index];
+    if (argv[index] === '--error-input') result.errorInput = argv[++index];
+    if (argv[index] === '--fixtures-input') result.fixturesInput = argv[++index];
   }
   return result;
 }
@@ -57,6 +63,14 @@ function assertUniqueIds(nodes) {
   }
 }
 
+function assertUniqueNames(nodes) {
+  const names = new Set();
+  for (const node of nodes) {
+    if (!node.name || names.has(node.name)) throw new Error('Duplicate or missing node name: ' + node.name);
+    names.add(node.name);
+  }
+}
+
 function assertRuntimeSafety(workflow) {
   for (const node of workflow.nodes) {
     if (!node.parameters || typeof node.parameters.jsCode !== 'string') continue;
@@ -65,31 +79,6 @@ function assertRuntimeSafety(workflow) {
         throw new Error('Unsupported runtime usage remains in ' + node.name + ': ' + pattern);
       }
     }
-  }
-}
-
-function assertExecutorContract(node) {
-  if (!node || node.type !== 'n8n-nodes-base.code') throw new Error('CCG-80 executor must be a Code node');
-  const code = node.parameters && node.parameters.jsCode;
-  if (typeof code !== 'string' || code.length < 1000) throw new Error('CCG-80 executor code is missing');
-  for (const required of [
-    'run_id',
-    'production_id',
-    'content_id',
-    'campaign_id',
-    'request_hash',
-    'idempotency_key',
-    'production_execution_results',
-    'POLICY_BLOCKED',
-    'DRY_RUN',
-    'EXECUTOR_ADAPTER_NOT_CONFIGURED',
-    'publish_allowed: false',
-    'publish_requested: false',
-  ]) {
-    if (!code.includes(required)) throw new Error('CCG-80 executor contract missing: ' + required);
-  }
-  if (/publish_allowed\s*:\s*true|publish_requested\s*:\s*true/.test(code)) {
-    throw new Error('CCG-80 executor contains an enabling publication flag');
   }
 }
 
@@ -108,6 +97,22 @@ function assertGraphTargetsExist(workflow) {
   }
 }
 
+function assertModuleContinuity(workflow) {
+  for (const moduleName of MODULES.slice(0, 9)) {
+    const node = workflow.nodes.find((candidate) => candidate.name === `${moduleName} Return Module Result`);
+    if (!node) continue;
+    const code = node.parameters?.jsCode || '';
+    if (!code.includes('...data') || !code.includes('module_trace') || !code.includes('ledger_events') || !code.includes('binary:')) {
+      throw new Error(`${moduleName} return does not preserve the continuous data, binary, trace, and ledger contract`);
+    }
+  }
+  const finalReturn = workflow.nodes.find((candidate) => candidate.name === 'CCG-90 Return Content Package');
+  const finalCode = finalReturn?.parameters?.jsCode || '';
+  if (!finalCode.includes("output_type: 'CONTENT_PACKAGE'")) {
+    throw new Error('CCG-90 return does not expose CONTENT_PACKAGE');
+  }
+}
+
 function validateWorkflow(workflow) {
   if (!workflow || workflow.id !== WORKFLOW_ID || workflow.name !== WORKFLOW_NAME) {
     throw new Error('Candidate identity does not match Campaign Creative Creator');
@@ -115,6 +120,7 @@ function validateWorkflow(workflow) {
   if (workflow.active === true) throw new Error('Candidate must remain inactive');
   const names = nodesByName(workflow);
   assertUniqueIds(workflow.nodes);
+  assertUniqueNames(workflow.nodes);
   assertGraphTargetsExist(workflow);
   for (const name of REQUIRED_MODULE_NODES) {
     if (!names.has(name)) throw new Error('Candidate is missing node: ' + name);
@@ -123,12 +129,18 @@ function validateWorkflow(workflow) {
     if (names.has(name)) throw new Error('Intermediate fixture remains: ' + name);
   }
   if (names.has('Build CCG-00 dry-run fixture') === false) throw new Error('Manual CCG-00 dry-run fixture was removed');
-  if (names.has('Build CCG-99 retryable fixture') === false) throw new Error('CCG-99 retryable fixture was removed');
-  if (!names.has('Operational Production Request') || !names.has('CCG-80 Production Executor')) {
-    throw new Error('Operational trigger or executor is missing');
+  for (const name of ERROR_HANDLER_NODE_NAMES) {
+    if (names.has(name)) throw new Error('Error workflow node remains in main workflow: ' + name);
+  }
+  if (!names.has('Operational Production Request')) {
+    throw new Error('Operational subworkflow trigger is missing');
   }
   if (workflow.nodes.filter((node) => node.name === 'Operational Production Request').length !== 1) {
     throw new Error('Expected exactly one operational trigger');
+  }
+  if (names.has('CCG-80 Production Executor')) throw new Error('Production executor must remain outside the first continuous route');
+  if (workflow.settings?.errorWorkflow !== ERROR_WORKFLOW_ID) {
+    throw new Error('Main workflow is not configured with the separate CCG-99 error workflow');
   }
   const requiredEdges = [
     ['Operational Production Request', 'CCG-00 Parse & Normalize'],
@@ -140,8 +152,17 @@ function validateWorkflow(workflow) {
     ['CCG-50 Return Module Result', 'CCG-60 Validate CCG-50 Input'],
     ['CCG-60 Return Module Result', 'CCG-70 Validate CCG-60 Input'],
     ['CCG-70 Return Module Result', 'CCG-80 Validate CCG-70 Input'],
-    ['CCG-80 Return Module Result', 'CCG-80 Production Executor'],
-    ['CCG-80 Production Executor', 'CCG-90 Validate CCG-80 Input'],
+    ['CCG-80 Return Module Result', 'CCG-90 Validate CCG-80 Input'],
+    ['Manual safe dry-run smoke', 'Build CCG-00 dry-run fixture'],
+    ['Build CCG-00 dry-run fixture', 'CCG-00 Parse & Normalize'],
+    ['CCG-60 Prepare Audio Planning Brief', 'CCG-60 Optional Applicability Gate'],
+    ['CCG-60 Optional Applicability Gate', 'CCG-60 Optional Skip Result'],
+    ['CCG-60 Optional Applicability Gate', 'CCG-60 Switch Audio Direction Mode'],
+    ['CCG-60 Optional Skip Result', 'CCG-60 Return Module Result'],
+    ['CCG-70 Prepare Timeline Planning Brief', 'CCG-70 Optional Applicability Gate'],
+    ['CCG-70 Optional Applicability Gate', 'CCG-70 Optional Skip Result'],
+    ['CCG-70 Optional Applicability Gate', 'CCG-70 Switch Timeline Mode'],
+    ['CCG-70 Optional Skip Result', 'CCG-70 Return Module Result'],
   ];
   for (const [source, target] of requiredEdges) {
     if (!hasEdge(workflow, source, target)) throw new Error('Missing required edge: ' + source + ' -> ' + target);
@@ -149,8 +170,14 @@ function validateWorkflow(workflow) {
   for (const source of INTERMEDIATE_FIXTURES) {
     if (workflow.connections && workflow.connections[source]) throw new Error('Fixture connection remains: ' + source);
   }
+  for (const fixture of ALL_FIXTURE_NAMES.slice(1)) {
+    if (Object.values(workflow.connections || {}).some((output) => Object.values(output || {}).some((branches) =>
+      Array.isArray(branches) && branches.some((branch) => Array.isArray(branch) && branch.some((edge) => edge?.node === fixture))))) {
+      throw new Error('Post-CCG-00 fixture is connected to the main graph: ' + fixture);
+    }
+  }
   assertRuntimeSafety(workflow);
-  assertExecutorContract(names.get('CCG-80 Production Executor'));
+  assertModuleContinuity(workflow);
   if (!workflow.meta || workflow.meta.codex_builder_version !== BUILDER_VERSION) {
     throw new Error('Candidate builder metadata is missing or stale');
   }
@@ -158,13 +185,64 @@ function validateWorkflow(workflow) {
   return { nodeCount: workflow.nodes.length, edgeCount: countEdges(workflow) };
 }
 
+function validateErrorWorkflow(workflow) {
+  if (!workflow || workflow.id !== ERROR_WORKFLOW_ID || workflow.name !== 'Campaign Creative Creator - Error Handler') {
+    throw new Error('Error workflow identity does not match Campaign Creative Creator - Error Handler');
+  }
+  if (workflow.active === true) throw new Error('Error workflow must remain inactive');
+  const names = nodesByName(workflow);
+  assertUniqueIds(workflow.nodes);
+  assertUniqueNames(workflow.nodes);
+  assertGraphTargetsExist(workflow);
+  for (const name of ['Error Trigger', 'CCG-99 Normalize & Redact Error Event', 'CCG-99 Classify & Decide Recovery', 'CCG-99 Switch Recovery Action', 'CCG-99 Finalize Incident & Ledger', 'CCG-99 Return Error Handler Result']) {
+    if (!names.has(name)) throw new Error('Error workflow is missing node: ' + name);
+  }
+  if (names.has('Build CCG-99 retryable fixture')) throw new Error('CCG-99 fixture was copied into the error workflow');
+  if (workflow.settings?.errorWorkflow) throw new Error('Error workflow must not point to itself');
+  assertRuntimeSafety(workflow);
+  const code = workflow.nodes.map((node) => node.parameters?.jsCode || '').join('\n');
+  if (/publish_allowed\s*:\s*true|publish_requested\s*:\s*true/.test(code)) {
+    throw new Error('Error workflow contains an enabling publication flag');
+  }
+  if (!hasEdge(workflow, 'Error Trigger', 'CCG-99 Normalize & Redact Error Event')) {
+    throw new Error('Error Trigger is not connected to CCG-99 normalization');
+  }
+  return { nodeCount: workflow.nodes.length, edgeCount: countEdges(workflow) };
+}
+
+function validateFixturesWorkflow(workflow) {
+  if (!workflow || workflow.name !== 'Campaign Creative Creator - Module Fixtures') {
+    throw new Error('Fixture catalog identity does not match Campaign Creative Creator');
+  }
+  if (workflow.active === true) throw new Error('Fixture catalog must remain inactive');
+  assertUniqueIds(workflow.nodes);
+  assertUniqueNames(workflow.nodes);
+  if (Object.keys(workflow.connections || {}).length) throw new Error('Fixture catalog must not be an operational route');
+  const names = new Set(workflow.nodes.map((node) => node.name));
+  for (const fixture of ALL_FIXTURE_NAMES) {
+    if (!names.has(fixture)) throw new Error('Fixture catalog is missing: ' + fixture);
+  }
+  assertRuntimeSafety(workflow);
+  return { nodeCount: workflow.nodes.length, edgeCount: countEdges(workflow) };
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const inputPath = args.input || process.env.CCG_OUTPUT_FILE;
   if (!inputPath) throw new Error('Usage: validate... --input <candidate.json>');
-  const workflow = JSON.parse(fs.readFileSync(path.resolve(inputPath), 'utf8'));
+  const workflow = JSON.parse(fs.readFileSync(path.resolve(inputPath), 'utf8').replace(/^\uFEFF/, ''));
+  const errorInputPath = args.errorInput || process.env.CCG_ERROR_OUTPUT_FILE;
+  const fixturesInputPath = args.fixturesInput || process.env.CCG_FIXTURES_OUTPUT_FILE;
   const result = validateWorkflow(workflow);
-  process.stdout.write('Campaign Creative Creator continuous validation: OK (' + result.nodeCount + ' nodes, ' + result.edgeCount + ' edges)\n');
+  const errorResult = errorInputPath
+    ? validateErrorWorkflow(JSON.parse(fs.readFileSync(path.resolve(errorInputPath), 'utf8').replace(/^\uFEFF/, '')))
+    : null;
+  const fixturesResult = fixturesInputPath
+    ? validateFixturesWorkflow(JSON.parse(fs.readFileSync(path.resolve(fixturesInputPath), 'utf8').replace(/^\uFEFF/, '')))
+    : null;
+  process.stdout.write('Campaign Creative Creator continuous validation: OK (' + result.nodeCount + ' nodes, ' + result.edgeCount + ' edges' +
+    (errorResult ? '; error ' + errorResult.nodeCount + ' nodes' : '') +
+    (fixturesResult ? '; fixtures ' + fixturesResult.nodeCount + ' nodes' : '') + ')\n');
 }
 
 if (require.main === module) {
@@ -176,4 +254,11 @@ if (require.main === module) {
   }
 }
 
-module.exports = { UNSAFE_RUNTIME_PATTERNS, countEdges, hasEdge, validateWorkflow };
+module.exports = {
+  UNSAFE_RUNTIME_PATTERNS,
+  countEdges,
+  hasEdge,
+  validateErrorWorkflow,
+  validateFixturesWorkflow,
+  validateWorkflow,
+};
