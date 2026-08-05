@@ -86,3 +86,20 @@ Harmonia DDL idempotently, seeds only the two bounded unit definitions, and
 records `20260805_harmonia_worker_foundation_v1`. It never drops, truncates or
 deletes data. Rollback is operational: stop/disable the worker and retain the
 schema and checkpoint; do not issue a destructive reverse migration.
+
+Production uses PostgreSQL peer authentication and therefore must run as the
+native `skincos` OS user. Provision the checkpoint directory once as root with
+group write for that service identity, then run the native launcher as
+`skincos`; the launcher refuses arbitrary backup roots or a different OS user:
+
+```sh
+sudo install -d -o root -g skincos -m 0770 /var/backups/skincos/clientes
+sudo -u skincos env \
+  HARMONIA_MIGRATION_TARGET=production \
+  HARMONIA_MIGRATION_ACTION=dry-run \
+  /opt/skincos/current/source/scripts/runtime/run-harmonia-migration-native.sh
+```
+
+An apply follows the same command with `HARMONIA_MIGRATION_ACTION=apply`.
+Staging uses its dedicated migrator environment and the separate
+`/var/backups/skincos/clientes/staging` checkpoint root.

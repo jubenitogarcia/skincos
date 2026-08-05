@@ -11,10 +11,28 @@ if [[ -z "$TARGET" ]]; then
   exit 64
 fi
 case "$TARGET" in
-  production) ENV_FILE="$CONFIG_ROOT/crm.env"; BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/skincos/clientes}" ;;
-  staging) ENV_FILE="$CONFIG_ROOT/crm-atendimento-staging-migrator.env"; BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/skincos/clientes/staging}" ;;
+  production)
+    ENV_FILE="$CONFIG_ROOT/crm.env"
+    BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/skincos/clientes}"
+    EXPECTED_BACKUP_ROOT='/var/backups/skincos/clientes'
+    EXPECTED_OS_USER='skincos'
+    ;;
+  staging)
+    ENV_FILE="$CONFIG_ROOT/crm-atendimento-staging-migrator.env"
+    BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/skincos/clientes/staging}"
+    EXPECTED_BACKUP_ROOT='/var/backups/skincos/clientes/staging'
+    EXPECTED_OS_USER=''
+    ;;
   *) echo "Unsupported target: $TARGET" >&2; exit 64 ;;
 esac
+[[ "$BACKUP_ROOT" == "$EXPECTED_BACKUP_ROOT" ]] || {
+  echo "BACKUP_ROOT is fixed to $EXPECTED_BACKUP_ROOT for $TARGET." >&2
+  exit 64
+}
+if [[ -n "$EXPECTED_OS_USER" && "$(id -un)" != "$EXPECTED_OS_USER" ]]; then
+  echo "The $TARGET migration must run as the OS user $EXPECTED_OS_USER for peer authentication." >&2
+  exit 77
+fi
 [[ -f "$ENV_FILE" ]] || { echo "Missing private environment: $ENV_FILE" >&2; exit 1; }
 # shellcheck disable=SC1090
 set -a
@@ -31,7 +49,10 @@ checkpoint=''
 if [[ "$ACTION" == 'apply' ]]; then
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   checkpoint="$BACKUP_ROOT/harmonia-${TARGET}-${stamp}.json"
-  install -d -o root -g skincos -m 0750 "$BACKUP_ROOT"
+  [[ -d "$BACKUP_ROOT" && -w "$BACKUP_ROOT" ]] || {
+    echo "Checkpoint directory must be pre-provisioned and writable: $BACKUP_ROOT" >&2
+    exit 77
+  }
 fi
 
 args=("--target" "$TARGET")

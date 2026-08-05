@@ -44,7 +44,7 @@ fi
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 sudo -n install -d -m 0750 -o root -g skincos "$CONFIG_DIR" "$CONTROL_DIR"
 sudo -n install -d -m 0750 -o skincos -g skincos "$STATE_ROOT" "$STATE_ROOT/var" "$LOG_ROOT"
-sudo -n install -d -m 0700 -o root -g root "$BACKUP_ROOT"
+sudo -n install -d -m 0700 -o root -g root "$BACKUP_ROOT" "$BACKUP_ROOT/staging"
 
 for path in "$ATENDIMENTO_CONFIG" "$MIGRATOR_CONFIG" "$CONTROL_FILE"; do
   if sudo -n test -f "$path"; then
