@@ -202,6 +202,60 @@ function mapPurchaseOrder(row, lines = [], receipts = []) {
   };
 }
 
+function mapReplenishmentPolicy(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    registro: String(row.registro_insumo || '').trim(),
+    codigoBarras: String(row.codigo_barras || '').trim(),
+    produto: String(row.produto || '').trim(),
+    lote: row.lote ? String(row.lote) : null,
+    dataValidade: row.data_validade ? String(row.data_validade) : null,
+    estoqueMinimo: toInt(row.estoque_minimo, 0),
+    estoqueAlvo: toInt(row.estoque_alvo, 0),
+    estoqueSeguranca: toInt(row.estoque_seguranca, 0),
+    leadTimeDias: toInt(row.lead_time_dias, 0),
+    ativo: Number(row.ativo || 0) === 1,
+    createdAt: row.created_at ? String(row.created_at) : null,
+    createdBy: String(row.created_by || '').trim(),
+    updatedAt: row.updated_at ? String(row.updated_at) : null,
+    updatedBy: String(row.updated_by || '').trim(),
+  };
+}
+
+function mapReplenishmentSuggestion(row) {
+  if (!row) return null;
+  let draft = null;
+  try { draft = row.draft_json ? JSON.parse(row.draft_json) : null; } catch { draft = null; }
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    registro: String(row.registro_insumo || '').trim(),
+    tipo: String(row.tipo || '').trim().toUpperCase(),
+    status: String(row.status || 'DRAFT').trim().toUpperCase(),
+    quantidade: toInt(row.quantidade, 0),
+    saldoAtual: toInt(row.saldo_atual, 0),
+    saldoProjetado: toInt(row.saldo_projetado, 0),
+    estoqueAlvo: toInt(row.estoque_alvo, 0),
+    estoqueSeguranca: toInt(row.estoque_seguranca, 0),
+    leadTimeDias: toInt(row.lead_time_dias, 0),
+    unidadeOrigem: row.unidade_origem ? normalizeUnitScope(row.unidade_origem) : null,
+    unidadeDestino: normalizeUnitScope(row.unidade_destino),
+    codigoBarras: String(row.codigo_barras || '').trim(),
+    produto: String(row.produto || '').trim(),
+    lote: row.lote ? String(row.lote) : null,
+    dataValidade: row.data_validade ? String(row.data_validade) : null,
+    suggestionKey: String(row.suggestion_key || '').trim(),
+    draft,
+    generatedAt: row.generated_at ? String(row.generated_at) : null,
+    generatedBy: String(row.generated_by || '').trim(),
+    dismissedAt: row.dismissed_at ? String(row.dismissed_at) : null,
+    dismissedBy: row.dismissed_by ? String(row.dismissed_by) : null,
+    dismissReason: row.dismiss_reason ? String(row.dismiss_reason) : null,
+  };
+}
+
 function mapCountLine(row) {
   return {
     id: String(row?.id || '').trim(),
@@ -2828,6 +2882,305 @@ export async function d1CancelarPedidoInterno({ env, id, unidade, actor, justifi
   if (resultChanges(result) !== 1) return { ok: false, status: 409, code: 'PURCHASE_CANCEL_CONFLICT', error: 'Pedido foi alterado por outra operação' };
   const order = await d1GetPedidoInterno({ env, id: orderId, unidade: scope.unit, actor });
   return { ok: true, ...order };
+}
+
+function parseReplenishmentInteger(value, { fallback = NaN, max = 1000000000 } = {}) {
+  const parsed = parseCountQuantity(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > max) return fallback;
+  return parsed;
+}
+
+export async function d1ListPoliticasReposicao({ env, unidade, actor, includeInactive = false }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const result = await env.DB.prepare(
+    `SELECT p.id, p.unidade, p.registro_insumo, p.estoque_minimo, p.estoque_alvo,
+            p.estoque_seguranca, p.lead_time_dias, p.ativo,
+            p.created_at, p.created_by, p.updated_at, p.updated_by,
+            i.codigo_barras, i.produto, i.lote, i.data_validade,
+            COALESCE(s.quantidade, 0) AS saldo_atual
+     FROM insumos_replenishment_policies p
+     JOIN insumos_items i ON i.registro = p.registro_insumo
+     LEFT JOIN insumos_stocks s ON s.registro = p.registro_insumo AND s.unidade = p.unidade
+     WHERE p.unidade = ? ${includeInactive ? '' : 'AND p.ativo = 1'}
+     ORDER BY lower(i.produto), p.registro_insumo`
+  ).bind(scope.unit).all();
+  return { ok: true, items: (result?.results || []).map((row) => ({ ...mapReplenishmentPolicy(row), saldoAtual: toInt(row.saldo_atual, 0) })) };
+}
+
+export async function d1UpsertPoliticaReposicao({ env, unidade, actor, body }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const registro = String(body?.registro || body?.registroInsumo || '').trim();
+  if (!registro) return { ok: false, status: 400, code: 'REPLENISHMENT_ITEM_REQUIRED', error: 'Registro do insumo é obrigatório' };
+  const item = await env.DB.prepare(
+    `SELECT registro, codigo_barras, produto, lote, data_validade, archived_at
+     FROM insumos_items WHERE registro = ? LIMIT 1`
+  ).bind(registro).first();
+  if (!item) return { ok: false, status: 404, code: 'INSUMO_NOT_FOUND', error: 'Insumo não encontrado' };
+  if (String(item.archived_at || '').trim()) return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não aceita política de reposição' };
+  const minimo = parseReplenishmentInteger(body?.estoqueMinimo ?? body?.minimo);
+  const alvo = parseReplenishmentInteger(body?.estoqueAlvo ?? body?.alvo);
+  const seguranca = parseReplenishmentInteger(body?.estoqueSeguranca ?? body?.seguranca, { fallback: 0 });
+  const leadTime = parseReplenishmentInteger(body?.leadTimeDias ?? body?.leadTime, { fallback: 0, max: 3650 });
+  if (!Number.isSafeInteger(minimo) || !Number.isSafeInteger(alvo) || !Number.isSafeInteger(seguranca) || !Number.isSafeInteger(leadTime)) {
+    return { ok: false, status: 400, code: 'REPLENISHMENT_POLICY_INVALID', error: 'Mínimo, alvo, segurança e lead time devem ser inteiros não negativos' };
+  }
+  if (alvo < minimo) return { ok: false, status: 400, code: 'REPLENISHMENT_TARGET_INVALID', error: 'Estoque alvo não pode ser menor que o mínimo' };
+  const ativo = body?.ativo === false || body?.ativo === 0 || String(body?.ativo || '').toLowerCase() === 'false' ? 0 : 1;
+  const now = nowIso();
+  const actorId = actorName(actor);
+  await env.DB.prepare(
+    `INSERT INTO insumos_replenishment_policies
+       (id, unidade, registro_insumo, estoque_minimo, estoque_alvo, estoque_seguranca,
+        lead_time_dias, ativo, created_at, created_by, updated_at, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(unidade, registro_insumo) DO UPDATE SET
+       estoque_minimo = excluded.estoque_minimo,
+       estoque_alvo = excluded.estoque_alvo,
+       estoque_seguranca = excluded.estoque_seguranca,
+       lead_time_dias = excluded.lead_time_dias,
+       ativo = excluded.ativo,
+       updated_at = excluded.updated_at,
+       updated_by = excluded.updated_by`
+  ).bind(crypto.randomUUID(), scope.unit, registro, minimo, alvo, seguranca, leadTime, ativo, now, actorId, now, actorId).run();
+  const row = await env.DB.prepare(
+    `SELECT p.id, p.unidade, p.registro_insumo, p.estoque_minimo, p.estoque_alvo,
+            p.estoque_seguranca, p.lead_time_dias, p.ativo,
+            p.created_at, p.created_by, p.updated_at, p.updated_by,
+            i.codigo_barras, i.produto, i.lote, i.data_validade,
+            COALESCE(s.quantidade, 0) AS saldo_atual
+     FROM insumos_replenishment_policies p
+     JOIN insumos_items i ON i.registro = p.registro_insumo
+     LEFT JOIN insumos_stocks s ON s.registro = p.registro_insumo AND s.unidade = p.unidade
+     WHERE p.unidade = ? AND p.registro_insumo = ? LIMIT 1`
+  ).bind(scope.unit, registro).first();
+  return { ok: true, policy: { ...mapReplenishmentPolicy(row), saldoAtual: toInt(row?.saldo_atual, 0) } };
+}
+
+async function loadReplenishmentInbound({ env, unidade, registro }) {
+  const transfers = await env.DB.prepare(
+    `SELECT COALESCE(SUM(quantidade), 0) AS quantidade
+     FROM insumos_transfers
+     WHERE registro_insumo = ? AND unidade_destino = ? AND status = 'PENDING_RECEIPT'`
+  ).bind(registro, unidade).first();
+  const purchases = await env.DB.prepare(
+    `SELECT COALESCE(SUM(l.quantidade_pedida - l.quantidade_recebida), 0) AS quantidade
+     FROM insumos_purchase_order_lines l
+     JOIN insumos_purchase_orders o ON o.id = l.pedido_id
+     WHERE l.registro_insumo = ? AND o.unidade = ?
+       AND o.status IN ('DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED')`
+  ).bind(registro, unidade).first();
+  return Math.max(0, toInt(transfers?.quantidade, 0)) + Math.max(0, toInt(purchases?.quantidade, 0));
+}
+
+async function loadReplenishmentDonor({ env, actor, unidade, registro }) {
+  const result = await env.DB.prepare(
+    `SELECT s.unidade, s.quantidade,
+            COALESCE(p.estoque_minimo, 0) AS estoque_minimo,
+            COALESCE(p.estoque_seguranca, 0) AS estoque_seguranca
+     FROM insumos_stocks s
+     LEFT JOIN insumos_replenishment_policies p
+       ON p.unidade = s.unidade AND p.registro_insumo = s.registro AND p.ativo = 1
+     WHERE s.registro = ? AND s.unidade <> ? AND s.quantidade > (COALESCE(p.estoque_minimo, 0) + COALESCE(p.estoque_seguranca, 0))
+     ORDER BY (s.quantidade - (COALESCE(p.estoque_minimo, 0) + COALESCE(p.estoque_seguranca, 0))) DESC, s.unidade ASC
+     LIMIT 20`
+  ).bind(registro, unidade).all();
+  for (const row of result?.results || []) {
+    const donorUnit = normalizeUnitScope(row.unidade);
+    if (!donorUnit || !hasUnitScopeAccess(actor, donorUnit)) continue;
+    const quantity = Math.max(0, toInt(row.quantidade, 0));
+    const reserve = Math.max(0, toInt(row.estoque_minimo, 0) + toInt(row.estoque_seguranca, 0));
+    const surplus = Math.max(0, quantity - reserve);
+    if (surplus > 0) return { unidade: donorUnit, surplus };
+  }
+  return null;
+}
+
+async function loadLatestProcurementCost({ env, unidade, registro }) {
+  const row = await env.DB.prepare(
+    `SELECT r.custo_unitario_centavos
+     FROM insumos_purchase_receipts r
+     WHERE r.unidade = ? AND r.registro_insumo = ?
+     ORDER BY r.received_at DESC, r.id DESC LIMIT 1`
+  ).bind(unidade, registro).first();
+  return row ? parseReplenishmentInteger(row.custo_unitario_centavos, { fallback: null }) : null;
+}
+
+export async function d1ListSugestoesReposicao({ env, unidade, actor, status = 'DRAFT' }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const normalizedStatus = String(status || '').trim().toUpperCase();
+  if (normalizedStatus && !['DRAFT', 'DISMISSED', 'CONVERTED'].includes(normalizedStatus)) return { ok: false, status: 400, code: 'REPLENISHMENT_STATUS_INVALID', error: 'Status de sugestão inválido' };
+  const result = await env.DB.prepare(
+    `SELECT id, unidade, registro_insumo, tipo, status, quantidade, saldo_atual, saldo_projetado,
+            estoque_alvo, estoque_seguranca, lead_time_dias, unidade_origem, unidade_destino,
+            codigo_barras, produto, lote, data_validade, suggestion_key, draft_json,
+            generated_at, generated_by, dismissed_at, dismissed_by, dismiss_reason
+     FROM insumos_replenishment_suggestions
+     WHERE unidade = ? ${normalizedStatus ? 'AND status = ?' : ''}
+     ORDER BY CASE WHEN status = 'DRAFT' THEN 0 ELSE 1 END,
+              lead_time_dias DESC, generated_at DESC, id DESC`
+  ).bind(...(normalizedStatus ? [scope.unit, normalizedStatus] : [scope.unit])).all();
+  return { ok: true, items: (result?.results || []).map(mapReplenishmentSuggestion) };
+}
+
+export async function d1GerarSugestoesReposicao({ env, unidade, actor }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const policiesResult = await env.DB.prepare(
+    `SELECT p.id, p.unidade, p.registro_insumo, p.estoque_minimo, p.estoque_alvo,
+            p.estoque_seguranca, p.lead_time_dias, p.ativo,
+            p.created_at, p.created_by, p.updated_at, p.updated_by,
+            i.codigo_barras, i.produto, i.lote, i.data_validade
+     FROM insumos_replenishment_policies p
+     JOIN insumos_items i ON i.registro = p.registro_insumo
+     WHERE p.unidade = ? AND p.ativo = 1 AND COALESCE(i.archived_at, '') = ''
+     ORDER BY p.registro_insumo LIMIT 500`
+  ).bind(scope.unit).all();
+  const generated = [];
+  for (const policy of policiesResult?.results || []) {
+    const minimum = toInt(policy.estoque_minimo, 0);
+    const safety = toInt(policy.estoque_seguranca, 0);
+    const target = Math.max(toInt(policy.estoque_alvo, 0), minimum + safety);
+    const stockRow = await env.DB.prepare(
+      `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ? LIMIT 1`
+    ).bind(policy.registro_insumo, scope.unit).first();
+    // A governed direct-output exception may leave a negative balance. Keep
+    // that accounting signal for the shortage calculation instead of
+    // treating it as zero; the suggestion table stores non-negative display
+    // snapshots because its CHECK constraint protects draft data.
+    const saldoContabilAtual = toInt(stockRow?.quantidade, 0);
+    const inbound = await loadReplenishmentInbound({ env, unidade: scope.unit, registro: policy.registro_insumo });
+    const saldoContabilProjetado = saldoContabilAtual + inbound;
+    if (saldoContabilProjetado >= minimum + safety) continue;
+    const saldoAtual = Math.max(0, saldoContabilAtual);
+    const saldoProjetado = Math.max(0, saldoContabilProjetado);
+    const shortage = Math.max(0, target - saldoContabilProjetado);
+    if (!shortage) continue;
+
+    const donor = await loadReplenishmentDonor({ env, actor, unidade: scope.unit, registro: policy.registro_insumo });
+    const transferQuantity = donor ? Math.min(shortage, donor.surplus) : 0;
+    const type = transferQuantity > 0 ? 'TRANSFER_DRAFT' : 'PURCHASE_DRAFT';
+    const quantity = transferQuantity > 0 ? transferQuantity : shortage;
+    const latestCost = type === 'PURCHASE_DRAFT' ? await loadLatestProcurementCost({ env, unidade: scope.unit, registro: policy.registro_insumo }) : null;
+    const draft = type === 'TRANSFER_DRAFT'
+      ? {
+        tipo: type,
+        prontaParaExecucao: false,
+        unidadeOrigem: donor.unidade,
+        unidadeDestino: scope.unit,
+        registro: String(policy.registro_insumo || ''),
+        codigoBarras: String(policy.codigo_barras || ''),
+        produto: String(policy.produto || ''),
+        lote: policy.lote ? String(policy.lote) : null,
+        dataValidade: policy.data_validade ? String(policy.data_validade) : null,
+        quantidade: quantity,
+        saldoContabilAtual,
+        saldoContabilProjetado,
+        leadTimeDias: toInt(policy.lead_time_dias, 0),
+        observacoes: 'Rascunho gerado pela política de reposição; requer revisão e despacho explícitos.',
+      }
+      : {
+        tipo: type,
+        prontaParaExecucao: false,
+        unidade: scope.unit,
+        fornecedorId: null,
+        status: 'DRAFT',
+        linhas: [{
+          registro: String(policy.registro_insumo || ''),
+          codigoBarras: String(policy.codigo_barras || ''),
+          produto: String(policy.produto || ''),
+          lote: policy.lote ? String(policy.lote) : null,
+          dataValidade: policy.data_validade ? String(policy.data_validade) : null,
+          quantidade: quantity,
+          custoUnitarioCentavos: latestCost,
+        }],
+        saldoContabilAtual,
+        saldoContabilProjetado,
+        leadTimeDias: toInt(policy.lead_time_dias, 0),
+        observacoes: 'Rascunho gerado pela política de reposição; requer revisão e criação explícita do pedido.',
+      };
+    const key = await sha256Hex(canonicalCommandJson({
+      unidade: scope.unit,
+      registro: policy.registro_insumo,
+      tipo: type,
+      quantidade: quantity,
+      saldoAtual,
+      saldoProjetado,
+      saldoContabilAtual,
+      saldoContabilProjetado,
+      minimum,
+      safety,
+      target,
+      leadTimeDias: toInt(policy.lead_time_dias, 0),
+      donor: donor?.unidade || null,
+      inbound,
+    }));
+    const id = crypto.randomUUID();
+    const generatedAt = nowIso();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO insumos_replenishment_suggestions (
+        id, unidade, registro_insumo, tipo, status, quantidade, saldo_atual, saldo_projetado,
+        estoque_alvo, estoque_seguranca, lead_time_dias, unidade_origem, unidade_destino,
+        codigo_barras, produto, lote, data_validade, suggestion_key, draft_json,
+        generated_at, generated_by
+      ) VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      id, scope.unit, policy.registro_insumo, type, quantity, saldoAtual, saldoProjetado,
+      target, safety, toInt(policy.lead_time_dias, 0), donor?.unidade || null, scope.unit,
+      String(policy.codigo_barras || ''), String(policy.produto || ''), policy.lote || null, policy.data_validade || null,
+      key, JSON.stringify(draft), generatedAt, actorName(actor),
+    ).run();
+    const row = await env.DB.prepare(
+      `SELECT id, unidade, registro_insumo, tipo, status, quantidade, saldo_atual, saldo_projetado,
+              estoque_alvo, estoque_seguranca, lead_time_dias, unidade_origem, unidade_destino,
+              codigo_barras, produto, lote, data_validade, suggestion_key, draft_json,
+              generated_at, generated_by, dismissed_at, dismissed_by, dismiss_reason
+       FROM insumos_replenishment_suggestions WHERE suggestion_key = ? LIMIT 1`
+    ).bind(key).first();
+    if (row) generated.push({ ...mapReplenishmentSuggestion(row), created: String(row.id || '') === id });
+  }
+  return { ok: true, generated, createdCount: generated.filter((entry) => entry.created).length, existingCount: generated.filter((entry) => !entry.created).length };
+}
+
+export async function d1DismissSugestaoReposicao({ env, id, unidade, actor, justificativa }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const suggestionId = String(id || '').trim();
+  const reason = String(justificativa || '').trim().slice(0, 1000);
+  if (!suggestionId) return { ok: false, status: 400, code: 'REPLENISHMENT_INVALID', error: 'Sugestão inválida' };
+  if (!reason) return { ok: false, status: 400, code: 'DISMISS_REASON_REQUIRED', error: 'Justificativa é obrigatória para descartar sugestão' };
+  const existing = await env.DB.prepare(
+    `SELECT id, status FROM insumos_replenishment_suggestions WHERE id = ? AND unidade = ? LIMIT 1`
+  ).bind(suggestionId, scope.unit).first();
+  if (!existing) return { ok: false, status: 404, code: 'REPLENISHMENT_NOT_FOUND', error: 'Sugestão não encontrada' };
+  if (String(existing.status || '').toUpperCase() !== 'DRAFT') return { ok: false, status: 409, code: 'REPLENISHMENT_NOT_DRAFT', error: 'Somente sugestões em rascunho podem ser descartadas' };
+  const now = nowIso();
+  const result = await env.DB.prepare(
+    `UPDATE insumos_replenishment_suggestions
+     SET status = 'DISMISSED', dismissed_at = ?, dismissed_by = ?, dismiss_reason = ?
+     WHERE id = ? AND unidade = ? AND status = 'DRAFT'`
+  ).bind(now, actorName(actor), reason, suggestionId, scope.unit).run();
+  if (resultChanges(result) !== 1) return { ok: false, status: 409, code: 'REPLENISHMENT_DISMISS_CONFLICT', error: 'Sugestão foi alterada por outra operação' };
+  const row = await env.DB.prepare(
+    `SELECT id, unidade, registro_insumo, tipo, status, quantidade, saldo_atual, saldo_projetado,
+            estoque_alvo, estoque_seguranca, lead_time_dias, unidade_origem, unidade_destino,
+            codigo_barras, produto, lote, data_validade, suggestion_key, draft_json,
+            generated_at, generated_by, dismissed_at, dismissed_by, dismiss_reason
+     FROM insumos_replenishment_suggestions WHERE id = ?`
+  ).bind(suggestionId).first();
+  return { ok: true, suggestion: mapReplenishmentSuggestion(row) };
 }
 
 export async function d1Transfer({ env, body, actor, unidade }) {

@@ -132,6 +132,103 @@ export async function handleInsumosRoutes({
             }
         }
 
+        // Smart replenishment is deliberately advisory. Server-side policies
+        // produce auditable transfer/purchase drafts only; no stock movement,
+        // purchase order or external/financial call is executed here.
+        if (url.pathname === '/insumos/reposicao/politicas' && request.method === 'GET') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+                if (!auth.ok) return auth.response;
+                const includeInactive = ['1', 'true', 'yes'].includes(String(url.searchParams.get('incluirInativas') || url.searchParams.get('includeInactive') || '').toLowerCase());
+                const out = await d1.listPoliticasReposicao({ unidade, actor: auth.user, includeInactive });
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                return withCORS(JSON.stringify({ success: true, data: out.items }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (url.pathname === '/insumos/reposicao/politicas' && request.method === 'POST') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'REPLENISHMENT_POLICY_UPSERT',
+                    idempotencyKey,
+                    command: { unidade, body },
+                    execute: () => d1.upsertPoliticaReposicao({ env, unidade, actor: auth.user, body }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                if (!command.replayed) await appendAuditLog({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey, action: 'REPLENISHMENT_POLICY_UPSERT', entity: 'REPLENISHMENT_POLICY', entityId: out.policy?.id, unidade, before: null, after: out.policy });
+                return withCORS(JSON.stringify({ success: true, data: out.policy, idempotent: !!command.replayed }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (url.pathname === '/insumos/reposicao/sugestoes' && request.method === 'GET') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+                if (!auth.ok) return auth.response;
+                const out = await d1.listSugestoesReposicao({ unidade, actor: auth.user, status: url.searchParams.get('status') || 'DRAFT' });
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                return withCORS(JSON.stringify({ success: true, data: out.items }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (url.pathname === '/insumos/reposicao/sugestoes/gerar' && request.method === 'POST') {
+            try {
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'REPLENISHMENT_SUGGESTIONS_GENERATE',
+                    idempotencyKey,
+                    command: { unidade, body: {} },
+                    execute: () => d1.gerarSugestoesReposicao({ env, unidade, actor: auth.user }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                if (!command.replayed) await appendAuditLog({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey, action: 'REPLENISHMENT_SUGGESTIONS_GENERATE', entity: 'REPLENISHMENT_SUGGESTION', entityId: unidade, unidade, before: null, after: { createdCount: out.createdCount, existingCount: out.existingCount, draftOnly: true } });
+                return withCORS(JSON.stringify({ success: true, data: out.generated, createdCount: out.createdCount, existingCount: out.existingCount, draftOnly: true, idempotent: !!command.replayed }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
+        if (url.pathname.startsWith('/insumos/reposicao/sugestoes/') && request.method === 'POST') {
+            try {
+                const parts = url.pathname.split('/').filter(Boolean);
+                const suggestionId = decodeURIComponent(parts[3] || '').trim();
+                const action = String(parts[4] || '').trim().toLowerCase();
+                if (!suggestionId || action !== 'descartar' || parts.length !== 5) return withCORS(JSON.stringify({ success: false, code: 'REPLENISHMENT_ROUTE_NOT_FOUND', error: 'Rota de sugestão não encontrada' }), { status: 404 }, appOrigin);
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: 'REPLENISHMENT_SUGGESTION_DISMISS',
+                    idempotencyKey,
+                    command: { suggestionId, unidade, body },
+                    execute: () => d1.dismissSugestaoReposicao({ id: suggestionId, unidade, actor: auth.user, justificativa: body?.justificativa || body?.motivo }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out.code, error: out.error }), { status: out.status || 400 }, appOrigin);
+                if (!command.replayed) await appendAuditLog({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey, action: 'REPLENISHMENT_SUGGESTION_DISMISS', entity: 'REPLENISHMENT_SUGGESTION', entityId: suggestionId, unidade, before: { status: 'DRAFT' }, after: { status: out.suggestion?.status, reason: body?.justificativa || body?.motivo || null } });
+                return withCORS(JSON.stringify({ success: true, data: out.suggestion, idempotent: !!command.replayed }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
         // Internal procurement: suppliers and purchase orders remain within
         // the authenticated unit. No financial or external provider call is
         // made; receipts post stock through the D1 ledger only.
