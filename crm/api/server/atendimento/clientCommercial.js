@@ -83,11 +83,19 @@ function segment(key, label, priority, nextAction, evidence) {
     return { key, label, priority, nextAction, evidence }
 }
 
-export function segmentCommercialProfiles(rows = [], { asOf = new Date().toISOString().slice(0, 10), thresholds = [90, 180, 365] } = {}) {
+export function segmentCommercialProfiles(rows = [], {
+    asOf = new Date().toISOString().slice(0, 10),
+    thresholds = [90, 180, 365],
+    benchmarks = null,
+} = {}) {
     const profiles = rows.map((row) => buildCommercialProfile(row, { asOf }))
     const [returnRisk, longAbsence, veryLongAbsence] = [...thresholds].map(number).sort((left, right) => left - right)
-    const salesP75 = percentile(profiles.map((profile) => profile.lifetimeSales), 0.75)
-    const visitsP75 = percentile(profiles.map((profile) => profile.visitCount), 0.75)
+    const salesP75 = Number.isFinite(Number(benchmarks?.salesP75))
+        ? Math.max(0, Number(benchmarks.salesP75))
+        : percentile(profiles.map((profile) => profile.lifetimeSales), 0.75)
+    const visitsP75 = Number.isFinite(Number(benchmarks?.visitsP75))
+        ? Math.max(0, Number(benchmarks.visitsP75))
+        : percentile(profiles.map((profile) => profile.visitCount), 0.75)
 
     return profiles.map((profile) => {
         const segments = []
