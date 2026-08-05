@@ -1,6 +1,21 @@
 import path from 'path'
 
-export function loadHarmoniaConfig({ varDir }) {
+const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
+
+function isTruthy(value) {
+    return TRUE_VALUES.has(String(value || '').trim().toLowerCase())
+}
+
+export function normalizeWorkerMode(value, fallback = 'disabled') {
+    const mode = String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_')
+    if (mode === 'observe' || mode === 'observer' || mode === 'read_only' || mode === 'readonly') return 'observe'
+    if (mode === 'assisted' || mode === 'human_confirmed' || mode === 'human_confirmed_only') return 'assisted'
+    if (mode === 'disabled' || mode === 'off' || mode === 'none') return 'disabled'
+    return normalizeWorkerMode(fallback === value ? 'disabled' : fallback, 'disabled')
+}
+
+export function loadHarmoniaConfig({ varDir, workerMode, defaultWorkerMode = 'disabled' }) {
+    const runtimeVarDir = varDir || process.env.VAR_DIR || path.join(process.cwd(), 'var')
     const debugToken = String(process.env.HARMONIA_DEBUG_TOKEN || '').trim() || null
     const execToken = String(process.env.HARMONIA_EXEC_TOKEN || '').trim() || null
     const ingestToken = String(process.env.HARMONIA_INGEST_TOKEN || '').trim() || null
@@ -11,7 +26,7 @@ export function loadHarmoniaConfig({ varDir }) {
 
     const googleSaFile =
         String(process.env.HARMONIA_GOOGLE_SA_FILE || '').trim() ||
-        path.join(varDir, 'secrets', 'google-sa.json')
+        path.join(runtimeVarDir, 'secrets', 'google-sa.json')
 
     const openAiApiKey = String(process.env.OPENAI_API_KEY || '').trim() || null
     const openAiModel = String(process.env.HARMONIA_OPENAI_MODEL || '').trim() || 'gpt-5-nano'
@@ -24,8 +39,15 @@ export function loadHarmoniaConfig({ varDir }) {
     const tasksClaimLimit = tasksClaimLimitRaw ? Number.parseInt(tasksClaimLimitRaw, 10) : 20
     const tasksStaleMinutesRaw = String(process.env.HARMONIA_TASKS_STALE_MINUTES || '').trim()
     const tasksStaleMinutes = tasksStaleMinutesRaw ? Number.parseInt(tasksStaleMinutesRaw, 10) : 30
-    const autoExecute = ['1', 'true', 'yes'].includes(String(process.env.HARMONIA_AUTO_EXECUTE || '').toLowerCase())
-    const workerEnabled = ['1', 'true', 'yes'].includes(String(process.env.HARMONIA_WORKER || '').toLowerCase())
+    const autoExecuteRequested = isTruthy(process.env.HARMONIA_AUTO_EXECUTE)
+    const legacyWorkerEnabled = isTruthy(process.env.HARMONIA_WORKER)
+    const configuredWorkerMode =
+        workerMode ??
+        process.env.CRM_CONTINUOUS_WORKERS_MODE ??
+        process.env.HARMONIA_WORKER_MODE ??
+        (legacyWorkerEnabled ? 'observe' : defaultWorkerMode)
+    const normalizedWorkerMode = normalizeWorkerMode(configuredWorkerMode, defaultWorkerMode)
+    const autoExecute = autoExecuteRequested && normalizedWorkerMode === 'assisted'
     const tasksMaxAttemptsRaw = String(process.env.HARMONIA_TASKS_MAX_ATTEMPTS || '').trim()
     const tasksMaxAttempts = tasksMaxAttemptsRaw ? Number.parseInt(tasksMaxAttemptsRaw, 10) : 5
     const tasksBackoffSecondsRaw = String(process.env.HARMONIA_TASKS_BACKOFF_SECONDS || '').trim()
@@ -81,8 +103,11 @@ export function loadHarmoniaConfig({ varDir }) {
         tasksBackoffSeconds: Number.isFinite(tasksBackoffSeconds) ? Math.max(1, tasksBackoffSeconds) : 30,
         tasksBackoffMaxSeconds: Number.isFinite(tasksBackoffMaxSeconds) ? Math.max(5, tasksBackoffMaxSeconds) : 900,
         tasksAlertNotify,
+        autoExecuteRequested,
         autoExecute,
-        workerEnabled,
+        workerMode: normalizedWorkerMode,
+        workerEnabled: normalizedWorkerMode !== 'disabled',
+        outboundMode: normalizedWorkerMode === 'assisted' ? 'human_confirmed' : 'blocked',
         webhook: {
             secret: webhookSecret,
         },

@@ -48,6 +48,7 @@ const lifecycleUnits = [
   "booking.service",
   "cloudflare-orb.service",
   "cloudflare-runtime.service",
+  "crm-jobs.service",
 ];
 for (const unit of lifecycleUnits) {
   const source = fs.readFileSync(path.join(root, "ops/runtime/units", unit), "utf8");
