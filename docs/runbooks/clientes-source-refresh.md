@@ -75,3 +75,9 @@ acionável. Não conceda acesso amplo apenas para obter a contagem agregada. No
 alvo local de produção, o comando operacional deve usar o socket sem usuário
 (`postgresql:///skincos_crm_local?host=/var/run/postgresql`) e executar como o
 papel técnico autorizado; assim a verificação de destino permanece estrita.
+
+A migração da fila também reconcilia os grants mínimos do runtime (`SELECT`/
+`INSERT`/`UPDATE` apenas na fila agregada e `SELECT`/`INSERT` no ledger de
+eventos). Ela não concede `SELECT` nas permissões de contato. Reexecute o
+runner de migração com o mesmo release quando o estado de grants estiver
+incompleto; a operação é idempotente.
