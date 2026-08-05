@@ -1,10 +1,10 @@
 name: Prepare Atendimento availability transition
 run-name: Atendimento availability ${{ inputs.state }} ${{ inputs.target }} ${{ inputs.release_sha }}
 
-# This workflow is an immutable, main-custodied control-plane preflight only.
-# It does not write CRM_MODULE_CONTROL_FILE until a dedicated native executor
-# exists. In particular, it never falls back to crm.service or evaluates an
-# environment-provided command string.
+# This workflow is an immutable, main-custodied control-plane attestation. The
+# versioned native control script writes CRM_MODULE_CONTROL_FILE on the approved
+# runtime; this workflow verifies the resulting isolated health state and never
+# falls back to crm.service or evaluates an environment-provided command string.
 on:
   workflow_dispatch:
     inputs:
@@ -19,7 +19,7 @@ on:
         required: true
         type: string
       state:
-        description: Intended isolated Atendimento availability state; no remote state is written yet
+        description: Isolated Atendimento availability state already applied by the approved runtime
         required: true
         default: disabled
         type: choice
@@ -129,7 +129,7 @@ jobs:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 1
           path: control
-      - name: Attest disabled-by-default availability contract
+      - name: Attest isolated availability contract
         env:
           CONTRACT_KIND: availability
           CONTRACT_TARGET: ${{ inputs.target }}
@@ -153,7 +153,20 @@ jobs:
           path: ${{ runner.temp }}/atendimento-availability-contract/preflight.json
           retention-days: 30
           if-no-files-found: warn
-      - name: Stop before remote control execution
+      - name: Verify staged native Atendimento runtime health
+        if: ${{ inputs.target == 'staging' }}
+        env:
+          CRM_ATENDIMENTO_HEALTH_URL: ${{ vars.CRM_ATENDIMENTO_HEALTH_URL }}
+          ATENDIMENTO_EXPECTED_STATE: ${{ inputs.state }}
+          ATENDIMENTO_HEALTH_OUTPUT: ${{ runner.temp }}/atendimento-availability-contract/health.json
         run: |
-          echo '::error::No trusted native Atendimento executor is configured. This contract workflow intentionally does not execute CRM_ATENDIMENTO_CONTROL_COMMAND or restart crm.service.'
-          exit 1
+          set -euo pipefail
+          node control/.github/scripts/verify-atendimento-health.mjs
+      - name: Upload sanitized Atendimento runtime health
+        if: ${{ inputs.target == 'staging' && always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: atendimento-runtime-health-${{ inputs.target }}-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/atendimento-availability-contract/health.json
+          retention-days: 30
+          if-no-files-found: warn

@@ -1,4 +1,4 @@
-import { isStrictLocalMirrorDestination } from './mirror.js'
+import { assertAtendimentoMigrationDestination, isStrictAtendimentoMigrationDestination, ATENDIMENTO_MIGRATION_TARGETS } from './migrationDestination.js'
 
 export const COMMERCIAL_CONTACT_MIGRATION_ID = '20260804_commercial_contact_controls_v1'
 
@@ -58,12 +58,10 @@ async function query(client, sql, params = []) {
     return client.query(sql, params)
 }
 
-async function assertLocalDestination(client, databaseUrl) {
-    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
-    const result = await query(client, `select current_database() as database_name, current_user as database_user,
-        current_setting('transaction_read_only') as read_only`)
-    const row = result.rows[0] || {}
-    if (row.database_name !== 'skincos_crm_local' || row.database_user !== 'admin' || String(row.read_only).toLowerCase() === 'on') {
+async function assertLocalDestination(client, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL) {
+    try {
+        await assertAtendimentoMigrationDestination(client, databaseUrl, target)
+    } catch {
         throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
     }
 }
@@ -85,16 +83,16 @@ export function commercialContactMigrationPlan() {
     }
 }
 
-export async function applyCommercialContactMigration({ pool, databaseUrl }) {
+export async function applyCommercialContactMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_POOL_REQUIRED')
-    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
+    if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
     const client = await pool.connect()
     const report = { id: COMMERCIAL_CONTACT_MIGRATION_ID, applied: false, indexes: [] }
     try {
         await query(client, `set lock_timeout = '3s'`)
         await query(client, `set statement_timeout = '60s'`)
         await query(client, `select pg_advisory_lock(hashtext($1))`, [COMMERCIAL_CONTACT_MIGRATION_ID])
-        await assertLocalDestination(client, databaseUrl)
+        await assertLocalDestination(client, databaseUrl, target)
         await ensureRegistry(client)
         for (const sql of CONTACT_TABLES) await query(client, sql)
         for (const sql of INDEXES) {
@@ -113,14 +111,14 @@ export async function applyCommercialContactMigration({ pool, databaseUrl }) {
     }
 }
 
-export async function rollbackCommercialContactMigration({ pool, databaseUrl }) {
+export async function rollbackCommercialContactMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_POOL_REQUIRED')
-    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
+    if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
     const client = await pool.connect()
     try {
         await query(client, `set lock_timeout = '3s'`)
         await query(client, `select pg_advisory_lock(hashtext($1))`, [COMMERCIAL_CONTACT_MIGRATION_ID])
-        await assertLocalDestination(client, databaseUrl)
+        await assertLocalDestination(client, databaseUrl, target)
         await query(client, `drop index concurrently if exists crm_atendimento.crm_atendimento_commercial_contact_permission_events_identity_idx`)
         await query(client, `drop index concurrently if exists crm_atendimento.crm_atendimento_commercial_contact_permissions_status_idx`)
         await query(client, `insert into crm_atendimento.schema_migrations(id, applied_at, rolled_back_at, details)

@@ -1,5 +1,5 @@
 import { ATTENDANCE_VALUE_FORMULA_VERSION } from './domain.js'
-import { isLocalMirrorDestination } from './mirror.js'
+import { assertAtendimentoMigrationDestination, ATENDIMENTO_MIGRATION_TARGETS } from './migrationDestination.js'
 
 export const ATTENDANCE_LEGACY_VALUE_FORMULA_VERSION = 'attendance-value/legacy-imported-v0'
 export const ATTENDANCE_WRITE_SAFETY_MIGRATION_ID = '20260718_atendimento_write_safety_v1'
@@ -126,17 +126,14 @@ async function ensureConstraint(client, constraint) {
     }
 }
 
-async function assertLocalDestination(client, databaseUrl) {
-    if (!isLocalMirrorDestination(databaseUrl)) {
-        throw migrationError('ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE', 'A migration só pode operar no banco local skincos_crm_local.')
+async function assertLocalDestination(client, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL) {
+    try {
+        return await assertAtendimentoMigrationDestination(client, databaseUrl, target)
+    } catch {
+        throw migrationError('ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE', target === ATENDIMENTO_MIGRATION_TARGETS.STAGING
+            ? 'O destino precisa ser o banco staging gravável.'
+            : 'O destino precisa ser o banco local gravável skincos_crm_local.')
     }
-    const identity = await queryWithGuardrails(client, `select current_database() as database_name,
-        current_setting('transaction_read_only') as transaction_read_only`)
-    const row = identity.rows[0] || {}
-    if (row.database_name !== 'skincos_crm_local' || String(row.transaction_read_only).toLowerCase() === 'on') {
-        throw migrationError('ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE', 'O destino precisa ser o banco local gravável skincos_crm_local.')
-    }
-    return { database: row.database_name }
 }
 
 async function assertNoIdempotencyDuplicates(client) {
@@ -159,7 +156,7 @@ async function createOnlineIndexes(client, report) {
     }
 }
 
-export async function applyAtendimentoWriteSafetyMigration({ pool, databaseUrl, batchSize = 500 }) {
+export async function applyAtendimentoWriteSafetyMigration({ pool, databaseUrl, batchSize = 500, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('ATENDIMENTO_MIGRATION_POOL_REQUIRED')
     const client = await pool.connect()
     const report = {
@@ -175,7 +172,7 @@ export async function applyAtendimentoWriteSafetyMigration({ pool, databaseUrl, 
     try {
         await setMigrationGuardrails(client)
         await queryWithGuardrails(client, `select pg_advisory_lock(hashtext($1))`, [ATTENDANCE_WRITE_SAFETY_MIGRATION_ID])
-        const identity = await assertLocalDestination(client, databaseUrl)
+        const identity = await assertLocalDestination(client, databaseUrl, target)
         report.database = identity.database
         await ensureMigrationRegistry(client)
         const existing = await getMigrationRecord(client)
@@ -245,13 +242,13 @@ export async function applyAtendimentoWriteSafetyMigration({ pool, databaseUrl, 
     }
 }
 
-export async function rollbackAtendimentoWriteSafetyMigration({ pool, databaseUrl }) {
+export async function rollbackAtendimentoWriteSafetyMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('ATENDIMENTO_MIGRATION_POOL_REQUIRED')
     const client = await pool.connect()
     try {
         await setMigrationGuardrails(client)
         await queryWithGuardrails(client, `select pg_advisory_lock(hashtext($1))`, [ATTENDANCE_WRITE_SAFETY_MIGRATION_ID])
-        await assertLocalDestination(client, databaseUrl)
+        await assertLocalDestination(client, databaseUrl, target)
         await ensureMigrationRegistry(client)
         for (const index of [...ONLINE_INDEXES].reverse()) {
             await queryWithGuardrails(client, `drop index concurrently if exists crm_atendimento.${index.name}`)

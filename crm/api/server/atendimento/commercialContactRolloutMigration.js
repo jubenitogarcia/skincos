@@ -1,4 +1,4 @@
-import { isStrictLocalMirrorDestination } from './mirror.js'
+import { assertAtendimentoMigrationDestination, isStrictAtendimentoMigrationDestination, ATENDIMENTO_MIGRATION_TARGETS } from './migrationDestination.js'
 
 export const COMMERCIAL_CONTACT_ROLLOUT_MIGRATION_ID = '20260804_commercial_contact_rollout_v1'
 const CONTACTED_INDEX_NAME = 'crm_atendimento_commercial_actions_contacted_idx'
@@ -32,12 +32,10 @@ async function query(client, sql, params = []) {
     return client.query(sql, params)
 }
 
-async function assertLocalDestination(client, databaseUrl) {
-    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('COMMERCIAL_CONTACT_ROLLOUT_MIGRATION_DESTINATION_UNSAFE')
-    const result = await query(client, `select current_database() as database_name, current_user as database_user,
-        current_setting('transaction_read_only') as read_only`)
-    const row = result.rows[0] || {}
-    if (row.database_name !== 'skincos_crm_local' || row.database_user !== 'admin' || String(row.read_only).toLowerCase() === 'on') {
+async function assertLocalDestination(client, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL) {
+    try {
+        await assertAtendimentoMigrationDestination(client, databaseUrl, target)
+    } catch {
         throw migrationError('COMMERCIAL_CONTACT_ROLLOUT_MIGRATION_DESTINATION_UNSAFE')
     }
 }
@@ -104,9 +102,9 @@ export function commercialContactRolloutMigrationPlan() {
     }
 }
 
-export async function applyCommercialContactRolloutMigration({ pool, databaseUrl }) {
+export async function applyCommercialContactRolloutMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('COMMERCIAL_CONTACT_ROLLOUT_MIGRATION_POOL_REQUIRED')
-    if (!isStrictLocalMirrorDestination(databaseUrl)) {
+    if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) {
         throw migrationError('COMMERCIAL_CONTACT_ROLLOUT_MIGRATION_DESTINATION_UNSAFE')
     }
     const client = await pool.connect()
@@ -115,7 +113,7 @@ export async function applyCommercialContactRolloutMigration({ pool, databaseUrl
         await query(client, `set lock_timeout = '3s'`)
         await query(client, `set statement_timeout = '60s'`)
         await query(client, `select pg_advisory_lock(hashtext($1))`, [COMMERCIAL_CONTACT_ROLLOUT_MIGRATION_ID])
-        await assertLocalDestination(client, databaseUrl)
+        await assertLocalDestination(client, databaseUrl, target)
         await assertPrerequisites(client)
         await ensureRegistry(client)
         for (const sql of ROLLOUT_STATEMENTS) await query(client, sql)
@@ -134,16 +132,16 @@ export async function applyCommercialContactRolloutMigration({ pool, databaseUrl
     }
 }
 
-export async function rollbackCommercialContactRolloutMigration({ pool, databaseUrl }) {
+export async function rollbackCommercialContactRolloutMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('COMMERCIAL_CONTACT_ROLLOUT_MIGRATION_POOL_REQUIRED')
-    if (!isStrictLocalMirrorDestination(databaseUrl)) {
+    if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) {
         throw migrationError('COMMERCIAL_CONTACT_ROLLOUT_MIGRATION_DESTINATION_UNSAFE')
     }
     const client = await pool.connect()
     try {
         await query(client, `set lock_timeout = '3s'`)
         await query(client, `select pg_advisory_lock(hashtext($1))`, [COMMERCIAL_CONTACT_ROLLOUT_MIGRATION_ID])
-        await assertLocalDestination(client, databaseUrl)
+        await assertLocalDestination(client, databaseUrl, target)
         await query(client, `update crm_atendimento.commercial_policy_config
             set commercial_contact_writes_enabled = false,
                 commercial_contact_canary_identity_ids = '{}'::uuid[],
