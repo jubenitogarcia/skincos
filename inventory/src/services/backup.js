@@ -23,7 +23,10 @@ function hasBackupPayloadInsumos(payload) {
             Array.isArray(payload.d1.insumosUsers) ||
             Array.isArray(payload.d1.insumosStocks) ||
             Array.isArray(payload.d1.insumosMovements) ||
-            Array.isArray(payload.d1.insumosTransfers))
+            Array.isArray(payload.d1.insumosTransfers) ||
+            Array.isArray(payload.d1.insumosCountSessions) ||
+            Array.isArray(payload.d1.insumosCountLines) ||
+            Array.isArray(payload.d1.insumosCountReads))
     );
 }
 
@@ -44,6 +47,9 @@ export async function buildBackupPayload({ env }) {
         insumosStocks: [],
         insumosMovements: [],
         insumosTransfers: [],
+        insumosCountSessions: [],
+        insumosCountLines: [],
+        insumosCountReads: [],
     };
 
     if (env?.DB) {
@@ -144,6 +150,40 @@ export async function buildBackupPayload({ env }) {
         } catch {
             // Older databases may not have the two-phase transfer aggregate yet.
         }
+        try {
+            const cs = await env.DB.prepare(
+                `SELECT id, unidade, status, snapshot_at as snapshotAt, started_at as startedAt,
+                        started_by as startedBy, closed_at as closedAt, closed_by as closedBy,
+                        conflict_at as conflictAt, conflict_reason as conflictReason, observacoes
+                 FROM insumos_count_sessions`
+            ).all();
+            d1Dump.insumosCountSessions = cs?.results || [];
+        } catch {
+            // Older databases may not have guided count tables yet.
+        }
+        try {
+            const cl = await env.DB.prepare(
+                `SELECT id, session_id as sessionId, registro, codigo_barras as codigoBarras,
+                        produto, lote, data_validade as dataValidade,
+                        snapshot_quantity as snapshotQuantity, physical_quantity as physicalQuantity,
+                        status, counted_at as countedAt, counted_by as countedBy,
+                        adjustment_movement_id as adjustmentMovementId
+                 FROM insumos_count_lines`
+            ).all();
+            d1Dump.insumosCountLines = cl?.results || [];
+        } catch {
+            // Older databases may not have guided count tables yet.
+        }
+        try {
+            const cr = await env.DB.prepare(
+                `SELECT id, session_id as sessionId, line_id as lineId, registro,
+                        quantidade, origem, observacoes, read_at as readAt, read_by as readBy
+                 FROM insumos_count_reads`
+            ).all();
+            d1Dump.insumosCountReads = cr?.results || [];
+        } catch {
+            // Older databases may not have guided count tables yet.
+        }
     }
 
     return {
@@ -160,6 +200,9 @@ export async function buildBackupPayload({ env }) {
                 insumosStocksCount: d1Dump.insumosStocks.length,
                 insumosMovementsCount: d1Dump.insumosMovements.length,
                 insumosTransfersCount: d1Dump.insumosTransfers.length,
+                insumosCountSessionsCount: d1Dump.insumosCountSessions.length,
+                insumosCountLinesCount: d1Dump.insumosCountLines.length,
+                insumosCountReadsCount: d1Dump.insumosCountReads.length,
             },
         },
         d1: d1Dump,
@@ -321,6 +364,74 @@ export async function restoreBackupPayload({ env, payload }) {
                         row.reason || null,
                         row.dispatchMovementId || null,
                         row.receiptMovementId || null,
+                    ).run();
+                }
+            }
+            // Guided count state is restored additively. Reads are append-only
+            // evidence, so an existing row is never rewritten or deleted.
+            if (Array.isArray(p.d1.insumosCountSessions)) {
+                for (const row of p.d1.insumosCountSessions) {
+                    await env.DB.prepare(
+                        `INSERT OR IGNORE INTO insumos_count_sessions
+                         (id, unidade, status, snapshot_at, started_at, started_by,
+                          closed_at, closed_by, conflict_at, conflict_reason, observacoes)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    ).bind(
+                        row.id || crypto.randomUUID(),
+                        row.unidade || '',
+                        row.status || 'OPEN',
+                        row.snapshotAt || new Date().toISOString(),
+                        row.startedAt || new Date().toISOString(),
+                        row.startedBy || '',
+                        row.closedAt || null,
+                        row.closedBy || null,
+                        row.conflictAt || null,
+                        row.conflictReason || null,
+                        row.observacoes || ''
+                    ).run();
+                }
+            }
+            if (Array.isArray(p.d1.insumosCountLines)) {
+                for (const row of p.d1.insumosCountLines) {
+                    await env.DB.prepare(
+                        `INSERT OR IGNORE INTO insumos_count_lines
+                         (id, session_id, registro, codigo_barras, produto, lote, data_validade,
+                          snapshot_quantity, physical_quantity, status, counted_at, counted_by,
+                          adjustment_movement_id)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    ).bind(
+                        row.id || crypto.randomUUID(),
+                        row.sessionId || '',
+                        row.registro || '',
+                        row.codigoBarras || '',
+                        row.produto || '',
+                        row.lote || '',
+                        row.dataValidade || '',
+                        Number(row.snapshotQuantity || 0),
+                        row.physicalQuantity === null || row.physicalQuantity === undefined ? null : Number(row.physicalQuantity),
+                        row.status || 'OPEN',
+                        row.countedAt || null,
+                        row.countedBy || null,
+                        row.adjustmentMovementId || null
+                    ).run();
+                }
+            }
+            if (Array.isArray(p.d1.insumosCountReads)) {
+                for (const row of p.d1.insumosCountReads) {
+                    await env.DB.prepare(
+                        `INSERT OR IGNORE INTO insumos_count_reads
+                         (id, session_id, line_id, registro, quantidade, origem, observacoes, read_at, read_by)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    ).bind(
+                        row.id || crypto.randomUUID(),
+                        row.sessionId || '',
+                        row.lineId || '',
+                        row.registro || '',
+                        Number(row.quantidade || 0),
+                        row.origem || 'MANUAL',
+                        row.observacoes || null,
+                        row.readAt || new Date().toISOString(),
+                        row.readBy || ''
                     ).run();
                 }
             }

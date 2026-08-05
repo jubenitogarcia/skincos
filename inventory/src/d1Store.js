@@ -68,6 +68,76 @@ function assertActorUnitScope(actor, unit) {
   return { ok: true, unit: normalized };
 }
 
+function assertCountManager(actor) {
+  const role = String(actor?.role || '').trim().toUpperCase();
+  if (!['GERENTE', 'GESTOR', 'ADMIN'].includes(role)) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'COUNT_MANAGER_REQUIRED',
+      error: 'A contagem só pode ser fechada ou reaberta por gerente, gestor ou administrador',
+    };
+  }
+  return { ok: true };
+}
+
+function assertCountActor(actor) {
+  if (!actorName(actor)) {
+    return { ok: false, status: 401, code: 'ACTOR_REQUIRED', error: 'Responsável da operação não identificado' };
+  }
+  return { ok: true };
+}
+
+function parseCountQuantity(value) {
+  if (typeof value === 'number') return Number.isInteger(value) && value >= 0 ? value : NaN;
+  const raw = String(value ?? '').trim();
+  if (!/^\d+$/.test(raw)) return NaN;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : NaN;
+}
+
+function mapCountLine(row) {
+  return {
+    id: String(row?.id || '').trim(),
+    sessionId: String(row?.session_id || '').trim(),
+    registro: String(row?.registro || '').trim(),
+    codigoBarras: String(row?.codigo_barras || '').trim(),
+    produto: String(row?.produto || '').trim(),
+    lote: String(row?.lote || '').trim(),
+    dataValidade: row?.data_validade ? String(row.data_validade) : null,
+    snapshotQuantity: toInt(row?.snapshot_quantity, 0),
+    physicalQuantity: row?.physical_quantity === null || row?.physical_quantity === undefined
+      ? null
+      : toInt(row.physical_quantity, 0),
+    status: String(row?.status || 'OPEN').trim().toUpperCase(),
+    countedAt: row?.counted_at ? String(row.counted_at) : null,
+    countedBy: row?.counted_by ? String(row.counted_by) : null,
+    adjustmentMovementId: row?.adjustment_movement_id ? String(row.adjustment_movement_id) : null,
+    readCount: toInt(row?.read_count, 0),
+  };
+}
+
+function mapCountSession(row, lines = []) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    status: String(row.status || '').trim().toUpperCase(),
+    snapshotAt: row.snapshot_at ? String(row.snapshot_at) : null,
+    startedAt: row.started_at ? String(row.started_at) : null,
+    startedBy: row.started_by ? String(row.started_by) : null,
+    closedAt: row.closed_at ? String(row.closed_at) : null,
+    closedBy: row.closed_by ? String(row.closed_by) : null,
+    conflictAt: row.conflict_at ? String(row.conflict_at) : null,
+    conflictReason: row.conflict_reason ? String(row.conflict_reason) : null,
+    observacoes: row.observacoes ? String(row.observacoes) : '',
+    lines,
+    totalLines: lines.length,
+    countedLines: lines.filter((line) => line.physicalQuantity !== null).length,
+    adjustedLines: lines.filter((line) => line.status === 'ADJUSTED').length,
+  };
+}
+
 /**
  * Claims a server-side command slot before a write and stores the successful
  * response. A repeated command by the same actor/key is replayed verbatim;
@@ -1819,7 +1889,429 @@ export async function d1Ajuste({ env, unidade, body, actor }) {
   if (resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1) {
     return { ok: false, status: 409, code: 'STOCK_CONFLICT', error: 'Saldo alterado por outra operação; tente novamente' };
   }
-  return { ok: true, estoqueAnterior, novoEstoque, registro: reg };
+  return { ok: true, estoqueAnterior, novoEstoque, registro: reg, movementId: movId };
+}
+
+/**
+ * Starts an auditable physical count for one unit. The snapshot is materialized
+ * as count lines, including zero stock and every active lot, so a scanner never
+ * has to infer a missing lot from current stock later in the workflow.
+ */
+export async function d1IniciarContagem({ env, unidade, actor, observacoes }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const unitScope = assertActorUnitScope(actor, unidade);
+  if (!unitScope.ok) return unitScope;
+  const existing = await env.DB.prepare(
+    `SELECT id, status
+     FROM insumos_count_sessions
+     WHERE unidade = ? AND status IN ('OPEN', 'CLOSING', 'CONFLICT')
+     ORDER BY started_at DESC, id DESC
+     LIMIT 1`
+  ).bind(unitScope.unit).first();
+  if (existing) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'COUNT_ALREADY_OPEN',
+      error: 'Já existe uma contagem ativa para esta unidade',
+      sessionId: String(existing.id || '').trim(),
+      sessionStatus: String(existing.status || '').trim().toUpperCase(),
+    };
+  }
+
+  const id = crypto.randomUUID();
+  const ts = nowIso();
+  const actorId = actorName(actor);
+  const note = String(observacoes || '').trim().slice(0, 2000);
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO insumos_count_sessions (
+          id, unidade, status, snapshot_at, started_at, started_by, observacoes
+        ) VALUES (?, ?, 'OPEN', ?, ?, ?, ?)`
+      ).bind(id, unitScope.unit, ts, ts, actorId, note),
+      env.DB.prepare(
+        `INSERT INTO insumos_count_lines (
+          id, session_id, registro, codigo_barras, produto, lote, data_validade,
+          snapshot_quantity, physical_quantity, status
+        )
+        SELECT lower(hex(randomblob(16))), ?, i.registro, i.codigo_barras, i.produto,
+               i.lote, i.data_validade, COALESCE(s.quantidade, 0), NULL, 'OPEN'
+        FROM insumos_items i
+        LEFT JOIN insumos_stocks s
+          ON s.registro = i.registro AND s.unidade = ?
+        WHERE COALESCE(i.archived_at, '') = ''
+        ORDER BY i.produto COLLATE NOCASE ASC, i.codigo_barras ASC, i.lote ASC, i.registro ASC`
+      ).bind(id, unitScope.unit),
+    ]);
+  } catch (error) {
+    const message = String(error?.message || error || '');
+    if (/unique|constraint/i.test(message)) {
+      const active = await env.DB.prepare(
+        `SELECT id, status FROM insumos_count_sessions
+         WHERE unidade = ? AND status IN ('OPEN', 'CLOSING', 'CONFLICT')
+         ORDER BY started_at DESC, id DESC LIMIT 1`
+      ).bind(unitScope.unit).first();
+      return {
+        ok: false,
+        status: 409,
+        code: 'COUNT_ALREADY_OPEN',
+        error: 'Já existe uma contagem ativa para esta unidade',
+        sessionId: String(active?.id || '').trim() || null,
+        sessionStatus: String(active?.status || '').trim().toUpperCase() || null,
+      };
+    }
+    throw error;
+  }
+  return d1GetContagem({ env, id, actor, unidade: unitScope.unit });
+}
+
+/** Returns the full count context, including immutable read counts per line. */
+export async function d1GetContagem({ env, id, actor, unidade }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const sessionId = String(id || '').trim();
+  if (!sessionId) return { ok: false, status: 400, code: 'COUNT_INVALID', error: 'Contagem inválida' };
+  const session = await env.DB.prepare(
+    `SELECT id, unidade, status, snapshot_at, started_at, started_by,
+            closed_at, closed_by, conflict_at, conflict_reason, observacoes
+     FROM insumos_count_sessions WHERE id = ? LIMIT 1`
+  ).bind(sessionId).first();
+  if (!session) return { ok: false, status: 404, code: 'COUNT_NOT_FOUND', error: 'Contagem não encontrada' };
+  const scope = assertActorUnitScope(actor, session.unidade);
+  if (!scope.ok) return scope;
+  if (unidade && normalizeUnitScope(unidade) !== scope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_COUNT_MISMATCH', error: 'A unidade da rota não corresponde à contagem' };
+  }
+  const linesRes = await env.DB.prepare(
+    `SELECT l.id, l.session_id, l.registro, l.codigo_barras, l.produto,
+            l.lote, l.data_validade, l.snapshot_quantity, l.physical_quantity,
+            l.status, l.counted_at, l.counted_by, l.adjustment_movement_id,
+            (SELECT COUNT(1) FROM insumos_count_reads r WHERE r.line_id = l.id) AS read_count
+     FROM insumos_count_lines l
+     WHERE l.session_id = ?
+     ORDER BY l.produto COLLATE NOCASE ASC, l.codigo_barras ASC, l.lote ASC, l.registro ASC`
+  ).bind(sessionId).all();
+  const lines = (linesRes?.results || []).map(mapCountLine);
+  return { ok: true, session: mapCountSession(session, lines), ...mapCountSession(session, lines) };
+}
+
+/** Records a scanner/manual read while retaining every previous read. */
+export async function d1RegistrarContagem({ env, id, actor, unidade, body }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const sessionId = String(id || '').trim();
+  if (!sessionId) return { ok: false, status: 400, code: 'COUNT_INVALID', error: 'Contagem inválida' };
+  const quantity = parseCountQuantity(body?.quantidade ?? body?.physicalQuantity ?? body?.quantidadeFisica);
+  if (!Number.isFinite(quantity)) {
+    return { ok: false, status: 400, code: 'COUNT_QUANTITY_INVALID', error: 'Quantidade física deve ser um inteiro maior ou igual a zero' };
+  }
+  const session = await env.DB.prepare(
+    `SELECT id, unidade, status FROM insumos_count_sessions WHERE id = ? LIMIT 1`
+  ).bind(sessionId).first();
+  if (!session) return { ok: false, status: 404, code: 'COUNT_NOT_FOUND', error: 'Contagem não encontrada' };
+  const scope = assertActorUnitScope(actor, session.unidade);
+  if (!scope.ok) return scope;
+  if (unidade && normalizeUnitScope(unidade) !== scope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_COUNT_MISMATCH', error: 'A unidade da rota não corresponde à contagem' };
+  }
+  if (String(session.status || '').toUpperCase() !== 'OPEN') {
+    const code = String(session.status || '').toUpperCase() === 'CONFLICT' ? 'COUNT_RECOUNT_REQUIRED' : 'COUNT_NOT_OPEN';
+    return { ok: false, status: 409, code, error: 'A contagem não está aberta para leituras', sessionStatus: String(session.status || '').toUpperCase() };
+  }
+
+  const lineId = String(body?.lineId || body?.linhaId || '').trim();
+  const registro = String(body?.registro || body?.registroInsumo || '').trim();
+  const codigo = String(body?.codigoBarras || body?.codigo || '').trim();
+  const lote = String(body?.lote || '').trim();
+  let line;
+  if (lineId) {
+    line = await env.DB.prepare(
+      `SELECT id, session_id, registro, codigo_barras, produto, lote, data_validade,
+              snapshot_quantity, physical_quantity, status, counted_at, counted_by,
+              adjustment_movement_id
+       FROM insumos_count_lines WHERE id = ? AND session_id = ? LIMIT 1`
+    ).bind(lineId, sessionId).first();
+  } else if (registro) {
+    line = await env.DB.prepare(
+      `SELECT id, session_id, registro, codigo_barras, produto, lote, data_validade,
+              snapshot_quantity, physical_quantity, status, counted_at, counted_by,
+              adjustment_movement_id
+       FROM insumos_count_lines WHERE registro = ? AND session_id = ? LIMIT 1`
+    ).bind(registro, sessionId).first();
+  } else if (codigo) {
+    const result = await env.DB.prepare(
+      `SELECT id, session_id, registro, codigo_barras, produto, lote, data_validade,
+              snapshot_quantity, physical_quantity, status, counted_at, counted_by,
+              adjustment_movement_id
+       FROM insumos_count_lines
+       WHERE session_id = ?
+         AND (codigo_barras = ? OR EXISTS (
+           SELECT 1 FROM insumos_barcodes b
+           WHERE b.registro = insumos_count_lines.registro AND b.codigo_barras = ?
+         ))
+         AND (? = '' OR lote = ?)
+       ORDER BY lote ASC, registro ASC`
+    ).bind(sessionId, codigo, codigo, lote, lote).all();
+    const candidates = result?.results || [];
+    if (candidates.length > 1) {
+      return {
+        ok: false,
+        status: 409,
+        code: 'COUNT_AMBIGUOUS_LOT',
+        error: 'Código possui múltiplos lotes; informe o lote ou registro',
+        registros: candidates.map((candidate) => String(candidate.registro || '').trim()),
+        candidates: candidates.map(mapCountLine),
+      };
+    }
+    line = candidates[0] || null;
+  }
+  if (!line) return { ok: false, status: 404, code: 'COUNT_LINE_NOT_FOUND', error: 'Linha não encontrada na contagem' };
+
+  const ts = nowIso();
+  const actorId = actorName(actor);
+  const readId = crypto.randomUUID();
+  const origem = String(body?.origem || body?.source || 'MANUAL').trim().slice(0, 40).toUpperCase() || 'MANUAL';
+  const note = String(body?.observacoes || body?.nota || '').trim().slice(0, 1000);
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE insumos_count_lines
+       SET physical_quantity = ?, status = 'COUNTED', counted_at = ?, counted_by = ?
+       WHERE id = ? AND session_id = ?
+         AND EXISTS (SELECT 1 FROM insumos_count_sessions WHERE id = ? AND status = 'OPEN')`
+    ).bind(quantity, ts, actorId, line.id, sessionId, sessionId),
+    env.DB.prepare(
+      `INSERT INTO insumos_count_reads (
+        id, session_id, line_id, registro, quantidade, origem, observacoes, read_at, read_by
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM insumos_count_lines l
+        JOIN insumos_count_sessions s ON s.id = l.session_id
+        WHERE l.id = ? AND l.session_id = ? AND s.status = 'OPEN'
+      )`
+    ).bind(readId, sessionId, line.id, line.registro, quantity, origem, note, ts, actorId, line.id, sessionId),
+  ]);
+  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1) {
+    return { ok: false, status: 409, code: 'COUNT_READ_CONFLICT', error: 'A contagem foi alterada por outra operação; recarregue a sessão' };
+  }
+  const current = await env.DB.prepare(
+    `SELECT l.id, l.session_id, l.registro, l.codigo_barras, l.produto, l.lote,
+            l.data_validade, l.snapshot_quantity, l.physical_quantity, l.status,
+            l.counted_at, l.counted_by, l.adjustment_movement_id,
+            (SELECT COUNT(1) FROM insumos_count_reads r WHERE r.line_id = l.id) AS read_count
+     FROM insumos_count_lines l WHERE l.id = ? LIMIT 1`
+  ).bind(line.id).first();
+  return { ok: true, readId, line: mapCountLine(current) };
+}
+
+/**
+ * Closes a count only if every line was read and no ledger movement occurred
+ * after the snapshot. Differences are recorded through the existing AJUSTE
+ * append-only flow, never by rewriting a movement or a stock history row.
+ */
+export async function d1FecharContagem({ env, id, actor, unidade }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const sessionId = String(id || '').trim();
+  if (!sessionId) return { ok: false, status: 400, code: 'COUNT_INVALID', error: 'Contagem inválida' };
+  const manager = assertCountManager(actor);
+  if (!manager.ok) return manager;
+  const session = await env.DB.prepare(
+    `SELECT id, unidade, status, snapshot_at, started_at, started_by, observacoes
+     FROM insumos_count_sessions WHERE id = ? LIMIT 1`
+  ).bind(sessionId).first();
+  if (!session) return { ok: false, status: 404, code: 'COUNT_NOT_FOUND', error: 'Contagem não encontrada' };
+  const scope = assertActorUnitScope(actor, session.unidade);
+  if (!scope.ok) return scope;
+  if (unidade && normalizeUnitScope(unidade) !== scope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_COUNT_MISMATCH', error: 'A unidade da rota não corresponde à contagem' };
+  }
+  const status = String(session.status || '').toUpperCase();
+  if (status === 'CLOSED') return { ok: false, status: 409, code: 'COUNT_ALREADY_CLOSED', error: 'A contagem já foi encerrada' };
+  if (status === 'CONFLICT') return { ok: false, status: 409, code: 'COUNT_RECOUNT_REQUIRED', error: 'Movimentação posterior ao snapshot; faça a recontagem' };
+  if (status === 'CANCELLED') return { ok: false, status: 409, code: 'COUNT_CANCELLED', error: 'A contagem foi cancelada' };
+  if (status === 'CLOSING') return { ok: false, status: 409, code: 'COUNT_CLOSE_IN_PROGRESS', error: 'O encerramento da contagem já está em andamento' };
+
+  const incomplete = await env.DB.prepare(
+    `SELECT COUNT(1) AS n FROM insumos_count_lines
+     WHERE session_id = ? AND physical_quantity IS NULL`
+  ).bind(sessionId).first();
+  const incompleteCount = toInt(incomplete?.n, 0);
+  if (incompleteCount > 0) {
+    return { ok: false, status: 409, code: 'COUNT_INCOMPLETE', error: 'Todas as linhas precisam ser contadas antes do fechamento', pendingLines: incompleteCount };
+  }
+
+  const movements = await env.DB.prepare(
+    `SELECT id, data_hora, tipo, registro_insumo, quantidade, unidade, usuario
+     FROM insumos_movements
+     WHERE unidade = ? AND data_hora >= ?
+     ORDER BY data_hora ASC, id ASC
+     LIMIT 50`
+  ).bind(scope.unit, session.snapshot_at).all();
+  if ((movements?.results || []).length > 0) {
+    const conflictAt = nowIso();
+    const reason = 'Movimentação registrada após o snapshot; recontagem obrigatória';
+    await env.DB.prepare(
+      `UPDATE insumos_count_sessions
+       SET status = 'CONFLICT', conflict_at = ?, conflict_reason = ?
+       WHERE id = ? AND status = 'OPEN'`
+    ).bind(conflictAt, reason, sessionId).run();
+    return {
+      ok: false,
+      status: 409,
+      code: 'COUNT_CONFLICT',
+      error: reason,
+      conflictAt,
+      movements: (movements.results || []).map((row) => ({
+        id: String(row.id || ''),
+        dataHora: String(row.data_hora || ''),
+        tipo: String(row.tipo || ''),
+        registro: String(row.registro_insumo || ''),
+        quantidade: toInt(row.quantidade, 0),
+        unidade: normalizeUnitScope(row.unidade),
+        usuario: String(row.usuario || ''),
+      })),
+    };
+  }
+
+  const claim = await env.DB.prepare(
+    `UPDATE insumos_count_sessions
+     SET status = 'CLOSING'
+     WHERE id = ? AND status = 'OPEN'`
+  ).bind(sessionId).run();
+  if (resultChanges(claim) !== 1) return { ok: false, status: 409, code: 'COUNT_CLOSE_IN_PROGRESS', error: 'A contagem foi alterada por outra operação' };
+
+  const linesRes = await env.DB.prepare(
+    `SELECT id, registro, codigo_barras, produto, lote, data_validade,
+            snapshot_quantity, physical_quantity
+     FROM insumos_count_lines
+     WHERE session_id = ? ORDER BY registro ASC`
+  ).bind(sessionId).all();
+  const lines = linesRes?.results || [];
+  const adjustments = [];
+  try {
+    for (const line of lines) {
+      const snapshotQuantity = toInt(line.snapshot_quantity, 0);
+      const physicalQuantity = parseCountQuantity(line.physical_quantity);
+      if (!Number.isFinite(physicalQuantity)) throw Object.assign(new Error('COUNT_INCOMPLETE'), { code: 'COUNT_INCOMPLETE' });
+      if (snapshotQuantity === physicalQuantity) {
+        adjustments.push({ lineId: String(line.id || ''), registro: String(line.registro || ''), delta: 0, movementId: null });
+        continue;
+      }
+      const adjustment = await d1Ajuste({
+        env,
+        unidade: scope.unit,
+        actor,
+        body: {
+          codigoBarras: String(line.codigo_barras || ''),
+          registro: String(line.registro || ''),
+          novoEstoque: physicalQuantity,
+          motivo: `Contagem física ${sessionId}`,
+          observacoes: `Fechamento da contagem ${sessionId}`,
+        },
+      });
+      if (!adjustment?.ok) throw Object.assign(new Error(adjustment?.error || 'Falha ao aplicar ajuste da contagem'), adjustment);
+      adjustments.push({
+        lineId: String(line.id || ''),
+        registro: String(line.registro || ''),
+        delta: physicalQuantity - snapshotQuantity,
+        movementId: adjustment.movementId || null,
+      });
+    }
+  } catch (error) {
+    const reason = String(error?.error || error?.message || 'Falha ao aplicar ajustes da contagem');
+    await env.DB.prepare(
+      `UPDATE insumos_count_sessions
+       SET status = 'CONFLICT', conflict_at = ?, conflict_reason = ?
+       WHERE id = ? AND status = 'CLOSING'`
+    ).bind(nowIso(), `Fechamento parcial: ${reason}`, sessionId).run();
+    if (error?.code && String(error.code).startsWith('COUNT_')) return { ok: false, status: 409, code: error.code, error: reason };
+    return { ok: false, status: Number(error?.status || 409), code: error?.code || 'COUNT_CLOSE_FAILED', error: reason };
+  }
+
+  const closedAt = nowIso();
+  const updates = [
+    ...adjustments.map((entry) => env.DB.prepare(
+      `UPDATE insumos_count_lines
+       SET status = 'ADJUSTED', adjustment_movement_id = ?
+       WHERE id = ? AND session_id = ?`
+    ).bind(entry.movementId, entry.lineId, sessionId)),
+    env.DB.prepare(
+      `UPDATE insumos_count_sessions
+       SET status = 'CLOSED', closed_at = ?, closed_by = ?, conflict_at = NULL, conflict_reason = NULL
+       WHERE id = ? AND status = 'CLOSING'`
+    ).bind(closedAt, actorName(actor), sessionId),
+  ];
+  const closeResults = await env.DB.batch(updates);
+  if (resultChanges(closeResults?.[closeResults.length - 1]) !== 1) {
+    return { ok: false, status: 409, code: 'COUNT_CLOSE_CONFLICT', error: 'A contagem não pôde ser encerrada com segurança' };
+  }
+  const out = await d1GetContagem({ env, id: sessionId, actor, unidade: scope.unit });
+  return { ok: true, ...out, adjustments };
+}
+
+/** Refreshes a conflicted snapshot while retaining all prior read evidence. */
+export async function d1RecontarContagem({ env, id, actor, unidade, observacoes }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const sessionId = String(id || '').trim();
+  if (!sessionId) return { ok: false, status: 400, code: 'COUNT_INVALID', error: 'Contagem inválida' };
+  const manager = assertCountManager(actor);
+  if (!manager.ok) return manager;
+  const session = await env.DB.prepare(
+    `SELECT id, unidade, status FROM insumos_count_sessions WHERE id = ? LIMIT 1`
+  ).bind(sessionId).first();
+  if (!session) return { ok: false, status: 404, code: 'COUNT_NOT_FOUND', error: 'Contagem não encontrada' };
+  const scope = assertActorUnitScope(actor, session.unidade);
+  if (!scope.ok) return scope;
+  if (unidade && normalizeUnitScope(unidade) !== scope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_COUNT_MISMATCH', error: 'A unidade da rota não corresponde à contagem' };
+  }
+  const status = String(session.status || '').toUpperCase();
+  if (!['OPEN', 'CONFLICT'].includes(status)) {
+    return { ok: false, status: 409, code: status === 'CLOSED' ? 'COUNT_ALREADY_CLOSED' : 'COUNT_NOT_OPEN', error: 'A contagem não pode ser reaberta neste estado' };
+  }
+  const snapshotAt = nowIso();
+  const note = observacoes === undefined ? null : String(observacoes || '').trim().slice(0, 2000);
+  const stockRes = await env.DB.prepare(
+    `SELECT i.registro, i.codigo_barras, i.produto, i.lote, i.data_validade,
+            COALESCE(s.quantidade, 0) AS snapshot_quantity
+     FROM insumos_items i
+     LEFT JOIN insumos_stocks s ON s.registro = i.registro AND s.unidade = ?
+     WHERE COALESCE(i.archived_at, '') = ''`
+  ).bind(scope.unit).all();
+  const stockRows = stockRes?.results || [];
+  const statements = [
+    env.DB.prepare(
+      `UPDATE insumos_count_sessions
+       SET status = 'OPEN', snapshot_at = ?, conflict_at = NULL, conflict_reason = NULL,
+           closed_at = NULL, closed_by = ?, observacoes = COALESCE(?, observacoes)
+       WHERE id = ? AND status IN ('OPEN', 'CONFLICT')`
+    ).bind(snapshotAt, null, note, sessionId),
+  ];
+  for (const row of stockRows) {
+    statements.push(env.DB.prepare(
+      `UPDATE insumos_count_lines
+       SET snapshot_quantity = ?, physical_quantity = NULL, status = 'OPEN',
+           counted_at = NULL, counted_by = NULL, adjustment_movement_id = NULL
+       WHERE session_id = ? AND registro = ?`
+    ).bind(toInt(row.snapshot_quantity, 0), sessionId, String(row.registro || '').trim()));
+    statements.push(env.DB.prepare(
+      `INSERT OR IGNORE INTO insumos_count_lines (
+        id, session_id, registro, codigo_barras, produto, lote, data_validade,
+        snapshot_quantity, physical_quantity, status
+      ) VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?, ?, ?, NULL, 'OPEN')`
+    ).bind(sessionId, String(row.registro || '').trim(), String(row.codigo_barras || ''), String(row.produto || ''), String(row.lote || ''), String(row.data_validade || ''), toInt(row.snapshot_quantity, 0)));
+  }
+  try {
+    const results = await env.DB.batch(statements);
+    if (resultChanges(results?.[0]) !== 1) return { ok: false, status: 409, code: 'COUNT_RECOUNT_CONFLICT', error: 'A contagem foi alterada por outra operação' };
+  } catch (error) {
+    return { ok: false, status: 409, code: 'COUNT_RECOUNT_CONFLICT', error: 'A recontagem não pôde ser aplicada com segurança' };
+  }
+  return d1GetContagem({ env, id: sessionId, actor, unidade: scope.unit });
 }
 
 export async function d1Transfer({ env, body, actor, unidade }) {
