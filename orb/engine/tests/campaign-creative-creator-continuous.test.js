@@ -21,6 +21,7 @@ const {
   validateFixturesWorkflow,
   validateWorkflow,
 } = require('../scripts/validate-campaign-creative-creator-continuous');
+const { createDefaultRegistry, executeProductionManifest } = require('../campaign-creative-executor');
 
 function node(name, index, extra = {}) {
   return {
@@ -198,10 +199,19 @@ function generatedMain() {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-async function runCodeNode(nodeValue, data) {
+function generatedError() {
+  const file = path.join(__dirname, '../generated-workflows/campaign-creative-creator/campaign-creative-creator-error-handler.v3.json');
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+async function runCodeNode(nodeValue, data, context = {}) {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const code = nodeValue.parameters.jsCode;
-  const result = await new AsyncFunction('$input', code)({ first: () => ({ json: data, binary: {} }) });
+  const result = await new AsyncFunction('$input', '$env', '$', code)(
+    { first: () => ({ json: data, binary: {} }) },
+    context.env || {},
+    context.nodeLookup || {},
+  );
   return result[0];
 }
 
@@ -217,7 +227,7 @@ test('build package is valid, idempotent, and keeps the operational route fixtur
   for (const fixture of INTERMEDIATE_FIXTURES) assert.equal(first.nodes.some((candidate) => candidate.name === fixture), false, fixture);
   assert.equal(first.nodes.some((candidate) => candidate.name === 'Build CCG-99 retryable fixture'), false);
   assert.equal(first.connections['CCG-00 Return Module Result'].main[0][0].node, 'CCG-10 Validate CCG-00 Input');
-  assert.equal(first.connections['CCG-80 Return Module Result'].main[0][0].node, 'CCG-90 Validate CCG-80 Input');
+  assert.equal(first.connections['CCG-80 Return Module Result'].main[0][0].node, 'CCG-80 Validate Execution Policy');
   assert.deepEqual(second, first);
   assert.doesNotThrow(() => validateWorkflow(first));
   assert.doesNotThrow(() => validateWorkflow(packageValue.main));
@@ -263,7 +273,9 @@ test('each content type carries one lineage object through CCG-90', () => {
 test('CCG-10 and CCG-80 outputs feed the next validators directly', () => {
   const workflow = buildWorkflowPackage(sourceFixture(), { strictSource: false }).main;
   assert.equal(hasEdge(workflow, 'CCG-10 Return Module Result', 'CCG-20 Validate CCG-10 Input'), true);
-  assert.equal(hasEdge(workflow, 'CCG-80 Return Module Result', 'CCG-90 Validate CCG-80 Input'), true);
+  assert.equal(hasEdge(workflow, 'CCG-80 Return Module Result', 'CCG-80 Validate Execution Policy'), true);
+  assert.equal(hasEdge(workflow, 'CCG-80 Dispatch Production Manifest', 'CCG-80 Poll Production Manifest'), true);
+  assert.equal(hasEdge(workflow, 'CCG-80 Normalize Execution Results', 'CCG-90 Validate CCG-80 Input'), true);
   assert.equal(workflow.nodes.find((nodeValue) => nodeValue.name === 'CCG-90 Return Content Package').parameters.jsCode.includes("output_type: 'CONTENT_PACKAGE'"), true);
 });
 
@@ -296,7 +308,9 @@ test('generated CCG-90 dry-run remains simulated and the final return is a CONTE
         status: 'DONE',
         production_manifest: {
           ...ids,
-          budget: { currency: 'BRL' },
+          budget: { currency: 'BRL', max_jobs: 10, max_revisions: 0, max_cost: 0 },
+          allowed_providers: ['mock'],
+          execution_policy: { allowed_providers: ['mock'], max_jobs: 10, max_revisions: 0, max_cost: 0, currency: 'BRL' },
           jobs: [{ job_id: 'job-generated-001', category: 'FINAL_RENDER', selected_model_id: 'mock-render-v1' }],
           artifact_expectations: [{
             artifact_key: 'artifact-generated-001',
@@ -317,14 +331,25 @@ test('generated CCG-90 dry-run remains simulated and the final return is a CONTE
     posting_payload: { publish_allowed: false, publish_requested: false },
   };
   data.production_manifest = data.module_outputs.CCG_80.production_manifest;
+  data.production_execution_results = await executeProductionManifest({
+    manifest: data.production_manifest,
+    mode: 'DRY_RUN',
+    registry: createDefaultRegistry(),
+  });
   const prepared = await runCodeNode(nodeByName.get('CCG-90 Prepare Evidence & Package Brief'), data);
   const execution = prepared.json.production_execution_results;
   assert.equal(execution.mode, 'DRY_RUN');
   assert.equal(execution.jobs[0].provider_id, 'mock');
   assert.equal(execution.jobs[0].cost.amount, 0);
-  assert.match(execution.jobs[0].artifacts[0].uri, /^simulated:\/\//);
+  assert.match(execution.jobs[0].artifact_uri, /^mock:\/\//);
+  assert.match(prepared.json.content_package_brief.execution.jobs[0].artifacts[0].uri, /^mock:\/\//);
   assert.deepEqual(execution.external_calls || [], []);
   assert.deepEqual(execution.storage_writes || [], []);
+
+  const reviewed = await runCodeNode(nodeByName.get('CCG-90 Deterministic Dry-Run Review'), prepared.json);
+  const sealed = await runCodeNode(nodeByName.get('CCG-90 Finalize & Seal Content Package'), reviewed.json);
+  assert.equal(sealed.json.content_package.package_status, 'DRY_RUN_COMPLETE');
+  assert.equal(sealed.json.content_package.publication_gate.publish_allowed, false);
 
   const final = await runCodeNode(nodeByName.get('CCG-90 Return Content Package'), {
     ...data,
@@ -335,6 +360,119 @@ test('generated CCG-90 dry-run remains simulated and the final return is a CONTE
     content_package: { package_id: 'package-generated-001', package_status: 'DRY_RUN_COMPLETE' },
   });
   assert.equal(final.json.output_type, 'CONTENT_PACKAGE');
+});
+
+test('CCG-80 policy and normalizer dispatch the executor contract into CCG-90', async () => {
+  const workflow = generatedMain();
+  const nodeByName = new Map(workflow.nodes.map((nodeValue) => [nodeValue.name, nodeValue]));
+  const ids = {
+    run_id: 'run-policy-normalizer',
+    production_id: 'production-policy-normalizer',
+    content_id: 'content-policy-normalizer',
+    campaign_id: 'campaign-policy-normalizer',
+    request_hash: 'request-policy-normalizer',
+    idempotency_key: 'idempotency-policy-normalizer',
+  };
+  const data = {
+    production_request: { ...ids, mode: 'DRY_RUN', publish_allowed: false, publish_requested: false },
+    ccg_context: { ...ids, mode: 'DRY_RUN' },
+    module_outputs: {
+      CCG_80: {
+        status: 'DONE',
+        production_manifest: {
+          ...ids,
+          status: 'READY',
+          routing_decision: 'PROCEED',
+          mode: 'DRY_RUN',
+          allowed_providers: ['mock'],
+          execution_policy: { allowed_providers: ['mock'], max_jobs: 1, max_revisions: 0, max_cost: 0, currency: 'BRL' },
+          budget: { max_jobs: 1, max_revisions: 0, max_cost: 0, currency: 'BRL' },
+          jobs: [{ job_id: 'policy-job-001', category: 'VISUAL_GENERATION', capability: 'image_generation', expected_artifacts: [{ artifact_key: 'primary' }] }],
+          artifact_expectations: [{ artifact_key: 'primary', source_job_id: 'policy-job-001', category: 'VISUAL_GENERATION', checksum_required: true, metadata_required: true }],
+          completion_contract: { blocking_failure_statuses: ['FAILED', 'NEEDS_REVIEW'] },
+          review: { hard_blockers: [] },
+          publish_allowed: false,
+          publish_requested: false,
+        },
+      },
+    },
+    posting_payload: { publish_allowed: false, publish_requested: false },
+  };
+  data.production_manifest = data.module_outputs.CCG_80.production_manifest;
+  const policy = await runCodeNode(nodeByName.get('CCG-80 Validate Execution Policy'), data, { env: {} });
+  assert.equal(policy.json.executor_dispatch_allowed, true);
+  assert.equal(policy.json.executor_request.mode, 'DRY_RUN');
+  const execution = await executeProductionManifest({
+    manifest: policy.json.executor_request.manifest,
+    mode: policy.json.executor_request.mode,
+    requestContext: policy.json.executor_request.request_context,
+    registry: createDefaultRegistry(),
+  });
+  const normalized = await runCodeNode(
+    nodeByName.get('CCG-80 Normalize Execution Results'),
+    { ...policy.json, production_execution_results: execution },
+    { nodeLookup: () => ({ first: () => ({ json: policy.json }) }), env: {} },
+  );
+  assert.equal(normalized.json.next_module, 'CCG-90');
+  assert.equal(normalized.json.production_execution_results.jobs[0].status, 'COMPLETED');
+  assert.match(normalized.json.production_execution_results.jobs[0].artifact_uri, /^mock:\/\//);
+  assert.equal(normalized.json.production_execution_results.publish_allowed, false);
+});
+
+test('CCG-99 classifies executor 429 and resumes from its checkpoint idempotently', async () => {
+  const errorNodes = new Map(generatedError().nodes.map((nodeValue) => [nodeValue.name, nodeValue]));
+  const ids = {
+    run_id: 'run-ccg99-executor',
+    production_id: 'production-ccg99-executor',
+    content_id: 'content-ccg99-executor',
+    campaign_id: 'campaign-ccg99-executor',
+    request_hash: 'request-ccg99-executor',
+    idempotency_key: 'idempotency-ccg99-executor',
+  };
+  const raw = {
+    ...ids,
+    ccg_context: { ...ids, mode: 'LIVE' },
+    production_execution_results: {
+      execution_id: 'executor-ccg99-001',
+      status: 'FAILED',
+      failed_job_id: 'job-ccg99-001',
+      checkpoint: { execution_id: 'executor-ccg99-001', failed_job_ids: ['job-ccg99-001'] },
+      jobs: [{ job_id: 'job-ccg99-001', status: 'FAILED', provider_job_id: 'provider-job-ccg99-001', attempt: 1 }],
+    },
+    error_event: {
+      workflow: { id: 'TxE9eMS1xfE6kq38', name: 'Campaign Creative Creator' },
+      execution: {
+        id: 'n8n-execution-ccg99-001',
+        mode: 'LIVE',
+        lastNodeExecuted: 'CCG-80 Dispatch Production Manifest',
+        error: { code: 'RATE_LIMIT', statusCode: 429, message: 'executor rate limit 429' },
+      },
+      recovery_context: { ...ids, checkpoint_module: 'CCG-80', max_attempts: 3, policy: { allow_execution_retry: true, allow_checkpoint_resume: true } },
+    },
+  };
+  const normalized = await runCodeNode(errorNodes.get('CCG-99 Normalize & Redact Error Event'), raw);
+  assert.equal(normalized.json.normalized_error_event.source.failed_job_id, 'job-ccg99-001');
+  assert.equal(normalized.json.normalized_error_event.recovery_context.executor_execution_id, 'executor-ccg99-001');
+  assert.equal(normalized.json.normalized_error_event.recovery_context.provider_job_id, 'provider-job-ccg99-001');
+
+  const classified = await runCodeNode(errorNodes.get('CCG-99 Classify & Decide Recovery'), normalized.json);
+  assert.equal(classified.json.recovery_decision.category, 'RATE_LIMIT');
+  assert.equal(classified.json.recovery_decision.action, 'RETRY_FAILED_EXECUTION');
+  const retry = await runCodeNode(errorNodes.get('CCG-99 Build Retry Handoff'), classified.json);
+  assert.equal(retry.json.recovery_handoff.failed_job_id, 'job-ccg99-001');
+  assert.equal(retry.json.recovery_handoff.executor_execution_id, 'executor-ccg99-001');
+
+  const missingEvidence = {
+    normalized_error_event: {
+      ...normalized.json.normalized_error_event,
+      error: { ...normalized.json.normalized_error_event.error, code: 'MISSING_CHECKSUM', message: 'missing artifact checksum', normalized_message: 'missing artifact checksum', status_code: 0 },
+    },
+  };
+  const resumeClassified = await runCodeNode(errorNodes.get('CCG-99 Classify & Decide Recovery'), missingEvidence);
+  assert.equal(resumeClassified.json.recovery_decision.action, 'RESUME_FROM_CHECKPOINT');
+  const resume = await runCodeNode(errorNodes.get('CCG-99 Build Resume Handoff'), resumeClassified.json);
+  assert.equal(resume.json.recovery_handoff.executor_execution_id, 'executor-ccg99-001');
+  assert.equal(resume.json.recovery_handoff.failed_job_id, 'job-ccg99-001');
 });
 
 test('no later-module fixture id appears in an E2E route started by CCG-00', () => {

@@ -25,6 +25,14 @@ const UNSAFE_RUNTIME_PATTERNS = [
   /Buffer\.from\([^\n]*base64/i,
 ];
 
+const EXECUTION_NODE_NAMES = [
+  'CCG-80 Validate Execution Policy',
+  'CCG-80 Execution Allowed?',
+  'CCG-80 Dispatch Production Manifest',
+  'CCG-80 Poll Production Manifest',
+  'CCG-80 Normalize Execution Results',
+];
+
 function parseArgs(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -138,7 +146,12 @@ function validateWorkflow(workflow) {
   if (workflow.nodes.filter((node) => node.name === 'Operational Production Request').length !== 1) {
     throw new Error('Expected exactly one operational trigger');
   }
-  if (names.has('CCG-80 Production Executor')) throw new Error('Production executor must remain outside the first continuous route');
+  for (const name of EXECUTION_NODE_NAMES) {
+    if (!names.has(name)) throw new Error('Production execution node is missing: ' + name);
+  }
+  if (names.get('CCG-80 Dispatch Production Manifest').type !== 'n8n-nodes-base.httpRequest') {
+    throw new Error('CCG-80 dispatch must be an HTTP handoff to the native executor');
+  }
   if (workflow.settings?.errorWorkflow !== ERROR_WORKFLOW_ID) {
     throw new Error('Main workflow is not configured with the separate CCG-99 error workflow');
   }
@@ -152,7 +165,13 @@ function validateWorkflow(workflow) {
     ['CCG-50 Return Module Result', 'CCG-60 Validate CCG-50 Input'],
     ['CCG-60 Return Module Result', 'CCG-70 Validate CCG-60 Input'],
     ['CCG-70 Return Module Result', 'CCG-80 Validate CCG-70 Input'],
-    ['CCG-80 Return Module Result', 'CCG-90 Validate CCG-80 Input'],
+    ['CCG-80 Return Module Result', 'CCG-80 Validate Execution Policy'],
+    ['CCG-80 Validate Execution Policy', 'CCG-80 Execution Allowed?'],
+    ['CCG-80 Execution Allowed?', 'CCG-80 Dispatch Production Manifest'],
+    ['CCG-80 Execution Allowed?', 'CCG-80 Normalize Execution Results'],
+    ['CCG-80 Dispatch Production Manifest', 'CCG-80 Poll Production Manifest'],
+    ['CCG-80 Poll Production Manifest', 'CCG-80 Normalize Execution Results'],
+    ['CCG-80 Normalize Execution Results', 'CCG-90 Validate CCG-80 Input'],
     ['Manual safe dry-run smoke', 'Build CCG-00 dry-run fixture'],
     ['Build CCG-00 dry-run fixture', 'CCG-00 Parse & Normalize'],
     ['CCG-60 Prepare Audio Planning Brief', 'CCG-60 Optional Applicability Gate'],
@@ -182,6 +201,7 @@ function validateWorkflow(workflow) {
     throw new Error('Candidate builder metadata is missing or stale');
   }
   if (workflow.meta.no_publication !== true) throw new Error('Candidate publication guard metadata is missing');
+  if (workflow.meta.executor_endpoint !== 'CCG_EXECUTOR_BASE_URL') throw new Error('Candidate executor endpoint metadata is missing');
   return { nodeCount: workflow.nodes.length, edgeCount: countEdges(workflow) };
 }
 
@@ -255,6 +275,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  EXECUTION_NODE_NAMES,
   UNSAFE_RUNTIME_PATTERNS,
   countEdges,
   hasEdge,

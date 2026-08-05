@@ -76,6 +76,7 @@ backup_escaped="$(sed_escape "$BACKUP_ROOT")"
 
 units=(
   orb.service
+  orb-ccg-executor.service
   orb-proxy.service
   messaging-whatsapp.service
   crm.service
