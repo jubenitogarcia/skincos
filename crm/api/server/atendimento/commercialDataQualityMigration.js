@@ -27,6 +27,22 @@ const PREREQUISITE_RELATIONS = [
     'crm_caixa.sale_items',
 ]
 
+const COMMERCIAL_DATA_QUALITY_RUNTIME_ROLES = Object.freeze({
+    [ATENDIMENTO_MIGRATION_TARGETS.LOCAL]: 'skincos',
+    [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
+})
+
+function runtimeGrantStatements(target) {
+    const role = COMMERCIAL_DATA_QUALITY_RUNTIME_ROLES[target]
+    if (!role) throw migrationError('COMMERCIAL_DATA_QUALITY_RUNTIME_ROLE_UNKNOWN')
+    return [
+        `grant usage on schema crm_atendimento to ${role}`,
+        `grant select, insert, update on table crm_atendimento.commercial_data_quality_findings to ${role}`,
+        `grant select, insert on table crm_atendimento.commercial_data_quality_finding_events to ${role}`,
+        `grant usage, select on sequence crm_atendimento.commercial_data_quality_finding_events_event_order_seq to ${role}`,
+    ]
+}
+
 const STATEMENTS = [
     `create extension if not exists pgcrypto`,
     `create table if not exists crm_atendimento.commercial_data_quality_findings (
@@ -174,6 +190,7 @@ export function commercialDataQualityMigrationPlan() {
     return {
         id: COMMERCIAL_DATA_QUALITY_MIGRATION_ID,
         adds: ['commercial_data_quality_findings', 'commercial_data_quality_finding_events'],
+        runtimeAccess: 'The dedicated runtime role receives only aggregate queue SELECT/INSERT/UPDATE and append-only event INSERT/SELECT; contact-governance row access is not granted.',
         queuePolicy: 'The queue stores aggregate counts and allowlisted freshness metrics only. It never stores client names, phones, email addresses, source paths, raw evidence or source identifiers.',
         auditPolicy: 'Current finding state is mutable with optimistic revision checks; every detection, recurrence, owner and status transition is appended to an immutable event ledger.',
         rollback: 'Non-destructive: retains findings and event evidence, then records the migration as rolled back.',
@@ -203,6 +220,11 @@ export async function applyCommercialDataQualityMigration({ pool, databaseUrl, t
         await ensureRegistry(client)
         for (const sql of STATEMENTS) await query(client, sql)
         for (const index of COMMERCIAL_DATA_QUALITY_INDEXES) await ensureCommercialDataQualityIndex(client, index, report)
+        const runtimeRole = COMMERCIAL_DATA_QUALITY_RUNTIME_ROLES[target]
+        const grants = runtimeGrantStatements(target)
+        for (const sql of grants) await query(client, sql)
+        report.runtimeRole = runtimeRole
+        report.runtimeGrants = grants
         report.applied = true
         await query(client, `insert into crm_atendimento.schema_migrations(id, applied_at, rolled_back_at, details)
             values ($1, now(), null, $2::jsonb)
