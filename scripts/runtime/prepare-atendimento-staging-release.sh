@@ -35,7 +35,7 @@ fi
 sudo -n true
 command -v git >/dev/null 2>&1 || { echo "Missing git" >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo "Missing npm" >&2; exit 1; }
-sudo -n install -d -o root -g skincos -m 0750 "$STAGING" "$RELEASE_BASE" "$NPM_CACHE"
+sudo -n install -d -o root -g skincos -m 0750 "$STAGING" "$RELEASE_BASE" "$RELEASE_BASE/$RELEASE_SHA" "$NPM_CACHE"
 cleanup() { sudo -n rm -rf "$STAGING"; }
 trap cleanup EXIT INT TERM
 git -C "$ROOT_DIR" archive --format=tar "$RELEASE_SHA" | sudo -n tar -xf - -C "$STAGING"

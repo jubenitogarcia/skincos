@@ -42,9 +42,11 @@ reavaliar a elegibilidade imediatamente antes do envio.
   venda ou retorno não contam como contato sem um `contacted_at` explícito.
 - O registro de contato e a concessão de uma nova permissão começam desligados.
   Para abrir um canário, um GESTOR precisa habilitar explicitamente o rollout e
-  fornecer uma allowlist de identidades UUID. Negar uma permissão continua
-  disponível mesmo fora do canário. O rollout libera somente registros no CRM;
-  ele não envia mensagens.
+  selecionar na própria fila apenas identidades materializadas e visíveis que
+  estejam elegíveis. O backend continua validando a allowlist persistida por
+  UUID, mas a UI não aceita uma lista manual de identificadores. Negar uma
+  permissão continua disponível mesmo fora do canário. O rollout libera
+  somente registros no CRM; ele não envia mensagens.
 - A política expõe uma versão opaca. A UI só envia campos de canário quando eles
   foram realmente alterados e acompanha a versão lida; uma atualização
   concorrente responde conflito em vez de reabrir, fechar ou esvaziar um

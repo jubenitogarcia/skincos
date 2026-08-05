@@ -12,9 +12,12 @@ import {
   d1EntradaBaixa,
   d1EstornarMovimentacao,
   d1ExecuteIdempotent,
+  d1ReceberTransferencia,
+  d1CancelarTransferencia,
   d1Transfer,
 } from '../src/d1Store.js';
 import { handleMovimentacoesRoutes } from '../src/routes/movimentacoes.js';
+import { handleInsumosRoutes } from '../src/routes/insumos.js';
 
 const { getPlatformProxy } = wrangler;
 
@@ -97,6 +100,7 @@ async function applyTestSchema(database) {
     '0013_insumos_barcodes.sql',
     '0014_insumos_movements_agg.sql',
     '0019_insumos_ledger_guardrails.sql',
+    '0020_insumos_transfer_receipt.sql',
   ];
   for (const name of names) {
     const sql = await readFile(new URL(`../migrations/${name}`, import.meta.url), 'utf8');
@@ -265,7 +269,7 @@ test('serializes competing issues and rejects cross-unit commands', async () => 
   assert.equal(deniedTransfer.code, 'RBAC_UNIT_DENIED');
 });
 
-test('moves stock atomically between scoped units and compensates both transfer legs', async () => {
+test('dispatches transfer, receives atomically at destination, and compensates both legs', async () => {
   const code = `TRANSFER-${Date.now()}`;
   const item = await createItem({ code, lot: 'T1', stock: 4 });
   const transfer = await d1Transfer({
@@ -276,9 +280,19 @@ test('moves stock atomically between scoped units and compensates both transfer 
   });
   assert.equal(transfer.ok, true);
   assert.equal(transfer.estoqueNovoOrigem, 2);
-  assert.equal(transfer.estoqueNovoDestino, 2);
-  const legs = await rows('SELECT id, tipo, unidade FROM insumos_movements WHERE id_transferencia = ? ORDER BY tipo', transfer.transferId);
+  assert.equal(transfer.estoqueNovoDestino, 0);
+  assert.equal(transfer.status, 'PENDING_RECEIPT');
+  const pending = (await rows('SELECT id, tipo, status, unidade FROM insumos_movements WHERE id_transferencia = ?', transfer.transferId))[0];
+  assert.equal(pending.status, 'PENDING_RECEIPT');
+  const deniedReceipt = await d1ReceberTransferencia({ env, id: transfer.transferId, actor: NH_ONLY, unidade: UNIT_BSS });
+  assert.equal(deniedReceipt.code, 'RBAC_UNIT_DENIED');
+  const received = await d1ReceberTransferencia({ env, id: transfer.transferId, actor: GESTOR, unidade: UNIT_BSS, observacoes: 'Conferido no destino' });
+  assert.equal(received.ok, true);
+  assert.equal(received.status, 'RECEIVED');
+  assert.equal(received.estoqueNovoDestino, 2);
+  const legs = await rows('SELECT id, tipo, status, unidade FROM insumos_movements WHERE id_transferencia = ? ORDER BY data_hora ASC, id ASC', transfer.transferId);
   assert.equal(legs.length, 2);
+  assert.equal(legs.filter((row) => row.tipo === 'ENTRADA').length, 1);
   const reversed = await d1EstornarMovimentacao({ env, id: legs[0].id, actor: GESTOR, justificativa: 'Transferência cancelada no recebimento' });
   assert.equal(reversed.ok, true);
   assert.deepEqual(
@@ -289,6 +303,44 @@ test('moves stock atomically between scoped units and compensates both transfer 
     ],
   );
   assert.equal((await rows('SELECT COUNT(1) AS n FROM insumos_movements WHERE estorno_de IS NOT NULL AND id_transferencia = ?', transfer.transferId))[0].n, 2);
+});
+
+test('cancels a pending dispatch with an audited compensating movement', async () => {
+  const code = `TRANSFER-CANCEL-${Date.now()}`;
+  const item = await createItem({ code, lot: 'TC1', stock: 3 });
+  const transfer = await d1Transfer({
+    env,
+    unidade: UNIT_NH,
+    actor: GESTOR,
+    body: { codigoBarras: code, registro: item.registro, quantidade: 2, fromUnidade: UNIT_NH, toUnidade: UNIT_BSS },
+  });
+  assert.equal(transfer.status, 'PENDING_RECEIPT');
+  const cancelled = await d1CancelarTransferencia({ env, id: transfer.transferId, actor: GESTOR, unidade: UNIT_NH, justificativa: 'Veículo indisponível antes do despacho' });
+  assert.equal(cancelled.ok, true);
+  assert.equal(cancelled.status, 'CANCELLED');
+  assert.equal(cancelled.estoqueNovoOrigem, 3);
+  assert.equal((await rows('SELECT status FROM insumos_transfers WHERE id = ?', transfer.transferId))[0].status, 'CANCELLED');
+  assert.equal((await rows('SELECT tipo, estorno_de, tipo_compensacao FROM insumos_movements WHERE id = ?', cancelled.reversalId))[0].tipo, 'ESTORNO');
+  assert.equal((await d1ReceberTransferencia({ env, id: transfer.transferId, actor: GESTOR, unidade: UNIT_BSS })).code, 'TRANSFER_CANCELLED');
+});
+
+test('serializes concurrent receipts and never duplicates destination stock', async () => {
+  const code = `TRANSFER-RACE-${Date.now()}`;
+  const item = await createItem({ code, lot: 'TR1', stock: 2 });
+  const transfer = await d1Transfer({
+    env,
+    unidade: UNIT_NH,
+    actor: GESTOR,
+    body: { codigoBarras: code, registro: item.registro, quantidade: 2, fromUnidade: UNIT_NH, toUnidade: UNIT_BSS },
+  });
+  const receipts = await Promise.all([
+    d1ReceberTransferencia({ env, id: transfer.transferId, actor: GESTOR, unidade: UNIT_BSS }),
+    d1ReceberTransferencia({ env, id: transfer.transferId, actor: GESTOR, unidade: UNIT_BSS }),
+  ]);
+  assert.equal(receipts.filter((result) => result.ok).length, 1);
+  assert.equal(receipts.filter((result) => ['TRANSFER_ALREADY_RECEIVED', 'TRANSFER_RECEIPT_CONFLICT'].includes(result.code)).length, 1);
+  assert.equal((await rows('SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?', item.registro, UNIT_BSS))[0].quantidade, 2);
+  assert.equal((await rows('SELECT COUNT(1) AS n FROM insumos_movements WHERE id_transferencia = ? AND tipo = \'ENTRADA\'', transfer.transferId))[0].n, 1);
 });
 
 test('records an adjustment and reverses it without rewriting the original', async () => {
@@ -393,4 +445,32 @@ test('rejects destructive movement HTTP verbs and advertises the estorno route',
     assert.equal(response.headers.get('allow'), 'GET, POST');
     assert.equal((await response.json()).code, 'LEDGER_IMMUTABLE');
   }
+});
+
+test('exposes destination receipt and origin cancellation routes with server actor context', async () => {
+  const audit = [];
+  const dispatched = [];
+  const base = {
+    request: new Request('https://inventory.test/insumos/transferencias/tx-route/receber?unidade=barra-shopping-sul', { method: 'POST', body: JSON.stringify({ observacoes: 'Conferido' }), headers: { 'content-type': 'application/json', 'idempotency-key': 'route-receipt-1' } }),
+    url: new URL('https://inventory.test/insumos/transferencias/tx-route/receber?unidade=barra-shopping-sul'),
+    env: {},
+    ctx: { waitUntil: () => {} },
+    appOrigin: 'https://crm.skincos.com.br',
+    withCORS: (body, init) => new Response(body, init),
+    unidade: UNIT_BSS,
+    requireRoles: async () => ({ ok: true, user: { ...GESTOR, username: 'backend-receiving-user' } }),
+    appendAuditLog: async (entry) => audit.push(entry),
+    enqueueNotificationsRefresh: async (unit) => dispatched.push(unit),
+    idempotencyKey: 'route-receipt-1',
+    d1: {
+      enabled: true,
+      executeIdempotent: async ({ execute }) => ({ ok: true, replayed: false, result: await execute() }),
+      receberTransferencia: async (input) => ({ ok: true, status: 'RECEIVED', transferId: input.id, receivedBy: input.actor.username, unidadeDestino: input.unidade }),
+    },
+  };
+  const response = await handleInsumosRoutes(base);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).data.receivedBy, 'backend-receiving-user');
+  assert.equal(audit[0].action, 'TRANSFER_RECEBIMENTO');
+  assert.equal(dispatched.length, 1);
 });

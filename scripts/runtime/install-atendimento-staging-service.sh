@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$SOURCE_ROOT" == /opt/skincos/releases/*/source ]] || { echo "SOURCE_ROOT must be an immutable native release path." >&2; exit 1; }
-[[ -d "$SOURCE_ROOT" && -x "$SOURCE_ROOT/scripts/crm/run-api-linux.sh" ]] || { echo "Native source release is unavailable: $SOURCE_ROOT" >&2; exit 1; }
+sudo -n test -d "$SOURCE_ROOT" && sudo -n test -x "$SOURCE_ROOT/scripts/crm/run-api-linux.sh" || { echo "Native source release is unavailable: $SOURCE_ROOT" >&2; exit 1; }
 command -v sed >/dev/null 2>&1 || { echo "Missing sed" >&2; exit 1; }
 command -v systemd-analyze >/dev/null 2>&1 || { echo "Missing systemd-analyze" >&2; exit 1; }
 sudo -n true

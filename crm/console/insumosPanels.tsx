@@ -28,6 +28,7 @@ import {
   severityBadgeVariant,
   severityLabel,
 } from '@/insumosShared'
+import { isMovementReversed } from '@/insumosDerivations'
 import type { MovementRowView } from '@/insumosDerivations'
 import type { AlertaStatusTag } from '@/insumosShared'
 import type {
@@ -35,6 +36,7 @@ import type {
   CategoryPolicy,
   CategoryPolicySuggestion,
   Insumo,
+  InsumosOperationContext,
   InsumosQuickOperation,
   Movimentacao,
   OfflineQueueItem,
@@ -176,7 +178,8 @@ type InsumosInventoryDialogProps = {
   insumosLoading: boolean
   insumosLoadError: InventoryLoadError | null
   emptyContent: React.ReactNode
-  onEditItem: (item: Insumo) => void
+  onOpenQuickOperation: (operation: InsumosQuickOperation, context?: InsumosOperationContext) => void
+  onOpenHistory: (context: InsumosOperationContext) => void
 }
 
 export function InsumosInventoryDialog({
@@ -241,7 +244,8 @@ export function InsumosInventoryDialog({
   insumosLoading,
   insumosLoadError,
   emptyContent,
-  onEditItem,
+  onOpenQuickOperation,
+  onOpenHistory,
 }: InsumosInventoryDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -437,7 +441,7 @@ export function InsumosInventoryDialog({
                   <th className="hidden w-[5rem] p-3 text-right whitespace-nowrap sm:table-cell">Mín</th>
                   <th className="hidden w-[7rem] p-3 text-left whitespace-nowrap xl:table-cell">Validade</th>
                   <th className="hidden w-[7.5rem] p-3 text-right whitespace-nowrap xl:table-cell">Valor</th>
-                  <th className="w-[6.5rem] p-3 text-right whitespace-nowrap">Ações</th>
+                  <th className="w-[20rem] p-3 text-right whitespace-nowrap">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -445,8 +449,10 @@ export function InsumosInventoryDialog({
                   const estoque = unit && item?.estoques ? Number(item.estoques?.[unit] ?? 0) : Number(item.estoqueAtual ?? 0)
                   const min = Number(item.estoqueMinimo) || 0
                   const valor = (Number(item.precoCusto) || 0) * (Number.isFinite(estoque) ? estoque : 0)
+                  const codigoBarras = String(item.codigoBarras || getInsumoBarcodes(item)[0] || '').trim()
+                  const context: InsumosOperationContext = { item, codigoBarras, unidade: unit }
                   return (
-                    <tr key={`${item.registro || ''}-${idx}`} className="hover:bg-white/5">
+                    <tr key={`${item.registro || ''}-${idx}`} className="hover:bg-white/5" data-testid={`insumos-product-row-${item.registro || idx}`}>
                       <td className="p-3 align-top text-blue-50">
                         <div className="min-w-0">
                           <div className="break-words font-medium">{item.produto || '-'}</div>
@@ -467,9 +473,56 @@ export function InsumosInventoryDialog({
                       <td className="hidden p-3 align-middle text-blue-100/70 whitespace-nowrap xl:table-cell">{fmtDateOnlyBR(item.dataValidade || '')}</td>
                       <td className="hidden p-3 align-middle text-right text-blue-100/80 whitespace-nowrap xl:table-cell">{fmtMoneyBRL(valor)}</td>
                       <td className="p-3 align-middle text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end">
-                          <Button variant="outline" size="sm" className="h-8 px-3 text-xs" onClick={() => onEditItem(item)} disabled={!isAuthed}>
-                            Editar
+                        <div className="flex flex-wrap items-center justify-end gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2 text-xs text-emerald-100"
+                            onClick={() => onOpenQuickOperation('ENTRADA', context)}
+                            disabled={!isAuthed || !codigoBarras}
+                            aria-label={`Entrada de ${item.produto || 'insumo'}`}
+                          >
+                            Entrada
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2 text-xs text-rose-100"
+                            onClick={() => onOpenQuickOperation('BAIXA', context)}
+                            disabled={!isAuthed || !codigoBarras}
+                            aria-label={`Saída de ${item.produto || 'insumo'}`}
+                          >
+                            Saída
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2 text-xs text-amber-100"
+                            onClick={() => onOpenQuickOperation('AJUSTE', context)}
+                            disabled={!isAuthed || !codigoBarras}
+                            aria-label={`Ajuste de ${item.produto || 'insumo'}`}
+                          >
+                            Ajuste
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2 text-xs text-blue-100"
+                            onClick={() => onOpenQuickOperation('TRANSFERENCIA', context)}
+                            disabled={!isAuthed || !codigoBarras}
+                            aria-label={`Transferência de ${item.produto || 'insumo'}`}
+                          >
+                            Transferência
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs"
+                            onClick={() => onOpenHistory(context)}
+                            disabled={!isAuthed}
+                            aria-label={`Histórico de ${item.produto || 'insumo'}`}
+                          >
+                            Histórico
                           </Button>
                         </div>
                       </td>
@@ -677,6 +730,7 @@ type QuickSearchMatch = {
 type InsumosQuickOperationDialogProps = {
   open: boolean
   operation: InsumosQuickOperation | null
+  context?: InsumosOperationContext | null
   dialogClassName: string
   isAuthed: boolean
   shouldShowDashboardLoading: boolean
@@ -728,12 +782,12 @@ type InsumosQuickOperationDialogProps = {
   onCancel: () => void
   onConfirmTransfer: () => Promise<void>
   onConfirmOperation: () => Promise<void>
-  onEditItem: (item: Insumo) => void
 }
 
 export function InsumosQuickOperationDialog({
   open,
   operation,
+  context = null,
   dialogClassName,
   isAuthed,
   shouldShowDashboardLoading,
@@ -785,8 +839,15 @@ export function InsumosQuickOperationDialog({
   onCancel,
   onConfirmTransfer,
   onConfirmOperation,
-  onEditItem,
 }: InsumosQuickOperationDialogProps) {
+  const contextItem = context?.item || null
+  const contextCodes = contextItem ? getInsumoBarcodes(contextItem) : []
+  const contextUnit = context?.unidade || ''
+  const contextStock = contextItem
+    ? contextUnit && contextItem.estoques
+      ? Number(contextItem.estoques?.[contextUnit] ?? 0)
+      : Number(contextItem.estoqueAtual ?? 0)
+    : null
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={`${dialogClassName} dark bg-corporate-900 border-white/10 text-white`}>
@@ -823,25 +884,59 @@ export function InsumosQuickOperationDialog({
 
         <div className="space-y-3">
           <div>
-            <div className="mb-1 text-xs text-blue-200/70">Buscar por produto, marca, categoria ou código</div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                value={search}
-                onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="ex: Rennova, preenchedor, 789..."
-                className="w-full sm:min-w-[240px] sm:flex-1"
-              />
-              <Button variant="secondary" type="button" onClick={onScanToggle}>
-                {scanOpen ? 'Fechar' : 'Escanear'}
-              </Button>
-            </div>
+            {context ? (
+              <div className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-3 py-3" data-testid="insumos-operation-context">
+                <div className="mb-2 text-[11px] uppercase tracking-wide text-blue-200/70">Contexto do produto · campos travados</div>
+                <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                  <div>
+                    <div className="text-xs text-blue-200/60">Produto</div>
+                    <div className="font-medium text-blue-50">{contextItem?.produto || 'Insumo'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/60">Código</div>
+                    <div className="break-all font-mono text-blue-50">{context.codigoBarras || contextCodes[0] || '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/60">Registro</div>
+                    <div className="break-all font-mono text-blue-50">{contextItem?.registro || '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/60">Lote</div>
+                    <div className="text-blue-50">{contextItem?.lote || '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/60">Validade</div>
+                    <div className="text-blue-50">{contextItem?.dataValidade ? fmtDateOnlyBR(contextItem.dataValidade) : '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-200/60">Saldo atual</div>
+                    <div className="font-mono text-blue-50">{Number.isFinite(contextStock) ? contextStock : '—'}</div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="mb-1 text-xs text-blue-200/70">Buscar por produto, marca, categoria ou código</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    value={search}
+                    onChange={(e) => onSearchChange(e.target.value)}
+                    placeholder="ex: Rennova, preenchedor, 789..."
+                    className="w-full sm:min-w-[240px] sm:flex-1"
+                  />
+                  <Button variant="secondary" type="button" onClick={onScanToggle}>
+                    {scanOpen ? 'Fechar' : 'Escanear'}
+                  </Button>
+                </div>
+              </>
+            )}
             <div className="mt-2">
-              {searchRemoteLoading ? (
+              {!context && searchRemoteLoading ? (
                 <div className="text-xs text-blue-200/70">Buscando no servidor…</div>
-              ) : searchRemoteError ? (
+              ) : !context && searchRemoteError ? (
                 <div className="text-xs text-amber-200">{searchRemoteError} (mostrando cache local).</div>
               ) : null}
-              {searchMatches.length && (!hasSelection || lookupLoading) ? (
+              {!context && searchMatches.length && (!hasSelection || lookupLoading) ? (
                 <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
                   <div className="mb-2 text-[11px] text-blue-200/60">Selecione o produto para lançar a operação:</div>
                   <div className="space-y-2">
@@ -895,20 +990,14 @@ export function InsumosQuickOperationDialog({
                               ) : null}
                             </div>
                           </button>
-                          {!hasCode ? (
-                            <div className="mt-2 flex justify-end">
-                              <Button variant="outline" size="sm" onClick={() => onEditItem(item)} disabled={!isAuthed}>
-                                Editar cadastro
-                              </Button>
-                            </div>
-                          ) : null}
+                          {!hasCode ? <div className="mt-2 text-xs text-amber-200">Sem código cadastrado; operação indisponível.</div> : null}
                         </div>
                       )
                     })}
                   </div>
                 </div>
               ) : null}
-              {lookupLoading ? (
+              {lookupLoading && !context ? (
                 <div className="text-xs text-blue-200/70">Buscando informações do insumo…</div>
               ) : lookupError ? (
                 <div className="text-xs text-red-200">{lookupError}</div>
@@ -932,9 +1021,11 @@ export function InsumosQuickOperationDialog({
                           ) : null}
                         </div>
                         <div className="flex flex-col items-end gap-2 text-xs text-blue-200/70">
-                          <Button variant="outline" size="sm" onClick={onClearSelection}>
-                            Trocar seleção
-                          </Button>
+                          {!context ? (
+                            <Button variant="outline" size="sm" onClick={onClearSelection}>
+                              Trocar seleção
+                            </Button>
+                          ) : null}
                           <div className="text-right">
                             {(() => {
                               const ctx = operation === 'TRANSFERENCIA' ? transferFrom : unit
@@ -960,7 +1051,7 @@ export function InsumosQuickOperationDialog({
                       {selectedCodes.length > 1 ? (
                         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-blue-200/70">
                           <span className="uppercase tracking-wide">Código</span>
-                          <Select value={activeCode} onValueChange={(value) => onSelectCode(value, selected)}>
+                            <Select value={context?.codigoBarras || activeCode} onValueChange={(value) => onSelectCode(value, selected)} disabled={!!context}>
                             <SelectTrigger className="h-8">
                               <SelectValue placeholder="Selecione o código" />
                             </SelectTrigger>
@@ -1167,6 +1258,202 @@ export function InsumosQuickOperationDialog({
               </span>
             </Button>
           )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+type InsumosContextualHistoryDialogProps = {
+  open: boolean
+  dialogClassName: string
+  context: InsumosOperationContext | null
+  movements: Movimentacao[]
+  isAuthed: boolean
+  reversingId: string | null
+  onOpenChange: (open: boolean) => void
+  onReverse: (movement: Movimentacao) => void
+  unitLabel: (unit: string) => string
+}
+
+/** Histórico focal iniciado pela linha do produto, sem editar/remover o ledger. */
+export function InsumosContextualHistoryDialog({
+  open,
+  dialogClassName,
+  context,
+  movements,
+  isAuthed,
+  reversingId,
+  onOpenChange,
+  onReverse,
+  unitLabel,
+}: InsumosContextualHistoryDialogProps) {
+  const item = context?.item
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className={`${dialogClassName} dark bg-corporate-900 border-white/10 text-white`}>
+        <DialogHeader>
+          <DialogTitle className="text-white">Histórico contextual</DialogTitle>
+          <DialogDescription className="text-blue-100/70">
+            {item?.produto || 'Produto'} · código <span className="font-mono">{context?.codigoBarras || item?.codigoBarras || '—'}</span> · registro{' '}
+            <span className="font-mono">{item?.registro || '—'}</span>
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-100">
+          Lote: <span className="font-medium">{item?.lote || '—'}</span> · validade:{' '}
+          <span className="font-medium">{item?.dataValidade ? fmtDateOnlyBR(item.dataValidade) : '—'}</span> · saldo atual:{' '}
+          <span className="font-mono font-medium">
+            {context && item
+              ? context.unidade && item.estoques
+                ? Number(item.estoques?.[context.unidade] ?? 0)
+                : Number(item.estoqueAtual ?? 0)
+              : '—'}
+          </span>
+        </div>
+
+        <div className="max-h-[58vh] overflow-auto rounded-xl border border-white/10">
+          <table className="min-w-full text-sm">
+            <thead className="bg-black/30 text-blue-100/80">
+              <tr>
+                <th className="p-3 text-left">Data</th>
+                <th className="p-3 text-left">Movimento</th>
+                <th className="p-3 text-left">Origem / destino</th>
+                <th className="p-3 text-left">Responsável</th>
+                <th className="p-3 text-left">Grupo / estado</th>
+                <th className="p-3 text-right">Ação</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {movements.length ? (
+                movements.map((movement, index) => {
+                  const id = String(movement.id || '').trim()
+                  const isTransfer = !!String(movement.transferId || '').trim()
+                  const isReversed = isMovementReversed(movement)
+                  const state = isReversed
+                    ? 'Estornado'
+                    : String(movement.transferStatus || movement.status || movement.estado || '').trim() || (isTransfer ? 'Transferência registrada' : 'Efetivada')
+                  const group = String(movement.grupo || movement.transferId || '').trim() || (isTransfer ? 'Transferência' : 'Movimento individual')
+                  const origin = isTransfer
+                    ? `${unitLabel(String(movement.unidadeOrigem || context?.unidade || ''))} → ${unitLabel(String(movement.unidadeDestino || ''))}`
+                    : unitLabel(String(movement.unidade || context?.unidade || ''))
+                  return (
+                    <tr key={`${id || 'movement'}-${index}`} className="hover:bg-white/5">
+                      <td className="whitespace-nowrap p-3 text-blue-100/80">
+                        {fmtDate(movement.dataHora || '') || '—'}
+                        <div className="text-xs text-blue-200/60">{movement.lote || item?.lote || 'Lote não informado'}</div>
+                      </td>
+                      <td className="p-3 text-blue-50">
+                        <div className="font-medium">{normalizeMovimentacaoTipo(movement.tipo) || 'Movimento'}</div>
+                        <div className="text-xs text-blue-200/60">
+                          {Number.isFinite(Number(movement.quantidade)) ? `Qtd. ${Number(movement.quantidade)}` : 'Quantidade não informada'}
+                          {Number.isFinite(Number(movement.estoqueNovo)) ? ` · saldo ${Number(movement.estoqueNovo)}` : ''}
+                        </div>
+                      </td>
+                      <td className="p-3 text-blue-100/80">{origin}</td>
+                      <td className="p-3 text-blue-100/80">{movement.usuario || 'Backend'}</td>
+                      <td className="p-3 text-blue-100/80">
+                        <div>{group}</div>
+                        <div className={isReversed ? 'text-amber-200' : 'text-emerald-200'}>{state}</div>
+                      </td>
+                      <td className="p-3 text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onReverse(movement)}
+                          disabled={!isAuthed || !id || isReversed || reversingId === id}
+                          aria-label={`Estornar ${movement.tipo || 'movimento'}`}
+                        >
+                          {reversingId === id ? 'Abrindo…' : 'Estornar'}
+                        </Button>
+                      </td>
+                    </tr>
+                  )
+                })
+              ) : (
+                <tr>
+                  <td className="p-4 text-center text-blue-100/70" colSpan={6}>
+                    Nenhuma movimentação encontrada para este registro.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+            Fechar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+type InsumosMovementReversalDialogProps = {
+  open: boolean
+  dialogClassName: string
+  target: Movimentacao | null
+  reason: string
+  saving: boolean
+  isAuthed: boolean
+  onOpenChange: (open: boolean) => void
+  onReasonChange: (value: string) => void
+  onCancel: () => void
+  onConfirm: () => void
+}
+
+export function InsumosMovementReversalDialog({
+  open,
+  dialogClassName,
+  target,
+  reason,
+  saving,
+  isAuthed,
+  onOpenChange,
+  onReasonChange,
+  onCancel,
+  onConfirm,
+}: InsumosMovementReversalDialogProps) {
+  const movementId = String(target?.id || '').trim()
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className={`${dialogClassName} dark bg-corporate-900 border-white/10 text-white`}>
+        <DialogHeader>
+          <DialogTitle className="text-white">Estornar movimentação</DialogTitle>
+          <DialogDescription className="text-blue-100/70">
+            O histórico permanece imutável. O estorno cria uma movimentação compensatória auditável.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-100">
+            <div className="font-medium">{target?.produto || 'Movimentação'}</div>
+            <div className="mt-1 text-xs text-blue-200/70">
+              {normalizeMovimentacaoTipo(target?.tipo) || 'Movimento'} · registro <span className="font-mono">{target?.registroInsumo || '—'}</span> · quantidade{' '}
+              <span className="font-mono">{Number(target?.quantidade) || 0}</span>
+              {movementId ? <span> · id <span className="font-mono">{movementId}</span></span> : null}
+            </div>
+          </div>
+          <label className="grid gap-1 text-sm">
+            <span>Motivo obrigatório</span>
+            <Textarea
+              value={reason}
+              onChange={(event) => onReasonChange(event.target.value)}
+              placeholder="Explique por que esta movimentação deve ser compensada."
+              rows={4}
+              autoFocus
+              aria-label="Motivo do estorno"
+            />
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onCancel} disabled={saving}>
+            Cancelar
+          </Button>
+          <Button variant="destructive" onClick={onConfirm} disabled={saving || !isAuthed || !movementId || !reason.trim()}>
+            {saving ? 'Registrando…' : 'Confirmar estorno'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1565,13 +1852,11 @@ type InsumosQualityMatchesDialogProps = {
   dialogClassName: string
   issue: QualityIssue | null
   items: Insumo[]
-  savingRegistro: string
   isAuthed: boolean
   unit: string
   unitLabel: (unit: string) => string
   onOpenChange: (open: boolean) => void
-  onEditItem: (item: Insumo) => void
-  onDeleteRegistro: (registro: string) => void
+  onOpenHistory: (item: Insumo) => void
 }
 
 export function InsumosQualityMatchesDialog({
@@ -1579,13 +1864,11 @@ export function InsumosQualityMatchesDialog({
   dialogClassName,
   issue,
   items,
-  savingRegistro,
   isAuthed,
   unit,
   unitLabel,
   onOpenChange,
-  onEditItem,
-  onDeleteRegistro,
+  onOpenHistory,
 }: InsumosQualityMatchesDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1595,11 +1878,11 @@ export function InsumosQualityMatchesDialog({
           <DialogDescription>
             {issue?.codigoBarras ? (
               <>
-                Selecione qual registro editar ou excluir para o código <span className="font-mono">#{issue.codigoBarras}</span>. ({items.length}{' '}
+                Selecione um registro para consultar o histórico do código <span className="font-mono">#{issue.codigoBarras}</span>. ({items.length}{' '}
                 correspondências)
               </>
             ) : (
-              <>Selecione qual registro editar ou excluir para resolver a duplicidade.</>
+              <>Consulte o histórico contextual de cada registro para resolver a duplicidade sem apagar o ledger.</>
             )}
           </DialogDescription>
         </DialogHeader>
@@ -1617,7 +1900,6 @@ export function InsumosQualityMatchesDialog({
             <tbody className="divide-y divide-white/5">
               {items.map((item) => {
                 const registro = String(item?.registro || '').trim()
-                const isDeleting = savingRegistro === registro
                 return (
                   <tr key={registro || String(item?.codigoBarras || '')} className="hover:bg-white/5">
                     <td className="p-3 font-mono text-blue-100/80">{registro || '-'}</td>
@@ -1625,19 +1907,9 @@ export function InsumosQualityMatchesDialog({
                     <td className="hidden p-3 text-blue-100/70 md:table-cell">{String(item?.lote || '-')}</td>
                     <td className="hidden p-3 text-blue-100/70 sm:table-cell">{Number(item?.estoqueAtual || 0)}</td>
                     <td className="p-3">
-                      <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-                        <Button size="sm" variant="outline" onClick={() => onEditItem(item)} disabled={!isAuthed || isDeleting}>
-                          Editar
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => onDeleteRegistro(registro)}
-                          disabled={!isAuthed || !registro || isDeleting}
-                        >
-                          {isDeleting ? 'Excluindo…' : 'Excluir'}
-                        </Button>
-                      </div>
+                      <Button size="sm" variant="outline" onClick={() => onOpenHistory(item)} disabled={!isAuthed || !registro}>
+                        Histórico
+                      </Button>
                     </td>
                   </tr>
                 )
@@ -1784,7 +2056,8 @@ export function InsumosShareHistoryPanel({
 
 type InsumosCreateInlinePanelProps = Omit<
   InsumosInventoryDialogProps,
-  'open' | 'dialogClassName' | 'query' | 'onQueryChange' | 'onOpenChange' | 'onExport' | 'filteredInsumos' | 'listContainerRef' | 'onListScroll' | 'insumosLoading' | 'insumosLoadError' | 'emptyContent' | 'onEditItem'
+  'open' | 'dialogClassName' | 'query' | 'onQueryChange' | 'onOpenChange' | 'onExport' | 'filteredInsumos' | 'listContainerRef' | 'onListScroll' | 'insumosLoading' | 'insumosLoadError' | 'emptyContent'
+  | 'onOpenQuickOperation' | 'onOpenHistory'
 > & {
   hint: string
   optionalDetailsOpen: boolean
@@ -2044,7 +2317,6 @@ type InsumosInventoryWorkspaceTableProps = {
   listContainerRef: React.RefObject<HTMLDivElement | null>
   onListScroll: (event: React.UIEvent<HTMLDivElement>) => void
   onSelectBarcode: (barcode: string) => void
-  onEditItem: (item: Insumo) => void
   onUseItem: (item: Insumo) => void
   emptyContent: React.ReactNode
 }
@@ -2058,7 +2330,6 @@ export function InsumosInventoryWorkspaceTable({
   listContainerRef,
   onListScroll,
   onSelectBarcode,
-  onEditItem,
   onUseItem,
   emptyContent,
 }: InsumosInventoryWorkspaceTableProps) {
@@ -2161,9 +2432,6 @@ export function InsumosInventoryWorkspaceTable({
                   <div className="flex items-center justify-end gap-2">
                     <Button variant="secondary" className="h-8 px-2 text-xs" onClick={() => onUseItem(item)}>
                       Usar
-                    </Button>
-                    <Button variant="outline" className="h-8 px-2 text-xs" onClick={() => onEditItem(item)} disabled={!isAuthed}>
-                      Editar
                     </Button>
                   </div>
                 </td>
@@ -2819,6 +3087,7 @@ type InsumosAlertsPanelProps = {
   emptyContent: React.ReactNode
   onToggleOpen: () => void
   onOpenPurchaseDialog: () => void
+  onOpenGuidedCount: () => void
   onAlertasStatusChange: (value: AlertasStatusFilter) => void
   onAlertasCategoriaChange: (value: string) => void
   onAlertasFluxoChange: (value: AlertasFluxoFilter) => void
@@ -2856,6 +3125,7 @@ export function InsumosAlertsPanel({
   emptyContent,
   onToggleOpen,
   onOpenPurchaseDialog,
+  onOpenGuidedCount,
   onAlertasStatusChange,
   onAlertasCategoriaChange,
   onAlertasFluxoChange,
@@ -2993,6 +3263,22 @@ export function InsumosAlertsPanel({
                     <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                     <circle cx="9" cy="20" r="1.6" fill="currentColor" />
                     <circle cx="17" cy="20" r="1.6" fill="currentColor" />
+                  </svg>
+                </Button>
+              </TooltipButton>
+              <TooltipButton label="Contagem física">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={onOpenGuidedCount}
+                  disabled={!isAuthed}
+                  aria-label="Contagem física"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M5 4h14v16H5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                    <path d="M8 8h8M8 12h8M8 16h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="m15 16 1.5 1.5L19 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </Button>
               </TooltipButton>
@@ -3630,7 +3916,7 @@ type InsumosMovementsPanelProps = {
   onProductClick: (productName: string) => void
   onCategoryClick: (categoryName: string) => void
   onBrandClick: (brandName: string) => void
-  onEditMovement: (movement: Movimentacao) => void
+  onReverseMovement: (movement: Movimentacao) => void
 }
 
 export function InsumosMovementsPanel({
@@ -3659,7 +3945,7 @@ export function InsumosMovementsPanel({
   onProductClick,
   onCategoryClick,
   onBrandClick,
-  onEditMovement,
+  onReverseMovement,
 }: InsumosMovementsPanelProps) {
   const columns: Array<{
     key: null | 'dataHora' | 'produto' | 'categoria' | 'marca' | 'estoque' | 'valor' | 'usuario' | 'observacao'
@@ -3923,8 +4209,8 @@ export function InsumosMovementsPanel({
                       </td>
                       <td className="whitespace-nowrap p-3 text-center align-top">
                         <div className="flex justify-center gap-2">
-                          <Button variant="outline" size="sm" onClick={() => onEditMovement(row.movement)} disabled={!row.canEdit}>
-                            Editar
+                          <Button variant="outline" size="sm" onClick={() => onReverseMovement(row.movement)} disabled={!row.canReverse}>
+                            Estornar
                           </Button>
                         </div>
                       </td>

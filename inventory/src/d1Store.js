@@ -68,6 +68,236 @@ function assertActorUnitScope(actor, unit) {
   return { ok: true, unit: normalized };
 }
 
+function assertCountManager(actor) {
+  const role = String(actor?.role || '').trim().toUpperCase();
+  if (!['GERENTE', 'GESTOR', 'ADMIN'].includes(role)) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'COUNT_MANAGER_REQUIRED',
+      error: 'A contagem só pode ser fechada ou reaberta por gerente, gestor ou administrador',
+    };
+  }
+  return { ok: true };
+}
+
+function assertCountActor(actor) {
+  if (!actorName(actor)) {
+    return { ok: false, status: 401, code: 'ACTOR_REQUIRED', error: 'Responsável da operação não identificado' };
+  }
+  return { ok: true };
+}
+
+function assertProcurementRole(actor, roles) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const role = String(actor?.role || '').trim().toUpperCase();
+  if (!roles.includes(role)) {
+    return { ok: false, status: 403, code: 'PROCUREMENT_ROLE_DENIED', error: 'Sem permissão para esta operação de compras' };
+  }
+  return { ok: true };
+}
+
+function parseCountQuantity(value) {
+  if (typeof value === 'number') return Number.isInteger(value) && value >= 0 ? value : NaN;
+  const raw = String(value ?? '').trim();
+  if (!/^\d+$/.test(raw)) return NaN;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : NaN;
+}
+
+function parseCents(value, { required = true } = {}) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return required ? NaN : null;
+  }
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 0 ? value : NaN;
+  }
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) return NaN;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : NaN;
+}
+
+function mapSupplier(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    nome: String(row.nome || '').trim(),
+    documento: String(row.documento || '').trim(),
+    email: String(row.email || '').trim(),
+    telefone: String(row.telefone || '').trim(),
+    observacoes: String(row.observacoes || '').trim(),
+    archivedAt: row.archived_at ? String(row.archived_at) : null,
+    archivedBy: row.archived_by ? String(row.archived_by) : null,
+    createdAt: row.created_at ? String(row.created_at) : null,
+    createdBy: String(row.created_by || '').trim(),
+    updatedAt: row.updated_at ? String(row.updated_at) : null,
+    updatedBy: String(row.updated_by || '').trim(),
+    active: !String(row.archived_at || '').trim(),
+  };
+}
+
+function mapPurchaseLine(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    pedidoId: String(row.pedido_id || '').trim(),
+    registro: String(row.registro_insumo || '').trim(),
+    codigoBarras: String(row.codigo_barras || '').trim(),
+    produto: String(row.produto || '').trim(),
+    lote: row.lote ? String(row.lote) : null,
+    dataValidade: row.data_validade ? String(row.data_validade) : null,
+    quantidadePedida: toInt(row.quantidade_pedida, 0),
+    quantidadeRecebida: toInt(row.quantidade_recebida, 0),
+    quantidadePendente: Math.max(0, toInt(row.quantidade_pedida, 0) - toInt(row.quantidade_recebida, 0)),
+    custoUnitarioCentavos: toInt(row.custo_unitario_centavos, 0),
+  };
+}
+
+function mapPurchaseReceipt(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    pedidoId: String(row.pedido_id || '').trim(),
+    linhaId: String(row.linha_id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    registro: String(row.registro_insumo || '').trim(),
+    codigoBarras: String(row.codigo_barras || '').trim(),
+    lote: row.lote ? String(row.lote) : null,
+    dataValidade: row.data_validade ? String(row.data_validade) : null,
+    quantidade: toInt(row.quantidade, 0),
+    custoUnitarioCentavos: toInt(row.custo_unitario_centavos, 0),
+    movementId: String(row.movement_id || '').trim(),
+    receivedAt: row.received_at ? String(row.received_at) : null,
+    receivedBy: String(row.received_by || '').trim(),
+    observacoes: String(row.observacoes || '').trim(),
+  };
+}
+
+function mapPurchaseOrder(row, lines = [], receipts = []) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    fornecedorId: row.fornecedor_id ? String(row.fornecedor_id) : null,
+    fornecedorNome: String(row.fornecedor_nome || '').trim() || null,
+    status: String(row.status || 'DRAFT').trim().toUpperCase(),
+    expectedAt: row.expected_at ? String(row.expected_at) : null,
+    observacoes: String(row.observacoes || '').trim(),
+    createdAt: row.created_at ? String(row.created_at) : null,
+    createdBy: String(row.created_by || '').trim(),
+    updatedAt: row.updated_at ? String(row.updated_at) : null,
+    updatedBy: String(row.updated_by || '').trim(),
+    cancelledAt: row.cancelled_at ? String(row.cancelled_at) : null,
+    cancelledBy: row.cancelled_by ? String(row.cancelled_by) : null,
+    cancelReason: row.cancel_reason ? String(row.cancel_reason) : null,
+    lines,
+    receipts,
+    totalLines: lines.length,
+    totalQuantity: lines.reduce((sum, line) => sum + toInt(line.quantidadePedida, 0), 0),
+    totalReceived: lines.reduce((sum, line) => sum + toInt(line.quantidadeRecebida, 0), 0),
+    totalCostCentavos: lines.reduce((sum, line) => sum + (toInt(line.quantidadePedida, 0) * toInt(line.custoUnitarioCentavos, 0)), 0),
+  };
+}
+
+function mapReplenishmentPolicy(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    registro: String(row.registro_insumo || '').trim(),
+    codigoBarras: String(row.codigo_barras || '').trim(),
+    produto: String(row.produto || '').trim(),
+    lote: row.lote ? String(row.lote) : null,
+    dataValidade: row.data_validade ? String(row.data_validade) : null,
+    estoqueMinimo: toInt(row.estoque_minimo, 0),
+    estoqueAlvo: toInt(row.estoque_alvo, 0),
+    estoqueSeguranca: toInt(row.estoque_seguranca, 0),
+    leadTimeDias: toInt(row.lead_time_dias, 0),
+    ativo: Number(row.ativo || 0) === 1,
+    createdAt: row.created_at ? String(row.created_at) : null,
+    createdBy: String(row.created_by || '').trim(),
+    updatedAt: row.updated_at ? String(row.updated_at) : null,
+    updatedBy: String(row.updated_by || '').trim(),
+  };
+}
+
+function mapReplenishmentSuggestion(row) {
+  if (!row) return null;
+  let draft = null;
+  try { draft = row.draft_json ? JSON.parse(row.draft_json) : null; } catch { draft = null; }
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    registro: String(row.registro_insumo || '').trim(),
+    tipo: String(row.tipo || '').trim().toUpperCase(),
+    status: String(row.status || 'DRAFT').trim().toUpperCase(),
+    quantidade: toInt(row.quantidade, 0),
+    saldoAtual: toInt(row.saldo_atual, 0),
+    saldoProjetado: toInt(row.saldo_projetado, 0),
+    estoqueAlvo: toInt(row.estoque_alvo, 0),
+    estoqueSeguranca: toInt(row.estoque_seguranca, 0),
+    leadTimeDias: toInt(row.lead_time_dias, 0),
+    unidadeOrigem: row.unidade_origem ? normalizeUnitScope(row.unidade_origem) : null,
+    unidadeDestino: normalizeUnitScope(row.unidade_destino),
+    codigoBarras: String(row.codigo_barras || '').trim(),
+    produto: String(row.produto || '').trim(),
+    lote: row.lote ? String(row.lote) : null,
+    dataValidade: row.data_validade ? String(row.data_validade) : null,
+    suggestionKey: String(row.suggestion_key || '').trim(),
+    draft,
+    generatedAt: row.generated_at ? String(row.generated_at) : null,
+    generatedBy: String(row.generated_by || '').trim(),
+    dismissedAt: row.dismissed_at ? String(row.dismissed_at) : null,
+    dismissedBy: row.dismissed_by ? String(row.dismissed_by) : null,
+    dismissReason: row.dismiss_reason ? String(row.dismiss_reason) : null,
+  };
+}
+
+function mapCountLine(row) {
+  return {
+    id: String(row?.id || '').trim(),
+    sessionId: String(row?.session_id || '').trim(),
+    registro: String(row?.registro || '').trim(),
+    codigoBarras: String(row?.codigo_barras || '').trim(),
+    produto: String(row?.produto || '').trim(),
+    lote: String(row?.lote || '').trim(),
+    dataValidade: row?.data_validade ? String(row.data_validade) : null,
+    snapshotQuantity: toInt(row?.snapshot_quantity, 0),
+    physicalQuantity: row?.physical_quantity === null || row?.physical_quantity === undefined
+      ? null
+      : toInt(row.physical_quantity, 0),
+    status: String(row?.status || 'OPEN').trim().toUpperCase(),
+    countedAt: row?.counted_at ? String(row.counted_at) : null,
+    countedBy: row?.counted_by ? String(row.counted_by) : null,
+    adjustmentMovementId: row?.adjustment_movement_id ? String(row.adjustment_movement_id) : null,
+    readCount: toInt(row?.read_count, 0),
+  };
+}
+
+function mapCountSession(row, lines = []) {
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    unidade: normalizeUnitScope(row.unidade),
+    status: String(row.status || '').trim().toUpperCase(),
+    snapshotAt: row.snapshot_at ? String(row.snapshot_at) : null,
+    startedAt: row.started_at ? String(row.started_at) : null,
+    startedBy: row.started_by ? String(row.started_by) : null,
+    closedAt: row.closed_at ? String(row.closed_at) : null,
+    closedBy: row.closed_by ? String(row.closed_by) : null,
+    conflictAt: row.conflict_at ? String(row.conflict_at) : null,
+    conflictReason: row.conflict_reason ? String(row.conflict_reason) : null,
+    observacoes: row.observacoes ? String(row.observacoes) : '',
+    lines,
+    totalLines: lines.length,
+    countedLines: lines.filter((line) => line.physicalQuantity !== null).length,
+    adjustedLines: lines.filter((line) => line.status === 'ADJUSTED').length,
+  };
+}
+
 /**
  * Claims a server-side command slot before a write and stores the successful
  * response. A repeated command by the same actor/key is replayed verbatim;
@@ -1524,7 +1754,7 @@ export async function d1ArchiveInsumo({ env, registro }) {
 
   const pending = await env.DB.prepare(
     `SELECT 1
-     FROM insumos_movements
+     FROM insumos_transfers
      WHERE registro_insumo = ?
        AND status = 'PENDING_RECEIPT'
      LIMIT 1`
@@ -1819,7 +2049,1138 @@ export async function d1Ajuste({ env, unidade, body, actor }) {
   if (resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1) {
     return { ok: false, status: 409, code: 'STOCK_CONFLICT', error: 'Saldo alterado por outra operação; tente novamente' };
   }
-  return { ok: true, estoqueAnterior, novoEstoque, registro: reg };
+  return { ok: true, estoqueAnterior, novoEstoque, registro: reg, movementId: movId };
+}
+
+/**
+ * Starts an auditable physical count for one unit. The snapshot is materialized
+ * as count lines, including zero stock and every active lot, so a scanner never
+ * has to infer a missing lot from current stock later in the workflow.
+ */
+export async function d1IniciarContagem({ env, unidade, actor, observacoes }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const unitScope = assertActorUnitScope(actor, unidade);
+  if (!unitScope.ok) return unitScope;
+  const existing = await env.DB.prepare(
+    `SELECT id, status
+     FROM insumos_count_sessions
+     WHERE unidade = ? AND status IN ('OPEN', 'CLOSING', 'CONFLICT')
+     ORDER BY started_at DESC, id DESC
+     LIMIT 1`
+  ).bind(unitScope.unit).first();
+  if (existing) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'COUNT_ALREADY_OPEN',
+      error: 'Já existe uma contagem ativa para esta unidade',
+      sessionId: String(existing.id || '').trim(),
+      sessionStatus: String(existing.status || '').trim().toUpperCase(),
+    };
+  }
+
+  const id = crypto.randomUUID();
+  const ts = nowIso();
+  const actorId = actorName(actor);
+  const note = String(observacoes || '').trim().slice(0, 2000);
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO insumos_count_sessions (
+          id, unidade, status, snapshot_at, started_at, started_by, observacoes
+        ) VALUES (?, ?, 'OPEN', ?, ?, ?, ?)`
+      ).bind(id, unitScope.unit, ts, ts, actorId, note),
+      env.DB.prepare(
+        `INSERT INTO insumos_count_lines (
+          id, session_id, registro, codigo_barras, produto, lote, data_validade,
+          snapshot_quantity, physical_quantity, status
+        )
+        SELECT lower(hex(randomblob(16))), ?, i.registro, i.codigo_barras, i.produto,
+               i.lote, i.data_validade, COALESCE(s.quantidade, 0), NULL, 'OPEN'
+        FROM insumos_items i
+        LEFT JOIN insumos_stocks s
+          ON s.registro = i.registro AND s.unidade = ?
+        WHERE COALESCE(i.archived_at, '') = ''
+        ORDER BY i.produto COLLATE NOCASE ASC, i.codigo_barras ASC, i.lote ASC, i.registro ASC`
+      ).bind(id, unitScope.unit),
+    ]);
+  } catch (error) {
+    const message = String(error?.message || error || '');
+    if (/unique|constraint/i.test(message)) {
+      const active = await env.DB.prepare(
+        `SELECT id, status FROM insumos_count_sessions
+         WHERE unidade = ? AND status IN ('OPEN', 'CLOSING', 'CONFLICT')
+         ORDER BY started_at DESC, id DESC LIMIT 1`
+      ).bind(unitScope.unit).first();
+      return {
+        ok: false,
+        status: 409,
+        code: 'COUNT_ALREADY_OPEN',
+        error: 'Já existe uma contagem ativa para esta unidade',
+        sessionId: String(active?.id || '').trim() || null,
+        sessionStatus: String(active?.status || '').trim().toUpperCase() || null,
+      };
+    }
+    throw error;
+  }
+  return d1GetContagem({ env, id, actor, unidade: unitScope.unit });
+}
+
+/** Returns the full count context, including immutable read counts per line. */
+export async function d1GetContagem({ env, id, actor, unidade }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const sessionId = String(id || '').trim();
+  if (!sessionId) return { ok: false, status: 400, code: 'COUNT_INVALID', error: 'Contagem inválida' };
+  const session = await env.DB.prepare(
+    `SELECT id, unidade, status, snapshot_at, started_at, started_by,
+            closed_at, closed_by, conflict_at, conflict_reason, observacoes
+     FROM insumos_count_sessions WHERE id = ? LIMIT 1`
+  ).bind(sessionId).first();
+  if (!session) return { ok: false, status: 404, code: 'COUNT_NOT_FOUND', error: 'Contagem não encontrada' };
+  const scope = assertActorUnitScope(actor, session.unidade);
+  if (!scope.ok) return scope;
+  if (unidade && normalizeUnitScope(unidade) !== scope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_COUNT_MISMATCH', error: 'A unidade da rota não corresponde à contagem' };
+  }
+  const linesRes = await env.DB.prepare(
+    `SELECT l.id, l.session_id, l.registro, l.codigo_barras, l.produto,
+            l.lote, l.data_validade, l.snapshot_quantity, l.physical_quantity,
+            l.status, l.counted_at, l.counted_by, l.adjustment_movement_id,
+            (SELECT COUNT(1) FROM insumos_count_reads r WHERE r.line_id = l.id) AS read_count
+     FROM insumos_count_lines l
+     WHERE l.session_id = ?
+     ORDER BY l.produto COLLATE NOCASE ASC, l.codigo_barras ASC, l.lote ASC, l.registro ASC`
+  ).bind(sessionId).all();
+  const lines = (linesRes?.results || []).map(mapCountLine);
+  return { ok: true, session: mapCountSession(session, lines), ...mapCountSession(session, lines) };
+}
+
+/** Records a scanner/manual read while retaining every previous read. */
+export async function d1RegistrarContagem({ env, id, actor, unidade, body }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const sessionId = String(id || '').trim();
+  if (!sessionId) return { ok: false, status: 400, code: 'COUNT_INVALID', error: 'Contagem inválida' };
+  const quantity = parseCountQuantity(body?.quantidade ?? body?.physicalQuantity ?? body?.quantidadeFisica);
+  if (!Number.isFinite(quantity)) {
+    return { ok: false, status: 400, code: 'COUNT_QUANTITY_INVALID', error: 'Quantidade física deve ser um inteiro maior ou igual a zero' };
+  }
+  const session = await env.DB.prepare(
+    `SELECT id, unidade, status FROM insumos_count_sessions WHERE id = ? LIMIT 1`
+  ).bind(sessionId).first();
+  if (!session) return { ok: false, status: 404, code: 'COUNT_NOT_FOUND', error: 'Contagem não encontrada' };
+  const scope = assertActorUnitScope(actor, session.unidade);
+  if (!scope.ok) return scope;
+  if (unidade && normalizeUnitScope(unidade) !== scope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_COUNT_MISMATCH', error: 'A unidade da rota não corresponde à contagem' };
+  }
+  if (String(session.status || '').toUpperCase() !== 'OPEN') {
+    const code = String(session.status || '').toUpperCase() === 'CONFLICT' ? 'COUNT_RECOUNT_REQUIRED' : 'COUNT_NOT_OPEN';
+    return { ok: false, status: 409, code, error: 'A contagem não está aberta para leituras', sessionStatus: String(session.status || '').toUpperCase() };
+  }
+
+  const lineId = String(body?.lineId || body?.linhaId || '').trim();
+  const registro = String(body?.registro || body?.registroInsumo || '').trim();
+  const codigo = String(body?.codigoBarras || body?.codigo || '').trim();
+  const lote = String(body?.lote || '').trim();
+  let line;
+  if (lineId) {
+    line = await env.DB.prepare(
+      `SELECT id, session_id, registro, codigo_barras, produto, lote, data_validade,
+              snapshot_quantity, physical_quantity, status, counted_at, counted_by,
+              adjustment_movement_id
+       FROM insumos_count_lines WHERE id = ? AND session_id = ? LIMIT 1`
+    ).bind(lineId, sessionId).first();
+  } else if (registro) {
+    line = await env.DB.prepare(
+      `SELECT id, session_id, registro, codigo_barras, produto, lote, data_validade,
+              snapshot_quantity, physical_quantity, status, counted_at, counted_by,
+              adjustment_movement_id
+       FROM insumos_count_lines WHERE registro = ? AND session_id = ? LIMIT 1`
+    ).bind(registro, sessionId).first();
+  } else if (codigo) {
+    const result = await env.DB.prepare(
+      `SELECT id, session_id, registro, codigo_barras, produto, lote, data_validade,
+              snapshot_quantity, physical_quantity, status, counted_at, counted_by,
+              adjustment_movement_id
+       FROM insumos_count_lines
+       WHERE session_id = ?
+         AND (codigo_barras = ? OR EXISTS (
+           SELECT 1 FROM insumos_barcodes b
+           WHERE b.registro = insumos_count_lines.registro AND b.codigo_barras = ?
+         ))
+         AND (? = '' OR lote = ?)
+       ORDER BY lote ASC, registro ASC`
+    ).bind(sessionId, codigo, codigo, lote, lote).all();
+    const candidates = result?.results || [];
+    if (candidates.length > 1) {
+      return {
+        ok: false,
+        status: 409,
+        code: 'COUNT_AMBIGUOUS_LOT',
+        error: 'Código possui múltiplos lotes; informe o lote ou registro',
+        registros: candidates.map((candidate) => String(candidate.registro || '').trim()),
+        candidates: candidates.map(mapCountLine),
+      };
+    }
+    line = candidates[0] || null;
+  }
+  if (!line) return { ok: false, status: 404, code: 'COUNT_LINE_NOT_FOUND', error: 'Linha não encontrada na contagem' };
+
+  const ts = nowIso();
+  const actorId = actorName(actor);
+  const readId = crypto.randomUUID();
+  const origem = String(body?.origem || body?.source || 'MANUAL').trim().slice(0, 40).toUpperCase() || 'MANUAL';
+  const note = String(body?.observacoes || body?.nota || '').trim().slice(0, 1000);
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE insumos_count_lines
+       SET physical_quantity = ?, status = 'COUNTED', counted_at = ?, counted_by = ?
+       WHERE id = ? AND session_id = ?
+         AND EXISTS (SELECT 1 FROM insumos_count_sessions WHERE id = ? AND status = 'OPEN')`
+    ).bind(quantity, ts, actorId, line.id, sessionId, sessionId),
+    env.DB.prepare(
+      `INSERT INTO insumos_count_reads (
+        id, session_id, line_id, registro, quantidade, origem, observacoes, read_at, read_by
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM insumos_count_lines l
+        JOIN insumos_count_sessions s ON s.id = l.session_id
+        WHERE l.id = ? AND l.session_id = ? AND s.status = 'OPEN'
+      )`
+    ).bind(readId, sessionId, line.id, line.registro, quantity, origem, note, ts, actorId, line.id, sessionId),
+  ]);
+  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1) {
+    return { ok: false, status: 409, code: 'COUNT_READ_CONFLICT', error: 'A contagem foi alterada por outra operação; recarregue a sessão' };
+  }
+  const current = await env.DB.prepare(
+    `SELECT l.id, l.session_id, l.registro, l.codigo_barras, l.produto, l.lote,
+            l.data_validade, l.snapshot_quantity, l.physical_quantity, l.status,
+            l.counted_at, l.counted_by, l.adjustment_movement_id,
+            (SELECT COUNT(1) FROM insumos_count_reads r WHERE r.line_id = l.id) AS read_count
+     FROM insumos_count_lines l WHERE l.id = ? LIMIT 1`
+  ).bind(line.id).first();
+  return { ok: true, readId, line: mapCountLine(current) };
+}
+
+/**
+ * Closes a count only if every line was read and no ledger movement occurred
+ * after the snapshot. Differences are recorded through the existing AJUSTE
+ * append-only flow, never by rewriting a movement or a stock history row.
+ */
+export async function d1FecharContagem({ env, id, actor, unidade }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const sessionId = String(id || '').trim();
+  if (!sessionId) return { ok: false, status: 400, code: 'COUNT_INVALID', error: 'Contagem inválida' };
+  const manager = assertCountManager(actor);
+  if (!manager.ok) return manager;
+  const session = await env.DB.prepare(
+    `SELECT id, unidade, status, snapshot_at, started_at, started_by, observacoes
+     FROM insumos_count_sessions WHERE id = ? LIMIT 1`
+  ).bind(sessionId).first();
+  if (!session) return { ok: false, status: 404, code: 'COUNT_NOT_FOUND', error: 'Contagem não encontrada' };
+  const scope = assertActorUnitScope(actor, session.unidade);
+  if (!scope.ok) return scope;
+  if (unidade && normalizeUnitScope(unidade) !== scope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_COUNT_MISMATCH', error: 'A unidade da rota não corresponde à contagem' };
+  }
+  const status = String(session.status || '').toUpperCase();
+  if (status === 'CLOSED') return { ok: false, status: 409, code: 'COUNT_ALREADY_CLOSED', error: 'A contagem já foi encerrada' };
+  if (status === 'CONFLICT') return { ok: false, status: 409, code: 'COUNT_RECOUNT_REQUIRED', error: 'Movimentação posterior ao snapshot; faça a recontagem' };
+  if (status === 'CANCELLED') return { ok: false, status: 409, code: 'COUNT_CANCELLED', error: 'A contagem foi cancelada' };
+  if (status === 'CLOSING') return { ok: false, status: 409, code: 'COUNT_CLOSE_IN_PROGRESS', error: 'O encerramento da contagem já está em andamento' };
+
+  const incomplete = await env.DB.prepare(
+    `SELECT COUNT(1) AS n FROM insumos_count_lines
+     WHERE session_id = ? AND physical_quantity IS NULL`
+  ).bind(sessionId).first();
+  const incompleteCount = toInt(incomplete?.n, 0);
+  if (incompleteCount > 0) {
+    return { ok: false, status: 409, code: 'COUNT_INCOMPLETE', error: 'Todas as linhas precisam ser contadas antes do fechamento', pendingLines: incompleteCount };
+  }
+
+  const movements = await env.DB.prepare(
+    `SELECT id, data_hora, tipo, registro_insumo, quantidade, unidade, usuario
+     FROM insumos_movements
+     WHERE unidade = ? AND data_hora >= ?
+     ORDER BY data_hora ASC, id ASC
+     LIMIT 50`
+  ).bind(scope.unit, session.snapshot_at).all();
+  if ((movements?.results || []).length > 0) {
+    const conflictAt = nowIso();
+    const reason = 'Movimentação registrada após o snapshot; recontagem obrigatória';
+    await env.DB.prepare(
+      `UPDATE insumos_count_sessions
+       SET status = 'CONFLICT', conflict_at = ?, conflict_reason = ?
+       WHERE id = ? AND status = 'OPEN'`
+    ).bind(conflictAt, reason, sessionId).run();
+    return {
+      ok: false,
+      status: 409,
+      code: 'COUNT_CONFLICT',
+      error: reason,
+      conflictAt,
+      movements: (movements.results || []).map((row) => ({
+        id: String(row.id || ''),
+        dataHora: String(row.data_hora || ''),
+        tipo: String(row.tipo || ''),
+        registro: String(row.registro_insumo || ''),
+        quantidade: toInt(row.quantidade, 0),
+        unidade: normalizeUnitScope(row.unidade),
+        usuario: String(row.usuario || ''),
+      })),
+    };
+  }
+
+  const claim = await env.DB.prepare(
+    `UPDATE insumos_count_sessions
+     SET status = 'CLOSING'
+     WHERE id = ? AND status = 'OPEN'`
+  ).bind(sessionId).run();
+  if (resultChanges(claim) !== 1) return { ok: false, status: 409, code: 'COUNT_CLOSE_IN_PROGRESS', error: 'A contagem foi alterada por outra operação' };
+
+  const linesRes = await env.DB.prepare(
+    `SELECT id, registro, codigo_barras, produto, lote, data_validade,
+            snapshot_quantity, physical_quantity
+     FROM insumos_count_lines
+     WHERE session_id = ? ORDER BY registro ASC`
+  ).bind(sessionId).all();
+  const lines = linesRes?.results || [];
+  const adjustments = [];
+  try {
+    for (const line of lines) {
+      const snapshotQuantity = toInt(line.snapshot_quantity, 0);
+      const physicalQuantity = parseCountQuantity(line.physical_quantity);
+      if (!Number.isFinite(physicalQuantity)) throw Object.assign(new Error('COUNT_INCOMPLETE'), { code: 'COUNT_INCOMPLETE' });
+      if (snapshotQuantity === physicalQuantity) {
+        adjustments.push({ lineId: String(line.id || ''), registro: String(line.registro || ''), delta: 0, movementId: null });
+        continue;
+      }
+      const adjustment = await d1Ajuste({
+        env,
+        unidade: scope.unit,
+        actor,
+        body: {
+          codigoBarras: String(line.codigo_barras || ''),
+          registro: String(line.registro || ''),
+          novoEstoque: physicalQuantity,
+          motivo: `Contagem física ${sessionId}`,
+          observacoes: `Fechamento da contagem ${sessionId}`,
+        },
+      });
+      if (!adjustment?.ok) throw Object.assign(new Error(adjustment?.error || 'Falha ao aplicar ajuste da contagem'), adjustment);
+      adjustments.push({
+        lineId: String(line.id || ''),
+        registro: String(line.registro || ''),
+        delta: physicalQuantity - snapshotQuantity,
+        movementId: adjustment.movementId || null,
+      });
+    }
+  } catch (error) {
+    const reason = String(error?.error || error?.message || 'Falha ao aplicar ajustes da contagem');
+    await env.DB.prepare(
+      `UPDATE insumos_count_sessions
+       SET status = 'CONFLICT', conflict_at = ?, conflict_reason = ?
+       WHERE id = ? AND status = 'CLOSING'`
+    ).bind(nowIso(), `Fechamento parcial: ${reason}`, sessionId).run();
+    if (error?.code && String(error.code).startsWith('COUNT_')) return { ok: false, status: 409, code: error.code, error: reason };
+    return { ok: false, status: Number(error?.status || 409), code: error?.code || 'COUNT_CLOSE_FAILED', error: reason };
+  }
+
+  const closedAt = nowIso();
+  const updates = [
+    ...adjustments.map((entry) => env.DB.prepare(
+      `UPDATE insumos_count_lines
+       SET status = 'ADJUSTED', adjustment_movement_id = ?
+       WHERE id = ? AND session_id = ?`
+    ).bind(entry.movementId, entry.lineId, sessionId)),
+    env.DB.prepare(
+      `UPDATE insumos_count_sessions
+       SET status = 'CLOSED', closed_at = ?, closed_by = ?, conflict_at = NULL, conflict_reason = NULL
+       WHERE id = ? AND status = 'CLOSING'`
+    ).bind(closedAt, actorName(actor), sessionId),
+  ];
+  const closeResults = await env.DB.batch(updates);
+  if (resultChanges(closeResults?.[closeResults.length - 1]) !== 1) {
+    return { ok: false, status: 409, code: 'COUNT_CLOSE_CONFLICT', error: 'A contagem não pôde ser encerrada com segurança' };
+  }
+  const out = await d1GetContagem({ env, id: sessionId, actor, unidade: scope.unit });
+  return { ok: true, ...out, adjustments };
+}
+
+/** Refreshes a conflicted snapshot while retaining all prior read evidence. */
+export async function d1RecontarContagem({ env, id, actor, unidade, observacoes }) {
+  const actorCheck = assertCountActor(actor);
+  if (!actorCheck.ok) return actorCheck;
+  const sessionId = String(id || '').trim();
+  if (!sessionId) return { ok: false, status: 400, code: 'COUNT_INVALID', error: 'Contagem inválida' };
+  const manager = assertCountManager(actor);
+  if (!manager.ok) return manager;
+  const session = await env.DB.prepare(
+    `SELECT id, unidade, status FROM insumos_count_sessions WHERE id = ? LIMIT 1`
+  ).bind(sessionId).first();
+  if (!session) return { ok: false, status: 404, code: 'COUNT_NOT_FOUND', error: 'Contagem não encontrada' };
+  const scope = assertActorUnitScope(actor, session.unidade);
+  if (!scope.ok) return scope;
+  if (unidade && normalizeUnitScope(unidade) !== scope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_COUNT_MISMATCH', error: 'A unidade da rota não corresponde à contagem' };
+  }
+  const status = String(session.status || '').toUpperCase();
+  if (!['OPEN', 'CONFLICT'].includes(status)) {
+    return { ok: false, status: 409, code: status === 'CLOSED' ? 'COUNT_ALREADY_CLOSED' : 'COUNT_NOT_OPEN', error: 'A contagem não pode ser reaberta neste estado' };
+  }
+  const snapshotAt = nowIso();
+  const note = observacoes === undefined ? null : String(observacoes || '').trim().slice(0, 2000);
+  const stockRes = await env.DB.prepare(
+    `SELECT i.registro, i.codigo_barras, i.produto, i.lote, i.data_validade,
+            COALESCE(s.quantidade, 0) AS snapshot_quantity
+     FROM insumos_items i
+     LEFT JOIN insumos_stocks s ON s.registro = i.registro AND s.unidade = ?
+     WHERE COALESCE(i.archived_at, '') = ''`
+  ).bind(scope.unit).all();
+  const stockRows = stockRes?.results || [];
+  const statements = [
+    env.DB.prepare(
+      `UPDATE insumos_count_sessions
+       SET status = 'OPEN', snapshot_at = ?, conflict_at = NULL, conflict_reason = NULL,
+           closed_at = NULL, closed_by = ?, observacoes = COALESCE(?, observacoes)
+       WHERE id = ? AND status IN ('OPEN', 'CONFLICT')`
+    ).bind(snapshotAt, null, note, sessionId),
+  ];
+  for (const row of stockRows) {
+    statements.push(env.DB.prepare(
+      `UPDATE insumos_count_lines
+       SET snapshot_quantity = ?, physical_quantity = NULL, status = 'OPEN',
+           counted_at = NULL, counted_by = NULL, adjustment_movement_id = NULL
+       WHERE session_id = ? AND registro = ?`
+    ).bind(toInt(row.snapshot_quantity, 0), sessionId, String(row.registro || '').trim()));
+    statements.push(env.DB.prepare(
+      `INSERT OR IGNORE INTO insumos_count_lines (
+        id, session_id, registro, codigo_barras, produto, lote, data_validade,
+        snapshot_quantity, physical_quantity, status
+      ) VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?, ?, ?, NULL, 'OPEN')`
+    ).bind(sessionId, String(row.registro || '').trim(), String(row.codigo_barras || ''), String(row.produto || ''), String(row.lote || ''), String(row.data_validade || ''), toInt(row.snapshot_quantity, 0)));
+  }
+  try {
+    const results = await env.DB.batch(statements);
+    if (resultChanges(results?.[0]) !== 1) return { ok: false, status: 409, code: 'COUNT_RECOUNT_CONFLICT', error: 'A contagem foi alterada por outra operação' };
+  } catch (error) {
+    return { ok: false, status: 409, code: 'COUNT_RECOUNT_CONFLICT', error: 'A recontagem não pôde ser aplicada com segurança' };
+  }
+  return d1GetContagem({ env, id: sessionId, actor, unidade: scope.unit });
+}
+
+async function loadProcurementItem({ env, registro, codigoBarras }) {
+  const reg = String(registro || '').trim();
+  const code = String(codigoBarras || '').trim();
+  if (reg) {
+    return env.DB.prepare(
+      `SELECT registro, codigo_barras, produto, lote, data_validade, archived_at
+       FROM insumos_items WHERE registro = ? LIMIT 1`
+    ).bind(reg).first();
+  }
+  if (!code) return null;
+  const found = await env.DB.prepare(
+    `SELECT i.registro, i.codigo_barras, i.produto, i.lote, i.data_validade, i.archived_at
+     FROM insumos_items i
+     WHERE i.codigo_barras = ?
+        OR EXISTS (SELECT 1 FROM insumos_barcodes b WHERE b.registro = i.registro AND b.codigo_barras = ?)
+     ORDER BY i.registro ASC`
+  ).bind(code, code).all();
+  const rows = found?.results || [];
+  if (rows.length === 1) return rows[0];
+  if (rows.length > 1) return { ambiguous: true, candidates: rows };
+  return null;
+}
+
+export async function d1ListFornecedores({ env, unidade, actor, includeArchived = false }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const sql = `SELECT id, unidade, nome, documento, email, telefone, observacoes,
+                      archived_at, archived_by, created_at, created_by, updated_at, updated_by
+               FROM insumos_suppliers
+               WHERE unidade = ? ${includeArchived ? '' : "AND COALESCE(archived_at, '') = ''"}
+               ORDER BY CASE WHEN COALESCE(archived_at, '') = '' THEN 0 ELSE 1 END, lower(nome), id`;
+  const result = await env.DB.prepare(sql).bind(scope.unit).all();
+  return { ok: true, items: (result?.results || []).map(mapSupplier) };
+}
+
+export async function d1CreateFornecedor({ env, unidade, actor, body }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const name = String(body?.nome || body?.name || '').trim().slice(0, 160);
+  if (!name) return { ok: false, status: 400, code: 'SUPPLIER_NAME_REQUIRED', error: 'Nome do fornecedor é obrigatório' };
+  const existing = await env.DB.prepare(
+    `SELECT id, archived_at FROM insumos_suppliers WHERE unidade = ? AND lower(nome) = lower(?) LIMIT 1`
+  ).bind(scope.unit, name).first();
+  if (existing && !String(existing.archived_at || '').trim()) {
+    return { ok: false, status: 409, code: 'SUPPLIER_DUPLICATE', error: 'Já existe um fornecedor ativo com este nome', id: String(existing.id || '') };
+  }
+  const id = crypto.randomUUID();
+  const now = nowIso();
+  const actorId = actorName(actor);
+  const result = await env.DB.prepare(
+    `INSERT INTO insumos_suppliers (
+       id, unidade, nome, documento, email, telefone, observacoes,
+       archived_at, archived_by, created_at, created_by, updated_at, updated_by
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`
+  ).bind(
+    id,
+    scope.unit,
+    name,
+    String(body?.documento || body?.document || '').trim().slice(0, 80) || null,
+    String(body?.email || '').trim().slice(0, 160) || null,
+    String(body?.telefone || body?.phone || '').trim().slice(0, 60) || null,
+    String(body?.observacoes || body?.nota || '').trim().slice(0, 1000) || null,
+    now,
+    actorId,
+    now,
+    actorId,
+  ).run();
+  if (resultChanges(result) !== 1) return { ok: false, status: 409, code: 'SUPPLIER_CREATE_CONFLICT', error: 'Fornecedor não pôde ser cadastrado' };
+  const row = await env.DB.prepare(
+    `SELECT id, unidade, nome, documento, email, telefone, observacoes, archived_at, archived_by,
+            created_at, created_by, updated_at, updated_by
+     FROM insumos_suppliers WHERE id = ?`
+  ).bind(id).first();
+  return { ok: true, supplier: mapSupplier(row) };
+}
+
+export async function d1ArchiveFornecedor({ env, id, unidade, actor }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const supplierId = String(id || '').trim();
+  if (!supplierId) return { ok: false, status: 400, code: 'SUPPLIER_INVALID', error: 'Fornecedor inválido' };
+  const supplier = await env.DB.prepare(
+    `SELECT id, unidade, archived_at FROM insumos_suppliers WHERE id = ? LIMIT 1`
+  ).bind(supplierId).first();
+  if (!supplier) return { ok: false, status: 404, code: 'SUPPLIER_NOT_FOUND', error: 'Fornecedor não encontrado' };
+  if (normalizeUnitScope(supplier.unidade) !== scope.unit) return { ok: false, status: 403, code: 'RBAC_UNIT_DENIED', error: 'Sem permissão para unidade' };
+  if (String(supplier.archived_at || '').trim()) return { ok: true, alreadyArchived: true, archivedAt: supplier.archived_at };
+  const pending = await env.DB.prepare(
+    `SELECT id FROM insumos_purchase_orders
+     WHERE fornecedor_id = ? AND status IN ('DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED') LIMIT 1`
+  ).bind(supplierId).first();
+  if (pending) return { ok: false, status: 409, code: 'SUPPLIER_PENDING_ORDERS', error: 'Não é possível arquivar fornecedor com pedido pendente' };
+  const archivedAt = nowIso();
+  const archivedBy = actorName(actor);
+  const result = await env.DB.prepare(
+    `UPDATE insumos_suppliers SET archived_at = ?, archived_by = ?, updated_at = ?, updated_by = ?
+     WHERE id = ? AND unidade = ? AND COALESCE(archived_at, '') = ''`
+  ).bind(archivedAt, archivedBy, archivedAt, archivedBy, supplierId, scope.unit).run();
+  if (resultChanges(result) !== 1) return { ok: false, status: 409, code: 'SUPPLIER_ARCHIVE_CONFLICT', error: 'Fornecedor foi alterado por outra operação' };
+  return { ok: true, archivedAt };
+}
+
+async function loadPurchaseOrderRow({ env, id, unidade }) {
+  return env.DB.prepare(
+    `SELECT o.id, o.unidade, o.fornecedor_id, s.nome AS fornecedor_nome, o.status, o.expected_at,
+            o.observacoes, o.created_at, o.created_by, o.updated_at, o.updated_by,
+            o.cancelled_at, o.cancelled_by, o.cancel_reason
+     FROM insumos_purchase_orders o
+     LEFT JOIN insumos_suppliers s ON s.id = o.fornecedor_id
+     WHERE o.id = ? AND o.unidade = ? LIMIT 1`
+  ).bind(id, unidade).first();
+}
+
+async function loadPurchaseOrderDetails({ env, row }) {
+  if (!row) return null;
+  const [lineResult, receiptResult] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, pedido_id, registro_insumo, codigo_barras, produto, lote, data_validade,
+              quantidade_pedida, quantidade_recebida, custo_unitario_centavos
+       FROM insumos_purchase_order_lines WHERE pedido_id = ? ORDER BY id`
+    ).bind(row.id).all(),
+    env.DB.prepare(
+      `SELECT id, pedido_id, linha_id, unidade, registro_insumo, codigo_barras, lote, data_validade,
+              quantidade, custo_unitario_centavos, movement_id, received_at, received_by, observacoes
+       FROM insumos_purchase_receipts WHERE pedido_id = ? ORDER BY received_at, id`
+    ).bind(row.id).all(),
+  ]);
+  return mapPurchaseOrder(
+    row,
+    (lineResult?.results || []).map(mapPurchaseLine),
+    (receiptResult?.results || []).map(mapPurchaseReceipt),
+  );
+}
+
+export async function d1ListPedidosInternos({ env, unidade, actor, status = '' }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const normalizedStatus = String(status || '').trim().toUpperCase();
+  if (normalizedStatus && !['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'].includes(normalizedStatus)) {
+    return { ok: false, status: 400, code: 'PURCHASE_STATUS_INVALID', error: 'Status de pedido inválido' };
+  }
+  const result = await env.DB.prepare(
+    `SELECT o.id, o.unidade, o.fornecedor_id, s.nome AS fornecedor_nome, o.status, o.expected_at,
+            o.observacoes, o.created_at, o.created_by, o.updated_at, o.updated_by,
+            o.cancelled_at, o.cancelled_by, o.cancel_reason,
+            COUNT(l.id) AS total_linhas, COALESCE(SUM(l.quantidade_pedida), 0) AS total_quantidade,
+            COALESCE(SUM(l.quantidade_recebida), 0) AS total_recebida
+     FROM insumos_purchase_orders o
+     LEFT JOIN insumos_suppliers s ON s.id = o.fornecedor_id
+     LEFT JOIN insumos_purchase_order_lines l ON l.pedido_id = o.id
+     WHERE o.unidade = ? ${normalizedStatus ? 'AND o.status = ?' : ''}
+     GROUP BY o.id ORDER BY o.updated_at DESC, o.id DESC`
+  ).bind(...(normalizedStatus ? [scope.unit, normalizedStatus] : [scope.unit])).all();
+  return {
+    ok: true,
+    items: (result?.results || []).map((row) => ({
+      ...mapPurchaseOrder(row),
+      totalLines: toInt(row.total_linhas, 0),
+      totalQuantity: toInt(row.total_quantidade, 0),
+      totalReceived: toInt(row.total_recebida, 0),
+      totalPending: Math.max(0, toInt(row.total_quantidade, 0) - toInt(row.total_recebida, 0)),
+      totalCostCentavos: null,
+    })),
+  };
+}
+
+export async function d1GetPedidoInterno({ env, id, unidade, actor }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const orderId = String(id || '').trim();
+  if (!orderId) return { ok: false, status: 400, code: 'PURCHASE_INVALID', error: 'Pedido inválido' };
+  const row = await loadPurchaseOrderRow({ env, id: orderId, unidade: scope.unit });
+  if (!row) return { ok: false, status: 404, code: 'PURCHASE_NOT_FOUND', error: 'Pedido não encontrado' };
+  return { ok: true, order: await loadPurchaseOrderDetails({ env, row }) };
+}
+
+export async function d1CreatePedidoInterno({ env, unidade, actor, body }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const requestedStatus = String(body?.status || 'DRAFT').trim().toUpperCase();
+  if (!['DRAFT', 'ORDERED'].includes(requestedStatus)) return { ok: false, status: 400, code: 'PURCHASE_STATUS_INVALID', error: 'Um novo pedido só pode ser rascunho ou solicitado' };
+  const rawLines = Array.isArray(body?.linhas) ? body.linhas : Array.isArray(body?.lines) ? body.lines : Array.isArray(body?.itens) ? body.itens : [];
+  if (!rawLines.length || rawLines.length > 100) return { ok: false, status: 400, code: 'PURCHASE_LINES_REQUIRED', error: 'O pedido precisa de pelo menos uma linha e no máximo 100' };
+
+  const supplierId = String(body?.fornecedorId || body?.supplierId || '').trim() || null;
+  if (supplierId) {
+    const supplier = await env.DB.prepare(
+      `SELECT id, unidade, archived_at FROM insumos_suppliers WHERE id = ? LIMIT 1`
+    ).bind(supplierId).first();
+    if (!supplier) return { ok: false, status: 404, code: 'SUPPLIER_NOT_FOUND', error: 'Fornecedor não encontrado' };
+    if (normalizeUnitScope(supplier.unidade) !== scope.unit) return { ok: false, status: 403, code: 'RBAC_UNIT_DENIED', error: 'Fornecedor fora do escopo da unidade' };
+    if (String(supplier.archived_at || '').trim()) return { ok: false, status: 409, code: 'SUPPLIER_ARCHIVED', error: 'Fornecedor arquivado não pode receber novos pedidos' };
+  }
+
+  const lines = [];
+  const seenRecords = new Set();
+  for (const raw of rawLines) {
+    const quantity = toInt(raw?.quantidade ?? raw?.quantity, NaN);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) return { ok: false, status: 400, code: 'PURCHASE_QUANTITY_INVALID', error: 'Quantidade pedida deve ser um inteiro positivo' };
+    const cost = parseCents(raw?.custoUnitarioCentavos ?? raw?.unitCostCents ?? raw?.custoCentavos);
+    if (!Number.isSafeInteger(cost)) return { ok: false, status: 400, code: 'COST_CENTS_REQUIRED', error: 'Custo unitário deve ser informado em centavos inteiros' };
+    const item = await loadProcurementItem({ env, registro: raw?.registro || raw?.registroInsumo, codigoBarras: raw?.codigoBarras || raw?.codigo });
+    if (item?.ambiguous) return { ok: false, status: 409, code: 'PURCHASE_AMBIGUOUS_ITEM', error: 'Código possui múltiplos lotes; informe o registro', candidates: item.candidates.map((candidate) => String(candidate.registro || '')) };
+    if (!item) return { ok: false, status: 404, code: 'INSUMO_NOT_FOUND', error: 'Insumo não encontrado' };
+    if (String(item.archived_at || '').trim()) return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não pode entrar em novo pedido' };
+    const record = String(item.registro || '').trim();
+    if (seenRecords.has(record)) return { ok: false, status: 400, code: 'PURCHASE_DUPLICATE_LINE', error: 'O mesmo registro não pode aparecer em duas linhas do pedido' };
+    seenRecords.add(record);
+    const lot = String(raw?.lote ?? item.lote ?? '').trim() || null;
+    const expiry = String(raw?.dataValidade ?? raw?.validade ?? item.data_validade ?? '').trim() || null;
+    if (String(item.lote || '').trim() && lot !== String(item.lote).trim()) return { ok: false, status: 400, code: 'PURCHASE_LOT_MISMATCH', error: 'Lote da linha não corresponde ao registro do insumo' };
+    lines.push({ item, quantity, cost, lot, expiry });
+  }
+
+  const id = crypto.randomUUID();
+  const actorId = actorName(actor);
+  const now = nowIso();
+  const statements = [env.DB.prepare(
+    `INSERT INTO insumos_purchase_orders
+       (id, unidade, fornecedor_id, status, expected_at, observacoes, created_at, created_by, updated_at, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    id,
+    scope.unit,
+    supplierId,
+    requestedStatus,
+    String(body?.expectedAt || body?.dataEsperada || '').trim() || null,
+    String(body?.observacoes || body?.nota || '').trim().slice(0, 2000) || null,
+    now,
+    actorId,
+    now,
+    actorId,
+  )];
+  for (const line of lines) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO insumos_purchase_order_lines
+         (id, pedido_id, registro_insumo, codigo_barras, produto, lote, data_validade,
+          quantidade_pedida, quantidade_recebida, custo_unitario_centavos, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
+    ).bind(
+      crypto.randomUUID(), id, String(line.item.registro || ''), String(line.item.codigo_barras || ''), String(line.item.produto || ''),
+      line.lot, line.expiry, line.quantity, line.cost, now, actorId,
+    ));
+  }
+  await env.DB.batch(statements);
+  const created = await d1GetPedidoInterno({ env, id, unidade: scope.unit, actor });
+  return { ok: true, ...created };
+}
+
+export async function d1ReceberPedidoInterno({ env, id, unidade, actor, body }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const orderId = String(id || '').trim();
+  const row = await loadPurchaseOrderRow({ env, id: orderId, unidade: scope.unit });
+  if (!row) return { ok: false, status: 404, code: 'PURCHASE_NOT_FOUND', error: 'Pedido não encontrado' };
+  if (['CANCELLED', 'RECEIVED'].includes(String(row.status || '').toUpperCase())) return { ok: false, status: 409, code: 'PURCHASE_NOT_RECEIVABLE', error: 'Pedido não aceita recebimentos neste estado' };
+  const rawReceipts = Array.isArray(body?.linhas) ? body.linhas : Array.isArray(body?.lines) ? body.lines : Array.isArray(body?.itens) ? body.itens : [];
+  if (!rawReceipts.length) return { ok: false, status: 400, code: 'RECEIPT_LINES_REQUIRED', error: 'Informe ao menos uma linha para recebimento' };
+  const linesResult = await env.DB.prepare(
+    `SELECT id, pedido_id, registro_insumo, codigo_barras, produto, lote, data_validade,
+            quantidade_pedida, quantidade_recebida, custo_unitario_centavos
+     FROM insumos_purchase_order_lines WHERE pedido_id = ? ORDER BY id`
+  ).bind(orderId).all();
+  const lineMap = new Map((linesResult?.results || []).map((line) => [String(line.id || ''), line]));
+  const seen = new Set();
+  const receipts = [];
+  for (const raw of rawReceipts) {
+    const lineId = String(raw?.linhaId || raw?.lineId || '').trim();
+    if (!lineId || seen.has(lineId)) return { ok: false, status: 400, code: 'RECEIPT_LINE_INVALID', error: 'Linha de recebimento inválida ou repetida' };
+    seen.add(lineId);
+    const line = lineMap.get(lineId);
+    if (!line) return { ok: false, status: 404, code: 'PURCHASE_LINE_NOT_FOUND', error: 'Linha do pedido não encontrada' };
+    const quantity = toInt(raw?.quantidade ?? raw?.quantity, NaN);
+    const pending = toInt(line.quantidade_pedida, 0) - toInt(line.quantidade_recebida, 0);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0 || quantity > pending) return { ok: false, status: 409, code: 'RECEIPT_EXCEEDS_PENDING', error: 'Recebimento excede a quantidade pendente', pending, lineId };
+    const cost = raw?.custoUnitarioCentavos ?? raw?.unitCostCents ?? raw?.custoCentavos;
+    const costCents = cost === undefined ? toInt(line.custo_unitario_centavos, 0) : parseCents(cost);
+    if (!Number.isSafeInteger(costCents)) return { ok: false, status: 400, code: 'COST_CENTS_INVALID', error: 'Custo unitário deve ser um inteiro em centavos', lineId };
+    const lot = String(raw?.lote ?? line.lote ?? '').trim() || null;
+    const expiry = String(raw?.dataValidade ?? raw?.validade ?? line.data_validade ?? '').trim() || null;
+    if (String(line.lote || '').trim() && lot !== String(line.lote).trim()) return { ok: false, status: 400, code: 'RECEIPT_LOT_MISMATCH', error: 'Lote recebido não corresponde à linha do pedido', lineId };
+    receipts.push({ line, quantity, costCents, lot, expiry, id: crypto.randomUUID(), movementId: crypto.randomUUID(), receivedAt: nowIso() });
+  }
+
+  const actorId = actorName(actor);
+  const notes = String(body?.observacoes || body?.nota || '').trim().slice(0, 1000) || null;
+  const allStatements = [];
+  const offsets = [];
+  for (const receipt of receipts) {
+    const { line, quantity, costCents, lot, expiry, id: receiptId, movementId, receivedAt } = receipt;
+    const reg = String(line.registro_insumo || '').trim();
+    const code = String(line.codigo_barras || '').trim();
+    const product = String(line.produto || '').trim();
+    const reason = `Recebimento pedido ${orderId}`;
+    const stockUpdateIndex = allStatements.length;
+    allStatements.push(env.DB.prepare(
+      `UPDATE insumos_stocks
+       SET quantidade = quantidade + ?, updated_at = ?
+       WHERE registro = ? AND unidade = ?
+         AND EXISTS (
+           SELECT 1 FROM insumos_purchase_order_lines l
+           JOIN insumos_purchase_orders o ON o.id = l.pedido_id
+           JOIN insumos_items i ON i.registro = l.registro_insumo
+           WHERE l.id = ? AND l.pedido_id = ?
+             AND l.quantidade_pedida - l.quantidade_recebida >= ?
+             AND o.status NOT IN ('CANCELLED', 'RECEIVED')
+             AND COALESCE(i.archived_at, '') = ''
+         )`
+    ).bind(quantity, receivedAt, reg, scope.unit, line.id, orderId, quantity));
+    allStatements.push(env.DB.prepare(
+      `INSERT OR IGNORE INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+       SELECT ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM insumos_purchase_order_lines l
+         JOIN insumos_purchase_orders o ON o.id = l.pedido_id
+         JOIN insumos_items i ON i.registro = l.registro_insumo
+         WHERE l.id = ? AND l.pedido_id = ?
+           AND l.quantidade_pedida - l.quantidade_recebida >= ?
+           AND o.status NOT IN ('CANCELLED', 'RECEIVED')
+           AND COALESCE(i.archived_at, '') = ''
+       )`
+    ).bind(reg, scope.unit, quantity, receivedAt, line.id, orderId, quantity));
+    allStatements.push(env.DB.prepare(
+      `INSERT INTO insumos_movements (
+        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+        produto, quantidade, estoque_anterior, estoque_novo, unidade, usuario,
+        motivo, observacoes, status
+      )
+      SELECT ?, ?, 'ENTRADA', ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, 'COMPLETED'
+      FROM insumos_stocks
+      WHERE registro = ? AND unidade = ? AND updated_at = ?
+        AND EXISTS (
+          SELECT 1 FROM insumos_purchase_order_lines l
+          WHERE l.id = ? AND l.pedido_id = ? AND l.quantidade_pedida - l.quantidade_recebida >= ?
+        )`
+    ).bind(movementId, receivedAt, code, reg, lot, expiry, product, quantity, quantity, scope.unit, actorId, reason, notes, reg, scope.unit, receivedAt, line.id, orderId, quantity));
+    const movementIndex = allStatements.length - 1;
+    allStatements.push(env.DB.prepare(
+      `INSERT INTO insumos_purchase_receipts (
+        id, pedido_id, linha_id, unidade, registro_insumo, codigo_barras, lote, data_validade,
+        quantidade, custo_unitario_centavos, movement_id, received_at, received_by, observacoes
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM insumos_movements WHERE id = ?)`
+    ).bind(receiptId, orderId, line.id, scope.unit, reg, code, lot, expiry, quantity, costCents, movementId, receivedAt, actorId, notes, movementId));
+    const receiptIndex = allStatements.length - 1;
+    allStatements.push(env.DB.prepare(
+      `UPDATE insumos_purchase_order_lines
+       SET quantidade_recebida = quantidade_recebida + ?
+       WHERE id = ? AND pedido_id = ? AND quantidade_pedida - quantidade_recebida >= ?
+         AND EXISTS (SELECT 1 FROM insumos_purchase_receipts WHERE id = ?)`
+    ).bind(quantity, line.id, orderId, quantity, receiptId));
+    const lineIndex = allStatements.length - 1;
+    offsets.push({ stockUpdateIndex, movementIndex, receiptIndex, lineIndex, receipt });
+  }
+  allStatements.push(env.DB.prepare(
+    `UPDATE insumos_purchase_orders
+     SET status = CASE
+       WHEN NOT EXISTS (SELECT 1 FROM insumos_purchase_order_lines WHERE pedido_id = ? AND quantidade_recebida < quantidade_pedida) THEN 'RECEIVED'
+       WHEN EXISTS (SELECT 1 FROM insumos_purchase_order_lines WHERE pedido_id = ? AND quantidade_recebida > 0) THEN 'PARTIALLY_RECEIVED'
+       ELSE status END,
+       updated_at = ?, updated_by = ?
+     WHERE id = ? AND unidade = ? AND status NOT IN ('CANCELLED', 'RECEIVED')`
+  ).bind(orderId, orderId, nowIso(), actorId, orderId, scope.unit));
+  const results = await env.DB.batch(allStatements);
+  for (const offset of offsets) {
+    if (resultChanges(results?.[offset.movementIndex]) !== 1 || resultChanges(results?.[offset.receiptIndex]) !== 1 || resultChanges(results?.[offset.lineIndex]) !== 1) {
+      return { ok: false, status: 409, code: 'RECEIPT_CONFLICT', error: 'O recebimento foi alterado por outra operação; recarregue o pedido' };
+    }
+  }
+  const order = await d1GetPedidoInterno({ env, id: orderId, unidade: scope.unit, actor });
+  return { ok: true, ...order, received: receipts.map((receipt) => ({ lineId: String(receipt.line.id || ''), receiptId: receipt.id, movementId: receipt.movementId, quantidade: receipt.quantity, custoUnitarioCentavos: receipt.costCents })) };
+}
+
+export async function d1CancelarPedidoInterno({ env, id, unidade, actor, justificativa }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const orderId = String(id || '').trim();
+  const reason = String(justificativa || '').trim().slice(0, 1000);
+  if (!reason) return { ok: false, status: 400, code: 'CANCEL_REASON_REQUIRED', error: 'Justificativa é obrigatória para cancelar o pedido' };
+  const row = await loadPurchaseOrderRow({ env, id: orderId, unidade: scope.unit });
+  if (!row) return { ok: false, status: 404, code: 'PURCHASE_NOT_FOUND', error: 'Pedido não encontrado' };
+  if (['RECEIVED', 'CANCELLED'].includes(String(row.status || '').toUpperCase())) return { ok: false, status: 409, code: 'PURCHASE_NOT_CANCELLABLE', error: 'Pedido não pode ser cancelado neste estado' };
+  const now = nowIso();
+  const result = await env.DB.prepare(
+    `UPDATE insumos_purchase_orders
+     SET status = 'CANCELLED', cancelled_at = ?, cancelled_by = ?, cancel_reason = ?, updated_at = ?, updated_by = ?
+     WHERE id = ? AND unidade = ? AND status IN ('DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED')`
+  ).bind(now, actorName(actor), reason, now, actorName(actor), orderId, scope.unit).run();
+  if (resultChanges(result) !== 1) return { ok: false, status: 409, code: 'PURCHASE_CANCEL_CONFLICT', error: 'Pedido foi alterado por outra operação' };
+  const order = await d1GetPedidoInterno({ env, id: orderId, unidade: scope.unit, actor });
+  return { ok: true, ...order };
+}
+
+function parseReplenishmentInteger(value, { fallback = NaN, max = 1000000000 } = {}) {
+  const parsed = parseCountQuantity(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > max) return fallback;
+  return parsed;
+}
+
+export async function d1ListPoliticasReposicao({ env, unidade, actor, includeInactive = false }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const result = await env.DB.prepare(
+    `SELECT p.id, p.unidade, p.registro_insumo, p.estoque_minimo, p.estoque_alvo,
+            p.estoque_seguranca, p.lead_time_dias, p.ativo,
+            p.created_at, p.created_by, p.updated_at, p.updated_by,
+            i.codigo_barras, i.produto, i.lote, i.data_validade,
+            COALESCE(s.quantidade, 0) AS saldo_atual
+     FROM insumos_replenishment_policies p
+     JOIN insumos_items i ON i.registro = p.registro_insumo
+     LEFT JOIN insumos_stocks s ON s.registro = p.registro_insumo AND s.unidade = p.unidade
+     WHERE p.unidade = ? ${includeInactive ? '' : 'AND p.ativo = 1'}
+     ORDER BY lower(i.produto), p.registro_insumo`
+  ).bind(scope.unit).all();
+  return { ok: true, items: (result?.results || []).map((row) => ({ ...mapReplenishmentPolicy(row), saldoAtual: toInt(row.saldo_atual, 0) })) };
+}
+
+export async function d1UpsertPoliticaReposicao({ env, unidade, actor, body }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const registro = String(body?.registro || body?.registroInsumo || '').trim();
+  if (!registro) return { ok: false, status: 400, code: 'REPLENISHMENT_ITEM_REQUIRED', error: 'Registro do insumo é obrigatório' };
+  const item = await env.DB.prepare(
+    `SELECT registro, codigo_barras, produto, lote, data_validade, archived_at
+     FROM insumos_items WHERE registro = ? LIMIT 1`
+  ).bind(registro).first();
+  if (!item) return { ok: false, status: 404, code: 'INSUMO_NOT_FOUND', error: 'Insumo não encontrado' };
+  if (String(item.archived_at || '').trim()) return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não aceita política de reposição' };
+  const minimo = parseReplenishmentInteger(body?.estoqueMinimo ?? body?.minimo);
+  const alvo = parseReplenishmentInteger(body?.estoqueAlvo ?? body?.alvo);
+  const seguranca = parseReplenishmentInteger(body?.estoqueSeguranca ?? body?.seguranca, { fallback: 0 });
+  const leadTime = parseReplenishmentInteger(body?.leadTimeDias ?? body?.leadTime, { fallback: 0, max: 3650 });
+  if (!Number.isSafeInteger(minimo) || !Number.isSafeInteger(alvo) || !Number.isSafeInteger(seguranca) || !Number.isSafeInteger(leadTime)) {
+    return { ok: false, status: 400, code: 'REPLENISHMENT_POLICY_INVALID', error: 'Mínimo, alvo, segurança e lead time devem ser inteiros não negativos' };
+  }
+  if (alvo < minimo) return { ok: false, status: 400, code: 'REPLENISHMENT_TARGET_INVALID', error: 'Estoque alvo não pode ser menor que o mínimo' };
+  const ativo = body?.ativo === false || body?.ativo === 0 || String(body?.ativo || '').toLowerCase() === 'false' ? 0 : 1;
+  const now = nowIso();
+  const actorId = actorName(actor);
+  await env.DB.prepare(
+    `INSERT INTO insumos_replenishment_policies
+       (id, unidade, registro_insumo, estoque_minimo, estoque_alvo, estoque_seguranca,
+        lead_time_dias, ativo, created_at, created_by, updated_at, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(unidade, registro_insumo) DO UPDATE SET
+       estoque_minimo = excluded.estoque_minimo,
+       estoque_alvo = excluded.estoque_alvo,
+       estoque_seguranca = excluded.estoque_seguranca,
+       lead_time_dias = excluded.lead_time_dias,
+       ativo = excluded.ativo,
+       updated_at = excluded.updated_at,
+       updated_by = excluded.updated_by`
+  ).bind(crypto.randomUUID(), scope.unit, registro, minimo, alvo, seguranca, leadTime, ativo, now, actorId, now, actorId).run();
+  const row = await env.DB.prepare(
+    `SELECT p.id, p.unidade, p.registro_insumo, p.estoque_minimo, p.estoque_alvo,
+            p.estoque_seguranca, p.lead_time_dias, p.ativo,
+            p.created_at, p.created_by, p.updated_at, p.updated_by,
+            i.codigo_barras, i.produto, i.lote, i.data_validade,
+            COALESCE(s.quantidade, 0) AS saldo_atual
+     FROM insumos_replenishment_policies p
+     JOIN insumos_items i ON i.registro = p.registro_insumo
+     LEFT JOIN insumos_stocks s ON s.registro = p.registro_insumo AND s.unidade = p.unidade
+     WHERE p.unidade = ? AND p.registro_insumo = ? LIMIT 1`
+  ).bind(scope.unit, registro).first();
+  return { ok: true, policy: { ...mapReplenishmentPolicy(row), saldoAtual: toInt(row?.saldo_atual, 0) } };
+}
+
+async function loadReplenishmentInbound({ env, unidade, registro }) {
+  const transfers = await env.DB.prepare(
+    `SELECT COALESCE(SUM(quantidade), 0) AS quantidade
+     FROM insumos_transfers
+     WHERE registro_insumo = ? AND unidade_destino = ? AND status = 'PENDING_RECEIPT'`
+  ).bind(registro, unidade).first();
+  const purchases = await env.DB.prepare(
+    `SELECT COALESCE(SUM(l.quantidade_pedida - l.quantidade_recebida), 0) AS quantidade
+     FROM insumos_purchase_order_lines l
+     JOIN insumos_purchase_orders o ON o.id = l.pedido_id
+     WHERE l.registro_insumo = ? AND o.unidade = ?
+       AND o.status IN ('DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED')`
+  ).bind(registro, unidade).first();
+  return Math.max(0, toInt(transfers?.quantidade, 0)) + Math.max(0, toInt(purchases?.quantidade, 0));
+}
+
+async function loadReplenishmentDonor({ env, actor, unidade, registro }) {
+  const result = await env.DB.prepare(
+    `SELECT s.unidade, s.quantidade,
+            COALESCE(p.estoque_minimo, 0) AS estoque_minimo,
+            COALESCE(p.estoque_seguranca, 0) AS estoque_seguranca
+     FROM insumos_stocks s
+     LEFT JOIN insumos_replenishment_policies p
+       ON p.unidade = s.unidade AND p.registro_insumo = s.registro AND p.ativo = 1
+     WHERE s.registro = ? AND s.unidade <> ? AND s.quantidade > (COALESCE(p.estoque_minimo, 0) + COALESCE(p.estoque_seguranca, 0))
+     ORDER BY (s.quantidade - (COALESCE(p.estoque_minimo, 0) + COALESCE(p.estoque_seguranca, 0))) DESC, s.unidade ASC
+     LIMIT 20`
+  ).bind(registro, unidade).all();
+  for (const row of result?.results || []) {
+    const donorUnit = normalizeUnitScope(row.unidade);
+    if (!donorUnit || !hasUnitScopeAccess(actor, donorUnit)) continue;
+    const quantity = Math.max(0, toInt(row.quantidade, 0));
+    const reserve = Math.max(0, toInt(row.estoque_minimo, 0) + toInt(row.estoque_seguranca, 0));
+    const surplus = Math.max(0, quantity - reserve);
+    if (surplus > 0) return { unidade: donorUnit, surplus };
+  }
+  return null;
+}
+
+async function loadLatestProcurementCost({ env, unidade, registro }) {
+  const row = await env.DB.prepare(
+    `SELECT r.custo_unitario_centavos
+     FROM insumos_purchase_receipts r
+     WHERE r.unidade = ? AND r.registro_insumo = ?
+     ORDER BY r.received_at DESC, r.id DESC LIMIT 1`
+  ).bind(unidade, registro).first();
+  return row ? parseReplenishmentInteger(row.custo_unitario_centavos, { fallback: null }) : null;
+}
+
+export async function d1ListSugestoesReposicao({ env, unidade, actor, status = 'DRAFT' }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR', 'CONSULTOR']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const normalizedStatus = String(status || '').trim().toUpperCase();
+  if (normalizedStatus && !['DRAFT', 'DISMISSED', 'CONVERTED'].includes(normalizedStatus)) return { ok: false, status: 400, code: 'REPLENISHMENT_STATUS_INVALID', error: 'Status de sugestão inválido' };
+  const result = await env.DB.prepare(
+    `SELECT id, unidade, registro_insumo, tipo, status, quantidade, saldo_atual, saldo_projetado,
+            estoque_alvo, estoque_seguranca, lead_time_dias, unidade_origem, unidade_destino,
+            codigo_barras, produto, lote, data_validade, suggestion_key, draft_json,
+            generated_at, generated_by, dismissed_at, dismissed_by, dismiss_reason
+     FROM insumos_replenishment_suggestions
+     WHERE unidade = ? ${normalizedStatus ? 'AND status = ?' : ''}
+     ORDER BY CASE WHEN status = 'DRAFT' THEN 0 ELSE 1 END,
+              lead_time_dias DESC, generated_at DESC, id DESC`
+  ).bind(...(normalizedStatus ? [scope.unit, normalizedStatus] : [scope.unit])).all();
+  return { ok: true, items: (result?.results || []).map(mapReplenishmentSuggestion) };
+}
+
+export async function d1GerarSugestoesReposicao({ env, unidade, actor }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const policiesResult = await env.DB.prepare(
+    `SELECT p.id, p.unidade, p.registro_insumo, p.estoque_minimo, p.estoque_alvo,
+            p.estoque_seguranca, p.lead_time_dias, p.ativo,
+            p.created_at, p.created_by, p.updated_at, p.updated_by,
+            i.codigo_barras, i.produto, i.lote, i.data_validade
+     FROM insumos_replenishment_policies p
+     JOIN insumos_items i ON i.registro = p.registro_insumo
+     WHERE p.unidade = ? AND p.ativo = 1 AND COALESCE(i.archived_at, '') = ''
+     ORDER BY p.registro_insumo LIMIT 500`
+  ).bind(scope.unit).all();
+  const generated = [];
+  for (const policy of policiesResult?.results || []) {
+    const minimum = toInt(policy.estoque_minimo, 0);
+    const safety = toInt(policy.estoque_seguranca, 0);
+    const target = Math.max(toInt(policy.estoque_alvo, 0), minimum + safety);
+    const stockRow = await env.DB.prepare(
+      `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ? LIMIT 1`
+    ).bind(policy.registro_insumo, scope.unit).first();
+    // A governed direct-output exception may leave a negative balance. Keep
+    // that accounting signal for the shortage calculation instead of
+    // treating it as zero; the suggestion table stores non-negative display
+    // snapshots because its CHECK constraint protects draft data.
+    const saldoContabilAtual = toInt(stockRow?.quantidade, 0);
+    const inbound = await loadReplenishmentInbound({ env, unidade: scope.unit, registro: policy.registro_insumo });
+    const saldoContabilProjetado = saldoContabilAtual + inbound;
+    if (saldoContabilProjetado >= minimum + safety) continue;
+    const saldoAtual = Math.max(0, saldoContabilAtual);
+    const saldoProjetado = Math.max(0, saldoContabilProjetado);
+    const shortage = Math.max(0, target - saldoContabilProjetado);
+    if (!shortage) continue;
+
+    const donor = await loadReplenishmentDonor({ env, actor, unidade: scope.unit, registro: policy.registro_insumo });
+    const transferQuantity = donor ? Math.min(shortage, donor.surplus) : 0;
+    const type = transferQuantity > 0 ? 'TRANSFER_DRAFT' : 'PURCHASE_DRAFT';
+    const quantity = transferQuantity > 0 ? transferQuantity : shortage;
+    const latestCost = type === 'PURCHASE_DRAFT' ? await loadLatestProcurementCost({ env, unidade: scope.unit, registro: policy.registro_insumo }) : null;
+    const draft = type === 'TRANSFER_DRAFT'
+      ? {
+        tipo: type,
+        prontaParaExecucao: false,
+        unidadeOrigem: donor.unidade,
+        unidadeDestino: scope.unit,
+        registro: String(policy.registro_insumo || ''),
+        codigoBarras: String(policy.codigo_barras || ''),
+        produto: String(policy.produto || ''),
+        lote: policy.lote ? String(policy.lote) : null,
+        dataValidade: policy.data_validade ? String(policy.data_validade) : null,
+        quantidade: quantity,
+        saldoContabilAtual,
+        saldoContabilProjetado,
+        leadTimeDias: toInt(policy.lead_time_dias, 0),
+        observacoes: 'Rascunho gerado pela política de reposição; requer revisão e despacho explícitos.',
+      }
+      : {
+        tipo: type,
+        prontaParaExecucao: false,
+        unidade: scope.unit,
+        fornecedorId: null,
+        status: 'DRAFT',
+        linhas: [{
+          registro: String(policy.registro_insumo || ''),
+          codigoBarras: String(policy.codigo_barras || ''),
+          produto: String(policy.produto || ''),
+          lote: policy.lote ? String(policy.lote) : null,
+          dataValidade: policy.data_validade ? String(policy.data_validade) : null,
+          quantidade: quantity,
+          custoUnitarioCentavos: latestCost,
+        }],
+        saldoContabilAtual,
+        saldoContabilProjetado,
+        leadTimeDias: toInt(policy.lead_time_dias, 0),
+        observacoes: 'Rascunho gerado pela política de reposição; requer revisão e criação explícita do pedido.',
+      };
+    const key = await sha256Hex(canonicalCommandJson({
+      unidade: scope.unit,
+      registro: policy.registro_insumo,
+      tipo: type,
+      quantidade: quantity,
+      saldoAtual,
+      saldoProjetado,
+      saldoContabilAtual,
+      saldoContabilProjetado,
+      minimum,
+      safety,
+      target,
+      leadTimeDias: toInt(policy.lead_time_dias, 0),
+      donor: donor?.unidade || null,
+      inbound,
+    }));
+    const id = crypto.randomUUID();
+    const generatedAt = nowIso();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO insumos_replenishment_suggestions (
+        id, unidade, registro_insumo, tipo, status, quantidade, saldo_atual, saldo_projetado,
+        estoque_alvo, estoque_seguranca, lead_time_dias, unidade_origem, unidade_destino,
+        codigo_barras, produto, lote, data_validade, suggestion_key, draft_json,
+        generated_at, generated_by
+      ) VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      id, scope.unit, policy.registro_insumo, type, quantity, saldoAtual, saldoProjetado,
+      target, safety, toInt(policy.lead_time_dias, 0), donor?.unidade || null, scope.unit,
+      String(policy.codigo_barras || ''), String(policy.produto || ''), policy.lote || null, policy.data_validade || null,
+      key, JSON.stringify(draft), generatedAt, actorName(actor),
+    ).run();
+    const row = await env.DB.prepare(
+      `SELECT id, unidade, registro_insumo, tipo, status, quantidade, saldo_atual, saldo_projetado,
+              estoque_alvo, estoque_seguranca, lead_time_dias, unidade_origem, unidade_destino,
+              codigo_barras, produto, lote, data_validade, suggestion_key, draft_json,
+              generated_at, generated_by, dismissed_at, dismissed_by, dismiss_reason
+       FROM insumos_replenishment_suggestions WHERE suggestion_key = ? LIMIT 1`
+    ).bind(key).first();
+    if (row) generated.push({ ...mapReplenishmentSuggestion(row), created: String(row.id || '') === id });
+  }
+  return { ok: true, generated, createdCount: generated.filter((entry) => entry.created).length, existingCount: generated.filter((entry) => !entry.created).length };
+}
+
+export async function d1DismissSugestaoReposicao({ env, id, unidade, actor, justificativa }) {
+  const roleCheck = assertProcurementRole(actor, ['ADMIN', 'GESTOR', 'GERENTE']);
+  if (!roleCheck.ok) return roleCheck;
+  const scope = assertActorUnitScope(actor, unidade);
+  if (!scope.ok) return scope;
+  const suggestionId = String(id || '').trim();
+  const reason = String(justificativa || '').trim().slice(0, 1000);
+  if (!suggestionId) return { ok: false, status: 400, code: 'REPLENISHMENT_INVALID', error: 'Sugestão inválida' };
+  if (!reason) return { ok: false, status: 400, code: 'DISMISS_REASON_REQUIRED', error: 'Justificativa é obrigatória para descartar sugestão' };
+  const existing = await env.DB.prepare(
+    `SELECT id, status FROM insumos_replenishment_suggestions WHERE id = ? AND unidade = ? LIMIT 1`
+  ).bind(suggestionId, scope.unit).first();
+  if (!existing) return { ok: false, status: 404, code: 'REPLENISHMENT_NOT_FOUND', error: 'Sugestão não encontrada' };
+  if (String(existing.status || '').toUpperCase() !== 'DRAFT') return { ok: false, status: 409, code: 'REPLENISHMENT_NOT_DRAFT', error: 'Somente sugestões em rascunho podem ser descartadas' };
+  const now = nowIso();
+  const result = await env.DB.prepare(
+    `UPDATE insumos_replenishment_suggestions
+     SET status = 'DISMISSED', dismissed_at = ?, dismissed_by = ?, dismiss_reason = ?
+     WHERE id = ? AND unidade = ? AND status = 'DRAFT'`
+  ).bind(now, actorName(actor), reason, suggestionId, scope.unit).run();
+  if (resultChanges(result) !== 1) return { ok: false, status: 409, code: 'REPLENISHMENT_DISMISS_CONFLICT', error: 'Sugestão foi alterada por outra operação' };
+  const row = await env.DB.prepare(
+    `SELECT id, unidade, registro_insumo, tipo, status, quantidade, saldo_atual, saldo_projetado,
+            estoque_alvo, estoque_seguranca, lead_time_dias, unidade_origem, unidade_destino,
+            codigo_barras, produto, lote, data_validade, suggestion_key, draft_json,
+            generated_at, generated_by, dismissed_at, dismissed_by, dismiss_reason
+     FROM insumos_replenishment_suggestions WHERE id = ?`
+  ).bind(suggestionId).first();
+  return { ok: true, suggestion: mapReplenishmentSuggestion(row) };
 }
 
 export async function d1Transfer({ env, body, actor, unidade }) {
@@ -1874,9 +3235,9 @@ export async function d1Transfer({ env, body, actor, unidade }) {
   const estoqueAnteriorDestino = toInt(beforeDest?.quantidade, 0);
   const ts = nowIso();
   const transferId = crypto.randomUUID();
+  const dispatchMovementId = crypto.randomUUID();
 
   const obsSaida = `Transferência para ${toScope.unit}${observacoes ? ` | ${observacoes}` : ''}`;
-  const obsEntrada = `Transferência de ${fromScope.unit}${observacoes ? ` | ${observacoes}` : ''}`;
   const actorId = actorName(actor);
 
   const stmts = [];
@@ -1889,16 +3250,33 @@ export async function d1Transfer({ env, body, actor, unidade }) {
   );
   stmts.push(
     env.DB.prepare(
-      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
-       SELECT ?, ?, ?, ?
+      `INSERT INTO insumos_transfers (
+        id, registro_insumo, codigo_barras, lote, data_validade, produto,
+        quantidade, unidade_origem, unidade_destino, status, dispatched_at,
+        dispatched_by, dispatch_movement_id
+      )
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_RECEIPT', ?, ?, ?
        WHERE EXISTS (
          SELECT 1 FROM insumos_stocks
          WHERE registro = ? AND unidade = ? AND updated_at = ?
-       )
-       ON CONFLICT(registro, unidade) DO UPDATE SET
-         quantidade = insumos_stocks.quantidade + excluded.quantidade,
-         updated_at = excluded.updated_at`
-    ).bind(reg, toScope.unit, quantidade, ts, reg, fromScope.unit, ts)
+       )`
+    ).bind(
+      transferId,
+      reg,
+      codigo,
+      String(item.lote || ''),
+      String(item.data_validade || ''),
+      String(item.produto || ''),
+      quantidade,
+      fromScope.unit,
+      toScope.unit,
+      ts,
+      actorId,
+      dispatchMovementId,
+      reg,
+      fromScope.unit,
+      ts,
+    )
   );
 
   const produto = String(item.produto || '');
@@ -1911,11 +3289,15 @@ export async function d1Transfer({ env, body, actor, unidade }) {
         id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto,
         quantidade, estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia, usuario, observacoes, status
       )
-      SELECT ?, ?, 'SAÍDA', ?, ?, ?, ?, ?, ?, quantidade + ?, quantidade, ?, ?, ?, ?, ?, ?, 'COMPLETED'
+      SELECT ?, ?, 'SAÍDA', ?, ?, ?, ?, ?, ?, quantidade + ?, quantidade, ?, ?, ?, ?, ?, ?, 'PENDING_RECEIPT'
       FROM insumos_stocks
-      WHERE registro = ? AND unidade = ? AND updated_at = ?`
+      WHERE registro = ? AND unidade = ? AND updated_at = ?
+        AND EXISTS (
+          SELECT 1 FROM insumos_transfers
+          WHERE id = ? AND status = 'PENDING_RECEIPT' AND dispatched_at = ?
+        )`
     ).bind(
-      crypto.randomUUID(),
+      dispatchMovementId,
       ts,
       codigo,
       reg,
@@ -1932,49 +3314,14 @@ export async function d1Transfer({ env, body, actor, unidade }) {
       obsSaida,
       reg,
       fromScope.unit,
-      ts
-    )
-  );
-  stmts.push(
-    env.DB.prepare(
-      `INSERT INTO insumos_movements (
-        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto,
-        quantidade, estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia, usuario, observacoes, status
-      )
-      SELECT ?, ?, 'ENTRADA', ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, ?, ?, 'COMPLETED'
-      FROM insumos_stocks
-      WHERE registro = ? AND unidade = ? AND updated_at = ?
-        AND EXISTS (
-          SELECT 1 FROM insumos_stocks
-          WHERE registro = ? AND unidade = ? AND updated_at = ?
-        )`
-    ).bind(
-      crypto.randomUUID(),
       ts,
-      codigo,
-      reg,
-      lote,
-      dataValidade,
-      produto,
-      quantidade,
-      quantidade,
-      toScope.unit,
-      fromScope.unit,
-      toScope.unit,
       transferId,
-      actorId,
-      obsEntrada,
-      reg,
-      toScope.unit,
-      ts,
-      reg,
-      fromScope.unit,
       ts
     )
   );
 
   const results = await env.DB.batch(stmts);
-  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1 || resultChanges(results?.[3]) !== 1) {
+  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1) {
     const current = await env.DB.prepare(
       `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
     ).bind(reg, fromScope.unit).first();
@@ -1988,6 +3335,11 @@ export async function d1Transfer({ env, body, actor, unidade }) {
   return {
     ok: true,
     transferId,
+    dispatchMovementId,
+    status: 'PENDING_RECEIPT',
+    pendingReceipt: true,
+    unidadeOrigem: fromScope.unit,
+    unidadeDestino: toScope.unit,
     estoqueAnteriorOrigem,
     estoqueNovoOrigem,
     estoqueAnteriorDestino,
@@ -1995,6 +3347,250 @@ export async function d1Transfer({ env, body, actor, unidade }) {
     quebraEstoqueOrigem: false,
     deficitOrigem: 0,
     registro: reg
+  };
+}
+
+export async function d1ReceberTransferencia({ env, id, actor, unidade, observacoes }) {
+  const transferId = String(id || '').trim();
+  if (!transferId) return { ok: false, status: 400, code: 'TRANSFER_INVALID', error: 'Transferência inválida' };
+
+  const transfer = await env.DB.prepare(
+    `SELECT id, registro_insumo, codigo_barras, lote, data_validade, produto,
+            quantidade, unidade_origem, unidade_destino, status, dispatched_at,
+            dispatched_by, received_at, received_by, dispatch_movement_id,
+            receipt_movement_id
+     FROM insumos_transfers
+     WHERE id = ?
+     LIMIT 1`
+  ).bind(transferId).first();
+  if (!transfer) return { ok: false, status: 404, code: 'TRANSFER_NOT_FOUND', error: 'Transferência não encontrada' };
+
+  const destinationScope = assertActorUnitScope(actor, transfer.unidade_destino);
+  if (!destinationScope.ok) return destinationScope;
+  if (unidade && normalizeUnitScope(unidade) !== destinationScope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_DESTINATION_MISMATCH', error: 'A unidade da rota deve ser o destino da transferência' };
+  }
+  const status = String(transfer.status || '').toUpperCase();
+  if (status === 'RECEIVED') return { ok: false, status: 409, code: 'TRANSFER_ALREADY_RECEIVED', error: 'A transferência já foi recebida', receivedAt: transfer.received_at || null };
+  if (status === 'CANCELLED') return { ok: false, status: 409, code: 'TRANSFER_CANCELLED', error: 'A transferência foi cancelada' };
+
+  const item = await env.DB.prepare(
+    `SELECT archived_at FROM insumos_items WHERE registro = ? LIMIT 1`
+  ).bind(transfer.registro_insumo).first();
+  if (String(item?.archived_at || '').trim()) {
+    return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não aceita recebimento' };
+  }
+
+  const quantity = Math.max(1, toInt(transfer.quantidade, 0));
+  if (!quantity) return { ok: false, status: 409, code: 'TRANSFER_INVALID', error: 'Quantidade de transferência inválida' };
+  const ts = nowIso();
+  const actorId = actorName(actor);
+  const receiptMovementId = crypto.randomUUID();
+  const note = String(observacoes || '').trim();
+  const receiptNote = `Recebimento de transferência de ${normalizeUnitScope(transfer.unidade_origem)}${note ? ` | ${note}` : ''}`;
+
+  const statements = [
+    env.DB.prepare(
+      `UPDATE insumos_transfers
+       SET status = 'RECEIVED', received_at = ?, received_by = ?, receipt_movement_id = ?
+       WHERE id = ? AND status = 'PENDING_RECEIPT' AND unidade_destino = ?`
+    ).bind(ts, actorId, receiptMovementId, transferId, destinationScope.unit),
+    env.DB.prepare(
+      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+       SELECT ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM insumos_transfers
+         WHERE id = ? AND status = 'RECEIVED' AND received_at = ?
+       )
+       ON CONFLICT(registro, unidade) DO UPDATE SET
+         quantidade = insumos_stocks.quantidade + excluded.quantidade,
+         updated_at = excluded.updated_at`
+    ).bind(transfer.registro_insumo, destinationScope.unit, quantity, ts, transferId, ts),
+    env.DB.prepare(
+      `INSERT INTO insumos_movements (
+        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+        produto, quantidade, estoque_anterior, estoque_novo, unidade,
+        unidade_origem, unidade_destino, id_transferencia, usuario, observacoes, status
+      )
+      SELECT ?, ?, 'ENTRADA', ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, ?, ?, 'COMPLETED'
+      FROM insumos_stocks
+      WHERE registro = ? AND unidade = ? AND updated_at = ?
+        AND EXISTS (
+          SELECT 1 FROM insumos_transfers
+          WHERE id = ? AND status = 'RECEIVED' AND received_at = ?
+        )`
+    ).bind(
+      receiptMovementId,
+      ts,
+      transfer.codigo_barras || '',
+      transfer.registro_insumo || '',
+      transfer.lote || '',
+      transfer.data_validade || '',
+      transfer.produto || '',
+      quantity,
+      quantity,
+      destinationScope.unit,
+      transfer.unidade_origem || '',
+      transfer.unidade_destino || '',
+      transferId,
+      actorId,
+      receiptNote,
+      transfer.registro_insumo,
+      destinationScope.unit,
+      ts,
+      transferId,
+      ts,
+    ),
+  ];
+
+  const results = await env.DB.batch(statements);
+  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1) {
+    const current = await env.DB.prepare(
+      `SELECT status, received_at FROM insumos_transfers WHERE id = ? LIMIT 1`
+    ).bind(transferId).first();
+    if (String(current?.status || '').toUpperCase() === 'RECEIVED') {
+      return { ok: false, status: 409, code: 'TRANSFER_ALREADY_RECEIVED', error: 'A transferência já foi recebida', receivedAt: current.received_at || null };
+    }
+    return { ok: false, status: 409, code: 'TRANSFER_RECEIPT_CONFLICT', error: 'O recebimento não pôde ser efetivado com segurança' };
+  }
+
+  const destinationAfter = await env.DB.prepare(
+    `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
+  ).bind(transfer.registro_insumo, destinationScope.unit).first();
+  return {
+    ok: true,
+    transferId,
+    receiptMovementId,
+    status: 'RECEIVED',
+    receivedBy: actorId,
+    receivedAt: ts,
+    unidadeOrigem: normalizeUnitScope(transfer.unidade_origem),
+    unidadeDestino: destinationScope.unit,
+    registro: transfer.registro_insumo,
+    estoqueNovoDestino: toInt(destinationAfter?.quantidade, 0),
+  };
+}
+
+export async function d1CancelarTransferencia({ env, id, actor, unidade, justificativa }) {
+  const transferId = String(id || '').trim();
+  const reason = String(justificativa || '').trim();
+  if (!transferId) return { ok: false, status: 400, code: 'TRANSFER_INVALID', error: 'Transferência inválida' };
+  if (reason.length < 3) return { ok: false, status: 400, code: 'JUSTIFICATION_REQUIRED', error: 'Motivo do cancelamento é obrigatório' };
+
+  const transfer = await env.DB.prepare(
+    `SELECT id, registro_insumo, codigo_barras, lote, data_validade, produto,
+            quantidade, unidade_origem, unidade_destino, status, dispatched_at,
+            dispatched_by, dispatch_movement_id
+     FROM insumos_transfers WHERE id = ? LIMIT 1`
+  ).bind(transferId).first();
+  if (!transfer) return { ok: false, status: 404, code: 'TRANSFER_NOT_FOUND', error: 'Transferência não encontrada' };
+
+  const originScope = assertActorUnitScope(actor, transfer.unidade_origem);
+  if (!originScope.ok) return originScope;
+  if (unidade && normalizeUnitScope(unidade) !== originScope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_ORIGIN_MISMATCH', error: 'A unidade da rota deve ser a origem da transferência' };
+  }
+  const status = String(transfer.status || '').toUpperCase();
+  if (status === 'CANCELLED') return { ok: false, status: 409, code: 'TRANSFER_ALREADY_CANCELLED', error: 'A transferência já foi cancelada' };
+  if (status === 'RECEIVED') return { ok: false, status: 409, code: 'TRANSFER_ALREADY_RECEIVED', error: 'A transferência já foi recebida; use estorno compensatório' };
+
+  const dispatchMovement = transfer.dispatch_movement_id
+    ? await env.DB.prepare(
+      `SELECT id, tipo, unidade, unidade_origem, unidade_destino, quantidade
+       FROM insumos_movements WHERE id = ? LIMIT 1`
+    ).bind(transfer.dispatch_movement_id).first()
+    : await env.DB.prepare(
+      `SELECT id, tipo, unidade, unidade_origem, unidade_destino, quantidade
+       FROM insumos_movements
+       WHERE id_transferencia = ? AND UPPER(tipo) IN ('SAÍDA', 'SAIDA')
+       ORDER BY data_hora ASC, id ASC LIMIT 1`
+    ).bind(transferId).first();
+  if (!dispatchMovement?.id) return { ok: false, status: 409, code: 'TRANSFER_INVALID', error: 'Despacho da transferência não encontrado' };
+
+  const quantity = Math.max(1, toInt(transfer.quantidade, dispatchMovement.quantidade));
+  const ts = nowIso();
+  const actorId = actorName(actor);
+  const reversalId = crypto.randomUUID();
+  const note = `Cancelamento da transferência para ${normalizeUnitScope(transfer.unidade_destino)} | ${reason}`;
+
+  const statements = [
+    env.DB.prepare(
+      `UPDATE insumos_transfers
+       SET status = 'CANCELLED', cancelled_at = ?, cancelled_by = ?, reason = ?
+       WHERE id = ? AND status = 'PENDING_RECEIPT' AND unidade_origem = ?`
+    ).bind(ts, actorId, reason, transferId, originScope.unit),
+    env.DB.prepare(
+      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+       SELECT ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM insumos_transfers
+         WHERE id = ? AND status = 'CANCELLED' AND cancelled_at = ?
+       )
+       ON CONFLICT(registro, unidade) DO UPDATE SET
+         quantidade = insumos_stocks.quantidade + excluded.quantidade,
+         updated_at = excluded.updated_at`
+    ).bind(transfer.registro_insumo, originScope.unit, quantity, ts, transferId, ts),
+    env.DB.prepare(
+      `INSERT INTO insumos_movements (
+        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+        produto, quantidade, estoque_anterior, estoque_novo, unidade,
+        unidade_origem, unidade_destino, id_transferencia, usuario, motivo,
+        observacoes, status, estorno_de, tipo_compensacao
+      )
+      SELECT ?, ?, 'ESTORNO', ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, 'ENTRADA'
+      FROM insumos_stocks
+      WHERE registro = ? AND unidade = ? AND updated_at = ?
+        AND EXISTS (
+          SELECT 1 FROM insumos_transfers
+          WHERE id = ? AND status = 'CANCELLED' AND cancelled_at = ?
+        )`
+    ).bind(
+      reversalId,
+      ts,
+      transfer.codigo_barras || '',
+      transfer.registro_insumo || '',
+      transfer.lote || '',
+      transfer.data_validade || '',
+      transfer.produto || '',
+      quantity,
+      quantity,
+      originScope.unit,
+      transfer.unidade_origem || '',
+      transfer.unidade_destino || '',
+      transferId,
+      actorId,
+      reason,
+      note,
+      dispatchMovement.id,
+      transfer.registro_insumo,
+      originScope.unit,
+      ts,
+      transferId,
+      ts,
+    ),
+  ];
+  const results = await env.DB.batch(statements);
+  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1) {
+    const current = await env.DB.prepare('SELECT status FROM insumos_transfers WHERE id = ? LIMIT 1').bind(transferId).first();
+    if (String(current?.status || '').toUpperCase() === 'CANCELLED') {
+      return { ok: false, status: 409, code: 'TRANSFER_ALREADY_CANCELLED', error: 'A transferência já foi cancelada' };
+    }
+    return { ok: false, status: 409, code: 'TRANSFER_CANCEL_CONFLICT', error: 'O cancelamento não pôde ser aplicado com segurança' };
+  }
+  const originAfter = await env.DB.prepare(
+    `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
+  ).bind(transfer.registro_insumo, originScope.unit).first();
+  return {
+    ok: true,
+    transferId,
+    reversalId,
+    status: 'CANCELLED',
+    cancelledBy: actorId,
+    cancelledAt: ts,
+    unidadeOrigem: originScope.unit,
+    unidadeDestino: normalizeUnitScope(transfer.unidade_destino),
+    registro: transfer.registro_insumo,
+    estoqueNovoOrigem: toInt(originAfter?.quantidade, 0),
   };
 }
 
@@ -2237,6 +3833,24 @@ export async function d1EstornarMovimentacao({ env, id, actor, justificativa }) 
   const actorId = actorName(actor);
   const ts = nowIso();
   const transferId = String(original.id_transferencia || '').trim();
+  const transferRecord = transferId
+    ? await env.DB.prepare(
+      `SELECT id, status, unidade_origem, unidade_destino
+       FROM insumos_transfers WHERE id = ? LIMIT 1`
+    ).bind(transferId).first()
+    : null;
+  if (transferRecord && String(transferRecord.status || '').toUpperCase() === 'PENDING_RECEIPT') {
+    return d1CancelarTransferencia({
+      env,
+      id: transferId,
+      actor,
+      unidade: original.unidade,
+      justificativa: reason,
+    });
+  }
+  if (transferRecord && String(transferRecord.status || '').toUpperCase() === 'CANCELLED') {
+    return { ok: false, status: 409, code: 'TRANSFER_ALREADY_CANCELLED', error: 'A transferência já foi cancelada' };
+  }
 
   const pairRows = transferId
     ? ((await env.DB.prepare(
@@ -2249,7 +3863,8 @@ export async function d1EstornarMovimentacao({ env, id, actor, justificativa }) 
   if (pairRows.some((row) => String(row.estorno_de || '').trim())) {
     return { ok: false, status: 409, code: 'ALREADY_REVERSED', error: 'Transferência já possui estorno' };
   }
-  if (pairRows.some((row) => String(row.status || 'COMPLETED').toUpperCase() !== 'COMPLETED')) {
+  if ((!transferRecord || String(transferRecord.status || '').toUpperCase() !== 'RECEIVED')
+    && pairRows.some((row) => String(row.status || 'COMPLETED').toUpperCase() !== 'COMPLETED')) {
     return { ok: false, status: 409, code: 'TRANSFER_NOT_EFFECTIVE', error: 'A transferência ainda não está efetivada' };
   }
   for (const row of pairRows) {
@@ -2634,6 +4249,14 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
         m.unidade_origem AS unidadeOrigem,
         m.unidade_destino AS unidadeDestino,
         m.id_transferencia AS transferId,
+        t.status AS transferStatus,
+        t.dispatched_at AS transferDispatchedAt,
+        t.dispatched_by AS transferDispatchedBy,
+        t.received_at AS transferReceivedAt,
+        t.received_by AS transferReceivedBy,
+        t.cancelled_at AS transferCancelledAt,
+        t.cancelled_by AS transferCancelledBy,
+        t.reason AS transferReason,
         m.usuario AS usuario,
         m.motivo AS motivo,
         m.observacoes AS observacoes,
@@ -2642,7 +4265,7 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
         m.tipo_compensacao AS tipoCompensacao,
         CASE WHEN EXISTS (
           SELECT 1 FROM insumos_movements reversal WHERE reversal.estorno_de = m.id
-        ) THEN 'ESTORNADO' ELSE COALESCE(m.status, 'COMPLETED') END AS status,
+        ) THEN 'ESTORNADO' ELSE COALESCE(t.status, m.status, 'COMPLETED') END AS status,
         m.registro_insumo AS registroInsumo,
         m.lote AS lote,
         m.data_validade AS dataValidade,
@@ -2652,6 +4275,8 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
      FROM insumos_movements m
      LEFT JOIN insumos_items i
        ON i.registro = m.registro_insumo
+     LEFT JOIN insumos_transfers t
+       ON t.id = m.id_transferencia
      ${whereSql}
      ORDER BY m.data_hora DESC
      LIMIT ? OFFSET ?`

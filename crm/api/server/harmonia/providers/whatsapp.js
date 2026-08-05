@@ -13,12 +13,14 @@ export function createWhatsAppProvider(config) {
     const baseUrl = ensureTrailingSlash(config?.wa?.baseUrl || '')
     const provider = String(config?.wa?.provider || 'official').toLowerCase()
 
-    async function sendViaOfficial({ channelId, number, message }) {
+    async function sendViaOfficial({ channelId, number, message, idempotencyKey }) {
         const url = `${baseUrl}/whatsapp/${channelId}/send-message`
         const payload = { number, message }
+        const headers = { 'content-type': 'application/json' }
+        if (idempotencyKey) headers['x-idempotency-key'] = idempotencyKey
         const r = await fetch(url, {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers,
             body: JSON.stringify(payload),
         })
         const data = await r.json().catch(() => ({}))
@@ -29,12 +31,14 @@ export function createWhatsAppProvider(config) {
         return data
     }
 
-    async function sendViaGateway({ number, message }) {
+    async function sendViaGateway({ number, message, idempotencyKey }) {
         const url = `${baseUrl}/send-message`
         const payload = { number, message }
+        const headers = { 'content-type': 'application/json' }
+        if (idempotencyKey) headers['x-idempotency-key'] = idempotencyKey
         const r = await fetch(url, {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers,
             body: JSON.stringify(payload),
         })
         const data = await r.json().catch(() => ({}))
@@ -46,18 +50,17 @@ export function createWhatsAppProvider(config) {
     }
 
     return {
-        async sendMessage({ channelId, number, message }) {
+        async sendMessage({ channelId, number, message, idempotencyKey }) {
             const num = normalizeNumber(number)
             if (!num) throw new Error('number is required')
             const msg = String(message || '').trim()
             if (!msg) throw new Error('message is required')
 
             if (provider === 'gateway') {
-                return sendViaGateway({ number: num, message: msg })
+                return sendViaGateway({ number: num, message: msg, idempotencyKey })
             }
             const channel = String(channelId || config?.wa?.channelDefault || '1')
-            return sendViaOfficial({ channelId: channel, number: num, message: msg })
+            return sendViaOfficial({ channelId: channel, number: num, message: msg, idempotencyKey })
         },
     }
 }
-
