@@ -4507,10 +4507,12 @@ async function materializeIdentityReviewReversal(client, { candidate, reversesDe
 
 export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
+    const schemaManaged = options.schemaManaged === true || String(process.env.CRM_ATENDIMENTO_SCHEMA_MANAGED || '').trim().toLowerCase() === 'true'
     let readinessPromise = null
 
     async function ensureReady() {
         requirePool(pgPool)
+        if (schemaManaged) return
         if (!readinessPromise) {
             readinessPromise = withPgTransaction(pgPool, migrateAtendimento)
                 .catch((error) => {
