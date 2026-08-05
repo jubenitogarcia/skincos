@@ -924,11 +924,12 @@ export type CommercialOverview = {
     saleItemsWithoutClassification: number
     activeAttendanceClientsWithoutIdentity: number
     identityDataUpdatedAt: string | null
-    contactEligibility: { eligible: number; blocked: number; reviewRequired: number; controlsReady: boolean; contactWriteControlsReady: boolean }
+    contactEligibility: { eligible: number; blocked: number; reviewRequired: number; controlsReady: boolean; contactWriteControlsReady: boolean; scope?: 'page' | 'all' }
   }
   total: number
   limit: number
   offset: number
+  pagination?: { mode: 'sql' | 'legacy'; sort: string; direction: 'asc' | 'desc'; hasPrevious: boolean; hasNext: boolean }
   profiles: CommercialProfile[]
 }
 
@@ -984,9 +985,12 @@ export type ClientIdentityMaterialization = {
   }
 }
 
-export function fetchCommercialOverview(filters: { asOf?: string; unit?: string; segment?: string; priority?: string; q?: string; limit?: number; offset?: number } = {}) {
+export function fetchCommercialOverview(filters: { asOf?: string; unit?: string; segment?: string; priority?: string; q?: string; limit?: number; offset?: number; server?: boolean; sort?: string; direction?: 'asc' | 'desc' } = {}) {
   const params = new URLSearchParams()
-  Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '' && value !== 'all') params.set(key, String(value)) })
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === true) params.set(key, '1')
+    else if (value !== undefined && value !== '' && value !== 'all') params.set(key, String(value))
+  })
   const qs = params.toString()
   return api<CommercialOverview>(`/commercial/overview${qs ? `?${qs}` : ''}`)
 }
