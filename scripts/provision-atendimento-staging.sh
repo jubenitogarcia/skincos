@@ -73,8 +73,13 @@ grant usage, select, update on all sequences in schema crm_atendimento, crm_caix
 grant usage on schema crm_atendimento, crm_caixa, crm_sessions, harmonia to $APP_ROLE;
 grant select, insert, update, delete on all tables in schema crm_atendimento, crm_caixa, crm_sessions, harmonia to $APP_ROLE;
 grant usage, select, update on all sequences in schema crm_atendimento, crm_caixa, crm_sessions, harmonia to $APP_ROLE;
+grant usage, create on schema harmonia to $MIGRATOR_ROLE;
+grant select, insert, update, delete on all tables in schema harmonia to $MIGRATOR_ROLE;
+grant usage, select, update on all sequences in schema harmonia to $MIGRATOR_ROLE;
 alter default privileges for role $OWNER_ROLE in schema crm_atendimento grant select, insert, update, delete on tables to $APP_ROLE;
 alter default privileges for role $OWNER_ROLE in schema crm_atendimento grant usage, select, update on sequences to $APP_ROLE;
+alter default privileges for role $OWNER_ROLE in schema harmonia grant select, insert, update, delete on tables to $MIGRATOR_ROLE;
+alter default privileges for role $OWNER_ROLE in schema harmonia grant usage, select, update on sequences to $MIGRATOR_ROLE;
 SQL
 
 app_url="postgresql://${APP_ROLE}:${app_password}@127.0.0.1:5432/${DB_NAME}?sslmode=require&uselibpqcompat=true&application_name=crm-atendimento-staging"

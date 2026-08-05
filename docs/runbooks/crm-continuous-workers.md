@@ -63,3 +63,26 @@ curl --fail http://127.0.0.1:8102/readiness
 
 The final two checks are expected to fail readiness when the service is disabled
 or the database is unavailable; that is a safety signal, not proof of a deploy.
+
+## Schema gate
+
+The worker foundation does not auto-create production tables. The additive
+Harmonia schema migration is explicit and target-bound:
+
+```sh
+HARMONIA_MIGRATION_TARGET=staging \
+HARMONIA_MIGRATION_ACTION=dry-run \
+scripts/runtime/run-harmonia-migration-native.sh
+
+HARMONIA_MIGRATION_TARGET=staging \
+HARMONIA_MIGRATION_ACTION=apply \
+scripts/runtime/run-harmonia-migration-native.sh
+```
+
+The native launcher loads only the private target environment, rejects a
+wrong database/user/transport, takes an advisory lock, records an aggregate
+checkpoint under `/var/backups/skincos/clientes`, applies the existing additive
+Harmonia DDL idempotently, seeds only the two bounded unit definitions, and
+records `20260805_harmonia_worker_foundation_v1`. It never drops, truncates or
+deletes data. Rollback is operational: stop/disable the worker and retain the
+schema and checkpoint; do not issue a destructive reverse migration.
