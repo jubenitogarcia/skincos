@@ -43,6 +43,11 @@ Observação: o Worker faz o *mount* em `/insumos/*` e mantém as rotas internas
 - Despacho de transferência: `POST /insumos/insumos/transferir?unidade=<origem>`
 - Recebimento: `POST /insumos/transferencias/:id/receber?unidade=<destino>`
 - Cancelamento antes do recebimento: `POST /insumos/transferencias/:id/cancelar?unidade=<origem>`
+- Abrir contagem física: `POST /insumos/contagens?unidade=<slug>`
+- Consultar sessão/linhas: `GET /insumos/contagens/:id?unidade=<slug>`
+- Registrar leitura: `POST /insumos/contagens/:id/leituras?unidade=<slug>` (`registro` ou `lineId` + `quantidade`)
+- Fechar contagem: `POST /insumos/contagens/:id/fechar?unidade=<slug>` (GERENTE/GESTOR/ADMIN)
+- Recontar após conflito: `POST /insumos/contagens/:id/recontar?unidade=<slug>` (GERENTE/GESTOR/ADMIN)
 
 Todas as mutações exigem `Idempotency-Key`. O responsável é obtido da sessão no
 Worker; campos `usuario`/`actor` enviados pelo cliente são ignorados.
@@ -66,6 +71,10 @@ Worker; campos `usuario`/`actor` enviados pelo cliente são ignorados.
 - O estado do agregado fica em `insumos_transfers`; a migração
   `0020_insumos_transfer_receipt.sql` converte transferências históricas já
   efetivadas em `RECEIVED` sem reescrever o ledger.
+- A migração `0021_insumos_guided_count.sql` cria sessões e linhas de snapshot
+  por unidade e a tabela append-only `insumos_count_reads`. Movimentações do
+  mesmo escopo após `snapshot_at` fazem o fechamento retornar
+  `409 COUNT_CONFLICT` e exigem recontagem antes de qualquer ajuste.
 
 ### Categorias (políticas)
 
