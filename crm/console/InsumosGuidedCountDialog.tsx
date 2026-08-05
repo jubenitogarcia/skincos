@@ -39,7 +39,7 @@ type InsumosGuidedCountDialogProps = {
   isAuthed: boolean
   managerRole: boolean
   unit: string
-  unitLabel: string
+  unitLabel: (unit: string) => string
   apiJson: ApiJson
   onRefresh: () => void
 }
@@ -164,7 +164,7 @@ export function InsumosGuidedCountDialog({
       try {
         await apiJson(`/contagens/${encodeURIComponent(session.id)}/leituras?unidade=${encodeURIComponent(unit)}`, {
           method: 'POST',
-          body: { registro: line.registro, lote: line.lote || undefined, quantidade },
+          body: { registro: line.registro, lote: line.lote || undefined, quantidade: quantity },
           idempotencyKey: newIdempotencyKey(`contagem-read:${line.registro}`),
         })
         await loadSession(String(session.id))
@@ -230,7 +230,7 @@ export function InsumosGuidedCountDialog({
         <DialogHeader>
           <DialogTitle className="text-white">Contagem física guiada</DialogTitle>
           <DialogDescription className="text-blue-100/70">
-            Unidade: <span className="font-medium text-blue-50">{unitLabel || unit}</span>. O snapshot é fechado pelo backend e toda diferença vira ajuste auditável.
+            Unidade: <span className="font-medium text-blue-50">{unitLabel(unit) || unit}</span>. O snapshot é fechado pelo backend e toda diferença vira ajuste auditável.
           </DialogDescription>
         </DialogHeader>
 
