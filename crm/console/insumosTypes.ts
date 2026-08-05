@@ -65,6 +65,21 @@ export type Movimentacao = {
   lote?: string
   dataValidade?: string
   observacoes?: string
+  grupo?: string
+  estado?: string
+  status?: string
+  transferStatus?: string
+  estornoDe?: string
+  estornoMotivo?: string
+  estornadoEm?: string
+  estornado?: boolean
+}
+
+/** Contexto imutável usado quando uma operação é iniciada pela linha do produto. */
+export type InsumosOperationContext = {
+  item: Insumo
+  codigoBarras: string
+  unidade: string
 }
 
 export type NotificationsSummary = {

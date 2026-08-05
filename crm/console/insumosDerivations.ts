@@ -4,6 +4,14 @@ export type MovementSortKey = 'dataHora' | 'produto' | 'categoria' | 'marca' | '
 export type MovementSortDir = 'asc' | 'desc'
 export type MovementTipoFilter = 'TODOS' | 'ENTRADA' | 'SAÍDA' | 'AJUSTE'
 
+export function isMovementReversed(movement?: Movimentacao | null): boolean {
+  if (!movement) return false
+  if (movement.estornado === true) return true
+  if (String(movement.estornoDe || movement.estornadoEm || '').trim()) return true
+  if (/^ESTORNO$/i.test(String(movement.tipo || '').trim())) return true
+  return /estorn|revers|cancel/i.test(`${movement.status || ''} ${movement.estado || ''}`)
+}
+
 export type MovementRowView = {
   key: string
   movement: Movimentacao
@@ -23,7 +31,7 @@ export type MovementRowView = {
   productPressed: boolean
   categoryPressed: boolean
   brandPressed: boolean
-  canEdit: boolean
+  canReverse: boolean
 }
 
 type BuildMovimentacoesViewArgs = {
@@ -286,7 +294,10 @@ export function buildMovementRows({
       productPressed: normalizeText(movSearch) === normalizeText(productName),
       categoryPressed: normalizeText(movFilterCategoria) === normalizeText(categoryName),
       brandPressed: normalizeText(movFilterMarca) === normalizeText(brandName),
-      canEdit: !!isAuthed && !!String(movement.id || '').trim(),
+      canReverse:
+        !!isAuthed &&
+        !!String(movement.id || '').trim() &&
+        !isMovementReversed(movement),
     }
   })
 }
