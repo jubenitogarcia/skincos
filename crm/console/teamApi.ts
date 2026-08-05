@@ -16,6 +16,8 @@ export type UnifiedTeamMember = {
   accountStatus: string
   schedule?: {
     professionalId?: string | null
+    phone?: string
+    email?: string
     status?: string
     role?: string
     shift?: string

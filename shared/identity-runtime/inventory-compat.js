@@ -20,5 +20,6 @@ export {
   displayJobTitle,
   publicOnboarding,
   resolveEmployeeProfile,
+  suggestEmployeeUsername,
   validateOnboardingInput,
 } from '../../identity/policy/employeeOnboarding.js';

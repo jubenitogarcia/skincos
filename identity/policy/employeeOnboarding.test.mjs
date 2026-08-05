@@ -15,12 +15,10 @@ test('normalizes business role aliases without granting technical ADMIN', () => 
 });
 
 test('derives closed unit scopes and fail-closes pending profiles', () => {
-  const input = validateOnboardingInput({ fullName: 'Pessoa Teste', personalEmail: 'personal@example.com', mobilePhone: '(51) 99999-9999', units: ['NH', 'Barra Shopping Sul'], jobTitle: 'Coordenador', department: 'Recepção' });
+  const input = validateOnboardingInput({ fullName: 'Pessoa Teste', corporateEmail: 'corp@example.com', personalEmail: 'personal@example.com', mobilePhone: '(51) 99999-9999', units: ['NH', 'Barra Shopping Sul'], jobTitle: 'Coordenador', department: 'Recepção' });
   assert.deepEqual(input.units, ['novo-hamburgo', 'barra-shopping-sul']);
-  assert.equal(input.accountStatus, 'INVITED');
-  assert.deepEqual(input.modules, ['ponto']);
-  assert.equal(input.corporateEmail, 'pessoateste@espacofacial.com');
-  assert.equal(input.requestedUsername, 'pessoateste');
+  assert.equal(input.accountStatus, 'PENDING_ACCESS');
+  assert.deepEqual(input.modules, []);
   assert.equal(validateOnboardingInput({ ...input, units: ['unidade-invalida'] }), null);
 });
 
@@ -36,7 +34,7 @@ test('builds the corporate address from the first and last name without accents 
     jobTitle: 'Consultor',
     department: 'Comercial',
     username: 'joao.silva',
-  }).corporateEmailOverridden, true);
+  }, { unified: true }).corporateEmailOverridden, true);
   assert.equal(validateOnboardingInput({
     fullName: 'João da Silva',
     corporateEmail: 'joao@outro.com',
@@ -45,7 +43,34 @@ test('builds the corporate address from the first and last name without accents 
     units: ['NH'],
     jobTitle: 'Consultor',
     department: 'Comercial',
-  }), null);
+  }, { requireCorporateDomain: true }), null);
+  assert.equal(validateOnboardingInput({
+    fullName: 'Synthetic Ponto Supervisor',
+    corporateEmail: 'stg-ponto-123456789-onboarding@staging.invalid',
+    personalEmail: 'stg-ponto-123456789-personal@staging.invalid',
+    mobilePhone: '+5551999999999',
+    units: ['NH'],
+    jobTitle: 'Supervisor',
+    department: 'stg-ponto-123456789-department',
+  }).accountStatus, 'PENDING_ACCESS');
+  assert.equal(validateOnboardingInput({
+    fullName: 'João da Silva',
+    corporateEmail: 'joaosilva@espacofacial.com',
+    personalEmail: 'ana@example.com',
+    mobilePhone: '51999999999',
+    units: ['NH'],
+    jobTitle: 'Supervisor',
+    department: 'Comercial',
+  }, { unified: true }).accountStatus, 'INVITED');
+  assert.equal(validateOnboardingInput({
+    fullName: 'Synthetic Ponto Supervisor',
+    corporateEmail: 'stg-ponto-123456789-onboarding@staging.invalid',
+    personalEmail: 'stg-ponto-123456789-personal@staging.invalid',
+    mobilePhone: '+5551999999999',
+    units: ['NH'],
+    jobTitle: 'Supervisor',
+    department: 'stg-ponto-123456789-department',
+  }, { unified: true }), null);
 });
 
 test('enforces hierarchy and unit subset without treating empty scope as global', () => {
