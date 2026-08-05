@@ -60,6 +60,23 @@ import {
     injectorPatchMatchesAttendance,
     resolveScheduledInjector,
 } from './injectorAssignment.js'
+import {
+    collectAutomaticIdentityLinkTransitions,
+} from './identityProjection.js'
+import {
+    chooseIdentitySurvivor,
+    IDENTITY_GRAPH_LOCK_KEY,
+    identityMaterializationFingerprint,
+    identityReviewError,
+    normalizeIdentityReviewDecision,
+    normalizeIdentityReviewUndo,
+    reviewComponentKey,
+} from './identityReviewWorkflow.js'
+import {
+    IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID,
+    IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS,
+    IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
+} from './identityReviewMigration.js'
 
 let pool = null
 
@@ -2949,6 +2966,10 @@ async function withCommercialContactTransaction(pgPool, operation) {
     // committed while it waited, rather than retain an earlier SSI snapshot.
     return withPgTransaction(pgPool, async (client) => {
         await client.query('set transaction isolation level read committed')
+        // Source reconciliation and identity review hold this lock before
+        // changing membership.  Commercial writes join it before taking a
+        // per-identity lock, so consent or an action cannot race a rebind.
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
         return operation(client)
     })
 }
@@ -3028,7 +3049,11 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
             from crm_atendimento.global_client_identities gi
             where exists (select 1 from crm_atendimento.global_client_identity_members gm where gm.identity_id = gi.id)
          ), attendance_members as (
-            select distinct gm.identity_id, coalesce(cc.merged_into_id, cc.id) as client_id
+            -- Keep the physical canonical member here.  A retired S and its
+            -- survivor T are intentionally one identity component, but ACL
+            -- rows remain stored against S so coalescing to T would erase S's
+            -- attendance history from commercial coverage and segments.
+            select distinct gm.identity_id, gm.source_id::uuid as client_id
             from crm_atendimento.global_client_identity_members gm
             join crm_atendimento.canonical_clients cc on cc.id = gm.source_id::uuid
             where gm.source_type = 'attendance_client'
@@ -3195,63 +3220,846 @@ async function assertIdentityReviewSource(pgPool) {
     }
 }
 
-async function queryIdentityReviewQueue(pgPool, query = {}) {
+async function identityReviewWorkflowStatus(pgPool) {
+    const availability = await pgPool.query(`select
+        to_regclass('crm_atendimento.schema_migrations') as registry,
+        to_regclass('crm_atendimento.identity_review_decisions') as decisions,
+        to_regclass('crm_atendimento.identity_materialization_runs') as runs,
+        to_regclass('crm_atendimento.identity_member_history') as member_history,
+        to_regclass('crm_atendimento.identity_lineage') as lineage,
+        to_regclass('crm_atendimento.identity_source_link_history') as source_link_history,
+        exists(select 1 from information_schema.columns where table_schema='crm_atendimento'
+            and table_name='identity_materialization_runs' and column_name='event_order') as run_event_order,
+        exists(select 1 from information_schema.columns where table_schema='crm_atendimento'
+            and table_name='identity_member_history' and column_name='event_order') as member_history_event_order,
+        exists(select 1 from information_schema.columns where table_schema='crm_atendimento'
+            and table_name='identity_review_decisions' and column_name='resulting_status') as decision_resulting_status,
+        exists(select 1 from information_schema.columns where table_schema='crm_atendimento'
+            and table_name='identity_review_decisions' and column_name='event_order') as decision_event_order,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_review_decisions')
+            and tgname='identity_review_decisions_immutable' and tgenabled='O') as decision_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_member_history')
+            and tgname='identity_member_history_immutable' and tgenabled='O') as member_history_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_lineage')
+            and tgname='identity_lineage_immutable' and tgenabled='O') as lineage_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_source_link_history')
+            and tgname='identity_source_link_history_immutable' and tgenabled='O') as source_link_history_immutable`)
+    const row = availability.rows[0] || {}
+    if (!row.registry || !row.decisions || !row.runs || !row.member_history || !row.lineage || !row.source_link_history
+        || !row.run_event_order
+        || !row.member_history_event_order || !row.decision_resulting_status || !row.decision_event_order
+        || !row.decision_immutable || !row.member_history_immutable || !row.lineage_immutable || !row.source_link_history_immutable) return { ready: false }
+    const migration = await pgPool.query(`select id from crm_atendimento.schema_migrations
+        where id = any($1::text[]) and rolled_back_at is null`, [IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS])
+    return { ready: migration.rows.length === IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS.length }
+}
+
+async function assertIdentityReviewWorkflowReady(pgPool) {
+    const status = await identityReviewWorkflowStatus(pgPool)
+    if (status.ready) return status
+    const error = new Error('IDENTITY_REVIEW_WORKFLOW_NOT_READY')
+    error.statusCode = 409
+    throw error
+}
+
+async function queryIdentityReviewQueue(pgPool, query = {}, { workflowReady = false } = {}) {
     const type = String(query.type || '').trim()
     const search = normalizeText(query.q || query.search || '')
     const limit = sanitizeLimit(query.limit, 100, 250)
     const offset = sanitizeOffset(query.offset, 0)
+    const includeResolved = String(query.includeResolved || '').trim().toLowerCase() === 'true'
+    const nameMergeStatuses = workflowReady ? "('pending','confirmed','rejected')" : "('pending')"
+    const linkStatuses = workflowReady ? "('suggested','ambiguous','confirmed','rejected')" : "('suggested','ambiguous')"
+    const decisionCte = workflowReady
+        ? `latest_decisions as (
+            select distinct on (review_type, source_id, target_id)
+                review_type, source_id, target_id, decision, resulting_status, source_version, created_at
+            from crm_atendimento.identity_review_decisions
+            order by review_type, source_id, target_id, event_order desc
+        )`
+        : `latest_decisions as (
+            select null::text as review_type, null::text as source_id, null::text as target_id,
+                null::text as decision, null::text as resulting_status, null::text as source_version,
+                null::timestamptz as created_at
+            where false
+        )`
     const result = await pgPool.query(
         `with review_items as (
-            select 'attendance_name_merge'::text as type, m.id::text as id, m.status, m.similarity::numeric as confidence,
+            select 'attendance_name_merge'::text as type, m.id::text as id, m.left_client_id::text as source_id,
+                m.right_client_id::text as target_id, m.status, m.similarity::numeric as confidence,
                 left_client.canonical_name as primary_name, right_client.canonical_name as secondary_name,
                 m.evidence, jsonb_build_object('leftAttendanceCount', left_client.attendance_count, 'rightAttendanceCount', right_client.attendance_count,
                     'leftAliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=left_client.id), '[]'::jsonb),
-                    'rightAliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=right_client.id), '[]'::jsonb)) as context
+                    'rightAliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=right_client.id), '[]'::jsonb)) as context,
+                md5(jsonb_build_object('type','attendance_name_merge','sourceId',m.left_client_id::text,
+                    'targetId',m.right_client_id::text,'status',m.status,'confidence',m.similarity,'evidence',m.evidence)::text) as review_version
             from crm_atendimento.client_merge_suggestions m
             join crm_atendimento.canonical_clients left_client on left_client.id=m.left_client_id
             join crm_atendimento.canonical_clients right_client on right_client.id=m.right_client_id
-            where m.status='pending'
+            where m.status in ${nameMergeStatuses}
             union all
-            select 'attendance_caixa'::text, link.id::text, link.status, link.confidence::numeric, client.canonical_name, customer.name, link.evidence,
+            select 'attendance_caixa'::text, link.id::text, link.client_id::text, link.caixa_customer_id::text,
+                link.status, link.confidence::numeric, client.canonical_name, customer.name, link.evidence,
                 jsonb_build_object('attendanceCount', client.attendance_count, 'aliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=client.id), '[]'::jsonb),
                     'phoneKey', customer.phone_key, 'sales', coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),
-                    'salesTotal', coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0))
+                    'salesTotal', coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0)),
+                md5(jsonb_build_object('type','attendance_caixa','sourceId',link.client_id::text,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text)
             from crm_atendimento.client_caixa_links link join crm_atendimento.canonical_clients client on client.id=link.client_id join crm_caixa.customers customer on customer.id=link.caixa_customer_id
-            where link.status in ('suggested','ambiguous')
+            where link.status in ${linkStatuses}
             union all
-            select 'app_attendance'::text, app_link.app_registration_id||':'||app_link.client_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, client.canonical_name, app_link.evidence,
+            select 'app_attendance'::text, app_link.app_registration_id||':'||app_link.client_id::text, app_link.app_registration_id,
+                app_link.client_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, client.canonical_name, app_link.evidence,
                 jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs,'attendanceCount',client.attendance_count,
-                    'aliases',coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=client.id),'[]'::jsonb))
+                    'aliases',coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=client.id),'[]'::jsonb)),
+                md5(jsonb_build_object('type','app_attendance','sourceId',app_link.app_registration_id,
+                    'targetId',app_link.client_id::text,'status',app_link.status,'method',app_link.method,'confidence',app_link.confidence,'evidence',app_link.evidence)::text)
             from crm_atendimento.app_registration_attendance_links app_link join crm_atendimento.app_client_registrations app on app.source_client_id=app_link.app_registration_id join crm_atendimento.canonical_clients client on client.id=app_link.client_id
-            where app_link.status in ('suggested','ambiguous')
+            where app_link.status in ${linkStatuses}
             union all
-            select 'app_caixa'::text, app_link.app_registration_id||':'||app_link.caixa_customer_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, customer.name, app_link.evidence,
+            select 'app_caixa'::text, app_link.app_registration_id||':'||app_link.caixa_customer_id::text, app_link.app_registration_id,
+                app_link.caixa_customer_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, customer.name, app_link.evidence,
                 jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs,'phoneKey',customer.phone_key,
-                    'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0))
+                    'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0)),
+                md5(jsonb_build_object('type','app_caixa','sourceId',app_link.app_registration_id,
+                    'targetId',app_link.caixa_customer_id::text,'status',app_link.status,'method',app_link.method,'confidence',app_link.confidence,'evidence',app_link.evidence)::text)
             from crm_atendimento.app_registration_caixa_links app_link join crm_atendimento.app_client_registrations app on app.source_client_id=app_link.app_registration_id join crm_caixa.customers customer on customer.id=app_link.caixa_customer_id
-            where app_link.status in ('suggested','ambiguous')
+            where app_link.status in ${linkStatuses}
             union all
-            select 'lead_app'::text, link.source_profile_id||':'||link.app_registration_id, link.status, link.confidence::numeric, lead.canonical_name, app.canonical_name, link.evidence,
+            select 'lead_app'::text, link.source_profile_id||':'||link.app_registration_id, link.source_profile_id, link.app_registration_id,
+                link.status, link.confidence::numeric, lead.canonical_name, app.canonical_name, link.evidence,
                 jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,'leadBirthdays',lead.birthdays,
-                    'appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs)
+                    'appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs),
+                md5(jsonb_build_object('type','lead_app','sourceId',link.source_profile_id,
+                    'targetId',link.app_registration_id,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text)
             from crm_atendimento.supplemental_lead_profile_app_links link join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id join crm_atendimento.app_client_registrations app on app.source_client_id=link.app_registration_id
-            where link.status in ('suggested','ambiguous')
+            where link.status in ${linkStatuses}
             union all
-            select 'lead_caixa'::text, link.source_profile_id||':'||link.caixa_customer_id::text, link.status, link.confidence::numeric, lead.canonical_name, customer.name, link.evidence,
+            select 'lead_caixa'::text, link.source_profile_id||':'||link.caixa_customer_id::text, link.source_profile_id,
+                link.caixa_customer_id::text, link.status, link.confidence::numeric, lead.canonical_name, customer.name, link.evidence,
                 jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,'leadBirthdays',lead.birthdays,
-                    'phoneKey',customer.phone_key,'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0))
+                    'phoneKey',customer.phone_key,'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0)),
+                md5(jsonb_build_object('type','lead_caixa','sourceId',link.source_profile_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text)
             from crm_atendimento.supplemental_lead_profile_caixa_links link join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id join crm_caixa.customers customer on customer.id=link.caixa_customer_id
-            where link.status in ('suggested','ambiguous')
+            where link.status in ${linkStatuses}
+        ), ${decisionCte}, resolved as (
+            select item.*, decision.decision as decision, decision.source_version as decision_source_version,
+                case when decision.decision in ('confirmed','rejected') and decision.source_version = item.review_version
+                          and decision.resulting_status = item.status then 'resolved'
+                    when decision.decision in ('confirmed','rejected') then 'stale'
+                    else null end as decision_state
+            from review_items item
+            left join latest_decisions decision on decision.review_type=item.type and decision.source_id=item.source_id and decision.target_id=item.target_id
         ), filtered as (
-            select *, count(*) over()::int as total from review_items
-            where ($1='' or type=$1) and ($2='' or lower(primary_name||' '||secondary_name||' '||coalesce(evidence::text,'')||' '||coalesce(context::text,'')) like '%'||$2||'%')
-        ) select * from filtered order by case status when 'ambiguous' then 0 else 1 end, confidence desc nulls last, primary_name, secondary_name limit $3 offset $4`,
+            select *, count(*) over()::int as total from resolved
+            where (${includeResolved ? 'true' : "decision_state is distinct from 'resolved' and (status in ('pending','suggested','ambiguous') or decision_state='stale')"})
+              and (status not in ('confirmed','rejected') or decision is not null)
+              and ($1='' or type=$1)
+              and ($2='' or lower(primary_name||' '||secondary_name||' '||coalesce(evidence::text,'')||' '||coalesce(context::text,'')) like '%'||$2||'%')
+        ) select * from filtered order by case decision_state when 'stale' then 0 else 1 end,
+            case status when 'ambiguous' then 0 else 1 end, confidence desc nulls last, primary_name, secondary_name limit $3 offset $4`,
         [type, search, limit, offset],
     )
     return { total: Number(result.rows[0]?.total || 0), limit, offset, items: result.rows.map((row) => ({
-        id: row.id, type: row.type, status: row.status, confidence: Number(row.confidence || 0), primaryName: row.primary_name,
-        secondaryName: row.secondary_name, evidence: row.evidence || {}, context: row.context || {},
+        id: row.id, type: row.type, sourceId: row.source_id, targetId: row.target_id, status: row.status,
+        version: row.review_version, decisionState: row.decision_state || null, confidence: Number(row.confidence || 0),
+        primaryName: row.primary_name, secondaryName: row.secondary_name, evidence: row.evidence || {}, context: row.context || {},
     })) }
+}
+
+const IDENTITY_REVIEW_DEFINITIONS = {
+    attendance_name_merge: { sourceType: 'attendance_client', targetType: 'attendance_client', statuses: new Set(['pending']) },
+    attendance_caixa: { sourceType: 'attendance_client', targetType: 'caixa_customer', statuses: new Set(['suggested', 'ambiguous']) },
+    app_attendance: { sourceType: 'app_registration', targetType: 'attendance_client', statuses: new Set(['suggested', 'ambiguous']) },
+    app_caixa: { sourceType: 'app_registration', targetType: 'caixa_customer', statuses: new Set(['suggested', 'ambiguous']) },
+    lead_app: { sourceType: 'lead_profile', targetType: 'app_registration', statuses: new Set(['suggested', 'ambiguous']) },
+    lead_caixa: { sourceType: 'lead_profile', targetType: 'caixa_customer', statuses: new Set(['suggested', 'ambiguous']) },
+}
+
+// Name-merge reviews operate directly on canonical identities.  The remaining
+// review types are persisted source-link edges and therefore share the same
+// automatic-topology ledger used by their importers.  Keeping this mapping
+// explicit prevents a new review type from silently acquiring link semantics.
+const IDENTITY_REVIEW_SOURCE_LINK_TYPES = Object.freeze({
+    attendance_caixa: 'attendance_caixa',
+    app_attendance: 'app_attendance',
+    app_caixa: 'app_caixa',
+    lead_app: 'lead_app',
+    lead_caixa: 'lead_caixa',
+})
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function assertIdentityReviewReferenceShape({ reviewType, sourceId, targetId }) {
+    const requiresSourceUuid = reviewType === 'attendance_name_merge' || reviewType === 'attendance_caixa'
+    const requiresTargetUuid = reviewType !== 'lead_app'
+    if ((requiresSourceUuid && !UUID_RE.test(sourceId)) || (requiresTargetUuid && !UUID_RE.test(targetId))) {
+        throw identityReviewError('INVALID_IDENTITY_REVIEW_REFERENCE')
+    }
+}
+
+function identityReviewLockKey(reviewType, sourceId, targetId) {
+    return `crm_atendimento.identity-review:${reviewType}:${sourceId}:${targetId}`
+}
+
+async function acquireIdentityReviewLocks(client, candidate) {
+    // Migration apply/rollback takes this same transaction lock.  Holding it
+    // before the graph lock prevents a decision from crossing a rollback that
+    // disables its schema and source-of-truth contract.
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID])
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID])
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [identityReviewLockKey(candidate.reviewType, candidate.sourceId, candidate.targetId)])
+    // Existing source reconcilers use this lock. Joining it keeps a reviewed
+    // decision from interleaving with an import that would replace evidence.
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, ['crm_atendimento.client_identity_reconciliation'])
+    const memberLocks = [
+        `${candidate.sourceType}:${candidate.sourceId}`,
+        `${candidate.targetType}:${candidate.targetId}`,
+    ].sort()
+    for (const member of memberLocks) {
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [`crm_atendimento.identity-member:${member}`])
+    }
+}
+
+async function readIdentityReviewCandidate(client, normalized) {
+    assertIdentityReviewReferenceShape(normalized)
+    const definition = IDENTITY_REVIEW_DEFINITIONS[normalized.reviewType]
+    let result
+    switch (normalized.reviewType) {
+    case 'attendance_name_merge':
+        result = await client.query(`select m.id::text as row_id, m.status, m.evidence,
+                md5(jsonb_build_object('type','attendance_name_merge','sourceId',m.left_client_id::text,
+                    'targetId',m.right_client_id::text,'status',m.status,'confidence',m.similarity,'evidence',m.evidence)::text) as review_version,
+                left_client.canonical_name as source_name, right_client.canonical_name as target_name,
+                jsonb_build_object('leftAttendanceCount', left_client.attendance_count, 'rightAttendanceCount', right_client.attendance_count) as context
+            from crm_atendimento.client_merge_suggestions m
+            join crm_atendimento.canonical_clients left_client on left_client.id=m.left_client_id
+            join crm_atendimento.canonical_clients right_client on right_client.id=m.right_client_id
+            where m.left_client_id=$1::uuid and m.right_client_id=$2::uuid for update of m`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'attendance_caixa':
+        result = await client.query(`select link.id::text as row_id, link.status, link.evidence,
+                md5(jsonb_build_object('type','attendance_caixa','sourceId',link.client_id::text,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                attendance.canonical_name as source_name, customer.name as target_name,
+                jsonb_build_object('attendanceCount', attendance.attendance_count, 'phoneKey', customer.phone_key) as context
+            from crm_atendimento.client_caixa_links link
+            join crm_atendimento.canonical_clients attendance on attendance.id=link.client_id
+            join crm_caixa.customers customer on customer.id=link.caixa_customer_id
+            where link.client_id=$1::uuid and link.caixa_customer_id=$2::uuid for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'app_attendance':
+        result = await client.query(`select link.status, link.evidence,
+                md5(jsonb_build_object('type','app_attendance','sourceId',link.app_registration_id,
+                    'targetId',link.client_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                app.canonical_name as source_name, attendance.canonical_name as target_name,
+                jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs) as context
+            from crm_atendimento.app_registration_attendance_links link
+            join crm_atendimento.app_client_registrations app on app.source_client_id=link.app_registration_id
+            join crm_atendimento.canonical_clients attendance on attendance.id=link.client_id
+            where link.app_registration_id=$1 and link.client_id=$2::uuid for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'app_caixa':
+        result = await client.query(`select link.status, link.evidence,
+                md5(jsonb_build_object('type','app_caixa','sourceId',link.app_registration_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                app.canonical_name as source_name, customer.name as target_name,
+                jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs,'phoneKey',customer.phone_key) as context
+            from crm_atendimento.app_registration_caixa_links link
+            join crm_atendimento.app_client_registrations app on app.source_client_id=link.app_registration_id
+            join crm_caixa.customers customer on customer.id=link.caixa_customer_id
+            where link.app_registration_id=$1 and link.caixa_customer_id=$2::uuid for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'lead_app':
+        result = await client.query(`select link.status, link.evidence,
+                md5(jsonb_build_object('type','lead_app','sourceId',link.source_profile_id,
+                    'targetId',link.app_registration_id,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                lead.canonical_name as source_name, app.canonical_name as target_name,
+                jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,
+                    'appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs) as context
+            from crm_atendimento.supplemental_lead_profile_app_links link
+            join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id
+            join crm_atendimento.app_client_registrations app on app.source_client_id=link.app_registration_id
+            where link.source_profile_id=$1 and link.app_registration_id=$2 for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    case 'lead_caixa':
+        result = await client.query(`select link.status, link.evidence,
+                md5(jsonb_build_object('type','lead_caixa','sourceId',link.source_profile_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,'confidence',link.confidence,'evidence',link.evidence)::text) as review_version,
+                lead.canonical_name as source_name, customer.name as target_name,
+                jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,'phoneKey',customer.phone_key) as context
+            from crm_atendimento.supplemental_lead_profile_caixa_links link
+            join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id
+            join crm_caixa.customers customer on customer.id=link.caixa_customer_id
+            where link.source_profile_id=$1 and link.caixa_customer_id=$2::uuid for update of link`, [normalized.sourceId, normalized.targetId])
+        break
+    default:
+        throw identityReviewError('INVALID_IDENTITY_REVIEW_TYPE')
+    }
+    const row = result.rows[0]
+    if (!row) throw identityReviewError('IDENTITY_REVIEW_NOT_FOUND', 404)
+    const canonicalReferences = [
+        definition.sourceType === 'attendance_client' ? normalized.sourceId : null,
+        definition.targetType === 'attendance_client' ? normalized.targetId : null,
+    ].filter(Boolean)
+    if (canonicalReferences.length) {
+        const retired = await client.query(`select id::text from crm_atendimento.canonical_clients
+            where id=any($1::uuid[]) and merged_into_id is not null limit 1 for update`, [canonicalReferences])
+        if (retired.rows[0]?.id) throw identityReviewError('IDENTITY_REVIEW_CANONICAL_REFERENCE_RETIRED', 409)
+    }
+    return {
+        reviewType: normalized.reviewType,
+        sourceId: normalized.sourceId,
+        targetId: normalized.targetId,
+        sourceType: definition.sourceType,
+        targetType: definition.targetType,
+        rawStatus: row.status,
+        version: row.review_version,
+        sourceName: row.source_name || '',
+        targetName: row.target_name || '',
+        evidence: row.evidence || {},
+        context: row.context || {},
+        survivorClientId: normalized.survivorClientId || null,
+    }
+}
+
+function assertIdentityReviewCandidateVersion(candidate, expectedVersion) {
+    const definition = IDENTITY_REVIEW_DEFINITIONS[candidate.reviewType]
+    if (!definition?.statuses?.has(candidate.rawStatus)) throw identityReviewError('IDENTITY_REVIEW_NOT_ACTIONABLE', 409)
+    if (candidate.version !== expectedVersion) throw identityReviewError('IDENTITY_REVIEW_CONFLICT', 409)
+}
+
+function assertIdentityReviewUndoCandidateVersion(candidate, expectedVersion, latestDecision) {
+    if (candidate.version !== expectedVersion) throw identityReviewError('IDENTITY_REVIEW_CONFLICT', 409)
+    const expectedStatus = latestDecision?.decision === 'confirmed' ? 'confirmed' : 'rejected'
+    if (!expectedStatus || candidate.rawStatus !== expectedStatus) {
+        throw identityReviewError('IDENTITY_REVIEW_CONFLICT', 409)
+    }
+}
+
+async function writeIdentityReviewSourceStatus(client, candidate, nextStatus, actor) {
+    const reviewedBy = actorIdentityForMutation(actor)
+    let result
+    switch (candidate.reviewType) {
+    case 'attendance_name_merge':
+        result = await client.query(`update crm_atendimento.client_merge_suggestions
+            set status=$3,reviewed_by=$4,reviewed_at=now(),updated_at=now()
+            where left_client_id=$1::uuid and right_client_id=$2::uuid and status=$5
+            returning status,md5(jsonb_build_object('type','attendance_name_merge','sourceId',left_client_id::text,
+                'targetId',right_client_id::text,'status',status,'confidence',similarity,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, reviewedBy, candidate.rawStatus])
+        break
+    case 'attendance_caixa':
+        result = await client.query(`update crm_atendimento.client_caixa_links
+            set status=$3,reviewed_by=$4,reviewed_at=now(),updated_at=now()
+            where client_id=$1::uuid and caixa_customer_id=$2::uuid and status=$5
+            returning status,md5(jsonb_build_object('type','attendance_caixa','sourceId',client_id::text,
+                'targetId',caixa_customer_id::text,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, reviewedBy, candidate.rawStatus])
+        break
+    case 'app_attendance':
+        result = await client.query(`update crm_atendimento.app_registration_attendance_links
+            set status=$3,updated_at=now()
+            where app_registration_id=$1 and client_id=$2::uuid and status=$4
+            returning status,md5(jsonb_build_object('type','app_attendance','sourceId',app_registration_id,
+                'targetId',client_id::text,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, candidate.rawStatus])
+        break
+    case 'app_caixa':
+        result = await client.query(`update crm_atendimento.app_registration_caixa_links
+            set status=$3,updated_at=now()
+            where app_registration_id=$1 and caixa_customer_id=$2::uuid and status=$4
+            returning status,md5(jsonb_build_object('type','app_caixa','sourceId',app_registration_id,
+                'targetId',caixa_customer_id::text,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, candidate.rawStatus])
+        break
+    case 'lead_app':
+        result = await client.query(`update crm_atendimento.supplemental_lead_profile_app_links
+            set status=$3,updated_at=now()
+            where source_profile_id=$1 and app_registration_id=$2 and status=$4
+            returning status,md5(jsonb_build_object('type','lead_app','sourceId',source_profile_id,
+                'targetId',app_registration_id,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, candidate.rawStatus])
+        break
+    case 'lead_caixa':
+        result = await client.query(`update crm_atendimento.supplemental_lead_profile_caixa_links
+            set status=$3,updated_at=now()
+            where source_profile_id=$1 and caixa_customer_id=$2::uuid and status=$4
+            returning status,md5(jsonb_build_object('type','lead_caixa','sourceId',source_profile_id,
+                'targetId',caixa_customer_id::text,'status',status,'method',method,'confidence',confidence,'evidence',evidence)::text) as review_version`,
+        [candidate.sourceId, candidate.targetId, nextStatus, candidate.rawStatus])
+        break
+    default:
+        throw identityReviewError('INVALID_IDENTITY_REVIEW_TYPE')
+    }
+    const row = result.rows[0]
+    if (!row) throw identityReviewError('IDENTITY_REVIEW_CONFLICT', 409)
+    return { rawStatus: row.status, version: row.review_version }
+}
+
+async function readLatestIdentityReviewDecision(client, candidate) {
+    const result = await client.query(`select id::text, event_order, decision, source_status, resulting_status, source_version,
+            materialization_run_id::text, source_snapshot, created_at
+        from crm_atendimento.identity_review_decisions
+        where review_type=$1 and source_id=$2 and target_id=$3
+        order by event_order desc limit 1 for update`, [candidate.reviewType, candidate.sourceId, candidate.targetId])
+    return result.rows[0] || null
+}
+
+async function assertIdentityReviewUndoLedgerCutover(client, materializationEventOrder) {
+    const result = await client.query(`select details from crm_atendimento.schema_migrations
+        where id=$1 and rolled_back_at is null`, [IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID])
+    const details = result.rows[0]?.details || {}
+    const cutover = Number(details?.sourceLinkLedgerCutoverRunEventOrder)
+    if (!Number.isSafeInteger(cutover) || cutover < 0 || materializationEventOrder <= cutover) {
+        throw identityReviewError('IDENTITY_REVIEW_UNDO_LEGACY_LEDGER_UNSAFE', 409)
+    }
+}
+
+async function assertNoDependentIdentityReviewDecision(client, decision, candidate) {
+    if (!decision?.materialization_run_id || decision.decision !== 'confirmed') return
+    const originalRun = await client.query(`select summary,event_order from crm_atendimento.identity_materialization_runs
+        where id=$1::uuid for share`, [decision.materialization_run_id])
+    const original = originalRun.rows[0]
+    const summary = original?.summary || {}
+    const materializationEventOrder = Number(original?.event_order)
+    const identityIds = [...new Set([
+        summary.sourceIdentityId,
+        summary.targetIdentityId,
+        summary.survivorIdentityId,
+        summary.retiredIdentityId,
+        ...(Array.isArray(summary.createdIdentityIds) ? summary.createdIdentityIds : []),
+    ].map((value) => String(value || '').trim()).filter(Boolean))]
+    if (!Number.isSafeInteger(materializationEventOrder) || materializationEventOrder <= 0) {
+        throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENCY_UNAVAILABLE', 409)
+    }
+    await assertIdentityReviewUndoLedgerCutover(client, materializationEventOrder)
+    // All graph materializations use IDENTITY_GRAPH_LOCK_KEY.  Thus a later
+    // applied ledger run touching a member or identity from this confirmation
+    // is a serial dependency, whether it came from another manager decision or
+    // from an automatic source reconciler.  Run event_order is assigned only
+    // after the graph lock is acquired, unlike a transaction-start timestamp.
+    // First retain the decision event guard for later human confirmations that
+    // could be source-state changes without a physical member move.
+    const dependentDecision = await client.query(`with latest_decisions as (
+            select distinct on (review_type,source_id,target_id)
+                review_type,source_id,target_id,decision,event_order,materialization_run_id
+            from crm_atendimento.identity_review_decisions
+            order by review_type,source_id,target_id,event_order desc
+        )
+        select later.review_type,later.source_id,later.target_id
+        from latest_decisions later
+        join crm_atendimento.identity_materialization_runs run on run.id=later.materialization_run_id
+        where later.decision='confirmed' and later.event_order>$1::bigint
+          and (
+            coalesce(run.summary->>'sourceIdentityId','')=any($2::text[])
+            or coalesce(run.summary->>'targetIdentityId','')=any($2::text[])
+            or coalesce(run.summary->>'survivorIdentityId','')=any($2::text[])
+            or coalesce(run.summary->>'retiredIdentityId','')=any($2::text[])
+            or exists(select 1 from jsonb_array_elements_text(coalesce(run.summary->'createdIdentityIds','[]'::jsonb)) as created(id)
+                where created.id=any($2::text[]))
+          )
+        limit 1`, [decision.event_order, identityIds])
+    if (dependentDecision.rows[0]) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENT_DECISION', 409)
+
+    const dependentMaterialization = await client.query(`with original_members as (
+            select source_type,source_id,event_order
+            from crm_atendimento.identity_member_history
+            where materialization_run_id=$1::uuid
+        ), later_history as (
+            select run.id::text as materialization_run_id,history.source_type,history.source_id,
+                history.previous_identity_id::text as previous_identity_id,
+                history.next_identity_id::text as next_identity_id
+            from crm_atendimento.identity_materialization_runs run
+            join crm_atendimento.identity_member_history history on history.materialization_run_id=run.id
+            where run.id<>$1::uuid and run.status='applied'
+              and run.event_order>$2::bigint
+        )
+        select later.materialization_run_id,later.source_type,later.source_id
+        from later_history later
+        where exists(select 1 from original_members original
+                where original.source_type=later.source_type and original.source_id=later.source_id)
+           or later.previous_identity_id=any($3::text[])
+           or later.next_identity_id=any($3::text[])
+        limit 1`, [decision.materialization_run_id, materializationEventOrder, identityIds])
+    if (dependentMaterialization.rows[0]) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENT_DECISION', 409)
+
+    const dependentAutomaticLink = await client.query(`with original_members as (
+            select source_type,source_id
+            from crm_atendimento.identity_member_history
+            where materialization_run_id=$1::uuid
+        ), latest_source_links as (
+            select distinct on (links.link_type,links.source_type,links.source_id,links.target_type,links.target_id)
+                links.link_type,links.source_type,links.source_id,links.target_type,links.target_id,
+                links.transition,run.event_order
+            from crm_atendimento.identity_source_link_history links
+            join crm_atendimento.identity_materialization_runs run on run.id=links.materialization_run_id
+            where run.status in ('applied','not_applicable')
+            order by links.link_type,links.source_type,links.source_id,links.target_type,links.target_id,run.event_order desc
+        )
+        select links.link_type,links.source_type,links.source_id,links.target_type,links.target_id
+        from latest_source_links links
+        where links.transition='automatic_activated' and links.event_order>$2::bigint
+          and (
+            exists(select 1 from original_members original
+                where (original.source_type=links.source_type and original.source_id=links.source_id)
+                   or (original.source_type=links.target_type and original.source_id=links.target_id))
+            or (links.source_type=$3 and links.source_id=$4)
+            or (links.target_type=$3 and links.target_id=$4)
+            or (links.source_type=$5 and links.source_id=$6)
+            or (links.target_type=$5 and links.target_id=$6)
+          )
+        limit 1`, [
+        decision.materialization_run_id,
+        materializationEventOrder,
+        candidate.sourceType,
+        candidate.sourceId,
+        candidate.targetType,
+        candidate.targetId,
+    ])
+    if (dependentAutomaticLink.rows[0]) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENT_DECISION', 409)
+}
+
+function assertNoCurrentIdentityReviewDecision(latest, candidate) {
+    if (latest && latest.decision !== 'reversed' && latest.source_version === candidate.version) {
+        throw identityReviewError('IDENTITY_REVIEW_ALREADY_DECIDED', 409)
+    }
+}
+
+async function createIdentityReviewDecision(client, {
+    candidate, decision, reason, actor, sourceSnapshot = {}, materializationRunId = null,
+    resultingStatus = candidate.rawStatus, sourceVersion = candidate.version,
+}) {
+    const actorIdentity = actorIdentityForMutation(actor)
+    const result = await client.query(`insert into crm_atendimento.identity_review_decisions(
+            materialization_run_id,review_type,source_id,target_id,decision,source_status,resulting_status,source_version,reason,actor,source_snapshot)
+        values($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb) returning id::text,created_at`, [
+        materializationRunId, candidate.reviewType, candidate.sourceId, candidate.targetId, decision, candidate.rawStatus,
+        resultingStatus, sourceVersion, reason, JSON.stringify({ id: actorIdentity, role: actor?.role || '' }), JSON.stringify({
+            sourceName: candidate.sourceName,
+            targetName: candidate.targetName,
+            evidence: candidate.evidence,
+            context: candidate.context,
+            ...sourceSnapshot,
+        }),
+    ])
+    return result.rows[0]
+}
+
+async function createIdentityMaterializationRun(client, { mode, status, inputFingerprint, previousFingerprint = null, summary = {}, actor }) {
+    const actorIdentity = actorIdentityForMutation(actor)
+    const result = await client.query(`insert into crm_atendimento.identity_materialization_runs(
+            mode,status,input_fingerprint,previous_fingerprint,summary,actor)
+        values($1,$2,$3,$4,$5::jsonb,$6::jsonb) returning id::text,created_at`, [
+        mode, status, inputFingerprint, previousFingerprint, JSON.stringify(summary),
+        JSON.stringify({ id: actorIdentity, role: actor?.role || '' }),
+    ])
+    return result.rows[0]
+}
+
+export function collectIdentityReviewSourceLinkTransitions({
+    candidate,
+    previousStatus,
+    resultingStatus,
+} = {}) {
+    const linkType = IDENTITY_REVIEW_SOURCE_LINK_TYPES[candidate?.reviewType]
+    if (!linkType) return []
+    return collectAutomaticIdentityLinkTransitions({
+        effectiveLinks: [{
+            sourceId: candidate.sourceId,
+            targetId: candidate.targetId,
+            status: resultingStatus,
+        }],
+        persistedLinks: [{
+            sourceId: candidate.sourceId,
+            targetId: candidate.targetId,
+            status: previousStatus,
+        }],
+        linkType,
+        sourceType: candidate.sourceType,
+        targetType: candidate.targetType,
+        getSourceId: (link) => link.sourceId,
+        getTargetId: (link) => link.targetId,
+    })
+}
+
+async function recordIdentityReviewSourceLinkTransition(client, {
+    materializationRunId,
+    candidate,
+    previousStatus,
+    resultingStatus,
+    origin,
+}) {
+    const transitions = collectIdentityReviewSourceLinkTransitions({ candidate, previousStatus, resultingStatus })
+    if (!transitions.length) return []
+    await client.query(`insert into crm_atendimento.identity_source_link_history(
+            materialization_run_id,link_type,source_type,source_id,target_type,target_id,transition,resulting_status,origin)
+        select $1::uuid,x.link_type,x.source_type,x.source_id,x.target_type,x.target_id,x.transition,x.resulting_status,$3
+        from jsonb_to_recordset($2::jsonb) as x(
+            link_type text,source_type text,source_id text,target_type text,target_id text,transition text,resulting_status text)`, [
+        materializationRunId,
+        JSON.stringify(transitions.map((transition) => ({
+            link_type: transition.linkType,
+            source_type: transition.sourceType,
+            source_id: transition.sourceId,
+            target_type: transition.targetType,
+            target_id: transition.targetId,
+            transition: transition.transition,
+            resulting_status: transition.resultingStatus,
+        }))),
+        String(origin || 'manager_identity_review'),
+    ])
+    return transitions
+}
+
+async function updateIdentityMaterializationRun(client, runId, summary) {
+    await client.query(`update crm_atendimento.identity_materialization_runs set summary=$2::jsonb where id=$1::uuid`, [runId, JSON.stringify(summary)])
+}
+
+async function acquireCommercialIdentityLocks(client, identityIds) {
+    for (const identityId of [...new Set(identityIds.filter(Boolean).map(String))].sort()) {
+        // Keep the exact same lock namespace used by consent and commercial
+        // action writes, so a profile cannot change identity while a contact
+        // eligibility decision is being recorded.
+        await acquireCommercialContactIdentityLock(client, identityId)
+    }
+}
+
+async function assertNoCommercialIdentityHistory(client, identityIds) {
+    const ids = [...new Set(identityIds.filter(Boolean).map(String))]
+    if (!ids.length) return
+    const result = await client.query(`select
+            (select count(*)::int from crm_atendimento.commercial_actions where identity_id=any($1::uuid[])) as actions,
+            (select count(*)::int from crm_atendimento.commercial_contact_permissions where identity_id=any($1::uuid[])) as permissions,
+            (select count(*)::int from crm_atendimento.commercial_contact_permission_events where identity_id=any($1::uuid[])) as permission_events,
+            (select count(*)::int from crm_atendimento.commercial_policy_config
+                where commercial_contact_canary_identity_ids && $1::uuid[]) as canary_entries,
+            (select count(*)::int from crm_atendimento.audit_events
+                where coalesce(payload->>'identityId','')=any($1::text[])) as audit_identity_events`, [ids])
+    const row = result.rows[0] || {}
+    if (Number(row.actions || 0) || Number(row.permissions || 0) || Number(row.permission_events || 0)
+        || Number(row.canary_entries || 0) || Number(row.audit_identity_events || 0)) {
+        throw identityReviewError('IDENTITY_REVIEW_COMMERCIAL_HISTORY_PRESENT', 409)
+    }
+}
+
+async function readIdentityMembers(client, identityId, { lock = false } = {}) {
+    const result = await client.query(`select source_type,source_id from crm_atendimento.global_client_identity_members
+        where identity_id=$1::uuid order by source_type,source_id${lock ? ' for update' : ''}`, [identityId])
+    return result.rows.map((row) => ({ sourceType: row.source_type, sourceId: row.source_id }))
+}
+
+async function ensureIdentityForMember(client, { sourceType, sourceId, canonicalName, runId }) {
+    const existing = await client.query(`select identity.id::text as id, identity.canonical_name, identity.created_at
+        from crm_atendimento.global_client_identity_members member
+        join crm_atendimento.global_client_identities identity on identity.id=member.identity_id
+        where member.source_type=$1 and member.source_id=$2 for update of member, identity`, [sourceType, sourceId])
+    if (existing.rows[0]) {
+        const row = existing.rows[0]
+        return { id: row.id, canonicalName: row.canonical_name, createdAt: row.created_at, members: await readIdentityMembers(client, row.id, { lock: true }), created: false }
+    }
+    const componentKey = reviewComponentKey([{ sourceType, sourceId }])
+    // An inactive historical projection must never be silently rebound to a
+    // new source member. Retire its mutable component key and create a fresh
+    // UUID so old contact/consent evidence remains unambiguous.
+    const retired = await client.query(`select id::text from crm_atendimento.global_client_identities
+        where component_key=$1 for update`, [componentKey])
+    if (retired.rows[0]?.id) {
+        await client.query(`update crm_atendimento.global_client_identities
+            set component_key='retired:'||id::text,source_types='[]'::jsonb,updated_at=now() where id=$1::uuid`, [retired.rows[0].id])
+    }
+    const created = await client.query(`insert into crm_atendimento.global_client_identities(component_key,canonical_name,source_types)
+        values($1,$2,$3::jsonb) returning id::text,canonical_name,created_at`, [componentKey, canonicalName || 'Cliente sem nome', JSON.stringify([sourceType])])
+    const row = created.rows[0]
+    await client.query(`insert into crm_atendimento.global_client_identity_members(identity_id,source_type,source_id)
+        values($1::uuid,$2,$3)`, [row.id, sourceType, sourceId])
+    await client.query(`insert into crm_atendimento.identity_member_history(
+            materialization_run_id,source_type,source_id,previous_identity_id,next_identity_id,change_kind)
+        values($1::uuid,$2,$3,null,$4::uuid,'created')`, [runId, sourceType, sourceId, row.id])
+    return { id: row.id, canonicalName: row.canonical_name, createdAt: row.created_at, members: [{ sourceType, sourceId }], created: true }
+}
+
+async function refreshIdentityProjection(client, identityId, preferredName = '') {
+    const members = await readIdentityMembers(client, identityId, { lock: true })
+    if (!members.length) {
+        await client.query(`update crm_atendimento.global_client_identities
+            set component_key='retired:'||id::text,source_types='[]'::jsonb,updated_at=now() where id=$1::uuid`, [identityId])
+        return { members, componentKey: `retired:${identityId}` }
+    }
+    const componentKey = reviewComponentKey(members)
+    const collision = await client.query(`select id::text from crm_atendimento.global_client_identities
+        where component_key=$1 and id<>$2::uuid for update`, [componentKey, identityId])
+    if (collision.rows[0]?.id) throw identityReviewError('IDENTITY_REVIEW_COMPONENT_COLLISION', 409)
+    const sourceTypes = [...new Set(members.map((member) => member.sourceType))].sort()
+    await client.query(`update crm_atendimento.global_client_identities set component_key=$2,
+        canonical_name=case when $3<>'' then $3 else canonical_name end,source_types=$4::jsonb,updated_at=now()
+        where id=$1::uuid`, [identityId, componentKey, preferredName || '', JSON.stringify(sourceTypes)])
+    return { members, componentKey }
+}
+
+async function applyManualCanonicalMerge(client, candidate) {
+    if (candidate.reviewType !== 'attendance_name_merge') return null
+    const survivorClientId = candidate.survivorClientId
+    const sourceClientId = survivorClientId === candidate.sourceId ? candidate.targetId : candidate.sourceId
+    const result = await client.query(`select id::text,canonical_name,merged_into_id::text from crm_atendimento.canonical_clients
+        where id=any($1::uuid[]) for update`, [[sourceClientId, survivorClientId]])
+    const source = result.rows.find((row) => row.id === sourceClientId)
+    const target = result.rows.find((row) => row.id === survivorClientId)
+    if (!source || !target || source.merged_into_id || target.merged_into_id) {
+        throw identityReviewError('IDENTITY_REVIEW_CANONICAL_MERGE_NOT_ACTIONABLE', 409)
+    }
+    const dependent = await client.query(`select id from crm_atendimento.canonical_clients where merged_into_id=$1::uuid limit 1 for update`, [sourceClientId])
+    if (dependent.rows[0]?.id) throw identityReviewError('IDENTITY_REVIEW_CANONICAL_MERGE_DEPENDENT', 409)
+    await client.query(`update crm_atendimento.canonical_clients set merged_into_id=$2::uuid,updated_at=now() where id=$1::uuid`, [sourceClientId, survivorClientId])
+    return { sourceClientId, survivorClientId, survivorName: target.canonical_name || '' }
+}
+
+async function reverseManualCanonicalMerge(client, merge) {
+    if (!merge?.sourceClientId || !merge?.survivorClientId) return
+    const result = await client.query(`select id::text,merged_into_id::text from crm_atendimento.canonical_clients
+        where id=any($1::uuid[]) for update`, [[merge.sourceClientId, merge.survivorClientId]])
+    const source = result.rows.find((row) => row.id === merge.sourceClientId)
+    if (!source || source.merged_into_id !== merge.survivorClientId) {
+        throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENCY_CHANGED', 409)
+    }
+    const dependent = await client.query(`select id from crm_atendimento.canonical_clients
+        where merged_into_id=$1::uuid limit 1 for update`, [merge.sourceClientId])
+    if (dependent.rows[0]?.id) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENT_CANONICAL_MERGE', 409)
+    await client.query(`update crm_atendimento.canonical_clients set merged_into_id=null,updated_at=now() where id=$1::uuid`, [merge.sourceClientId])
+}
+
+function preferredGlobalIdentity(identities, candidate) {
+    if (candidate.survivorClientId) {
+        const explicit = identities.find((identity) => identity.members.some((member) =>
+            member.sourceType === 'attendance_client' && member.sourceId === candidate.survivorClientId))
+        if (explicit) return explicit
+    }
+    return chooseIdentitySurvivor(identities)
+}
+
+async function insertIdentityMemberHistory(client, { runId, member, previousIdentityId, nextIdentityId, changeKind }) {
+    await client.query(`insert into crm_atendimento.identity_member_history(
+            materialization_run_id,source_type,source_id,previous_identity_id,next_identity_id,change_kind)
+        values($1::uuid,$2,$3,$4::uuid,$5::uuid,$6)`, [runId, member.sourceType, member.sourceId,
+        previousIdentityId || null, nextIdentityId || null, changeKind])
+}
+
+async function materializeIdentityReviewConfirmation(client, { candidate, actor }) {
+    const inputFingerprint = identityMaterializationFingerprint({
+        reviewType: candidate.reviewType, sourceId: candidate.sourceId, targetId: candidate.targetId,
+        sourceVersion: candidate.version, survivorClientId: candidate.survivorClientId,
+    })
+    const run = await createIdentityMaterializationRun(client, {
+        mode: 'confirm', status: 'applied', inputFingerprint, actor,
+    })
+    const sourceIdentity = await ensureIdentityForMember(client, {
+        sourceType: candidate.sourceType, sourceId: candidate.sourceId, canonicalName: candidate.sourceName, runId: run.id,
+    })
+    const targetIdentity = await ensureIdentityForMember(client, {
+        sourceType: candidate.targetType, sourceId: candidate.targetId, canonicalName: candidate.targetName, runId: run.id,
+    })
+    const before = identityMaterializationFingerprint({ source: sourceIdentity, target: targetIdentity })
+    const identities = sourceIdentity.id === targetIdentity.id ? [sourceIdentity] : [sourceIdentity, targetIdentity]
+    let manualCanonicalMerge = null
+    let survivor = preferredGlobalIdentity(identities, candidate)
+    let loser = null
+    const movedMembers = []
+    if (sourceIdentity.id !== targetIdentity.id) {
+        await acquireCommercialIdentityLocks(client, [sourceIdentity.id, targetIdentity.id])
+        await assertNoCommercialIdentityHistory(client, [sourceIdentity.id, targetIdentity.id])
+        manualCanonicalMerge = candidate.reviewType === 'attendance_name_merge'
+            ? await applyManualCanonicalMerge(client, candidate)
+            : null
+        loser = identities.find((identity) => identity.id !== survivor.id)
+        for (const member of loser.members) {
+            await client.query(`update crm_atendimento.global_client_identity_members set identity_id=$3::uuid,updated_at=now()
+                where source_type=$1 and source_id=$2 and identity_id=$4::uuid`, [member.sourceType, member.sourceId, survivor.id, loser.id])
+            await insertIdentityMemberHistory(client, {
+                runId: run.id, member, previousIdentityId: loser.id, nextIdentityId: survivor.id, changeKind: 'moved',
+            })
+            movedMembers.push(member)
+        }
+        await client.query(`insert into crm_atendimento.identity_lineage(
+                materialization_run_id,predecessor_identity_id,successor_identity_id,relation)
+            values($1::uuid,$2::uuid,$3::uuid,'merged_into'),($1::uuid,$3::uuid,$3::uuid,'retained')`, [run.id, loser.id, survivor.id])
+    }
+    if (sourceIdentity.id === targetIdentity.id && candidate.reviewType === 'attendance_name_merge') {
+        await acquireCommercialIdentityLocks(client, [sourceIdentity.id])
+        await assertNoCommercialIdentityHistory(client, [sourceIdentity.id])
+        manualCanonicalMerge = await applyManualCanonicalMerge(client, candidate)
+    }
+    const preferredName = manualCanonicalMerge?.survivorName || survivor.canonicalName || candidate.sourceName || candidate.targetName
+    const survivorProjection = await refreshIdentityProjection(client, survivor.id, preferredName)
+    const loserProjection = loser ? await refreshIdentityProjection(client, loser.id) : null
+    const summary = {
+        sourceIdentityId: sourceIdentity.id,
+        targetIdentityId: targetIdentity.id,
+        survivorIdentityId: survivor.id,
+        retiredIdentityId: loser?.id || null,
+        createdIdentityIds: identities.filter((identity) => identity.created).map((identity) => identity.id),
+        membersMoved: movedMembers.length,
+        survivorComponentKey: survivorProjection.componentKey,
+        retiredComponentKey: loserProjection?.componentKey || null,
+        manualCanonicalMerge,
+    }
+    await client.query(`update crm_atendimento.identity_materialization_runs set previous_fingerprint=$2,summary=$3::jsonb where id=$1::uuid`,
+        [run.id, before, JSON.stringify(summary)])
+    return { ...run, summary }
+}
+
+async function materializeIdentityReviewReversal(client, { candidate, reversesDecision, actor }) {
+    const originalRunId = String(reversesDecision.materialization_run_id || '').trim()
+    if (!originalRunId) throw identityReviewError('IDENTITY_REVIEW_UNDO_NOT_MATERIALIZED', 409)
+    const originalRun = await client.query(`select id::text,status,summary from crm_atendimento.identity_materialization_runs
+        where id=$1::uuid for update`, [originalRunId])
+    if (originalRun.rows[0]?.status !== 'applied') throw identityReviewError('IDENTITY_REVIEW_UNDO_NOT_MATERIALIZED', 409)
+    const history = await client.query(`select event_order,source_type,source_id,previous_identity_id::text,next_identity_id::text,change_kind
+        from crm_atendimento.identity_member_history where materialization_run_id=$1::uuid
+        order by event_order desc for update`, [originalRunId])
+    const originalSummary = originalRun.rows[0]?.summary || {}
+    const identityIds = [...new Set([
+        ...history.rows.flatMap((row) => [row.previous_identity_id, row.next_identity_id]),
+        originalSummary.sourceIdentityId,
+        originalSummary.targetIdentityId,
+        originalSummary.survivorIdentityId,
+        originalSummary.retiredIdentityId,
+    ].filter(Boolean))]
+    await acquireCommercialIdentityLocks(client, identityIds)
+    await assertNoCommercialIdentityHistory(client, identityIds)
+    const inputFingerprint = identityMaterializationFingerprint({ reverse: originalRunId, sourceVersion: candidate.version })
+    const run = await createIdentityMaterializationRun(client, {
+        mode: 'reverse', status: 'applied', inputFingerprint,
+        previousFingerprint: originalRunId, actor,
+    })
+    for (const row of history.rows) {
+        if (row.change_kind === 'moved') {
+            const restored = await client.query(`update crm_atendimento.global_client_identity_members set identity_id=$3::uuid,updated_at=now()
+                where source_type=$1 and source_id=$2 and identity_id=$4::uuid`, [row.source_type, row.source_id, row.previous_identity_id, row.next_identity_id])
+            if (restored.rowCount !== 1) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENCY_CHANGED', 409)
+            await insertIdentityMemberHistory(client, {
+                runId: run.id, member: { sourceType: row.source_type, sourceId: row.source_id },
+                previousIdentityId: row.next_identity_id, nextIdentityId: row.previous_identity_id, changeKind: 'restored',
+            })
+            await client.query(`insert into crm_atendimento.identity_lineage(
+                materialization_run_id,predecessor_identity_id,successor_identity_id,relation)
+                values($1::uuid,$2::uuid,$3::uuid,'split_from')`, [run.id, row.next_identity_id, row.previous_identity_id])
+        } else if (row.change_kind === 'created') {
+            const removed = await client.query(`delete from crm_atendimento.global_client_identity_members
+                where source_type=$1 and source_id=$2 and identity_id=$3::uuid`, [row.source_type, row.source_id, row.next_identity_id])
+            if (removed.rowCount !== 1) throw identityReviewError('IDENTITY_REVIEW_UNDO_DEPENDENCY_CHANGED', 409)
+            await insertIdentityMemberHistory(client, {
+                runId: run.id, member: { sourceType: row.source_type, sourceId: row.source_id },
+                previousIdentityId: row.next_identity_id, nextIdentityId: null, changeKind: 'restored',
+            })
+        }
+    }
+    await reverseManualCanonicalMerge(client, originalSummary.manualCanonicalMerge)
+    for (const identityId of identityIds) await refreshIdentityProjection(client, identityId)
+    const summary = { reversesRunId: originalRunId, restoredMembers: history.rows.length, manualCanonicalMergeReversed: !!originalSummary.manualCanonicalMerge }
+    await updateIdentityMaterializationRun(client, run.id, summary)
+    return { ...run, summary }
 }
 
 export function createAtendimentoStore(options = {}) {
@@ -3617,7 +4425,153 @@ export function createAtendimentoStore(options = {}) {
             await ensureReady()
             assertCommercialManager(actor)
             await assertIdentityReviewSource(pgPool)
-            return queryIdentityReviewQueue(pgPool, query)
+            const workflow = await identityReviewWorkflowStatus(pgPool)
+            return {
+                ...(await queryIdentityReviewQueue(pgPool, query, { workflowReady: workflow.ready })),
+                workflow: { writesReady: workflow.ready },
+            }
+        },
+
+        async decideIdentityReview(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            await assertIdentityReviewWorkflowReady(pgPool)
+            const normalized = normalizeIdentityReviewDecision(payload || {})
+            return withPgTransaction(pgPool, async (client) => {
+                await acquireIdentityReviewLocks(client, {
+                    ...normalized,
+                    ...IDENTITY_REVIEW_DEFINITIONS[normalized.reviewType],
+                })
+                await assertIdentityReviewWorkflowReady(client)
+                const candidate = await readIdentityReviewCandidate(client, normalized)
+                assertIdentityReviewCandidateVersion(candidate, normalized.expectedVersion)
+                const latest = await readLatestIdentityReviewDecision(client, candidate)
+                assertNoCurrentIdentityReviewDecision(latest, candidate)
+                const sourceState = await writeIdentityReviewSourceStatus(client, candidate, normalized.decision, actor)
+                let materialization
+                if (normalized.decision === 'confirmed') {
+                    materialization = await materializeIdentityReviewConfirmation(client, {
+                        candidate, actor,
+                    })
+                    const sourceLinkTransitions = await recordIdentityReviewSourceLinkTransition(client, {
+                        materializationRunId: materialization.id,
+                        candidate,
+                        previousStatus: candidate.rawStatus,
+                        resultingStatus: sourceState.rawStatus,
+                        origin: 'manager_identity_review',
+                    })
+                    const decision = await createIdentityReviewDecision(client, {
+                        candidate, decision: normalized.decision, reason: normalized.reason, actor,
+                        materializationRunId: materialization.id, resultingStatus: sourceState.rawStatus,
+                        sourceVersion: sourceState.version,
+                        sourceSnapshot: {
+                            survivorClientId: normalized.survivorClientId,
+                            previousSourceVersion: candidate.version,
+                        },
+                    })
+                    await audit(client, 'client-identity.review.confirmed', actor, null, {
+                        reviewType: candidate.reviewType,
+                        sourceId: candidate.sourceId,
+                        targetId: candidate.targetId,
+                        decisionId: decision.id,
+                        materializationRunId: materialization.id,
+                        membersMoved: materialization.summary.membersMoved,
+                        sourceLinkTransitions: sourceLinkTransitions.length,
+                    })
+                    return { decision: { id: decision.id, state: 'confirmed', sourceVersion: sourceState.version }, materialization }
+                }
+                materialization = await createIdentityMaterializationRun(client, {
+                    mode: 'reject', status: 'not_applicable',
+                    inputFingerprint: identityMaterializationFingerprint({
+                        reviewType: candidate.reviewType, sourceId: candidate.sourceId, targetId: candidate.targetId,
+                        sourceVersion: candidate.version, decision: normalized.decision,
+                    }),
+                    summary: { reason: 'rejected_without_graph_mutation' }, actor,
+                })
+                const sourceLinkTransitions = await recordIdentityReviewSourceLinkTransition(client, {
+                    materializationRunId: materialization.id,
+                    candidate,
+                    previousStatus: candidate.rawStatus,
+                    resultingStatus: sourceState.rawStatus,
+                    origin: 'manager_identity_review',
+                })
+                const decision = await createIdentityReviewDecision(client, {
+                    candidate, decision: normalized.decision, reason: normalized.reason, actor,
+                    materializationRunId: materialization.id, resultingStatus: sourceState.rawStatus,
+                    sourceVersion: sourceState.version,
+                    sourceSnapshot: { previousSourceVersion: candidate.version },
+                })
+                await audit(client, 'client-identity.review.rejected', actor, null, {
+                    reviewType: candidate.reviewType,
+                    sourceId: candidate.sourceId,
+                    targetId: candidate.targetId,
+                    decisionId: decision.id,
+                    materializationRunId: materialization.id,
+                    sourceLinkTransitions: sourceLinkTransitions.length,
+                })
+                return { decision: { id: decision.id, state: 'rejected', sourceVersion: sourceState.version }, materialization }
+            })
+        },
+
+        async undoIdentityReviewDecision(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            await assertIdentityReviewWorkflowReady(pgPool)
+            const normalized = normalizeIdentityReviewUndo(payload || {})
+            return withPgTransaction(pgPool, async (client) => {
+                await acquireIdentityReviewLocks(client, {
+                    ...normalized,
+                    ...IDENTITY_REVIEW_DEFINITIONS[normalized.reviewType],
+                })
+                await assertIdentityReviewWorkflowReady(client)
+                const candidate = await readIdentityReviewCandidate(client, normalized)
+                const latest = await readLatestIdentityReviewDecision(client, candidate)
+                if (!latest || latest.decision === 'reversed') throw identityReviewError('IDENTITY_REVIEW_NOT_DECIDED', 409)
+                assertIdentityReviewUndoCandidateVersion(candidate, normalized.expectedVersion, latest)
+                await assertNoDependentIdentityReviewDecision(client, latest, candidate)
+                // A source refresh may update evidence while retaining the human
+                // terminal status.  It cannot silently re-materialize the graph,
+                // but a manager may explicitly undo that stale decision before
+                // making a fresh one with the new evidence.
+                const sourceState = await writeIdentityReviewSourceStatus(client, candidate, latest.source_status, actor)
+                let materialization
+                if (latest.decision === 'confirmed') {
+                    materialization = await materializeIdentityReviewReversal(client, {
+                        candidate, reversesDecision: latest, actor,
+                    })
+                } else {
+                    materialization = await createIdentityMaterializationRun(client, {
+                        mode: 'reverse', status: 'not_applicable',
+                        inputFingerprint: identityMaterializationFingerprint({ reversesDecisionId: latest.id, sourceVersion: candidate.version }),
+                        summary: { reversesDecisionId: latest.id, reason: 'rejected_without_graph_mutation' }, actor,
+                    })
+                }
+                const sourceLinkTransitions = await recordIdentityReviewSourceLinkTransition(client, {
+                    materializationRunId: materialization.id,
+                    candidate,
+                    previousStatus: candidate.rawStatus,
+                    resultingStatus: sourceState.rawStatus,
+                    origin: 'manager_identity_review_undo',
+                })
+                const reversal = await createIdentityReviewDecision(client, {
+                    candidate, decision: 'reversed', reason: normalized.reason, actor,
+                    materializationRunId: materialization.id, resultingStatus: sourceState.rawStatus,
+                    sourceVersion: sourceState.version,
+                    sourceSnapshot: { reversesDecisionId: latest.id, previousSourceVersion: candidate.version },
+                })
+                await audit(client, 'client-identity.review.reversed', actor, null, {
+                    reviewType: candidate.reviewType,
+                    sourceId: candidate.sourceId,
+                    targetId: candidate.targetId,
+                    decisionId: reversal.id,
+                    reversesDecisionId: latest.id,
+                    materializationRunId: materialization.id,
+                    sourceLinkTransitions: sourceLinkTransitions.length,
+                })
+                return { decision: { id: reversal.id, state: 'reversed', sourceVersion: sourceState.version, reversesDecisionId: latest.id }, materialization }
+            })
         },
 
         async commercialProfile(identityId, query, actor) {

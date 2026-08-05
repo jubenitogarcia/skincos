@@ -3,11 +3,13 @@ import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, CircleDollarS
 import { Button } from '@/button'
 import {
   createCommercialAction,
+  decideClientIdentityReview,
   fetchAtendimentoReferences,
   fetchClientIdentityReviewQueue,
   fetchCommercialOverview,
   fetchCommercialProfile,
   recordCommercialContactPermission,
+  undoClientIdentityReview,
   updateCommercialAction,
   updateCommercialPolicy,
   upsertCommercialCadence,
@@ -231,22 +233,101 @@ function List({ label, values, empty }: { label: string; values: string[]; empty
 const reviewTypeLabel: Record<ClientIdentityReviewItem['type'], string> = { attendance_name_merge: 'Grafia no Atendimento', attendance_caixa: 'Atendimento ↔ Caixa', app_attendance: 'Cadastro app ↔ Atendimento', app_caixa: 'Cadastro app ↔ Caixa', lead_app: 'Planilha ↔ Cadastro app', lead_caixa: 'Planilha ↔ Caixa' }
 function reviewValue(value: unknown) { return Array.isArray(value) ? value.filter(Boolean).join(', ') : typeof value === 'string' || typeof value === 'number' ? String(value) : '' }
 
-function IdentityReviewQueue() {
+function reviewItemKey(item: ClientIdentityReviewItem) { return `${item.type}:${item.sourceId}:${item.targetId}` }
+function reviewDecisionLabel(item: ClientIdentityReviewItem) {
+  if (item.decisionState === 'resolved') return 'Decisão vigente'
+  if (item.decisionState === 'stale') return 'Evidência atualizada — refaça a revisão'
+  return item.status === 'ambiguous' ? 'Ambíguo' : 'Sugestão'
+}
+
+export function IdentityReviewQueue() {
   const [items, setItems] = useState<ClientIdentityReviewItem[]>([])
   const [total, setTotal] = useState(0)
   const [type, setType] = useState('')
   const [search, setSearch] = useState('')
+  const [includeResolved, setIncludeResolved] = useState(false)
+  const [drafts, setDrafts] = useState<Record<string, { reason: string; survivorClientId: string }>>({})
+  const [acting, setActing] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [writesReady, setWritesReady] = useState(false)
   const load = useCallback(async (offset = 0, append = false) => {
-    try { setBusy(true); setError(''); const result = await fetchClientIdentityReviewQueue({ type: type as ClientIdentityReviewItem['type'] || undefined, q: search, limit: 100, offset }); if (!result.ok) throw new Error(result.error || 'Não foi possível carregar a revisão.'); setItems((current) => append ? [...current, ...result.items] : result.items); setTotal(result.total) } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível carregar a revisão.') } finally { setBusy(false) }
-  }, [search, type])
+    try {
+      setBusy(true); setError('')
+      const result = await fetchClientIdentityReviewQueue({
+        type: type as ClientIdentityReviewItem['type'] || undefined,
+        q: search,
+        includeResolved,
+        limit: 100,
+        offset,
+      })
+      if (!result.ok) throw new Error(result.error || 'Não foi possível carregar a revisão.')
+      setItems((current) => append ? [...current, ...result.items] : result.items)
+      setTotal(result.total)
+      setWritesReady(result.workflow?.writesReady === true)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível carregar a revisão.') } finally { setBusy(false) }
+  }, [includeResolved, search, type])
   useEffect(() => { void load() }, [load])
+  const updateDraft = (item: ClientIdentityReviewItem, patch: Partial<{ reason: string; survivorClientId: string }>) => {
+    const key = reviewItemKey(item)
+    setDrafts((current) => ({ ...current, [key]: { reason: current[key]?.reason || '', survivorClientId: current[key]?.survivorClientId || '', ...patch } }))
+  }
+  const decide = async (item: ClientIdentityReviewItem, decision: 'confirmed' | 'rejected') => {
+    const key = reviewItemKey(item)
+    const draft = drafts[key] || { reason: '', survivorClientId: '' }
+    if (draft.reason.trim().length < 3) { setError('Informe o motivo da decisão para preservar a trilha de auditoria.'); return }
+    if (item.type === 'attendance_name_merge' && decision === 'confirmed' && !draft.survivorClientId) { setError('Escolha qual cliente canônico será mantido antes de confirmar a unificação.'); return }
+    try {
+      setActing(key); setError(''); setNotice('')
+      const result = await decideClientIdentityReview(item.type, {
+        sourceId: item.sourceId,
+        targetId: item.targetId,
+        expectedVersion: item.version,
+        decision,
+        reason: draft.reason.trim(),
+        survivorClientId: item.type === 'attendance_name_merge' && decision === 'confirmed' ? draft.survivorClientId : undefined,
+      })
+      if (!result.ok) throw new Error(result.error || 'Não foi possível registrar a decisão.')
+      const moved = Number(result.materialization?.summary?.membersMoved || 0)
+      setNotice(decision === 'confirmed'
+        ? `Decisão confirmada com auditoria. ${moved ? `${moved} vínculo(s) foram rematerializados.` : 'Nenhum vínculo adicional precisou ser movido.'}`
+        : 'Decisão de rejeição registrada com auditoria; a correspondência não foi unificada.')
+      setDrafts((current) => { const next = { ...current }; delete next[key]; return next })
+      await load()
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível registrar a decisão.') } finally { setActing('') }
+  }
+  const undo = async (item: ClientIdentityReviewItem) => {
+    const key = reviewItemKey(item)
+    const draft = drafts[key] || { reason: '', survivorClientId: '' }
+    if (draft.reason.trim().length < 3) { setError('Informe o motivo do desfazimento para preservar a trilha de auditoria.'); return }
+    try {
+      setActing(key); setError(''); setNotice('')
+      const result = await undoClientIdentityReview(item.type, {
+        sourceId: item.sourceId,
+        targetId: item.targetId,
+        expectedVersion: item.version,
+        reason: draft.reason.trim(),
+      })
+      if (!result.ok) throw new Error(result.error || 'Não foi possível desfazer a decisão.')
+      setNotice('Decisão desfeita com uma nova entrada de auditoria. A correspondência voltou para revisão.')
+      setDrafts((current) => { const next = { ...current }; delete next[key]; return next })
+      await load()
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível desfazer a decisão.') } finally { setActing('') }
+  }
   return <section className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 shadow-[0_20px_60px_rgba(2,6,23,0.28)]">
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="text-lg font-semibold text-white">Revisão de correspondências</h2><p className="mt-1 text-sm text-slate-500">{items.length} de {total} sugestão(ões) pendente(s), com evidências de cada fonte. Nenhuma unificação é disparada por esta tela.</p></div><Button size="sm" variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className={`mr-2 h-4 w-4 ${busy ? 'animate-spin' : ''}`} />Atualizar</Button></div>
-    <div className="mt-4 flex flex-wrap gap-2"><select aria-label="Origem da correspondência" value={type} onChange={(event) => setType(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Todas as origens</option>{Object.entries(reviewTypeLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><input aria-label="Buscar correspondência" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, telefone ou evidência" className="min-w-64 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><Button size="sm" onClick={() => void load()} disabled={busy}>Aplicar</Button></div>
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="text-lg font-semibold text-white">Revisão de correspondências</h2><p className="mt-1 text-sm text-slate-500">{items.length} de {total} correspondência(s) com evidências de cada fonte. Confirmações alteram apenas a projeção consolidada, com trilha e desfazimento auditáveis.</p></div><Button size="sm" variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className={`mr-2 h-4 w-4 ${busy ? 'animate-spin' : ''}`} />Atualizar</Button></div>
+    {!writesReady ? <div className="mt-3 rounded-lg border border-amber-300/25 bg-amber-500/10 p-3 text-xs text-amber-100">A fila pode ser consultada, mas decisões permanecem bloqueadas até a migration explícita de revisão de identidades neste ambiente.</div> : null}
+    <div className="mt-4 flex flex-wrap items-center gap-2"><select aria-label="Origem da correspondência" value={type} onChange={(event) => setType(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Todas as origens</option>{Object.entries(reviewTypeLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><input aria-label="Buscar correspondência" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, telefone ou evidência" className="min-w-64 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><label className="flex items-center gap-2 px-1 text-xs text-slate-400"><input type="checkbox" checked={includeResolved} onChange={(event) => setIncludeResolved(event.target.checked)} />Exibir decisões vigentes</label><Button size="sm" onClick={() => void load()} disabled={busy}>Aplicar</Button></div>
     {error ? <div className="mt-3 rounded-lg border border-rose-300/30 bg-rose-500/10 p-3 text-sm text-rose-100">{error}</div> : null}
-    <div className="mt-4 space-y-3">{items.map((item) => <article key={`${item.type}:${item.id}`} className="rounded-xl border border-slate-800/80 bg-slate-900/35 p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><div className="text-xs text-sky-300">{reviewTypeLabel[item.type]}</div><div className="mt-1 text-sm font-semibold text-white">{item.primaryName} <span className="mx-1 text-slate-600">↔</span> {item.secondaryName}</div></div><div className="text-xs text-slate-400">{item.status === 'ambiguous' ? 'Ambíguo' : 'Sugestão'} · confiança {Math.round(item.confidence * 100)}%</div></div><div className="mt-3 grid gap-2 text-xs text-slate-400 md:grid-cols-2"><div><span className="text-slate-500">Contexto: </span>{Object.entries(item.context).map(([key, value]) => { const shown = reviewValue(value); return shown ? <span key={key} className="mr-3 inline-block">{key}: <span className="text-slate-200">{shown}</span></span> : null })}</div><div><span className="text-slate-500">Evidência: </span>{Object.entries(item.evidence).map(([key, value]) => { const shown = reviewValue(value); return shown ? <span key={key} className="mr-3 inline-block">{key}: <span className="text-slate-200">{shown}</span></span> : null })}</div></div></article>)}{!busy && !items.length ? <p className="py-6 text-center text-sm text-slate-500">Nenhuma sugestão encontrada para estes filtros.</p> : null}</div>
+    {notice ? <div className="mt-3 rounded-lg border border-emerald-300/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{notice}</div> : null}
+    <div className="mt-4 space-y-3">{items.map((item) => {
+      const key = reviewItemKey(item)
+      const draft = drafts[key] || { reason: '', survivorClientId: '' }
+      const isActing = acting === key
+      const undoable = item.decisionState === 'resolved' || item.decisionState === 'stale'
+      return <article key={key} className="rounded-xl border border-slate-800/80 bg-slate-900/35 p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><div className="text-xs text-sky-300">{reviewTypeLabel[item.type]}</div><div className="mt-1 text-sm font-semibold text-white">{item.primaryName} <span className="mx-1 text-slate-600">↔</span> {item.secondaryName}</div></div><div className={`text-xs ${item.decisionState === 'stale' ? 'text-amber-200' : 'text-slate-400'}`}>{reviewDecisionLabel(item)} · confiança {Math.round(item.confidence * 100)}%</div></div><div className="mt-3 grid gap-2 text-xs text-slate-400 md:grid-cols-2"><div><span className="text-slate-500">Contexto: </span>{Object.entries(item.context).map(([entryKey, value]) => { const shown = reviewValue(value); return shown ? <span key={entryKey} className="mr-3 inline-block">{entryKey}: <span className="text-slate-200">{shown}</span></span> : null })}</div><div><span className="text-slate-500">Evidência: </span>{Object.entries(item.evidence).map(([entryKey, value]) => { const shown = reviewValue(value); return shown ? <span key={entryKey} className="mr-3 inline-block">{entryKey}: <span className="text-slate-200">{shown}</span></span> : null })}</div></div>{item.decisionState === 'stale' ? <p className="mt-3 text-xs text-amber-200">A fonte mudou depois da última decisão. Desfaça-a explicitamente e registre um novo motivo antes de revisar de novo.</p> : null}<div className="mt-3 grid gap-2 border-t border-slate-800/70 pt-3 md:grid-cols-[minmax(0,1fr)_auto]">{item.type === 'attendance_name_merge' && !undoable ? <select aria-label={`Cliente sobrevivente para ${item.primaryName}`} value={draft.survivorClientId} onChange={(event) => updateDraft(item, { survivorClientId: event.target.value })} disabled={!writesReady || isActing} className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"><option value="">Escolha o cliente canônico a manter</option><option value={item.sourceId}>Manter {item.primaryName}</option><option value={item.targetId}>Manter {item.secondaryName}</option></select> : null}<input aria-label={`Motivo da decisão para ${item.primaryName}`} value={draft.reason} onChange={(event) => updateDraft(item, { reason: event.target.value })} placeholder={undoable ? 'Motivo do desfazimento' : 'Motivo da decisão'} maxLength={1000} disabled={!writesReady || isActing} className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><div className="flex flex-wrap gap-2 md:justify-end">{undoable ? <Button size="sm" variant="outline" onClick={() => void undo(item)} disabled={!writesReady || isActing || draft.reason.trim().length < 3}>Desfazer decisão</Button> : <><Button size="sm" onClick={() => void decide(item, 'confirmed')} disabled={!writesReady || isActing || draft.reason.trim().length < 3 || (item.type === 'attendance_name_merge' && !draft.survivorClientId)}>Confirmar</Button><Button size="sm" variant="outline" onClick={() => void decide(item, 'rejected')} disabled={!writesReady || isActing || draft.reason.trim().length < 3}>Rejeitar</Button></>}</div></div></article>
+    })}{!busy && !items.length ? <p className="py-6 text-center text-sm text-slate-500">Nenhuma sugestão encontrada para estes filtros.</p> : null}</div>
     {items.length < total ? <div className="mt-4 text-center"><Button size="sm" variant="outline" onClick={() => void load(items.length, true)} disabled={busy}>Carregar mais 100</Button></div> : null}
   </section>
 }

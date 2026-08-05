@@ -6,6 +6,7 @@ import {
     actorIdentityForMutation,
     atendimentoMigrationStatements,
     canAccessAtendimento,
+    collectIdentityReviewSourceLinkTransitions,
     createAtendimentoStore,
     filterConversionReportToActorScope,
     normalizeAttendanceMutation,
@@ -15,6 +16,47 @@ import {
     ATTENDANCE_WRITE_SAFETY_MIGRATION_ID,
     attendanceWriteSafetyMigrationPlan,
 } from '../writeSafetyMigration.js'
+
+test('records only real automatic source-link topology changes from a reviewed source edge', () => {
+    const candidate = {
+        reviewType: 'app_caixa',
+        sourceType: 'app_registration',
+        sourceId: 'app-1',
+        targetType: 'caixa_customer',
+        targetId: 'cash-1',
+    }
+    assert.deepEqual(collectIdentityReviewSourceLinkTransitions({
+        candidate,
+        previousStatus: 'auto_confirmed',
+        resultingStatus: 'rejected',
+    }), [{
+        linkType: 'app_caixa',
+        sourceType: 'app_registration',
+        sourceId: 'app-1',
+        targetType: 'caixa_customer',
+        targetId: 'cash-1',
+        transition: 'automatic_deactivated',
+        resultingStatus: 'rejected',
+    }])
+    assert.deepEqual(collectIdentityReviewSourceLinkTransitions({
+        candidate,
+        previousStatus: 'suggested',
+        resultingStatus: 'auto_confirmed_spelling',
+    }), [{
+        linkType: 'app_caixa',
+        sourceType: 'app_registration',
+        sourceId: 'app-1',
+        targetType: 'caixa_customer',
+        targetId: 'cash-1',
+        transition: 'automatic_activated',
+        resultingStatus: 'auto_confirmed_spelling',
+    }])
+    assert.deepEqual(collectIdentityReviewSourceLinkTransitions({
+        candidate: { ...candidate, reviewType: 'attendance_name_merge' },
+        previousStatus: 'auto_confirmed',
+        resultingStatus: 'rejected',
+    }), [])
+})
 
 test('recalculates manual values on the server and rejects invalid financial records', () => {
     const normalized = normalizeAttendanceMutation({
@@ -333,7 +375,11 @@ test('records auditable commercial permission and gates contacted transitions on
     assert.equal(actionUpdated, true)
     assert.equal(queries.filter(({ sql }) => sql === 'set transaction isolation level read committed').length, 2)
     const advisoryLocks = queries.filter(({ sql }) => sql.includes('pg_advisory_xact_lock'))
-    assert.equal(advisoryLocks.length, 3)
+    // Each commercial transaction also takes the shared identity-graph lock,
+    // before its narrower contact/identity locks.  That keeps a source
+    // materialization from rebinding an identity while consent is written.
+    assert.equal(advisoryLocks.length, 5)
+    assert.equal(advisoryLocks.filter(({ params }) => params?.[0] === 'crm_atendimento.identity_graph_materialization').length, 2)
     assert.equal(advisoryLocks.some(({ params }) => params?.[0] === 'skincos.contact-phone:5511999999999'), true)
     assert.ok(
         queries.findIndex(({ sql, params }) => sql.includes('skincos.contact-phone') && params?.[0] === 'skincos.contact-phone:5511999999999')
@@ -1139,6 +1185,203 @@ test('returns remuneration only as a versioned legacy preview policy', async () 
     assert.equal(preview.doctors[0].remuneration, 300)
     assert.equal(preview.doctors[0].remunerationFormulaVersion, 'attendance-remuneration/legacy-preview-v1')
     assert.equal(preview.remunerationPolicy.businessStatus, 'pending_confirmation')
+})
+
+test('blocks a same-identity review undo when that historical identity has commercial evidence', async () => {
+    const queries = []
+    const sourceClientId = '11111111-1111-4111-8111-111111111111'
+    const targetClientId = '22222222-2222-4222-8222-222222222222'
+    const identityId = '33333333-3333-4333-8333-333333333333'
+    const sourceVersion = '35c54b6916b6b8191a17f8500ab103d8'
+    const pool = createFakePool([
+        (sql, params) => {
+            queries.push({ sql, params })
+            if (sql.includes("to_regclass('crm_atendimento.client_merge_suggestions') as merges")) {
+                return { rows: [{ merges: 'merges', attendance_caixa: 'links', app: 'app', leads: 'leads' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.schema_migrations') as registry")) {
+                return {
+                    rows: [{
+                        registry: 'schema_migrations', decisions: 'identity_review_decisions', runs: 'identity_materialization_runs',
+                        member_history: 'identity_member_history', lineage: 'identity_lineage', source_link_history: 'identity_source_link_history',
+                        run_event_order: true, member_history_event_order: true, decision_resulting_status: true, decision_event_order: true,
+                        decision_immutable: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                    }],
+                    rowCount: 1,
+                }
+            }
+            if (sql.startsWith('select id from crm_atendimento.schema_migrations')) {
+                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }], rowCount: 2 }
+            }
+            if (sql.includes('from crm_atendimento.client_merge_suggestions m') && sql.includes('for update of m')) {
+                return {
+                    rows: [{
+                        row_id: 'merge-1', status: 'confirmed', evidence: {}, review_version: sourceVersion,
+                        source_name: 'Cliente A', target_name: 'Cliente B', context: {},
+                    }],
+                    rowCount: 1,
+                }
+            }
+            if (sql.includes('from crm_atendimento.identity_review_decisions') && sql.includes('limit 1 for update')) {
+                return {
+                    rows: [{
+                        id: 'decision-1', event_order: 10, decision: 'confirmed', source_status: 'pending', resulting_status: 'confirmed',
+                        source_version: sourceVersion, materialization_run_id: 'run-1', source_snapshot: {}, created_at: '2026-08-05T00:00:00.000Z',
+                    }],
+                    rowCount: 1,
+                }
+            }
+            if (sql.startsWith('update crm_atendimento.client_merge_suggestions')) {
+                return { rows: [{ status: 'pending', review_version: '8af5f0ef4bd5fce3a63d653f7aef947e' }], rowCount: 1 }
+            }
+            if (sql.includes('from crm_atendimento.identity_materialization_runs') && sql.includes('where id=$1::uuid for share')) {
+                return {
+                    rows: [{
+                        event_order: 11,
+                        summary: {
+                            sourceIdentityId: identityId,
+                            targetIdentityId: identityId,
+                            survivorIdentityId: identityId,
+                            retiredIdentityId: null,
+                        },
+                    }],
+                    rowCount: 1,
+                }
+            }
+            if (sql.startsWith('select details from crm_atendimento.schema_migrations')) {
+                return { rows: [{ details: { sourceLinkLedgerCutoverRunEventOrder: 0 } }], rowCount: 1 }
+            }
+            if (sql.includes('from crm_atendimento.identity_materialization_runs') && sql.includes('where id=$1::uuid for update')) {
+                return {
+                    rows: [{
+                        id: 'run-1', status: 'applied',
+                        created_at: '2026-08-05T00:00:00.000Z',
+                        summary: {
+                            sourceIdentityId: identityId,
+                            targetIdentityId: identityId,
+                            survivorIdentityId: identityId,
+                            retiredIdentityId: null,
+                        },
+                    }],
+                    rowCount: 1,
+                }
+            }
+            if (sql.includes('from crm_atendimento.identity_member_history where materialization_run_id=$1::uuid')) {
+                return { rows: [], rowCount: 0 }
+            }
+            if (sql.includes('from crm_atendimento.commercial_actions where identity_id=any($1::uuid[])')) {
+                return { rows: [{ actions: 1, permissions: 0, permission_events: 0, canary_entries: 0, audit_identity_events: 0 }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.undoIdentityReviewDecision({
+            reviewType: 'attendance_name_merge',
+            sourceId: sourceClientId,
+            targetId: targetClientId,
+            expectedVersion: sourceVersion,
+            reason: 'Há histórico comercial que impede a reversão automática.',
+        }, { id: 'gestor-1', role: 'GESTOR' }),
+        { message: 'IDENTITY_REVIEW_COMMERCIAL_HISTORY_PRESENT', statusCode: 409 },
+    )
+
+    const historyGuard = queries.find(({ sql }) => sql.includes('from crm_atendimento.commercial_actions where identity_id=any($1::uuid[])'))
+    assert.deepEqual(historyGuard?.params, [[identityId]])
+    assert.equal(queries.some(({ sql }) => sql.startsWith('insert into crm_atendimento.identity_materialization_runs(')), false)
+    assert.equal(queries.some(({ sql }) => sql.startsWith('insert into crm_atendimento.identity_review_decisions(')), false)
+})
+
+test('blocks an undo when a later automatic source link remains active without a member move', async () => {
+    const queries = []
+    const sourceClientId = '11111111-1111-4111-8111-111111111111'
+    const targetClientId = '22222222-2222-4222-8222-222222222222'
+    const survivorIdentityId = '33333333-3333-4333-8333-333333333333'
+    const retiredIdentityId = '44444444-4444-4444-8444-444444444444'
+    const sourceVersion = '35c54b6916b6b8191a17f8500ab103d8'
+    const pool = createFakePool([
+        (sql, params) => {
+            queries.push({ sql, params })
+            if (sql.includes("to_regclass('crm_atendimento.client_merge_suggestions') as merges")) {
+                return { rows: [{ merges: 'merges', attendance_caixa: 'links', app: 'app', leads: 'leads' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.schema_migrations') as registry")) {
+                return {
+                    rows: [{
+                        registry: 'schema_migrations', decisions: 'identity_review_decisions', runs: 'identity_materialization_runs',
+                        member_history: 'identity_member_history', lineage: 'identity_lineage', source_link_history: 'identity_source_link_history',
+                        run_event_order: true, member_history_event_order: true, decision_resulting_status: true, decision_event_order: true,
+                        decision_immutable: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                    }],
+                    rowCount: 1,
+                }
+            }
+            if (sql.startsWith('select id from crm_atendimento.schema_migrations')) {
+                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }], rowCount: 2 }
+            }
+            if (sql.includes('from crm_atendimento.client_merge_suggestions m') && sql.includes('for update of m')) {
+                return {
+                    rows: [{
+                        row_id: 'merge-1', status: 'confirmed', evidence: {}, review_version: sourceVersion,
+                        source_name: 'Cliente A', target_name: 'Cliente B', context: {},
+                    }],
+                    rowCount: 1,
+                }
+            }
+            if (sql.includes('from crm_atendimento.identity_review_decisions') && sql.includes('limit 1 for update')) {
+                return {
+                    rows: [{
+                        id: 'decision-1', event_order: 10, decision: 'confirmed', source_status: 'pending', resulting_status: 'confirmed',
+                        source_version: sourceVersion, materialization_run_id: 'run-1', source_snapshot: {}, created_at: '2026-08-05T00:00:00.000Z',
+                    }],
+                    rowCount: 1,
+                }
+            }
+            if (sql.includes('from crm_atendimento.identity_materialization_runs') && sql.includes('where id=$1::uuid for share')) {
+                return {
+                    rows: [{
+                        event_order: 22,
+                        summary: {
+                            sourceIdentityId: survivorIdentityId,
+                            targetIdentityId: retiredIdentityId,
+                            survivorIdentityId,
+                            retiredIdentityId,
+                        },
+                    }],
+                    rowCount: 1,
+                }
+            }
+            if (sql.startsWith('select details from crm_atendimento.schema_migrations')) {
+                return { rows: [{ details: { sourceLinkLedgerCutoverRunEventOrder: 0 } }], rowCount: 1 }
+            }
+            if (sql.includes('latest_source_links as (')) {
+                return { rows: [{ link_type: 'attendance_caixa', source_type: 'attendance_client', source_id: sourceClientId }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.undoIdentityReviewDecision({
+            reviewType: 'attendance_name_merge',
+            sourceId: sourceClientId,
+            targetId: targetClientId,
+            expectedVersion: sourceVersion,
+            reason: 'Uma confirmação automática posterior ainda depende desta identidade.',
+        }, { id: 'gestor-1', role: 'GESTOR' }),
+        { message: 'IDENTITY_REVIEW_UNDO_DEPENDENT_DECISION', statusCode: 409 },
+    )
+
+    const dependencyCheck = queries.find(({ sql }) => sql.includes('latest_source_links as ('))
+    assert.deepEqual(dependencyCheck?.params, ['run-1', 22, 'attendance_client', sourceClientId, 'attendance_client', targetClientId])
+    assert.match(dependencyCheck?.sql || '', /links\.transition='automatic_activated'/)
+    assert.match(dependencyCheck?.sql || '', /links\.event_order>\$2::bigint/)
+    assert.match(dependencyCheck?.sql || '', /run\.status in \('applied','not_applicable'\)/)
+    assert.equal(queries.some(({ sql }) => sql.startsWith('update crm_atendimento.client_merge_suggestions')), false)
+    assert.equal(queries.some(({ sql }) => sql.startsWith('update crm_atendimento.global_client_identity_members')), false)
 })
 
 function buildConversionPoolHandlers() {

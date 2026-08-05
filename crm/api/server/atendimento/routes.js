@@ -298,6 +298,30 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    expressRouter.post('/commercial/review/:type/decision', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await store.decideIdentityReview({ ...(req.body || {}), reviewType: String(req.params.type || '') }, req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/review/:type/undo', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await store.undoIdentityReviewDecision({ ...(req.body || {}), reviewType: String(req.params.type || '') }, req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.get('/commercial/profiles/:identityId', async (req, res) => {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
