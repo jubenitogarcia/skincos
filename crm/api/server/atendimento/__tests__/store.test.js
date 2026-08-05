@@ -119,6 +119,25 @@ test('scopes atendimento router access by consuming module', () => {
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/catalog', 'GET'), false)
 })
 
+test('uses an explicitly managed schema without bootstrapping DDL from the app pool', async () => {
+    const queries = []
+    const pool = createFakePool([
+        (sql) => {
+            queries.push(sql)
+            if (sql.includes('from crm_atendimento.clients c')) {
+                return { rows: [{ name: 'Cliente sintético', usage_count: 1 }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const result = await createAtendimentoStore({ pool, schemaManaged: true }).clients(
+        { unit: 'barra-shopping-sul', q: 'an', limit: 5 },
+        { id: 'synthetic-gestor', role: 'GESTOR' },
+    )
+    assert.deepEqual(result.clients, [{ name: 'Cliente sintético', usageCount: 1 }])
+    assert.equal(queries.some((sql) => sql.includes('create extension if not exists pgcrypto')), false)
+})
+
 test('scopes Clientes commercial reads, queues, actions, cadences and offers to explicit GESTOR units', async () => {
     const captured = []
     const identityId = '11111111-1111-4111-8111-111111111111'
