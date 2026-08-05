@@ -280,9 +280,16 @@ export function buildCommercialDataQualityObservations({ core = {}, reviewRows =
         mirrorSyncedAgeHours,
         latestImportAgeHours,
     }
-    const mirrorStale = mirrorSyncedAgeHours === null || latestImportAgeHours === null ||
-        mirrorSyncedAgeHours > COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS ||
-        latestImportAgeHours > COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS
+    // A live Google Sheets import is a valid source checkpoint even when the
+    // local mirror has never been materialized.  A recent local mirror is also
+    // a valid fallback when no live import has been recorded.  Treat the source
+    // as healthy when either checkpoint is recent, and stale only when both
+    // checkpoints are absent or over the SLA.
+    const mirrorFresh = mirrorSyncedAgeHours !== null &&
+        mirrorSyncedAgeHours <= COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS
+    const importFresh = latestImportAgeHours !== null &&
+        latestImportAgeHours <= COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS
+    const mirrorStale = !mirrorFresh && !importFresh
     const appRegistrationSnapshotAvailable = core.app_registration_snapshot_available === true || core.appRegistrationSnapshotAvailable === true
     const appRegistrationSnapshotVerified = core.app_registration_snapshot_verified === true || core.appRegistrationSnapshotVerified === true
     const appRegistrationSnapshotResidual = appRegistrationSnapshotVerified

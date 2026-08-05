@@ -1310,10 +1310,49 @@ test('imports source rows with one actor value for both audit columns', async ()
         actor: { id: 'google-sheet-import', role: 'GESTOR' },
     })
 
-    assert.deepEqual(result, { dryRun: false, records: 1, inserted: 1, updated: 0, skipped: 0 })
+    assert.deepEqual(result, { dryRun: false, records: 1, inserted: 1, updated: 0, skipped: 0, importBatchId: null })
     const write = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.attendances('))
     assert.match(write.sql, /values \(\$1,\$2,\$3,\$4,\$5,\$6,\$7,\$8,\$9,\$10,\$11,\$12,\$13,\$14,\$15,\$16,\$17,\$18,\$19,\$19\)/)
     assert.equal(write.params.at(-1), 'google-sheet-import')
+})
+
+test('records an aggregate source checkpoint for a completed Google Sheets import', async () => {
+    const queries = []
+    const fakePool = createFakePool([
+        (sql, params) => {
+            queries.push({ sql, params })
+            if (sql.startsWith('insert into crm_atendimento.units(')) {
+                return { rows: [{ id: 'unit-1', slug: 'novo-hamburgo', name: 'Novo Hamburgo' }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.procedures(')) {
+                return { rows: [{ id: 'procedure-1', name: 'Botox' }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.attendances(')) {
+                return { rows: [{ id: 'attendance-1', inserted: true }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.import_batches(')) {
+                return { rows: [{ id: 'batch-1' }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const result = await createAtendimentoStore({ pool: fakePool }).importRecords({
+        records: [{
+            unitSlug: 'novo-hamburgo', unitName: 'Novo Hamburgo', date: '2026-07-24',
+            clientName: 'Cliente', procedureName: 'Botox', code: '#0699', quantity: 1,
+            discount: false, otherValue: 0, roundValue: false, value: 699,
+            injectorName: '', consultantName: '', observation: '',
+            sourceSheetId: 'sheet-1', sourceTab: 'Novo Hamburgo', sourceRow: 3,
+        }],
+        cache: { procedures: [], professionals: [], procedureCodes: [], schedules: [] },
+        actor: { id: 'google-sheet-import', role: 'GESTOR' },
+        source: { sourceSheetId: 'sheet-1', sourceName: 'Atendimento', tabs: ['Novo Hamburgo'], snapshotComplete: true },
+    })
+
+    assert.equal(result.importBatchId, 'batch-1')
+    const checkpoint = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.import_batches('))
+    assert.deepEqual(checkpoint.params.slice(0, 2), ['sheet-1', 'Atendimento'])
+    assert.match(checkpoint.params[3], /"snapshotComplete":true/)
 })
 
 test('rejects a direct non-manager attempt to replace the persisted consultant before any write', async () => {

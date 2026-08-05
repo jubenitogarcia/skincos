@@ -48,23 +48,35 @@ test('builds only aggregate quality findings and preserves source freshness ages
     assert.equal(JSON.stringify(observations).match(/phone|email|evidence|source_id/i), null)
 })
 
-test('treats a missing or over-threshold mirror timestamp as stale without retaining a path', () => {
-    const stale = buildCommercialDataQualityObservations({ freshness: { latestImportAgeHours: 12 } })
+test('accepts a recent import checkpoint when the local mirror is absent', () => {
+    const fresh = buildCommercialDataQualityObservations({ freshness: { latestImportAgeHours: 12 } })
         .find((item) => item.key === 'source.local_mirror_stale')
-    assert.equal(stale?.observedCount, 1)
-    assert.deepEqual(stale?.metrics, {
+    assert.equal(fresh?.observedCount, 0)
+    assert.deepEqual(fresh?.metrics, {
         thresholdHours: COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS,
         latestImportAgeHours: 12,
     })
     assert.doesNotMatch(COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES.freshness, /backup_path|source_fingerprint|path/i)
 })
 
-test('opens the freshness finding when the latest import is stale even if the mirror age is recent', () => {
+test('treats absent or jointly stale source checkpoints as stale', () => {
+    const missing = buildCommercialDataQualityObservations({ freshness: {} })
+        .find((item) => item.key === 'source.local_mirror_stale')
+    assert.equal(missing?.observedCount, 1)
+    const stale = buildCommercialDataQualityObservations({ freshness: { mirrorSyncedAgeHours: 49, latestImportAgeHours: 49 } })
+        .find((item) => item.key === 'source.local_mirror_stale')
+    assert.equal(stale?.observedCount, 1)
+    const mirrorFallback = buildCommercialDataQualityObservations({ freshness: { mirrorSyncedAgeHours: 12 } })
+        .find((item) => item.key === 'source.local_mirror_stale')
+    assert.equal(mirrorFallback?.observedCount, 0)
+})
+
+test('accepts a recent mirror checkpoint when the latest import is stale', () => {
     const freshness = buildCommercialDataQualityObservations({
         freshness: { mirrorSyncedAgeHours: 2, latestImportAgeHours: 49 },
     }).find((item) => item.key === 'source.local_mirror_stale')
 
-    assert.equal(freshness?.observedCount, 1)
+    assert.equal(freshness?.observedCount, 0)
     assert.deepEqual(freshness?.metrics, {
         thresholdHours: COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS,
         mirrorSyncedAgeHours: 2,
