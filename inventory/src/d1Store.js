@@ -1,5 +1,9 @@
 // @ts-nocheck
-import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits } from '../../shared/identity-contract/index.js';
+import {
+  hasUnitScopeAccess,
+  normalizeAllowedUnits as normalizeCanonicalAllowedUnits,
+  normalizeUnitScope,
+} from '../../shared/identity-contract/index.js';
 
 function toInt(v, fallback = 0) {
   const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
@@ -13,6 +17,147 @@ function toNumber(v, fallback = 0) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const IDEMPOTENCY_PENDING_STATUS = 'PENDING';
+const IDEMPOTENCY_COMPLETED_STATUS = 'COMPLETED';
+
+function canonicalCommandValue(value, key = '') {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map((entry) => canonicalCommandValue(entry));
+  if (typeof value === 'object') {
+    const out = {};
+    for (const name of Object.keys(value).sort()) {
+      // The actor is always server-derived. A client supplied usuario/actor
+      // must not produce a second command hash or affect the ledger.
+      if (['usuario', 'actor', 'responsavel', 'responsible'].includes(String(name).toLowerCase())) continue;
+      out[name] = canonicalCommandValue(value[name], name);
+    }
+    return out;
+  }
+  return String(value);
+}
+
+function canonicalCommandJson(value) {
+  return JSON.stringify(canonicalCommandValue(value));
+}
+
+async function sha256Hex(value) {
+  const input = new TextEncoder().encode(String(value || ''));
+  const digest = await crypto.subtle.digest('SHA-256', input);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function resultChanges(result) {
+  const changes = result?.meta?.changes;
+  return Number.isFinite(Number(changes)) ? Number(changes) : 0;
+}
+
+function actorName(actor) {
+  if (typeof actor === 'string') return actor.trim();
+  return String(actor?.username || actor?.user || actor?.id || '').trim();
+}
+
+function assertActorUnitScope(actor, unit) {
+  const normalized = normalizeUnitScope(unit);
+  if (!normalized || !hasUnitScopeAccess(actor, normalized)) {
+    return { ok: false, status: 403, code: 'RBAC_UNIT_DENIED', error: 'Sem permissão para unidade' };
+  }
+  return { ok: true, unit: normalized };
+}
+
+/**
+ * Claims a server-side command slot before a write and stores the successful
+ * response. A repeated command by the same actor/key is replayed verbatim;
+ * concurrent execution receives a deterministic conflict instead of double
+ * applying stock.
+ */
+export async function d1ExecuteIdempotent({ env, actor, action, idempotencyKey, command, execute }) {
+  const subject = actorName(actor);
+  const key = String(idempotencyKey || '').trim().slice(0, 180);
+  if (!subject) return { ok: false, status: 401, code: 'ACTOR_REQUIRED', error: 'Responsável da operação não identificado' };
+  if (!key) return { ok: false, status: 428, code: 'IDEMPOTENCY_REQUIRED', error: 'Idempotency-Key é obrigatório' };
+  if (typeof execute !== 'function') return { ok: false, status: 500, code: 'IDEMPOTENCY_EXECUTOR_INVALID', error: 'Comando inválido' };
+
+  const commandJson = canonicalCommandJson({ actor: subject, action: String(action || '').trim(), key, command });
+  const commandHash = await sha256Hex(commandJson);
+  const now = nowIso();
+  const expiresAt = new Date(Date.now() + IDEMPOTENCY_TTL_MS).toISOString();
+
+  let claim = await env.DB.prepare(
+    `INSERT OR IGNORE INTO insumos_command_idempotency
+       (command_hash, actor, action, command_json, status, response_json, response_status, created_at, updated_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`
+  ).bind(commandHash, subject, String(action || '').trim(), commandJson, IDEMPOTENCY_PENDING_STATUS, now, now, expiresAt).run();
+
+  if (resultChanges(claim) === 0) {
+    let existing = await env.DB.prepare(
+      `SELECT command_hash, actor, status, response_json, response_status, expires_at
+       FROM insumos_command_idempotency
+       WHERE command_hash = ? AND actor = ?
+       LIMIT 1`
+    ).bind(commandHash, subject).first();
+
+    if (existing?.status === IDEMPOTENCY_COMPLETED_STATUS) {
+      let replay = null;
+      try { replay = existing.response_json ? JSON.parse(existing.response_json) : null; } catch { replay = null; }
+      return { ok: true, replayed: true, commandHash, result: replay || { ok: true } };
+    }
+
+    const expired = existing?.status === IDEMPOTENCY_PENDING_STATUS && String(existing?.expires_at || '') < now;
+    if (expired) {
+      claim = await env.DB.prepare(
+        `UPDATE insumos_command_idempotency
+         SET updated_at = ?, expires_at = ?
+         WHERE command_hash = ? AND actor = ? AND status = ? AND expires_at < ?`
+      ).bind(now, expiresAt, commandHash, subject, IDEMPOTENCY_PENDING_STATUS, now).run();
+      if (resultChanges(claim) === 0) {
+        existing = await env.DB.prepare(
+          `SELECT status, response_json, expires_at
+           FROM insumos_command_idempotency
+           WHERE command_hash = ? AND actor = ?
+           LIMIT 1`
+        ).bind(commandHash, subject).first();
+      }
+    }
+
+    if (resultChanges(claim) === 0 && existing?.status !== IDEMPOTENCY_COMPLETED_STATUS) {
+      return { ok: false, status: 409, code: 'IDEMPOTENCY_IN_PROGRESS', error: 'Comando idêntico em processamento' };
+    }
+  }
+
+  try {
+    const result = await execute();
+    if (result?.ok === false) {
+      await env.DB.prepare('DELETE FROM insumos_command_idempotency WHERE command_hash = ? AND actor = ?').bind(commandHash, subject).run();
+      return { ok: true, replayed: false, commandHash, result };
+    }
+
+    const responseJson = JSON.stringify(result ?? { ok: true });
+    await env.DB.prepare(
+      `UPDATE insumos_command_idempotency
+       SET status = ?, response_json = ?, response_status = ?, updated_at = ?, expires_at = ?
+       WHERE command_hash = ? AND actor = ?`
+    ).bind(
+      IDEMPOTENCY_COMPLETED_STATUS,
+      responseJson,
+      Number(result?.status || 200),
+      nowIso(),
+      expiresAt,
+      commandHash,
+      subject
+    ).run();
+    return { ok: true, replayed: false, commandHash, result };
+  } catch (error) {
+    try {
+      await env.DB.prepare('DELETE FROM insumos_command_idempotency WHERE command_hash = ? AND actor = ?').bind(commandHash, subject).run();
+    } catch {
+      // Keep the original failure; a future TTL reclaim prevents a permanent lock.
+    }
+    throw error;
+  }
 }
 
 function normalizeDateTimeInput(value) {
@@ -50,6 +195,13 @@ function buildTransferObservacoes(kind, fromUnidade, toUnidade, freeText) {
 
 function computeMovementDelta(row) {
   const tipo = normalizeTipo(row?.tipo);
+  if (tipo === 'SALDO_INICIAL') return toInt(row?.quantidade, 0);
+  if (tipo === 'ESTORNO') {
+    const compensation = normalizeTipo(row?.tipo_compensacao);
+    if (compensation.includes('ENTRADA')) return Math.max(1, toInt(row?.quantidade, 1));
+    if (compensation.includes('SAIDA')) return -Math.max(1, toInt(row?.quantidade, 1));
+    return 0;
+  }
   if (tipo === 'AJUSTE') {
     return toInt(row?.estoque_novo, 0) - toInt(row?.estoque_anterior, 0);
   }
@@ -478,6 +630,7 @@ async function listPickCandidates(env, { codigo, unidade }) {
      LEFT JOIN insumos_stocks s
        ON s.registro = i.registro AND s.unidade = ?
      WHERE b.codigo_barras = ?
+       AND COALESCE(i.archived_at, '') = ''
      ORDER BY (CASE WHEN i.data_validade IS NULL OR i.data_validade = '' THEN 1 ELSE 0 END),
               i.data_validade ASC,
               i.registro ASC`
@@ -499,7 +652,7 @@ async function listPickCandidates(env, { codigo, unidade }) {
     .filter((r) => r.registro);
 }
 
-async function pickRegistroOrAmbiguous(env, { codigo, registro, unidade, allowFefo = true }) {
+async function pickRegistroOrAmbiguous(env, { codigo, registro, unidade, allowFefo = true, quantidade = 1 }) {
   const normCodigo = String(codigo || '').trim();
   const normRegistro = String(registro || '').trim();
   if (!normCodigo) return { ok: false, code: 'BAD_REQUEST', error: 'Código inválido' };
@@ -541,20 +694,35 @@ async function pickRegistroOrAmbiguous(env, { codigo, registro, unidade, allowFe
   if (!candidates.length) return { ok: false, code: 'NOT_FOUND', error: 'Insumo não encontrado' };
   if (candidates.length > 1) {
     let fefoEnabled = false;
+    let fefoPolicy = null;
     if (allowFefo) {
       for (const c of candidates) {
         const policy = await resolveItemPolicy(env, c, c?.categoria);
         if (policy?.fefo) {
           fefoEnabled = true;
+          fefoPolicy = policy;
           break;
         }
       }
     }
 
     if (allowFefo && fefoEnabled) {
-      const pool = candidates.filter((c) => toInt(c?.estoque, 0) > 0);
-      const source = pool.length ? pool : candidates;
-      const picked = source
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const validCandidates = candidates.filter((candidate) => {
+        if (!candidate?.dataValidade) return true;
+        const expiry = new Date(candidate.dataValidade);
+        if (Number.isNaN(expiry.getTime())) return true;
+        expiry.setHours(0, 0, 0, 0);
+        return expiry >= today;
+      });
+      const sourceCandidates = validCandidates.length ? validCandidates : candidates;
+      const pool = sourceCandidates.filter((c) => toInt(c?.estoque, 0) > 0);
+      const source = pool.length ? pool : sourceCandidates;
+      const requestedQuantity = Math.max(1, toInt(quantidade, 1));
+      const withEnough = source.filter((candidate) => toInt(candidate?.estoque, 0) >= requestedQuantity);
+      const eligible = withEnough.length ? withEnough : source;
+      const picked = eligible
         .slice()
         .sort((a, b) => {
           const da = a?.dataValidade ? new Date(a.dataValidade).getTime() : Number.POSITIVE_INFINITY;
@@ -562,7 +730,16 @@ async function pickRegistroOrAmbiguous(env, { codigo, registro, unidade, allowFe
           if (da !== db) return da - db;
           return String(a.registro).localeCompare(String(b.registro));
         })[0];
-      if (picked?.registro) return { ok: true, registro: picked.registro, pickedBy: 'FEFO', policy };
+      if (picked?.registro && toInt(picked?.estoque, 0) >= requestedQuantity) return { ok: true, registro: picked.registro, pickedBy: 'FEFO', policy: fefoPolicy };
+      if (allowFefo) {
+        return {
+          ok: false,
+          code: 'INSUFFICIENT_STOCK',
+          error: 'Estoque insuficiente para o lote selecionado por FEFO',
+          registros: candidates.map((r) => String(r.registro || '').trim()).filter(Boolean),
+          candidates,
+        };
+      }
     }
 
     return {
@@ -672,6 +849,7 @@ export async function d1ListInsumos({ env, unidades, unidade }) {
         data_cadastro,
         data_atualizacao
      FROM insumos_items
+     WHERE COALESCE(archived_at, '') = ''
      ORDER BY produto COLLATE NOCASE ASC, codigo_barras ASC, registro ASC`
   ).all();
   const items = itemsRes?.results || [];
@@ -750,6 +928,7 @@ export async function d1ListInsumosLite({ env, unidade }) {
         data_cadastro,
         data_atualizacao
      FROM insumos_items
+     WHERE COALESCE(archived_at, '') = ''
      ORDER BY produto COLLATE NOCASE ASC, codigo_barras ASC, registro ASC`
   ).all();
   const items = itemsRes?.results || [];
@@ -823,7 +1002,8 @@ export async function d1ListInsumosPaged({ env, unidades, unidade, q, pagina, li
     )`);
     binds.push(like, like, like, like, like, like);
   }
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  where.unshift(`COALESCE(archived_at, '') = ''`);
+  const whereSql = `WHERE ${where.join(' AND ')}`;
 
   const countRow = await env.DB.prepare(`SELECT COUNT(1) AS n FROM insumos_items ${whereSql}`)
     .bind(...binds)
@@ -920,8 +1100,9 @@ export async function d1ListInsumosByCodigos({ env, unidades, unidade, codigos }
         `SELECT DISTINCT i.registro
          FROM insumos_items i
          LEFT JOIN insumos_barcodes b ON b.registro = i.registro
-         WHERE i.codigo_barras IN (${placeholders})
-            OR b.codigo_barras IN (${placeholders})`
+         WHERE COALESCE(i.archived_at, '') = ''
+           AND (i.codigo_barras IN (${placeholders})
+            OR b.codigo_barras IN (${placeholders}))`
       ).bind(...chunk, ...chunk).all();
       return res?.results || [];
     } catch (err) {
@@ -976,7 +1157,8 @@ export async function d1ListInsumosByCodigos({ env, unidades, unidade, codigos }
             data_cadastro,
             data_atualizacao
          FROM insumos_items
-         WHERE registro IN (${placeholders})`
+         WHERE registro IN (${placeholders})
+           AND COALESCE(archived_at, '') = ''`
       ).bind(...chunk).all();
       return res?.results || [];
     } catch (err) {
@@ -1040,14 +1222,16 @@ export async function d1ListInsumosOptions({ env, limite }) {
     env.DB.prepare(
       `SELECT DISTINCT categoria
        FROM insumos_items
-       WHERE categoria IS NOT NULL AND TRIM(categoria) != ''
+       WHERE COALESCE(archived_at, '') = ''
+         AND categoria IS NOT NULL AND TRIM(categoria) != ''
        ORDER BY categoria COLLATE NOCASE ASC
        LIMIT ?`
     ).bind(lim).all(),
     env.DB.prepare(
       `SELECT DISTINCT marca
        FROM insumos_items
-       WHERE marca IS NOT NULL AND TRIM(marca) != ''
+       WHERE COALESCE(archived_at, '') = ''
+         AND marca IS NOT NULL AND TRIM(marca) != ''
        ORDER BY marca COLLATE NOCASE ASC
        LIMIT ?`
     ).bind(lim).all()
@@ -1084,6 +1268,7 @@ export async function d1GetInsumoByRegistro(env, registro) {
         policy_requires_lot,
         policy_requires_expiry,
         policy_fefo,
+        archived_at,
         data_cadastro,
         data_atualizacao
      FROM insumos_items
@@ -1100,7 +1285,7 @@ export async function d1GetInsumoByRegistro(env, registro) {
   return { ...row, codigosBarras };
 }
 
-export async function d1CreateInsumo({ env, unidades, unidade, body }) {
+export async function d1CreateInsumo({ env, unidades, unidade, body, actor }) {
   const primaryCodigo = String(body?.codigoBarras || '').trim();
   const codigosBarras = mergeBarcodeList(primaryCodigo, normalizeBarcodeList(body?.codigosBarras));
   const codigoBarras = codigosBarras[0] || '';
@@ -1139,6 +1324,8 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
   const estoqueMinimo = toInt(body?.estoqueMinimo, 0);
   const precoCusto = toNumber(body?.precoCusto, 0);
   const estoqueInicial = toInt(body?.estoqueInicial, 0);
+  const responsavel = actorName(actor);
+  if (!responsavel) return { ok: false, status: 401, code: 'ACTOR_REQUIRED', error: 'Responsável da operação não identificado' };
 
   const categoria = String(body?.categoria || '').trim();
   const bodyPolicy = readPolicyFromBody(body);
@@ -1196,6 +1383,32 @@ export async function d1CreateInsumo({ env, unidades, unidade, body }) {
     ).bind(registro, String(unidade || '').trim(), estoqueInicial, ts)
   );
 
+  // Every new item receives an immutable opening-balance event, including a
+  // zero baseline. Future corrections never need to rewrite this row.
+  statements.push(
+    env.DB.prepare(
+      `INSERT INTO insumos_movements (
+        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+        produto, quantidade, estoque_anterior, estoque_novo, unidade, usuario,
+        motivo, observacoes, status
+      ) VALUES (?, ?, 'SALDO_INICIAL', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'COMPLETED')`
+    ).bind(
+      crypto.randomUUID(),
+      ts,
+      codigoBarras,
+      registro,
+      lote,
+      dataValidade,
+      produto,
+      estoqueInicial,
+      estoqueInicial,
+      String(unidade || '').trim(),
+      responsavel,
+      'Cadastro inicial do item',
+      'SALDO_INICIAL'
+    )
+  );
+
   await env.DB.batch(statements);
   return { ok: true, registro };
 }
@@ -1205,11 +1418,12 @@ export async function d1UpdateInsumo({ env, registro, body }) {
   if (!reg) return { ok: false, status: 400, error: 'Registro inválido' };
 
   const existing = await env.DB.prepare(
-    'SELECT registro, codigo_barras, categoria, lote, data_validade, policy_requires_lot, policy_requires_expiry, policy_fefo FROM insumos_items WHERE registro = ?'
+    'SELECT registro, codigo_barras, categoria, lote, data_validade, policy_requires_lot, policy_requires_expiry, policy_fefo, archived_at FROM insumos_items WHERE registro = ?'
   )
     .bind(reg)
     .first();
   if (!existing) return { ok: false, status: 404, error: 'Registro não encontrado' };
+  if (String(existing.archived_at || '').trim()) return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não pode ser editado' };
 
   const nextCategoria = body?.categoria !== undefined ? String(body?.categoria || '').trim() : String(existing?.categoria || '').trim();
   const nextLote = body?.lote !== undefined ? String(body?.lote || '').trim() : String(existing?.lote || '').trim();
@@ -1284,35 +1498,80 @@ export async function d1UpdateInsumo({ env, registro, body }) {
 export async function d1DeleteInsumo({ env, registro }) {
   const reg = String(registro || '').trim();
   if (!reg) return { ok: false, status: 400, error: 'Registro inválido' };
-  const exists = await env.DB.prepare('SELECT 1 FROM insumos_items WHERE registro = ?').bind(reg).first();
-  if (!exists) return { ok: false, status: 404, error: 'Registro não encontrado' };
-  await env.DB.prepare('DELETE FROM insumos_items WHERE registro = ?').bind(reg).run();
-  await env.DB.prepare('DELETE FROM insumos_barcodes WHERE registro = ?').bind(reg).run();
-  return { ok: true };
+  return { ok: false, status: 405, code: 'ARCHIVE_REQUIRED', error: 'Exclusão física de insumos é proibida; arquive o registro.' };
 }
 
-export async function d1EntradaBaixa({ env, unidade, body, kind }) {
+export async function d1ArchiveInsumo({ env, registro }) {
+  const reg = String(registro || '').trim();
+  if (!reg) return { ok: false, status: 400, error: 'Registro inválido' };
+  const item = await env.DB.prepare(
+    `SELECT registro, archived_at
+     FROM insumos_items
+     WHERE registro = ?
+     LIMIT 1`
+  ).bind(reg).first();
+  if (!item) return { ok: false, status: 404, error: 'Registro não encontrado' };
+  if (String(item.archived_at || '').trim()) return { ok: true, archivedAt: item.archived_at, alreadyArchived: true };
+
+  const positive = await env.DB.prepare(
+    `SELECT COALESCE(SUM(CASE WHEN quantidade > 0 THEN quantidade ELSE 0 END), 0) AS quantidade
+     FROM insumos_stocks
+     WHERE registro = ?`
+  ).bind(reg).first();
+  if (toInt(positive?.quantidade, 0) > 0) {
+    return { ok: false, status: 409, code: 'ARCHIVE_STOCK_NOT_ZERO', error: 'Não é possível arquivar um insumo com saldo positivo.' };
+  }
+
+  const pending = await env.DB.prepare(
+    `SELECT 1
+     FROM insumos_movements
+     WHERE registro_insumo = ?
+       AND status = 'PENDING_RECEIPT'
+     LIMIT 1`
+  ).bind(reg).first();
+  if (pending) {
+    return { ok: false, status: 409, code: 'ARCHIVE_TRANSFER_PENDING', error: 'Não é possível arquivar um insumo com transferência pendente.' };
+  }
+
+  const archivedAt = nowIso();
+  await env.DB.prepare(
+    `UPDATE insumos_items
+     SET archived_at = ?, data_atualizacao = ?
+     WHERE registro = ? AND COALESCE(archived_at, '') = ''`
+  ).bind(archivedAt, archivedAt, reg).run();
+  return { ok: true, archivedAt };
+}
+
+export async function d1EntradaBaixa({ env, unidade, body, kind, actor }) {
   const codigo = String(body?.codigoBarras || '').trim();
   const registro = String(body?.registro || '').trim();
   const quantidade = Math.max(1, toInt(body?.quantidade, 0));
-  const usuario = String(body?.usuario || '').trim();
   const observacoes = String(body?.observacoes || '').trim();
+  const unitScope = assertActorUnitScope(actor, unidade);
+  if (!unitScope.ok) return unitScope;
   if (!codigo || !quantidade) return { ok: false, status: 400, error: 'Código e quantidade são obrigatórios' };
 
-  const unit = String(unidade || '').trim();
-  const pick = await pickRegistroOrAmbiguous(env, { codigo, registro, unidade: unit, allowFefo: kind === 'BAIXA' });
+  const normalizedKind = String(kind || '').toUpperCase() === 'ENTRADA' ? 'ENTRADA' : 'BAIXA';
+  const pick = await pickRegistroOrAmbiguous(env, {
+    codigo,
+    registro,
+    unidade: unitScope.unit,
+    quantidade,
+    allowFefo: normalizedKind === 'BAIXA',
+  });
   if (!pick.ok) {
-    const status = pick.code === 'NOT_FOUND' ? 404 : pick.code === 'AMBIGUOUS' ? 409 : 400;
+    const status = pick.code === 'NOT_FOUND' ? 404 : pick.code === 'AMBIGUOUS' || pick.code === 'INSUFFICIENT_STOCK' ? 409 : 400;
     return { ok: false, status, error: pick.error, code: pick.code, registros: pick.registros || [], candidates: pick.candidates || [] };
   }
   const reg = pick.registro;
 
   const item = await env.DB.prepare(
     `SELECT registro, codigo_barras, produto, categoria, lote, data_validade, estoque_minimo,
-            policy_requires_lot, policy_requires_expiry, policy_fefo
+            policy_requires_lot, policy_requires_expiry, policy_fefo, archived_at
      FROM insumos_items WHERE registro = ?`
   ).bind(reg).first();
   if (!item) return { ok: false, status: 404, error: 'Insumo não encontrado' };
+  if (String(item.archived_at || '').trim()) return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não aceita movimentações' };
 
   const policy = await resolveItemPolicy(env, item, item?.categoria || '');
   const policyCheck = enforceLotExpiryPolicyOrError({
@@ -1322,64 +1581,161 @@ export async function d1EntradaBaixa({ env, unidade, body, kind }) {
   });
   if (!policyCheck.ok) return policyCheck;
 
+  const actorId = actorName(actor);
+  const role = String(actor?.role || '').trim().toUpperCase();
+  const justification = String(body?.justificativa || body?.negativeStockJustification || '').trim();
+  const canOverrideNegative = ['GERENTE', 'GESTOR', 'ADMIN'].includes(role);
   const beforeRow = await env.DB.prepare(
     `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
-  ).bind(reg, unit).first();
-  const estoqueAnterior = toInt(beforeRow?.quantidade, 0);
+  ).bind(reg, unitScope.unit).first();
+  const observedStock = toInt(beforeRow?.quantidade, 0);
 
-  const novoEstoque = kind === 'ENTRADA' ? estoqueAnterior + quantidade : estoqueAnterior - quantidade;
-  const quebraEstoque = kind === 'BAIXA' && novoEstoque < 0;
-  const deficit = quebraEstoque ? Math.abs(novoEstoque) : 0;
+  if (normalizedKind === 'BAIXA' && observedStock < quantidade && canOverrideNegative && !justification) {
+    return { ok: false, status: 400, code: 'NEGATIVE_STOCK_JUSTIFICATION_REQUIRED', error: 'Justificativa é obrigatória para saldo negativo' };
+  }
+  if (normalizedKind === 'BAIXA' && observedStock < quantidade && !(canOverrideNegative && justification)) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'INSUFFICIENT_STOCK',
+      error: 'Estoque insuficiente para a saída',
+      estoqueAnterior: observedStock,
+      deficit: quantidade - observedStock,
+    };
+  }
+
   const ts = nowIso();
   const movId = crypto.randomUUID();
-
+  const lote = String(item.lote || '');
+  const dataValidade = String(item.data_validade || '');
+  const produto = String(item.produto || '');
+  const negativeOverride = normalizedKind === 'BAIXA' && observedStock < quantidade;
   const stmts = [];
-  stmts.push(
-    env.DB.prepare(
-      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(registro, unidade) DO UPDATE SET quantidade=excluded.quantidade, updated_at=excluded.updated_at`
-    ).bind(reg, unit, novoEstoque, ts)
-  );
 
-  stmts.push(
-    env.DB.prepare(
-      `INSERT INTO insumos_movements (
-        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
-        produto, quantidade, estoque_anterior, estoque_novo, unidade, usuario, observacoes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      movId,
-      ts,
-      kind === 'ENTRADA' ? 'ENTRADA' : 'SAÍDA',
-      codigo,
-      reg,
-      String(item.lote || ''),
-      String(item.data_validade || ''),
-      String(item.produto || ''),
-      quantidade,
-      estoqueAnterior,
-      novoEstoque,
-      unit,
-      usuario,
-      observacoes
-    )
-  );
+  if (normalizedKind === 'ENTRADA' || negativeOverride) {
+    const delta = normalizedKind === 'ENTRADA' ? quantidade : -quantidade;
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(registro, unidade) DO UPDATE SET
+           quantidade = insumos_stocks.quantidade + excluded.quantidade,
+           updated_at = excluded.updated_at`
+      ).bind(reg, unitScope.unit, delta, ts)
+    );
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO insumos_movements (
+          id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+          produto, quantidade, estoque_anterior, estoque_novo, unidade, usuario,
+          motivo, observacoes, status
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, 'COMPLETED'
+        FROM insumos_stocks
+        WHERE registro = ? AND unidade = ? AND updated_at = ?`
+      ).bind(
+        movId,
+        ts,
+        normalizedKind === 'ENTRADA' ? 'ENTRADA' : 'SAÍDA',
+        codigo,
+        reg,
+        lote,
+        dataValidade,
+        produto,
+        quantidade,
+        delta,
+        unitScope.unit,
+        actorId,
+        negativeOverride ? justification : '',
+        observacoes,
+        reg,
+        unitScope.unit,
+        ts
+      )
+    );
+  } else {
+    // Conditional decrement is the FEFO/concurrency guard: if another request
+    // consumed the selected lot first, no movement row is written.
+    stmts.push(
+      env.DB.prepare(
+        `UPDATE insumos_stocks
+         SET quantidade = quantidade - ?, updated_at = ?
+         WHERE registro = ? AND unidade = ? AND quantidade >= ?`
+      ).bind(quantidade, ts, reg, unitScope.unit, quantidade)
+    );
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO insumos_movements (
+          id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+          produto, quantidade, estoque_anterior, estoque_novo, unidade, usuario,
+          motivo, observacoes, status
+        )
+        SELECT ?, ?, 'SAÍDA', ?, ?, ?, ?, ?, ?, quantidade + ?, quantidade, ?, ?, '', ?, 'COMPLETED'
+        FROM insumos_stocks
+        WHERE registro = ? AND unidade = ? AND updated_at = ?`
+      ).bind(
+        movId,
+        ts,
+        codigo,
+        reg,
+        lote,
+        dataValidade,
+        produto,
+        quantidade,
+        quantidade,
+        unitScope.unit,
+        actorId,
+        observacoes,
+        reg,
+        unitScope.unit,
+        ts
+      )
+    );
+  }
 
-  await env.DB.batch(stmts);
-  return { ok: true, estoqueAnterior, novoEstoque, registro: reg, quebraEstoque, deficit };
+  const results = await env.DB.batch(stmts);
+  if (normalizedKind === 'BAIXA' && !negativeOverride && resultChanges(results?.[0]) !== 1) {
+    const current = await env.DB.prepare(
+      `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
+    ).bind(reg, unitScope.unit).first();
+    const currentStock = toInt(current?.quantidade, 0);
+    return { ok: false, status: 409, code: 'INSUFFICIENT_STOCK', error: 'Estoque insuficiente para a saída', estoqueAnterior: currentStock, deficit: Math.max(0, quantidade - currentStock) };
+  }
+  if (resultChanges(results?.[1]) !== 1) {
+    return { ok: false, status: 409, code: 'STOCK_CONFLICT', error: 'Saldo alterado por outra operação; tente novamente' };
+  }
+
+  const saved = await env.DB.prepare(
+    `SELECT estoque_anterior, estoque_novo
+     FROM insumos_movements
+     WHERE id = ?`
+  ).bind(movId).first();
+  const estoqueAnterior = toInt(saved?.estoque_anterior, 0);
+  const novoEstoque = toInt(saved?.estoque_novo, 0);
+  return {
+    ok: true,
+    estoqueAnterior,
+    novoEstoque,
+    registro: reg,
+    quebraEstoque: negativeOverride,
+    deficit: negativeOverride ? Math.abs(novoEstoque) : 0,
+    negativeOverride,
+    negativeJustification: negativeOverride ? justification : null,
+    pickedBy: pick.pickedBy || null,
+  };
 }
 
-export async function d1Ajuste({ env, unidade, body }) {
+export async function d1Ajuste({ env, unidade, body, actor }) {
   const codigo = String(body?.codigoBarras || '').trim();
   const registro = String(body?.registro || '').trim();
   const motivo = String(body?.motivo || '').trim();
-  const usuario = String(body?.usuario || '').trim();
   const observacoes = String(body?.observacoes || '').trim();
   const novoEstoque = toInt(body?.novoEstoque, NaN);
+  const unitScope = assertActorUnitScope(actor, unidade);
   if (!codigo) return { ok: false, status: 400, error: 'Código é obrigatório' };
   if (!motivo) return { ok: false, status: 400, error: 'Motivo é obrigatório para ajuste' };
   if (!Number.isFinite(novoEstoque) || novoEstoque < 0) return { ok: false, status: 400, error: 'novoEstoque inválido' };
+  if (!unitScope.ok) return unitScope;
 
   const unit = String(unidade || '').trim();
   const pick = await pickRegistroOrAmbiguous(env, { codigo, registro, unidade: unit, allowFefo: false });
@@ -1391,7 +1747,7 @@ export async function d1Ajuste({ env, unidade, body }) {
 
   const item = await env.DB.prepare(
     `SELECT registro, codigo_barras, produto, categoria, lote, data_validade,
-            policy_requires_lot, policy_requires_expiry, policy_fefo
+            policy_requires_lot, policy_requires_expiry, policy_fefo, archived_at
      FROM insumos_items WHERE registro = ?`
   ).bind(reg).first();
   if (!item) return { ok: false, status: 404, error: 'Insumo não encontrado' };
@@ -1408,29 +1764,39 @@ export async function d1Ajuste({ env, unidade, body }) {
     `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
   ).bind(reg, unit).first();
   const estoqueAnterior = toInt(beforeRow?.quantidade, 0);
+  if (String(item.archived_at || '').trim()) return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não aceita movimentações' };
   const diff = Math.abs((Number(novoEstoque) || 0) - (Number(estoqueAnterior) || 0));
 
   const ts = nowIso();
   const movId = crypto.randomUUID();
+  const actorId = actorName(actor);
 
   const stmts = [];
   stmts.push(
     env.DB.prepare(
-      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(registro, unidade) DO UPDATE SET quantidade=excluded.quantidade, updated_at=excluded.updated_at`
-    ).bind(reg, unit, novoEstoque, ts)
+      `INSERT OR IGNORE INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+       VALUES (?, ?, 0, ?)`
+    ).bind(reg, unit, ts)
+  );
+  stmts.push(
+    env.DB.prepare(
+      `UPDATE insumos_stocks
+       SET quantidade = ?, updated_at = ?
+       WHERE registro = ? AND unidade = ? AND quantidade = ?`
+    ).bind(novoEstoque, ts, reg, unit, estoqueAnterior)
   );
   stmts.push(
     env.DB.prepare(
       `INSERT INTO insumos_movements (
         id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
-        produto, quantidade, estoque_anterior, estoque_novo, unidade, usuario, motivo, observacoes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        produto, quantidade, estoque_anterior, estoque_novo, unidade, usuario, motivo, observacoes, status
+      )
+      SELECT ?, ?, 'AJUSTE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED'
+      FROM insumos_stocks
+      WHERE registro = ? AND unidade = ? AND updated_at = ? AND quantidade = ?`
     ).bind(
       movId,
       ts,
-      'AJUSTE',
       codigo,
       reg,
       String(item.lote || ''),
@@ -1440,41 +1806,55 @@ export async function d1Ajuste({ env, unidade, body }) {
       estoqueAnterior,
       novoEstoque,
       unit,
-      usuario,
+      actorId,
       motivo,
-      observacoes
+      observacoes,
+      reg,
+      unit,
+      ts,
+      novoEstoque
     )
   );
-  await env.DB.batch(stmts);
+  const results = await env.DB.batch(stmts);
+  if (resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1) {
+    return { ok: false, status: 409, code: 'STOCK_CONFLICT', error: 'Saldo alterado por outra operação; tente novamente' };
+  }
   return { ok: true, estoqueAnterior, novoEstoque, registro: reg };
 }
 
-export async function d1Transfer({ env, body }) {
+export async function d1Transfer({ env, body, actor, unidade }) {
   const codigo = String(body?.codigoBarras || '').trim();
   const registro = String(body?.registro || '').trim();
   const quantidade = Math.max(1, toInt(body?.quantidade, 0));
   const fromUnidade = String(body?.fromUnidade || body?.unidadeOrigem || body?.from || '').trim();
   const toUnidade = String(body?.toUnidade || body?.unidadeDestino || body?.to || '').trim();
-  const usuario = String(body?.usuario || '').trim();
   const observacoes = String(body?.observacoes || '').trim();
 
   if (!codigo || !quantidade) return { ok: false, status: 400, error: 'Código e quantidade são obrigatórios' };
   if (!fromUnidade || !toUnidade) return { ok: false, status: 400, error: 'Unidade origem e destino são obrigatórias' };
   if (fromUnidade === toUnidade) return { ok: false, status: 400, error: 'Origem e destino devem ser diferentes' };
+  const fromScope = assertActorUnitScope(actor, fromUnidade);
+  const toScope = assertActorUnitScope(actor, toUnidade);
+  if (!fromScope.ok) return fromScope;
+  if (!toScope.ok) return toScope;
+  if (unidade && normalizeUnitScope(unidade) !== fromScope.unit) {
+    return { ok: false, status: 400, code: 'UNIT_ORIGIN_MISMATCH', error: 'A unidade da rota deve ser a origem da transferência' };
+  }
 
-  const pick = await pickRegistroOrAmbiguous(env, { codigo, registro, unidade: fromUnidade, allowFefo: true });
+  const pick = await pickRegistroOrAmbiguous(env, { codigo, registro, unidade: fromScope.unit, quantidade, allowFefo: true });
   if (!pick.ok) {
-    const status = pick.code === 'NOT_FOUND' ? 404 : pick.code === 'AMBIGUOUS' ? 409 : 400;
+    const status = pick.code === 'NOT_FOUND' ? 404 : (pick.code === 'AMBIGUOUS' || pick.code === 'INSUFFICIENT_STOCK') ? 409 : 400;
     return { ok: false, status, error: pick.error, code: pick.code, registros: pick.registros || [], candidates: pick.candidates || [] };
   }
   const reg = pick.registro;
 
   const item = await env.DB.prepare(
     `SELECT registro, codigo_barras, produto, categoria, lote, data_validade,
-            policy_requires_lot, policy_requires_expiry, policy_fefo
+            policy_requires_lot, policy_requires_expiry, policy_fefo, archived_at
      FROM insumos_items WHERE registro = ?`
   ).bind(reg).first();
   if (!item) return { ok: false, status: 404, error: 'Insumo não encontrado' };
+  if (String(item.archived_at || '').trim()) return { ok: false, status: 409, code: 'INSUMO_ARCHIVED', error: 'Insumo arquivado não aceita movimentações' };
 
   const policy = await resolveItemPolicy(env, item, item?.categoria || '');
   const policyCheck = enforceLotExpiryPolicyOrError({
@@ -1486,38 +1866,39 @@ export async function d1Transfer({ env, body }) {
 
   const beforeOrig = await env.DB.prepare(
     `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
-  ).bind(reg, fromUnidade).first();
+  ).bind(reg, fromScope.unit).first();
   const beforeDest = await env.DB.prepare(
     `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
-  ).bind(reg, toUnidade).first();
+  ).bind(reg, toScope.unit).first();
   const estoqueAnteriorOrigem = toInt(beforeOrig?.quantidade, 0);
   const estoqueAnteriorDestino = toInt(beforeDest?.quantidade, 0);
-
-  const estoqueNovoOrigem = estoqueAnteriorOrigem - quantidade;
-  const estoqueNovoDestino = estoqueAnteriorDestino + quantidade;
-  const quebraEstoqueOrigem = estoqueNovoOrigem < 0;
-  const deficitOrigem = quebraEstoqueOrigem ? Math.abs(estoqueNovoOrigem) : 0;
-
   const ts = nowIso();
   const transferId = crypto.randomUUID();
 
-  const obsSaida = `Transferência para ${toUnidade}${observacoes ? ` | ${observacoes}` : ''}`;
-  const obsEntrada = `Transferência de ${fromUnidade}${observacoes ? ` | ${observacoes}` : ''}`;
+  const obsSaida = `Transferência para ${toScope.unit}${observacoes ? ` | ${observacoes}` : ''}`;
+  const obsEntrada = `Transferência de ${fromScope.unit}${observacoes ? ` | ${observacoes}` : ''}`;
+  const actorId = actorName(actor);
 
   const stmts = [];
   stmts.push(
     env.DB.prepare(
-      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(registro, unidade) DO UPDATE SET quantidade=excluded.quantidade, updated_at=excluded.updated_at`
-    ).bind(reg, fromUnidade, estoqueNovoOrigem, ts)
+      `UPDATE insumos_stocks
+       SET quantidade = quantidade - ?, updated_at = ?
+       WHERE registro = ? AND unidade = ? AND quantidade >= ?`
+    ).bind(quantidade, ts, reg, fromScope.unit, quantidade)
   );
   stmts.push(
     env.DB.prepare(
       `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(registro, unidade) DO UPDATE SET quantidade=excluded.quantidade, updated_at=excluded.updated_at`
-    ).bind(reg, toUnidade, estoqueNovoDestino, ts)
+       SELECT ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM insumos_stocks
+         WHERE registro = ? AND unidade = ? AND updated_at = ?
+       )
+       ON CONFLICT(registro, unidade) DO UPDATE SET
+         quantidade = insumos_stocks.quantidade + excluded.quantidade,
+         updated_at = excluded.updated_at`
+    ).bind(reg, toScope.unit, quantidade, ts, reg, fromScope.unit, ts)
   );
 
   const produto = String(item.produto || '');
@@ -1528,56 +1909,82 @@ export async function d1Transfer({ env, body }) {
     env.DB.prepare(
       `INSERT INTO insumos_movements (
         id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto,
-        quantidade, estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia, usuario, observacoes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        quantidade, estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia, usuario, observacoes, status
+      )
+      SELECT ?, ?, 'SAÍDA', ?, ?, ?, ?, ?, ?, quantidade + ?, quantidade, ?, ?, ?, ?, ?, ?, 'COMPLETED'
+      FROM insumos_stocks
+      WHERE registro = ? AND unidade = ? AND updated_at = ?`
     ).bind(
       crypto.randomUUID(),
       ts,
-      'SAÍDA',
       codigo,
       reg,
       lote,
       dataValidade,
       produto,
       quantidade,
-      estoqueAnteriorOrigem,
-      estoqueNovoOrigem,
-      fromUnidade,
-      fromUnidade,
-      toUnidade,
+      quantidade,
+      fromScope.unit,
+      fromScope.unit,
+      toScope.unit,
       transferId,
-      usuario,
-      obsSaida
+      actorId,
+      obsSaida,
+      reg,
+      fromScope.unit,
+      ts
     )
   );
   stmts.push(
     env.DB.prepare(
       `INSERT INTO insumos_movements (
         id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto,
-        quantidade, estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia, usuario, observacoes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        quantidade, estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia, usuario, observacoes, status
+      )
+      SELECT ?, ?, 'ENTRADA', ?, ?, ?, ?, ?, ?, quantidade - ?, quantidade, ?, ?, ?, ?, ?, ?, 'COMPLETED'
+      FROM insumos_stocks
+      WHERE registro = ? AND unidade = ? AND updated_at = ?
+        AND EXISTS (
+          SELECT 1 FROM insumos_stocks
+          WHERE registro = ? AND unidade = ? AND updated_at = ?
+        )`
     ).bind(
       crypto.randomUUID(),
       ts,
-      'ENTRADA',
       codigo,
       reg,
       lote,
       dataValidade,
       produto,
       quantidade,
-      estoqueAnteriorDestino,
-      estoqueNovoDestino,
-      toUnidade,
-      fromUnidade,
-      toUnidade,
+      quantidade,
+      toScope.unit,
+      fromScope.unit,
+      toScope.unit,
       transferId,
-      usuario,
-      obsEntrada
+      actorId,
+      obsEntrada,
+      reg,
+      toScope.unit,
+      ts,
+      reg,
+      fromScope.unit,
+      ts
     )
   );
 
-  await env.DB.batch(stmts);
+  const results = await env.DB.batch(stmts);
+  if (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1 || resultChanges(results?.[3]) !== 1) {
+    const current = await env.DB.prepare(
+      `SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?`
+    ).bind(reg, fromScope.unit).first();
+    const currentStock = toInt(current?.quantidade, 0);
+    return { ok: false, status: 409, code: 'INSUFFICIENT_STOCK', error: 'Estoque insuficiente na unidade de origem', estoqueAnteriorOrigem: currentStock, deficitOrigem: Math.max(0, quantidade - currentStock) };
+  }
+  const sourceAfter = await env.DB.prepare('SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?').bind(reg, fromScope.unit).first();
+  const destinationAfter = await env.DB.prepare('SELECT quantidade FROM insumos_stocks WHERE registro = ? AND unidade = ?').bind(reg, toScope.unit).first();
+  const estoqueNovoOrigem = toInt(sourceAfter?.quantidade, 0);
+  const estoqueNovoDestino = toInt(destinationAfter?.quantidade, 0);
   return {
     ok: true,
     transferId,
@@ -1585,13 +1992,409 @@ export async function d1Transfer({ env, body }) {
     estoqueNovoOrigem,
     estoqueAnteriorDestino,
     estoqueNovoDestino,
-    quebraEstoqueOrigem,
-    deficitOrigem,
+    quebraEstoqueOrigem: false,
+    deficitOrigem: 0,
     registro: reg
   };
 }
 
+async function d1EstornarMovimentacaoLegacy({ env, id, actor, justificativa }) {
+  const movementId = String(id || '').trim();
+  const reason = String(justificativa || '').trim();
+  if (!movementId) return { ok: false, status: 400, code: 'MOVEMENT_INVALID', error: 'Movimentação inválida' };
+  if (reason.length < 3) return { ok: false, status: 400, code: 'JUSTIFICATION_REQUIRED', error: 'Motivo do estorno é obrigatório' };
+  const original = await env.DB.prepare(
+    `SELECT id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+            produto, quantidade, estoque_anterior, estoque_novo, unidade,
+            unidade_origem, unidade_destino, id_transferencia, usuario, motivo,
+            observacoes, status, estorno_de
+     FROM insumos_movements
+     WHERE id = ?
+     LIMIT 1`
+  ).bind(movementId).first();
+  if (!original) return { ok: false, status: 404, code: 'MOVEMENT_NOT_FOUND', error: 'Movimentação não encontrada' };
+  if (String(original.estorno_de || '').trim()) return { ok: false, status: 409, code: 'REVERSAL_NOT_REVERSIBLE', error: 'Movimentação compensatória não pode ser estornada novamente' };
+  const already = await env.DB.prepare(
+    `SELECT 1 FROM insumos_movements WHERE estorno_de = ? LIMIT 1`
+  ).bind(movementId).first();
+  if (already) return { ok: false, status: 409, code: 'ALREADY_REVERSED', error: 'Movimentação já possui estorno' };
+
+  const tipo = normalizeTipo(original.tipo);
+  if (tipo === 'SALDO_INICIAL') return { ok: false, status: 409, code: 'OPENING_BALANCE_NOT_REVERSIBLE', error: 'Saldo inicial só pode ser corrigido por ajuste compensatório' };
+  if (tipo === 'ESTORNO') return { ok: false, status: 409, code: 'REVERSAL_NOT_REVERSIBLE', error: 'Movimentação compensatória não pode ser estornada novamente' };
+
+  const actorId = actorName(actor);
+  const transferId = String(original.id_transferencia || '').trim();
+  const pairRows = transferId
+    ? ((await env.DB.prepare(
+      `SELECT id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+              produto, quantidade, estoque_anterior, estoque_novo, unidade,
+              unidade_origem, unidade_destino, id_transferencia, status, estorno_de
+       FROM insumos_movements
+       WHERE id_transferencia = ?
+       ORDER BY data_hora ASC, id ASC`
+    ).bind(transferId).all())?.results || [])
+    : [original];
+  if (pairRows.some((row) => String(row.estorno_de || '').trim() || String(row.status || 'COMPLETED').toUpperCase() !== 'COMPLETED')) {
+    return { ok: false, status: 409, code: 'TRANSFER_NOT_EFFECTIVE', error: 'A transferência ainda não está efetivada ou já foi compensada' };
+  }
+
+  for (const row of pairRows) {
+    const scope = assertActorUnitScope(actor, row.unidade);
+    if (!scope.ok) return scope;
+  }
+
+  const ts = nowIso();
+  const compensationRows = [];
+  const statements = [];
+  const addMovementInsert = ({ row, movId, beforeExpression, afterExpression, compensationType, whereSql, whereBinds }) => {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO insumos_movements (
+          id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+          produto, quantidade, estoque_anterior, estoque_novo, unidade,
+          unidade_origem, unidade_destino, id_transferencia, usuario, motivo,
+          observacoes, status, estorno_de, tipo_compensacao
+        )
+        SELECT ?, ?, 'ESTORNO', ?, ?, ?, ?, ?, ?, ${beforeExpression}, ${afterExpression}, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?
+        FROM insumos_stocks
+        WHERE ${whereSql}`
+      ).bind(
+        movId,
+        ts,
+        row.codigo_barras || '',
+        row.registro_insumo || '',
+        row.lote || '',
+        row.data_validade || '',
+        row.produto || '',
+        Math.max(1, toInt(row.quantidade, 1)),
+        row.unidade || '',
+        row.unidade_origem || '',
+        row.unidade_destino || '',
+        row.id_transferencia || null,
+        actorId,
+        reason,
+        `Estorno da movimentação ${row.id}`,
+        row.id,
+        compensationType,
+        ...whereBinds
+      )
+    );
+  };
+
+  if (transferId && pairRows.length >= 2) {
+    const source = pairRows.find((row) => normalizeTipo(row.tipo).includes('SAIDA'));
+    const destination = pairRows.find((row) => normalizeTipo(row.tipo).includes('ENTRADA'));
+    if (!source || !destination) return { ok: false, status: 409, code: 'TRANSFER_INVALID', error: 'Par de transferência inválido' };
+    const quantity = Math.max(1, toInt(source.quantidade, 1));
+    const destUnit = normalizeUnitScope(destination.unidade);
+    const sourceUnit = normalizeUnitScope(source.unidade);
+    const destReg = String(destination.registro_insumo || '').trim();
+    const sourceReg = String(source.registro_insumo || '').trim();
+    if (!destReg || !sourceReg || destReg !== sourceReg) return { ok: false, status: 409, code: 'TRANSFER_INVALID', error: 'Transferência sem registro consistente' };
+
+    statements.push(
+      env.DB.prepare(
+        `UPDATE insumos_stocks
+         SET quantidade = quantidade - ?, updated_at = ?
+         WHERE registro = ? AND unidade = ? AND quantidade >= ?`
+      ).bind(quantity, ts, destReg, destUnit, quantity)
+    );
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+         SELECT ?, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM insumos_stocks WHERE registro = ? AND unidade = ? AND updated_at = ?)
+         ON CONFLICT(registro, unidade) DO UPDATE SET
+           quantidade = insumos_stocks.quantidade + excluded.quantidade,
+           updated_at = excluded.updated_at`
+      ).bind(sourceReg, sourceUnit, quantity, ts, destReg, destUnit, ts)
+    );
+
+    const sourceEstornoId = crypto.randomUUID();
+    const destinationEstornoId = crypto.randomUUID();
+    compensationRows.push(sourceEstornoId, destinationEstornoId);
+    addMovementInsert({
+      row: source,
+      movId: sourceEstornoId,
+      beforeExpression: 'quantidade - ?',
+      afterExpression: 'quantidade',
+      compensationType: 'ENTRADA',
+      whereSql: 'registro = ? AND unidade = ? AND updated_at = ? AND EXISTS (SELECT 1 FROM insumos_stocks WHERE registro = ? AND unidade = ? AND updated_at = ?)',
+      whereBinds: [sourceReg, sourceUnit, ts, destReg, destUnit, ts],
+    });
+    addMovementInsert({
+      row: destination,
+      movId: destinationEstornoId,
+      beforeExpression: 'quantidade + ?',
+      afterExpression: 'quantidade',
+      compensationType: 'SAIDA',
+      whereSql: 'registro = ? AND unidade = ? AND updated_at = ?',
+      whereBinds: [destReg, destUnit, ts],
+    });
+    // The quantity used by the source/destination expressions is bound as the
+    // final placeholder for each SELECT below.
+    statements[2] = env.DB.prepare(
+      statements[2].rawSql || ''
+    );
+  } else {
+    const row = original;
+    const unit = normalizeUnitScope(row.unidade);
+    const reg = String(row.registro_insumo || '').trim();
+    const quantity = Math.max(1, toInt(row.quantidade, 1));
+    const before = toInt(row.estoque_anterior, 0);
+    const after = toInt(row.estoque_novo, 0);
+    const movId = crypto.randomUUID();
+    compensationRows.push(movId);
+    if (tipo === 'ENTRADA') {
+      statements.push(
+        env.DB.prepare(
+          `UPDATE insumos_stocks SET quantidade = quantidade - ?, updated_at = ?
+           WHERE registro = ? AND unidade = ? AND quantidade >= ?`
+        ).bind(quantity, ts, reg, unit, quantity)
+      );
+      addMovementInsert({ row, movId, beforeExpression: 'quantidade + ?', afterExpression: 'quantidade', compensationType: 'SAIDA', whereSql: 'registro = ? AND unidade = ? AND updated_at = ?', whereBinds: [reg, unit, ts, quantity] });
+    } else if (tipo === 'SAIDA') {
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(registro, unidade) DO UPDATE SET quantidade = insumos_stocks.quantidade + excluded.quantidade, updated_at = excluded.updated_at`
+        ).bind(reg, unit, quantity, ts)
+      );
+      addMovementInsert({ row, movId, beforeExpression: 'quantidade - ?', afterExpression: 'quantidade', compensationType: 'ENTRADA', whereSql: 'registro = ? AND unidade = ? AND updated_at = ?', whereBinds: [reg, unit, ts, quantity] });
+    } else if (tipo === 'AJUSTE') {
+      statements.push(env.DB.prepare('INSERT OR IGNORE INTO insumos_stocks (registro, unidade, quantidade, updated_at) VALUES (?, ?, ?, ?)').bind(reg, unit, before, ts));
+      statements.push(env.DB.prepare('UPDATE insumos_stocks SET quantidade = ?, updated_at = ? WHERE registro = ? AND unidade = ? AND quantidade = ?').bind(before, ts, reg, unit, after));
+      addMovementInsert({ row, movId, beforeExpression: 'quantidade + ?', afterExpression: 'quantidade', compensationType: 'AJUSTE', whereSql: 'registro = ? AND unidade = ? AND updated_at = ? AND quantidade = ?', whereBinds: [reg, unit, ts, before, Math.abs(after - before)] });
+    } else {
+      return { ok: false, status: 409, code: 'MOVEMENT_NOT_REVERSIBLE', error: 'Tipo de movimentação não pode ser estornado' };
+    }
+  }
+
+  // The helper above uses quantity as a final SQL expression parameter. D1
+  // statements are immutable prepared objects, so bind the expressions in a
+  // dedicated, explicit form below instead of relying on mutable SQL state.
+  const normalizedStatements = [];
+  if (transferId && pairRows.length >= 2) {
+    const source = pairRows.find((row) => normalizeTipo(row.tipo).includes('SAIDA'));
+    const destination = pairRows.find((row) => normalizeTipo(row.tipo).includes('ENTRADA'));
+    const quantity = Math.max(1, toInt(source.quantidade, 1));
+    const sourceReg = String(source.registro_insumo || '').trim();
+    const sourceUnit = normalizeUnitScope(source.unidade);
+    const destReg = String(destination.registro_insumo || '').trim();
+    const destUnit = normalizeUnitScope(destination.unidade);
+    normalizedStatements.push(statements[0], statements[1]);
+    const make = (row, movId, beforeExpr, afterExpr, compensationType, whereSql, binds) => env.DB.prepare(
+      `INSERT INTO insumos_movements (
+        id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+        produto, quantidade, estoque_anterior, estoque_novo, unidade,
+        unidade_origem, unidade_destino, id_transferencia, usuario, motivo,
+        observacoes, status, estorno_de, tipo_compensacao
+      ) SELECT ?, ?, 'ESTORNO', ?, ?, ?, ?, ?, ?, ${beforeExpr}, ${afterExpr}, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?
+      FROM insumos_stocks WHERE ${whereSql}`
+    ).bind(
+      movId, ts, row.codigo_barras || '', row.registro_insumo || '', row.lote || '', row.data_validade || '', row.produto || '', quantity,
+      quantity, row.unidade || '', row.unidade_origem || '', row.unidade_destino || '', row.id_transferencia || null, actorId, reason,
+      `Estorno da movimentação ${row.id}`, row.id, compensationType, ...binds
+    );
+    normalizedStatements.push(make(source, compensationRows[0], 'quantidade - ?', 'quantidade', 'ENTRADA', 'registro = ? AND unidade = ? AND updated_at = ? AND EXISTS (SELECT 1 FROM insumos_stocks WHERE registro = ? AND unidade = ? AND updated_at = ?)', [sourceReg, sourceUnit, ts, destReg, destUnit, ts, quantity]));
+    normalizedStatements.push(make(destination, compensationRows[1], 'quantidade + ?', 'quantidade', 'SAIDA', 'registro = ? AND unidade = ? AND updated_at = ?', [destReg, destUnit, ts, quantity]));
+  } else {
+    normalizedStatements.push(...statements);
+  }
+
+  const results = await env.DB.batch(normalizedStatements);
+  const minimumExpected = transferId && pairRows.length >= 2 ? 4 : (tipo === 'AJUSTE' ? 3 : 2);
+  if ((transferId && pairRows.length >= 2 && (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1 || resultChanges(results?.[3]) !== 1)) || (!transferId && ((tipo === 'AJUSTE' && (resultChanges(results?.[1]) !== 1 || resultChanges(results?.[2]) !== 1)) || (tipo !== 'AJUSTE' && (resultChanges(results?.[0]) !== 1 || resultChanges(results?.[1]) !== 1))))) {
+    return { ok: false, status: 409, code: 'REVERSAL_CONFLICT', error: 'O saldo não permite aplicar o estorno com segurança' };
+  }
+  return { ok: true, estornoIds: compensationRows, transferId: transferId || null, registro: String(original.registro_insumo || '').trim() };
+}
+
+export async function d1EstornarMovimentacao({ env, id, actor, justificativa }) {
+  const movementId = String(id || '').trim();
+  const reason = String(justificativa || '').trim();
+  if (!movementId) return { ok: false, status: 400, code: 'MOVEMENT_INVALID', error: 'Movimentação inválida' };
+  if (reason.length < 3) return { ok: false, status: 400, code: 'JUSTIFICATION_REQUIRED', error: 'Motivo do estorno é obrigatório' };
+
+  const original = await env.DB.prepare(
+    `SELECT id, tipo, codigo_barras, registro_insumo, lote, data_validade, produto,
+            quantidade, estoque_anterior, estoque_novo, unidade, unidade_origem,
+            unidade_destino, id_transferencia, usuario, status, estorno_de
+     FROM insumos_movements WHERE id = ? LIMIT 1`
+  ).bind(movementId).first();
+  if (!original) return { ok: false, status: 404, code: 'MOVEMENT_NOT_FOUND', error: 'Movimentação não encontrada' };
+  if (String(original.estorno_de || '').trim()) return { ok: false, status: 409, code: 'REVERSAL_NOT_REVERSIBLE', error: 'Movimentação compensatória não pode ser estornada novamente' };
+  if (await env.DB.prepare('SELECT 1 FROM insumos_movements WHERE estorno_de = ? LIMIT 1').bind(movementId).first()) {
+    return { ok: false, status: 409, code: 'ALREADY_REVERSED', error: 'Movimentação já possui estorno' };
+  }
+
+  const tipo = normalizeTipo(original.tipo);
+  if (tipo === 'SALDO_INICIAL' || tipo === 'ESTORNO') {
+    return { ok: false, status: 409, code: 'MOVEMENT_NOT_REVERSIBLE', error: 'Este tipo de movimentação não pode ser estornado' };
+  }
+  const actorId = actorName(actor);
+  const ts = nowIso();
+  const transferId = String(original.id_transferencia || '').trim();
+
+  const pairRows = transferId
+    ? ((await env.DB.prepare(
+      `SELECT id, tipo, codigo_barras, registro_insumo, lote, data_validade, produto,
+              quantidade, unidade, unidade_origem, unidade_destino, id_transferencia,
+              status, estorno_de
+       FROM insumos_movements WHERE id_transferencia = ? ORDER BY data_hora ASC, id ASC`
+    ).bind(transferId).all())?.results || [])
+    : [original];
+  if (pairRows.some((row) => String(row.estorno_de || '').trim())) {
+    return { ok: false, status: 409, code: 'ALREADY_REVERSED', error: 'Transferência já possui estorno' };
+  }
+  if (pairRows.some((row) => String(row.status || 'COMPLETED').toUpperCase() !== 'COMPLETED')) {
+    return { ok: false, status: 409, code: 'TRANSFER_NOT_EFFECTIVE', error: 'A transferência ainda não está efetivada' };
+  }
+  for (const row of pairRows) {
+    const scope = assertActorUnitScope(actor, row.unidade);
+    if (!scope.ok) return scope;
+  }
+
+  const statements = [];
+  const estornoIds = [];
+  const makeMovement = ({ row, movId, movementQuantity, beforeExpression, afterExpression, compensationType, whereSql, whereBinds }) => {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO insumos_movements (
+          id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade,
+          produto, quantidade, estoque_anterior, estoque_novo, unidade,
+          unidade_origem, unidade_destino, id_transferencia, usuario, motivo,
+          observacoes, status, estorno_de, tipo_compensacao
+        )
+        SELECT ?, ?, 'ESTORNO', ?, ?, ?, ?, ?, ?, ${beforeExpression}, ${afterExpression},
+               ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?
+        FROM insumos_stocks
+        WHERE ${whereSql}`
+      ).bind(
+        movId,
+        ts,
+        row.codigo_barras || '',
+        row.registro_insumo || '',
+        row.lote || '',
+        row.data_validade || '',
+        row.produto || '',
+        movementQuantity,
+        movementQuantity,
+        row.unidade || '',
+        row.unidade_origem || '',
+        row.unidade_destino || '',
+        row.id_transferencia || null,
+        actorId,
+        reason,
+        `Estorno da movimentação ${row.id}`,
+        row.id,
+        compensationType,
+        ...whereBinds
+      )
+    );
+  };
+
+  if (transferId && pairRows.length >= 2) {
+    const source = pairRows.find((row) => normalizeTipo(row.tipo).includes('SAIDA'));
+    const destination = pairRows.find((row) => normalizeTipo(row.tipo).includes('ENTRADA'));
+    if (!source || !destination) return { ok: false, status: 409, code: 'TRANSFER_INVALID', error: 'Par de transferência inválido' };
+    const quantity = Math.max(1, toInt(source.quantidade, 1));
+    const sourceReg = String(source.registro_insumo || '').trim();
+    const sourceUnit = normalizeUnitScope(source.unidade);
+    const destinationReg = String(destination.registro_insumo || '').trim();
+    const destinationUnit = normalizeUnitScope(destination.unidade);
+    if (!sourceReg || sourceReg !== destinationReg) return { ok: false, status: 409, code: 'TRANSFER_INVALID', error: 'Transferência sem registro consistente' };
+
+    statements.push(env.DB.prepare(
+      `UPDATE insumos_stocks SET quantidade = quantidade - ?, updated_at = ?
+       WHERE registro = ? AND unidade = ? AND quantidade >= ?`
+    ).bind(quantity, ts, destinationReg, destinationUnit, quantity));
+    statements.push(env.DB.prepare(
+      `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+       SELECT ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM insumos_stocks WHERE registro = ? AND unidade = ? AND updated_at = ?)
+       ON CONFLICT(registro, unidade) DO UPDATE SET
+         quantidade = insumos_stocks.quantidade + excluded.quantidade,
+         updated_at = excluded.updated_at`
+    ).bind(sourceReg, sourceUnit, quantity, ts, destinationReg, destinationUnit, ts));
+
+    const sourceEstornoId = crypto.randomUUID();
+    const destinationEstornoId = crypto.randomUUID();
+    estornoIds.push(sourceEstornoId, destinationEstornoId);
+    makeMovement({
+      row: source,
+      movId: sourceEstornoId,
+      movementQuantity: quantity,
+      beforeExpression: 'quantidade - ?',
+      afterExpression: 'quantidade',
+      compensationType: 'ENTRADA',
+      whereSql: 'registro = ? AND unidade = ? AND updated_at = ? AND EXISTS (SELECT 1 FROM insumos_stocks WHERE registro = ? AND unidade = ? AND updated_at = ?)',
+      whereBinds: [sourceReg, sourceUnit, ts, destinationReg, destinationUnit, ts],
+    });
+    makeMovement({
+      row: destination,
+      movId: destinationEstornoId,
+      movementQuantity: quantity,
+      beforeExpression: 'quantidade + ?',
+      afterExpression: 'quantidade',
+      compensationType: 'SAIDA',
+      whereSql: 'registro = ? AND unidade = ? AND updated_at = ?',
+      whereBinds: [destinationReg, destinationUnit, ts],
+    });
+  } else {
+    const row = original;
+    const unit = normalizeUnitScope(row.unidade);
+    const reg = String(row.registro_insumo || '').trim();
+    const quantity = Math.max(1, toInt(row.quantidade, 1));
+    const before = toInt(row.estoque_anterior, 0);
+    const after = toInt(row.estoque_novo, 0);
+    const estornoId = crypto.randomUUID();
+    estornoIds.push(estornoId);
+
+    if (tipo === 'ENTRADA') {
+      statements.push(env.DB.prepare(
+        `UPDATE insumos_stocks SET quantidade = quantidade - ?, updated_at = ?
+         WHERE registro = ? AND unidade = ? AND quantidade >= ?`
+      ).bind(quantity, ts, reg, unit, quantity));
+      makeMovement({ row, movId: estornoId, movementQuantity: quantity, beforeExpression: 'quantidade + ?', afterExpression: 'quantidade', compensationType: 'SAIDA', whereSql: 'registro = ? AND unidade = ? AND updated_at = ?', whereBinds: [reg, unit, ts] });
+    } else if (tipo === 'SAIDA') {
+      statements.push(env.DB.prepare(
+        `INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(registro, unidade) DO UPDATE SET
+           quantidade = insumos_stocks.quantidade + excluded.quantidade,
+           updated_at = excluded.updated_at`
+      ).bind(reg, unit, quantity, ts));
+      makeMovement({ row, movId: estornoId, movementQuantity: quantity, beforeExpression: 'quantidade - ?', afterExpression: 'quantidade', compensationType: 'ENTRADA', whereSql: 'registro = ? AND unidade = ? AND updated_at = ?', whereBinds: [reg, unit, ts] });
+    } else if (tipo === 'AJUSTE') {
+      const diff = Math.abs(after - before);
+      statements.push(env.DB.prepare('INSERT OR IGNORE INTO insumos_stocks (registro, unidade, quantidade, updated_at) VALUES (?, ?, ?, ?)').bind(reg, unit, before, ts));
+      statements.push(env.DB.prepare(
+        `UPDATE insumos_stocks SET quantidade = ?, updated_at = ?
+         WHERE registro = ? AND unidade = ? AND quantidade = ?`
+      ).bind(before, ts, reg, unit, after));
+      makeMovement({ row, movId: estornoId, movementQuantity: diff, beforeExpression: 'quantidade + ?', afterExpression: 'quantidade', compensationType: 'AJUSTE', whereSql: 'registro = ? AND unidade = ? AND updated_at = ? AND quantidade = ?', whereBinds: [reg, unit, ts, before] });
+    } else {
+      return { ok: false, status: 409, code: 'MOVEMENT_NOT_REVERSIBLE', error: 'Este tipo de movimentação não pode ser estornado' };
+    }
+  }
+
+  const results = await env.DB.batch(statements);
+  const transferValid = transferId && pairRows.length >= 2;
+  const successful = transferValid
+    ? results.length >= 4 && results.slice(0, 4).every((result) => resultChanges(result) === 1)
+    : (tipo === 'AJUSTE'
+      ? resultChanges(results?.[1]) === 1 && resultChanges(results?.[2]) === 1
+      : resultChanges(results?.[0]) === 1 && resultChanges(results?.[1]) === 1);
+  if (!successful) return { ok: false, status: 409, code: 'REVERSAL_CONFLICT', error: 'O saldo não permite aplicar o estorno com segurança' };
+  return { ok: true, estornoIds, transferId: transferId || null, registro: String(original.registro_insumo || '').trim() };
+}
+
 export async function d1UpdateMovimentacao({ env, id, body }) {
+  return { ok: false, status: 405, code: 'LEDGER_IMMUTABLE', error: 'Movimentações são imutáveis; use o estorno compensatório' };
+  /* legacy implementation retained only for source compatibility */
   const movementId = String(id || '').trim();
   if (!movementId) return { ok: false, status: 400, error: 'Movimentação inválida' };
 
@@ -1739,6 +2542,8 @@ export async function d1UpdateMovimentacao({ env, id, body }) {
 }
 
 export async function d1DeleteMovimentacao({ env, id }) {
+  return { ok: false, status: 405, code: 'LEDGER_IMMUTABLE', error: 'Movimentações são imutáveis; use o estorno compensatório' };
+  /* legacy implementation retained only for source compatibility */
   const movementId = String(id || '').trim();
   if (!movementId) return { ok: false, status: 400, error: 'Movimentação inválida' };
 
@@ -1832,6 +2637,12 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
         m.usuario AS usuario,
         m.motivo AS motivo,
         m.observacoes AS observacoes,
+        m.status AS ledgerStatus,
+        m.estorno_de AS estornoDe,
+        m.tipo_compensacao AS tipoCompensacao,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM insumos_movements reversal WHERE reversal.estorno_de = m.id
+        ) THEN 'ESTORNADO' ELSE COALESCE(m.status, 'COMPLETED') END AS status,
         m.registro_insumo AS registroInsumo,
         m.lote AS lote,
         m.data_validade AS dataValidade,
@@ -1852,6 +2663,7 @@ export async function d1ListMovimentacoes({ env, unidade, tipo, de, ate, pagina,
     movimentos: (rows?.results || []).map((r) => ({
       ...r,
       preco: toNumber(r.preco, 0),
+      estornado: String(r.status || '').toUpperCase() === 'ESTORNADO',
     })),
     resumo: { totalMovimentacoes, pagina: pag, limite: lim }
   };
@@ -2015,7 +2827,8 @@ export async function d1UpdateUserProfile(env, username, updates) {
 
     await env.DB.prepare(`DELETE FROM ${usersTable} WHERE LOWER(username) = LOWER(?)`).bind(u).run();
     // Best-effort propagate to other tables where we store username as text.
-    try { await env.DB.prepare(`UPDATE insumos_movements SET usuario=? WHERE usuario=?`).bind(nextUsername, existing.username).run(); } catch { }
+    // Ledger rows retain the backend actor captured at posting time. User
+    // profile changes must never rewrite historical responsibility.
     try { await env.DB.prepare(`UPDATE share_history SET user=? WHERE user=?`).bind(nextUsername, existing.username).run(); } catch { }
     try { await env.DB.prepare(`UPDATE audit_log SET actor=? WHERE actor=?`).bind(nextUsername, existing.username).run(); } catch { }
 

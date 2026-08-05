@@ -97,6 +97,7 @@ export async function buildBackupPayload({ env }) {
                 `SELECT registro, codigo_barras as codigoBarras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade as tipoUnidade,
                         fonte, preco_custo as precoCusto, estoque_minimo as estoqueMinimo, lote, data_validade as dataValidade,
                         policy_requires_lot as policyRequiresLot, policy_requires_expiry as policyRequiresExpiry, policy_fefo as policyFefo,
+                        archived_at as archivedAt,
                         data_cadastro as dataCadastro, data_atualizacao as dataAtualizacao
                  FROM insumos_items`
             ).all();
@@ -117,7 +118,8 @@ export async function buildBackupPayload({ env }) {
             const mv = await env.DB.prepare(
                 `SELECT id, data_hora as dataHora, tipo, codigo_barras as codigoBarras, registro_insumo as registroInsumo, lote, data_validade as dataValidade, produto, quantidade,
                         estoque_anterior as estoqueAnterior, estoque_novo as estoqueNovo, unidade, unidade_origem as unidadeOrigem, unidade_destino as unidadeDestino,
-                        id_transferencia as transferId, usuario, motivo, observacoes
+                        id_transferencia as transferId, usuario, motivo, observacoes,
+                        status, estorno_de as estornoDe, tipo_compensacao as tipoCompensacao
                  FROM insumos_movements`
             ).all();
             d1Dump.insumosMovements = mv?.results || [];
@@ -159,8 +161,11 @@ export async function restoreBackupPayload({ env, payload }) {
                 : (Array.isArray(p.d1.insumosUsers) ? p.d1.insumosUsers : []);
 
             if (Array.isArray(p.d1.insumosStocks)) await env.DB.prepare('DELETE FROM insumos_stocks').run();
-            if (Array.isArray(p.d1.insumosMovements)) await env.DB.prepare('DELETE FROM insumos_movements').run();
-            if (Array.isArray(p.d1.insumosItems)) await env.DB.prepare('DELETE FROM insumos_items').run();
+            // The stock ledger is append-only. Restore may add missing evidence,
+            // but it must never erase or rewrite movements already posted.
+            // Items are restored by upsert. Deleting them would cascade into
+            // insumos_movements through the legacy foreign key and violate the
+            // append-only ledger contract.
             if (usersRows.length) await env.DB.prepare(`DELETE FROM ${usersTable}`).run();
             if (Array.isArray(p.d1.shareHistory)) await env.DB.prepare('DELETE FROM share_history').run();
 
@@ -210,8 +215,29 @@ export async function restoreBackupPayload({ env, payload }) {
                      (registro, codigo_barras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade,
                       fonte, preco_custo, estoque_minimo, lote, data_validade,
                       policy_requires_lot, policy_requires_expiry, policy_fefo,
-                      data_cadastro, data_atualizacao)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                      archived_at, data_cadastro, data_atualizacao)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(registro) DO UPDATE SET
+                       codigo_barras = excluded.codigo_barras,
+                       produto = excluded.produto,
+                       categoria = excluded.categoria,
+                       marca = excluded.marca,
+                       especificacao = excluded.especificacao,
+                       concentracao = excluded.concentracao,
+                       volume = excluded.volume,
+                       calibre = excluded.calibre,
+                       tipo_unidade = excluded.tipo_unidade,
+                       fonte = excluded.fonte,
+                       preco_custo = excluded.preco_custo,
+                       estoque_minimo = excluded.estoque_minimo,
+                       lote = excluded.lote,
+                       data_validade = excluded.data_validade,
+                       policy_requires_lot = excluded.policy_requires_lot,
+                       policy_requires_expiry = excluded.policy_requires_expiry,
+                       policy_fefo = excluded.policy_fefo,
+                       archived_at = excluded.archived_at,
+                       data_cadastro = excluded.data_cadastro,
+                       data_atualizacao = excluded.data_atualizacao`
                 )
                     .bind(
                         row.registro || '',
@@ -232,6 +258,7 @@ export async function restoreBackupPayload({ env, payload }) {
                         row.policyRequiresLot !== undefined && row.policyRequiresLot !== null ? (Number(row.policyRequiresLot) ? 1 : 0) : null,
                         row.policyRequiresExpiry !== undefined && row.policyRequiresExpiry !== null ? (Number(row.policyRequiresExpiry) ? 1 : 0) : null,
                         row.policyFefo !== undefined && row.policyFefo !== null ? (Number(row.policyFefo) ? 1 : 0) : null,
+                        row.archivedAt || null,
                         row.dataCadastro || new Date().toISOString(),
                         row.dataAtualizacao || new Date().toISOString()
                     )
@@ -247,11 +274,11 @@ export async function restoreBackupPayload({ env, payload }) {
             }
             for (const row of (p.d1.insumosMovements || []).reverse()) {
                 await env.DB.prepare(
-                    `INSERT INTO insumos_movements
+                    `INSERT OR IGNORE INTO insumos_movements
                      (id, data_hora, tipo, codigo_barras, registro_insumo, lote, data_validade, produto, quantidade,
                       estoque_anterior, estoque_novo, unidade, unidade_origem, unidade_destino, id_transferencia,
-                      usuario, motivo, observacoes)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                      usuario, motivo, observacoes, status, estorno_de, tipo_compensacao)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
                 )
                     .bind(
                         row.id || crypto.randomUUID(),
@@ -271,7 +298,10 @@ export async function restoreBackupPayload({ env, payload }) {
                         row.transferId || '',
                         row.usuario || '',
                         row.motivo || '',
-                        row.observacoes || ''
+                        row.observacoes || '',
+                        row.status || 'COMPLETED',
+                        row.estornoDe || null,
+                        row.tipoCompensacao || null
                     )
                     .run();
             }
