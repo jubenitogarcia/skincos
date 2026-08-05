@@ -19,6 +19,12 @@ const releaseSurfacesByUnit = {
   "escala-api": ["runtime"],
   "meta-ads-report": ["runtime"],
   "public-website-release": ["website"],
+  // Atendimento is promoted as an isolated native CRM runtime.  Its release
+  // identity spans the CRM/API source, native runtime custody and the
+  // main-custodied workflow validators; keeping all three inputs in the
+  // digest prevents a predecessor evidence record from being reused after a
+  // contract or runtime change.
+  "atendimento": ["timekeeping", "runtime", "github-governance"],
 };
 
 function releaseInputDigest(unit, sourceSha) {
