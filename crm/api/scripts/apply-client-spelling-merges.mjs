@@ -5,10 +5,22 @@ import {
     asRecoverableIdentityMaterializationError,
     configureIdentityMaterializationTimeouts,
 } from '../server/atendimento/identityMaterializationRuntime.js'
+import {
+    assertIdentityMaterializationApplyCheckpoint,
+    assertIdentityMaterializationDatabase,
+    assertIdentityMaterializationDestination,
+    assertIdentityMaterializationSchemaReady,
+    fingerprintIdentityMaterializationSource,
+    identityMaterializationCheckpoint,
+    writeIdentityMaterializationCheckpoint,
+} from '../server/atendimento/identityMaterializationSafety.js'
 
 const apply = process.argv.includes('--apply')
 const databaseUrl = String(process.env.DATABASE_URL || '').trim()
+const checkpointFile = String(process.env.CLIENT_SPELLING_MERGES_CHECKPOINT || '').trim()
+const checkpointOutput = String(process.env.CLIENT_SPELLING_MERGES_CHECKPOINT_OUTPUT || '').trim()
 if (!databaseUrl) throw new Error('DATABASE_URL_not_configured')
+assertIdentityMaterializationDestination(databaseUrl)
 
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 2, application_name: 'crm-client-spelling-merges' })
 
@@ -46,7 +58,14 @@ async function assertSpellingMergesDoNotBypassIdentityReview(client, merges) {
 
 const db = await pool.connect()
 try {
+    await assertIdentityMaterializationDatabase(db, databaseUrl)
+    await assertIdentityMaterializationSchemaReady(db)
     let plan = await loadSpellingMergePlan(db)
+    let sourceFingerprint = fingerprintIdentityMaterializationSource(plan)
+    let checkpoint = identityMaterializationCheckpoint({ operation: 'client_spelling_merges', sourceFingerprint })
+    let writtenCheckpoint = !apply
+        ? await writeIdentityMaterializationCheckpoint({ outputFile: checkpointOutput, checkpoint })
+        : null
     let runId = null
     if (apply) {
         await db.query('begin')
@@ -55,18 +74,16 @@ try {
             await db.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
             await db.query(`select pg_advisory_xact_lock(hashtext('crm_atendimento.client_identity_reconciliation'))`)
             plan = await loadSpellingMergePlan(db)
+            sourceFingerprint = fingerprintIdentityMaterializationSource(plan)
+            checkpoint = identityMaterializationCheckpoint({ operation: 'client_spelling_merges', sourceFingerprint })
+            await assertIdentityMaterializationApplyCheckpoint({
+                operation: 'client_spelling_merges',
+                confirmation: process.env.CLIENT_SPELLING_MERGES_APPLY_CONFIRM,
+                targetConfirmation: process.env.CLIENT_SPELLING_MERGES_APPLY_TARGET,
+                checkpointFile,
+                sourceFingerprint,
+            })
             await assertSpellingMergesDoNotBypassIdentityReview(db, plan.merges)
-            await db.query(`alter table crm_atendimento.canonical_clients add column if not exists merged_into_id uuid references crm_atendimento.canonical_clients(id) on delete restrict`)
-            await db.query(`create table if not exists crm_atendimento.client_spelling_merges (
-                source_client_id uuid primary key references crm_atendimento.canonical_clients(id) on delete restrict,
-                target_client_id uuid not null references crm_atendimento.canonical_clients(id) on delete restrict,
-                caixa_customer_id uuid not null references crm_caixa.customers(id) on delete restrict,
-                method text not null,
-                confidence numeric(5,4) not null,
-                run_id uuid references crm_atendimento.client_identity_runs(id) on delete set null,
-                created_at timestamptz not null default now(),
-                updated_at timestamptz not null default now()
-            )`)
             const run = await db.query(`insert into crm_atendimento.client_identity_runs(mode,summary)
                 values('apply-spelling-merges',$1::jsonb) returning id`, [JSON.stringify(plan.summary)])
             runId = run.rows[0].id
@@ -94,23 +111,21 @@ try {
                     where client_id=$1 and caixa_customer_id=$2 and status not in ('confirmed','rejected','auto_confirmed')`,
                 [merge.sourceClientId, merge.caixaCustomerId])
             }
-            await db.query(`create or replace view crm_atendimento.resolved_attendance_clients as
-                select l.attendance_id,l.client_id as source_client_id,coalesce(c.merged_into_id,c.id) as client_id,
-                    l.original_name,l.method,l.confidence
-                from crm_atendimento.attendance_client_links l
-                join crm_atendimento.canonical_clients c on c.id=l.client_id`)
-            await db.query(`create or replace view crm_atendimento.resolved_client_caixa_links as
-                select coalesce(c.merged_into_id,c.id) as client_id,l.client_id as source_client_id,
-                    l.caixa_customer_id,l.method,l.confidence,l.status,l.evidence
-                from crm_atendimento.client_caixa_links l
-                join crm_atendimento.canonical_clients c on c.id=l.client_id`)
             await db.query('commit')
         } catch (error) {
             await db.query('rollback')
             throw asRecoverableIdentityMaterializationError(error)
         }
     }
-    console.log(JSON.stringify({ ok: true, dryRun: !apply, runId, dateDistanceUsed: false, ...plan.summary }, null, 2))
+    console.log(JSON.stringify({
+        ok: true,
+        dryRun: !apply,
+        runId,
+        dateDistanceUsed: false,
+        checkpoint,
+        checkpointOutput: writtenCheckpoint,
+        ...plan.summary,
+    }, null, 2))
 } finally {
     db.release()
     await pool.end()

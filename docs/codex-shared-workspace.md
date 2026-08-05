@@ -152,12 +152,17 @@ prévia pertencente àquele worktree.
 - `Agenda Full Sync`
 - `Booking API`
 - `Procedures`
+- `Client Registration`
 - `Recorder`
 - `Rotate Agenda Sync Token`
 
-O menu do scraper reserva a entrada `Client Registration`, mas o repo ainda nao
-tem uma implementacao executavel ligada em `run_scraper.py`; o launcher exibe
-uma mensagem clara em vez de fingir suporte.
+`Client Registration` usa o exportador UI somente de leitura e cria uma pasta
+privada por execução em `C:\CodexRuntime\operator\admin\skincos\scraper\client-registration`.
+Uma retomada precisa ser escolhida explicitamente com
+`EF_CLIENT_REGISTRATION_RESUME_OUTPUT_DIR`; a ação normal nunca reutiliza um
+checkpoint antigo. O resumo de cada execução registra a cobertura da lista UI
+visível, mas não declara escopo histórico completo nem permite tratar ausência
+como aposentadoria de cadastro.
 
 ### Orb
 

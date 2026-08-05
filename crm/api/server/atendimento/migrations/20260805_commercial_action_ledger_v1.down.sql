@@ -1,0 +1,3 @@
+-- Non-destructive rollback. Do not delete commercial evidence, remove trace
+-- links or weaken append-only triggers. The guarded runner records the
+-- migration as rolled back while retaining the ledger for investigation.

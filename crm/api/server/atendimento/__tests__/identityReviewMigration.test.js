@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+    IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID,
     IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID,
     IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
     applyIdentityReviewWorkflowMigration,
@@ -18,6 +19,7 @@ test('defines an additive, append-only identity review workflow migration', () =
     assert.deepEqual(plan.migrationIds, [
         IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
         IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID,
+        IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID,
     ])
     assert.deepEqual(plan.adds, [
         'identity_review_decisions',
@@ -27,6 +29,7 @@ test('defines an additive, append-only identity review workflow migration', () =
         'identity_source_link_history',
     ])
     assert.match(plan.decisionPolicy, /append-only/i)
+    assert.match(plan.ledgerIntegrityPolicy, /truncate/i)
     assert.match(plan.decisionPolicy, /expected source version/i)
     assert.match(plan.materializationPolicy, /fails closed/i)
     assert.match(plan.materializationPolicy, /commercial history/i)
@@ -65,6 +68,10 @@ test('applies compatibility DDL atomically before recording workflow readiness',
     const addEventOrder = indexOf(/alter table crm_atendimento\.identity_member_history add column if not exists event_order/i)
     const addRunEventOrder = indexOf(/alter table crm_atendimento\.identity_materialization_runs add column if not exists event_order/i)
     const createSourceLinkHistory = indexOf(/create table if not exists crm_atendimento\.identity_source_link_history/i)
+    const decisionNoTruncate = indexOf(/create trigger identity_review_decisions_no_truncate before truncate/i)
+    const memberHistoryNoTruncate = indexOf(/create trigger identity_member_history_no_truncate before truncate/i)
+    const lineageNoTruncate = indexOf(/create trigger identity_lineage_no_truncate before truncate/i)
+    const sourceLinkHistoryNoTruncate = indexOf(/create trigger identity_source_link_history_no_truncate before truncate/i)
     const registryCalls = calls.filter(({ sql }) => /insert into crm_atendimento\.schema_migrations/i.test(String(sql)))
     const registry = calls.findIndex(({ sql }) => /insert into crm_atendimento\.schema_migrations/i.test(String(sql)))
     const commit = indexOf(/^commit$/i)
@@ -75,18 +82,24 @@ test('applies compatibility DDL atomically before recording workflow readiness',
     assert.deepEqual(locks.map(({ params }) => params[0]), [
         IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
         IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID,
+        IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID,
         'crm_atendimento.identity_graph_materialization',
     ])
     assert.ok(createHistory > lock)
     assert.ok(addEventOrder > createHistory)
     assert.ok(addRunEventOrder > addEventOrder)
     assert.ok(createSourceLinkHistory > addRunEventOrder)
+    assert.ok(decisionNoTruncate > createSourceLinkHistory)
+    assert.ok(memberHistoryNoTruncate > decisionNoTruncate)
+    assert.ok(lineageNoTruncate > memberHistoryNoTruncate)
+    assert.ok(sourceLinkHistoryNoTruncate > lineageNoTruncate)
     assert.ok(registry > addEventOrder)
     assert.ok(commit > registry)
     assert.equal(calls.some(({ sql }) => String(sql).trim().toLowerCase() === 'rollback'), false)
     assert.deepEqual(registryCalls.map(({ params }) => params[0]), [
         IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
         IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID,
+        IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID,
     ])
     assert.match(registryCalls[0].params[1], /"applied":true/)
 })

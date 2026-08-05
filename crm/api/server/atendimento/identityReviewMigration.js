@@ -3,9 +3,11 @@ import { IDENTITY_GRAPH_LOCK_KEY } from './identityReviewWorkflow.js'
 
 export const IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID = '20260805_identity_review_workflow_v1'
 export const IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID = '20260805_identity_review_source_link_ledger_v1'
+export const IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID = '20260805_identity_review_ledger_integrity_v1'
 export const IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS = [
     IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
     IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID,
+    IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID,
 ]
 
 const PREREQUISITE_TABLES = [
@@ -139,6 +141,29 @@ const SOURCE_LINK_LEDGER_STATEMENTS = [
         for each row execute function crm_atendimento.prevent_identity_review_ledger_mutation()`,
 ]
 
+// TRUNCATE does not fire row-level UPDATE/DELETE triggers. Keep this as a
+// separate tracked migration so an already-applied review workflow becomes
+// ready only after its historical evidence receives the same protection as
+// the commercial ledgers.
+const LEDGER_INTEGRITY_STATEMENTS = [
+    `drop trigger if exists identity_review_decisions_no_truncate on crm_atendimento.identity_review_decisions`,
+    `create trigger identity_review_decisions_no_truncate
+        before truncate on crm_atendimento.identity_review_decisions
+        for each statement execute function crm_atendimento.prevent_identity_review_ledger_mutation()`,
+    `drop trigger if exists identity_member_history_no_truncate on crm_atendimento.identity_member_history`,
+    `create trigger identity_member_history_no_truncate
+        before truncate on crm_atendimento.identity_member_history
+        for each statement execute function crm_atendimento.prevent_identity_review_ledger_mutation()`,
+    `drop trigger if exists identity_lineage_no_truncate on crm_atendimento.identity_lineage`,
+    `create trigger identity_lineage_no_truncate
+        before truncate on crm_atendimento.identity_lineage
+        for each statement execute function crm_atendimento.prevent_identity_review_ledger_mutation()`,
+    `drop trigger if exists identity_source_link_history_no_truncate on crm_atendimento.identity_source_link_history`,
+    `create trigger identity_source_link_history_no_truncate
+        before truncate on crm_atendimento.identity_source_link_history
+        for each statement execute function crm_atendimento.prevent_identity_review_ledger_mutation()`,
+]
+
 function migrationError(code) {
     const error = new Error(code)
     error.code = code
@@ -201,6 +226,7 @@ export function identityReviewWorkflowMigrationPlan() {
             'identity_source_link_history',
         ],
         decisionPolicy: 'Append-only decisions preserve raw matching evidence, source state and an expected source version.',
+        ledgerIntegrityPolicy: 'Every identity-review evidence table rejects UPDATE, DELETE and TRUNCATE through the append-only ledger guard.',
         materializationPolicy: 'Confirmation reuses a deterministic active identity, orders member and automatic-link evidence in one ledger, and fails closed when commercial history would need to move or pre-ledger history is ambiguous.',
         rollback: 'Non-destructive: preserves decisions, materialization history and lineage, then marks the workflow unavailable.',
     }
@@ -219,6 +245,7 @@ export async function applyIdentityReviewWorkflowMigration({ pool, databaseUrl }
         await client.query(`set local statement_timeout = '60s'`)
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID])
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID])
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID])
         // Reviewed decisions acquire migration -> graph in this order; source
         // materializers acquire the graph lock.  Joining both guarantees this
         // DDL cannot cross an in-flight projection or commercial rebind.
@@ -228,6 +255,7 @@ export async function applyIdentityReviewWorkflowMigration({ pool, databaseUrl }
         await ensureRegistry(client)
         for (const sql of STATEMENTS) await client.query(sql)
         for (const sql of SOURCE_LINK_LEDGER_STATEMENTS) await client.query(sql)
+        for (const sql of LEDGER_INTEGRITY_STATEMENTS) await client.query(sql)
         report.sourceLinkLedgerCutoverRunEventOrder = await sourceLinkLedgerCutoverEventOrder(client)
         report.tables = ['identity_review_decisions', 'identity_materialization_runs', 'identity_member_history', 'identity_lineage', 'identity_source_link_history']
         report.indexes = ['identity_review_decisions_lookup_idx', 'identity_review_decisions_event_order_idx', 'identity_materialization_runs_created_idx', 'identity_materialization_runs_event_order_idx', 'identity_member_history_run_idx', 'identity_lineage_predecessor_idx', 'identity_source_link_history_run_idx', 'identity_source_link_history_target_idx']
@@ -262,6 +290,7 @@ export async function rollbackIdentityReviewWorkflowMigration({ pool, databaseUr
         await client.query(`set local lock_timeout = '3s'`)
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID])
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID])
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID])
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
         await assertLocalDestination(client, databaseUrl)
         await ensureRegistry(client)

@@ -433,6 +433,7 @@ export async function assertIdentityProjectionCanBeMaterialized(client, componen
 async function identityReviewLedgerStatus(client) {
     const availability = await client.query(`select
         to_regclass('crm_atendimento.schema_migrations') as registry,
+        to_regclass('crm_atendimento.identity_review_decisions') as decisions,
         to_regclass('crm_atendimento.identity_materialization_runs') as runs,
         to_regclass('crm_atendimento.identity_member_history') as member_history,
         to_regclass('crm_atendimento.identity_lineage') as lineage,
@@ -441,11 +442,37 @@ async function identityReviewLedgerStatus(client) {
         exists(select 1 from information_schema.columns where table_schema='crm_atendimento'
             and table_name='identity_materialization_runs' and column_name='event_order') as run_event_order,
         exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_member_history')
-            and tgname='identity_member_history_immutable' and tgenabled='O') as member_history_immutable,
+            and tgname='identity_member_history_immutable' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as member_history_immutable,
         exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_lineage')
-            and tgname='identity_lineage_immutable' and tgenabled='O') as lineage_immutable,
+            and tgname='identity_lineage_immutable' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as lineage_immutable,
         exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_source_link_history')
-            and tgname='identity_source_link_history_immutable' and tgenabled='O') as source_link_history_immutable`)
+            and tgname='identity_source_link_history_immutable' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as source_link_history_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_review_decisions')
+            and tgname='identity_review_decisions_immutable' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as decision_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_review_decisions')
+            and tgname='identity_review_decisions_no_truncate' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 32) <> 0) as decision_no_truncate,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_member_history')
+            and tgname='identity_member_history_no_truncate' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 32) <> 0) as member_history_no_truncate,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_lineage')
+            and tgname='identity_lineage_no_truncate' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 32) <> 0) as lineage_no_truncate,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_source_link_history')
+            and tgname='identity_source_link_history_no_truncate' and tgenabled='O'
+            and tgfoid=to_regprocedure('crm_atendimento.prevent_identity_review_ledger_mutation()')
+            and (tgtype::integer & 32) <> 0) as source_link_history_no_truncate`)
     const row = availability.rows[0] || {}
     const migration = row.registry
         ? await client.query(`select id from crm_atendimento.schema_migrations
@@ -455,8 +482,9 @@ async function identityReviewLedgerStatus(client) {
     const workflowV1Active = appliedMigrationIds.has(IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID)
     return {
         workflowV1Active,
-        ready: !!(row.registry && row.runs && row.member_history && row.lineage && row.source_link_history && row.audit_events
-            && row.run_event_order && row.member_history_immutable && row.lineage_immutable && row.source_link_history_immutable
+        ready: !!(row.registry && row.decisions && row.runs && row.member_history && row.lineage && row.source_link_history && row.audit_events
+            && row.run_event_order && row.decision_immutable && row.member_history_immutable && row.lineage_immutable && row.source_link_history_immutable
+            && row.decision_no_truncate && row.member_history_no_truncate && row.lineage_no_truncate && row.source_link_history_no_truncate
             && IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS.every((id) => appliedMigrationIds.has(id))),
     }
 }

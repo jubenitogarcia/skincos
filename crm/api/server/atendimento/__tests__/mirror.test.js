@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 
 import { __testables, preflightAtendimentoMirror, syncAtendimentoMirror } from '../mirror.js'
+
+const require = createRequire(import.meta.url)
+const { parse: parsePgConnectionString } = require('pg-connection-string')
 
 const MIRROR_TABLES = [
     'units',
@@ -93,6 +97,13 @@ test('accepts only the local Atendimento mirror database as destination', () => 
     )
     assert.equal(
         __testables.isStrictLocalMirrorDestination('postgresql://admin@127.0.0.1:5432/skincos_crm_local'),
+        false,
+    )
+    const duplicateHost = 'postgresql:///skincos_crm_local?host=%2Fvar%2Frun%2Fpostgresql&host=db.example.test&port=5432'
+    assert.equal(__testables.isStrictLocalMirrorDestination(duplicateHost), false)
+    assert.equal(parsePgConnectionString(duplicateHost).host, 'db.example.test')
+    assert.equal(
+        __testables.isStrictLocalMirrorDestination('postgresql:///skincos_crm_local?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable'),
         false,
     )
 })

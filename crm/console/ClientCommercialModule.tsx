@@ -3,17 +3,25 @@ import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, CircleDollarS
 import { Button } from '@/button'
 import {
   createCommercialAction,
+  commercialCadenceManagerStatuses,
   decideClientIdentityReview,
-  fetchAtendimentoReferences,
+  fetchCommercialReferences,
   fetchClientIdentityReviewQueue,
+  fetchCommercialDataQuality,
   fetchCommercialOverview,
   fetchCommercialProfile,
+  isCommercialDataQualityScopeDenied,
   recordCommercialContactPermission,
   undoClientIdentityReview,
   updateCommercialAction,
+  updateCommercialDataQualityFinding,
   updateCommercialPolicy,
   upsertCommercialCadence,
   type CommercialAction,
+  type CommercialCadenceManagerStatus,
+  type CommercialDataQualityFinding,
+  type CommercialDataQualityQueue,
+  type CommercialDataQualityStatus,
   type CommercialOverview,
   type CommercialProfile,
   type CommercialProfileDetail,
@@ -33,7 +41,46 @@ const unavailableContactEligibility: CommercialProfile['contactEligibility'] = {
   contactWriteControlsReady: false,
   harmoniaChecked: false, hasPhone: false, optOutRecorded: false,
   permissionStatus: 'unknown', evidenceSource: '', evidenceReference: '',
-  expiresAt: null, recordedBy: '', updatedAt: null,
+  expiresAt: null, permissionRevision: 0, recordedBy: '', updatedAt: null,
+}
+const commercialCadenceStatusLabels: Record<CommercialCadenceManagerStatus, string> = {
+  draft: 'Rascunho',
+  disabled: 'Desativada',
+}
+const commercialDataQualitySeverityLabels: Record<CommercialDataQualityFinding['severity'], string> = {
+  critical: 'Crítica',
+  high: 'Alta',
+  medium: 'Média',
+  low: 'Baixa',
+}
+const commercialDataQualityStatusLabels: Record<CommercialDataQualityStatus, string> = {
+  open: 'Aberta',
+  acknowledged: 'Reconhecida',
+  in_progress: 'Em andamento',
+  resolved: 'Resolvida',
+  suppressed: 'Suprimida',
+}
+const commercialDataQualitySeverityStyles: Record<CommercialDataQualityFinding['severity'], string> = {
+  critical: 'border-rose-300/30 bg-rose-500/10 text-rose-100',
+  high: 'border-orange-300/30 bg-orange-500/10 text-orange-100',
+  medium: 'border-amber-300/30 bg-amber-500/10 text-amber-100',
+  low: 'border-sky-300/25 bg-sky-500/10 text-sky-100',
+}
+const commercialDataQualityFindingLabels: Record<string, string> = {
+  'identity.attendance_membership_gap': 'Atendimentos sem identidade consolidada',
+  'sales.unclassified_items': 'Itens de venda sem classificação',
+  'attendance.future_dates': 'Atendimentos em data futura',
+  'identity_review.name_merge_pending': 'Revisões de grafia pendentes',
+  'identity_review.attendance_caixa_pending': 'Revisões Atendimento ↔ Caixa pendentes',
+  'identity_review.app_attendance_pending': 'Revisões Cadastro ↔ Atendimento pendentes',
+  'identity_review.app_caixa_pending': 'Revisões Cadastro ↔ Caixa pendentes',
+  'identity_review.lead_app_pending': 'Revisões Planilha ↔ Cadastro pendentes',
+  'identity_review.lead_caixa_pending': 'Revisões Planilha ↔ Caixa pendentes',
+  'commercial.permission_coverage_missing': 'Identidades sem permissão registrada',
+  'commercial.contact_controls_unready': 'Controles de contato indisponíveis',
+  'source.app_registration_snapshot_residual': 'Cadastros fora do último snapshot',
+  'source.app_registration_snapshot_unverified': 'Escopo do snapshot de cadastro não verificado',
+  'source.local_mirror_stale': 'Espelho local desatualizado',
 }
 
 function formatDate(value: string | null | undefined) {
@@ -189,9 +236,16 @@ function ContactPermission({ profile, contactRolloutAllowed, onSaved }: { profil
         status,
         source,
         evidenceReference,
+        expectedRevision: current.permissionRevision,
         expiresAt: status === 'granted' && parsedExpiry ? parsedExpiry.toISOString() : undefined,
       })
-      if (!result.ok) throw new Error(result.error || 'Não foi possível registrar a permissão.')
+      if (!result.ok) {
+        if (result.error === 'COMMERCIAL_CONTACT_PERMISSION_CONFLICT') {
+          await onSaved()
+          throw new Error('A permissão foi alterada por outra pessoa. O perfil foi recarregado antes de uma nova tentativa.')
+        }
+        throw new Error(result.error || 'Não foi possível registrar a permissão.')
+      }
       setNotice('Permissão registrada com evento de auditoria.')
       await onSaved()
     } catch (cause) { setNotice(cause instanceof Error ? cause.message : 'Não foi possível registrar a permissão.') } finally { setBusy(false) }
@@ -215,20 +269,78 @@ function ContactPermission({ profile, contactRolloutAllowed, onSaved }: { profil
 function ProfilePanel({ detail, units, professionals, onRefresh }: { detail: CommercialProfileDetail | null; units: Array<{ slug: string; name: string }>; professionals: Array<{ name: string }>; onRefresh: () => Promise<void> }) {
   if (!detail) return <aside className="rounded-2xl border border-slate-800/80 bg-slate-950/45 p-5 text-sm text-slate-500">Selecione um cliente para abrir o perfil comercial.</aside>
   const { profile } = detail
+  const contactEligibility = safeContactEligibility(profile.contactEligibility)
   const contactRolloutAllowed = detail.policy.commercialContactWriteControlsReady === true && commercialRolloutAllows(detail.policy, profile.identityId)
   return <aside className="space-y-5 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 shadow-[0_20px_60px_rgba(2,6,23,0.28)]">
-    <div><div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">{profile.name}</h2><div className="mt-1 text-xs text-slate-400">{profile.phone || 'Sem telefone de contato'}{profile.email ? ` · ${profile.email}` : ''}</div></div><SegmentBadge profile={profile} /></div><p className="mt-3 text-sm text-slate-300">{profile.recommendedAction}</p></div>
+    <div><div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">{profile.name}</h2><div className="mt-1 text-xs text-slate-400">{profile.contactEligibility?.hasPhone ? 'Contato confirmado para uso interno' : 'Contato ainda não confirmado'}</div></div><SegmentBadge profile={profile} /></div><p className="mt-3 text-sm text-slate-300">{profile.recommendedAction}</p></div>
     <div className="grid grid-cols-2 gap-2"><Fact label="Último atendimento" value={profile.lastAttendance ? formatDate(profile.lastAttendance) : 'Sem registro'} /><Fact label="Dias sem presença" value={profile.recencyDays == null ? '—' : String(profile.recencyDays)} /><Fact label="Faturamento" value={currency.format(profile.lifetimeSales)} /><Fact label="Ticket médio" value={currency.format(profile.ticketAverage)} /><Fact label="Visitas" value={String(profile.visitCount)} /><Fact label="Procedimentos" value={String(profile.procedureCount)} /></div>
     <section className="border-t border-slate-800/80 pt-4"><h3 className="text-sm font-semibold text-white">Histórico confirmado</h3><List label="Procedimentos realizados" values={profile.completedProcedures} empty="Sem procedimentos confirmados." /><List label="Procedimentos comprados classificados" values={profile.purchasedProcedures} empty="Sem itens classificados." />{profile.pendingSaleItems ? <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-300/20 bg-amber-500/10 p-2 text-xs text-amber-100"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{profile.pendingSaleItems} item(ns) de venda seguem sem classificação e não entram em sugestão de procedimento.</div> : null}</section>
     <section className="border-t border-slate-800/80 pt-4"><h3 className="text-sm font-semibold text-white">Cadência clínica</h3>{detail.clinicalCadences.length ? <div className="mt-2 space-y-2">{detail.clinicalCadences.map((cadence) => <div key={`${cadence.procedureId}:${cadence.unitSlug}`} className="text-xs text-slate-300"><span className="font-medium text-slate-100">{cadence.procedureName}</span> · {cadence.status === 'approved' ? `regra aprovada: ${cadence.cadenceDays} dias` : 'sem regra aprovada'}</div>)}</div> : <p className="mt-2 text-xs text-slate-500">Nenhuma cadência aprovada. A plataforma não fará recomendação clínica.</p>}</section>
-    <ContactPermission key={profile.identityId} profile={profile} contactRolloutAllowed={contactRolloutAllowed} onSaved={onRefresh} />
+    <ContactPermission key={`${profile.identityId}:${contactEligibility.permissionRevision}`} profile={profile} contactRolloutAllowed={contactRolloutAllowed} onSaved={onRefresh} />
     <ActionForm detail={detail} units={units} professionals={professionals} onSaved={onRefresh} />
-    <ActionHistory actions={detail.actions} contactEligibility={safeContactEligibility(profile.contactEligibility)} contactRolloutAllowed={contactRolloutAllowed} onUpdated={onRefresh} />
+    <ActionHistory actions={detail.actions} contactEligibility={contactEligibility} contactRolloutAllowed={contactRolloutAllowed} onUpdated={onRefresh} />
   </aside>
 }
 
 function Fact({ label, value }: { label: string; value: string }) { return <div className="rounded-xl border border-slate-800/80 bg-slate-900/45 p-2.5"><div className="text-[11px] text-slate-500">{label}</div><div className="mt-1 truncate text-sm font-medium text-slate-100">{value}</div></div> }
 function List({ label, values, empty }: { label: string; values: string[]; empty: string }) { return <div className="mt-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-sm text-slate-200">{values.length ? values.join(', ') : empty}</div></div> }
+
+function commercialDataQualitySlaLabel(finding: CommercialDataQualityFinding) {
+  if (finding.status === 'resolved') return finding.resolvedAt ? `Resolvida em ${formatDate(finding.resolvedAt)}` : 'Resolvida'
+  if (!finding.slaDueAt) return finding.observedCount ? 'SLA ainda não definido' : 'Sem ocorrência atual'
+  const dueAt = new Date(finding.slaDueAt)
+  if (Number.isNaN(dueAt.getTime())) return 'SLA indisponível'
+  return dueAt.getTime() < Date.now() ? `SLA vencido em ${formatDate(finding.slaDueAt)}` : `SLA até ${formatDate(finding.slaDueAt)}`
+}
+
+function CommercialDataQualityPanel({ queue, loading, onRefresh }: {
+  queue: CommercialDataQualityQueue
+  loading: boolean
+  onRefresh: () => Promise<void>
+}) {
+  const [ownerDrafts, setOwnerDrafts] = useState<Record<string, string>>({})
+  const [acting, setActing] = useState('')
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const mutate = async (finding: CommercialDataQualityFinding, patch: Omit<Parameters<typeof updateCommercialDataQualityFinding>[1], 'expectedRevision'>, success: string) => {
+    try {
+      setActing(finding.id); setError(''); setNotice('')
+      const result = await updateCommercialDataQualityFinding(finding.id, { expectedRevision: finding.revision, ...patch })
+      if (!result.ok) {
+        if (result.error === 'COMMERCIAL_DATA_QUALITY_FINDING_CONFLICT') {
+          await onRefresh()
+          throw new Error('Este item foi atualizado por outra pessoa. A fila foi recarregada antes de uma nova tentativa.')
+        }
+        throw new Error(result.error || 'Não foi possível atualizar a fila de qualidade.')
+      }
+      setOwnerDrafts((current) => ({ ...current, [finding.id]: result.finding.owner }))
+      setNotice(success)
+      await onRefresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar a fila de qualidade.')
+    } finally {
+      setActing('')
+    }
+  }
+  const assignOwner = (finding: CommercialDataQualityFinding) => {
+    const owner = (ownerDrafts[finding.id] ?? finding.owner).trim()
+    if (owner === finding.owner) { setNotice('O responsável já está atualizado nesta fila.'); return }
+    void mutate(finding, { owner }, owner ? 'Responsável atualizado com auditoria.' : 'Responsável removido com auditoria.')
+  }
+
+  return <section aria-labelledby="commercial-data-quality-heading" className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 shadow-[0_20px_60px_rgba(2,6,23,0.28)]">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 id="commercial-data-quality-heading" className="text-lg font-semibold text-white">Qualidade operacional</h2><p className="mt-1 text-sm text-slate-500">Indicadores agregados da fila consolidada. Esta visão não expõe dados de contato nem dados pessoais de clientes.</p></div><Button size="sm" variant="outline" onClick={() => void onRefresh()} disabled={loading || Boolean(acting)}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />Atualizar painel</Button></div>
+    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4"><Fact label="Ocorrências atuais" value={String(queue.metrics.currentFindings)} /><Fact label="SLA vencido" value={String(queue.metrics.overdue)} /><Fact label="Sem responsável" value={String(queue.metrics.unassigned)} /><Fact label="Itens na fila" value={String(queue.total)} /></div>
+    {error ? <div className="mt-3 rounded-lg border border-rose-300/30 bg-rose-500/10 p-3 text-sm text-rose-100">{error}</div> : null}
+    {notice ? <div className="mt-3 rounded-lg border border-emerald-300/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{notice}</div> : null}
+    <div className="mt-4 space-y-3">{queue.findings.map((finding) => {
+      const isActing = acting === finding.id
+      const owner = ownerDrafts[finding.id] ?? finding.owner
+      const canResolve = finding.observedCount === 0 && finding.status !== 'resolved'
+      return <article key={finding.id} className="rounded-xl border border-slate-800/80 bg-slate-900/35 p-4"><div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold text-white">{commercialDataQualityFindingLabels[finding.findingKey] || 'Controle de qualidade'}</h3><span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${commercialDataQualitySeverityStyles[finding.severity]}`}>{commercialDataQualitySeverityLabels[finding.severity]}</span><span className="text-xs text-slate-400">{commercialDataQualityStatusLabels[finding.status]}</span></div><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400"><span><span className="text-slate-500">Ocorrências:</span> {finding.observedCount}</span><span><span className="text-slate-500">{commercialDataQualitySlaLabel(finding)}</span></span><span><span className="text-slate-500">Revisão:</span> {finding.revision}</span></div></div><div className="grid gap-2 sm:grid-cols-[minmax(0,13rem)_auto] lg:min-w-96"><input aria-label={`Responsável por ${commercialDataQualityFindingLabels[finding.findingKey] || 'controle de qualidade'}`} value={owner} maxLength={160} onChange={(event) => setOwnerDrafts((current) => ({ ...current, [finding.id]: event.target.value }))} placeholder="Responsável pela fila" disabled={isActing || loading} className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><Button size="sm" variant="outline" onClick={() => assignOwner(finding)} disabled={isActing || loading || owner.trim() === finding.owner}>Atribuir</Button></div></div><div className="mt-3 flex flex-wrap gap-2 border-t border-slate-800/70 pt-3">{finding.status === 'open' ? <Button size="sm" variant="outline" onClick={() => void mutate(finding, { status: 'acknowledged' }, 'Ocorrência reconhecida com auditoria.')} disabled={isActing || loading}>Reconhecer</Button> : null}{finding.status !== 'in_progress' && finding.status !== 'resolved' && finding.status !== 'suppressed' ? <Button size="sm" variant="outline" onClick={() => void mutate(finding, { status: 'in_progress' }, 'Ocorrência marcada como em andamento.')} disabled={isActing || loading}>Em andamento</Button> : null}{canResolve ? <Button size="sm" onClick={() => void mutate(finding, { status: 'resolved' }, 'Ocorrência resolvida com auditoria.')} disabled={isActing || loading}>Resolver</Button> : null}{finding.observedCount > 0 && finding.status !== 'resolved' ? <span className="self-center text-xs text-slate-500">A resolução permanece bloqueada enquanto a ocorrência estiver ativa.</span> : null}</div></article>
+    })}{!queue.findings.length ? <p className="py-6 text-center text-sm text-slate-500">Nenhuma ocorrência de qualidade disponível nesta fila.</p> : null}</div>
+  </section>
+}
 
 const reviewTypeLabel: Record<ClientIdentityReviewItem['type'], string> = { attendance_name_merge: 'Grafia no Atendimento', attendance_caixa: 'Atendimento ↔ Caixa', app_attendance: 'Cadastro app ↔ Atendimento', app_caixa: 'Cadastro app ↔ Caixa', lead_app: 'Planilha ↔ Cadastro app', lead_caixa: 'Planilha ↔ Caixa' }
 function reviewValue(value: unknown) { return Array.isArray(value) ? value.filter(Boolean).join(', ') : typeof value === 'string' || typeof value === 'number' ? String(value) : '' }
@@ -350,16 +462,38 @@ export function ClientCommercialModule() {
   const [commercialContactCanaryIdentityIds, setCommercialContactCanaryIdentityIds] = useState('')
   const [cadenceProcedure, setCadenceProcedure] = useState('')
   const [cadenceDays, setCadenceDays] = useState('')
-  const [cadenceStatus, setCadenceStatus] = useState<'draft' | 'approved' | 'disabled'>('draft')
+  const [cadenceStatus, setCadenceStatus] = useState<CommercialCadenceManagerStatus>('draft')
   const [cadenceNotice, setCadenceNotice] = useState('')
   const [procedureOptions, setProcedureOptions] = useState<Array<{ id: string; name: string }>>([])
+  const [commercialDataQuality, setCommercialDataQuality] = useState<CommercialDataQualityQueue | null>(null)
+  const [commercialDataQualityBusy, setCommercialDataQualityBusy] = useState(false)
+  const [commercialDataQualityError, setCommercialDataQualityError] = useState('')
   const contactSummary = overview?.dataQuality?.contactEligibility || { eligible: 0, blocked: 0, reviewRequired: 0, controlsReady: false, contactWriteControlsReady: false }
   const policyWriteControlsReady = overview?.policy.commercialContactWriteControlsReady === true
+
+  const loadCommercialDataQuality = useCallback(async () => {
+    try {
+      setCommercialDataQualityBusy(true); setCommercialDataQualityError('')
+      const result = await fetchCommercialDataQuality({ limit: 24 })
+      if (result.ok) {
+        setCommercialDataQuality(result)
+        return
+      }
+      setCommercialDataQuality(null)
+      // A scoped gestor must never see global aggregate counts. This is an expected
+      // authorization result, not a failure of the Clientes module.
+      if (!isCommercialDataQualityScopeDenied(result.error)) {
+        setCommercialDataQualityError('O painel agregado de qualidade não está disponível neste ambiente.')
+      }
+    } finally {
+      setCommercialDataQualityBusy(false)
+    }
+  }, [])
 
   const load = useCallback(async (next?: { selectIdentityId?: string }) => {
     try {
       setBusy(true); setError('')
-      const [commercial, references] = await Promise.all([fetchCommercialOverview({ unit, segment, priority, q: search, limit: 100 }), fetchAtendimentoReferences()])
+      const [commercial, references] = await Promise.all([fetchCommercialOverview({ unit, segment, priority, q: search, limit: 100 }), fetchCommercialReferences()])
       if (!commercial.ok) throw new Error(commercial.error || 'Não foi possível carregar a inteligência comercial.')
       if (!references.ok) throw new Error(references.error || 'Não foi possível carregar referências do CRM.')
       setOverview(commercial); setUnits(references.units); setProfessionals(references.professionals.map((person) => ({ name: person.name }))); setProcedureOptions(references.procedures.map((procedure) => ({ id: procedure.id, name: procedure.name })))
@@ -370,6 +504,7 @@ export function ClientCommercialModule() {
       const candidate = commercial.profiles.find((profile) => profile.identityId === selectedId) || commercial.profiles[0]
       if (candidate) await loadDetail(candidate.identityId, commercial.asOf)
       else setDetail(null)
+      void loadCommercialDataQuality()
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível carregar a inteligência comercial.') } finally { setBusy(false) }
   // Filters are deliberately applied only with the button, so typing does not trigger a request per keystroke.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -406,19 +541,21 @@ export function ClientCommercialModule() {
       const policy: {
         activeContactCooldownDays: number
         returnRiskThresholds: number[]
-        expectedPolicyVersion?: string
+        expectedPolicyVersion: string
         commercialContactWritesEnabled?: boolean
         commercialContactCanaryIdentityIds?: string[]
       } = {
         activeContactCooldownDays: Number(cooldown),
         returnRiskThresholds: values,
+        expectedPolicyVersion: overview?.policy.policyVersion || '',
       }
-      if (overview?.policy.policyVersion) policy.expectedPolicyVersion = overview.policy.policyVersion
+      if (!overview?.policy.policyVersion) throw new Error('A versão atual da política não está disponível. Recarregue antes de salvar.')
       if (rolloutChanged) Object.assign(policy, { commercialContactWritesEnabled, commercialContactCanaryIdentityIds: canaryIdentityIds })
       const result = await updateCommercialPolicy(policy)
       if (!result.ok) {
         if (result.error === 'COMMERCIAL_POLICY_CONFLICT') {
-          throw new Error('A política foi alterada por outro gestor. Atualize e revise os valores antes de salvar.')
+          await load()
+          throw new Error('A política foi alterada por outro gestor. Os valores atuais foram recarregados antes de uma nova tentativa.')
         }
         throw new Error(result.error || 'Não foi possível salvar a política.')
       }
@@ -430,8 +567,13 @@ export function ClientCommercialModule() {
     try {
       setBusy(true); setCadenceNotice('')
       const result = await upsertCommercialCadence({ procedureId: cadenceProcedure, cadenceDays: Number(cadenceDays), status: cadenceStatus })
-      if (!result.ok) throw new Error(result.error || 'Não foi possível salvar a cadência.')
-      setCadenceNotice('Cadência salva. Ela só será usada em contexto clínico quando aprovada.')
+      if (!result.ok) {
+        if (result.error === 'CLINICAL_CADENCE_APPROVAL_REQUIRED') {
+          throw new Error('A aprovação clínica exige um fluxo verificado e não está disponível neste módulo.')
+        }
+        throw new Error(result.error || 'Não foi possível salvar a cadência.')
+      }
+      setCadenceNotice('Registro salvo sem aprovação clínica. A aprovação exige um fluxo verificado e não está disponível aqui.')
       setCadenceDays('')
       await load()
     } catch (cause) { setCadenceNotice(cause instanceof Error ? cause.message : 'Não foi possível salvar a cadência.') } finally { setBusy(false) }
@@ -443,13 +585,15 @@ export function ClientCommercialModule() {
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h1 className="text-2xl font-bold tracking-tight">Clientes</h1><p className="mt-1 text-sm text-slate-400">Prioridades comerciais baseadas em presença registrada, vendas e procedimentos confirmados.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className={`mr-2 h-4 w-4 ${busy ? 'animate-spin' : ''}`} />Atualizar</Button><Button variant="outline" onClick={() => setSettingsOpen((value) => !value)}><ShieldCheck className="mr-2 h-4 w-4" />Políticas clínicas</Button></div></header>
     {error ? <div className="rounded-xl border border-rose-300/30 bg-rose-500/10 p-4 text-sm text-rose-100">{error}</div> : null}
     {overview ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100"><div className="flex gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><div><b>Uso comercial seguro:</b> a recência considera apenas o último atendimento realizado. Compras antecipadas não representam procedimento realizado. {overview.dataQuality.futureAttendancesExcluded ? `${overview.dataQuality.futureAttendancesExcluded} atendimento(s) futuro(s) foram excluídos desta métrica. ` : ''}{overview.dataQuality.activeAttendanceClientsWithoutIdentity ? `${overview.dataQuality.activeAttendanceClientsWithoutIdentity} cliente(s) de Atendimento ainda não têm identidade comercial. ` : ''}{contactSummary.controlsReady ? `${contactSummary.eligible} apto(s), ${contactSummary.blocked} bloqueado(s) e ${contactSummary.reviewRequired} em revisão para WhatsApp. ` : 'Os controles de contato ainda não foram migrados; nenhum contato pode ser marcado. '}{!contactSummary.contactWriteControlsReady ? 'A cadência de contato aguarda a migration explícita; filas novas, concessões e registros de contato seguem bloqueados. ' : overview.policy.commercialContactWritesEnabled ? `Canário de contato ativo para ${overview.policy.commercialContactCanaryIdentityIds?.length || 0} identidade(s).` : 'Registro de contato e novas permissões concedidas seguem bloqueados até a abertura explícita de um canário.'}</div></div></div> : null}
-    {settingsOpen ? <section className="grid gap-4 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 xl:grid-cols-2"><div><h2 className="font-semibold text-white">Política de reativação</h2><p className="mt-1 text-sm text-slate-500">Define o intervalo entre contatos assistidos e as faixas de ausência, sem alterar o histórico clínico.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs text-slate-400">Intervalo mínimo de contato (dias)<input type="number" value={cooldown} onChange={(event) => setCooldown(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label><label className="text-xs text-slate-400">Faixas de ausência<input value={thresholds} onChange={(event) => setThresholds(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label></div>{!policyWriteControlsReady ? <p className="mt-4 text-xs text-amber-200">A migration de rollout ainda não está presente neste ambiente. As faixas podem ser salvas, mas o canário permanece indisponível.</p> : null}<label className="mt-4 flex items-start gap-2 text-xs text-amber-100"><input type="checkbox" checked={commercialContactWritesEnabled} disabled={!policyWriteControlsReady} onChange={(event) => setCommercialContactWritesEnabled(event.target.checked)} className="mt-0.5" />Abrir somente o canário de registros de contato. Isto não envia mensagens.</label><label className="mt-2 block text-xs text-slate-400">Identidades UUID autorizadas no canário, separadas por vírgula<textarea value={commercialContactCanaryIdentityIds} disabled={!policyWriteControlsReady} onChange={(event) => setCommercialContactCanaryIdentityIds(event.target.value)} placeholder="UUID da identidade sintética ou aprovada" className="mt-1 min-h-16 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-600 disabled:opacity-50" /></label><Button size="sm" onClick={() => void savePolicy()} disabled={busy} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar política</Button></div><div className="border-t border-slate-800 pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"><h2 className="font-semibold text-white">Cadência clínica</h2><p className="mt-1 text-sm text-slate-500">Somente uma regra aprovada poderá ser exibida como referência; ela não cria mensagens automáticas.</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><select value={cadenceProcedure} onChange={(event) => setCadenceProcedure(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"><option value="">Procedimento</option>{procedureOptions.map((procedure) => <option key={procedure.id} value={procedure.id}>{procedure.name}</option>)}</select><input type="number" min="1" placeholder="Dias" value={cadenceDays} onChange={(event) => setCadenceDays(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><select value={cadenceStatus} onChange={(event) => setCadenceStatus(event.target.value as typeof cadenceStatus)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"><option value="draft">Rascunho</option><option value="approved">Aprovada</option><option value="disabled">Desativada</option></select></div><Button size="sm" variant="outline" onClick={() => void saveCadence()} disabled={busy || !cadenceProcedure || !cadenceDays} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar cadência</Button>{cadenceNotice ? <div className="mt-2 text-xs text-slate-400">{cadenceNotice}</div> : null}</div></section> : null}
+    {settingsOpen ? <section className="grid gap-4 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 xl:grid-cols-2"><div><h2 className="font-semibold text-white">Política de reativação</h2><p className="mt-1 text-sm text-slate-500">Define o intervalo entre contatos assistidos e as faixas de ausência, sem alterar o histórico clínico.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs text-slate-400">Intervalo mínimo de contato (dias)<input type="number" value={cooldown} onChange={(event) => setCooldown(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label><label className="text-xs text-slate-400">Faixas de ausência<input value={thresholds} onChange={(event) => setThresholds(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label></div>{!policyWriteControlsReady ? <p className="mt-4 text-xs text-amber-200">A migration de rollout ainda não está presente neste ambiente. As faixas podem ser salvas, mas o canário permanece indisponível.</p> : null}<label className="mt-4 flex items-start gap-2 text-xs text-amber-100"><input type="checkbox" checked={commercialContactWritesEnabled} disabled={!policyWriteControlsReady} onChange={(event) => setCommercialContactWritesEnabled(event.target.checked)} className="mt-0.5" />Abrir somente o canário de registros de contato. Isto não envia mensagens.</label><label className="mt-2 block text-xs text-slate-400">Identidades UUID autorizadas no canário, separadas por vírgula<textarea value={commercialContactCanaryIdentityIds} disabled={!policyWriteControlsReady} onChange={(event) => setCommercialContactCanaryIdentityIds(event.target.value)} placeholder="UUID da identidade sintética ou aprovada" className="mt-1 min-h-16 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-600 disabled:opacity-50" /></label><Button size="sm" onClick={() => void savePolicy()} disabled={busy} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar política</Button></div><div className="border-t border-slate-800 pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"><h2 className="font-semibold text-white">Cadência clínica</h2><p className="mt-1 text-sm text-slate-500">Gestores podem manter rascunhos ou desativar regras não aprovadas. A aprovação clínica exige um fluxo verificado e não está disponível neste módulo.</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><select value={cadenceProcedure} onChange={(event) => setCadenceProcedure(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"><option value="">Procedimento</option>{procedureOptions.map((procedure) => <option key={procedure.id} value={procedure.id}>{procedure.name}</option>)}</select><input type="number" min="1" placeholder="Dias" value={cadenceDays} onChange={(event) => setCadenceDays(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><select value={cadenceStatus} onChange={(event) => setCadenceStatus(event.target.value as CommercialCadenceManagerStatus)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white">{commercialCadenceManagerStatuses.map((status) => <option key={status} value={status}>{commercialCadenceStatusLabels[status]}</option>)}</select></div><Button size="sm" variant="outline" onClick={() => void saveCadence()} disabled={busy || !cadenceProcedure || !cadenceDays} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar cadência</Button>{cadenceNotice ? <div className="mt-2 text-xs text-slate-400">{cadenceNotice}</div> : null}</div></section> : null}
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Metric label="Retorno em risco" value={overview?.summary.returnAtRisk ?? '—'} detail="Sem presença registrada na faixa configurada" icon={CalendarClock} /><Metric label="Alto valor inativo" value={overview?.summary.highValueInactive ?? '—'} detail="Valor e ausência combinados" icon={CircleDollarSign} /><Metric label="Potencial de reativação" value={overview?.summary.reactivationPotential ?? '—'} detail="Prioridade para a equipe" icon={UserRoundCheck} /><Metric label="Aptos para WhatsApp" value={overview ? contactSummary.eligible : '—'} detail="Permissão explícita e bloqueios verificados" icon={UsersRound} /></div>
+    {commercialDataQualityError ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100">{commercialDataQualityError}</div> : null}
+    {commercialDataQuality ? <CommercialDataQualityPanel queue={commercialDataQuality} loading={commercialDataQualityBusy} onRefresh={loadCommercialDataQuality} /> : null}
     <div className="flex flex-wrap gap-2 rounded-xl border border-slate-800/80 bg-slate-950/45 p-3"><select aria-label="Unidade" value={unit} onChange={(event) => setUnit(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="all">Todas as unidades</option>{units.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select><select aria-label="Segmento" value={segment} onChange={(event) => setSegment(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100">{segmentOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select><select aria-label="Prioridade" value={priority} onChange={(event) => setPriority(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Todas as prioridades</option><option value="high">Alta</option><option value="medium">Média</option><option value="normal">Normal</option></select><input aria-label="Buscar cliente" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente" className="min-w-48 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><Button size="sm" onClick={() => void load()} disabled={busy}>Aplicar</Button></div>
     <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.7fr)_minmax(22rem,0.8fr)]">
       <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/55 shadow-[0_20px_60px_rgba(2,6,23,0.28)]">
         <div className="flex items-center justify-between border-b border-slate-800/80 p-5"><div><h2 className="font-semibold text-white">Prioridades de reativação</h2><p className="mt-1 text-xs text-slate-500">{overview ? `${overview.total} clientes na seleção atual` : 'Carregando clientes…'}</p></div><div className="text-xs text-slate-500">Fila: {overview?.actions.actions ?? 0} · Contatos: {overview?.actions.contactedActions ?? 0}</div></div>
-        <div className="overflow-x-auto"><table className="w-full min-w-190 text-sm"><thead className="bg-white/[0.025] text-left text-xs font-medium text-slate-400"><tr><th className="p-3">Cliente</th><th className="p-3">Último atendimento</th><th className="p-3 text-right">Faturamento</th><th className="p-3">Frequência</th><th className="p-3">Próxima ação</th><th className="p-3">Prioridade</th><th className="p-3" /></tr></thead><tbody>{overview?.profiles.map((profile) => <tr key={profile.identityId} onClick={() => void loadDetail(profile.identityId, overview.asOf)} className={`cursor-pointer border-t border-slate-800/70 transition hover:bg-sky-500/[0.05] ${detail?.profile.identityId === profile.identityId ? 'bg-sky-500/[0.08]' : ''}`}><td className="p-3"><div className="font-medium text-slate-100">{profile.name}</div><div className="mt-0.5 text-xs text-slate-500">{profile.phone || profile.identityQuality.replace(/_/g, ' ')}</div><div className={`mt-1 text-[11px] ${contactEligibilityTextStyle(profile.contactEligibility)}`}>{contactEligibilityLabel(profile.contactEligibility)}</div></td><td className="p-3"><div className="text-slate-200">{formatDate(profile.lastAttendance)}</div><div className={`mt-0.5 text-xs ${profile.recencyDays != null && profile.recencyDays >= 180 ? 'text-rose-300' : 'text-slate-500'}`}>{profile.recencyDays == null ? 'Sem presença confirmada' : `${profile.recencyDays} dias`}</div></td><td className="p-3 text-right"><div className="font-medium text-slate-100">{currency.format(profile.lifetimeSales)}</div><div className="mt-0.5 text-xs text-slate-500">{profile.saleCount} compra(s)</div></td><td className="p-3"><div className="text-slate-200">{profile.visitCount} visita(s)</div><div className="mt-0.5 text-xs text-slate-500">{profile.procedureCount} procedimento(s)</div></td><td className="max-w-56 p-3 text-slate-300">{profile.recommendedAction}</td><td className="p-3"><SegmentBadge profile={profile} /></td><td className="p-3 text-right"><ChevronRight className="inline h-4 w-4 text-slate-500" /></td></tr>)}</tbody></table>{overview && !overview.profiles.length ? <div className="p-8 text-center text-sm text-slate-500">Nenhum cliente encontrado para os filtros selecionados.</div> : null}</div>
+        <div className="overflow-x-auto"><table className="w-full min-w-190 text-sm"><thead className="bg-white/[0.025] text-left text-xs font-medium text-slate-400"><tr><th className="p-3">Cliente</th><th className="p-3">Último atendimento</th><th className="p-3 text-right">Faturamento</th><th className="p-3">Frequência</th><th className="p-3">Próxima ação</th><th className="p-3">Prioridade</th><th className="p-3" /></tr></thead><tbody>{overview?.profiles.map((profile) => <tr key={profile.identityId} onClick={() => void loadDetail(profile.identityId, overview.asOf)} className={`cursor-pointer border-t border-slate-800/70 transition hover:bg-sky-500/[0.05] ${detail?.profile.identityId === profile.identityId ? 'bg-sky-500/[0.08]' : ''}`}><td className="p-3"><div className="font-medium text-slate-100">{profile.name}</div><div className="mt-0.5 text-xs text-slate-500">{profile.identityQuality.replace(/_/g, ' ')}</div><div className={`mt-1 text-[11px] ${contactEligibilityTextStyle(profile.contactEligibility)}`}>{contactEligibilityLabel(profile.contactEligibility)}</div></td><td className="p-3"><div className="text-slate-200">{formatDate(profile.lastAttendance)}</div><div className={`mt-0.5 text-xs ${profile.recencyDays != null && profile.recencyDays >= 180 ? 'text-rose-300' : 'text-slate-500'}`}>{profile.recencyDays == null ? 'Sem presença confirmada' : `${profile.recencyDays} dias`}</div></td><td className="p-3 text-right"><div className="font-medium text-slate-100">{currency.format(profile.lifetimeSales)}</div><div className="mt-0.5 text-xs text-slate-500">{profile.saleCount} compra(s)</div></td><td className="p-3"><div className="text-slate-200">{profile.visitCount} visita(s)</div><div className="mt-0.5 text-xs text-slate-500">{profile.procedureCount} procedimento(s)</div></td><td className="max-w-56 p-3 text-slate-300">{profile.recommendedAction}</td><td className="p-3"><SegmentBadge profile={profile} /></td><td className="p-3 text-right"><ChevronRight className="inline h-4 w-4 text-slate-500" /></td></tr>)}</tbody></table>{overview && !overview.profiles.length ? <div className="p-8 text-center text-sm text-slate-500">Nenhum cliente encontrado para os filtros selecionados.</div> : null}</div>
       </section>
       <ProfilePanel detail={detail} units={units} professionals={professionals} onRefresh={refreshDetail} />
     </div>

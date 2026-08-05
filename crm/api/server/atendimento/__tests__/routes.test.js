@@ -83,6 +83,29 @@ test('keeps Clientes routes exclusive to GESTOR, matching the CRM module policy'
     assert.equal(__testables.isCommercialManager({ role: 'INJETOR' }), false)
 })
 
+test('blocks a commercial clinical-approval request before the cadence store write', async () => {
+    let calls = 0
+    const routes = captureAtendimentoRoutes({
+        async upsertCommercialCadence() {
+            calls += 1
+            return { id: 'cadence-1' }
+        },
+    })
+    const actor = { id: 'gestor-1', role: 'GESTOR', allowedModules: ['atendimento'] }
+
+    const approval = captureResponse()
+    await routes.get('PUT /commercial/cadences')({ atendimentoActor: actor, body: { procedureId: 'procedure-1', cadenceDays: 90, status: 'approved' } }, approval)
+    assert.equal(approval.state.status, 403)
+    assert.deepEqual(approval.state.body, { ok: false, error: 'CLINICAL_CADENCE_APPROVAL_REQUIRED' })
+    assert.equal(calls, 0)
+
+    const draft = captureResponse()
+    await routes.get('PUT /commercial/cadences')({ atendimentoActor: actor, body: { procedureId: 'procedure-1', cadenceDays: 90, status: 'draft' } }, draft)
+    assert.equal(draft.state.status, 200)
+    assert.deepEqual(draft.state.body, { ok: true, id: 'cadence-1' })
+    assert.equal(calls, 1)
+})
+
 test('forwards source-state review decisions and undo only for a GESTOR', async () => {
     const calls = []
     const semanticVersion = '35c54b6916b6b8191a17f8500ab103d8'

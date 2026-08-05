@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
     assertActorCanMutateUnit,
@@ -118,6 +119,453 @@ test('scopes atendimento router access by consuming module', () => {
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/catalog', 'GET'), false)
 })
 
+test('scopes Clientes commercial reads, queues, actions, cadences and offers to explicit GESTOR units', async () => {
+    const captured = []
+    const identityId = '11111111-1111-4111-8111-111111111111'
+    const profileRow = {
+        identity_id: identityId,
+        canonical_name: 'Cliente restrito',
+        source_types: ['attendance_client', 'caixa_customer'],
+        last_attendance: '2026-01-10', visit_count: 1, procedure_count: 1,
+        completed_procedures: ['Botox'], attendance_units: ['Novo Hamburgo'], future_attendance_count: 0,
+        sale_count: 1, lifetime_sales: 900, sales_12m: 900, sales_units: ['Novo Hamburgo'],
+        phone: '5551999991111', purchased_procedures: ['Botox'], pending_sale_items: 0,
+        active_action_count: 0, last_action_at: null,
+    }
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
+                return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance_links', sales: 'sales' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [{}], rowCount: 1 }
+            if (sql.includes('with identities as')) {
+                captured.push({ kind: 'profiles', sql, params })
+                return { rows: [profileRow], rowCount: 1 }
+            }
+            if (sql.includes('from crm_atendimento.commercial_actions action') && sql.includes('where action.identity_id = $1')) {
+                captured.push({ kind: 'profile-actions', sql, params })
+                return { rows: [], rowCount: 0 }
+            }
+            if (sql.includes('from crm_atendimento.commercial_procedure_cadences cadence') && sql.includes('where $1::text[] is null')) {
+                captured.push({ kind: 'cadences', sql, params })
+                return { rows: [], rowCount: 0 }
+            }
+            if (sql.includes('from crm_atendimento.commercial_offers o')) {
+                captured.push({ kind: 'offers', sql, params })
+                return { rows: [], rowCount: 0 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const scopedGestor = { id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'] }
+
+    const overview = await store.commercialOverview({}, scopedGestor)
+    assert.deepEqual(captured.find((entry) => entry.kind === 'profiles')?.params[1], ['novo-hamburgo'])
+    assert.equal(Object.hasOwn(overview.profiles[0], 'phone'), false)
+    assert.equal(Object.hasOwn(overview.profiles[0], 'email'), false)
+
+    const detail = await store.commercialProfile(identityId, {}, scopedGestor)
+    assert.equal(Object.hasOwn(detail.profile, 'phone'), false)
+    assert.deepEqual(captured.find((entry) => entry.kind === 'profile-actions')?.params, [identityId, ['novo-hamburgo']])
+
+    await store.commercialCadences(scopedGestor)
+    assert.deepEqual(captured.find((entry) => entry.kind === 'cadences')?.params, [['novo-hamburgo']])
+    await store.commercialOffers({}, scopedGestor)
+    assert.deepEqual(captured.find((entry) => entry.kind === 'offers')?.params, [['novo-hamburgo']])
+
+    await assert.rejects(
+        () => store.commercialOverview({ unit: 'barra-shopping-sul' }, scopedGestor),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    await assert.rejects(
+        () => store.commercialProfile(identityId, { unit: 'barra-shopping-sul' }, scopedGestor),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    await assert.rejects(
+        () => store.upsertCommercialCadence({ procedureId: 'procedure-1', status: 'draft', cadenceDays: 90, unit: 'barra-shopping-sul' }, scopedGestor),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    await assert.rejects(
+        () => store.createCommercialAction({ identityId, segmentKey: 'return_at_risk', actionType: 'contact', unit: 'barra-shopping-sul' }, scopedGestor),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    await assert.rejects(
+        () => store.upsertCommercialOffer({
+            unitSlug: 'barra-shopping-sul', title: 'Oferta restrita', status: 'draft', priceQualifier: 'on_request',
+            procedures: [{ procedureId: 'procedure-1', quantity: 1, quantityUnit: 'unidade' }],
+        }, scopedGestor),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    await assert.rejects(
+        () => store.commercialOverview({}, { id: 'gestor-empty', role: 'GESTOR', allowedUnits: [] }),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    await assert.rejects(
+        () => store.commercialOverview({}, {
+            id: 'gestor-malformed-scope', role: 'GESTOR', allowedUnits: 'Novo Hamburgo',
+        }),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+
+    await store.commercialOverview({}, { id: 'admin-via-pages', role: 'GESTOR', isGlobalAdmin: true, allowedUnits: [] })
+    assert.equal(captured.filter((entry) => entry.kind === 'profiles').at(-1)?.params[1], null)
+})
+
+test('returns commercial-only references filtered to the declared manager units', async () => {
+    const pool = createFakePool([
+        (sql) => sql.includes('select slug, name from crm_atendimento.units order by name') && {
+            rows: [
+                { slug: 'barra-shopping-sul', name: 'Barra Shopping Sul' },
+                { slug: 'novo-hamburgo', name: 'Novo Hamburgo' },
+            ], rowCount: 2,
+        },
+        (sql) => sql.includes('from crm_atendimento.professionals p') && {
+            rows: [
+                { id: 'professional-bss', canonical_id: 'professional-bss', canonical_name: 'Equipe BSS', name: 'Equipe BSS', status: 'Ativo', units: ['Barra Shopping Sul'], roles: ['Consultor'], aliases: [] },
+                { id: 'professional-nh', canonical_id: 'professional-nh', canonical_name: 'Equipe NH', name: 'Equipe NH', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Consultor'], aliases: [] },
+            ], rowCount: 2,
+        },
+        (sql) => sql.includes('from crm_atendimento.procedures p') && { rows: [], rowCount: 0 },
+    ])
+    const refs = await createAtendimentoStore({ pool }).commercialReferences({
+        id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'],
+    })
+
+    assert.deepEqual(refs.units.map((unit) => unit.slug), ['novo-hamburgo'])
+    assert.deepEqual(refs.professionals.map((professional) => professional.name), ['Equipe NH'])
+})
+
+test('does not let a scoped manager manufacture an action unit for an unrelated identity', async () => {
+    let actionInserted = false
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions', permission_events: 'permission-events', action_events: 'action-events',
+        harmonia_contacts: 'harmonia.contacts', caixa_customers: 'crm_caixa.customers', app_registrations: null, lead_profiles: null,
+        permission_event_trace_id: true, permission_events_immutable: true, permission_events_no_truncate: true,
+        action_events_immutable: true, action_events_no_truncate: true, action_channel: true, action_contacted_at: true,
+        rollout_enabled: true, rollout_canary: true,
+    }
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
+                return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance-links', sales: 'sales' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+            if (sql === 'select id from crm_atendimento.global_client_identities where id = $1') return { rows: [{ id: params[0] }], rowCount: 1 }
+            if (sql === 'select active_contact_cooldown_days from crm_atendimento.commercial_policy_config where singleton = true') return { rows: [{ active_contact_cooldown_days: 30 }], rowCount: 1 }
+            if (sql === 'select id from crm_atendimento.units where slug = $1') return { rows: [{ id: 'unit-nh' }], rowCount: 1 }
+            if (sql.includes('from crm_atendimento.global_client_identity_members member') && sql.includes('as matched')) {
+                return { rows: [{ matched: false }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.commercial_actions(')) actionInserted = true
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.createCommercialAction({
+            identityId: '11111111-1111-4111-8111-111111111111', segmentKey: 'return_at_risk', actionType: 'contact', unit: 'novo-hamburgo',
+        }, { id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'] }),
+        { message: 'COMMERCIAL_IDENTITY_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    assert.equal(actionInserted, false)
+})
+
+test('rejects an action owner who is not available for the action unit', async () => {
+    let actionUpdated = false
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions', permission_events: 'permission-events', action_events: 'action-events',
+        harmonia_contacts: 'harmonia.contacts', caixa_customers: 'crm_caixa.customers', app_registrations: null, lead_profiles: null,
+        permission_event_trace_id: true, permission_events_immutable: true, permission_events_no_truncate: true,
+        action_events_immutable: true, action_events_no_truncate: true, action_channel: true, action_contacted_at: true,
+        rollout_enabled: true, rollout_canary: true,
+    }
+    const pool = createFakePool([
+        (sql) => {
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+            if (sql.includes('from crm_atendimento.commercial_actions action') && sql.includes('for update of action')) {
+                return { rows: [{ id: 'action-1', identity_id: 'identity-1', status: 'open', contacted_at: null, unit_slug: 'novo-hamburgo' }], rowCount: 1 }
+            }
+            if (sql.includes('from crm_atendimento.professionals p')) {
+                return { rows: [{ id: 'professional-bss', canonical_id: 'professional-bss', canonical_name: 'Equipe BSS', name: 'Equipe BSS', status: 'Ativo', units: ['Barra Shopping Sul'], roles: ['Consultor'], aliases: [] }], rowCount: 1 }
+            }
+            if (sql.startsWith('update crm_atendimento.commercial_actions')) actionUpdated = true
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.updateCommercialAction('action-1', { status: 'closed', owner: 'Equipe BSS' }, { id: 'gestor-global', role: 'GESTOR' }),
+        { message: 'PROFESSIONAL_NOT_AVAILABLE_FOR_UNIT', statusCode: 400 },
+    )
+    assert.equal(actionUpdated, false)
+})
+
+test('keeps clinical cadence approval fail-closed while allowing commercial drafts and disabled records', async () => {
+    const cadenceWrites = []
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.startsWith('select id, status from crm_atendimento.commercial_procedure_cadences')) {
+                return { rows: [], rowCount: 0 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.commercial_procedure_cadences(')) {
+                cadenceWrites.push({ sql, params })
+                return { rows: [{ id: `cadence-${cadenceWrites.length}` }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const actor = { id: 'gestor-1', role: 'GESTOR' }
+
+    await store.upsertCommercialCadence({ procedureId: 'procedure-1', status: 'draft', cadenceDays: 90 }, actor)
+    await store.upsertCommercialCadence({ procedureId: 'procedure-1', status: 'disabled', cadenceDays: 90 }, actor)
+    await assert.rejects(
+        () => store.upsertCommercialCadence({ procedureId: 'procedure-1', status: 'approved', cadenceDays: 90 }, actor),
+        { message: 'CLINICAL_CADENCE_APPROVAL_REQUIRED', statusCode: 403 },
+    )
+
+    assert.deepEqual(cadenceWrites.map(({ params }) => params[3]), ['draft', 'disabled'])
+    assert.equal(cadenceWrites.every(({ sql }) => sql.includes('where crm_atendimento.commercial_procedure_cadences.status <> \'approved\'')), true)
+})
+
+test('keeps existing approved clinical cadences read-only to a commercial manager', async () => {
+    let cadenceWriteAttempted = false
+    const pool = createFakePool([
+        (sql) => {
+            if (sql.startsWith('select id, status from crm_atendimento.commercial_procedure_cadences')) {
+                return { rows: [{ id: 'legacy-approved', status: 'approved' }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.commercial_procedure_cadences(')) cadenceWriteAttempted = true
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const actor = { id: 'gestor-1', role: 'GESTOR' }
+
+    await assert.rejects(
+        () => store.upsertCommercialCadence({ procedureId: 'procedure-1', status: 'draft', cadenceDays: 90 }, actor),
+        { message: 'CLINICAL_CADENCE_APPROVAL_REQUIRED', statusCode: 403 },
+    )
+    await assert.rejects(
+        () => store.upsertCommercialCadence({ procedureId: 'procedure-1', status: 'disabled', cadenceDays: 90 }, actor),
+        { message: 'CLINICAL_CADENCE_APPROVAL_REQUIRED', statusCode: 403 },
+    )
+    assert.equal(cadenceWriteAttempted, false)
+})
+
+test('rejects a scoped GESTOR action update before commercial-contact state is read or written', async () => {
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions',
+        permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        action_events: 'crm_atendimento.commercial_action_events',
+        harmonia_contacts: 'harmonia.contacts',
+        caixa_customers: 'crm_caixa.customers',
+        app_registrations: null,
+        lead_profiles: null,
+        permission_event_trace_id: true,
+        permission_events_immutable: true,
+        permission_events_no_truncate: true,
+        action_events_immutable: true,
+        action_events_no_truncate: true,
+        action_channel: true,
+        action_contacted_at: true,
+        rollout_enabled: true,
+        rollout_canary: true,
+    }
+    let contactStateRead = false
+    const pool = createFakePool([
+        (sql) => {
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) {
+                return { rows: [availability], rowCount: 1 }
+            }
+            if (sql.includes('from crm_atendimento.commercial_actions action') && sql.includes('for update of action')) {
+                return { rows: [{ id: 'action-cross-unit', identity_id: 'identity-1', status: 'open', contacted_at: null }], rowCount: 1 }
+            }
+            if (sql.includes('commercial_contact_permissions') || sql.includes('harmonia.contacts') || sql.startsWith('update crm_atendimento.commercial_actions')) {
+                contactStateRead = true
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.updateCommercialAction('action-cross-unit', { status: 'closed' }, {
+            id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'],
+        }),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    assert.equal(contactStateRead, false)
+})
+
+test('scopes identity review cross-unit and removes contact and birth data from review responses', async () => {
+    const captured = []
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.includes("to_regclass('crm_atendimento.client_merge_suggestions') as merges")) {
+                return { rows: [{ merges: 'merges', attendance_caixa: 'attendance_caixa', app: 'app', leads: 'leads' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.schema_migrations') as registry")) return { rows: [{ registry: null }], rowCount: 1 }
+            if (sql.startsWith('with review_items as')) {
+                captured.push({ sql, params })
+                return {
+                    rows: [{
+                        id: 'review-1', type: 'lead_app', source_id: 'lead-1', target_id: 'app-1', status: 'suggested',
+                        review_version: 'version-1', decision_state: null, confidence: 0.92,
+                        primary_name: 'Ana', secondary_name: 'Ana Silva', total: 1,
+                        evidence: { phone: '5551999991111', nested: { email: 'ana@example.test', method: 'unique_name_phone' } },
+                        context: {
+                            leadPhones: ['5551999991111'], leadEmails: ['ana@example.test'], leadBirthdays: ['1990-01-02'],
+                            phoneKey: '5551999991111', safe: 'same_name', nested: { appEmail: 'ana@example.test', unit: 'novo-hamburgo' },
+                        },
+                    }], rowCount: 1,
+                }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const result = await store.identityReviewQueue({}, { id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['novo-hamburgo'] })
+    assert.deepEqual(captured[0]?.params.at(-1), ['novo-hamburgo'])
+    assert.match(captured[0]?.sql || '', /unit_slugs <@ \$5::text\[\]/)
+    assert.deepEqual(result.items[0].evidence, { nested: { method: 'unique_name_phone' } })
+    assert.deepEqual(result.items[0].context, { safe: 'same_name', nested: { unit: 'novo-hamburgo' } })
+})
+
+test('keeps identity-review writes disabled when the no-truncate ledger guard is absent', async () => {
+    const pool = createFakePool([
+        (sql) => {
+            if (sql.includes("to_regclass('crm_atendimento.client_merge_suggestions') as merges")) {
+                return { rows: [{ merges: 'merges', attendance_caixa: 'attendance_caixa', app: 'app', leads: 'leads' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.schema_migrations') as registry")) {
+                return {
+                    rows: [{
+                        registry: 'schema_migrations', decisions: 'identity_review_decisions', runs: 'identity_materialization_runs',
+                        member_history: 'identity_member_history', lineage: 'identity_lineage', source_link_history: 'identity_source_link_history',
+                        run_event_order: true, member_history_event_order: true, decision_resulting_status: true, decision_event_order: true,
+                        decision_immutable: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                        decision_no_truncate: false, member_history_no_truncate: true, lineage_no_truncate: true, source_link_history_no_truncate: true,
+                    }], rowCount: 1,
+                }
+            }
+            if (sql.startsWith('select id from crm_atendimento.schema_migrations')) {
+                return {
+                    rows: [
+                        { id: '20260805_identity_review_workflow_v1' },
+                        { id: '20260805_identity_review_source_link_ledger_v1' },
+                        { id: '20260805_identity_review_ledger_integrity_v1' },
+                    ], rowCount: 3,
+                }
+            }
+            if (sql.startsWith('with review_items as')) return { rows: [], rowCount: 0 }
+            return null
+        },
+    ])
+
+    const result = await createAtendimentoStore({ pool }).identityReviewQueue({}, {
+        id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['novo-hamburgo'],
+    })
+
+    assert.equal(result.workflow.writesReady, false)
+})
+
+test('blocks a scoped GESTOR from deciding an identity review that spans another unit', async () => {
+    const writes = []
+    const sourceId = '11111111-1111-4111-8111-111111111111'
+    const targetId = '22222222-2222-4222-8222-222222222222'
+    const workflowReady = {
+        registry: 'schema_migrations', decisions: 'identity_review_decisions', runs: 'identity_materialization_runs',
+        member_history: 'identity_member_history', lineage: 'identity_lineage', source_link_history: 'identity_source_link_history',
+        run_event_order: true, member_history_event_order: true, decision_resulting_status: true, decision_event_order: true,
+        decision_immutable: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+        decision_no_truncate: true, member_history_no_truncate: true, lineage_no_truncate: true, source_link_history_no_truncate: true,
+    }
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.startsWith('update crm_atendimento.client_caixa_links')) writes.push({ sql, params })
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
+                return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance_links', sales: 'sales' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.schema_migrations') as registry")) return { rows: [workflowReady], rowCount: 1 }
+            if (sql.startsWith('select id from crm_atendimento.schema_migrations')) return { rows: [{ id: 'workflow' }, { id: 'source-links' }, { id: 'ledger-integrity' }], rowCount: 3 }
+            if (sql.includes('from crm_atendimento.client_caixa_links link') && sql.includes('for update of link')) {
+                return {
+                    rows: [{
+                        row_id: 'link-1', status: 'suggested', evidence: { method: 'name_phone' }, review_version: 'version-1',
+                        source_name: 'Cliente Atendimento', target_name: 'Cliente Caixa',
+                        context: { attendanceCount: 1, phoneKey: '5551999991111' }, unit_slugs: ['barra-shopping-sul'],
+                    }], rowCount: 1,
+                }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    await assert.rejects(
+        () => store.decideIdentityReview({
+            reviewType: 'attendance_caixa', sourceId, targetId, decision: 'confirmed', expectedVersion: 'version-1',
+            reason: 'Os registros foram revisados para validar o escopo da unidade.',
+        }, { id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['novo-hamburgo'] }),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    assert.equal(writes.length, 0)
+})
+
+test('blocks a scoped GESTOR from materializing an indirectly cross-unit identity component', async () => {
+    const writes = []
+    const sourceId = '11111111-1111-4111-8111-111111111111'
+    const targetId = '22222222-2222-4222-8222-222222222222'
+    const workflowReady = {
+        registry: 'schema_migrations', decisions: 'identity_review_decisions', runs: 'identity_materialization_runs',
+        member_history: 'identity_member_history', lineage: 'identity_lineage', source_link_history: 'identity_source_link_history',
+        run_event_order: true, member_history_event_order: true, decision_resulting_status: true, decision_event_order: true,
+        decision_immutable: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+        decision_no_truncate: true, member_history_no_truncate: true, lineage_no_truncate: true, source_link_history_no_truncate: true,
+    }
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.startsWith('update crm_atendimento.client_caixa_links')) writes.push({ sql, params })
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
+                return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance_links', sales: 'sales' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.schema_migrations') as registry")) return { rows: [workflowReady], rowCount: 1 }
+            if (sql.startsWith('select id from crm_atendimento.schema_migrations')) return { rows: [{ id: 'workflow' }, { id: 'source-links' }, { id: 'ledger-integrity' }], rowCount: 3 }
+            if (sql.includes('from crm_atendimento.client_caixa_links link') && sql.includes('for update of link')) {
+                return {
+                    rows: [{
+                        row_id: 'link-1', status: 'suggested', evidence: { method: 'name_phone' }, review_version: 'version-1',
+                        source_name: 'Cliente Atendimento', target_name: 'Cliente Caixa',
+                        context: { attendanceCount: 1 }, unit_slugs: ['novo-hamburgo'],
+                    }], rowCount: 1,
+                }
+            }
+            if (sql.includes('with affected_components as')) {
+                return {
+                    rows: [
+                        { source_type: 'attendance_client', source_id: sourceId, unit_slugs: ['novo-hamburgo'] },
+                        { source_type: 'caixa_customer', source_id: targetId, unit_slugs: ['barra-shopping-sul'] },
+                    ], rowCount: 2,
+                }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.decideIdentityReview({
+            reviewType: 'attendance_caixa', sourceId, targetId, decision: 'confirmed', expectedVersion: 'version-1',
+            reason: 'Validação de escopo expandido de componentes da identidade.',
+        }, { id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'] }),
+        { message: 'COMMERCIAL_UNIT_FORBIDDEN', statusCode: 403 },
+    )
+    assert.equal(writes.length, 0)
+})
+
 test('contains the normalized commercial-offer schema and refuses to treat it as a sheet snapshot', () => {
     const migration = atendimentoMigrationStatements().join('\n')
     assert.match(migration, /commercial_offers/i)
@@ -163,7 +611,7 @@ test('keeps commercial policy reads fail-closed before the explicit rollout migr
     assert.deepEqual(result.policy.commercialContactCanaryIdentityIds, [])
 })
 
-test('keeps an opt-out recordable when the explicit contact-write migration is absent', async () => {
+test('fails closed when the append-only commercial ledger migration is absent', async () => {
     const queries = []
     let deniedWritten = false
     const partialAvailability = {
@@ -201,19 +649,37 @@ test('keeps an opt-out recordable when the explicit contact-write migration is a
     const store = createAtendimentoStore({ pool })
     const actor = { id: 'manager-1', role: 'GESTOR' }
 
-    const denied = await store.recordCommercialContactPermission({
-        identityId: 'identity-1', status: 'denied', source: 'opt_out', evidenceReference: 'synthetic:stop',
-    }, actor)
-    assert.equal(deniedWritten, true)
-    assert.equal(denied.contactEligibility.status, 'blocked')
+    await assert.rejects(
+        () => store.recordCommercialContactPermission({
+            identityId: 'identity-1', status: 'denied', source: 'opt_out', evidenceReference: 'synthetic:stop',
+        }, actor),
+        /COMMERCIAL_CONTACT_CONTROLS_NOT_READY/,
+    )
+    assert.equal(deniedWritten, false)
     assert.equal(queries.some(({ sql }) => sql.startsWith('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids')), false)
 
     await assert.rejects(
         () => store.recordCommercialContactPermission({
-            identityId: 'identity-1', status: 'granted', source: 'synthetic', evidenceReference: 'synthetic:grant',
+            identityId: 'identity-1', status: 'granted', source: 'synthetic', evidenceReference: 'synthetic:grant', expectedRevision: 0,
         }, actor),
-        /COMMERCIAL_CONTACT_COOLDOWN_CONTROLS_NOT_READY/,
+        /COMMERCIAL_CONTACT_CONTROLS_NOT_READY/,
     )
+})
+
+test('binds commercial ledger readiness to BEFORE mutation trigger shapes', () => {
+    const source = readFileSync(new URL('../store.js', import.meta.url), 'utf8')
+    for (const trigger of [
+        'commercial_contact_permission_events_immutable',
+        'commercial_action_events_immutable',
+    ]) {
+        assert.match(source, new RegExp(`tgname = '${trigger}'[\\s\\S]*prevent_commercial_ledger_mutation\\(\\)[\\s\\S]*tgtype::integer & 8[\\s\\S]*tgtype::integer & 16`))
+    }
+    for (const trigger of [
+        'commercial_contact_permission_events_no_truncate',
+        'commercial_action_events_no_truncate',
+    ]) {
+        assert.match(source, new RegExp(`tgname = '${trigger}'[\\s\\S]*prevent_commercial_ledger_mutation\\(\\)[\\s\\S]*tgtype::integer & 32`))
+    }
 })
 
 test('does not let a legacy contacted action without a timestamp bypass the rollout gate', async () => {
@@ -221,10 +687,16 @@ test('does not let a legacy contacted action without a timestamp bypass the roll
     const availability = {
         permissions: 'crm_atendimento.commercial_contact_permissions',
         permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        action_events: 'crm_atendimento.commercial_action_events',
         harmonia_contacts: 'harmonia.contacts',
         caixa_customers: 'crm_caixa.customers',
         app_registrations: null,
         lead_profiles: null,
+        permission_event_trace_id: true,
+        permission_events_immutable: true,
+        permission_events_no_truncate: true,
+        action_events_immutable: true,
+        action_events_no_truncate: true,
         action_channel: true,
         action_contacted_at: true,
         rollout_enabled: true,
@@ -233,7 +705,7 @@ test('does not let a legacy contacted action without a timestamp bypass the roll
     const pool = createFakePool([
         (sql) => {
             if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
-            if (sql.includes('select id, identity_id, status, contacted_at from crm_atendimento.commercial_actions')) {
+            if (sql.includes('from crm_atendimento.commercial_actions action') && sql.includes('for update of action')) {
                 return { rows: [{ id: 'action-1', identity_id: 'identity-1', status: 'contacted', contacted_at: null }], rowCount: 1 }
             }
             if (sql.startsWith('select identity_id::text as identity_id, channel, status, evidence_source')) {
@@ -263,10 +735,16 @@ test('rejects a stale commercial policy version before it can overwrite the cana
     const availability = {
         permissions: 'crm_atendimento.commercial_contact_permissions',
         permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        action_events: 'crm_atendimento.commercial_action_events',
         harmonia_contacts: 'harmonia.contacts',
         caixa_customers: 'crm_caixa.customers',
         app_registrations: null,
         lead_profiles: null,
+        permission_event_trace_id: true,
+        permission_events_immutable: true,
+        permission_events_no_truncate: true,
+        action_events_immutable: true,
+        action_events_no_truncate: true,
         action_channel: true,
         action_contacted_at: true,
         rollout_enabled: true,
@@ -299,6 +777,68 @@ test('rejects a stale commercial policy version before it can overwrite the cana
     assert.match(lockedPolicyQuery, /extract\(epoch from updated_at\)::text/)
 })
 
+test('requires a current version for every commercial policy write', async () => {
+    let policyUpdated = false
+    const pool = createFakePool([
+        (sql) => {
+            if (sql.startsWith('update crm_atendimento.commercial_policy_config')) policyUpdated = true
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.updateCommercialPolicy({
+            activeContactCooldownDays: 30,
+            returnRiskThresholds: [90, 180, 365],
+        }, { id: 'manager-1', role: 'GESTOR' }),
+        { message: 'COMMERCIAL_POLICY_VERSION_REQUIRED', statusCode: 409 },
+    )
+    assert.equal(policyUpdated, false)
+})
+
+test('rejects a stale or versionless affirmative contact permission before it can overwrite a denial', async () => {
+    let permissionWritten = false
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions', permission_events: 'permission-events', action_events: 'action-events',
+        harmonia_contacts: 'harmonia.contacts', caixa_customers: 'crm_caixa.customers', app_registrations: null, lead_profiles: null,
+        permission_event_trace_id: true, permission_events_immutable: true, permission_events_no_truncate: true,
+        action_events_immutable: true, action_events_no_truncate: true, action_channel: true, action_contacted_at: true,
+        rollout_enabled: true, rollout_canary: true,
+    }
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
+                return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance-links', sales: 'sales' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+            if (sql === 'select id from crm_atendimento.global_client_identities where id = $1') return { rows: [{ id: params[0] }], rowCount: 1 }
+            if (sql.includes('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids')) {
+                return { rows: [{ commercial_contact_writes_enabled: true, commercial_contact_canary_identity_ids: [params?.[0] || 'identity-1'] }], rowCount: 1 }
+            }
+            if (sql.includes('from crm_atendimento.commercial_contact_permissions') && sql.includes('for update')) {
+                return { rows: [{ status: 'denied', revision: 4 }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.commercial_contact_permissions(')) permissionWritten = true
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const payload = {
+        identityId: 'identity-1', status: 'granted', source: 'cadastro_assinado', evidenceReference: 'consentimento:atual',
+    }
+
+    await assert.rejects(
+        () => store.recordCommercialContactPermission(payload, { id: 'manager-1', role: 'GESTOR' }),
+        { message: 'COMMERCIAL_CONTACT_PERMISSION_VERSION_REQUIRED', statusCode: 409 },
+    )
+    await assert.rejects(
+        () => store.recordCommercialContactPermission({ ...payload, expectedRevision: 3 }, { id: 'manager-1', role: 'GESTOR' }),
+        { message: 'COMMERCIAL_CONTACT_PERMISSION_CONFLICT', statusCode: 409 },
+    )
+    assert.equal(permissionWritten, false)
+})
+
 test('records auditable commercial permission and gates contacted transitions on locked current eligibility', async () => {
     const queries = []
     let permission = null
@@ -310,10 +850,16 @@ test('records auditable commercial permission and gates contacted transitions on
     const availability = {
         permissions: 'crm_atendimento.commercial_contact_permissions',
         permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        action_events: 'crm_atendimento.commercial_action_events',
         harmonia_contacts: 'harmonia.contacts',
         caixa_customers: 'crm_caixa.customers',
         app_registrations: null,
         lead_profiles: null,
+        permission_event_trace_id: true,
+        permission_events_immutable: true,
+        permission_events_no_truncate: true,
+        action_events_immutable: true,
+        action_events_no_truncate: true,
         action_channel: true,
         action_contacted_at: true,
         rollout_enabled: true,
@@ -342,7 +888,7 @@ test('records auditable commercial permission and gates contacted transitions on
             }
             if (sql.includes('join crm_caixa.customers customer')) return { rows: [{ identity_id: 'identity-1', phone_key: '5511999999999' }], rowCount: 1 }
             if (sql.includes('from harmonia.contacts')) return { rows: harmoniaOptedOut ? [{ phone_raw: '5511999999999', opted_out_at: '2026-08-04T12:00:00.000Z' }] : [{ phone_raw: '5511999999999', opted_out_at: null }], rowCount: 1 }
-            if (sql.includes('select id, identity_id, status, contacted_at from crm_atendimento.commercial_actions')) return { rows: [{ id: 'action-1', identity_id: 'identity-1', status: 'open', contacted_at: null }], rowCount: 1 }
+            if (sql.includes('from crm_atendimento.commercial_actions action') && sql.includes('for update of action')) return { rows: [{ id: 'action-1', identity_id: 'identity-1', status: 'open', contacted_at: null }], rowCount: 1 }
             if (sql.includes('contacted_at >= now()')) return { rows: recentContact ? [{ id: 'older-contact', contacted_at: '2026-08-04T10:00:00.000Z' }] : [], rowCount: recentContact ? 1 : 0 }
             if (sql.startsWith('update crm_atendimento.commercial_actions')) {
                 actionUpdated = true
@@ -359,6 +905,7 @@ test('records auditable commercial permission and gates contacted transitions on
         status: 'granted',
         source: 'cadastro_assinado',
         evidenceReference: 'consentimento:registro-1',
+        expectedRevision: 0,
         expiresAt: '2030-01-02T03:04:05.000Z',
     }, actor)
     assert.equal(recorded.contactEligibility.status, 'eligible')
@@ -366,13 +913,28 @@ test('records auditable commercial permission and gates contacted transitions on
     assert.equal(queries.some(({ sql }) => sql.startsWith('insert into crm_atendimento.commercial_contact_permission_events(')), true)
     const permissionEvent = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.commercial_contact_permission_events('))
     assert.equal(permissionEvent.params[7], 'manager-1')
-    const audit = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.audit_events('))
-    assert.doesNotMatch(JSON.stringify(audit.params), /5511999999999/)
-    assert.match(String(audit.params[1]), /manager-1/)
+    const permissionTraceId = String(permissionEvent.params[8])
+    assert.match(permissionTraceId, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i)
+    const permissionAudit = queries.find(({ sql, params }) => sql.startsWith('insert into crm_atendimento.audit_events(')
+        && params[0] === 'commercial.contact_permission.recorded')
+    assert.doesNotMatch(JSON.stringify(permissionAudit.params), /5511999999999/)
+    assert.match(String(permissionAudit.params[1]), /manager-1/)
+    assert.equal(JSON.parse(permissionAudit.params[3]).traceId, permissionTraceId)
 
     const contacted = await store.updateCommercialAction('action-1', { status: 'contacted' }, actor)
     assert.equal(contacted.status, 'contacted')
     assert.equal(actionUpdated, true)
+    const actionEvent = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.commercial_action_events('))
+    assert.equal(actionEvent.params[0], 'action-1')
+    assert.equal(actionEvent.params[2], 'updated')
+    assert.equal(actionEvent.params[3], 'open')
+    assert.equal(actionEvent.params[4], 'contacted')
+    const actionTraceId = String(actionEvent.params[5])
+    assert.match(actionTraceId, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i)
+    assert.doesNotMatch(JSON.stringify(actionEvent.params), /5511999999999/)
+    const actionAudit = queries.find(({ sql, params }) => sql.startsWith('insert into crm_atendimento.audit_events(')
+        && params[0] === 'commercial.action.updated')
+    assert.equal(JSON.parse(actionAudit.params[3]).traceId, actionTraceId)
     assert.equal(queries.filter(({ sql }) => sql === 'set transaction isolation level read committed').length, 2)
     const advisoryLocks = queries.filter(({ sql }) => sql.includes('pg_advisory_xact_lock'))
     // Each commercial transaction also takes the shared identity-graph lock,
@@ -417,10 +979,16 @@ test('serializes concurrent contacted transitions so only one action can consume
     const availability = {
         permissions: 'crm_atendimento.commercial_contact_permissions',
         permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        action_events: 'crm_atendimento.commercial_action_events',
         harmonia_contacts: 'harmonia.contacts',
         caixa_customers: 'crm_caixa.customers',
         app_registrations: null,
         lead_profiles: null,
+        permission_event_trace_id: true,
+        permission_events_immutable: true,
+        permission_events_no_truncate: true,
+        action_events_immutable: true,
+        action_events_no_truncate: true,
         action_channel: true,
         action_contacted_at: true,
         rollout_enabled: true,
@@ -448,7 +1016,7 @@ test('serializes concurrent contacted transitions so only one action can consume
             return { rows: [{ identities: 'crm_atendimento.global_client_identities', members: 'crm_atendimento.global_client_identity_members', attendance_links: 'crm_atendimento.attendance_client_links', sales: 'crm_caixa.sales' }], rowCount: 1 }
         }
         if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
-        if (sql.includes('select id, identity_id, status, contacted_at from crm_atendimento.commercial_actions')) {
+        if (sql.includes('from crm_atendimento.commercial_actions action') && sql.includes('for update of action')) {
             return { rows: [{ id: params[0], identity_id: 'identity-1', status: 'open', contacted_at: null }], rowCount: 1 }
         }
         if (sql.startsWith('select identity_id::text as identity_id, channel, status, evidence_source')) {
@@ -497,10 +1065,16 @@ test('does not allow an action with a recorded contact to re-enter contacted', a
     const availability = {
         permissions: 'crm_atendimento.commercial_contact_permissions',
         permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        action_events: 'crm_atendimento.commercial_action_events',
         harmonia_contacts: 'harmonia.contacts',
         caixa_customers: 'crm_caixa.customers',
         app_registrations: null,
         lead_profiles: null,
+        permission_event_trace_id: true,
+        permission_events_immutable: true,
+        permission_events_no_truncate: true,
+        action_events_immutable: true,
+        action_events_no_truncate: true,
         action_channel: true,
         action_contacted_at: true,
         rollout_enabled: true,
@@ -508,7 +1082,7 @@ test('does not allow an action with a recorded contact to re-enter contacted', a
     }
     const pool = createFakePool([
         (sql) => sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')") && { rows: [availability], rowCount: 1 },
-        (sql) => sql.includes('select id, identity_id, status, contacted_at from crm_atendimento.commercial_actions') && {
+        (sql) => sql.includes('from crm_atendimento.commercial_actions action') && sql.includes('for update of action') && {
             rows: [{ id: 'action-1', identity_id: 'identity-1', status: 'open', contacted_at: '2026-08-04T12:00:00.000Z' }],
             rowCount: 1,
         },
@@ -1206,12 +1780,13 @@ test('blocks a same-identity review undo when that historical identity has comme
                         member_history: 'identity_member_history', lineage: 'identity_lineage', source_link_history: 'identity_source_link_history',
                         run_event_order: true, member_history_event_order: true, decision_resulting_status: true, decision_event_order: true,
                         decision_immutable: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                        decision_no_truncate: true, member_history_no_truncate: true, lineage_no_truncate: true, source_link_history_no_truncate: true,
                     }],
                     rowCount: 1,
                 }
             }
             if (sql.startsWith('select id from crm_atendimento.schema_migrations')) {
-                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }], rowCount: 2 }
+                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }, { id: '20260805_identity_review_ledger_integrity_v1' }], rowCount: 3 }
             }
             if (sql.includes('from crm_atendimento.client_merge_suggestions m') && sql.includes('for update of m')) {
                 return {
@@ -1314,12 +1889,13 @@ test('blocks an undo when a later automatic source link remains active without a
                         member_history: 'identity_member_history', lineage: 'identity_lineage', source_link_history: 'identity_source_link_history',
                         run_event_order: true, member_history_event_order: true, decision_resulting_status: true, decision_event_order: true,
                         decision_immutable: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                        decision_no_truncate: true, member_history_no_truncate: true, lineage_no_truncate: true, source_link_history_no_truncate: true,
                     }],
                     rowCount: 1,
                 }
             }
             if (sql.startsWith('select id from crm_atendimento.schema_migrations')) {
-                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }], rowCount: 2 }
+                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }, { id: '20260805_identity_review_ledger_integrity_v1' }], rowCount: 3 }
             }
             if (sql.includes('from crm_atendimento.client_merge_suggestions m') && sql.includes('for update of m')) {
                 return {

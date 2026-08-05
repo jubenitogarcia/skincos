@@ -20,6 +20,7 @@ type AtendimentoActorHeader = {
   email?: string
   name?: string
   role: string
+  isGlobalAdmin?: boolean
   allowedUnits?: string[]
   allowedModules?: string[]
 }
@@ -105,12 +106,17 @@ function stringArray(value: unknown): string[] | undefined {
 }
 
 function toAtendimentoActor(user: CrmUserLike): AtendimentoActorHeader {
+  const rawRole = String(user.role || '').trim().toUpperCase()
   return {
     id: String(user.id || ''),
     username: user.username ? String(user.username) : undefined,
     email: user.email ? String(user.email) : undefined,
     name: user.displayName ? String(user.displayName) : undefined,
     role: normalizeRole(user.role),
+    // The upstream normalizes ADMIN to GESTOR for its public module role, but
+    // Clientes needs the original break-glass provenance to distinguish it
+    // from a unit-scoped manager.
+    isGlobalAdmin: rawRole === 'ADMIN',
     allowedUnits: stringArray(user.allowedUnits),
     allowedModules: effectiveAllowedModules(user.role, user.allowedModules),
   }

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto'
 import express from 'express'
 import { createAtendimentoStore, canAccessAtendimento } from './store.js'
+import { createCommercialDataQualityStore } from './commercialDataQualityStore.js'
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
 
 const json = (res, status, body, headers = {}) => {
@@ -44,19 +45,26 @@ function normalizeRole(value) {
     return raw
 }
 
+function isGlobalAdminRole(value) {
+    return String(value || '').trim().toUpperCase() === 'ADMIN'
+}
+
 function parseActorHeader(req) {
     const encoded = String(req.headers['x-crm-user'] || '').trim()
     if (!encoded) return null
     try {
         const actor = JSON.parse(b64UrlDecode(encoded))
         if (!actor || typeof actor !== 'object') return null
+        const rawRole = actor.role
         return {
             id: String(actor.id || actor.username || actor.email || '').trim(),
             username: actor.username ? String(actor.username) : undefined,
             email: actor.email ? String(actor.email) : undefined,
             name: actor.name ? String(actor.name) : undefined,
-            role: normalizeRole(actor.role),
+            role: normalizeRole(rawRole),
+            isGlobalAdmin: isGlobalAdminRole(rawRole),
             allowedUnits: Array.isArray(actor.allowedUnits) ? actor.allowedUnits.map(String).filter(Boolean) : undefined,
+            allowedUnitsDeclared: Object.prototype.hasOwnProperty.call(actor, 'allowedUnits'),
             allowedModules: Array.isArray(actor.allowedModules) ? actor.allowedModules.map(String).filter(Boolean) : undefined,
         }
     } catch {
@@ -90,13 +98,16 @@ function devSessionActor(req, getDevSession) {
     const session = getDevSession(req)
     const user = session?.user || null
     if (!user) return null
+    const rawRole = user.role
     return {
         id: String(user.username || user.email || '').trim(),
         username: user.username ? String(user.username) : undefined,
         email: user.email ? String(user.email) : undefined,
         name: user.displayName ? String(user.displayName) : undefined,
-        role: normalizeRole(user.role),
+        role: normalizeRole(rawRole),
+        isGlobalAdmin: isGlobalAdminRole(rawRole),
         allowedUnits: Array.isArray(user.allowedUnits) ? user.allowedUnits.map(String).filter(Boolean) : undefined,
+        allowedUnitsDeclared: Object.prototype.hasOwnProperty.call(user, 'allowedUnits'),
         allowedModules: Array.isArray(user.allowedModules) ? user.allowedModules.map(String).filter(Boolean) : undefined,
     }
 }
@@ -112,6 +123,10 @@ function isCommercialManager(actor) {
     // boundary at the API too, so a direct signed request cannot bypass the
     // role policy enforced by the frontend registry.
     return role === 'GESTOR'
+}
+
+function requestsClinicalCadenceApproval(payload) {
+    return String(payload?.status || '').trim().toLowerCase() === 'approved'
 }
 
 function isLocalRequest(req) {
@@ -166,6 +181,10 @@ function errorResponse(res, error) {
 
 export function createAtendimentoRouter(options = {}) {
     const store = options.store || createAtendimentoStore({ databaseUrl: options.databaseUrl })
+    const commercialDataQualityStore = options.commercialDataQualityStore || createCommercialDataQualityStore({
+        pool: options.commercialDataQualityPool,
+        databaseUrl: options.databaseUrl,
+    })
     const actorKey = String(
         options.actorHmacKey ||
         process.env.ATENDIMENTO_ACTOR_HMAC_KEY ||
@@ -280,6 +299,15 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    expressRouter.get('/commercial/references', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.commercialReferences(req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.get('/commercial/overview', async (req, res) => {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
@@ -376,6 +404,9 @@ export function createAtendimentoRouter(options = {}) {
     expressRouter.put('/commercial/cadences', async (req, res) => {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            if (requestsClinicalCadenceApproval(req.body)) {
+                return json(res, 403, { ok: false, error: 'CLINICAL_CADENCE_APPROVAL_REQUIRED' })
+            }
             return json(res, 200, { ok: true, ...(await store.upsertCommercialCadence(req.body || {}, req.atendimentoActor)) })
         } catch (error) {
             return errorResponse(res, error)
@@ -395,6 +426,42 @@ export function createAtendimentoRouter(options = {}) {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
             return json(res, 200, { ok: true, ...(await store.updateCommercialAction(String(req.params.id || ''), req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/data-quality', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialDataQualityStore.list(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/data-quality/refresh', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialDataQualityStore.refresh(req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.patch('/commercial/data-quality/:id', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialDataQualityStore.update(String(req.params.id || ''), req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/data-quality/:id/events', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialDataQualityStore.events(String(req.params.id || ''), req.query || {}, req.atendimentoActor)) })
         } catch (error) {
             return errorResponse(res, error)
         }
@@ -654,6 +721,8 @@ export function createAtendimentoRouter(options = {}) {
 export const __testables = {
     errorPayload,
     isCommercialManager,
+    requestsClinicalCadenceApproval,
+    parseActorHeader,
     isLocalRequest,
     redactLocalDiagnostic,
     safeEqual,

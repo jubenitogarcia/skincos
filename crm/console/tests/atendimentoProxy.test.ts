@@ -68,6 +68,7 @@ describe('Atendimento proxy helpers', () => {
       email: 'user@example.test',
       name: 'User Test',
       role: 'GESTOR',
+      isGlobalAdmin: true,
       allowedUnits: ['Novo Hamburgo'],
       allowedModules: ['atendimento'],
     })

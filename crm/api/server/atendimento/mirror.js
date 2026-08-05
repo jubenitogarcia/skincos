@@ -84,13 +84,16 @@ export function isStrictLocalMirrorDestination(destinationUrl) {
     const raw = String(destinationUrl || '').trim()
     try {
         const url = new URL(raw)
+        const query = [...url.searchParams.entries()]
         return url.protocol === 'postgresql:' &&
             !url.hostname &&
             !url.port &&
             !url.username &&
             !url.password &&
             url.pathname === `/${LOCAL_DATABASE_NAME}` &&
-            url.searchParams.get('host') === '/var/run/postgresql'
+            query.length === 1 &&
+            query[0][0] === 'host' &&
+            query[0][1] === '/var/run/postgresql'
     } catch {
         return false
     }

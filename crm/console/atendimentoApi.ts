@@ -526,6 +526,10 @@ export async function fetchAtendimentoReferences() {
   return api<AtendimentoReferences>('/references')
 }
 
+export async function fetchCommercialReferences() {
+  return api<AtendimentoReferences>('/commercial/references')
+}
+
 export async function fetchAtendimentoClientSuggestions(unit: string, query: string, limit = 8) {
   const params = new URLSearchParams({ unit, q: query, limit: String(limit) })
   return api<{ clients: AtendimentoClientSuggestion[] }>(`/clients?${params.toString()}`)
@@ -792,6 +796,7 @@ export type CommercialContactEligibility = {
   evidenceSource: string
   evidenceReference: string
   expiresAt: string | null
+  permissionRevision: number
   recordedBy: string
   updatedAt: string | null
 }
@@ -799,8 +804,6 @@ export type CommercialContactEligibility = {
 export type CommercialProfile = {
   identityId: string
   name: string
-  phone: string
-  email: string
   sourceTypes: string[]
   identityQuality: string
   units: string[]
@@ -854,6 +857,59 @@ export type CommercialPolicy = {
   policyVersion: string
   updatedBy: string
   updatedAt: string | null
+}
+
+export type CommercialDataQualitySeverity = 'critical' | 'high' | 'medium' | 'low'
+export type CommercialDataQualityStatus = 'open' | 'acknowledged' | 'in_progress' | 'resolved' | 'suppressed'
+
+export type CommercialDataQualityFinding = {
+  id: string
+  findingKey: string
+  severity: CommercialDataQualitySeverity
+  status: CommercialDataQualityStatus
+  owner: string
+  observedCount: number
+  // The API deliberately limits this object to aggregate safety/freshness values.
+  metrics: {
+    thresholdHours?: number
+    mirrorSyncedAgeHours?: number
+    latestImportAgeHours?: number
+    currentSnapshotCount?: number
+    residualRegistrationCount?: number
+    controlsReady?: boolean
+    snapshotVerified?: boolean
+  }
+  slaDueAt: string | null
+  firstDetectedAt: string | null
+  lastObservedAt: string | null
+  lastEvaluatedAt: string | null
+  acknowledgedAt: string | null
+  resolvedAt: string | null
+  revision: number
+  updatedAt: string | null
+}
+
+export type CommercialDataQualityQueue = {
+  total: number
+  limit: number
+  offset: number
+  metrics: {
+    findings: number
+    currentFindings: number
+    overdue: number
+    unassigned: number
+    bySeverity: Partial<Record<CommercialDataQualitySeverity, number>>
+    byStatus: Partial<Record<CommercialDataQualityStatus, number>>
+  }
+  sourceFreshness: CommercialDataQualityFinding['metrics']
+  findings: CommercialDataQualityFinding[]
+}
+
+export type CommercialDataQualityFindingMutation = {
+  // The queue is shared. The server rejects writes based on a stale revision.
+  expectedRevision: number
+  owner?: string
+  status?: CommercialDataQualityStatus
 }
 
 export type CommercialOverview = {
@@ -935,6 +991,26 @@ export function fetchCommercialOverview(filters: { asOf?: string; unit?: string;
   return api<CommercialOverview>(`/commercial/overview${qs ? `?${qs}` : ''}`)
 }
 
+export function fetchCommercialDataQuality(filters: {
+  status?: CommercialDataQualityStatus
+  severity?: CommercialDataQualitySeverity
+  limit?: number
+  offset?: number
+} = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => { if (value !== undefined) params.set(key, String(value)) })
+  const qs = params.toString()
+  return api<CommercialDataQualityQueue>(`/commercial/data-quality${qs ? `?${qs}` : ''}`)
+}
+
+export function updateCommercialDataQualityFinding(id: string, payload: CommercialDataQualityFindingMutation) {
+  return api<{ finding: CommercialDataQualityFinding }>(`/commercial/data-quality/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+}
+
+export function isCommercialDataQualityScopeDenied(error: string | undefined) {
+  return error === 'COMMERCIAL_DATA_QUALITY_UNIT_SCOPE_UNSUPPORTED' || error === 'FORBIDDEN'
+}
+
 export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityReviewItem['type']; q?: string; limit?: number; offset?: number; includeResolved?: boolean } = {}) {
   const params = new URLSearchParams()
   Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)) })
@@ -984,7 +1060,11 @@ export function updateCommercialAction(id: string, payload: { status: Commercial
   return api<{ id: string; status: CommercialAction['status']; contactEligibility: CommercialContactEligibility }>(`/commercial/actions/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
 }
 
-export function recordCommercialContactPermission(identityId: string, payload: { status: 'granted' | 'denied'; source: string; evidenceReference: string; expiresAt?: string }) {
+export type CommercialContactPermissionMutation =
+  | { status: 'granted'; source: string; evidenceReference: string; expectedRevision: number; expiresAt?: string }
+  | { status: 'denied'; source: string; evidenceReference: string; expectedRevision?: number; expiresAt?: string }
+
+export function recordCommercialContactPermission(identityId: string, payload: CommercialContactPermissionMutation) {
   return api<{ contactEligibility: CommercialContactEligibility }>(`/commercial/contact-permissions/${encodeURIComponent(identityId)}`, { method: 'PUT', body: payload })
 }
 
@@ -994,7 +1074,7 @@ export function fetchCommercialPolicy() {
 
 export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'> &
   Partial<Pick<CommercialPolicy, 'commercialContactWritesEnabled' | 'commercialContactCanaryIdentityIds'>> &
-  { expectedPolicyVersion?: string }) {
+  { expectedPolicyVersion: string }) {
   return api<{ policy: CommercialPolicy }>('/commercial/policy', { method: 'PUT', body: payload })
 }
 
@@ -1002,7 +1082,10 @@ export function fetchCommercialCadences() {
   return api<{ cadences: Array<{ id: string; procedureId: string; procedureName: string; cadenceDays: number; status: string; notes: string; approvedBy: string; approvedAt: string | null; updatedBy: string; updatedAt: string | null; unitSlug: string; unitName: string }> }>('/commercial/cadences')
 }
 
-export function upsertCommercialCadence(payload: { procedureId: string; unit?: string; cadenceDays: number; status: 'draft' | 'approved' | 'disabled'; notes?: string }) {
+export const commercialCadenceManagerStatuses = ['draft', 'disabled'] as const
+export type CommercialCadenceManagerStatus = (typeof commercialCadenceManagerStatuses)[number]
+
+export function upsertCommercialCadence(payload: { procedureId: string; unit?: string; cadenceDays: number; status: CommercialCadenceManagerStatus; notes?: string }) {
   return api<{ id: string }>('/commercial/cadences', { method: 'PUT', body: payload })
 }
 

@@ -127,13 +127,14 @@ test('records append-only projection lineage and audit evidence when the reviewe
             if (normalized.includes("to_regclass('crm_atendimento.schema_migrations') as registry")) {
                 return {
                     rows: [{
-                        registry: 'registry', runs: 'runs', member_history: 'history', lineage: 'lineage', source_link_history: 'source-links', audit_events: 'audit',
-                        run_event_order: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                        registry: 'registry', decisions: 'decisions', runs: 'runs', member_history: 'history', lineage: 'lineage', source_link_history: 'source-links', audit_events: 'audit',
+                        run_event_order: true, decision_immutable: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                        decision_no_truncate: true, member_history_no_truncate: true, lineage_no_truncate: true, source_link_history_no_truncate: true,
                     }],
                 }
             }
             if (normalized.startsWith('select id from crm_atendimento.schema_migrations')) {
-                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }] }
+                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }, { id: '20260805_identity_review_ledger_integrity_v1' }] }
             }
             if (normalized.startsWith('insert into crm_atendimento.identity_materialization_runs')) {
                 return { rows: [{ id: '22222222-2222-4222-8222-222222222222' }] }
@@ -172,6 +173,41 @@ test('records append-only projection lineage and audit evidence when the reviewe
     const audit = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.audit_events'))
     assert.equal(audit.params[0], 'client-identity.projection.materialized')
     assert.doesNotMatch(JSON.stringify(audit.params), /cash-1|app-1/)
+})
+
+test('keeps projection evidence unavailable when the decision immutable guard is absent', async () => {
+    const queries = []
+    const client = {
+        async query(sql, params = []) {
+            const normalized = String(sql).replace(/\s+/g, ' ').trim()
+            queries.push({ sql: normalized, params })
+            if (normalized.includes("to_regclass('crm_atendimento.schema_migrations') as registry")) {
+                return {
+                    rows: [{
+                        registry: 'registry', decisions: 'decisions', runs: 'runs', member_history: 'history', lineage: 'lineage', source_link_history: 'source-links', audit_events: 'audit',
+                        run_event_order: true, decision_immutable: false, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                        decision_no_truncate: true, member_history_no_truncate: true, lineage_no_truncate: true, source_link_history_no_truncate: true,
+                    }],
+                }
+            }
+            if (normalized.startsWith('select id from crm_atendimento.schema_migrations')) {
+                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }, { id: '20260805_identity_review_ledger_integrity_v1' }] }
+            }
+            return { rows: [] }
+        },
+    }
+
+    const result = await recordIdentityProjectionMaterialization(client, {
+        origin: 'missing_decision_immutable_guard',
+        components: [{
+            componentKey: 'app_registration:app-1',
+            members: [{ sourceType: 'app_registration', sourceId: 'app-1' }],
+        }],
+        resultingIdentityIds: new Map([['app_registration:app-1', '33333333-3333-4333-8333-333333333333']]),
+    })
+
+    assert.deepEqual(result, { available: false, recorded: false, membersCreated: 0, membersMoved: 0 })
+    assert.equal(queries.some(({ sql }) => sql.startsWith('insert into crm_atendimento.identity_materialization_runs')), false)
 })
 
 test('records only automatic source-link topology transitions', () => {
@@ -214,13 +250,14 @@ test('records a source-link activation even when no physical member moves', asyn
             if (normalized.includes("to_regclass('crm_atendimento.schema_migrations') as registry")) {
                 return {
                     rows: [{
-                        registry: 'registry', runs: 'runs', member_history: 'history', lineage: 'lineage', source_link_history: 'source-links', audit_events: 'audit',
-                        run_event_order: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                        registry: 'registry', decisions: 'decisions', runs: 'runs', member_history: 'history', lineage: 'lineage', source_link_history: 'source-links', audit_events: 'audit',
+                        run_event_order: true, decision_immutable: true, member_history_immutable: true, lineage_immutable: true, source_link_history_immutable: true,
+                        decision_no_truncate: true, member_history_no_truncate: true, lineage_no_truncate: true, source_link_history_no_truncate: true,
                     }],
                 }
             }
             if (normalized.startsWith('select id from crm_atendimento.schema_migrations')) {
-                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }] }
+                return { rows: [{ id: '20260805_identity_review_workflow_v1' }, { id: '20260805_identity_review_source_link_ledger_v1' }, { id: '20260805_identity_review_ledger_integrity_v1' }] }
             }
             if (normalized.startsWith('insert into crm_atendimento.identity_materialization_runs')) {
                 return { rows: [{ id: '44444444-4444-4444-8444-444444444444' }] }

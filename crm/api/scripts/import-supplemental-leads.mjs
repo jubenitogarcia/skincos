@@ -14,6 +14,15 @@ import {
     asRecoverableIdentityMaterializationError,
     configureIdentityMaterializationTimeouts,
 } from '../server/atendimento/identityMaterializationRuntime.js'
+import {
+    assertIdentityMaterializationApplyCheckpoint,
+    assertIdentityMaterializationDatabase,
+    assertIdentityMaterializationDestination,
+    assertIdentityMaterializationSchemaReady,
+    fingerprintIdentityMaterializationSource,
+    identityMaterializationCheckpoint,
+    writeIdentityMaterializationCheckpoint,
+} from '../server/atendimento/identityMaterializationSafety.js'
 import { buildSupplementalLeadIdentityPlan, buildSupplementalLeadProfiles } from '../server/atendimento/supplementalLeadIdentity.js'
 
 const apply = process.argv.includes('--apply')
@@ -22,12 +31,12 @@ const outputDirectory = String(process.env.SUPPLEMENTAL_LEADS_OUTPUT || '').trim
 const databaseUrl = String(process.env.DATABASE_URL || '').trim()
 const serviceAccountFile = String(process.env.ATENDIMENTO_GOOGLE_SA_FILE || process.env.HARMONIA_GOOGLE_SA_FILE || '').trim()
 const checkpointFile = String(process.env.SUPPLEMENTAL_LEADS_CHECKPOINT || '').trim()
+const checkpointOutput = String(process.env.SUPPLEMENTAL_LEADS_CHECKPOINT_OUTPUT || '').trim()
 if (!spreadsheetId) throw new Error('SUPPLEMENTAL_LEADS_GOOGLE_SHEET_ID_not_configured')
 if (!outputDirectory) throw new Error('SUPPLEMENTAL_LEADS_OUTPUT_not_configured')
 if (!databaseUrl) throw new Error('DATABASE_URL_not_configured')
 if (!serviceAccountFile) throw new Error('ATENDIMENTO_GOOGLE_SA_FILE_not_configured')
-if (apply && process.env.SUPPLEMENTAL_LEADS_APPLY_CONFIRM !== 'UNIFICAR') throw new Error('SUPPLEMENTAL_LEADS_APPLY_CONFIRM_UNIFICAR_required')
-if (apply && !checkpointFile) throw new Error('SUPPLEMENTAL_LEADS_CHECKPOINT_required_before_apply')
+assertIdentityMaterializationDestination(databaseUrl)
 
 const sourceTabs = ['Lead', 'Novo Hamburgo', 'BarraShoppingSul', 'Não Identificado', 'Codex App', 'Message']
 const chunks = (values, size = 500) => Array.from({ length: Math.ceil(values.length / size) }, (_, index) => values.slice(index * size, (index + 1) * size))
@@ -88,22 +97,10 @@ async function loadInputs(pool) {
     }
 }
 
-const schemaStatements = [
-    `create table if not exists crm_atendimento.supplemental_lead_import_runs (id uuid primary key default gen_random_uuid(), source_sheet_id text not null, summary jsonb not null, created_at timestamptz not null default now())`,
-    `create table if not exists crm_atendimento.supplemental_lead_profiles (source_profile_id text primary key, source_sheet_id text not null, source_rows jsonb not null, canonical_name text not null, name_key text not null, name_variants jsonb not null default '[]'::jsonb, phone_keys jsonb not null default '[]'::jsonb, email_keys jsonb not null default '[]'::jsonb, unit_slugs jsonb not null default '[]'::jsonb, birthdays jsonb not null default '[]'::jsonb, last_run_id uuid references crm_atendimento.supplemental_lead_import_runs(id) on delete set null, created_at timestamptz not null default now(), updated_at timestamptz not null default now())`,
-    `create table if not exists crm_atendimento.supplemental_lead_profile_app_links (source_profile_id text not null references crm_atendimento.supplemental_lead_profiles(source_profile_id) on delete cascade, app_registration_id text not null references crm_atendimento.app_client_registrations(source_client_id) on delete restrict, method text not null, confidence numeric(5,4) not null, status text not null, evidence jsonb not null default '{}'::jsonb, run_id uuid references crm_atendimento.supplemental_lead_import_runs(id) on delete set null, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), primary key(source_profile_id, app_registration_id))`,
-    `create table if not exists crm_atendimento.supplemental_lead_profile_caixa_links (source_profile_id text not null references crm_atendimento.supplemental_lead_profiles(source_profile_id) on delete cascade, caixa_customer_id uuid not null references crm_caixa.customers(id) on delete restrict, method text not null, confidence numeric(5,4) not null, status text not null, evidence jsonb not null default '{}'::jsonb, run_id uuid references crm_atendimento.supplemental_lead_import_runs(id) on delete set null, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), primary key(source_profile_id, caixa_customer_id))`,
-    `alter table crm_atendimento.global_client_identity_members drop constraint if exists global_client_identity_members_source_type_check`,
-    `alter table crm_atendimento.global_client_identity_members add constraint global_client_identity_members_source_type_check check(source_type in ('app_registration','caixa_customer','attendance_client','lead_profile'))`,
-    `create index if not exists supplemental_lead_profile_app_status_idx on crm_atendimento.supplemental_lead_profile_app_links(status, confidence desc)`,
-    `create index if not exists supplemental_lead_profile_caixa_status_idx on crm_atendimento.supplemental_lead_profile_caixa_links(status, confidence desc)`,
-]
-
 async function persist(client, { plan }) {
     await configureIdentityMaterializationTimeouts(client)
     await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
     await client.query(`select pg_advisory_xact_lock(hashtext('crm_atendimento.supplemental_lead_reconciliation'))`)
-    for (const statement of schemaStatements) await client.query(statement)
     const [persistedLeadAppBefore, persistedLeadCaixaBefore] = await Promise.all([
         client.query(`select source_profile_id as "profileId",app_registration_id as "registrationId",status
             from crm_atendimento.supplemental_lead_profile_app_links`),
@@ -227,17 +224,37 @@ async function persist(client, { plan }) {
 
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 2, application_name: 'crm-supplemental-lead-import' })
 try {
+    const verificationClient = await pool.connect()
+    try {
+        await assertIdentityMaterializationDatabase(verificationClient, databaseUrl)
+        await assertIdentityMaterializationSchemaReady(verificationClient)
+    } finally {
+        verificationClient.release()
+    }
     console.error('Reading supplemental lead workbook and existing identities...')
     const [sheet, input] = await Promise.all([readSheet(), loadInputs(pool)])
     console.error('Building normalized lead profiles and link plan...')
     const profiles = buildSupplementalLeadProfiles({ spreadsheetId, tabs: sheet.tabs })
     const plan = buildSupplementalLeadIdentityPlan({ profiles, appRegistrations: input.apps, caixaCustomers: input.customers })
+    const sourceFingerprint = fingerprintIdentityMaterializationSource({ spreadsheetId, tabs: sheet.tabs })
+    const checkpoint = identityMaterializationCheckpoint({ operation: 'supplemental_lead_import', sourceFingerprint })
+    const writtenCheckpoint = !apply
+        ? await writeIdentityMaterializationCheckpoint({ outputFile: checkpointOutput, checkpoint })
+        : null
     let persisted = null
     if (apply) {
-        await fs.access(checkpointFile)
         console.error('Persisting supplemental profiles and confirmed identity components...')
         const client = await pool.connect()
         try {
+            await assertIdentityMaterializationDatabase(client, databaseUrl)
+            await assertIdentityMaterializationSchemaReady(client)
+            await assertIdentityMaterializationApplyCheckpoint({
+                operation: 'supplemental_lead_import',
+                confirmation: process.env.SUPPLEMENTAL_LEADS_APPLY_CONFIRM,
+                targetConfirmation: process.env.SUPPLEMENTAL_LEADS_APPLY_TARGET,
+                checkpointFile,
+                sourceFingerprint,
+            })
             await client.query('begin')
             persisted = await persist(client, { plan })
             await client.query('commit')
@@ -249,9 +266,9 @@ try {
     await fs.mkdir(outputDirectory, { recursive: true })
     const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-')
     const summaryFile = path.join(outputDirectory, `importacao-leads-resumo-${stamp}.json`)
-    await fs.writeFile(summaryFile, `${JSON.stringify({ ok: true, dryRun: !apply, persisted, source: { spreadsheetId, tabs: sheet.tabNames, rows: Object.fromEntries(Object.entries(sheet.tabs).map(([tab, rows]) => [tab, Math.max(0, rows.length - 1)])) }, ...plan.summary }, null, 2)}\n`)
+    await fs.writeFile(summaryFile, `${JSON.stringify({ ok: true, dryRun: !apply, persisted, checkpoint, source: { spreadsheetId, tabs: sheet.tabNames, rows: Object.fromEntries(Object.entries(sheet.tabs).map(([tab, rows]) => [tab, Math.max(0, rows.length - 1)])) }, ...plan.summary }, null, 2)}\n`)
     console.error('Supplemental lead import completed.')
-    console.log(JSON.stringify({ ok: true, dryRun: !apply, persisted, source: { spreadsheetId, tabs: sheet.tabNames, rows: Object.fromEntries(Object.entries(sheet.tabs).map(([tab, rows]) => [tab, Math.max(0, rows.length - 1)])) }, ...plan.summary, output: summaryFile }, null, 2))
+    console.log(JSON.stringify({ ok: true, dryRun: !apply, persisted, checkpoint, checkpointOutput: writtenCheckpoint, source: { spreadsheetId, tabs: sheet.tabNames, rows: Object.fromEntries(Object.entries(sheet.tabs).map(([tab, rows]) => [tab, Math.max(0, rows.length - 1)])) }, ...plan.summary, output: summaryFile }, null, 2))
 } finally { await pool.end() }
 // googleapis can retain an idle transport handle after a completed one-shot import.
 process.exit(0)
