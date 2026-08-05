@@ -778,6 +778,24 @@ export type CommercialSegment = {
   evidence: Record<string, number>
 }
 
+export type CommercialContactEligibility = {
+  channel: 'whatsapp'
+  status: 'eligible' | 'review_required' | 'blocked'
+  contactAllowed: boolean
+  reason: string
+  controlsReady: boolean
+  contactWriteControlsReady: boolean
+  harmoniaChecked: boolean
+  hasPhone: boolean
+  optOutRecorded: boolean
+  permissionStatus: 'granted' | 'denied' | 'unknown'
+  evidenceSource: string
+  evidenceReference: string
+  expiresAt: string | null
+  recordedBy: string
+  updatedAt: string | null
+}
+
 export type CommercialProfile = {
   identityId: string
   name: string
@@ -804,6 +822,7 @@ export type CommercialProfile = {
   recommendedAction: string
   activeActionCount: number
   lastActionAt: string | null
+  contactEligibility: CommercialContactEligibility
 }
 
 export type CommercialAction = {
@@ -813,6 +832,7 @@ export type CommercialAction = {
   unitName: string
   segmentKey: string
   actionType: 'contact' | 'follow_up' | 'appointment' | 'relationship'
+  contactChannel: 'whatsapp'
   status: 'open' | 'contacted' | 'responded' | 'scheduled' | 'won_sale' | 'returned' | 'closed' | 'cancelled'
   owner: string
   dueDate: string | null
@@ -820,6 +840,7 @@ export type CommercialAction = {
   outcomeNotes: string
   createdBy: string
   completedAt: string | null
+  contactedAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -827,6 +848,10 @@ export type CommercialAction = {
 export type CommercialPolicy = {
   activeContactCooldownDays: number
   returnRiskThresholds: number[]
+  commercialContactWritesEnabled: boolean
+  commercialContactCanaryIdentityIds: string[]
+  commercialContactWriteControlsReady: boolean
+  policyVersion: string
   updatedBy: string
   updatedAt: string | null
 }
@@ -835,9 +860,16 @@ export type CommercialOverview = {
   asOf: string
   policy: CommercialPolicy
   summary: { profiles: number; returnAtRisk: number; highValueInactive: number; frequent: number; balancedVip: number; reactivationPotential: number; averageTicket: number }
-  actions: { actions: number; recoveredSalesClients: number; clinicalReturnClients: number }
-  coverage: { confirmedIdentities: number; classifiedSaleItems: number; saleItems: number }
-  dataQuality: { futureAttendancesExcluded: number; recencySource: 'completed_attendance_only'; saleItemsWithoutClassification: number }
+  actions: { actions: number; contactedActions: number; recoveredSalesClients: number; clinicalReturnClients: number }
+  coverage: { identitiesVisible: number; confirmedMultiSourceIdentities: number; unresolvedSingleSourceIdentities: number; classifiedSaleItems: number; saleItems: number }
+  dataQuality: {
+    futureAttendancesExcluded: number
+    recencySource: 'completed_attendance_only'
+    saleItemsWithoutClassification: number
+    activeAttendanceClientsWithoutIdentity: number
+    identityDataUpdatedAt: string | null
+    contactEligibility: { eligible: number; blocked: number; reviewRequired: number; controlsReady: boolean; contactWriteControlsReady: boolean }
+  }
   total: number
   limit: number
   offset: number
@@ -887,19 +919,25 @@ export function fetchCommercialProfile(identityId: string, filters: { asOf?: str
   return api<CommercialProfileDetail>(`/commercial/profiles/${encodeURIComponent(identityId)}${qs ? `?${qs}` : ''}`)
 }
 
-export function createCommercialAction(payload: { identityId: string; segmentKey: string; actionType: CommercialAction['actionType']; owner?: string; unit?: string; dueDate?: string; notes?: string }) {
-  return api<{ id: string }>('/commercial/actions', { method: 'POST', body: payload })
+export function createCommercialAction(payload: { identityId: string; segmentKey: string; actionType: CommercialAction['actionType']; contactChannel?: 'whatsapp'; owner?: string; unit?: string; dueDate?: string; notes?: string }) {
+  return api<{ id: string; contactEligibility: CommercialContactEligibility }>('/commercial/actions', { method: 'POST', body: payload })
 }
 
 export function updateCommercialAction(id: string, payload: { status: CommercialAction['status']; owner?: string; outcomeNotes?: string }) {
-  return api<{ id: string; status: CommercialAction['status'] }>(`/commercial/actions/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+  return api<{ id: string; status: CommercialAction['status']; contactEligibility: CommercialContactEligibility }>(`/commercial/actions/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+}
+
+export function recordCommercialContactPermission(identityId: string, payload: { status: 'granted' | 'denied'; source: string; evidenceReference: string; expiresAt?: string }) {
+  return api<{ contactEligibility: CommercialContactEligibility }>(`/commercial/contact-permissions/${encodeURIComponent(identityId)}`, { method: 'PUT', body: payload })
 }
 
 export function fetchCommercialPolicy() {
   return api<{ policy: CommercialPolicy }>('/commercial/policy')
 }
 
-export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'>) {
+export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'> &
+  Partial<Pick<CommercialPolicy, 'commercialContactWritesEnabled' | 'commercialContactCanaryIdentityIds'>> &
+  { expectedPolicyVersion?: string }) {
   return api<{ policy: CommercialPolicy }>('/commercial/policy', { method: 'PUT', body: payload })
 }
 

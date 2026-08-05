@@ -86,6 +86,395 @@ test('contains the normalized commercial-offer schema and refuses to treat it as
     assert.match(migration, /aliases text\[\]/i)
 })
 
+test('keeps commercial-contact rollout DDL out of the automatic store bootstrap', () => {
+    const migration = atendimentoMigrationStatements().join('\n')
+    assert.doesNotMatch(migration, /commercial_contact_writes_enabled/i)
+    assert.doesNotMatch(migration, /commercial_contact_canary_identity_ids/i)
+    assert.doesNotMatch(migration, /contacted_at/i)
+    assert.doesNotMatch(migration, /commercial_actions_contacted_idx/i)
+})
+
+test('keeps commercial policy reads fail-closed before the explicit rollout migration', async () => {
+    const missingColumn = Object.assign(new Error('column does not exist'), { code: '42703' })
+    const pool = createFakePool([
+        (sql) => {
+            if (sql.includes('commercial_contact_writes_enabled') && !sql.includes('false as')) throw missingColumn
+            if (sql.includes('false as commercial_contact_writes_enabled')) {
+                return {
+                    rows: [{
+                        active_contact_cooldown_days: 30,
+                        return_risk_thresholds: [90, 180, 365],
+                        commercial_contact_writes_enabled: false,
+                        commercial_contact_canary_identity_ids: [],
+                    }],
+                    rowCount: 1,
+                }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    const result = await store.commercialPolicy({ role: 'GESTOR' })
+
+    assert.equal(result.policy.commercialContactWritesEnabled, false)
+    assert.deepEqual(result.policy.commercialContactCanaryIdentityIds, [])
+})
+
+test('keeps an opt-out recordable when the explicit contact-write migration is absent', async () => {
+    const queries = []
+    let deniedWritten = false
+    const partialAvailability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions',
+        permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        harmonia_contacts: 'harmonia.contacts',
+        caixa_customers: 'crm_caixa.customers',
+        app_registrations: null,
+        lead_profiles: null,
+        action_channel: true,
+        action_contacted_at: false,
+        rollout_enabled: false,
+        rollout_canary: false,
+    }
+    const pool = createFakePool([
+        (sql, params) => {
+            queries.push({ sql, params })
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities')")) {
+                return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'links', sales: 'sales' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [partialAvailability], rowCount: 1 }
+            if (sql === 'select id from crm_atendimento.global_client_identities where id = $1') return { rows: [{ id: params[0] }], rowCount: 1 }
+            if (sql.startsWith('insert into crm_atendimento.commercial_contact_permissions(')) {
+                deniedWritten = params[2] === 'denied'
+                return { rows: [], rowCount: 1 }
+            }
+            if (sql.startsWith('select identity_id::text as identity_id, channel, status, evidence_source')) {
+                return { rows: [{ identity_id: 'identity-1', channel: 'whatsapp', status: 'denied', evidence_source: 'opt_out', evidence_reference: 'synthetic:stop', expires_at: null, recorded_by: 'manager-1' }], rowCount: 1 }
+            }
+            if (sql.includes('join crm_caixa.customers customer')) return { rows: [{ identity_id: 'identity-1', phone_key: '5511999999999' }], rowCount: 1 }
+            if (sql.includes('from harmonia.contacts')) return { rows: [{ phone_raw: '5511999999999', opted_out_at: null }], rowCount: 1 }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const actor = { id: 'manager-1', role: 'GESTOR' }
+
+    const denied = await store.recordCommercialContactPermission({
+        identityId: 'identity-1', status: 'denied', source: 'opt_out', evidenceReference: 'synthetic:stop',
+    }, actor)
+    assert.equal(deniedWritten, true)
+    assert.equal(denied.contactEligibility.status, 'blocked')
+    assert.equal(queries.some(({ sql }) => sql.startsWith('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids')), false)
+
+    await assert.rejects(
+        () => store.recordCommercialContactPermission({
+            identityId: 'identity-1', status: 'granted', source: 'synthetic', evidenceReference: 'synthetic:grant',
+        }, actor),
+        /COMMERCIAL_CONTACT_COOLDOWN_CONTROLS_NOT_READY/,
+    )
+})
+
+test('does not let a legacy contacted action without a timestamp bypass the rollout gate', async () => {
+    let actionUpdated = false
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions',
+        permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        harmonia_contacts: 'harmonia.contacts',
+        caixa_customers: 'crm_caixa.customers',
+        app_registrations: null,
+        lead_profiles: null,
+        action_channel: true,
+        action_contacted_at: true,
+        rollout_enabled: true,
+        rollout_canary: true,
+    }
+    const pool = createFakePool([
+        (sql) => {
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+            if (sql.includes('select id, identity_id, status, contacted_at from crm_atendimento.commercial_actions')) {
+                return { rows: [{ id: 'action-1', identity_id: 'identity-1', status: 'contacted', contacted_at: null }], rowCount: 1 }
+            }
+            if (sql.startsWith('select identity_id::text as identity_id, channel, status, evidence_source')) {
+                return { rows: [{ identity_id: 'identity-1', channel: 'whatsapp', status: 'granted', evidence_source: 'synthetic', evidence_reference: 'synthetic:consent', expires_at: null, recorded_by: 'manager-1' }], rowCount: 1 }
+            }
+            if (sql.includes('join crm_caixa.customers customer')) return { rows: [{ identity_id: 'identity-1', phone_key: '5511999999999' }], rowCount: 1 }
+            if (sql.includes('from harmonia.contacts')) return { rows: [{ phone_raw: '5511999999999', opted_out_at: null }], rowCount: 1 }
+            if (sql.includes('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids')) {
+                return { rows: [{ commercial_contact_writes_enabled: false, commercial_contact_canary_identity_ids: [] }], rowCount: 1 }
+            }
+            if (sql.startsWith('update crm_atendimento.commercial_actions')) actionUpdated = true
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.updateCommercialAction('action-1', { status: 'contacted' }, { id: 'manager-1', role: 'GESTOR' }),
+        /COMMERCIAL_CONTACT_ROLLOUT_DISABLED/,
+    )
+    assert.equal(actionUpdated, false)
+})
+
+test('rejects a stale commercial policy version before it can overwrite the canary', async () => {
+    let updateIssued = false
+    let lockedPolicyQuery = ''
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions',
+        permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        harmonia_contacts: 'harmonia.contacts',
+        caixa_customers: 'crm_caixa.customers',
+        app_registrations: null,
+        lead_profiles: null,
+        action_channel: true,
+        action_contacted_at: true,
+        rollout_enabled: true,
+        rollout_canary: true,
+    }
+    const pool = createFakePool([
+        (sql) => {
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+            if (sql.startsWith('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,')) {
+                lockedPolicyQuery = sql
+                return { rows: [{ commercial_contact_writes_enabled: true, commercial_contact_canary_identity_ids: ['11111111-1111-4111-8111-111111111111'], policy_version: 'b'.repeat(32) }], rowCount: 1 }
+            }
+            if (sql.startsWith('update crm_atendimento.commercial_policy_config')) updateIssued = true
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.updateCommercialPolicy({
+            activeContactCooldownDays: 30,
+            returnRiskThresholds: [90, 180, 365],
+            commercialContactWritesEnabled: false,
+            commercialContactCanaryIdentityIds: [],
+            expectedPolicyVersion: 'a'.repeat(32),
+        }, { id: 'manager-1', role: 'GESTOR' }),
+        /COMMERCIAL_POLICY_CONFLICT/,
+    )
+    assert.equal(updateIssued, false)
+    assert.match(lockedPolicyQuery, /extract\(epoch from updated_at\)::text/)
+})
+
+test('records auditable commercial permission and gates contacted transitions on locked current eligibility', async () => {
+    const queries = []
+    let permission = null
+    let harmoniaOptedOut = false
+    let recentContact = false
+    let rolloutEnabled = true
+    let canaryIdentityIds = ['identity-1']
+    let actionUpdated = false
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions',
+        permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        harmonia_contacts: 'harmonia.contacts',
+        caixa_customers: 'crm_caixa.customers',
+        app_registrations: null,
+        lead_profiles: null,
+        action_channel: true,
+        action_contacted_at: true,
+        rollout_enabled: true,
+        rollout_canary: true,
+    }
+    const fakePool = createFakePool([
+        (sql, params) => {
+            queries.push({ sql, params })
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities')")) {
+                return { rows: [{ identities: 'crm_atendimento.global_client_identities', members: 'crm_atendimento.global_client_identity_members', attendance_links: 'crm_atendimento.attendance_client_links', sales: 'crm_caixa.sales' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+            if (sql === 'select id from crm_atendimento.global_client_identities where id = $1') return { rows: [{ id: params[0] }], rowCount: 1 }
+            if (sql.includes('from crm_atendimento.commercial_contact_permissions') && sql.includes('for update')) {
+                return { rows: permission ? [{ status: permission.status }] : [], rowCount: permission ? 1 : 0 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.commercial_contact_permissions(')) {
+                permission = { identityId: params[0], status: params[2], source: params[3], evidenceReference: params[4], expiresAt: params[5], recordedBy: params[6] }
+                return { rows: [], rowCount: 1 }
+            }
+            if (sql.startsWith('select identity_id::text as identity_id, channel, status, evidence_source')) {
+                return { rows: permission ? [{ identity_id: permission.identityId, channel: 'whatsapp', status: permission.status, evidence_source: permission.source, evidence_reference: permission.evidenceReference, expires_at: permission.expiresAt, recorded_by: permission.recordedBy, updated_at: '2026-08-04T12:00:00.000Z' }] : [], rowCount: permission ? 1 : 0 }
+            }
+            if (sql.includes('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids')) {
+                return { rows: [{ commercial_contact_writes_enabled: rolloutEnabled, commercial_contact_canary_identity_ids: canaryIdentityIds }], rowCount: 1 }
+            }
+            if (sql.includes('join crm_caixa.customers customer')) return { rows: [{ identity_id: 'identity-1', phone_key: '5511999999999' }], rowCount: 1 }
+            if (sql.includes('from harmonia.contacts')) return { rows: harmoniaOptedOut ? [{ phone_raw: '5511999999999', opted_out_at: '2026-08-04T12:00:00.000Z' }] : [{ phone_raw: '5511999999999', opted_out_at: null }], rowCount: 1 }
+            if (sql.includes('select id, identity_id, status, contacted_at from crm_atendimento.commercial_actions')) return { rows: [{ id: 'action-1', identity_id: 'identity-1', status: 'open', contacted_at: null }], rowCount: 1 }
+            if (sql.includes('contacted_at >= now()')) return { rows: recentContact ? [{ id: 'older-contact', contacted_at: '2026-08-04T10:00:00.000Z' }] : [], rowCount: recentContact ? 1 : 0 }
+            if (sql.startsWith('update crm_atendimento.commercial_actions')) {
+                actionUpdated = true
+                return { rows: [], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+    const actor = { id: 'manager-1', role: 'GESTOR' }
+
+    const recorded = await store.recordCommercialContactPermission({
+        identityId: 'identity-1',
+        status: 'granted',
+        source: 'cadastro_assinado',
+        evidenceReference: 'consentimento:registro-1',
+        expiresAt: '2030-01-02T03:04:05.000Z',
+    }, actor)
+    assert.equal(recorded.contactEligibility.status, 'eligible')
+    assert.equal(recorded.contactEligibility.expiresAt, '2030-01-02T03:04:05.000Z')
+    assert.equal(queries.some(({ sql }) => sql.startsWith('insert into crm_atendimento.commercial_contact_permission_events(')), true)
+    const permissionEvent = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.commercial_contact_permission_events('))
+    assert.equal(permissionEvent.params[7], 'manager-1')
+    const audit = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.audit_events('))
+    assert.doesNotMatch(JSON.stringify(audit.params), /5511999999999/)
+    assert.match(String(audit.params[1]), /manager-1/)
+
+    const contacted = await store.updateCommercialAction('action-1', { status: 'contacted' }, actor)
+    assert.equal(contacted.status, 'contacted')
+    assert.equal(actionUpdated, true)
+    assert.equal(queries.filter(({ sql }) => sql === 'set transaction isolation level read committed').length, 2)
+    const advisoryLocks = queries.filter(({ sql }) => sql.includes('pg_advisory_xact_lock'))
+    assert.equal(advisoryLocks.length, 3)
+    assert.equal(advisoryLocks.some(({ params }) => params?.[0] === 'skincos.contact-phone:5511999999999'), true)
+    assert.ok(
+        queries.findIndex(({ sql, params }) => sql.includes('skincos.contact-phone') && params?.[0] === 'skincos.contact-phone:5511999999999')
+        < queries.findIndex(({ sql }) => sql.includes('from harmonia.contacts') && sql.includes('for update')),
+    )
+    assert.equal(queries.some(({ sql }) => sql.includes('from harmonia.contacts') && sql.includes('for update')), true)
+
+    rolloutEnabled = false
+    actionUpdated = false
+    await assert.rejects(() => store.updateCommercialAction('action-1', { status: 'contacted' }, actor), /COMMERCIAL_CONTACT_ROLLOUT_DISABLED/)
+    assert.equal(actionUpdated, false)
+
+    rolloutEnabled = true
+    canaryIdentityIds = []
+    await assert.rejects(() => store.updateCommercialAction('action-1', { status: 'contacted' }, actor), /COMMERCIAL_CONTACT_CANARY_REQUIRED/)
+
+    canaryIdentityIds = ['identity-1']
+    recentContact = true
+    actionUpdated = false
+    await assert.rejects(() => store.updateCommercialAction('action-1', { status: 'contacted' }, actor), /COMMERCIAL_CONTACT_COOLDOWN_ACTIVE/)
+    assert.equal(actionUpdated, false)
+
+    recentContact = false
+    harmoniaOptedOut = true
+    actionUpdated = false
+    await assert.rejects(() => store.updateCommercialAction('action-1', { status: 'contacted' }, actor), /COMMERCIAL_CONTACT_BLOCKED/)
+    assert.equal(actionUpdated, false)
+
+    await assert.rejects(() => store.recordCommercialContactPermission({
+        identityId: 'identity-1', status: 'denied', source: 'operador', evidenceReference: 'ref-2',
+    }, { role: 'GESTOR' }), /ACTOR_IDENTITY_REQUIRED/)
+})
+
+test('serializes concurrent contacted transitions so only one action can consume a contact cooldown window', async () => {
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions',
+        permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        harmonia_contacts: 'harmonia.contacts',
+        caixa_customers: 'crm_caixa.customers',
+        app_registrations: null,
+        lead_profiles: null,
+        action_channel: true,
+        action_contacted_at: true,
+        rollout_enabled: true,
+        rollout_canary: true,
+    }
+    let contactRecorded = false
+    let lockTail = Promise.resolve()
+
+    const runQuery = async (client, input, params = []) => {
+        const sql = String(input || '').replace(/\s+/g, ' ').trim()
+        if (sql === 'commit' || sql === 'rollback') {
+            client.releaseIdentityLock?.()
+            client.releaseIdentityLock = null
+            return { rows: [], rowCount: 0 }
+        }
+        if (sql.includes('pg_advisory_xact_lock') && params?.[0] === 'crm_atendimento.commercial-contact:identity-1') {
+            const previous = lockTail
+            let release
+            lockTail = new Promise((resolve) => { release = resolve })
+            await previous
+            client.releaseIdentityLock = release
+            return { rows: [], rowCount: 1 }
+        }
+        if (sql.includes("to_regclass('crm_atendimento.global_client_identities')")) {
+            return { rows: [{ identities: 'crm_atendimento.global_client_identities', members: 'crm_atendimento.global_client_identity_members', attendance_links: 'crm_atendimento.attendance_client_links', sales: 'crm_caixa.sales' }], rowCount: 1 }
+        }
+        if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+        if (sql.includes('select id, identity_id, status, contacted_at from crm_atendimento.commercial_actions')) {
+            return { rows: [{ id: params[0], identity_id: 'identity-1', status: 'open', contacted_at: null }], rowCount: 1 }
+        }
+        if (sql.startsWith('select identity_id::text as identity_id, channel, status, evidence_source')) {
+            return { rows: [{ identity_id: 'identity-1', channel: 'whatsapp', status: 'granted', evidence_source: 'synthetic', evidence_reference: 'synthetic:consent', expires_at: null, recorded_by: 'manager-1', updated_at: '2026-08-04T12:00:00.000Z' }], rowCount: 1 }
+        }
+        if (sql.includes('join crm_caixa.customers customer')) return { rows: [{ identity_id: 'identity-1', phone_key: '5511999999999' }], rowCount: 1 }
+        if (sql.includes('from harmonia.contacts')) return { rows: [{ phone_raw: '5511999999999', opted_out_at: null }], rowCount: 1 }
+        if (sql.includes('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids')) {
+            return { rows: [{ commercial_contact_writes_enabled: true, commercial_contact_canary_identity_ids: ['identity-1'] }], rowCount: 1 }
+        }
+        if (sql.startsWith('select active_contact_cooldown_days from crm_atendimento.commercial_policy_config')) return { rows: [{ active_contact_cooldown_days: 30 }], rowCount: 1 }
+        if (sql.includes('contacted_at >= now()')) return { rows: contactRecorded ? [{ id: 'action-first', contacted_at: '2026-08-04T12:00:00.000Z' }] : [], rowCount: contactRecorded ? 1 : 0 }
+        if (sql.startsWith('update crm_atendimento.commercial_actions')) {
+            contactRecorded = true
+            return { rows: [], rowCount: 1 }
+        }
+        return { rows: [], rowCount: 0 }
+    }
+    const pool = {
+        async connect() {
+            const client = {
+                releaseIdentityLock: null,
+                query(sql, params) { return runQuery(client, sql, params) },
+                release() {},
+            }
+            return client
+        },
+        query(sql, params) {
+            return runQuery({ releaseIdentityLock: null }, sql, params)
+        },
+    }
+    const store = createAtendimentoStore({ pool })
+    const actor = { id: 'manager-1', role: 'GESTOR' }
+    const settled = await Promise.allSettled([
+        store.updateCommercialAction('action-a', { status: 'contacted' }, actor),
+        store.updateCommercialAction('action-b', { status: 'contacted' }, actor),
+    ])
+
+    assert.equal(settled.filter((result) => result.status === 'fulfilled').length, 1)
+    assert.equal(settled.filter((result) => result.status === 'rejected').length, 1)
+    const rejected = settled.find((result) => result.status === 'rejected')
+    assert.match(String(rejected?.reason), /COMMERCIAL_CONTACT_COOLDOWN_ACTIVE/)
+})
+
+test('does not allow an action with a recorded contact to re-enter contacted', async () => {
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions',
+        permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        harmonia_contacts: 'harmonia.contacts',
+        caixa_customers: 'crm_caixa.customers',
+        app_registrations: null,
+        lead_profiles: null,
+        action_channel: true,
+        action_contacted_at: true,
+        rollout_enabled: true,
+        rollout_canary: true,
+    }
+    const pool = createFakePool([
+        (sql) => sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')") && { rows: [availability], rowCount: 1 },
+        (sql) => sql.includes('select id, identity_id, status, contacted_at from crm_atendimento.commercial_actions') && {
+            rows: [{ id: 'action-1', identity_id: 'identity-1', status: 'open', contacted_at: '2026-08-04T12:00:00.000Z' }],
+            rowCount: 1,
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+
+    await assert.rejects(
+        () => store.updateCommercialAction('action-1', { status: 'contacted' }, { id: 'manager-1', role: 'GESTOR' }),
+        /COMMERCIAL_CONTACT_ALREADY_RECORDED/,
+    )
+})
+
 test('initializes Atendimento schema once when concurrent reads arrive', async () => {
     let transactions = 0
     const fakePool = createFakePool([
