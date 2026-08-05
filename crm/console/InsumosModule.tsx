@@ -205,6 +205,7 @@ async function apiJson<T>(
       ex.requestId = requestId || null
       ex.registros = Array.isArray(err.registros) ? err.registros : []
       ex.candidates = Array.isArray((err as any).candidates) ? (err as any).candidates : []
+      ex.sessionId = (err as any).sessionId || null
       throw ex
     })
 

@@ -140,6 +140,10 @@ export function InsumosGuidedCountDialog({
       setSession(next)
       if (next.id) await loadSession(String(next.id))
     } catch (cause: any) {
+      if (cause?.code === 'COUNT_ALREADY_OPEN' && cause?.sessionId) {
+        await loadSession(String(cause.sessionId))
+        return
+      }
       setError(cause?.message || 'Não foi possível iniciar a contagem.')
     } finally {
       setSaving(false)
