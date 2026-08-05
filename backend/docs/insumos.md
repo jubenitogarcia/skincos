@@ -40,7 +40,9 @@ Observação: o Worker faz o *mount* em `/insumos/*` e mantém as rotas internas
 - Entrada: `POST /insumos/insumos/entrada?unidade=<slug>`
 - Saída: `POST /insumos/insumos/baixa?unidade=<slug>`
 - Ajuste: `POST /insumos/insumos/ajuste?unidade=<slug>`
-- Transferência: `POST /insumos/insumos/transferir?unidade=<origem>`
+- Despacho de transferência: `POST /insumos/insumos/transferir?unidade=<origem>`
+- Recebimento: `POST /insumos/transferencias/:id/receber?unidade=<destino>`
+- Cancelamento antes do recebimento: `POST /insumos/transferencias/:id/cancelar?unidade=<origem>`
 
 Todas as mutações exigem `Idempotency-Key`. O responsável é obtido da sessão no
 Worker; campos `usuario`/`actor` enviados pelo cliente são ignorados.
@@ -57,6 +59,13 @@ Worker; campos `usuario`/`actor` enviados pelo cliente são ignorados.
   registram a quebra.
 - Correções são feitas em `POST /insumos/movimentacoes/:id/estorno` com motivo
   obrigatório, preservando o movimento original e marcando o compensatório.
+- Transferências são em duas fases: o despacho reduz somente a origem e cria
+  `PENDING_RECEIPT`; o destino efetiva o recebimento com uma nova entrada
+  atômica. Cancelamento pré-recebimento restaura a origem por `ESTORNO` e deixa
+  a transferência auditável como `CANCELLED`.
+- O estado do agregado fica em `insumos_transfers`; a migração
+  `0020_insumos_transfer_receipt.sql` converte transferências históricas já
+  efetivadas em `RECEIVED` sem reescrever o ledger.
 
 ### Categorias (políticas)
 
@@ -221,7 +230,8 @@ Depois reinicie:
 
 - Auth por cookies + CSRF, RBAC e permissão por unidade.
 - CRUD de insumos e múltiplos lotes por código (via `registro`), com estoque por unidade.
-- Operações: entrada/saída/ajuste/transferência (com idempotência e auditoria).
+- Operações: entrada/saída/ajuste e transferências em duas fases (com
+  idempotência e auditoria).
 - Políticas por categoria (`requires_lot`, `requires_expiry`, `fefo`) e enforcement no backend.
 - Alertas (estoque baixo, vencendo, expirado com estoque) + insights (tendências/giro/ROI/qualidade).
 - Offline queue no frontend para mutações quando cair a rede.
@@ -231,7 +241,8 @@ Depois reinicie:
 
 - P0: UX “selecionar lote” mais amigável (mostrar lote+validade em vez de “registro”) em todos os fluxos.
 - P0: tela/admin de usuários e permissões (hoje existe “Usuários” mas fica bloqueado).
-- P1: compras (fornecedor, pedido, status, recebimento) — hoje só existe “lista sugerida”.
+- P1: compras (fornecedor, pedido, status, recebimento) — ainda não há o
+  agregado de compras/fornecedores.
 - P1: inventário avançado (reorder por unidade, múltiplos mínimos, consumo por procedimento, custo médio).
 - P2: importação em massa, etiquetas/barcode print, auditoria avançada (filtros/retention), integrações.
 

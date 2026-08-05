@@ -326,6 +326,56 @@ export async function handleInsumosRoutes({
             }
         }
 
+        // POST /insumos/transferencias/:id/receber|cancelar
+        if (url.pathname.startsWith("/insumos/transferencias/") && request.method === "POST") {
+            try {
+                const parts = url.pathname.split('/').filter(Boolean);
+                const transferId = decodeURIComponent(parts[2] || '').trim();
+                const action = String(parts[3] || '').trim().toLowerCase();
+                if (!transferId || !['receber', 'cancelar'].includes(action)) {
+                    return withCORS(JSON.stringify({ success: false, code: 'NOT_FOUND', error: 'Rota de transferência não encontrada' }), { status: 404 }, appOrigin);
+                }
+                const auth = await requireRoles(['ADMIN', 'GESTOR', 'GERENTE', 'OPERADOR']);
+                if (!auth.ok) return auth.response;
+                const body = await request.json().catch(() => ({}));
+                const isReceipt = action === 'receber';
+                const command = await d1.executeIdempotent({
+                    actor: auth.user,
+                    action: isReceipt ? 'TRANSFER_RECEBIMENTO' : 'TRANSFER_CANCELAMENTO',
+                    idempotencyKey,
+                    command: { transferId, unidade, body },
+                    execute: () => isReceipt
+                        ? d1.receberTransferencia({ id: transferId, actor: auth.user, unidade, observacoes: body?.observacoes })
+                        : d1.cancelarTransferencia({ id: transferId, actor: auth.user, unidade, justificativa: body?.justificativa || body?.motivo }),
+                });
+                if (!command.ok) return withCORS(JSON.stringify({ success: false, code: command.code, error: command.error }), { status: command.status || 400 }, appOrigin);
+                const out = command.result;
+                if (!out?.ok) return withCORS(JSON.stringify({ success: false, code: out?.code, error: out?.error }), { status: out?.status || 400 }, appOrigin);
+
+                if (!command.replayed) {
+                    await appendAuditLog({
+                        env,
+                        actor: auth.user.username,
+                        role: auth.user.role,
+                        ip,
+                        userAgent,
+                        idempotencyKey,
+                        action: isReceipt ? 'TRANSFER_RECEBIMENTO' : 'TRANSFER_CANCELAMENTO',
+                        entity: 'TRANSFERENCIA',
+                        entityId: transferId,
+                        unidade: unidade || out.unidadeDestino || out.unidadeOrigem,
+                        before: { status: isReceipt ? 'PENDING_RECEIPT' : 'PENDING_RECEIPT' },
+                        after: { status: out.status, registro: out.registro, motivo: body?.justificativa || body?.motivo || null }
+                    });
+                    const units = Array.from(new Set([out.unidadeOrigem, out.unidadeDestino].map((value) => String(value || '').trim()).filter(Boolean)));
+                    for (const unit of units) ctx.waitUntil(enqueueNotificationsRefresh(env, unit));
+                }
+                return withCORS(JSON.stringify({ success: true, data: out, idempotent: !!command.replayed }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err || '') }), { status: 500 }, appOrigin);
+            }
+        }
+
         // POST /insumos/transferir
         if (url.pathname === "/insumos/transferir" && request.method === "POST") {
             try {
@@ -364,6 +414,11 @@ export async function handleInsumosRoutes({
                 return withCORS(JSON.stringify({
                     success: true,
                     transferId: out.transferId,
+                    dispatchMovementId: out.dispatchMovementId,
+                    status: out.status,
+                    pendingReceipt: !!out.pendingReceipt,
+                    unidadeOrigem: out.unidadeOrigem,
+                    unidadeDestino: out.unidadeDestino,
                     estoqueAnteriorOrigem: out.estoqueAnteriorOrigem,
                     estoqueNovoOrigem: out.estoqueNovoOrigem,
                     estoqueAnteriorDestino: out.estoqueAnteriorDestino,
