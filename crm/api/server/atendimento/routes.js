@@ -3,6 +3,7 @@ import express from 'express'
 import { createAtendimentoStore, canAccessAtendimento } from './store.js'
 import { createCommercialDataQualityStore } from './commercialDataQualityStore.js'
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
+import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
 
 const json = (res, status, body, headers = {}) => {
     res.status(status)
@@ -198,8 +199,26 @@ export function createAtendimentoRouter(options = {}) {
     const getDevSession = options.getDevSession || null
     const expressRouter = options.routerFactory ? options.routerFactory() : express.Router()
 
+    expressRouter.get('/health', async (_req, res) => {
+        const moduleControl = readAtendimentoModuleControl()
+        try {
+            const health = await store.health()
+            return json(res, moduleControl.ready ? 200 : 503, {
+                ok: moduleControl.ready,
+                ...health,
+                moduleControl,
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.use(async (req, res, next) => {
         try {
+            const moduleControl = readAtendimentoModuleControl()
+            if (atendimentoModuleUnavailable(moduleControl)) {
+                return json(res, 503, { ok: false, error: 'MODULE_MAINTENANCE', moduleControl })
+            }
             if (req.path === '/internal/meta-ads/offer-context') {
                 if (!metaAdsOfferContextToken) {
                     return json(res, 503, { ok: false, error: 'META_ADS_OFFER_CONTEXT_TOKEN_NOT_CONFIGURED' })
@@ -218,15 +237,6 @@ export function createAtendimentoRouter(options = {}) {
             if (!canAccessAtendimento(actor, req.path, req.method)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
             req.atendimentoActor = actor
             next()
-        } catch (error) {
-            return errorResponse(res, error)
-        }
-    })
-
-    expressRouter.get('/health', async (_req, res) => {
-        try {
-            const health = await store.health()
-            return json(res, 200, { ok: true, ...health })
         } catch (error) {
             return errorResponse(res, error)
         }

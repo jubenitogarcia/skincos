@@ -41,7 +41,7 @@ function configuredEnvironment(overrides = {}) {
 
 test("native Atendimento deployment contract requires explicit enablement and exact command identifiers", () => {
   const accepted = validateAtendimentoDeploymentContract(configuredEnvironment());
-  assert.equal(accepted.result, "configuration-attested-executor-unavailable");
+  assert.equal(accepted.result, "configuration-attested-native-runtime");
   assert.deepEqual(accepted.errors, []);
   assert.equal(accepted.mutation.remoteCommandExecuted, false);
   assert.equal(accepted.mutation.sharedCrmRestarted, false);
@@ -85,7 +85,8 @@ test("Atendimento workflows remain main-custodied, manually dispatched, immutabl
     assert.match(workflow, /emit_preview_evidence: false/);
     assert.match(workflow, /github\.workflow_sha/);
     assert.match(workflow, /ENABLE_ATENDIMENTO_DEPLOY/);
-    assert.match(workflow, /Stop before remote/);
+    assert.match(workflow, /Verify (?:staged )?native Atendimento runtime health/);
+    assert.doesNotMatch(workflow, /Stop before remote/);
     assert.doesNotMatch(workflow, /\beval\b|bash\s+-c|sh\s+-c|appleboy\/ssh-action|systemctl\s+(?:restart|stop|start)\s+crm\.service/);
   }
 });

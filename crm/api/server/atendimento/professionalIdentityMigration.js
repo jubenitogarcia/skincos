@@ -1,4 +1,4 @@
-import { isLocalMirrorDestination } from './mirror.js'
+import { assertAtendimentoMigrationDestination, ATENDIMENTO_MIGRATION_TARGETS } from './migrationDestination.js'
 import {
     CONFIRMED_PROFESSIONAL_ALIAS_RULES,
     PROFESSIONAL_IDENTITY_VERSION,
@@ -27,11 +27,12 @@ async function query(client, sql, params = []) {
     return client.query(sql, params)
 }
 
-async function assertLocalDestination(client, databaseUrl) {
-    if (!isLocalMirrorDestination(databaseUrl)) throw migrationError('ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE')
-    const result = await query(client, `select current_database() as database_name, current_setting('transaction_read_only') as read_only`)
-    const row = result.rows[0] || {}
-    if (row.database_name !== 'skincos_crm_local' || String(row.read_only).toLowerCase() === 'on') throw migrationError('ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE')
+async function assertLocalDestination(client, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL) {
+    try {
+        await assertAtendimentoMigrationDestination(client, databaseUrl, target)
+    } catch {
+        throw migrationError('ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE')
+    }
 }
 
 async function ensureSchema(client) {
@@ -86,7 +87,7 @@ export function professionalIdentityMigrationPlan() {
     }
 }
 
-export async function applyProfessionalIdentityMigration({ pool, databaseUrl }) {
+export async function applyProfessionalIdentityMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('ATENDIMENTO_MIGRATION_POOL_REQUIRED')
     const client = await pool.connect()
     const report = { id: PROFESSIONAL_IDENTITY_MIGRATION_ID, canonicalizedRows: 0, aliases: 0, scheduleLinks: 0, confirmedLinks: [], indexes: [] }
@@ -94,7 +95,7 @@ export async function applyProfessionalIdentityMigration({ pool, databaseUrl }) 
         await query(client, `set lock_timeout = '3s'`)
         await query(client, `set statement_timeout = '60s'`)
         await query(client, `select pg_advisory_lock(hashtext($1))`, [PROFESSIONAL_IDENTITY_MIGRATION_ID])
-        await assertLocalDestination(client, databaseUrl)
+        await assertLocalDestination(client, databaseUrl, target)
         await ensureSchema(client)
         const backfill = await query(client, `update crm_atendimento.professionals
             set canonical_id = id, identity_version = coalesce(nullif(identity_version, ''), $1)
@@ -167,13 +168,13 @@ export async function applyProfessionalIdentityMigration({ pool, databaseUrl }) 
     }
 }
 
-export async function rollbackProfessionalIdentityMigration({ pool, databaseUrl }) {
+export async function rollbackProfessionalIdentityMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('ATENDIMENTO_MIGRATION_POOL_REQUIRED')
     const client = await pool.connect()
     try {
         await query(client, `set lock_timeout = '3s'`)
         await query(client, `select pg_advisory_lock(hashtext($1))`, [PROFESSIONAL_IDENTITY_MIGRATION_ID])
-        await assertLocalDestination(client, databaseUrl)
+        await assertLocalDestination(client, databaseUrl, target)
         await query(client, `drop index concurrently if exists crm_atendimento.crm_atendimento_schedule_professional_period_idx`)
         await query(client, `drop index concurrently if exists crm_atendimento.crm_atendimento_professional_aliases_key_idx`)
         await query(client, `drop index concurrently if exists crm_atendimento.crm_atendimento_professionals_canonical_idx`)

@@ -1,4 +1,4 @@
-import { isStrictLocalMirrorDestination } from './mirror.js'
+import { assertAtendimentoMigrationDestination, isStrictAtendimentoMigrationDestination, ATENDIMENTO_MIGRATION_TARGETS } from './migrationDestination.js'
 import { IDENTITY_GRAPH_LOCK_KEY } from './identityReviewWorkflow.js'
 
 export const IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID = '20260805_identity_review_workflow_v1'
@@ -170,12 +170,11 @@ function migrationError(code) {
     return error
 }
 
-async function assertLocalDestination(client, databaseUrl) {
-    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_DESTINATION_UNSAFE')
-    const result = await client.query(`select current_database() as database_name, current_user as database_user,
-        current_setting('transaction_read_only') as read_only`)
-    const row = result.rows[0] || {}
-    if (row.database_name !== 'skincos_crm_local' || row.database_user !== 'admin' || String(row.read_only).toLowerCase() === 'on') {
+async function assertLocalDestination(client, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL) {
+    if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_DESTINATION_UNSAFE')
+    try {
+        await assertAtendimentoMigrationDestination(client, databaseUrl, target)
+    } catch {
         throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_DESTINATION_UNSAFE')
     }
 }
@@ -232,9 +231,9 @@ export function identityReviewWorkflowMigrationPlan() {
     }
 }
 
-export async function applyIdentityReviewWorkflowMigration({ pool, databaseUrl }) {
+export async function applyIdentityReviewWorkflowMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_POOL_REQUIRED')
-    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_DESTINATION_UNSAFE')
+    if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_DESTINATION_UNSAFE')
     const client = await pool.connect()
     const report = { id: IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID, migrationIds: IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS, applied: false, tables: [], indexes: [] }
     let transactionOpen = false
@@ -250,7 +249,7 @@ export async function applyIdentityReviewWorkflowMigration({ pool, databaseUrl }
         // materializers acquire the graph lock.  Joining both guarantees this
         // DDL cannot cross an in-flight projection or commercial rebind.
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
-        await assertLocalDestination(client, databaseUrl)
+        await assertLocalDestination(client, databaseUrl, target)
         await assertPrerequisites(client)
         await ensureRegistry(client)
         for (const sql of STATEMENTS) await client.query(sql)
@@ -279,9 +278,9 @@ export async function applyIdentityReviewWorkflowMigration({ pool, databaseUrl }
     }
 }
 
-export async function rollbackIdentityReviewWorkflowMigration({ pool, databaseUrl }) {
+export async function rollbackIdentityReviewWorkflowMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_POOL_REQUIRED')
-    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_DESTINATION_UNSAFE')
+    if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_DESTINATION_UNSAFE')
     const client = await pool.connect()
     let transactionOpen = false
     try {
@@ -292,7 +291,7 @@ export async function rollbackIdentityReviewWorkflowMigration({ pool, databaseUr
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_SOURCE_LINK_LEDGER_MIGRATION_ID])
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_REVIEW_LEDGER_INTEGRITY_MIGRATION_ID])
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
-        await assertLocalDestination(client, databaseUrl)
+        await assertLocalDestination(client, databaseUrl, target)
         await ensureRegistry(client)
         for (const migrationId of IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS) {
             await client.query(`insert into crm_atendimento.schema_migrations(id, applied_at, rolled_back_at, details)
