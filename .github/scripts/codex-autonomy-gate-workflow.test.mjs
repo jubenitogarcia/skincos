@@ -12,6 +12,7 @@ test("ready-for-review transitions create the required PR check", () => {
     source,
     /pull_request:\n\s+types:\s+\[opened, synchronize, reopened, ready_for_review\]/,
   );
+  assert.match(source, /push:\n\s+branches:\s+\[main, 'codex\/\*\*'\]/);
 });
 
 test("manual autonomy recovery requires an exact ancestor base", () => {
