@@ -11,6 +11,7 @@ import {
   normalizeScheduleSyncResult,
   normalizeScheduleSyncState,
   operationMemberIds,
+  scheduleSyncOperationMatches,
 } from '../src/services/teamScheduleSync.js';
 
 test('normalizes the fail-closed Escala sync state contract', () => {
@@ -62,4 +63,16 @@ test('falls back to the visible link state for records created before the ledger
     state: 'SYNCED', professionalId: 'escala-1', errorCode: null, attempt: 0, updatedAt: null, operationKey: null, createdAt: null,
   });
   assert.equal(normalizeScheduleSyncResult({ state: 'BLOCKED', errorCode: 'X', updatedAt: 'invalid' }).updatedAt, null);
+});
+
+test('binds Escala idempotency to the full operational payload', () => {
+  const row = {
+    operation_type: 'ESCALA_SYNC',
+    requested_status: 'SYNCED',
+    member_ids_json: JSON.stringify(['member-1']),
+    result_json: JSON.stringify({ state: 'SYNCED', professionalId: 'escala-1', attempt: 1 }),
+  };
+  assert.equal(scheduleSyncOperationMatches(row, { onboardingId: 'member-1', state: 'SYNCED', professionalId: 'escala-1' }), true);
+  assert.equal(scheduleSyncOperationMatches(row, { onboardingId: 'member-1', state: 'SYNCED', professionalId: 'escala-2' }), false);
+  assert.equal(scheduleSyncOperationMatches(row, { onboardingId: 'member-1', state: 'FAILED', professionalId: 'escala-1', errorCode: 'ESCALA_API_ERROR' }), false);
 });

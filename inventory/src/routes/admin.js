@@ -18,7 +18,7 @@ import {
   normalizeScheduleSyncOperationKey,
   normalizeScheduleSyncResult,
   normalizeScheduleSyncState,
-  operationMemberIds,
+  scheduleSyncOperationMatches,
 } from '../services/teamScheduleSync.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'];
@@ -259,11 +259,12 @@ async function persistScheduleSyncOperation({
 
   const existing = await env.DB.prepare('SELECT * FROM crm_team_operations WHERE operation_key=? LIMIT 1').bind(key).first();
   if (existing) {
-    const previousIds = operationMemberIds(existing);
-    if (String(existing.operation_type || '').toUpperCase() !== 'ESCALA_SYNC'
-      || String(existing.requested_status || '').toUpperCase() !== normalizeScheduleSyncState(state)
-      || previousIds.length !== 1
-      || previousIds[0] !== normalizedOnboardingId) {
+    if (!scheduleSyncOperationMatches(existing, {
+      onboardingId: normalizedOnboardingId,
+      state,
+      professionalId,
+      errorCode,
+    })) {
       throw new Error('ESCALA_SYNC_IDEMPOTENCY_CONFLICT');
     }
     return { replayed: true, scheduleSync: normalizeScheduleSyncResult(safeJsonParse(existing.result_json, {})) };
@@ -291,11 +292,12 @@ async function persistScheduleSyncOperation({
   } catch (error) {
     const raced = await env.DB.prepare('SELECT * FROM crm_team_operations WHERE operation_key=? LIMIT 1').bind(key).first();
     if (!raced) throw error;
-    const racedIds = operationMemberIds(raced);
-    if (String(raced.operation_type || '').toUpperCase() !== 'ESCALA_SYNC'
-      || String(raced.requested_status || '').toUpperCase() !== record.requestedStatus
-      || racedIds.length !== 1
-      || racedIds[0] !== normalizedOnboardingId) throw new Error('ESCALA_SYNC_IDEMPOTENCY_CONFLICT');
+    if (!scheduleSyncOperationMatches(raced, {
+      onboardingId: normalizedOnboardingId,
+      state,
+      professionalId,
+      errorCode,
+    })) throw new Error('ESCALA_SYNC_IDEMPOTENCY_CONFLICT');
     return { replayed: true, scheduleSync: normalizeScheduleSyncResult(safeJsonParse(raced.result_json, {})) };
   }
   return { replayed: false, scheduleSync: record.result };
@@ -1082,7 +1084,7 @@ export async function handleAdminRoutes({
       if (rawState === 'SYNCED' && !professionalId) {
         return withCORS(JSON.stringify({ success: false, error: 'A sincronização concluída precisa do identificador da Escala', code: 'ESCALA_PROFESSIONAL_ID_REQUIRED' }), { status: 400 }, appOrigin);
       }
-      if (rawState === 'NOT_CONFIGURED' && professionalId) {
+      if (rawState === 'NOT_CONFIGURED' && (professionalId || String(onboarding.schedule_professional_id || '').trim())) {
         return withCORS(JSON.stringify({ success: false, error: 'Um vínculo configurado não pode ser marcado como não configurado', code: 'ESCALA_SYNC_STATE_CONFLICT' }), { status: 409 }, appOrigin);
       }
       const errorCode = normalizeScheduleSyncErrorCode(body?.errorCode ?? body?.error_code, rawState === 'BLOCKED' ? 'ESCALA_SYNC_BLOCKED' : rawState === 'FAILED' ? 'ESCALA_SYNC_FAILED' : '');
@@ -1100,10 +1102,10 @@ export async function handleAdminRoutes({
       const rawOperationKey = request.headers.get('idempotency-key') || body?.operationKey || body?.requestId || '';
       const operationKey = normalizeScheduleSyncOperationKey(rawOperationKey);
       if (!operationKey) return withCORS(JSON.stringify({ success: false, error: 'A sincronização exige uma chave de idempotência', code: 'ESCALA_SYNC_IDEMPOTENCY_REQUIRED' }), { status: 400 }, appOrigin);
+      const persisted = await persistScheduleSyncOperation({ env, onboardingId, state: rawState, professionalId, errorCode, operationKey });
       if (rawState === 'SYNCED' && professionalId) {
         await env.DB.prepare('UPDATE crm_employee_team SET schedule_professional_id=?, updated_at=? WHERE onboarding_id=?').bind(professionalId, new Date().toISOString(), onboardingId).run();
       }
-      const persisted = await persistScheduleSyncOperation({ env, onboardingId, state: rawState, professionalId, errorCode, operationKey });
       if (persisted.replayed) {
         return withCORS(JSON.stringify({ success: true, replayed: true, data: { scheduleSync: publicScheduleSync(persisted.scheduleSync, professionalId) } }), { status: 200 }, appOrigin);
       }

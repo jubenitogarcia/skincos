@@ -92,6 +92,27 @@ export function operationMemberIds(row) {
   return Array.from(new Set(raw.map((value) => cleanText(value, 180)).filter(Boolean)));
 }
 
+export function scheduleSyncOperationMatches(row, {
+  onboardingId = '',
+  state = '',
+  professionalId = '',
+  errorCode = '',
+} = {}) {
+  const memberId = cleanText(onboardingId, 180);
+  const requestedState = normalizeScheduleSyncState(state, 'PENDING');
+  const requestedProfessionalId = cleanText(professionalId, 160) || null;
+  const requestedErrorCode = normalizeScheduleSyncErrorCode(errorCode) || null;
+  const result = normalizeScheduleSyncResult(parseJson(row?.result_json ?? row?.resultJson, {}));
+  const ids = operationMemberIds(row);
+  return String(row?.operation_type ?? row?.operationType ?? '').trim().toUpperCase() === 'ESCALA_SYNC'
+    && String(row?.requested_status ?? row?.requestedStatus ?? '').trim().toUpperCase() === requestedState
+    && ids.length === 1
+    && ids[0] === memberId
+    && result.state === requestedState
+    && result.professionalId === requestedProfessionalId
+    && result.errorCode === requestedErrorCode;
+}
+
 function operationCreatedAt(row) {
   const timestamp = Date.parse(String(row?.created_at ?? row?.createdAt ?? ''));
   return Number.isFinite(timestamp) ? timestamp : 0;
