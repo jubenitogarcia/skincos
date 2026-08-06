@@ -148,7 +148,7 @@ sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$CURRENT_LINK")"
 # The versioned n8n writer authenticates locally as postgres. Permit only
 # traversal to its immutable scripts and only manifest-directory writes; no
 # workflow sidecar or source tree becomes generally readable or writable.
-for acl_dir in "$RELEASE_BASE/$RELEASE_ID" "$DESTINATION" "$DESTINATION/orb" "$DESTINATION/orb/engine" "$DESTINATION/orb/engine/scripts" "$DESTINATION/orb/engine/scripts/livia" "$DESTINATION/orb/engine/scripts/lib" "$DESTINATION/orb/engine/workflow-src" "$DESTINATION/orb/engine/workflow-src/meta-ads-publish" "$DESTINATION/orb/engine/workflows" "$CURRENT_LINK"; do
+for acl_dir in "$RELEASE_BASE" "$RELEASE_BASE/$RELEASE_ID" "$DESTINATION" "$DESTINATION/orb" "$DESTINATION/orb/engine" "$DESTINATION/orb/engine/scripts" "$DESTINATION/orb/engine/scripts/livia" "$DESTINATION/orb/engine/scripts/lib" "$DESTINATION/orb/engine/workflow-src" "$DESTINATION/orb/engine/workflow-src/meta-ads-publish" "$DESTINATION/orb/engine/workflows" "$CURRENT_LINK"; do
   sudo -n setfacl -m u:postgres:--x "$acl_dir"
 done
 sudo -n setfacl -m u:postgres:r-- \
