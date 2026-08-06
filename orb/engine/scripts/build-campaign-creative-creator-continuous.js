@@ -1857,7 +1857,7 @@ function transformWorkflow(source, options = {}) {
 
   workflow.nodes.push({
     parameters: {},
-    id: 'ccg-operational-production-request-trigger',
+    id: 'ccg-operational-request-trigger',
     name: 'Operational Production Request',
     type: 'n8n-nodes-base.executeWorkflowTrigger',
     typeVersion: 1.1,
