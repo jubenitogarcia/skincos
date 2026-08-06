@@ -1270,6 +1270,19 @@ if (DEV_AUTH_ENABLED) {
         createdAt: link?.createdAt || null,
     })
 
+    const localPublicTeamAudit = (entry) => ({
+        id: String(entry?.id || ''),
+        timestamp: entry?.createdAt || null,
+        actor: String(entry?.actor || ''),
+        role: String(entry?.role || '').trim().toUpperCase(),
+        action: String(entry?.action || ''),
+        entity: String(entry?.entity || ''),
+        idempotencyKey: entry?.idempotencyKey || null,
+        units: String(entry?.units || ''),
+        before: entry?.before ?? null,
+        after: entry?.after ?? null,
+    })
+
     const localPublicTeamMember = (member) => ({
         id: member.id,
         fullName: member.fullName,
@@ -1283,6 +1296,7 @@ if (DEV_AUTH_ENABLED) {
         accountStatus: member.accountStatus,
         inviteId: member.inviteId || null,
         provisioningState: member.provisioningState || null,
+        compensationState: member.compensationState || null,
         createdAt: member.createdAt || null,
         updatedAt: member.updatedAt || null,
         schedule: localNormalizeSchedule(member.schedule, member.units),
@@ -1298,6 +1312,8 @@ if (DEV_AUTH_ENABLED) {
             if (['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(provisioningState)) {
                 items.push({ memberId, kind: 'PROVISIONING', status: provisioningState })
             }
+            const compensationState = String(row?.compensationState || '').trim().toUpperCase()
+            if (compensationState) items.push({ memberId, kind: 'COMPENSATION', status: compensationState })
             for (const link of row?.identityLinks || []) {
                 if (String(link?.reviewStatus || '').toUpperCase() === 'PENDING_REVIEW') {
                     items.push({ memberId, kind: 'IDENTITY_LINK', source: String(link?.source || '').toUpperCase(), status: 'PENDING_REVIEW' })
@@ -1437,7 +1453,7 @@ if (DEV_AUTH_ENABLED) {
         }
     }
 
-    const localAudit = (store, session, action, entityId, after) => {
+    const localAudit = (store, session, action, entityId, after, before = null) => {
         const audit = Array.isArray(store.audit) ? store.audit : []
         audit.unshift({
             id: `local-audit-${randomUUID()}`,
@@ -1445,7 +1461,9 @@ if (DEV_AUTH_ENABLED) {
             entity: 'EMPLOYEE_TEAM',
             entityId,
             actor: session?.user?.username || session?.user?.email || 'gestor-local',
+            role: normalizeRole(session?.user?.role || ''),
             createdAt: new Date().toISOString(),
+            before,
             after,
         })
         store.audit = audit.slice(0, 250)
@@ -1617,7 +1635,7 @@ if (DEV_AUTH_ENABLED) {
             updatedAt: new Date().toISOString(),
         })
         store.team[index] = updated
-        localAudit(store, session, 'EMPLOYEE_TEAM_UPDATED', id, { profile: updated.profile, units: updated.units, localPreview: true })
+        localAudit(store, session, 'EMPLOYEE_TEAM_UPDATED', id, { profile: updated.profile, units: updated.units, localPreview: true }, { profile: current.profile, units: current.units, scheduleProfessionalId: current.schedule?.professionalId || null })
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_UPDATED', 'SUCCESS', 1, updated.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(updated) })
@@ -1639,19 +1657,38 @@ if (DEV_AUTH_ENABLED) {
         const validTransition = currentStatus === nextStatus ||
             nextStatus === 'TERMINATED' && currentStatus !== 'TERMINATED' ||
             currentStatus !== 'TERMINATED' && nextStatus === 'SUSPENDED' ||
-            currentStatus === 'SUSPENDED' && nextStatus === 'ACTIVE' ||
-            currentStatus === 'INVITED' && nextStatus === 'ACTIVE'
+            currentStatus === 'SUSPENDED' && nextStatus === 'ACTIVE'
         if (!validTransition) return res.status(409).json({ success: false, error: 'Transição de estado não permitida', code: 'ACCOUNT_STATUS_TRANSITION_DENIED' })
+        const terminationReason = String(req.body?.reason ?? req.body?.terminationReason ?? '').trim().replace(/\s+/g, ' ').slice(0, 500)
+        if (nextStatus === 'TERMINATED' && terminationReason.length < 5) return res.status(400).json({ success: false, error: 'O desligamento exige um motivo', code: 'TEAM_TERMINATION_REASON_REQUIRED' })
         member.accountStatus = nextStatus
         member.updatedAt = new Date().toISOString()
         if (nextStatus === 'SUSPENDED' || nextStatus === 'TERMINATED' || nextStatus === 'PENDING_ACCESS') {
             const invite = store.invites.find((row) => row.id === member.inviteId)
             if (invite && !invite.revoked) invite.revoked = true
         }
-        localAudit(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', id, { beforeStatus: currentStatus, accountStatus: nextStatus, historyPreserved: true, localPreview: true })
+        localAudit(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', id, { accountStatus: nextStatus, historyPreserved: true, terminationReasonProvided: nextStatus === 'TERMINATED', terminationReason: nextStatus === 'TERMINATED' ? terminationReason : null, localPreview: true }, { accountStatus: currentStatus })
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
+    })
+    app.get(['/api/crm/admin/team/:id/history', '/admin/team/:id/history'], async (req, res) => {
+        const session = getDevSession(req) || getLocalProxySession(req)
+        const role = normalizeRole(session?.user?.role)
+        if (!['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)) return res.status(401).json({ ok: false, success: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const id = String(req.params.id || '').trim()
+        const member = store.team.find((row) => row.id === id)
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const parsedLimit = Number.parseInt(String(req.query?.limit || '50'), 10)
+        const limit = Math.max(1, Math.min(100, Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50))
+        const data = (Array.isArray(store.audit) ? store.audit : [])
+            .filter((entry) => String(entry?.entityId || '') === id)
+            .slice(0, limit)
+            .map(localPublicTeamAudit)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data, summary: { count: data.length, limit } })
     })
     app.post(['/api/crm/admin/team/bulk-status', '/admin/team/bulk-status'], async (req, res) => {
         const session = requireDevAdmin(req, res)
@@ -1687,7 +1724,7 @@ if (DEV_AUTH_ENABLED) {
                 const invite = store.invites.find((row) => row.id === member.inviteId)
                 if (invite && !invite.revoked) invite.revoked = true
             }
-            localAudit(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', member.id, { accountStatus: nextStatus, historyPreserved: true, bulk: true, localPreview: true })
+            localAudit(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', member.id, { accountStatus: nextStatus, historyPreserved: true, bulk: true, localPreview: true }, { accountStatus: currentStatus })
         }
         const result = { ids, accountStatus: nextStatus, count: members.length }
         store.bulkOperations = [{ operationKey, fingerprint, result, createdAt: at }, ...(store.bulkOperations || [])].slice(0, 100)
@@ -1711,6 +1748,7 @@ if (DEV_AUTH_ENABLED) {
         store.invites.forEach((invite) => { if (invite.id === member.inviteId && !invite.revoked) invite.revoked = true })
         const at = new Date().toISOString()
         const inviteId = `local-invite-${randomUUID()}`
+        const previousStatus = member.accountStatus
         member.inviteId = inviteId
         member.accountStatus = 'INVITED'
         member.updatedAt = at
@@ -1730,7 +1768,7 @@ if (DEV_AUTH_ENABLED) {
             createdBy: session.user.username || session.user.email || 'gestor-local',
             createdAt: at,
         })
-        localAudit(store, session, 'EMPLOYEE_TEAM_INVITE_RESENT', id, { inviteIssued: true, localPreview: true })
+        localAudit(store, session, 'EMPLOYEE_TEAM_INVITE_RESENT', id, { inviteIssued: true, accountStatus: 'INVITED', localPreview: true }, { accountStatus: previousStatus })
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_INVITE_RESENT', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
@@ -1748,10 +1786,11 @@ if (DEV_AUTH_ENABLED) {
         if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia não permite revogar este convite', code: hierarchyError })
         const invite = store.invites.find((row) => row.id === member.inviteId)
         if (!invite || invite.revoked || !['INVITED', 'PENDING_ACCESS'].includes(String(member.accountStatus || '').toUpperCase())) return res.status(409).json({ success: false, error: 'Convite pendente não encontrado', code: 'TEAM_INVITE_NOT_PENDING' })
+        const previousStatus = member.accountStatus
         invite.revoked = true
         member.accountStatus = 'PENDING_ACCESS'
         member.updatedAt = new Date().toISOString()
-        localAudit(store, session, 'EMPLOYEE_TEAM_INVITE_REVOKED', id, { inviteRevoked: true, localPreview: true })
+        localAudit(store, session, 'EMPLOYEE_TEAM_INVITE_REVOKED', id, { inviteRevoked: true, accountStatus: 'PENDING_ACCESS', localPreview: true }, { accountStatus: previousStatus })
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_INVITE_REVOKED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
@@ -1802,7 +1841,7 @@ if (DEV_AUTH_ENABLED) {
         member.identityLinks = [...(member.identityLinks || []), link]
         if (source === 'ESCALA' && reviewStatus === 'CONFIRMED') member.schedule = { ...member.schedule, professionalId: sourceId }
         member.updatedAt = new Date().toISOString()
-        localAudit(store, session, 'EMPLOYEE_IDENTITY_LINK_CREATED', member.id, { source, sourceId, reviewStatus, localPreview: true })
+        localAudit(store, session, 'EMPLOYEE_IDENTITY_LINK_CREATED', member.id, { onboardingId: member.id, source, sourceId, reviewStatus, localPreview: true })
         localTeamTelemetry(store, session, 'EMPLOYEE_IDENTITY_LINK_CREATED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(201).set('cache-control', 'no-store').json({ success: true, data: localPublicIdentityLink(link) })

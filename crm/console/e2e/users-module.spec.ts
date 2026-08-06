@@ -30,6 +30,9 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByRole('tab', { name: 'Operação' })).toBeVisible()
     await page.getByRole('tab', { name: 'Operação' }).click()
     await expect(page.getByText('Vínculo operacional da Escala', { exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: 'Histórico' }).click()
+    await expect(page.getByRole('heading', { name: 'Histórico do cadastro' })).toBeVisible()
+    await expect(page.getByText('Cadastro atualizado', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Fechar' }).click()
 
     await page.getByRole('button', { name: 'Editar Lucas Mendes' }).click()
@@ -52,6 +55,17 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByRole('button', { name: 'Salvar alterações' })).toHaveCount(0)
     await expect(page.getByLabel('Nome completo')).toBeDisabled()
     await page.getByRole('button', { name: 'Fechar' }).click()
+  })
+
+  test('registers explicit operational links without name-based matching', async ({ page }) => {
+    await mockUsersApi(page)
+    await page.goto('/?module=users')
+    await page.getByRole('button', { name: 'Editar Ana Ribeiro' }).click()
+    await page.getByRole('tab', { name: 'Operação' }).click()
+    await page.getByLabel('Identificador').fill('e2e-escala-ana-manual')
+    await page.getByRole('button', { name: 'Registrar vínculo' }).click()
+    await expect(page.getByText('e2e-escala-ana-manual', { exact: true })).toBeVisible()
+    await expect(page.getByText('Revisão pendente', { exact: true })).toBeVisible()
   })
 
   test('does not overflow at 390, 768 or 1280 pixels', async ({ page }) => {
