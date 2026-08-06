@@ -4,6 +4,7 @@ import { createAtendimentoStore, canAccessAtendimento } from './store.js'
 import { createCommercialDataQualityStore } from './commercialDataQualityStore.js'
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
 import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
+import { createClinicalApprovalStore } from '../clinical/clinicalApprovalStore.js'
 
 const json = (res, status, body, headers = {}) => {
     res.status(status)
@@ -194,7 +195,11 @@ function errorResponse(res, error) {
 }
 
 export function createAtendimentoRouter(options = {}) {
-    const store = options.store || createAtendimentoStore({ databaseUrl: options.databaseUrl })
+    const clinicalApprovalStore = options.clinicalApprovalStore || createClinicalApprovalStore({
+        pool: options.clinicalApprovalPool,
+        databaseUrl: options.databaseUrl,
+    })
+    const store = options.store || createAtendimentoStore({ databaseUrl: options.databaseUrl, clinicalApprovalStore })
     const commercialDataQualityStore = options.commercialDataQualityStore || createCommercialDataQualityStore({
         pool: options.commercialDataQualityPool,
         databaseUrl: options.databaseUrl,

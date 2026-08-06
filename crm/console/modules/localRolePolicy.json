@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "policyVersion": 1,
+  "policyVersion": 2,
   "roleAliases": {
     "ADMIN": "GESTOR",
     "OPERADOR": "INJETOR",
@@ -18,6 +18,11 @@
       "key": "CONSULTOR",
       "label": "Consultor",
       "access": "allowlist"
+    },
+    {
+      "key": "CLINICAL_APPROVER",
+      "label": "Aprovador clínico",
+      "access": "allowlist"
     }
   ],
   "unrestrictedRoles": [
@@ -27,11 +32,17 @@
     "CONSULTOR": [
       "atendimento",
       "ponto"
+    ],
+    "CLINICAL_APPROVER": [
+      "clinical-approvals"
     ]
   },
   "fixedModuleGrants": {
     "CONSULTOR": [
       "atendimento"
+    ],
+    "CLINICAL_APPROVER": [
+      "clinical-approvals"
     ]
   },
   "alwaysAvailableModules": [
@@ -40,6 +51,10 @@
   "exclusiveModuleRoles": {
     "clientes": [
       "GESTOR"
+    ],
+    "clinical-approvals": [
+      "GESTOR",
+      "CLINICAL_APPROVER"
     ],
     "escala-profissionais": [
       "GESTOR",
