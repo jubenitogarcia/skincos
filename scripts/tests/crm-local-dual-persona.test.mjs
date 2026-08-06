@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -45,6 +46,23 @@ function runBashHarness(body, options = {}) {
   } finally {
     fs.rmSync(harnessRoot, { recursive: true, force: true })
   }
+}
+
+function reserveLoopbackPort() {
+  const server = net.createServer()
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen({ host: '127.0.0.1', port: 0 }, () => {
+      const address = server.address()
+      resolve({ server, port: address.port })
+    })
+  })
+}
+
+async function getFreeLoopbackPort() {
+  const { server, port } = await reserveLoopbackPort()
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  return port
 }
 
 test('Codex App and Windows expose stable CRM actions plus the isolated thread preview without the generic Local surface', () => {
@@ -202,9 +220,69 @@ test('thread preview only materializes the invoking registered worktree and allo
   assert.doesNotMatch(launcher, /^\s*\$host = \$Uri\.Host/m)
   assert.match(
     crmRunner,
-    /prepare_frontend_artifact\s*\nensure_playwright_chromium\s*\ncrm_port_plan_acquire_bundle_lock\s*\nif \[\[ "\$CRM_DYNAMIC_PORT_BUNDLE" == "1" \]\]; then\s*\n  crm_port_plan_select_dynamic_bundle/,
+    /if \[\[ "\$CRM_DYNAMIC_PORT_BUNDLE" == "1" \]\]; then\s*[\s\S]*?prepare_frontend_artifact\s*\n  ensure_playwright_chromium\s*\n  crm_port_plan_acquire_bundle_lock\s*\n  crm_port_plan_select_dynamic_bundle[\s\S]*?else\s*\n  select_available_vite_port\s*\n  crm_port_plan_refresh_urls\s*\n[\s\S]*?assert_runtime_ports_free\s*\n  prepare_frontend_artifact/,
   )
   assert.doesNotMatch(launcher, /Write-Host "\[crm-thread-preview\] URL:/)
+})
+
+test('static launchers reject an occupied Pages port before invoking the frontend build', async (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-static-port-precheck-'))
+  const bin = path.join(temp, 'bin')
+  const marker = path.join(temp, 'npm-invoked')
+  fs.mkdirSync(bin)
+  const fakeNpm = path.join(bin, 'npm')
+  fs.writeFileSync(fakeNpm, '#!/usr/bin/env bash\nprintf invoked > "$CRM_STATIC_PORT_TEST_NPM_MARKER"\nexit 86\n', { mode: 0o700 })
+  const { server: occupiedPages, port: pagesPort } = await reserveLoopbackPort()
+  const vitePort = await getFreeLoopbackPort()
+  t.after(async () => {
+    await new Promise((resolve, reject) => occupiedPages.close((error) => error ? reject(error) : resolve()))
+    fs.rmSync(temp, { recursive: true, force: true })
+  })
+
+  const target = 'a'.repeat(40)
+  const result = spawnSync('bash', ['scripts/run-local-crm.sh'], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 20_000,
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      CRM_STATIC_PORT_TEST_NPM_MARKER: marker,
+      CRM_DYNAMIC_PORT_BUNDLE: '0',
+      CRM_RUNTIME_ROOT: path.join(temp, 'runtime'),
+      CRM_RUNTIME_ID: 'static-port-precheck',
+      CRM_RUNTIME_MODULE: 'static-port-precheck',
+      CRM_PERSONA: 'GESTOR',
+      CRM_TARGET_COMMIT: target,
+      CRM_SOURCE_FINGERPRINT: `commit:${target}`,
+      CRM_SOURCE_ORIGIN: `${root}__static-port-precheck`,
+      CRM_RUNTIME_CONFIG_FINGERPRINT: `sha256:${'b'.repeat(64)}`,
+      CRM_PID_FILE: path.join(temp, 'crm.pid'),
+      CRM_LOG_FILE: path.join(temp, 'runtime.log'),
+      CRM_BUILD_STATE_FILE: path.join(temp, 'build-state.json'),
+      CRM_BUILD_LOCK_DIR: path.join(temp, 'build.lock'),
+      CRM_FRONTEND_DEPENDENCY_CACHE_ROOT: path.join(temp, 'cache'),
+      CRM_HOST: '127.0.0.1',
+      CRM_BIND_HOST: '127.0.0.1',
+      CRM_PUBLIC_HOST: 'localhost',
+      CRM_VITE_PORT: String(vitePort),
+      CRM_PAGES_PORT: String(pagesPort),
+      CRM_WITH_INSUMOS: '0',
+      CRM_WITH_TIMEKEEPING: '0',
+      CRM_WITH_WHATSAPP: '0',
+      PONTO_API_TARGET: '',
+      CRM_GATE_STRICT: '0',
+      CRM_SMOKE: '0',
+      CRM_BUILD_BEFORE_START: '1',
+      CRM_OPEN_BROWSER: '0',
+      CRM_REFRESH_INSUMOS_SNAPSHOT: '0',
+    },
+  })
+  const output = `${result.stdout}\n${result.stderr}`
+  assert.notEqual(result.status, 0, output)
+  assert.match(output, new RegExp(`Porta ${pagesPort} já está em uso`))
+  assert.equal(fs.existsSync(marker), false, output)
+  assert.doesNotMatch(output, /Gerando build do frontend|Garantindo o Chromium/)
 })
 
 test('launcher derives local auth grants from the canonical role policy', () => {

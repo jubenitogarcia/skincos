@@ -455,6 +455,20 @@ select_available_vite_port() {
   exit 1
 }
 
+assert_runtime_ports_free() {
+  assert_port_free "$CRM_VITE_PORT" "vite"
+  assert_port_free "$CRM_PAGES_PORT" "pages"
+  if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+    assert_port_free "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
+  fi
+  if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+    assert_port_free "$CRM_INSUMOS_PORT" "insumos"
+  fi
+  if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
+    assert_port_free "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
+  fi
+}
+
 wait_for_http() {
   local url="$1"
   local retries="${2:-90}"
@@ -1289,17 +1303,22 @@ stop_existing
 rotate_current_log
 crm_persona_runtime_write_manifest starting
 
-# Building does not bind any service port. Do it before selecting the dynamic
-# bundle so a long build cannot turn an otherwise-free candidate into a stale
-# reservation while unrelated tools start and stop around it.
-prepare_frontend_artifact
-ensure_playwright_chromium
-crm_port_plan_acquire_bundle_lock
 if [[ "$CRM_DYNAMIC_PORT_BUNDLE" == "1" ]]; then
+  # Building does not bind any service port. Do it before selecting the dynamic
+  # bundle so a long build cannot turn an otherwise-free candidate into a stale
+  # reservation while unrelated tools start and stop around it.
+  prepare_frontend_artifact
+  ensure_playwright_chromium
+  crm_port_plan_acquire_bundle_lock
   crm_port_plan_select_dynamic_bundle
 else
   select_available_vite_port
   crm_port_plan_refresh_urls
+  # Static launchers retain their fail-fast contract: an occupied configured
+  # service port must abort before any build or browser preparation begins.
+  assert_runtime_ports_free
+  prepare_frontend_artifact
+  ensure_playwright_chromium
 fi
 crm_persona_runtime_write_manifest starting
 
@@ -1328,22 +1347,16 @@ fi
 echo "Log: $LOG_FILE"
 echo ""
 
-assert_port_free "$CRM_VITE_PORT" "vite"
-assert_port_free "$CRM_PAGES_PORT" "pages"
-if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
-  assert_port_free "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
-fi
+assert_runtime_ports_free
 
 INSUMOS_PID=""
 WHATSAPP_ORCHESTRATOR_PID=""
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
-  assert_port_free "$CRM_INSUMOS_PORT" "insumos"
   start_insumos_local
 fi
 
 TIMEKEEPING_PID=""
 if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
-  assert_port_free "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
   start_timekeeping_local
 fi
 
