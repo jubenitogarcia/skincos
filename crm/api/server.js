@@ -1156,9 +1156,29 @@ if (DEV_AUTH_ENABLED) {
         return first && (parts.length === 1 || last) ? `${first}${last}@espacofacial.com` : ''
     }
 
+    const localIsAsciiAlphaNumeric = (character) => {
+        const code = character.charCodeAt(0)
+        return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+    }
+
+    const localHasSimpleEmailSyntax = (value) => {
+        const email = String(value || '').trim().toLowerCase()
+        const at = email.indexOf('@')
+        if (at <= 0 || at !== email.lastIndexOf('@') || at === email.length - 1) return false
+        const local = email.slice(0, at)
+        const domain = email.slice(at + 1)
+        if (local.length > 64 || domain.length > 253 || local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false
+        if (!Array.from(local).every((character) => localIsAsciiAlphaNumeric(character) || '-_+.%'.includes(character))) return false
+        const labels = domain.split('.')
+        return labels.length >= 2 && labels.every((label) => {
+            if (!label || label.startsWith('-') || label.endsWith('-')) return false
+            return Array.from(label).every((character) => localIsAsciiAlphaNumeric(character) || character === '-')
+        })
+    }
+
     const localNormalizeCorporateEmail = (value) => {
         const email = String(value || '').trim().toLowerCase()
-        return /^[^\s@]+@espacofacial\.com$/.test(email) ? email : ''
+        return localHasSimpleEmailSyntax(email) && email.endsWith('@espacofacial.com') ? email : ''
     }
 
     const localIsAllowedCorporateEmail = (fullName, corporateEmail) => {
@@ -1175,7 +1195,7 @@ if (DEV_AUTH_ENABLED) {
 
     const localNormalizePersonalEmail = (value) => {
         const email = String(value || '').trim().toLowerCase()
-        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
+        return localHasSimpleEmailSyntax(email) ? email : ''
     }
 
     const localNormalizePhone = (value) => {
