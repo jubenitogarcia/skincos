@@ -1,9 +1,11 @@
 # Atendimento — contrato de promoção independente
 
-**Estado atual:** staging isolado operacional. O banco, o unit nativo, o arquivo
-de controle, o túnel e a atestação pública são mantidos pelos scripts versionados
-com backups privados. Os workflows continuam dispatch-only e apenas atestam o
-SHA imutável e o health do runtime; nunca reiniciam `crm.service`.
+**Estado atual:** staging isolado operacional e contrato de produção isolado
+somente leitura preparado pelos scripts versionados, sempre com backups
+privados. O production runtime fica em loopback, sem rota pública e sem escrita
+comercial; o CRM global não é reiniciado por ele. Os workflows continuam
+dispatch-only e apenas atestam o SHA imutável e o health do runtime; nunca
+reiniciam `crm.service`.
 
 ## Fluxos canônicos
 
@@ -59,16 +61,18 @@ os nomes abaixo com os valores específicos de cada ambiente:
 Pré-requisitos técnicos cobertos no staging:
 
 1. o `crm-atendimento-staging.service` isolado, com porta, banco/role e health próprios;
-2. suporte efetivo e testado de `CRM_DOMAIN=atendimento` e
+2. o `crm-atendimento-production.service` isolado, com papel PostgreSQL
+   `skincos_clientes_ro`, bind loopback e bloqueio de métodos de escrita;
+3. suporte efetivo e testado de `CRM_DOMAIN=atendimento` e
    `CRM_MODULE_CONTROL_FILE` no processo — hoje o servidor CRM compartilhado não
    prova esse isolamento;
-3. gateway/túnel com rota para o processo isolado em staging, sem redirecionar
+4. gateway/túnel com rota para o processo isolado em staging, sem redirecionar
    para `crm.service`;
-4. scripts nativos confiáveis com allowlist dos três identificadores acima,
+5. scripts nativos confiáveis com allowlist dos três identificadores acima,
    autoria/auditoria por SHA e sem fallback de shell ou SSH do GitHub;
-5. migration staging somente aditiva, banco alvo explicitamente identificado,
+6. migration staging somente aditiva, banco alvo explicitamente identificado,
    checkpoint/backup e verificação de idempotência em staging;
-6. registro do SHA candidato e do SHA de retorno, smoke autenticado do mesmo SHA
+7. registro do SHA candidato e do SHA de retorno, smoke autenticado do mesmo SHA
    e prova de rollback do processo isolado.
 
 ## Rollback e disponibilidade
@@ -82,6 +86,8 @@ aditivos; se o dado não puder ser revertido com segurança, o rollback desliga 
 escrita/controle e recupera somente de checkpoint aprovado em ambiente isolado.
 
 O staging atende esses pré-requisitos e está apto a promoção sintética. A
-produção permanece explicitamente desabilitada e sem rota de Atendimento
-dedicada; nenhum workflow de produção é considerado executado enquanto esse
-runtime equivalente não existir.
+produção agora possui o runtime equivalente em modo somente leitura, mas
+permanece sem rota de Atendimento dedicada e sem qualquer escrita; nenhum
+workflow de publicação pública ou promoção global é considerado executado até
+que os gates de proxy, autenticação e rollback sejam comprovados
+separadamente.

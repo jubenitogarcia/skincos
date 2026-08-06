@@ -15,6 +15,7 @@ required=(
   'value.verifiedAncestor !== true'
   '.skincos-release-lineage.json'
   'sudo -n tar -xf "$RELEASE_ARCHIVE" -C "$STAGING"'
+  'for acl_dir in "$RELEASE_BASE" "$RELEASE_BASE/$RELEASE_ID"'
   'find "$STAGING" -type f'
   'workflow-runtime-manifest.js'
   'apply-livia-runtime-isolation.js'

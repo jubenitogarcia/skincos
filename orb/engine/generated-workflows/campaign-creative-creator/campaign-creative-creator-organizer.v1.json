@@ -1,0 +1,174 @@
+{
+  "id": "ccg-orchestrator-001",
+  "name": "Campaign Creative Creator Organizer",
+  "active": false,
+  "nodes": [
+    {
+      "id": "ccg-organizer-manual",
+      "name": "When clicking 'Execute workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ccg-organizer-config",
+      "name": "Organizer Safe Defaults",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -480,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ccg-organizer-content-type",
+              "name": "content_type",
+              "value": "STATIC_SINGLE",
+              "type": "string"
+            },
+            {
+              "id": "ccg-organizer-dry-run",
+              "name": "dry_run",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "ccg-organizer-max-jobs",
+              "name": "max_jobs",
+              "value": 4,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ccg-organizer-request",
+      "name": "Build CCG Operational Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\nconst input = $input.first()?.json || {};\nconst value = (candidate, fallback = '') => candidate === undefined || candidate === null ? fallback : String(candidate).trim();\nconst list = (candidate, fallback = []) => {\n  if (Array.isArray(candidate)) return candidate;\n  if (typeof candidate === 'string' && candidate.trim()) {\n    try {\n      const parsed = JSON.parse(candidate);\n      return Array.isArray(parsed) ? parsed : fallback;\n    } catch {}\n  }\n  return fallback;\n};\nconst object = (candidate) => candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? candidate : {};\nconst supplied = object(input.production_request);\nconst executionId = value(typeof $execution !== 'undefined' && $execution.id, 'manual');\nconst now = new Date().toISOString();\nconst requestedMaxJobs = Number(input.max_jobs);\n// The safe static smoke uses three approved URI assets plus one composition job.\nconst defaultMaxJobs = Number.isFinite(requestedMaxJobs) && requestedMaxJobs > 0\n  ? Math.floor(requestedMaxJobs)\n  : 4;\nconst productionId = value(supplied.production_id, 'organizer-production-' + executionId);\nconst contentId = value(supplied.content_id, 'organizer-content-' + executionId);\nconst campaignId = value(supplied.campaign_id, 'organizer-campaign');\nconst deliverables = list(supplied.requested_deliverables, [{\n  deliverable_id: contentId + '-static',\n  content_mode: 'STATIC_SINGLE',\n  format: '9:16',\n  usage: 'ORGANIC',\n}]);\nconst request = Object.keys(supplied).length\n  ? {\n      ...supplied,\n      production_id: productionId,\n      content_id: contentId,\n      campaign_id: campaignId,\n      requested_deliverables: deliverables,\n      dry_run: supplied.dry_run === undefined ? true : supplied.dry_run,\n      provider_policy: {\n        ...object(supplied.provider_policy),\n        require_human_approval: true,\n        publish_allowed: false,\n        publish_requested: false,\n      },\n      organizer_context: {\n        ...object(supplied.organizer_context),\n        source: 'ccg-orchestrator-001',\n        execution_id: executionId,\n      },\n    }\n  : {\n      schema_version: '1.0.0',\n      production_id: productionId,\n      content_id: contentId,\n      campaign_id: campaignId,\n      content_type: value(input.content_type, 'STATIC_SINGLE').toUpperCase(),\n      production_tier: 'FAST',\n      objective: 'Validar a entrada operacional do Campaign Creative Creator sem efeitos externos.',\n      funnel_stage: 'consideration',\n      audience: { segment: 'organizer-default', location: 'Brasil' },\n      procedure_or_topic: 'cuidados faciais',\n      offer: {},\n      cta: 'Saiba mais',\n      requested_deliverables: deliverables,\n      // The default operational smoke must be a valid closed-world request.\n      // These are synthetic, non-personal mock references with explicit\n      // approval/ownership metadata; they never become live provider inputs.\n      source_assets: list(input.source_assets).length ? list(input.source_assets) : [\n        {\n          asset_id: 'organizer-mock-hero-v1',\n          role: 'hero_visual',\n          asset_type: 'IMAGE',\n          file_name: 'organizer-mock-hero.svg',\n          mime_type: 'image/svg+xml',\n          url: 'mock://approved-assets/organizer-mock-hero-v1.svg',\n          approval_status: 'approved',\n          rights_status: 'owned',\n          contains_personal_data: false,\n          width: 1080,\n          height: 1440,\n          size_bytes: 1024,\n          sha256: '1111111111111111111111111111111111111111111111111111111111111111'\n        },\n        {\n          asset_id: 'organizer-mock-background-v1',\n          role: 'supporting_background',\n          asset_type: 'IMAGE',\n          file_name: 'organizer-mock-background.svg',\n          mime_type: 'image/svg+xml',\n          url: 'mock://approved-assets/organizer-mock-background-v1.svg',\n          approval_status: 'approved',\n          rights_status: 'owned',\n          contains_personal_data: false,\n          width: 1080,\n          height: 1920,\n          size_bytes: 1024,\n          sha256: '2222222222222222222222222222222222222222222222222222222222222222'\n        }\n      ],\n      brand_assets: list(input.brand_assets).length ? list(input.brand_assets) : [\n        {\n          asset_id: 'organizer-mock-brand-logo-v1',\n          role: 'brand_logo',\n          asset_type: 'LOGO',\n          file_name: 'organizer-mock-brand-logo.svg',\n          mime_type: 'image/svg+xml',\n          url: 'mock://approved-assets/organizer-mock-brand-logo-v1.svg',\n          approval_status: 'approved',\n          rights_status: 'owned',\n          contains_personal_data: false,\n          width: 640,\n          height: 160,\n          size_bytes: 1024,\n          sha256: '3333333333333333333333333333333333333333333333333333333333333333'\n        }\n      ],\n      references: list(input.references),\n      mandatory_elements: ['CTA legível'],\n      forbidden_elements: ['Promessa garantida', 'Antes e depois'],\n      provider_policy: {\n        mode: 'mock',\n        mock_provider: true,\n        allowed_providers: ['mock'],\n        max_cost: 0,\n        max_jobs: defaultMaxJobs,\n        max_revisions: 0,\n        require_human_approval: true,\n        publish_allowed: false,\n        publish_requested: false,\n      },\n      budget: { currency: 'BRL', max_cost: 0 },\n      dry_run: true,\n      brand_context: { brand_name: 'Espaço Facial', locale: 'pt-BR', country: 'BR', compliance_profile: 'SKINCOS_AESTHETICS_BR_V1' },\n      organizer_context: { source: 'ccg-orchestrator-001', execution_id: executionId, requested_at: now },\n    };\nrequest.publish_allowed = false;\nrequest.publish_requested = false;\nrequest.run_id = value(request.run_id, 'run-' + executionId);\nrequest.idempotency_key = value(request.idempotency_key, 'ccg:' + campaignId + ':' + contentId + ':' + executionId);\nreturn [{ json: { production_request: request, organizer_request: { creator_workflow_id: 'TxE9eMS1xfE6kq38', mode: request.dry_run ? 'DRY_RUN' : 'LIVE', created_at: now } } }];\n"
+      }
+    },
+    {
+      "id": "ccg-organizer-execute",
+      "name": "Execute Campaign Creative Creator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "TxE9eMS1xfE6kq38",
+          "mode": "id"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "ccg-organizer-return",
+      "name": "Return CCG Content Package",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\nconst item = $input.first();\nconst data = item?.json || {};\nconst packageValue = data.content_package || data.module_outputs?.CCG_90?.content_package;\nif (!packageValue) throw new Error('[CCG-Organizer/OUTPUT] Campaign Creative Creator não retornou CONTENT_PACKAGE.');\nreturn [{\n  json: {\n    ...data,\n    output_type: 'CONTENT_PACKAGE',\n    organizer_result: {\n      status: data.status || data.module_status || 'DONE',\n      package_id: packageValue.package_id,\n      package_status: packageValue.package_status,\n      run_id: data.ccg_context?.run_id || data.production_request?.run_id,\n      idempotency_key: data.ccg_context?.idempotency_key || data.production_request?.idempotency_key,\n    },\n    posting_payload: { publish_requested: false, publish_allowed: false, published: false },\n  },\n  binary: item?.binary,\n}];\n"
+      }
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [
+          {
+            "node": "Organizer Safe Defaults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Organizer Safe Defaults": {
+      "main": [
+        [
+          {
+            "node": "Build CCG Operational Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build CCG Operational Request": {
+      "main": [
+        [
+          {
+            "node": "Execute Campaign Creative Creator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Campaign Creative Creator": {
+      "main": [
+        [
+          {
+            "node": "Return CCG Content Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/Sao_Paulo",
+    "binaryMode": "separate",
+    "callerPolicy": "workflowsFromSameOwner",
+    "timeSavedMode": "dynamic",
+    "availableInMCP": false,
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "codex_generated": true,
+    "codex_builder": "build-campaign-creative-creator-organizer",
+    "codex_builder_version": "1.0.2",
+    "source_workflow_id": "ccg-orchestrator-001",
+    "creator_workflow_id": "TxE9eMS1xfE6kq38",
+    "architecture": "n8n-organizer-to-campaign-creative-creator-operational-entry",
+    "no_publication": true,
+    "publish_allowed": false,
+    "publish_requested": false,
+    "no_public_webhook": true,
+    "credentials_stripped_for_git": true
+  }
+}

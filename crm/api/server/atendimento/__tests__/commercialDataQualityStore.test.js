@@ -48,23 +48,35 @@ test('builds only aggregate quality findings and preserves source freshness ages
     assert.equal(JSON.stringify(observations).match(/phone|email|evidence|source_id/i), null)
 })
 
-test('treats a missing or over-threshold mirror timestamp as stale without retaining a path', () => {
-    const stale = buildCommercialDataQualityObservations({ freshness: { latestImportAgeHours: 12 } })
+test('accepts a recent import checkpoint when the local mirror is absent', () => {
+    const fresh = buildCommercialDataQualityObservations({ freshness: { latestImportAgeHours: 12 } })
         .find((item) => item.key === 'source.local_mirror_stale')
-    assert.equal(stale?.observedCount, 1)
-    assert.deepEqual(stale?.metrics, {
+    assert.equal(fresh?.observedCount, 0)
+    assert.deepEqual(fresh?.metrics, {
         thresholdHours: COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS,
         latestImportAgeHours: 12,
     })
     assert.doesNotMatch(COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES.freshness, /backup_path|source_fingerprint|path/i)
 })
 
-test('opens the freshness finding when the latest import is stale even if the mirror age is recent', () => {
+test('treats absent or jointly stale source checkpoints as stale', () => {
+    const missing = buildCommercialDataQualityObservations({ freshness: {} })
+        .find((item) => item.key === 'source.local_mirror_stale')
+    assert.equal(missing?.observedCount, 1)
+    const stale = buildCommercialDataQualityObservations({ freshness: { mirrorSyncedAgeHours: 49, latestImportAgeHours: 49 } })
+        .find((item) => item.key === 'source.local_mirror_stale')
+    assert.equal(stale?.observedCount, 1)
+    const mirrorFallback = buildCommercialDataQualityObservations({ freshness: { mirrorSyncedAgeHours: 12 } })
+        .find((item) => item.key === 'source.local_mirror_stale')
+    assert.equal(mirrorFallback?.observedCount, 0)
+})
+
+test('accepts a recent mirror checkpoint when the latest import is stale', () => {
     const freshness = buildCommercialDataQualityObservations({
         freshness: { mirrorSyncedAgeHours: 2, latestImportAgeHours: 49 },
     }).find((item) => item.key === 'source.local_mirror_stale')
 
-    assert.equal(freshness?.observedCount, 1)
+    assert.equal(freshness?.observedCount, 0)
     assert.deepEqual(freshness?.metrics, {
         thresholdHours: COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS,
         mirrorSyncedAgeHours: 2,
@@ -74,6 +86,16 @@ test('opens the freshness finding when the latest import is stale even if the mi
 
 test('requires the full enabled immutable contact ledger and ignores deleted attendance links', () => {
     const core = COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES.core
+    assert.match(core, /case when has_table_privilege\(current_user, 'crm_atendimento\.commercial_contact_permissions', 'SELECT'\)/)
+    for (const table of [
+        'commercial_contact_permissions',
+        'commercial_contact_permission_events',
+        'commercial_actions',
+        'commercial_action_events',
+        'commercial_policy_config',
+    ]) {
+        assert.match(core, new RegExp(`has_table_privilege\\(current_user, 'crm_atendimento\\.${table}', 'SELECT'\\)`))
+    }
     assert.match(core, /commercial_contact_permission_events'[\s\S]*trace_id/)
     for (const { trigger, requiredBits } of [
         { trigger: 'commercial_contact_permission_events_immutable', requiredBits: [2, 8, 16] },
@@ -109,6 +131,31 @@ test('starts a new SLA window when an observed finding recurs after clearing', (
     assert.equal(reopen.shouldStartObservationWindow, true)
     assert.equal(reopen.shouldReopen, true)
     assert.equal(reopen.eventType, 'reopened')
+})
+
+test('resolves an actionable finding when its positive observation clears', () => {
+    for (const previousStatus of ['open', 'acknowledged', 'in_progress']) {
+        const cleared = __testables.commercialObservationTransition({
+            previousStatus, previousCount: 84, observedCount: 0,
+        })
+        assert.equal(cleared.shouldResolve, true)
+        assert.equal(cleared.nextStatus, 'resolved')
+        assert.equal(cleared.eventType, 'cleared')
+        assert.equal(cleared.shouldRecord, true)
+    }
+
+    const legacyCleared = __testables.commercialObservationTransition({
+        previousStatus: 'open', previousCount: 0, observedCount: 0,
+    })
+    assert.equal(legacyCleared.shouldResolve, true)
+    assert.equal(legacyCleared.nextStatus, 'resolved')
+    assert.equal(legacyCleared.eventType, 'cleared')
+
+    const suppressed = __testables.commercialObservationTransition({
+        previousStatus: 'suppressed', previousCount: 84, observedCount: 0,
+    })
+    assert.equal(suppressed.shouldResolve, false)
+    assert.equal(suppressed.nextStatus, 'suppressed')
 })
 
 test('automatically reopens a suppressed finding when it remains observed', () => {
@@ -167,6 +214,9 @@ test('reads aggregate observations serially inside one database transaction clie
             calls.push(sql)
             await new Promise((resolve) => setImmediate(resolve))
             activeQueries -= 1
+            if (sql.startsWith('select has_table_privilege(current_user')) {
+                return { rows: [{ can_read_contact_permissions: true }] }
+            }
             if (sql.includes('from crm_atendimento.canonical_clients')) {
                 return { rows: [{ attendance_membership_gap: 0, unclassified_sale_items: 0, future_attendances: 0, identities_without_permission: 0, contact_controls_unready: 0 }] }
             }
@@ -179,8 +229,32 @@ test('reads aggregate observations serially inside one database transaction clie
     const observations = await __testables.querySourceObservations(client)
 
     assert.equal(peakQueries, 1)
-    assert.equal(calls.length, 3)
+    assert.equal(calls.length, 4)
     assert.equal(observations.find((item) => item.key === 'source.local_mirror_stale')?.observedCount, 0)
+})
+
+test('avoids unauthorized contact rows and keeps the quality refresh fail-closed', async () => {
+    const calls = []
+    const client = {
+        async query(sql) {
+            calls.push(sql)
+            if (sql.startsWith('select has_table_privilege(current_user')) {
+                return { rows: [{ can_read_contact_permissions: false }] }
+            }
+            if (sql.includes('from crm_atendimento.canonical_clients')) {
+                assert.doesNotMatch(sql, /from crm_atendimento\.commercial_contact_permissions permission/)
+                return { rows: [{ attendance_membership_gap: 0, unclassified_sale_items: 0, future_attendances: 0, identities_without_permission: 0, contact_controls_unready: 1 }] }
+            }
+            if (sql.includes("identity_review.name_merge_pending")) return { rows: [] }
+            if (sql.includes('with mirror as')) return { rows: [{ mirror_synced_age_hours: 1, latest_import_age_hours: 2 }] }
+            throw new Error('Unexpected aggregate quality query')
+        },
+    }
+
+    const observations = await __testables.querySourceObservations(client)
+
+    assert.equal(calls.length, 4)
+    assert.equal(observations.find((item) => item.key === 'commercial.contact_controls_unready')?.observedCount, 1)
 })
 
 test('fails closed for a unit-scoped GESTOR but retains the ADMIN global exception', () => {

@@ -1,0 +1,26 @@
+[Unit]
+Description=Skincos Clientes source refresh (fail-closed, aggregate checkpointed import)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=skincos
+Group=skincos
+WorkingDirectory=__REPO_ROOT__
+Environment=CRM_CLIENTES_SOURCE_REFRESH_TARGET=production
+Environment=CRM_CLIENTES_SOURCE_REFRESH_ACTION=--dry-run
+Environment=CRM_CLIENTES_SOURCE_REFRESH_APPLY_CONFIRMED=0
+Environment=CONFIG_ROOT=__CONFIG_ROOT__
+EnvironmentFile=-__CONFIG_ROOT__/crm-clientes-source-refresh.env
+ExecStart=__REPO_ROOT__/scripts/runtime/run-clientes-source-refresh-native.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__BACKUP_ROOT__ __LOG_ROOT__/crm-clientes-source-refresh
+UMask=0027
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

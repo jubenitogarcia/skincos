@@ -186,6 +186,10 @@ test('scopes Clientes commercial reads, queues, actions, cadences and offers to 
 
     const detail = await store.commercialProfile(identityId, {}, scopedGestor)
     assert.equal(Object.hasOwn(detail.profile, 'phone'), false)
+    const detailProfilesQuery = captured.filter((entry) => entry.kind === 'profiles' && entry.params?.length === 4).at(-1)
+    assert.equal(detailProfilesQuery?.params[3], identityId)
+    assert.match(detailProfilesQuery?.sql || '', /gi\.id::text = \$4/)
+    assert.match(detailProfilesQuery?.sql || '', /gm\.identity_id::text = \$4/)
     assert.deepEqual(captured.find((entry) => entry.kind === 'profile-actions')?.params, [identityId, ['novo-hamburgo']])
 
     await store.commercialCadences(scopedGestor)
@@ -229,6 +233,55 @@ test('scopes Clientes commercial reads, queues, actions, cadences and offers to 
 
     await store.commercialOverview({}, { id: 'admin-via-pages', role: 'GESTOR', isGlobalAdmin: true, allowedUnits: [] })
     assert.equal(captured.filter((entry) => entry.kind === 'profiles').at(-1)?.params[1], null)
+
+    // The Pages actor parser keeps a stable `allowedUnits` property but marks
+    // an omitted claim as false. Such a global GESTOR must retain legacy
+    // cross-unit access; only an explicit empty claim is fail-closed.
+    await store.commercialOverview({}, {
+        id: 'gestor-without-scope-claim', role: 'GESTOR', allowedUnits: undefined, allowedUnitsDeclared: false,
+    })
+    assert.equal(captured.filter((entry) => entry.kind === 'profiles').at(-1)?.params[1], null)
+})
+
+test('returns a bounded, unit-scoped Customer 360 timeline from confirmed source events', async () => {
+    const identityId = '11111111-1111-4111-8111-111111111111'
+    const profileRow = {
+        identity_id: identityId,
+        canonical_name: 'Cliente 360',
+        source_types: ['attendance_client', 'caixa_customer'],
+        last_attendance: '2026-01-10', visit_count: 1, procedure_count: 1,
+        completed_procedures: ['Botox'], attendance_units: ['Novo Hamburgo'], future_attendance_count: 0,
+        sale_count: 1, lifetime_sales: 900, sales_12m: 900, sales_units: ['Novo Hamburgo'],
+        phone: '5551999991111', purchased_procedures: ['Botox'], pending_sale_items: 0,
+        active_action_count: 0, last_action_at: null,
+    }
+    const captured = []
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
+                return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance_links', sales: 'sales' }], rowCount: 1 }
+            }
+            if (sql.includes('with identities as')) return { rows: [profileRow], rowCount: 1 }
+            if (sql.includes('with attendance_members as')) {
+                captured.push({ sql, params })
+                return { rows: [{
+                    event_id: 'sale:22222222-2222-4222-8222-222222222222', event_type: 'sale', occurred_on: '2026-01-09',
+                    title: 'Compra registrada', detail: 'Botox', unit_name: 'Novo Hamburgo', source_label: 'Caixa',
+                    amount: '900.00', event_status: 'confirmed',
+                }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const detail = await store.commercialProfile(identityId, { timelineLimit: 120 }, { id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'] })
+
+    assert.equal(detail.timeline.length, 1)
+    assert.deepEqual(detail.timeline[0], {
+        id: 'sale:22222222-2222-4222-8222-222222222222', type: 'sale', occurredOn: '2026-01-09',
+        title: 'Compra registrada', detail: 'Botox', unitName: 'Novo Hamburgo', source: 'Caixa', amount: 900, status: 'confirmed',
+    })
+    assert.deepEqual(captured[0].params, [identityId, detail.asOf, ['novo-hamburgo'], 100])
 })
 
 test('uses bounded SQL pagination and global percentile benchmarks for the commercial overview', async () => {
@@ -283,6 +336,8 @@ test('uses bounded SQL pagination and global percentile benchmarks for the comme
     const store = createAtendimentoStore({ pool })
     const result = await store.commercialOverview({ server: '1', limit: 1, offset: 1, sort: 'lifetime_sales', direction: 'asc', q: 'cliente' }, { id: 'manager', role: 'GESTOR' })
     assert.equal(captured.length, 1)
+    assert.match(captured[0].sql, /jsonb_array_length\(coalesce\(source_types, '\[\]'::jsonb\)\)/)
+    assert.doesNotMatch(captured[0].sql, /cardinality\(source_types\)/)
     assert.deepEqual(captured[0].params.slice(3, 8), ['cliente', '', '', 1, 1])
     assert.equal(result.pagination.mode, 'sql')
     assert.equal(result.pagination.sort, 'lifetime_sales')
@@ -1310,10 +1365,49 @@ test('imports source rows with one actor value for both audit columns', async ()
         actor: { id: 'google-sheet-import', role: 'GESTOR' },
     })
 
-    assert.deepEqual(result, { dryRun: false, records: 1, inserted: 1, updated: 0, skipped: 0 })
+    assert.deepEqual(result, { dryRun: false, records: 1, inserted: 1, updated: 0, skipped: 0, importBatchId: null })
     const write = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.attendances('))
     assert.match(write.sql, /values \(\$1,\$2,\$3,\$4,\$5,\$6,\$7,\$8,\$9,\$10,\$11,\$12,\$13,\$14,\$15,\$16,\$17,\$18,\$19,\$19\)/)
     assert.equal(write.params.at(-1), 'google-sheet-import')
+})
+
+test('records an aggregate source checkpoint for a completed Google Sheets import', async () => {
+    const queries = []
+    const fakePool = createFakePool([
+        (sql, params) => {
+            queries.push({ sql, params })
+            if (sql.startsWith('insert into crm_atendimento.units(')) {
+                return { rows: [{ id: 'unit-1', slug: 'novo-hamburgo', name: 'Novo Hamburgo' }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.procedures(')) {
+                return { rows: [{ id: 'procedure-1', name: 'Botox' }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.attendances(')) {
+                return { rows: [{ id: 'attendance-1', inserted: true }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.import_batches(')) {
+                return { rows: [{ id: 'batch-1' }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const result = await createAtendimentoStore({ pool: fakePool }).importRecords({
+        records: [{
+            unitSlug: 'novo-hamburgo', unitName: 'Novo Hamburgo', date: '2026-07-24',
+            clientName: 'Cliente', procedureName: 'Botox', code: '#0699', quantity: 1,
+            discount: false, otherValue: 0, roundValue: false, value: 699,
+            injectorName: '', consultantName: '', observation: '',
+            sourceSheetId: 'sheet-1', sourceTab: 'Novo Hamburgo', sourceRow: 3,
+        }],
+        cache: { procedures: [], professionals: [], procedureCodes: [], schedules: [] },
+        actor: { id: 'google-sheet-import', role: 'GESTOR' },
+        source: { sourceSheetId: 'sheet-1', sourceName: 'Atendimento', tabs: ['Novo Hamburgo'], snapshotComplete: true },
+    })
+
+    assert.equal(result.importBatchId, 'batch-1')
+    const checkpoint = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.import_batches('))
+    assert.deepEqual(checkpoint.params.slice(0, 2), ['sheet-1', 'Atendimento'])
+    assert.match(checkpoint.params[3], /"snapshotComplete":true/)
 })
 
 test('rejects a direct non-manager attempt to replace the persisted consultant before any write', async () => {

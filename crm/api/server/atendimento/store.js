@@ -2683,8 +2683,14 @@ function commercialUnitScope(actor) {
     // behavior even when they did not populate that parser marker.
     if (actor?.isGlobalAdmin === true || role === 'ADMIN') return null
     if (!Array.isArray(actor?.allowedUnits)) {
+        // The signed-actor parser always carries an `allowedUnits` property so
+        // its shape is stable, but marks whether the claim was present on the
+        // token separately.  Treat that explicit false marker as an omitted
+        // claim; only malformed direct callers without the marker retain the
+        // fail-closed empty-scope behavior.
         const scopeWasDeclared = actor?.allowedUnitsDeclared === true ||
-            Object.prototype.hasOwnProperty.call(actor || {}, 'allowedUnits')
+            (actor?.allowedUnitsDeclared === undefined &&
+                Object.prototype.hasOwnProperty.call(actor || {}, 'allowedUnits'))
         return scopeWasDeclared ? [] : null
     }
     return [...normalizeAllowedUnitKeys(actor)].sort()
@@ -2771,6 +2777,74 @@ function mapCommercialAction(row) {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     }
+}
+
+function mapCommercialTimelineEntry(row) {
+    return {
+        id: row.event_id,
+        type: row.event_type,
+        occurredOn: row.occurred_on ? String(row.occurred_on).slice(0, 10) : null,
+        title: row.title || '',
+        detail: row.detail || '',
+        unitName: row.unit_name || '',
+        source: row.source_label || '',
+        amount: row.amount == null ? null : Number(row.amount),
+        status: row.event_status || 'confirmed',
+    }
+}
+
+async function queryCommercialTimeline(pgPool, { identityId, asOf, unitSlugs, limit }) {
+    const result = await pgPool.query(
+        `with attendance_members as (
+             select distinct gm.source_id::uuid as client_id
+             from crm_atendimento.global_client_identity_members gm
+             where gm.identity_id = $1 and gm.source_type = 'attendance_client'
+         ), attendance_events as (
+             select distinct concat('attendance:', a.id::text) as event_id,
+                    'attendance'::text as event_type,
+                    a.service_date::text as occurred_on,
+                    p.name::text as title,
+                    ''::text as detail,
+                    u.name::text as unit_name,
+                    'Atendimento'::text as source_label,
+                    null::numeric as amount,
+                    'confirmed'::text as event_status
+             from attendance_members am
+             join crm_atendimento.attendance_client_links acl on acl.client_id = am.client_id
+             join crm_atendimento.attendances a on a.id = acl.attendance_id
+             join crm_atendimento.procedures p on p.id = a.procedure_id
+             join crm_atendimento.units u on u.id = a.unit_id
+             where a.deleted_at is null
+               and a.service_date <= $2::date
+               and ($3::text[] is null or u.slug = any($3::text[]))
+         ), sale_members as (
+             select distinct gm.source_id::uuid as customer_id
+             from crm_atendimento.global_client_identity_members gm
+             where gm.identity_id = $1 and gm.source_type = 'caixa_customer'
+         ), sale_events as (
+             select distinct concat('sale:', s.id::text) as event_id,
+                    'sale'::text as event_type,
+                    s.occurred_on::text as occurred_on,
+                    'Compra registrada'::text as title,
+                    coalesce(nullif(trim(s.raw_service), ''), 'Item não classificado')::text as detail,
+                    u.name::text as unit_name,
+                    'Caixa'::text as source_label,
+                    s.total::numeric as amount,
+                    'confirmed'::text as event_status
+             from sale_members sm
+             join crm_caixa.sales s on s.customer_id = sm.customer_id
+             join crm_atendimento.units u on u.id = s.unit_id
+             where s.occurred_on <= $2::date
+               and ($3::text[] is null or u.slug = any($3::text[]))
+         )
+         select * from attendance_events
+         union all
+         select * from sale_events
+         order by occurred_on desc, event_id desc
+         limit $4`,
+        [identityId, asOf, unitSlugs, limit],
+    )
+    return result.rows.map(mapCommercialTimelineEntry)
 }
 
 async function assertCommercialIdentitySource(pgPool) {
@@ -3301,12 +3375,25 @@ function commercialExpectedPermissionRevision(value) {
     return revision
 }
 
-async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) {
+function commercialTimelineLimit(value) {
+    const parsed = Number(value)
+    if (!Number.isInteger(parsed) || parsed < 1) return 50
+    return Math.min(parsed, 100)
+}
+
+async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds, identityId = null }) {
+    // Customer 360 is an identity-detail read.  Keep the legacy all-profile
+    // query available for compatibility, but constrain every source CTE when
+    // a detail identity is requested.  Without this bound the route computes
+    // every customer and hydrates every contact-control row before selecting
+    // one profile, which can block the isolated read-only runtime.
+    const targetIdentityId = String(identityId || '').trim()
     const result = await pgPool.query(
         `with identities as (
             select gi.id as identity_id, gi.canonical_name, gi.source_types
             from crm_atendimento.global_client_identities gi
-            where exists (select 1 from crm_atendimento.global_client_identity_members gm where gm.identity_id = gi.id)
+            where ($4::text = '' or gi.id::text = $4)
+              and exists (select 1 from crm_atendimento.global_client_identity_members gm where gm.identity_id = gi.id)
          ), attendance_members as (
             -- Keep the physical canonical member here.  A retired S and its
             -- survivor T are intentionally one identity component, but ACL
@@ -3316,6 +3403,7 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
             from crm_atendimento.global_client_identity_members gm
             join crm_atendimento.canonical_clients cc on cc.id = gm.source_id::uuid
             where gm.source_type = 'attendance_client'
+              and ($4::text = '' or gm.identity_id::text = $4)
          ), attendance_core as (
             select am.identity_id, a.id, a.service_date, p.name as procedure_name, u.name as unit_name
             from attendance_members am
@@ -3344,6 +3432,7 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
             select distinct gm.identity_id, gm.source_id::uuid as customer_id
             from crm_atendimento.global_client_identity_members gm
             where gm.source_type = 'caixa_customer'
+              and ($4::text = '' or gm.identity_id::text = $4)
          ), sale_core as (
             select sm.identity_id, s.id, s.occurred_on, s.total, s.phone_raw, u.name as unit_name
             from sale_members sm
@@ -3373,6 +3462,7 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
             from crm_atendimento.commercial_actions action
             left join crm_atendimento.units action_unit on action_unit.id = action.unit_id
             where action.status = any($3::text[])
+              and ($4::text = '' or action.identity_id::text = $4)
               and ($2::text[] is null or action_unit.slug = any($2::text[]))
             group by action.identity_id
          )
@@ -3389,13 +3479,17 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
          left join active_actions actions on actions.identity_id = i.identity_id
          where $2::text[] is null or a.identity_id is not null or s.identity_id is not null
          order by i.canonical_name`,
-        [asOf, unitSlugs, COMMERCIAL_ACTIVE_ACTION_STATUSES],
+        [asOf, unitSlugs, COMMERCIAL_ACTIVE_ACTION_STATUSES, targetIdentityId],
     )
-    const profiles = segmentCommercialProfiles(result.rows.map(commercialProfileRowInput), { asOf, thresholds }).map((profile) => ({
-        ...profile,
-        activeActionCount: Number(result.rows.find((row) => row.identity_id === profile.identityId)?.active_action_count || 0),
-        lastActionAt: result.rows.find((row) => row.identity_id === profile.identityId)?.last_action_at || null,
-    }))
+    const rowsByIdentity = new Map(result.rows.map((row) => [String(row.identity_id), row]))
+    const profiles = segmentCommercialProfiles(result.rows.map(commercialProfileRowInput), { asOf, thresholds }).map((profile) => {
+        const row = rowsByIdentity.get(profile.identityId)
+        return {
+            ...profile,
+            activeActionCount: Number(row?.active_action_count || 0),
+            lastActionAt: row?.last_action_at || null,
+        }
+    })
     const eligibilityByIdentity = await queryCommercialContactEligibility(pgPool, profiles.map((profile) => profile.identityId), { unitSlugs })
     return profiles.map((profile) => ({
         ...profile,
@@ -3608,8 +3702,8 @@ async function queryCommercialProfilesServerPage(pgPool, { asOf, unitSlugs, thre
                 count(*) filter (where frequent)::int as frequent_total,
                 count(*) filter (where balanced_vip)::int as balanced_vip_total,
                 count(*) filter (where reactivation_potential)::int as reactivation_potential_total,
-                count(*) filter (where cardinality(source_types) >= 2)::int as confirmed_multi_source_total,
-                count(*) filter (where cardinality(source_types) < 2)::int as unresolved_single_source_total,
+                count(*) filter (where jsonb_array_length(coalesce(source_types, '[]'::jsonb)) >= 2)::int as confirmed_multi_source_total,
+                count(*) filter (where jsonb_array_length(coalesce(source_types, '[]'::jsonb)) < 2)::int as unresolved_single_source_total,
                 coalesce(sum(lifetime_sales), 0)::numeric as lifetime_sales_total,
                 coalesce(sum(sale_count), 0)::int as sale_count_total
             from filtered
@@ -5395,6 +5489,7 @@ export function createAtendimentoStore(options = {}) {
                 asOf,
                 unitSlugs,
                 thresholds: policy.returnRiskThresholds,
+                identityId: id,
             })
             const profile = profiles.find((item) => item.identityId === id)
             if (!profile) {
@@ -5402,7 +5497,7 @@ export function createAtendimentoStore(options = {}) {
                 error.statusCode = 404
                 throw error
             }
-            const [actions, cadences] = await Promise.all([
+            const [actions, cadences, timeline] = await Promise.all([
                 pgPool.query(
                     `select action.*, unit.slug as unit_slug, unit.name as unit_name
                      from crm_atendimento.commercial_actions action
@@ -5424,12 +5519,19 @@ export function createAtendimentoStore(options = {}) {
                      order by procedure.name`,
                     [profile.completedProcedures, unitSlugs],
                 ),
+                queryCommercialTimeline(pgPool, {
+                    identityId: id,
+                    asOf,
+                    unitSlugs,
+                    limit: commercialTimelineLimit(query?.timelineLimit),
+                }),
             ])
             return {
                 asOf,
                 policy: commercialPolicyForActor(policy, actor),
                 profile: minimizeCommercialProfile(profile),
                 actions: actions.rows.map(mapCommercialAction),
+                timeline,
                 clinicalCadences: cadences.rows.map((row) => ({
                     procedureId: row.id,
                     procedureName: row.name,
@@ -6465,7 +6567,7 @@ export function createAtendimentoStore(options = {}) {
             })
         },
 
-        async importRecords({ records, cache, actor, dryRun = false }) {
+        async importRecords({ records, cache, actor, dryRun = false, source = null }) {
             await ensureReady()
             if (dryRun) {
                 return {
@@ -6588,8 +6690,36 @@ export function createAtendimentoStore(options = {}) {
                     else if (out.rows[0]) updated += 1
                     else skipped += 1
                 }
+                let importBatchId = null
+                const sourceSheetId = String(source?.sourceSheetId || '').trim()
+                if (sourceSheetId) {
+                    const sourceName = String(source?.sourceName || 'Atendimento').trim().slice(0, 160) || 'Atendimento'
+                    const tabs = Array.isArray(source?.tabs)
+                        ? source.tabs.map((tab) => String(tab || '').trim()).filter(Boolean).slice(0, 32)
+                        : []
+                    const batch = await client.query(
+                        `insert into crm_atendimento.import_batches(
+                            source_sheet_id, source_name, dry_run, actor, summary)
+                         values ($1, $2, false, $3::jsonb, $4::jsonb)
+                         returning id`,
+                        [
+                            sourceSheetId,
+                            sourceName,
+                            JSON.stringify(actor || {}),
+                            JSON.stringify({
+                                records: records.length,
+                                inserted,
+                                updated,
+                                skipped,
+                                tabs,
+                                snapshotComplete: source?.snapshotComplete === true,
+                            }),
+                        ],
+                    )
+                    importBatchId = batch.rows[0]?.id || null
+                }
                 await audit(client, 'import.google-sheet', actor, null, { inserted, updated, skipped, records: records.length })
-                return { dryRun: false, records: records.length, inserted, updated, skipped }
+                return { dryRun: false, records: records.length, inserted, updated, skipped, importBatchId }
             })
         },
 

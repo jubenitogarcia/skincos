@@ -116,3 +116,12 @@ test('preserves a signed ADMIN global exception while retaining a declared unit 
     assert.equal(actor?.isGlobalAdmin, true)
     assert.equal(actor?.allowedUnitsDeclared, true)
 })
+
+test('marks an omitted GESTOR unit claim as absent rather than an empty scope', () => {
+    const encoded = Buffer.from(JSON.stringify({ id: 'gestor-1', role: 'GESTOR' })).toString('base64url')
+    const actor = __testables.parseActorHeader({ headers: { 'x-crm-user': encoded } })
+
+    assert.equal(actor?.role, 'GESTOR')
+    assert.equal(actor?.allowedUnits, undefined)
+    assert.equal(actor?.allowedUnitsDeclared, false)
+})
