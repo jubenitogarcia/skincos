@@ -34,7 +34,8 @@ if [[ "$ACTION" == "--dry-run" ]]; then
 select 'database=' || datname from pg_database where datname = '$DB_NAME';
 select 'role=' || rolname || ':login=' || rolcanlogin || ':default_read_only=' || coalesce(array_to_string(rolconfig, ','), '')
   from pg_roles where rolname = '$APP_ROLE';
-select 'database_connect=' || has_database_privilege('$APP_ROLE', '$DB_NAME', 'CONNECT');
+select 'database_connect=' || case when exists (select 1 from pg_roles where rolname = '$APP_ROLE')
+  then has_database_privilege('$APP_ROLE', '$DB_NAME', 'CONNECT')::text else 'missing' end;
 SQL
   for path in "$ATENDIMENTO_CONFIG" "$CONTROL_FILE"; do
     if sudo -n test -f "$path"; then echo "present=$path"; else echo "missing=$path"; fi
