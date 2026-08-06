@@ -35,6 +35,22 @@ const definitionByKey = new Map(COMMERCIAL_DATA_QUALITY_DEFINITIONS.map((definit
 
 // These queries deliberately return counts and age values only. They do not
 // select a customer name, phone, email, raw source evidence, source path or ID.
+// The runtime role may intentionally lack SELECT on contact-governance tables.
+// Keep the row-level observation in a replaceable fragment so the aggregate
+// refresh can fail closed without attempting an unauthorized read.
+const CONTACT_PERMISSION_OBSERVATION_SQL = `(case when has_table_privilege(current_user, 'crm_atendimento.commercial_contact_permissions', 'SELECT') then
+            (select count(*)::int
+               from crm_atendimento.global_client_identities identity
+              where exists (select 1 from crm_atendimento.global_client_identity_members member where member.identity_id = identity.id)
+                and not exists (
+                    select 1 from crm_atendimento.commercial_contact_permissions permission
+                     where permission.identity_id = identity.id and permission.channel = 'whatsapp'
+                ))
+            else 0 end) as identities_without_permission`
+
+const CONTACT_PERMISSION_OBSERVATION_UNAVAILABLE_SQL = '0::int as identities_without_permission'
+const CONTACT_PERMISSION_PRIVILEGE_QUERY = `select has_table_privilege(current_user, 'crm_atendimento.commercial_contact_permissions', 'SELECT') as can_read_contact_permissions`
+
 export const COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES = Object.freeze({
     core: `with latest_app_registration_run as (
         select id from crm_atendimento.app_registration_import_runs
@@ -57,18 +73,17 @@ export const COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES = Object.freeze({
             )) as attendance_membership_gap,
         (select count(*)::int from crm_caixa.sale_items where coalesce(mapping_status, 'pending') <> 'mapped') as unclassified_sale_items,
         (select count(*)::int from crm_atendimento.attendances where deleted_at is null and service_date > current_date) as future_attendances,
-        (select count(*)::int
-           from crm_atendimento.global_client_identities identity
-          where exists (select 1 from crm_atendimento.global_client_identity_members member where member.identity_id = identity.id)
-            and not exists (
-                select 1 from crm_atendimento.commercial_contact_permissions permission
-                 where permission.identity_id = identity.id and permission.channel = 'whatsapp'
-            )) as identities_without_permission,
+        ${CONTACT_PERMISSION_OBSERVATION_SQL},
         (select case when
             to_regclass('crm_atendimento.commercial_contact_permissions') is null or
             to_regclass('crm_atendimento.commercial_contact_permission_events') is null or
             to_regclass('crm_atendimento.commercial_actions') is null or
             to_regclass('crm_atendimento.commercial_action_events') is null or
+            not has_table_privilege(current_user, 'crm_atendimento.commercial_contact_permissions', 'SELECT') or
+            not has_table_privilege(current_user, 'crm_atendimento.commercial_contact_permission_events', 'SELECT') or
+            not has_table_privilege(current_user, 'crm_atendimento.commercial_actions', 'SELECT') or
+            not has_table_privilege(current_user, 'crm_atendimento.commercial_action_events', 'SELECT') or
+            not has_table_privilege(current_user, 'crm_atendimento.commercial_policy_config', 'SELECT') or
             not exists(select 1 from information_schema.columns
                 where table_schema = 'crm_atendimento' and table_name = 'commercial_contact_permission_events'
                   and column_name = 'trace_id') or
@@ -142,6 +157,12 @@ export const COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES = Object.freeze({
         case when (select created_at from latest_import) is null then null
              else greatest(0, floor(extract(epoch from now() - (select created_at from latest_import)) / 3600))::int end as latest_import_age_hours`,
 })
+
+const COMMERCIAL_DATA_QUALITY_SOURCE_QUERY_WITHOUT_CONTACT_PERMISSION =
+    COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES.core.replace(
+        CONTACT_PERMISSION_OBSERVATION_SQL,
+        CONTACT_PERMISSION_OBSERVATION_UNAVAILABLE_SQL,
+    )
 
 function qualityError(code, statusCode = 409) {
     const error = new Error(code)
@@ -280,9 +301,16 @@ export function buildCommercialDataQualityObservations({ core = {}, reviewRows =
         mirrorSyncedAgeHours,
         latestImportAgeHours,
     }
-    const mirrorStale = mirrorSyncedAgeHours === null || latestImportAgeHours === null ||
-        mirrorSyncedAgeHours > COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS ||
-        latestImportAgeHours > COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS
+    // A live Google Sheets import is a valid source checkpoint even when the
+    // local mirror has never been materialized.  A recent local mirror is also
+    // a valid fallback when no live import has been recorded.  Treat the source
+    // as healthy when either checkpoint is recent, and stale only when both
+    // checkpoints are absent or over the SLA.
+    const mirrorFresh = mirrorSyncedAgeHours !== null &&
+        mirrorSyncedAgeHours <= COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS
+    const importFresh = latestImportAgeHours !== null &&
+        latestImportAgeHours <= COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS
+    const mirrorStale = !mirrorFresh && !importFresh
     const appRegistrationSnapshotAvailable = core.app_registration_snapshot_available === true || core.appRegistrationSnapshotAvailable === true
     const appRegistrationSnapshotVerified = core.app_registration_snapshot_verified === true || core.appRegistrationSnapshotVerified === true
     const appRegistrationSnapshotResidual = appRegistrationSnapshotVerified
@@ -346,7 +374,12 @@ async function querySourceObservations(client) {
     // produces a pg deprecation warning today and may become a hard failure in
     // the next driver major; the aggregate snapshot is intentionally read in a
     // single serial flow instead.
-    const core = await client.query(COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES.core)
+    const privilege = await client.query(CONTACT_PERMISSION_PRIVILEGE_QUERY)
+    const canReadContactPermissions = privilege.rows[0]?.can_read_contact_permissions === true
+    const coreQuery = canReadContactPermissions
+        ? COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES.core
+        : COMMERCIAL_DATA_QUALITY_SOURCE_QUERY_WITHOUT_CONTACT_PERMISSION
+    const core = await client.query(coreQuery)
     const review = await client.query(COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES.review)
     const freshness = await client.query(COMMERCIAL_DATA_QUALITY_SOURCE_QUERIES.freshness)
     return buildCommercialDataQualityObservations({
@@ -397,7 +430,15 @@ function commercialObservationTransition({ previousStatus, previousCount, observ
     // SLA if the underlying condition returns.  Otherwise it can immediately
     // appear overdue on recurrence.
     const shouldStartObservationWindow = nextCount > 0 && (priorCount === 0 || shouldReopen)
-    const nextStatus = shouldReopen ? 'open' : previousStatus
+    // A positive observation is the actionable state; once that observation
+    // clears, the queue should converge to resolved without waiting for an
+    // operator to close a stale zero-count row.  Suppressed and already
+    // resolved findings retain their historical state, while an acknowledged
+    // or in-progress finding is resolved only after a positive observation has
+    // actually cleared.
+    const shouldResolve = priorCount > 0 && nextCount === 0
+        && ['open', 'acknowledged', 'in_progress'].includes(previousStatus)
+    const nextStatus = shouldReopen ? 'open' : shouldResolve ? 'resolved' : previousStatus
     const eventType = shouldReopen
         ? 'reopened'
         : priorCount === 0 && nextCount > 0
@@ -408,9 +449,10 @@ function commercialObservationTransition({ previousStatus, previousCount, observ
     return {
         priorCount,
         shouldReopen,
+        shouldResolve,
         shouldStartObservationWindow,
         nextStatus,
-        shouldRecord: shouldReopen || priorCount !== nextCount,
+        shouldRecord: shouldReopen || shouldResolve || priorCount !== nextCount,
         eventType,
     }
 }
@@ -477,11 +519,11 @@ async function materializeObservation(client, item, actor) {
             last_observed_at = case when $4 > 0 then now() else last_observed_at end,
             last_evaluated_at = now(),
             acknowledged_at = case when $6 then null else acknowledged_at end,
-            resolved_at = case when $6 then null else resolved_at end,
+            resolved_at = case when $10 then now() when $6 then null else resolved_at end,
             -- Background observation must not make an operator's optimistic
             -- status/owner patch stale on every refresh.  Only an automatic
-            -- state transition (a resolved finding reopening) advances it.
-            revision = case when $9 then revision + 1 else revision end,
+            -- state transition (clear or reopen) advances it.
+            revision = case when $9 or $10 then revision + 1 else revision end,
             updated_by = $8,
             updated_at = now()
         where id = $1
@@ -495,6 +537,7 @@ async function materializeObservation(client, item, actor) {
             item.slaHours,
             actor,
             transition.shouldReopen,
+            transition.shouldResolve,
         ])
     const row = updated.rows[0]
     if (transition.shouldRecord) {

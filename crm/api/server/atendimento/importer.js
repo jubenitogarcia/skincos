@@ -491,6 +491,12 @@ export async function importAtendimentoFromGoogleSheet(store, { actor, dryRun = 
         cache: sheet.cache,
         actor,
         dryRun,
+        source: {
+            sourceSheetId: sheet.spreadsheetId,
+            sourceName: 'Atendimento',
+            tabs: sheet.tabs,
+            snapshotComplete: true,
+        },
     })
     return {
         ...result,

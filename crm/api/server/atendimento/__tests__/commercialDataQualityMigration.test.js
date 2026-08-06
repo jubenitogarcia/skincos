@@ -66,6 +66,10 @@ test('creates the queue and immutable event ledger only after local prerequisite
 
     assert.equal(report.applied, true)
     assert.deepEqual(report.tables, ['commercial_data_quality_findings', 'commercial_data_quality_finding_events'])
+    assert.equal(report.runtimeRole, 'skincos')
+    assert.equal(report.runtimeGrants.length, 4)
+    assert.ok(fixture.calls.some(({ sql }) => /grant select, insert, update on table crm_atendimento\.commercial_data_quality_findings to skincos/i.test(sql)))
+    assert.ok(fixture.calls.some(({ sql }) => /grant usage, select on sequence crm_atendimento\.commercial_data_quality_finding_events_event_order_seq to skincos/i.test(sql)))
     assert.deepEqual(report.repairedIndexes, [])
     assert.equal(fixture.released, true)
     const indexOf = (pattern) => fixture.calls.findIndex(({ sql }) => pattern.test(String(sql).replace(/\s+/g, ' ')))

@@ -6605,7 +6605,7 @@ export function createAtendimentoStore(options = {}) {
             })
         },
 
-        async importRecords({ records, cache, actor, dryRun = false }) {
+        async importRecords({ records, cache, actor, dryRun = false, source = null }) {
             await ensureReady()
             if (dryRun) {
                 return {
@@ -6728,8 +6728,36 @@ export function createAtendimentoStore(options = {}) {
                     else if (out.rows[0]) updated += 1
                     else skipped += 1
                 }
+                let importBatchId = null
+                const sourceSheetId = String(source?.sourceSheetId || '').trim()
+                if (sourceSheetId) {
+                    const sourceName = String(source?.sourceName || 'Atendimento').trim().slice(0, 160) || 'Atendimento'
+                    const tabs = Array.isArray(source?.tabs)
+                        ? source.tabs.map((tab) => String(tab || '').trim()).filter(Boolean).slice(0, 32)
+                        : []
+                    const batch = await client.query(
+                        `insert into crm_atendimento.import_batches(
+                            source_sheet_id, source_name, dry_run, actor, summary)
+                         values ($1, $2, false, $3::jsonb, $4::jsonb)
+                         returning id`,
+                        [
+                            sourceSheetId,
+                            sourceName,
+                            JSON.stringify(actor || {}),
+                            JSON.stringify({
+                                records: records.length,
+                                inserted,
+                                updated,
+                                skipped,
+                                tabs,
+                                snapshotComplete: source?.snapshotComplete === true,
+                            }),
+                        ],
+                    )
+                    importBatchId = batch.rows[0]?.id || null
+                }
                 await audit(client, 'import.google-sheet', actor, null, { inserted, updated, skipped, records: records.length })
-                return { dryRun: false, records: records.length, inserted, updated, skipped }
+                return { dryRun: false, records: records.length, inserted, updated, skipped, importBatchId }
             })
         },
 
