@@ -1,0 +1,33 @@
+[Unit]
+Description=Skincos Clientes isolated production read-only runtime
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+WorkingDirectory=__REPO_ROOT__
+Environment=CRM_RUNTIME_HOME=__STATE_ROOT__/crm-atendimento-production
+Environment=SKINCOS_CRM_API_ENV_FILE=__CONFIG_ROOT__/crm-clientes-production-readonly.env
+Environment=VAR_DIR=__STATE_ROOT__/crm-atendimento-production/var
+Environment=BACKEND_DIR=__REPO_ROOT__/backend
+Environment=FRONTEND_DIR=__REPO_ROOT__/crm/console
+Environment=CONFIG_DIR=__REPO_ROOT__/backend/config
+EnvironmentFile=-__CONFIG_ROOT__/crm-clientes-production-readonly.env
+ExecStart=__REPO_ROOT__/scripts/crm/run-api-linux.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__STATE_ROOT__/crm-atendimento-production __LOG_ROOT__/crm-atendimento-production
+UMask=0027
+LimitNOFILE=8192
+SyslogIdentifier=crm-atendimento-production
+
+[Install]
+WantedBy=multi-user.target
