@@ -31,6 +31,7 @@ import { registerPontoRoutes } from './server/pontoRoutes.js'
 import { createHarmoniaRouter } from './server/harmonia/routes.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
+import { createClinicalApprovalRouter } from './server/clinical/routes.js'
 import { createCaixaRouter } from './server/caixa/routes.js'
 import { configuredCorsOrigins, isAllowedCrmCorsOrigin } from './server/corsPolicy.js'
 import { effectiveAllowedModules, normalizeCrmRole as normalizeRole } from './server/crmRolePolicy.js'
@@ -873,6 +874,20 @@ async function resolveCrmUser(req) {
     }
     const user = await fetchCrmUserFromAuth(req)
     return normalizeCrmUser(user)
+}
+
+// Clinical cadence approval is a separate bounded context. It is mounted
+// after the authenticated CRM resolver is declared and never shares the
+// commercial router's mutation surface. The domain stays schema-managed and
+// fail-closed until its additive migration is explicitly applied.
+try {
+    app.use('/api/clinical', createClinicalApprovalRouter({
+        databaseUrl: process.env.DATABASE_URL,
+        getActor: resolveCrmUser,
+    }))
+    console.log('✅ Clinical approval routes registered')
+} catch (e) {
+    console.warn('⚠️  Clinical approval routes failed to register:', e?.message || String(e))
 }
 
 app.use('/api/meta-ads', async (req, res, next) => {
