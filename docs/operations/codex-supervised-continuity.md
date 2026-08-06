@@ -13,9 +13,11 @@ systems, choose milestones, run deploys or duplicate the Skill's judgment.
 
 Automatic continuation is opt-in per explicit root mission: the assistant must
 emit the delimited supervisor contract. Ordinary answers without the contract
-finish normally. Only `orchestration_status=continue` can create a new turn.
-All other statuses and every ambiguous or corrupt state finish safely with a
-diagnostic.
+finish normally when no mission is active; once a mission is persisted as
+`in_progress`, an unstructured stop is rejected so the assistant must emit the
+next safe item or a terminal status. Only `orchestration_status=continue` can
+create a new turn. All other statuses and every ambiguous or corrupt state
+finish safely with a diagnostic.
 
 No App Server or daemon is needed for this same-thread use case. A future
 multi-thread supervisor, if justified, belongs in a separate PR and must use the
