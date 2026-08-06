@@ -1,5 +1,5 @@
 import React from 'react'
-import { Ban, CircleAlert, Link2, ListChecks, Mail, Pencil, Power, Search, ShieldCheck, UsersRound } from 'lucide-react'
+import { Ban, CircleAlert, Link2, ListChecks, Mail, Pencil, Power, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { addEscalaProfessional, updateEscalaProfessional } from '@/escalaApi'
 import { Badge } from '@/badge'
@@ -17,7 +17,7 @@ type Me = { success?: boolean; user?: { username?: string; role?: string; allowe
 type Onboarding = { id: string; fullName: string; username?: string | null; corporateEmail: string; workforceEmployeeId?: string | null; profile: string; jobTitle: string; department: string; units: string[]; accountStatus: string; createdAt?: string; updatedAt?: string }
 type ApiError = { error?: string; message?: string; code?: string }
 type RequestOptions = { method?: string; body?: unknown; csrf?: string | null; headers?: Record<string, string> }
-type TeamPendingItem = { memberId: string; kind: 'PROVISIONING' | 'COMPENSATION' | 'IDENTITY_LINK' | 'ESCALA_LINK'; source?: string; status: string }
+type TeamPendingItem = { memberId: string; kind: 'PROVISIONING' | 'COMPENSATION' | 'IDENTITY_LINK' | 'ESCALA_LINK' | 'ESCALA_SYNC'; source?: string; status: string }
 type TeamSummary = { members?: number; pendingLinks?: number; pendingProvisioning?: number; pendingInvites?: number; pendingItems?: TeamPendingItem[] }
 type TeamHistoryEntry = { id: string | number; timestamp?: string | null; actor?: string; role?: string; action?: string; entity?: string; before?: Record<string, unknown> | null; after?: Record<string, unknown> | null }
 
@@ -133,7 +133,20 @@ function pendingItemLabel(item: TeamPendingItem) {
   if (item.kind === 'IDENTITY_LINK') return item.source === 'ATENDIMENTO' ? 'Vínculo do Atendimento' : 'Vínculo da Escala'
   if (item.kind === 'COMPENSATION') return 'Sincronização de acesso'
   if (item.kind === 'PROVISIONING') return 'Provisionamento'
+  if (item.kind === 'ESCALA_SYNC') return item.status === 'FAILED' || item.status === 'BLOCKED' ? 'Sincronização da Escala com erro' : 'Sincronização da Escala pendente'
   return 'Vínculo da Escala'
+}
+
+function scheduleSyncLabel(state?: string) {
+  return ({ NOT_CONFIGURED: 'Não configurada', PENDING: 'Pendente', SYNCED: 'Sincronizada', FAILED: 'Falhou', BLOCKED: 'Bloqueada' } as Record<string, string>)[String(state || '').toUpperCase()] || 'Pendente'
+}
+
+function scheduleSyncBadgeVariant(state?: string): BadgeVariant {
+  const normalized = String(state || '').toUpperCase()
+  if (normalized === 'SYNCED') return 'success'
+  if (normalized === 'FAILED' || normalized === 'BLOCKED') return 'destructive'
+  if (normalized === 'NOT_CONFIGURED') return 'outline'
+  return 'warning'
 }
 
 function historyActionLabel(action: string) {
@@ -147,6 +160,7 @@ function historyActionLabel(action: string) {
     EMPLOYEE_ONBOARDING_STATUS_CHANGED: 'Status alterado',
     EMPLOYEE_ONBOARDING_ACTIVATION_RETRY: 'Ativação processada',
     EMPLOYEE_IDENTITY_LINK_CREATED: 'Vínculo operacional criado',
+    EMPLOYEE_ESCALA_SYNC_RECORDED: 'Sincronização da Escala registrada',
   } as Record<string, string>)[String(action || '').toUpperCase()] || String(action || 'Alteração registrada')
 }
 
@@ -168,6 +182,7 @@ function historyChange(entry: TeamHistoryEntry) {
   const source = after.source
   const reviewStatus = after.reviewStatus
   if (source || reviewStatus) return [`Vínculo: ${String(source || 'operacional')}`, reviewStatus ? String(reviewStatus) : ''].filter(Boolean).join(' · ')
+  if (after.scheduleSyncState) return [`Escala: ${scheduleSyncLabel(String(after.scheduleSyncState))}`, after.errorCode ? `Código: ${String(after.errorCode)}` : ''].filter(Boolean).join(' · ')
   if (after.inviteIssued) return 'Convite emitido'
   if (after.inviteRevoked) return 'Acesso aguardando novo convite'
   return 'Alteração registrada'
@@ -186,6 +201,7 @@ export function UsersModule() {
   const [open, setOpen] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
+  const [syncingEscala, setSyncingEscala] = React.useState(false)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editingOriginalName, setEditingOriginalName] = React.useState('')
   const [collisionRequired, setCollisionRequired] = React.useState(false)
@@ -337,6 +353,22 @@ export function UsersModule() {
     }
   }
 
+  const reportEscalaSync = async (member: UnifiedTeamMember, state: 'PENDING' | 'SYNCED' | 'FAILED' | 'BLOCKED' | 'NOT_CONFIGURED', details: { professionalId?: string; errorCode?: string } = {}) => {
+    const operationKey = `crm-escala-sync-${member.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    try {
+      await api(`/admin/team/${encodeURIComponent(member.id)}/schedule-sync`, {
+        method: 'POST',
+        csrf: me?.csrfToken,
+        headers: { 'idempotency-key': operationKey },
+        body: { state, ...(details.professionalId ? { professionalId: details.professionalId } : {}), ...(details.errorCode ? { errorCode: details.errorCode } : {}) },
+      })
+      return true
+    } catch (error: any) {
+      toast.warning(`A Escala foi processada, mas o estado não pôde ser registrado: ${error?.message || 'tente atualizar a lista'}.`)
+      return false
+    }
+  }
+
   const addIdentityLink = async () => {
     if (!editingRow || !linkSourceId.trim() || !canManage) return
     setLinkSaving(true)
@@ -364,29 +396,51 @@ export function UsersModule() {
 
   const syncEscala = async (member: UnifiedTeamMember, created: boolean) => {
     if (!teamConfig.enabled || !member.workforceEmployeeId) return
-    const schedulePayload = {
-      name: form.fullName,
-      status: form.scheduleStatus,
-      units: form.units,
-      role: form.scheduleRole,
-      shift: form.scheduleShift,
-      nickname: form.scheduleNickname,
-      phone: form.mobilePhone || member.schedule?.phone || undefined,
-      email: effectiveEmail,
-      instagram: form.scheduleInstagram,
-      color: form.scheduleColor,
-      workforceEmployeeId: member.workforceEmployeeId,
+    setSyncingEscala(true)
+    try {
+      const schedulePayload = {
+        name: form.fullName,
+        status: form.scheduleStatus,
+        units: form.units,
+        role: form.scheduleRole,
+        shift: form.scheduleShift,
+        nickname: form.scheduleNickname,
+        phone: form.mobilePhone || member.schedule?.phone || undefined,
+        email: effectiveEmail,
+        instagram: form.scheduleInstagram,
+        color: form.scheduleColor,
+        workforceEmployeeId: member.workforceEmployeeId,
+      }
+      const hasScheduleLink = Boolean(member.schedule?.professionalId || member.scheduleSync?.professionalId)
+      const result = created || !hasScheduleLink
+        ? await addEscalaProfessional(schedulePayload)
+        : await updateEscalaProfessional({ currentName: editingOriginalName, ...schedulePayload })
+      if (!result.ok) {
+        const recorded = await reportEscalaSync(member, 'FAILED', { errorCode: 'ESCALA_API_ERROR' })
+        if (!created && recorded) await load()
+        toast.warning(`Cadastro salvo, mas a Escala ficou pendente: ${result.error || 'tente novamente'}.`)
+        return false
+      }
+      const professionalId = result.data?.professionalId
+      if (!professionalId) {
+        const recorded = await reportEscalaSync(member, 'FAILED', { errorCode: 'ESCALA_PROFESSIONAL_ID_MISSING' })
+        if (!created && recorded) await load()
+        toast.warning('Cadastro salvo, mas a Escala não devolveu um identificador para o vínculo.')
+        return false
+      }
+      const linked = await linkEscalaMember(member, { professionalId })
+      if (!linked) {
+        const recorded = await reportEscalaSync(member, 'FAILED', { professionalId, errorCode: 'ESCALA_LINK_FAILED' })
+        if (!created && recorded) await load()
+        return false
+      }
+      const recorded = await reportEscalaSync(member, 'SYNCED', { professionalId })
+      if (!created && recorded) await load()
+      if (recorded) toast.success('Vínculo com a Escala sincronizado.')
+      return recorded
+    } finally {
+      setSyncingEscala(false)
     }
-    const hasScheduleLink = Boolean(member.schedule?.professionalId)
-    const result = created || !hasScheduleLink
-      ? await addEscalaProfessional(schedulePayload)
-      : await updateEscalaProfessional({ currentName: editingOriginalName, ...schedulePayload })
-    if (!result.ok) {
-      toast.warning(`Cadastro salvo, mas a Escala ficou pendente: ${result.error || 'tente novamente'}.`)
-      return
-    }
-    const professionalId = result.data?.professionalId
-    if (professionalId) await linkEscalaMember(member, { professionalId })
   }
 
   const submit = async () => {
@@ -662,7 +716,7 @@ export function UsersModule() {
                         </div>
                       </td>
                       <td className="p-3 align-middle"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge></td>
-                      <td className="p-3 align-middle"><Badge variant={row.schedule?.professionalId ? 'success' : 'outline'} className="px-2 py-1 text-[11px]">{row.schedule?.professionalId ? 'Vinculada' : 'Pendente'}</Badge></td>
+                      <td className="p-3 align-middle"><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></td>
                       <td className="p-3 text-right align-middle">
                         <TooltipButton label={`Editar ${row.fullName}`}>
                           <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full text-blue-100 hover:bg-white/[0.10]" aria-label={`Editar ${row.fullName}`} onClick={() => openEdit(row)}>
@@ -702,7 +756,7 @@ export function UsersModule() {
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Departamento</p><p className="text-blue-100/80">{row.department || '—'}</p></div>
                     <div className="col-span-2"><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><div className="flex flex-wrap gap-1">{row.units.length ? row.units.map((unit) => <Badge key={unit} variant="outline" className="px-2 py-1 text-[11px]">{unitLabels[unit] || unit}</Badge>) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}</div></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Conta</p><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge></div>
-                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Escala</p><Badge variant={row.schedule?.professionalId ? 'success' : 'outline'} className="px-2 py-1 text-[11px]">{row.schedule?.professionalId ? 'Vinculada' : 'Pendente'}</Badge></div>
+                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Escala</p><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></div>
                   </div>
                 </article>
               ))}
@@ -766,9 +820,19 @@ export function UsersModule() {
             <TabsContent value="operation" className="mt-4 space-y-4">
               {teamConfig.enabled ? <>
                 <section className="rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby="team-schedule-title">
-                  <div className="mb-4 flex items-start gap-3">
+                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
                     <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-400/10 text-sky-200"><ListChecks className="size-4" aria-hidden="true" /></div>
                     <div><h3 id="team-schedule-title" className="text-sm font-semibold text-white">Vínculo operacional da Escala</h3><p className="mt-1 text-xs text-blue-100/55">Agenda, função e identificação permanecem aqui; o vínculo usa o identificador do funcionário.</p></div>
+                    </div>
+                    {editingRow && <div className="flex flex-wrap items-center justify-end gap-2" aria-live="polite">
+                      <Badge variant={scheduleSyncBadgeVariant(editingRow.scheduleSync?.state)} className="px-2 py-1 text-[10px]">{scheduleSyncLabel(editingRow.scheduleSync?.state)}</Badge>
+                      {editingRow.scheduleSync?.errorCode && <span className="text-[11px] text-rose-100/70">{editingRow.scheduleSync.errorCode}</span>}
+                      {canManage && <Button type="button" size="sm" variant="outline" disabled={syncingEscala || saving} onClick={() => void syncEscala(editingRow, false)}>
+                        <RefreshCw className={`mr-2 size-3.5 ${syncingEscala ? 'animate-spin' : ''}`} aria-hidden="true" />
+                        {syncingEscala ? 'Sincronizando…' : editingRow.scheduleSync?.state === 'SYNCED' ? 'Sincronizar novamente' : 'Tentar novamente'}
+                      </Button>}
+                    </div>}
                   </div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <label className="space-y-1.5 text-sm">Status na Escala<Input value={form.scheduleStatus} disabled={formReadOnly} onChange={(event) => updateField('scheduleStatus', event.target.value)} /></label>

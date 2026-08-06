@@ -68,6 +68,18 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByText('Revisão pendente', { exact: true })).toBeVisible()
   })
 
+  test('retries a failed Escala synchronization from the unified member modal', async ({ page }) => {
+    await mockUsersApi(page)
+    await page.goto('/?module=users')
+    await page.getByRole('combobox', { name: 'Filtrar status' }).click()
+    await page.getByRole('option', { name: 'Todos os estados' }).click()
+    await page.getByRole('button', { name: 'Editar Carla Souza' }).click()
+    await page.getByRole('tab', { name: 'Operação' }).click()
+    await expect(page.getByRole('tabpanel').getByText('Falhou', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Tentar novamente' }).click()
+    await expect(page.getByRole('tabpanel').getByText('Sincronizada', { exact: true })).toBeVisible()
+  })
+
   test('does not overflow at 390, 768 or 1280 pixels', async ({ page }) => {
     await mockUsersApi(page)
     for (const width of [390, 768, 1280]) {
