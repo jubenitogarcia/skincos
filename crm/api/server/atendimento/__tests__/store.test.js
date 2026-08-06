@@ -186,6 +186,10 @@ test('scopes Clientes commercial reads, queues, actions, cadences and offers to 
 
     const detail = await store.commercialProfile(identityId, {}, scopedGestor)
     assert.equal(Object.hasOwn(detail.profile, 'phone'), false)
+    const detailProfilesQuery = captured.filter((entry) => entry.kind === 'profiles' && entry.params?.length === 4).at(-1)
+    assert.equal(detailProfilesQuery?.params[3], identityId)
+    assert.match(detailProfilesQuery?.sql || '', /gi\.id::text = \$4/)
+    assert.match(detailProfilesQuery?.sql || '', /gm\.identity_id::text = \$4/)
     assert.deepEqual(captured.find((entry) => entry.kind === 'profile-actions')?.params, [identityId, ['novo-hamburgo']])
 
     await store.commercialCadences(scopedGestor)
