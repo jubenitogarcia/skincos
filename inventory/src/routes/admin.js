@@ -112,18 +112,19 @@ async function tableExists(env, tableName) {
   }
 }
 
-function normalizeTeamData(value, fallbackUnits = []) {
+function normalizeTeamData(value, fallbackUnits = [], fallback = {}) {
   const input = value && typeof value === 'object' ? value : {};
   const clean = (item, max = 160) => String(item ?? '').trim().slice(0, max);
-  const units = normalizeAllowedUnits(input.units ?? fallbackUnits);
+  const valueOrFallback = (key, alias) => input[key] !== undefined ? input[key] : alias && input[alias] !== undefined ? input[alias] : fallback[key];
+  const units = normalizeAllowedUnits(input.units !== undefined ? input.units : fallback.units ?? fallbackUnits);
   return {
-    professionalId: clean(input.professionalId ?? input.scheduleProfessionalId, 120),
-    status: clean(input.status, 40),
-    role: clean(input.role, 80),
-    shift: clean(input.shift, 120),
-    nickname: clean(input.nickname, 120),
-    instagram: clean(input.instagram, 160),
-    color: clean(input.color, 20),
+    professionalId: clean(valueOrFallback('professionalId', 'scheduleProfessionalId'), 120),
+    status: clean(valueOrFallback('status'), 40),
+    role: clean(valueOrFallback('role'), 80),
+    shift: clean(valueOrFallback('shift'), 120),
+    nickname: clean(valueOrFallback('nickname'), 120),
+    instagram: clean(valueOrFallback('instagram'), 160),
+    color: clean(valueOrFallback('color'), 20),
     units,
   };
 }
@@ -1036,6 +1037,75 @@ export async function handleAdminRoutes({
   }
 
   const teamLinksMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/links$/);
+  const teamLinkReviewMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/links\/([^/]+)\/review$/);
+  if (teamLinkReviewMatch && request.method === 'POST') {
+    try {
+      if (!teamTablesReady) return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const onboardingId = decodeURIComponent(teamLinkReviewMatch[1] || '').trim();
+      const linkId = decodeURIComponent(teamLinkReviewMatch[2] || '').trim();
+      const onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite revisar este vínculo', code: hierarchyDenied }), { status: 403 }, appOrigin);
+
+      const body = await request.json().catch(() => ({}));
+      const nextStatus = String(body.reviewStatus || body.review_status || '').trim().toUpperCase();
+      const confidence = String(body.confidence || '').trim().toUpperCase();
+      const reason = String(body.reason || '').trim().replace(/\s+/g, ' ').slice(0, 500);
+      if (!['PENDING_REVIEW', 'CONFIRMED', 'REJECTED'].includes(nextStatus) || (confidence && !['HIGH', 'MEDIUM', 'LOW'].includes(confidence))) {
+        return withCORS(JSON.stringify({ success: false, error: 'Revisão do vínculo inválida', code: 'TEAM_LINK_REVIEW_INVALID' }), { status: 400 }, appOrigin);
+      }
+      if (nextStatus === 'REJECTED' && reason.length < 5) {
+        return withCORS(JSON.stringify({ success: false, error: 'A rejeição exige um motivo', code: 'TEAM_LINK_REJECTION_REASON_REQUIRED' }), { status: 400 }, appOrigin);
+      }
+      const link = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE id=? AND workforce_employee_id=? LIMIT 1').bind(linkId, onboarding.workforce_employee_id).first();
+      if (!link) return withCORS(JSON.stringify({ success: false, error: 'Vínculo não encontrado para este membro', code: 'TEAM_LINK_NOT_FOUND' }), { status: 404 }, appOrigin);
+      const currentStatus = String(link.review_status || 'PENDING_REVIEW').trim().toUpperCase();
+      if (currentStatus === 'CONFIRMED' && nextStatus !== 'CONFIRMED') {
+        return withCORS(JSON.stringify({ success: false, error: 'Um vínculo confirmado não pode ser rebaixado neste fluxo', code: 'TEAM_LINK_CONFIRMED_IMMUTABLE' }), { status: 409 }, appOrigin);
+      }
+      if (currentStatus === nextStatus) {
+        return withCORS(JSON.stringify({ success: true, data: publicIdentityLink(link), replayed: true }), { status: 200 }, appOrigin);
+      }
+      const at = new Date().toISOString();
+      const metadata = safeJsonParse(link.metadata_json, {});
+      const nextMetadata = {
+        ...metadata,
+        review: {
+          status: nextStatus,
+          reviewedAt: at,
+          reviewedBy: String(auth?.user?.username || ''),
+          reasonProvided: Boolean(reason),
+        },
+      };
+      const reviewUpdate = await env.DB.prepare('UPDATE crm_employee_identity_links SET review_status=?, confidence=?, metadata_json=? WHERE id=? AND review_status=?').bind(
+        nextStatus,
+        confidence || link.confidence,
+        JSON.stringify(nextMetadata),
+        linkId,
+        currentStatus,
+      ).run();
+      if (!Number(reviewUpdate?.meta?.changes || 0)) {
+        const raced = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE id=? AND workforce_employee_id=? LIMIT 1').bind(linkId, onboarding.workforce_employee_id).first();
+        if (String(raced?.review_status || '').toUpperCase() === nextStatus) {
+          return withCORS(JSON.stringify({ success: true, data: publicIdentityLink(raced), replayed: true }), { status: 200 }, appOrigin);
+        }
+        return withCORS(JSON.stringify({ success: false, error: 'O vínculo foi alterado por outra revisão', code: 'TEAM_LINK_REVIEW_CONFLICT' }), { status: 409 }, appOrigin);
+      }
+      if (nextStatus === 'CONFIRMED' && String(link.source || '').toUpperCase() === 'ESCALA') {
+        await env.DB.prepare('UPDATE crm_employee_team SET schedule_professional_id=?, updated_at=? WHERE onboarding_id=?').bind(link.source_id, at, onboardingId).run();
+      }
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_IDENTITY_LINK_REVIEWED', entity: 'EMPLOYEE_IDENTITY_LINK', entityId: linkId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { reviewStatus: currentStatus, confidence: link.confidence }, after: { onboardingId, source: link.source, sourceId: link.source_id, reviewStatus: nextStatus, confidence: confidence || link.confidence, reason: reason || null } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_IDENTITY_LINK_REVIEWED', actorRole: auth.user.role, outcome: nextStatus, itemCount: 1, unitCount: normalizeAllowedUnits(onboarding.units_json).length });
+      const reviewed = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE id=?').bind(linkId).first();
+      return withCORS(JSON.stringify({ success: true, data: publicIdentityLink(reviewed) }), { status: 200 }, appOrigin);
+    } catch (error) {
+      const code = String(error?.message || 'TEAM_LINK_REVIEW_FAILED').slice(0, 120);
+      const status = /UNIQUE|CONSTRAINT|IMMUTABLE|CONFLICT|REQUIRED|INVALID/.test(code) ? 409 : 503;
+      return withCORS(JSON.stringify({ success: false, error: 'Não foi possível atualizar a revisão do vínculo', code }), { status }, appOrigin);
+    }
+  }
   if (teamLinksMatch && (request.method === 'GET' || request.method === 'POST')) {
     try {
       const onboardingId = decodeURIComponent(teamLinksMatch[1] || '').trim();
@@ -1055,12 +1125,16 @@ export async function handleAdminRoutes({
       const sourceId = String(body.sourceId || body.source_id || '').trim().slice(0, 160);
       const matchMethod = String(body.matchMethod || body.match_method || 'EXPLICIT_WORKFORCE_ID').trim().toUpperCase();
       const confidence = String(body.confidence || 'HIGH').trim().toUpperCase();
-      const reviewStatus = String(body.reviewStatus || 'CONFIRMED').trim().toUpperCase();
+      const reviewStatus = String(body.reviewStatus || 'PENDING_REVIEW').trim().toUpperCase();
+      const reviewReason = String(body.reason || body.reviewReason || '').trim().slice(0, 500);
       if (!['ESCALA', 'ATENDIMENTO'].includes(source) || !sourceId || ['NAME', 'NAME_ONLY', 'SIMILAR_NAME'].includes(matchMethod)) {
         return withCORS(JSON.stringify({ success: false, error: 'Vínculo exige identificador explícito; nome não é suficiente', code: 'TEAM_LINK_EXPLICIT_ID_REQUIRED' }), { status: 400 }, appOrigin);
       }
       if (!['PENDING_REVIEW', 'CONFIRMED', 'REJECTED'].includes(reviewStatus) || !['HIGH', 'MEDIUM', 'LOW'].includes(confidence)) {
         return withCORS(JSON.stringify({ success: false, error: 'Estado de revisão do vínculo inválido', code: 'TEAM_LINK_REVIEW_INVALID' }), { status: 400 }, appOrigin);
+      }
+      if (reviewStatus === 'REJECTED' && reviewReason.length < 5) {
+        return withCORS(JSON.stringify({ success: false, error: 'A rejeição exige um motivo', code: 'TEAM_LINK_REJECTION_REASON_REQUIRED' }), { status: 400 }, appOrigin);
       }
       const bySource = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE source=? AND source_id=? LIMIT 1').bind(source, sourceId).first();
       if (bySource && bySource.workforce_employee_id !== onboarding.workforce_employee_id) {
@@ -1072,11 +1146,13 @@ export async function handleAdminRoutes({
       }
       const at = new Date().toISOString();
       const linkId = crypto.randomUUID();
+      const metadata = { explicit: true, onboardingId };
+      if (reviewStatus === 'REJECTED') metadata.review = { status: reviewStatus, reason: reviewReason, reviewedAt: at, reviewedBy: String(auth?.user?.username || '') };
       await env.DB.prepare(`INSERT INTO crm_employee_identity_links
         (id, workforce_employee_id, source, source_id, match_method, confidence, review_status, metadata_json, created_by, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
         linkId, onboarding.workforce_employee_id, source, sourceId, matchMethod, confidence, reviewStatus,
-        JSON.stringify({ explicit: true, onboardingId }), String(auth?.user?.username || ''), at,
+        JSON.stringify(metadata), String(auth?.user?.username || ''), at,
       ).run();
       if (source === 'ESCALA' && reviewStatus === 'CONFIRMED') {
         await env.DB.prepare('UPDATE crm_employee_team SET schedule_professional_id=?, updated_at=? WHERE onboarding_id=?').bind(sourceId, at, onboardingId).run();
@@ -1227,7 +1303,7 @@ export async function handleAdminRoutes({
         onboardingId,
         fullName: nextName,
         corporateEmail: current.corporate_email,
-        mobilePhoneHash: current.mobile_phone_hash,
+        mobilePhoneHash: nextPhoneHash || current.mobile_phone_hash,
         units: nextUnits,
         profile: nextProfile.profile || nextProfile,
         accountStatus: current.account_status,
@@ -1249,7 +1325,16 @@ export async function handleAdminRoutes({
       values.push(onboardingId);
       await env.DB.prepare(`UPDATE crm_employee_onboarding SET ${sets.join(', ')} WHERE id=?`).bind(...values).run();
 
-      const teamData = normalizeTeamData(body.team, nextUnits);
+      const teamData = normalizeTeamData(body.team, nextUnits, {
+        professionalId: current.schedule_professional_id,
+        status: current.schedule_status,
+        role: current.schedule_role,
+        shift: current.schedule_shift,
+        nickname: current.schedule_nickname,
+        instagram: current.schedule_instagram,
+        color: current.schedule_color,
+        units: nextUnits,
+      });
       const nextScheduleProfessionalId = teamData.professionalId || current.schedule_professional_id || null;
       await env.DB.prepare(`UPDATE crm_employee_team SET schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
         nextScheduleProfessionalId, teamData.status || null, teamData.role || null, teamData.shift || null,
