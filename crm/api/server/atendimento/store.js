@@ -77,6 +77,17 @@ import {
     IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS,
     IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
 } from './identityReviewMigration.js'
+import {
+    IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID,
+} from './identityClusterWorkspaceMigration.js'
+import {
+    buildIdentityReviewClusterPresentation,
+    buildIdentityClusterBulkPreview,
+    stripIdentityClusterInternals,
+    assertExplicitIdentityClusterPayload,
+    explicitRevealFields,
+    digestClusterValue,
+} from './identityClusterWorkspace.js'
 
 let pool = null
 
@@ -4877,6 +4888,375 @@ async function materializeIdentityReviewReversal(client, { candidate, reversesDe
     return { ...run, summary }
 }
 
+function identityClusterSourceFreshness(updatedAt, now = new Date()) {
+    if (!updatedAt) return 'unknown'
+    const timestamp = new Date(updatedAt).getTime()
+    if (!Number.isFinite(timestamp)) return 'unknown'
+    return (now.getTime() - timestamp) > (48 * 60 * 60 * 1000) ? 'stale' : 'current'
+}
+
+async function identityClusterWorkspaceStatus(pgPool) {
+    const availability = await pgPool.query(`select
+        to_regclass('crm_atendimento.schema_migrations') as registry,
+        to_regclass('crm_atendimento.identity_review_cluster_operations') as operations,
+        to_regclass('crm_atendimento.identity_review_cluster_reveals') as reveals,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_review_cluster_operations')
+            and tgname='identity_review_cluster_operations_immutable' and tgenabled='O') as operations_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_review_cluster_reveals')
+            and tgname='identity_review_cluster_reveals_immutable' and tgenabled='O') as reveals_immutable`)
+    const row = availability.rows[0] || {}
+    if (!row.registry || !row.operations || !row.reveals || !row.operations_immutable || !row.reveals_immutable) {
+        return { ready: false, migrationId: IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID }
+    }
+    const migration = await pgPool.query(`select id from crm_atendimento.schema_migrations where id=$1 and rolled_back_at is null`, [IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID])
+    return { ready: !!migration.rows[0]?.id, migrationId: IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID }
+}
+
+function clusterEdgeSql() {
+    return [
+        `select 'attendance_name_merge'::text as review_type, m.left_client_id::text as source_id, m.right_client_id::text as target_id,
+                'attendance_client'::text as source_type, 'attendance_client'::text as target_type, m.status,
+                m.similarity::numeric as confidence, 'name'::text as method, m.evidence,
+                md5(jsonb_build_object('type','attendance_name_merge','sourceId',m.left_client_id::text,
+                    'targetId',m.right_client_id::text,'status',m.status,'confidence',m.similarity,'evidence',m.evidence)::text) as source_version,
+                case when m.status='ambiguous' then 2 else 1 end as candidate_count,
+                false as validated_match, m.updated_at
+         from crm_atendimento.client_merge_suggestions m
+         where m.status in ('pending','confirmed','rejected')`,
+        `select 'attendance_caixa'::text, link.client_id::text, link.caixa_customer_id::text,
+                'attendance_client'::text, 'caixa_customer'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence,
+                md5(jsonb_build_object('type','attendance_caixa','sourceId',link.client_id::text,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end,
+                link.method ~ '(phone|email)', link.updated_at
+         from crm_atendimento.client_caixa_links link
+         where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+        `select 'app_attendance'::text, link.app_registration_id, link.client_id::text,
+                'app_registration'::text, 'attendance_client'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence,
+                md5(jsonb_build_object('type','app_attendance','sourceId',link.app_registration_id,
+                    'targetId',link.client_id::text,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end,
+                link.method ~ '(phone|email)', link.updated_at
+         from crm_atendimento.app_registration_attendance_links link
+         where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+        `select 'app_caixa'::text, link.app_registration_id, link.caixa_customer_id::text,
+                'app_registration'::text, 'caixa_customer'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence,
+                md5(jsonb_build_object('type','app_caixa','sourceId',link.app_registration_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end,
+                link.method ~ '(phone|email)', link.updated_at
+         from crm_atendimento.app_registration_caixa_links link
+         where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+        `select 'lead_app'::text, link.source_profile_id, link.app_registration_id,
+                'lead_profile'::text, 'app_registration'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence,
+                md5(jsonb_build_object('type','lead_app','sourceId',link.source_profile_id,
+                    'targetId',link.app_registration_id,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end,
+                link.method ~ '(phone|email)', link.updated_at
+         from crm_atendimento.supplemental_lead_profile_app_links link
+         where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+        `select 'lead_caixa'::text, link.source_profile_id, link.caixa_customer_id::text,
+                'lead_profile'::text, 'caixa_customer'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence,
+                md5(jsonb_build_object('type','lead_caixa','sourceId',link.source_profile_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end,
+                link.method ~ '(phone|email)', link.updated_at
+         from crm_atendimento.supplemental_lead_profile_caixa_links link
+         where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+    ].join(' union all ')
+}
+
+async function queryIdentityClusterGraph(pgPool, actor, query = {}) {
+    const unitSlugs = commercialUnitSlugsForQuery(actor, query.unit)
+    const now = new Date()
+    const [identityMembers, attendance, caixa, app, leads, edgeResult, decisions, lineage, sourceLinkHistory, history] = await Promise.all([
+        pgPool.query(`select member.identity_id::text as identity_id, identity.canonical_name as identity_name,
+                identity.created_at as identity_created_at, member.source_type, member.source_id, member.updated_at
+             from crm_atendimento.global_client_identity_members member
+             join crm_atendimento.global_client_identities identity on identity.id=member.identity_id`),
+        pgPool.query(`select 'attendance_client'::text as source_type, client.id::text as source_id,
+                client.canonical_name as name,
+                coalesce(array_agg(distinct alias.alias_name order by alias.alias_name) filter (where alias.alias_name is not null), '{}'::text[]) as aliases,
+                coalesce(array_agg(distinct unit.slug order by unit.slug) filter (where unit.slug is not null), '{}'::text[]) as unit_slugs,
+                '{}'::jsonb as phone_keys, '{}'::jsonb as email_keys, '{}'::jsonb as cpf_keys, client.updated_at,
+                md5(concat_ws('|',client.id::text,client.canonical_name,client.updated_at::text)) as source_fingerprint
+             from crm_atendimento.canonical_clients client
+             left join crm_atendimento.client_aliases alias on alias.client_id=client.id
+             left join crm_atendimento.attendance_client_links link on link.client_id=client.id
+             left join crm_atendimento.attendances attendance on attendance.id=link.attendance_id and attendance.deleted_at is null
+             left join crm_atendimento.units unit on unit.id=attendance.unit_id
+             group by client.id, client.canonical_name, client.updated_at`),
+        pgPool.query(`select 'caixa_customer'::text as source_type, customer.id::text as source_id,
+                customer.name, '{}'::text[] as aliases,
+                coalesce(array_agg(distinct unit.slug order by unit.slug) filter (where unit.slug is not null), '{}'::text[]) as unit_slugs,
+                case when nullif(customer.phone_key,'') is null then '[]'::jsonb else jsonb_build_array(customer.phone_key) end as phone_keys,
+                '[]'::jsonb as email_keys, '[]'::jsonb as cpf_keys, customer.updated_at,
+                md5(concat_ws('|',customer.id::text,customer.name,customer.phone_key,customer.updated_at::text)) as source_fingerprint
+             from crm_caixa.customers customer
+             left join crm_caixa.sales sale on sale.customer_id=customer.id
+             left join crm_atendimento.units unit on unit.id=sale.unit_id
+             group by customer.id, customer.name, customer.phone_key, customer.updated_at`),
+        pgPool.query(`select 'app_registration'::text as source_type, source_client_id as source_id,
+                canonical_name as name, name_variants as aliases, unit_slugs, phone_keys, email_keys, cpf_keys, updated_at,
+                md5(jsonb_build_object('id',source_client_id,'name',canonical_name,'phones',phone_keys,'emails',email_keys,
+                    'units',unit_slugs,'updatedAt',updated_at)::text) as source_fingerprint
+             from crm_atendimento.app_client_registrations`),
+        pgPool.query(`select 'lead_profile'::text as source_type, source_profile_id as source_id,
+                canonical_name as name, name_variants as aliases, unit_slugs, phone_keys, email_keys, '{}'::jsonb as cpf_keys, updated_at,
+                md5(jsonb_build_object('id',source_profile_id,'name',canonical_name,'phones',phone_keys,'emails',email_keys,
+                    'units',unit_slugs,'updatedAt',updated_at)::text) as source_fingerprint
+             from crm_atendimento.supplemental_lead_profiles`),
+        pgPool.query(`select * from (${clusterEdgeSql()}) edges`),
+        pgPool.query(`select decision.event_order, decision.review_type, decision.source_id, decision.target_id, decision.decision,
+                decision.resulting_status, decision.source_version, decision.created_at,
+                decision.materialization_run_id::text as materialization_run_id,
+                run.mode as run_mode, run.status as run_status, run.created_at as run_created_at,
+                coalesce(case when run.summary->>'membersMoved' ~ '^[0-9]+$'
+                    then (run.summary->>'membersMoved')::int else 0 end, 0) as run_members_moved
+             from crm_atendimento.identity_review_decisions decision
+             left join crm_atendimento.identity_materialization_runs run on run.id=decision.materialization_run_id
+             order by decision.created_at desc`),
+        pgPool.query(`select predecessor_identity_id::text as predecessor_identity_id, successor_identity_id::text as successor_identity_id,
+                relation, created_at from crm_atendimento.identity_lineage order by created_at desc`),
+        pgPool.query(`select link_type as review_type, source_type, source_id, target_type, target_id,
+                transition, resulting_status, origin, created_at
+             from crm_atendimento.identity_source_link_history order by created_at desc`),
+        pgPool.query(`select identity_id::text as identity_id,
+                count(*) filter (where source='commercial_action')::int as actions,
+                count(*) filter (where source='commercial_permission')::int as permissions,
+                count(*) filter (where source='commercial_permission_event')::int as permission_events,
+                count(*) filter (where source='identity_audit')::int as audit_identity_events
+             from (
+                select action.identity_id, 'commercial_action'::text as source from crm_atendimento.commercial_actions action
+                union all select permission.identity_id, 'commercial_permission'::text from crm_atendimento.commercial_contact_permissions permission
+                union all select event.identity_id, 'commercial_permission_event'::text from crm_atendimento.commercial_contact_permission_events event
+                union all select case when payload->>'identityId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then (payload->>'identityId')::uuid else null end, 'identity_audit'::text from crm_atendimento.audit_events
+                 where nullif(payload->>'identityId','') is not null
+             ) events group by identity_id`),
+    ])
+    const sourceMap = new Map()
+    for (const row of [...attendance.rows, ...caixa.rows, ...app.rows, ...leads.rows]) {
+        sourceMap.set(`${row.source_type}:${row.source_id}`, {
+            sourceType: row.source_type,
+            sourceId: row.source_id,
+            name: row.name,
+            canonicalName: row.name,
+            aliases: row.aliases,
+            unitSlugs: row.unit_slugs,
+            phoneKeys: row.phone_keys,
+            emailKeys: row.email_keys,
+            cpfKeys: row.cpf_keys,
+            updatedAt: row.updated_at,
+            sourceFingerprint: row.source_fingerprint,
+            sourceFreshness: identityClusterSourceFreshness(row.updated_at, now),
+        })
+    }
+    const members = identityMembers.rows.map((row) => ({
+        ...(sourceMap.get(`${row.source_type}:${row.source_id}`) || {}),
+        sourceType: row.source_type,
+        sourceId: row.source_id,
+        identityId: row.identity_id,
+        identityName: row.identity_name,
+        identityCreatedAt: row.identity_created_at,
+        updatedAt: sourceMap.get(`${row.source_type}:${row.source_id}`)?.updatedAt || row.updated_at,
+    }))
+    const materializedMemberKeys = new Set(members.map((member) => `${member.sourceType}:${member.sourceId}`))
+    for (const source of sourceMap.values()) {
+        const key = `${source.sourceType}:${source.sourceId}`
+        if (materializedMemberKeys.has(key)) continue
+        members.push({ ...source, identityId: null, identityName: source.name, identityCreatedAt: null })
+    }
+    const edges = edgeResult.rows.map((row) => ({
+        reviewType: row.review_type,
+        sourceType: row.source_type,
+        sourceId: row.source_id,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        status: row.status,
+        confidence: Number(row.confidence || 0),
+        method: row.method,
+        evidence: row.evidence || {},
+        matchedFields: row.evidence?.matchedFields || row.evidence?.sharedFields || [],
+        sharedUnits: row.evidence?.sharedUnits || [],
+        sourceVersion: row.source_version,
+        candidateCount: Number(row.candidate_count || 1),
+        validatedMatch: row.validated_match === true,
+        changedAfterDecision: false,
+    }))
+    const automaticLinkHistory = sourceLinkHistory.rows.map((row) => ({
+            reviewType: row.review_type,
+            sourceType: row.source_type,
+            sourceId: row.source_id,
+            targetType: row.target_type,
+            targetId: row.target_id,
+            transition: row.transition,
+            resultingStatus: row.resulting_status,
+            origin: row.origin,
+            createdAt: row.created_at,
+        }))
+    const historyByIdentity = Object.fromEntries(history.rows.map((row) => [row.identity_id, row]))
+    const clusters = buildIdentityReviewClusterPresentation({
+        members,
+        edges,
+        decisions: decisions.rows,
+        lineage: lineage.rows,
+        automaticLinkHistory,
+        historyByIdentity,
+        unitScope: unitSlugs,
+        now,
+        includeInternals: true,
+    })
+    const search = normalizeText(query.q || query.search || '')
+    const includeResolved = String(query.includeResolved || '').toLowerCase() === 'true'
+    const staleOnly = String(query.stale || '').toLowerCase() === 'true'
+    const status = String(query.status || '').trim()
+    const filtered = clusters.filter((cluster) => {
+        if (!includeResolved && ['confirmed', 'rejected'].includes(cluster.decision.state)) return false
+        if (staleOnly && cluster.staleState !== 'stale') return false
+        if (status && cluster.decision.state !== status) return false
+        if (!search) return true
+        const haystack = cluster._members.flatMap((member) => [member.name, ...member.aliases, ...member.units]).join(' ').toLowerCase()
+        return haystack.includes(search)
+    })
+    return { clusters: filtered, unitSlugs, graph: { members: members.length, edges: edges.length }, workflow: await identityReviewWorkflowStatus(pgPool), workspace: await identityClusterWorkspaceStatus(pgPool) }
+}
+
+function findIdentityCluster(clusters, clusterKey) {
+    const key = String(clusterKey || '').trim()
+    return clusters.find((cluster) => cluster.clusterKey === key) || null
+}
+
+async function assertIdentityClusterWorkspaceReady(pgPool) {
+    const status = await identityClusterWorkspaceStatus(pgPool)
+    if (status.ready) return status
+    const error = new Error('IDENTITY_CLUSTER_WORKSPACE_NOT_READY')
+    error.statusCode = 409
+    throw error
+}
+
+function identityClusterExpectedVersions(payload = {}) {
+    const map = payload.expectedVersions && typeof payload.expectedVersions === 'object' ? payload.expectedVersions : {}
+    return map
+}
+
+async function applyIdentityClusterBulkTransaction(client, payload, actor) {
+    const requestedKeys = [...new Set((Array.isArray(payload.clusterKeys) ? payload.clusterKeys : []).map(String).map((value) => value.trim()).filter(Boolean))]
+    if (!requestedKeys.length || requestedKeys.length > 50) throw identityReviewError('IDENTITY_CLUSTER_BULK_SELECTION_REQUIRED', 400)
+    const expectedVersions = identityClusterExpectedVersions(payload)
+    const reason = String(payload.reason || '').trim()
+    const idempotencyKey = normalizeIdempotencyKey(payload.idempotencyKey)
+    if (!idempotencyKey) throw identityReviewError('IDENTITY_CLUSTER_IDEMPOTENCY_KEY_REQUIRED', 400)
+    if (reason.length < 3 || reason.length > 1000) throw identityReviewError('IDENTITY_CLUSTER_REASON_REQUIRED', 400)
+    const graph = await queryIdentityClusterGraph(client, actor, { unit: payload.unit, includeResolved: true })
+    const results = []
+    let membersMoved = 0
+    for (const clusterKey of requestedKeys) {
+        const cluster = findIdentityCluster(graph.clusters, clusterKey)
+        if (!cluster) throw identityReviewError('IDENTITY_CLUSTER_NOT_FOUND', 404)
+        const expectedVersion = String(expectedVersions[clusterKey] || '').trim()
+        if (!expectedVersion || expectedVersion !== cluster.version) throw identityReviewError('IDENTITY_CLUSTER_CONFLICT', 409)
+        if (!cluster.bulkReview.eligible) throw identityReviewError('IDENTITY_CLUSTER_BULK_NOT_ELIGIBLE', 409)
+        const operationKey = `${idempotencyKey}:${clusterKey}`
+        const requestFingerprint = digestClusterValue(JSON.stringify({ clusterKey, expectedVersion, reason }))
+        const existing = await client.query(`select status,result,request_fingerprint from crm_atendimento.identity_review_cluster_operations where operation_key=$1 for update`, [operationKey])
+        if (existing.rows[0]) {
+            if (existing.rows[0].request_fingerprint !== requestFingerprint) throw identityReviewError('IDENTITY_CLUSTER_IDEMPOTENCY_CONFLICT', 409)
+            results.push({ clusterKey, status: existing.rows[0].status, result: existing.rows[0].result || {} })
+            continue
+        }
+        let clusterMoved = 0
+        for (const edge of cluster._edges) {
+            const normalized = { reviewType: edge.reviewType, sourceId: edge.sourceId, targetId: edge.targetId, survivorClientId: null }
+            await acquireIdentityReviewLocks(client, { ...normalized, ...IDENTITY_REVIEW_DEFINITIONS[edge.reviewType] })
+            const candidate = await readIdentityReviewCandidate(client, normalized)
+            await assertCommercialReviewCandidateScope(client, actor, candidate)
+            assertIdentityReviewCandidateVersion(candidate, edge.sourceVersion)
+            const latest = await readLatestIdentityReviewDecision(client, candidate)
+            assertNoCurrentIdentityReviewDecision(latest, candidate)
+            const sourceState = await writeIdentityReviewSourceStatus(client, candidate, 'confirmed', actor)
+            const materialization = await materializeIdentityReviewConfirmation(client, { candidate, actor })
+            const sourceLinkTransitions = await recordIdentityReviewSourceLinkTransition(client, {
+                materializationRunId: materialization.id,
+                candidate,
+                previousStatus: candidate.rawStatus,
+                resultingStatus: sourceState.rawStatus,
+                origin: 'manager_identity_cluster_bulk_review',
+            })
+            const decision = await createIdentityReviewDecision(client, {
+                candidate, decision: 'confirmed', reason, actor,
+                materializationRunId: materialization.id,
+                resultingStatus: sourceState.rawStatus,
+                sourceVersion: sourceState.version,
+                sourceSnapshot: { clusterKey, previousSourceVersion: candidate.version },
+            })
+            clusterMoved += Number(materialization.summary?.membersMoved || 0)
+            await audit(client, 'client-identity.cluster.bulk-confirmed', actor, null, {
+                clusterKey, decisionId: decision.id, materializationRunId: materialization.id,
+                membersMoved: Number(materialization.summary?.membersMoved || 0), sourceLinkTransitions: sourceLinkTransitions.length,
+            })
+        }
+        const result = { clusterKey, membersMoved: clusterMoved, decisionState: 'confirmed' }
+        await client.query(`insert into crm_atendimento.identity_review_cluster_operations(
+                operation_key,cluster_key,operation,request_fingerprint,status,actor,result)
+            values($1,$2,'bulk_confirm',$3,'applied',$4::jsonb,$5::jsonb)`, [
+            operationKey, clusterKey, requestFingerprint,
+            JSON.stringify({ id: actorIdentityForMutation(actor), role: actor?.role || '' }), JSON.stringify(result),
+        ])
+        results.push(result)
+        membersMoved += clusterMoved
+    }
+    return { schemaVersion: 'crm-identity-cluster/v1', idempotent: results.some((result) => result.status), appliedClusters: results.length, membersMoved, results }
+}
+
+async function revealIdentityCluster(client, payload, actor) {
+    const normalized = assertExplicitIdentityClusterPayload(payload)
+    const fields = explicitRevealFields(payload)
+    const graph = await queryIdentityClusterGraph(client, actor, { unit: payload.unit, includeResolved: true })
+    const cluster = findIdentityCluster(graph.clusters, payload.clusterKey)
+    if (!cluster) throw identityReviewError('IDENTITY_CLUSTER_NOT_FOUND', 404)
+    if (cluster.version !== normalized.expectedVersion) throw identityReviewError('IDENTITY_CLUSTER_CONFLICT', 409)
+    const actorIdentity = actorIdentityForMutation(actor)
+    const reasonDigest = digestClusterValue(normalized.reason)
+    const inserted = await client.query(`insert into crm_atendimento.identity_review_cluster_reveals(
+            cluster_key,cluster_version,fields,reason_digest,actor,unit_scope)
+        values($1,$2,$3::jsonb,$4,$5::jsonb,$6::jsonb) returning id::text,created_at`, [
+        cluster.clusterKey, cluster.version, JSON.stringify(fields), reasonDigest,
+        JSON.stringify({ id: actorIdentity, role: actor?.role || '' }), JSON.stringify(graph.unitSlugs || []),
+    ])
+    await audit(client, 'client-identity.cluster.contact-revealed', actor, null, {
+        clusterKey: cluster.clusterKey, clusterVersion: cluster.version, fields, reasonDigest,
+    })
+    const contacts = cluster._members.map((member) => ({
+        sourceLabel: sourceLabelForClusterMember(member.sourceType),
+        name: member.name,
+        phone: fields.includes('phone') ? [...new Set(member.phoneKeys)].filter(Boolean) : [],
+        email: fields.includes('email') ? [...new Set(member.emailKeys)].filter(Boolean) : [],
+    })).filter((entry) => entry.phone.length || entry.email.length)
+    return {
+        clusterKey: cluster.clusterKey,
+        version: cluster.version,
+        auditId: inserted.rows[0]?.id || null,
+        revealedAt: inserted.rows[0]?.created_at || null,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        contacts,
+        privacy: { explicitAction: true, reasonRecorded: true, metricsAndLogsRedacted: true },
+    }
+}
+
+function sourceLabelForClusterMember(sourceType) {
+    return ({ attendance_client: 'Atendimento', caixa_customer: 'Caixa', app_registration: 'Cadastro do app', lead_profile: 'Leads e planilhas' })[sourceType] || 'Fonte'
+}
+
 export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
     const schemaManaged = options.schemaManaged === true || String(process.env.CRM_ATENDIMENTO_SCHEMA_MANAGED || '').trim().toLowerCase() === 'true'
@@ -5326,6 +5706,82 @@ export function createAtendimentoStore(options = {}) {
                 ...(await queryIdentityReviewQueue(pgPool, query, { workflowReady: workflow.ready, unitSlugs })),
                 workflow: { writesReady: workflow.ready },
             }
+        },
+
+        async identityClusterWorkspace(query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            const graph = await queryIdentityClusterGraph(pgPool, actor, query || {})
+            const limit = sanitizeLimit(query?.limit, 50, 100)
+            const offset = sanitizeOffset(query?.offset, 0)
+            const page = graph.clusters.slice(offset, offset + limit)
+            return {
+                schemaVersion: 'crm-identity-cluster/v1',
+                total: graph.clusters.length,
+                limit,
+                offset,
+                clusters: page.map(stripIdentityClusterInternals),
+                workflow: { writesReady: graph.workflow.ready },
+                workspace: graph.workspace,
+                graph: graph.graph,
+                pagination: { hasPrevious: offset > 0, hasNext: offset + page.length < graph.clusters.length },
+            }
+        },
+
+        async identityClusterDetail(clusterKey, query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            const graph = await queryIdentityClusterGraph(pgPool, actor, { ...(query || {}), includeResolved: true })
+            const cluster = findIdentityCluster(graph.clusters, clusterKey)
+            if (!cluster) throw identityReviewError('IDENTITY_CLUSTER_NOT_FOUND', 404)
+            return {
+                schemaVersion: 'crm-identity-cluster/v1',
+                cluster: stripIdentityClusterInternals(cluster),
+                workflow: { writesReady: graph.workflow.ready },
+                workspace: graph.workspace,
+            }
+        },
+
+        async previewIdentityClusterBulk(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            const graph = await queryIdentityClusterGraph(pgPool, actor, { unit: payload?.unit, includeResolved: true })
+            const selected = Array.isArray(payload?.clusterKeys) && payload.clusterKeys.length
+                ? graph.clusters.filter((cluster) => payload.clusterKeys.map(String).includes(cluster.clusterKey))
+                : graph.clusters
+            return {
+                ...buildIdentityClusterBulkPreview(selected),
+                workspace: graph.workspace,
+                workflow: { writesReady: graph.workflow.ready },
+            }
+        },
+
+        async applyIdentityClusterBulk(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            await assertIdentityReviewWorkflowReady(pgPool)
+            await assertIdentityClusterWorkspaceReady(pgPool)
+            if (payload?.confirmation !== 'REVIEW_CLUSTER') throw identityReviewError('IDENTITY_CLUSTER_CONFIRMATION_REQUIRED', 400)
+            if (String(payload?.reason || '').trim().length < 3) throw identityReviewError('IDENTITY_CLUSTER_REASON_REQUIRED', 400)
+            return withPgTransaction(pgPool, async (client) => {
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
+                return applyIdentityClusterBulkTransaction(client, payload || {}, actor)
+            })
+        },
+
+        async revealIdentityCluster(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            await assertIdentityClusterWorkspaceReady(pgPool)
+            return withPgTransaction(pgPool, async (client) => {
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
+                return revealIdentityCluster(client, payload || {}, actor)
+            })
         },
 
         async decideIdentityReview(payload, actor) {

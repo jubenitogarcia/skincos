@@ -236,6 +236,42 @@ test('blocks non-GESTOR identity review decisions before the store mutation boun
     assert.deepEqual(undo.state.body, { ok: false, error: 'FORBIDDEN' })
 })
 
+test('protects cluster workspace reads and writes with the Clientes RBAC boundary', async () => {
+    const calls = []
+    const routes = captureAtendimentoRoutes({
+        async identityClusterWorkspace(query, actor) { calls.push(['workspace', query, actor]); return { clusters: [] } },
+        async identityClusterDetail(key, query, actor) { calls.push(['detail', key, query, actor]); return { cluster: null } },
+        async previewIdentityClusterBulk(payload, actor) { calls.push(['preview', payload, actor]); return { eligibleCount: 0 } },
+        async applyIdentityClusterBulk(payload, actor) { calls.push(['apply', payload, actor]); return { appliedClusters: 0 } },
+        async revealIdentityCluster(payload, actor) { calls.push(['reveal', payload, actor]); return { contacts: [] } },
+    })
+    const manager = { id: 'manager-1', role: 'GESTOR', allowedModules: ['atendimento'] }
+    const denied = { id: 'manager-2', role: 'GERENTE', allowedModules: ['atendimento'] }
+    for (const method of ['GET /commercial/identity-clusters', 'GET /commercial/identity-clusters/:clusterKey', 'POST /commercial/identity-clusters/bulk/preview', 'POST /commercial/identity-clusters/bulk/apply', 'POST /commercial/identity-clusters/:clusterKey/reveal']) {
+        const response = captureResponse()
+        await routes.get(method)({ atendimentoActor: denied, params: { clusterKey: 'opaque' }, headers: {}, query: {}, body: {} }, response)
+        assert.equal(response.state.status, 403)
+        assert.deepEqual(response.state.body, { ok: false, error: 'FORBIDDEN' })
+    }
+    const workspace = captureResponse()
+    await routes.get('GET /commercial/identity-clusters')({ atendimentoActor: manager, query: { q: 'Ana', unit: 'novo-hamburgo' } }, workspace)
+    assert.equal(workspace.state.status, 200)
+    const detail = captureResponse()
+    await routes.get('GET /commercial/identity-clusters/:clusterKey')({ atendimentoActor: manager, params: { clusterKey: 'opaque' }, query: {} }, detail)
+    assert.equal(detail.state.status, 200)
+    const preview = captureResponse()
+    await routes.get('POST /commercial/identity-clusters/bulk/preview')({ atendimentoActor: manager, body: { clusterKeys: ['opaque'] } }, preview)
+    assert.equal(preview.state.status, 200)
+    const apply = captureResponse()
+    await routes.get('POST /commercial/identity-clusters/bulk/apply')({ atendimentoActor: manager, headers: { 'idempotency-key': 'idem-1' }, body: { clusterKeys: [], reason: 'synthetic' } }, apply)
+    assert.equal(apply.state.status, 200)
+    const reveal = captureResponse()
+    await routes.get('POST /commercial/identity-clusters/:clusterKey/reveal')({ atendimentoActor: manager, params: { clusterKey: 'opaque' }, body: { reason: 'synthetic' } }, reveal)
+    assert.equal(reveal.state.status, 200)
+    assert.equal(calls.length, 5)
+    assert.equal(calls[3][1].idempotencyKey, 'idem-1')
+})
+
 test('maps review payload and source-state conflicts to their client-safe status codes', async () => {
     const routes = captureAtendimentoRoutes({
         async decideIdentityReview(payload) {

@@ -1,0 +1,2 @@
+-- Rollback is registry-only. Evidence remains queryable and is never deleted.
+-- The runtime must treat this migration as unavailable after marking it rolled back.
