@@ -6,7 +6,7 @@ const path = require('node:path');
 const ORGANIZER_ID = 'ccg-orchestrator-001';
 const ORGANIZER_NAME = 'Campaign Creative Creator Organizer';
 const CREATOR_WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
-const BUILDER_VERSION = '1.0.0';
+const BUILDER_VERSION = '1.0.1';
 
 function parseArgs(argv) {
   const result = {};
@@ -95,8 +95,58 @@ const request = Object.keys(supplied).length
       offer: {},
       cta: 'Saiba mais',
       requested_deliverables: deliverables,
-      source_assets: list(input.source_assets),
-      brand_assets: list(input.brand_assets),
+      // The default operational smoke must be a valid closed-world request.
+      // These are synthetic, non-personal mock references with explicit
+      // approval/ownership metadata; they never become live provider inputs.
+      source_assets: list(input.source_assets).length ? list(input.source_assets) : [
+        {
+          asset_id: 'organizer-mock-hero-v1',
+          role: 'hero_visual',
+          asset_type: 'IMAGE',
+          file_name: 'organizer-mock-hero.svg',
+          mime_type: 'image/svg+xml',
+          url: 'mock://approved-assets/organizer-mock-hero-v1.svg',
+          approval_status: 'approved',
+          rights_status: 'owned',
+          contains_personal_data: false,
+          width: 1080,
+          height: 1440,
+          size_bytes: 1024,
+          sha256: '1111111111111111111111111111111111111111111111111111111111111111'
+        },
+        {
+          asset_id: 'organizer-mock-background-v1',
+          role: 'supporting_background',
+          asset_type: 'IMAGE',
+          file_name: 'organizer-mock-background.svg',
+          mime_type: 'image/svg+xml',
+          url: 'mock://approved-assets/organizer-mock-background-v1.svg',
+          approval_status: 'approved',
+          rights_status: 'owned',
+          contains_personal_data: false,
+          width: 1080,
+          height: 1920,
+          size_bytes: 1024,
+          sha256: '2222222222222222222222222222222222222222222222222222222222222222'
+        }
+      ],
+      brand_assets: list(input.brand_assets).length ? list(input.brand_assets) : [
+        {
+          asset_id: 'organizer-mock-brand-logo-v1',
+          role: 'brand_logo',
+          asset_type: 'LOGO',
+          file_name: 'organizer-mock-brand-logo.svg',
+          mime_type: 'image/svg+xml',
+          url: 'mock://approved-assets/organizer-mock-brand-logo-v1.svg',
+          approval_status: 'approved',
+          rights_status: 'owned',
+          contains_personal_data: false,
+          width: 640,
+          height: 160,
+          size_bytes: 1024,
+          sha256: '3333333333333333333333333333333333333333333333333333333333333333'
+        }
+      ],
       references: list(input.references),
       mandatory_elements: ['CTA legível'],
       forbidden_elements: ['Promessa garantida', 'Antes e depois'],
