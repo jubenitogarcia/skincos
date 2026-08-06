@@ -81,6 +81,12 @@ test('accepts only a numeric collision suffix without evaluating user input as a
   assert.equal(isAllowedCorporateEmail('A+B Pessoa', 'abpessoa+2@espacofacial.com'), false);
 });
 
+test('keeps punctuation out of the collision base before checking a suffix', () => {
+  assert.equal(buildCorporateEmail('A.* Pessoa'), 'apessoa@espacofacial.com');
+  assert.equal(isAllowedCorporateEmail('A.* Pessoa', 'apessoa7@espacofacial.com'), true);
+  assert.equal(isAllowedCorporateEmail('A.* Pessoa', 'aXXpessoa7@espacofacial.com'), false);
+});
+
 test('enforces hierarchy and unit subset without treating empty scope as global', () => {
   assert.equal(canCreateEmployee({ actorRole: 'GESTOR', actorAllowedUnits: ['novo-hamburgo'], targetProfile: 'GERENTE', units: ['novo-hamburgo'] }), null);
   assert.equal(canCreateEmployee({ actorRole: 'GERENTE', actorAllowedUnits: ['novo-hamburgo'], targetProfile: 'GESTOR', units: ['novo-hamburgo'] }), 'ROLE_DENIED');
