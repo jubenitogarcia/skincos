@@ -13,6 +13,20 @@
 .\scripts\run-shared-codex-shortcut.ps1 -Action CrmModule -CrmRole Gestor -CrmModule insumos
 ```
 
+O Codex App também expõe a ação `CRM – Prévia Insumos Thread`. Ela usa o
+mesmo launcher, materializa o snapshot atual do checkout em runtime isolado e
+abre diretamente o módulo Insumos como Gestor:
+
+```powershell
+.\scripts\run-shared-codex-shortcut.ps1 -Action CrmThreadPreview -CrmRole Gestor -CrmModule insumos
+```
+
+O endereço publicado é gravado em
+`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\thread-previews\gestor\insumos\current.json`.
+Em hosts Windows sem encaminhamento de `localhost` para o WSL, o launcher
+seleciona automaticamente o IPv4 privado do WSL e valida esse host antes de
+abrir o navegador.
+
 Para encerrar somente essa combinação:
 
 ```powershell
