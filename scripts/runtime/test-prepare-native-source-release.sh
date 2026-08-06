@@ -25,6 +25,7 @@ required=(
   'patch-livia-token-vault-preflight.js'
   'patch-livia-accessibility-contract.js'
   'patch-livia-facebook-carousel-contract.js'
+  'patch-livia-today-first-selection.js'
   'patch-livia-job-graph-payload-file.js'
   'patch-livia-runtime-isolation.js'
   'Missing required command: setfacl'
