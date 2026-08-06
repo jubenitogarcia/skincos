@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildCorporateEmail,
   canCreateEmployee,
+  isAllowedCorporateEmail,
   resolveEmployeeProfile,
   validateOnboardingInput,
 } from './employeeOnboarding.js';
@@ -71,6 +72,13 @@ test('builds the corporate address from the first and last name without accents 
     jobTitle: 'Supervisor',
     department: 'stg-ponto-123456789-department',
   }, { unified: true }), null);
+});
+
+test('accepts only a numeric collision suffix without evaluating user input as a pattern', () => {
+  assert.equal(isAllowedCorporateEmail('A+B Pessoa', 'abpessoa@espacofacial.com'), true);
+  assert.equal(isAllowedCorporateEmail('A+B Pessoa', 'abpessoa2@espacofacial.com'), true);
+  assert.equal(isAllowedCorporateEmail('A+B Pessoa', 'abpessoaabc@espacofacial.com'), false);
+  assert.equal(isAllowedCorporateEmail('A+B Pessoa', 'abpessoa+2@espacofacial.com'), false);
 });
 
 test('enforces hierarchy and unit subset without treating empty scope as global', () => {

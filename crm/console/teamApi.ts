@@ -14,6 +14,7 @@ export type UnifiedTeamMember = {
   department: string
   units: string[]
   accountStatus: string
+  compensationState?: string | null
   schedule?: {
     professionalId?: string | null
     phone?: string
@@ -27,6 +28,7 @@ export type UnifiedTeamMember = {
     units?: string[]
   }
   identityLinks?: Array<{
+    id?: string
     source: string
     sourceId: string
     reviewStatus: string
