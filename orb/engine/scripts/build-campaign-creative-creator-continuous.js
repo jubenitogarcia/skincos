@@ -8,7 +8,7 @@ const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
 const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-error-v3';
 const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
-const BUILDER_VERSION = '4.1.2';
+const BUILDER_VERSION = '4.1.3';
 const ALL_FIXTURE_NAMES = [
   'Build CCG-00 dry-run fixture',
   'Build CCG-10 dry-run fixture',
@@ -421,6 +421,13 @@ for (const job of jobs) {
   if (!consentGranted) blockers.push('CONSENT_REQUIRED:' + text(job.job_id || job.id));
 }
 const dispatchAllowed = blockers.length === 0;
+const executorEndpoint = text(firstDefined(
+  policy.executor_base_url,
+  policy.executor_endpoint,
+  request.provider_policy?.executor_base_url,
+  request.executor_endpoint,
+  'n8n-env:CCG_EXECUTOR_BASE_URL'
+));
 const blockedJobs = jobs.map((job, index) => ({
   job_id: text(job.job_id || job.id || 'job-' + (index + 1)),
   status: 'NEEDS_REVIEW',
@@ -504,7 +511,7 @@ return [{
       execution_id: dispatchAllowed ? '' : blockedExecution.execution_id,
       dispatch_allowed: dispatchAllowed,
       dispatch_requested: mode === 'LIVE' || mode === 'DRY_RUN',
-      executor_endpoint: text($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790'),
+      executor_endpoint: executorEndpoint,
       publish_allowed: false,
       publish_requested: false,
       policy_blockers: blockers
@@ -610,7 +617,12 @@ const execution = {
   total_cost: number(candidate.total_cost || candidate.cost?.amount) || normalizedJobs.reduce((sum, job) => sum + (number(job.cost?.amount) || 0), 0),
   mode: text(candidate.mode || base.ccg_context?.mode || 'DRY_RUN').toUpperCase(),
   source: 'campaign-creative-executor',
-  executor_endpoint: text($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790'),
+  executor_endpoint: text(
+    base.execution_handoff?.executor_endpoint ||
+    base.executor_handoff?.executor_endpoint ||
+    base.production_request?.executor_endpoint ||
+    'n8n-env:CCG_EXECUTOR_BASE_URL'
+  ),
   publish_allowed: false,
   publish_requested: false,
   external_calls: list(candidate.external_calls),
