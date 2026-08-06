@@ -87,11 +87,11 @@ class FakeD1 {
   first(sql, params) {
     const query = normalizeSql(sql)
 
-    if (query.startsWith('select id, name, phone, email from professionals where name = ?1')
-      || query.startsWith('select id, name, phone, email, workforce_employee_id from professionals where name = ?1')) {
+    if (query.startsWith('select id, name, phone, email, units_json from professionals where name = ?1')
+      || query.startsWith('select id, name, phone, email, workforce_employee_id, units_json from professionals where name = ?1')) {
       const name = String(params[0] || '')
       const row = this.professionals.find((prof) => prof.name === name)
-      return row ? { id: row.id, name: row.name, phone: row.phone, email: row.email, workforce_employee_id: row.workforce_employee_id || null } : null
+      return row ? { id: row.id, name: row.name, phone: row.phone, email: row.email, workforce_employee_id: row.workforce_employee_id || null, units_json: row.units_json || '[]' } : null
     }
 
     if (query.startsWith('select id, name from professionals where name = ?1')) {
@@ -420,6 +420,38 @@ test('Escala professionals POST and PUT persist and sync schedule entries', asyn
       professional: 'Dra. Anita',
     },
   ])
+})
+
+test('Escala blocks scoped managers from editing a professional outside the existing unit scope', async () => {
+  const db = new FakeD1()
+  db.professionals.push({
+    id: 'professional-barra',
+    name: 'Dra. Barra',
+    status: 'Ativo',
+    role: 'Injetor',
+    units_json: JSON.stringify(['BarraShoppingSul']),
+  })
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+  const response = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/professionals', {
+      method: 'PUT',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor: { id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'] },
+      body: {
+        currentName: 'Dra. Barra',
+        name: 'Dra. Alterada',
+        units: ['Novo Hamburgo'],
+      },
+    }),
+    env,
+  )
+  assert.equal(response.status, 403)
+  assert.deepEqual(await response.json(), { ok: false, error: 'FORBIDDEN_EXISTING_UNIT' })
+  assert.equal(db.professionals[0].name, 'Dra. Barra')
 })
 
 test('Escala professionals GET/POST/PUT tolerate legacy schema without color column', async () => {

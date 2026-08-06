@@ -5,10 +5,21 @@ import { resolveCrmTables } from '../d1Store.js';
 import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
 import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
-import { canCreateEmployee, displayJobTitle, publicOnboarding, resolveEmployeeProfile, suggestEmployeeUsername, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
+import { buildEmployeeOnboardingFingerprintPayload, canCreateEmployee, displayJobTitle, publicOnboarding, resolveEmployeeProfile, suggestEmployeeUsername, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
 import { syncIdentityWorkforceOnboarding, syncIdentityWorkforceStatus } from '../../../shared/identity-runtime/workforce-onboarding.js';
 import { isValidAccountTransition, normalizeAccountState, shouldIssueInvite } from '../../../shared/identity-runtime/onboarding-state.js';
 import { recordTeamTelemetry } from '../services/teamTelemetry.js';
+import {
+  SCHEDULE_SYNC_STATES,
+  buildScheduleSyncRecord,
+  fallbackScheduleSync,
+  latestScheduleSyncByMember,
+  normalizeScheduleSyncErrorCode,
+  normalizeScheduleSyncOperationKey,
+  normalizeScheduleSyncResult,
+  normalizeScheduleSyncState,
+  scheduleSyncOperationMatches,
+} from '../services/teamScheduleSync.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'];
 const ROLE_INVITES = ['ADMIN', 'GESTOR', 'GERENTE'];
@@ -117,7 +128,11 @@ function normalizeTeamData(value, fallbackUnits = []) {
   };
 }
 
-function publicTeamMember(row, links = []) {
+function publicTeamMember(row, links = [], scheduleSync = null) {
+  const fallback = fallbackScheduleSync(row.schedule_professional_id || '');
+  const normalizedSync = scheduleSync
+    ? normalizeScheduleSyncResult(scheduleSync, row.schedule_professional_id || '')
+    : fallback;
   return {
     ...publicOnboarding(row),
     workforceEmployeeId: row.workforce_employee_id || null,
@@ -130,6 +145,13 @@ function publicTeamMember(row, links = []) {
       instagram: row.schedule_instagram || '',
       color: row.schedule_color || '',
       units: normalizeAllowedUnits(row.schedule_units_json || row.units_json),
+    },
+    scheduleSync: {
+      state: normalizedSync.state,
+      professionalId: normalizedSync.professionalId,
+      errorCode: normalizedSync.errorCode,
+      attempt: normalizedSync.attempt,
+      updatedAt: normalizedSync.updatedAt,
     },
     identityLinks: links,
   };
@@ -197,11 +219,99 @@ function teamPendingItems(rows) {
         items.push({ memberId, kind: 'IDENTITY_LINK', source: String(link?.source || '').toUpperCase(), status: 'PENDING_REVIEW' });
       }
     }
-    if (!row?.schedule?.professionalId && !['TERMINATED'].includes(String(row?.accountStatus || '').toUpperCase())) {
+    const scheduleState = normalizeScheduleSyncState(row?.scheduleSync?.state, row?.schedule?.professionalId ? 'SYNCED' : 'PENDING');
+    if (['PENDING', 'FAILED', 'BLOCKED'].includes(scheduleState) && !['TERMINATED'].includes(String(row?.accountStatus || '').toUpperCase())) {
+      items.push({ memberId, kind: 'ESCALA_SYNC', status: scheduleState });
+    } else if (!row?.schedule?.professionalId && scheduleState !== 'NOT_CONFIGURED' && !['TERMINATED'].includes(String(row?.accountStatus || '').toUpperCase())) {
       items.push({ memberId, kind: 'ESCALA_LINK', status: 'PENDING' });
     }
   }
   return items.slice(0, 100);
+}
+
+function hasScheduleIntent(teamData) {
+  return [
+    teamData?.professionalId,
+    teamData?.status,
+    teamData?.role,
+    teamData?.shift,
+    teamData?.nickname,
+    teamData?.instagram,
+    teamData?.color,
+  ].some((value) => String(value || '').trim() !== '');
+}
+
+function internalScheduleOperationKey(onboardingId, state) {
+  return normalizeScheduleSyncOperationKey(`escala-sync:${String(onboardingId || '').trim()}:${String(state || 'PENDING').toLowerCase()}:${crypto.randomUUID()}`);
+}
+
+async function persistScheduleSyncOperation({
+  env,
+  onboardingId,
+  state,
+  professionalId = '',
+  errorCode = '',
+  operationKey,
+}) {
+  const normalizedOnboardingId = String(onboardingId || '').trim();
+  const key = normalizeScheduleSyncOperationKey(operationKey);
+  if (!normalizedOnboardingId || !key) throw new Error('ESCALA_SYNC_IDEMPOTENCY_REQUIRED');
+
+  const existing = await env.DB.prepare('SELECT * FROM crm_team_operations WHERE operation_key=? LIMIT 1').bind(key).first();
+  if (existing) {
+    if (!scheduleSyncOperationMatches(existing, {
+      onboardingId: normalizedOnboardingId,
+      state,
+      professionalId,
+      errorCode,
+    })) {
+      throw new Error('ESCALA_SYNC_IDEMPOTENCY_CONFLICT');
+    }
+    return { replayed: true, scheduleSync: normalizeScheduleSyncResult(safeJsonParse(existing.result_json, {})) };
+  }
+
+  const latestRow = await env.DB.prepare(`SELECT operation_key, operation_type, member_ids_json, result_json, created_at
+    FROM crm_team_operations
+    WHERE operation_type='ESCALA_SYNC' AND member_ids_json LIKE ?
+    ORDER BY created_at DESC LIMIT 1`).bind(`%\"${normalizedOnboardingId}\"%`).first();
+  const previous = latestScheduleSyncByMember(latestRow ? [latestRow] : []).get(normalizedOnboardingId);
+  const at = new Date().toISOString();
+  const record = buildScheduleSyncRecord({
+    state,
+    professionalId,
+    errorCode,
+    attempt: (previous?.attempt || 0) + 1,
+    createdAt: at,
+  });
+  try {
+    await env.DB.prepare(`INSERT INTO crm_team_operations
+      (operation_key, operation_type, requested_status, member_ids_json, outcome, result_json, created_at)
+      VALUES (?, 'ESCALA_SYNC', ?, ?, ?, ?, ?)`)
+      .bind(key, record.requestedStatus, JSON.stringify([normalizedOnboardingId]), record.outcome, record.resultJson, record.createdAt)
+      .run();
+  } catch (error) {
+    const raced = await env.DB.prepare('SELECT * FROM crm_team_operations WHERE operation_key=? LIMIT 1').bind(key).first();
+    if (!raced) throw error;
+    if (!scheduleSyncOperationMatches(raced, {
+      onboardingId: normalizedOnboardingId,
+      state,
+      professionalId,
+      errorCode,
+    })) throw new Error('ESCALA_SYNC_IDEMPOTENCY_CONFLICT');
+    return { replayed: true, scheduleSync: normalizeScheduleSyncResult(safeJsonParse(raced.result_json, {})) };
+  }
+  return { replayed: false, scheduleSync: record.result };
+}
+
+function publicScheduleSync(value, fallbackProfessionalId = '') {
+  const normalized = normalizeScheduleSyncResult(value, fallbackProfessionalId);
+  return {
+    state: normalized.state,
+    professionalId: normalized.professionalId,
+    errorCode: normalized.errorCode,
+    attempt: normalized.attempt,
+    updatedAt: normalized.updatedAt,
+  };
 }
 
 function publicUser(user) {
@@ -428,6 +538,7 @@ export async function handleAdminRoutes({
   const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
   const invitesHasInviteeEmail = await tableHasColumn(env, invitesTable, 'invitee_email');
   const onboardingHasUsername = await tableHasColumn(env, 'crm_employee_onboarding', 'requested_username');
+  const onboardingHasRequestFingerprint = await tableHasColumn(env, 'crm_employee_onboarding', 'request_fingerprint');
   const invitesHasUsername = await tableHasColumn(env, invitesTable, 'requested_username');
   const onboardingHasSaga = await tableHasColumn(env, 'crm_employee_onboarding', 'provisioning_state') && await tableHasColumn(env, 'crm_employee_onboarding', 'invite_token_encrypted');
   const teamTablesReady = await tableExists(env, 'crm_employee_team')
@@ -435,7 +546,7 @@ export async function handleAdminRoutes({
     && await tableExists(env, 'crm_team_operations')
     && await tableExists(env, 'crm_team_telemetry');
 
-  if (isTeamRoute && (!onboardingHasUsername || !invitesHasUsername || !onboardingHasSaga || !teamTablesReady)) {
+  if (isTeamRoute && (!onboardingHasUsername || !onboardingHasRequestFingerprint || !invitesHasUsername || !onboardingHasSaga || !teamTablesReady)) {
     return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
   }
 
@@ -466,9 +577,23 @@ export async function handleAdminRoutes({
         return withCORS(JSON.stringify({ success: false, error: 'Migração de usuário da equipe pendente', code: 'TEAM_USERNAME_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
       }
 
+      const personalEmailHash = await sha256Hex(input.personalEmail);
+      const mobilePhoneHash = await sha256Hex(input.mobilePhone);
+      const requestFingerprint = onboardingHasRequestFingerprint
+        ? await sha256Hex(JSON.stringify(buildEmployeeOnboardingFingerprintPayload({
+          input,
+          requestedUsername,
+          personalEmailHash,
+          mobilePhoneHash,
+          team: url.pathname === '/admin/team' ? teamData : null,
+        })))
+        : '';
       const idempotency = String(request.headers.get('idempotency-key') || body.idempotencyKey || '').trim().slice(0, 180);
       if (idempotency) {
         const existing = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE idempotency_key=? LIMIT 1').bind(idempotency).first();
+        if (existing && url.pathname === '/admin/team' && (!existing.request_fingerprint || existing.request_fingerprint !== requestFingerprint)) {
+          throw new Error(existing.request_fingerprint ? 'ONBOARDING_IDEMPOTENCY_CONFLICT' : 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+        }
         if (existing?.provisioning_state === 'COMPLETED') return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
       }
       const existingUser = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(input.corporateEmail).first();
@@ -496,6 +621,10 @@ export async function handleAdminRoutes({
       const at = new Date().toISOString();
       const requestId = String(request.headers.get('x-request-id') || `identity-onboarding-${id}`).slice(0, 180);
       const existingOnboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
+      if (existingOnboarding && url.pathname === '/admin/team') {
+        if (!existingOnboarding.request_fingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+        if (existingOnboarding.request_fingerprint !== requestFingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_CONFLICT');
+      }
       if (existingOnboarding?.provisioning_state === 'COMPLETED') {
         return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
       }
@@ -511,8 +640,8 @@ export async function handleAdminRoutes({
             'compensation_state', 'correlation_id',
           ];
           const values = [
-            id, input.fullName, input.corporateEmail, encryptedPersonal, await sha256Hex(input.personalEmail),
-            encryptedPhone, await sha256Hex(input.mobilePhone), input.profile, displayJobTitle(input.profile),
+            id, input.fullName, input.corporateEmail, encryptedPersonal, personalEmailHash,
+            encryptedPhone, mobilePhoneHash, input.profile, displayJobTitle(input.profile),
             input.department, JSON.stringify(input.units), input.accountStatus, null, null, idempotency || null,
             String(auth?.user?.username || ''), at, at, 'PROVISIONING', null, null, requestId,
           ];
@@ -520,10 +649,17 @@ export async function handleAdminRoutes({
             columns.push('requested_username');
             values.push(requestedUsername);
           }
+          if (onboardingHasRequestFingerprint) {
+            columns.push('request_fingerprint');
+            values.push(requestFingerprint);
+          }
           await env.DB.prepare(`INSERT INTO crm_employee_onboarding (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).bind(...values).run();
         } catch (insertError) {
           const raced = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
           if (!raced) throw insertError;
+          if (url.pathname === '/admin/team' && (!raced.request_fingerprint || raced.request_fingerprint !== requestFingerprint)) {
+            throw new Error(raced.request_fingerprint ? 'ONBOARDING_IDEMPOTENCY_CONFLICT' : 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+          }
         }
       }
 
@@ -592,6 +728,7 @@ export async function handleAdminRoutes({
         }
       }
       await env.DB.prepare('UPDATE crm_employee_onboarding SET invite_id=?, workforce_employee_id=?, provisioning_state=?, updated_at=?, last_error_code=NULL WHERE id=?').bind(inviteId, workforce?.employeeId || null, 'COMPLETED', new Date().toISOString(), id).run();
+      let scheduleSync = null;
       if (url.pathname === '/admin/team') {
         const workforceEmployeeId = String(workforce?.employeeId || '').trim();
         if (!workforceEmployeeId) throw new Error('WORKFORCE_EMPLOYEE_ID_REQUIRED');
@@ -613,14 +750,23 @@ export async function handleAdminRoutes({
             String(auth?.user?.username || ''), teamAt, teamAt,
           ).run();
         }
+        const scheduleState = hasScheduleIntent(teamData) ? 'PENDING' : 'NOT_CONFIGURED';
+        scheduleSync = await persistScheduleSyncOperation({
+          env,
+          onboardingId: id,
+          state: scheduleState,
+          operationKey: internalScheduleOperationKey(id, scheduleState),
+        }).catch(() => null);
       }
       const created = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(id).first();
-      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId, workforceEmployeeId: workforce?.employeeId || null, provisioningState: 'COMPLETED' } });
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId, workforceEmployeeId: workforce?.employeeId || null, provisioningState: 'COMPLETED', scheduleSyncState: scheduleSync?.scheduleSync?.state || (url.pathname === '/admin/team' ? 'PENDING' : null) } });
       await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_CREATED', actorRole: auth.user.role, itemCount: 1, unitCount: input.units.length });
-      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created), team: url.pathname === '/admin/team' ? normalizeTeamData(teamData, input.units) : undefined }), { status: existingOnboarding ? 200 : 201 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created), team: url.pathname === '/admin/team' ? { ...normalizeTeamData(teamData, input.units), scheduleSync: publicScheduleSync(scheduleSync?.scheduleSync || { state: hasScheduleIntent(teamData) ? 'PENDING' : 'NOT_CONFIGURED' }, '') } : undefined }), { status: existingOnboarding ? 200 : 201 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_FAILED');
-      const status = message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' || message === 'AUTH_EMAIL_NOT_CONFIGURED' || /^WORKFORCE_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
+      const status = ['ONBOARDING_IDEMPOTENCY_CONFLICT', 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED'].includes(message)
+        ? 409
+        : message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' || message === 'AUTH_EMAIL_NOT_CONFIGURED' || /^WORKFORCE_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Configuração segura de cadastro pendente' : 'Não foi possível concluir o cadastro', code: message }), { status }, appOrigin);
     }
   }
@@ -944,6 +1090,77 @@ export async function handleAdminRoutes({
     }
   }
 
+  const teamScheduleSyncMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/schedule-sync$/);
+  if (teamScheduleSyncMatch && request.method === 'POST') {
+    try {
+      if (!teamTablesReady) return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const onboardingId = decodeURIComponent(teamScheduleSyncMatch[1] || '').trim();
+      const onboarding = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id
+        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id
+        WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite sincronizar este membro', code: hierarchyDenied }), { status: 403 }, appOrigin);
+
+      const body = await request.json().catch(() => ({}));
+      const rawState = String(body?.state ?? body?.status ?? '').trim().toUpperCase();
+      if (!SCHEDULE_SYNC_STATES.includes(rawState)) {
+        return withCORS(JSON.stringify({ success: false, error: 'Estado de sincronização inválido', code: 'ESCALA_SYNC_STATE_INVALID' }), { status: 400 }, appOrigin);
+      }
+      const professionalId = String(body?.professionalId ?? body?.professional_id ?? '').trim().slice(0, 160);
+      if (rawState === 'SYNCED' && !professionalId) {
+        return withCORS(JSON.stringify({ success: false, error: 'A sincronização concluída precisa do identificador da Escala', code: 'ESCALA_PROFESSIONAL_ID_REQUIRED' }), { status: 400 }, appOrigin);
+      }
+      if (rawState === 'NOT_CONFIGURED' && (professionalId || String(onboarding.schedule_professional_id || '').trim())) {
+        return withCORS(JSON.stringify({ success: false, error: 'Um vínculo configurado não pode ser marcado como não configurado', code: 'ESCALA_SYNC_STATE_CONFLICT' }), { status: 409 }, appOrigin);
+      }
+      const errorCode = normalizeScheduleSyncErrorCode(body?.errorCode ?? body?.error_code, rawState === 'BLOCKED' ? 'ESCALA_SYNC_BLOCKED' : rawState === 'FAILED' ? 'ESCALA_SYNC_FAILED' : '');
+      if (['FAILED', 'BLOCKED'].includes(rawState) && !errorCode) {
+        return withCORS(JSON.stringify({ success: false, error: 'A falha precisa de um código operacional', code: 'ESCALA_SYNC_ERROR_CODE_REQUIRED' }), { status: 400 }, appOrigin);
+      }
+
+      if (rawState === 'SYNCED') {
+        const link = await env.DB.prepare(`SELECT id FROM crm_employee_identity_links
+          WHERE workforce_employee_id=? AND source='ESCALA' AND source_id=? AND review_status='CONFIRMED' LIMIT 1`)
+          .bind(onboarding.workforce_employee_id, professionalId).first();
+        if (!link) return withCORS(JSON.stringify({ success: false, error: 'Confirme primeiro o vínculo explícito com a Escala', code: 'TEAM_ESCALA_LINK_REQUIRED' }), { status: 409 }, appOrigin);
+      }
+
+      const rawOperationKey = request.headers.get('idempotency-key') || body?.operationKey || body?.requestId || '';
+      const operationKey = normalizeScheduleSyncOperationKey(rawOperationKey);
+      if (!operationKey) return withCORS(JSON.stringify({ success: false, error: 'A sincronização exige uma chave de idempotência', code: 'ESCALA_SYNC_IDEMPOTENCY_REQUIRED' }), { status: 400 }, appOrigin);
+      const persisted = await persistScheduleSyncOperation({ env, onboardingId, state: rawState, professionalId, errorCode, operationKey });
+      if (rawState === 'SYNCED' && professionalId) {
+        await env.DB.prepare('UPDATE crm_employee_team SET schedule_professional_id=?, updated_at=? WHERE onboarding_id=?').bind(professionalId, new Date().toISOString(), onboardingId).run();
+      }
+      if (persisted.replayed) {
+        return withCORS(JSON.stringify({ success: true, replayed: true, data: { scheduleSync: publicScheduleSync(persisted.scheduleSync, professionalId) } }), { status: 200 }, appOrigin);
+      }
+      const units = normalizeAllowedUnits(onboarding.units_json);
+      await appendAuditLog?.({
+        env,
+        actor: auth.user.username,
+        role: auth.user.role,
+        ip,
+        userAgent,
+        idempotencyKey: operationKey,
+        action: 'EMPLOYEE_ESCALA_SYNC_RECORDED',
+        entity: 'EMPLOYEE_TEAM',
+        entityId: onboardingId,
+        unidade: units.join(','),
+        after: { scheduleSyncState: rawState, professionalId: professionalId || null, errorCode: errorCode || null, attempt: persisted.scheduleSync?.attempt || 0 },
+      });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_ESCALA_SYNC_RECORDED', actorRole: auth.user.role, outcome: rawState, itemCount: 1, unitCount: units.length });
+      return withCORS(JSON.stringify({ success: true, replayed: persisted.replayed, data: { scheduleSync: publicScheduleSync(persisted.scheduleSync, professionalId) } }), { status: 200 }, appOrigin);
+    } catch (error) {
+      const rawCode = String(error?.message || '').trim();
+      const conflict = ['ESCALA_SYNC_IDEMPOTENCY_CONFLICT', 'ESCALA_SYNC_STATE_CONFLICT', 'TEAM_ESCALA_LINK_REQUIRED'].includes(rawCode);
+      const status = conflict ? 409 : 503;
+      return withCORS(JSON.stringify({ success: false, error: conflict ? 'A sincronização não pôde ser registrada para este estado' : 'Não foi possível registrar o estado da Escala', code: conflict ? rawCode : 'ESCALA_SYNC_PERSIST_FAILED' }), { status }, appOrigin);
+    }
+  }
+
   const teamHistoryMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/history$/);
   if (teamHistoryMatch && request.method === 'GET') {
     try {
@@ -1033,16 +1250,25 @@ export async function handleAdminRoutes({
       await env.DB.prepare(`UPDATE crm_employee_onboarding SET ${sets.join(', ')} WHERE id=?`).bind(...values).run();
 
       const teamData = normalizeTeamData(body.team, nextUnits);
+      const nextScheduleProfessionalId = teamData.professionalId || current.schedule_professional_id || null;
       await env.DB.prepare(`UPDATE crm_employee_team SET schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
-        teamData.professionalId || current.schedule_professional_id || null, teamData.status || null, teamData.role || null, teamData.shift || null,
+        nextScheduleProfessionalId, teamData.status || null, teamData.role || null, teamData.shift || null,
         teamData.nickname || null, teamData.instagram || null, teamData.color || null, JSON.stringify(teamData.units), new Date().toISOString(), onboardingId,
       ).run();
+      const scheduleState = hasScheduleIntent(teamData) || nextScheduleProfessionalId ? 'PENDING' : 'NOT_CONFIGURED';
+      const scheduleSync = await persistScheduleSyncOperation({
+        env,
+        onboardingId,
+        state: scheduleState,
+        professionalId: nextScheduleProfessionalId || '',
+        operationKey: internalScheduleOperationKey(onboardingId, scheduleState),
+      }).catch(() => null);
       const updated = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
         FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
       const links = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE workforce_employee_id=? ORDER BY created_at DESC').bind(updated.workforce_employee_id).all();
-      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_UPDATED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: nextUnits.join(','), before: { profile: current.profile, units: normalizeAllowedUnits(current.units_json), scheduleProfessionalId: current.schedule_professional_id || null }, after: { profile: nextProfile.profile || nextProfile, units: nextUnits, scheduleProfessionalId: teamData.professionalId || current.schedule_professional_id || null } });
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_UPDATED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: nextUnits.join(','), before: { profile: current.profile, units: normalizeAllowedUnits(current.units_json), scheduleProfessionalId: current.schedule_professional_id || null }, after: { profile: nextProfile.profile || nextProfile, units: nextUnits, scheduleProfessionalId: nextScheduleProfessionalId, scheduleSyncState: scheduleSync?.scheduleSync?.state || scheduleState } });
       await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_UPDATED', actorRole: auth.user.role, itemCount: 1, unitCount: nextUnits.length });
-      return withCORS(JSON.stringify({ success: true, data: publicTeamMember(updated, (links?.results || []).map(publicIdentityLink)) }), { status: 200 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: publicTeamMember(updated, (links?.results || []).map(publicIdentityLink), scheduleSync?.scheduleSync || { state: scheduleState, professionalId: nextScheduleProfessionalId }) }), { status: 200 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'TEAM_UPDATE_FAILED');
       const status = /^WORKFORCE_|^IDENTITY_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
@@ -1078,7 +1304,16 @@ export async function handleAdminRoutes({
         list.push(publicIdentityLink(link));
         linksByEmployee.set(key, list);
       }
-      const data = visible.map((row) => publicTeamMember(row, linksByEmployee.get(String(row.workforce_employee_id || '')) || []));
+      const operations = await env.DB.prepare(`SELECT operation_key, operation_type, member_ids_json, result_json, created_at
+        FROM crm_team_operations
+        WHERE operation_type='ESCALA_SYNC'
+        ORDER BY created_at DESC LIMIT 2000`).all();
+      const latestScheduleSync = latestScheduleSyncByMember(operations?.results || []);
+      const data = visible.map((row) => publicTeamMember(
+        row,
+        linksByEmployee.get(String(row.workforce_employee_id || '')) || [],
+        latestScheduleSync.get(String(row.id || '')) || null,
+      ));
       const pendingLinks = data.reduce((sum, row) => sum + (row.identityLinks || []).filter((link) => link.reviewStatus === 'PENDING_REVIEW').length, 0);
       const pendingProvisioning = data.filter((row) => ['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(String(row.provisioningState || '').toUpperCase())).length;
       const pendingInvites = data.filter((row) => String(row.accountStatus || '').toUpperCase() === 'INVITED').length;

@@ -1,12 +1,44 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildEmployeeOnboardingFingerprintPayload,
   buildCorporateEmail,
   canCreateEmployee,
   isAllowedCorporateEmail,
   resolveEmployeeProfile,
   validateOnboardingInput,
 } from './employeeOnboarding.js';
+
+test('builds a stable onboarding fingerprint payload without raw contact data', () => {
+  const base = {
+    fullName: 'Pessoa Teste',
+    corporateEmail: 'pessoateste@espacofacial.com',
+    personalEmailHash: 'personal-hash',
+    mobilePhoneHash: 'phone-hash',
+    profile: 'CONSULTOR',
+    department: 'Comercial',
+    units: ['Barra Shopping Sul', 'Novo Hamburgo'],
+    accountStatus: 'INVITED',
+    requestedUsername: 'pessoateste',
+  };
+  const first = buildEmployeeOnboardingFingerprintPayload({
+    input: base,
+    requestedUsername: base.requestedUsername,
+    personalEmailHash: base.personalEmailHash,
+    mobilePhoneHash: base.mobilePhoneHash,
+    team: { units: base.units, status: 'Ativo' },
+  });
+  const second = buildEmployeeOnboardingFingerprintPayload({
+    input: { ...base, units: [...base.units].reverse() },
+    requestedUsername: base.requestedUsername,
+    personalEmailHash: base.personalEmailHash,
+    mobilePhoneHash: base.mobilePhoneHash,
+    team: { units: [...base.units].reverse(), status: 'Ativo' },
+  });
+  assert.deepEqual(first, second);
+  assert.equal(JSON.stringify(first).includes('personal@example.com'), false);
+  assert.equal(JSON.stringify(first).includes('51999999999'), false);
+});
 
 test('normalizes business role aliases without granting technical ADMIN', () => {
   assert.equal(resolveEmployeeProfile('Diretor').profile, 'GESTOR');

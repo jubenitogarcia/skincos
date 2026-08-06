@@ -469,10 +469,15 @@ async function handleProfessionalPut(env, actor, body) {
   }
 
   const existing = await env.DB.prepare(
-    hasWorkforceColumn ? `select id, name, phone, email, workforce_employee_id from professionals where name = ?1` : `select id, name, phone, email from professionals where name = ?1`
+    hasWorkforceColumn ? `select id, name, phone, email, workforce_employee_id, units_json from professionals where name = ?1` : `select id, name, phone, email, units_json from professionals where name = ?1`
   ).bind(currentName).first()
   if (!existing) {
     return { ok: false, status: 404, body: { ok: false, error: 'PROFESSIONAL_NOT_FOUND' } }
+  }
+
+  const existingUnits = safeJsonParse(existing.units_json, [])
+  if (actor.allowedUnitKeys.length && (!Array.isArray(existingUnits) || !existingUnits.length || existingUnits.some((unit) => !isUnitVisibleForActor(actor, unit)))) {
+    return { ok: false, status: 403, body: { ok: false, error: 'FORBIDDEN_EXISTING_UNIT' } }
   }
 
   // Identity edits do not necessarily include the private phone field. An

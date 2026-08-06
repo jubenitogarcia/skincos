@@ -27,6 +27,13 @@ export type UnifiedTeamMember = {
     color?: string
     units?: string[]
   }
+  scheduleSync?: {
+    state: 'NOT_CONFIGURED' | 'PENDING' | 'SYNCED' | 'FAILED' | 'BLOCKED' | string
+    professionalId?: string | null
+    errorCode?: string | null
+    attempt?: number
+    updatedAt?: string | null
+  }
   identityLinks?: Array<{
     id?: string
     source: string
