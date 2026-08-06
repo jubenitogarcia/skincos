@@ -430,7 +430,15 @@ function commercialObservationTransition({ previousStatus, previousCount, observ
     // SLA if the underlying condition returns.  Otherwise it can immediately
     // appear overdue on recurrence.
     const shouldStartObservationWindow = nextCount > 0 && (priorCount === 0 || shouldReopen)
-    const nextStatus = shouldReopen ? 'open' : previousStatus
+    // A positive observation is the actionable state; once that observation
+    // clears, the queue should converge to resolved without waiting for an
+    // operator to close a stale zero-count row.  Suppressed and already
+    // resolved findings retain their historical state, while an acknowledged
+    // or in-progress finding is resolved only after a positive observation has
+    // actually cleared.
+    const shouldResolve = priorCount > 0 && nextCount === 0
+        && ['open', 'acknowledged', 'in_progress'].includes(previousStatus)
+    const nextStatus = shouldReopen ? 'open' : shouldResolve ? 'resolved' : previousStatus
     const eventType = shouldReopen
         ? 'reopened'
         : priorCount === 0 && nextCount > 0
@@ -441,9 +449,10 @@ function commercialObservationTransition({ previousStatus, previousCount, observ
     return {
         priorCount,
         shouldReopen,
+        shouldResolve,
         shouldStartObservationWindow,
         nextStatus,
-        shouldRecord: shouldReopen || priorCount !== nextCount,
+        shouldRecord: shouldReopen || shouldResolve || priorCount !== nextCount,
         eventType,
     }
 }
@@ -510,11 +519,11 @@ async function materializeObservation(client, item, actor) {
             last_observed_at = case when $4 > 0 then now() else last_observed_at end,
             last_evaluated_at = now(),
             acknowledged_at = case when $6 then null else acknowledged_at end,
-            resolved_at = case when $6 then null else resolved_at end,
+            resolved_at = case when $10 then now() when $6 then null else resolved_at end,
             -- Background observation must not make an operator's optimistic
             -- status/owner patch stale on every refresh.  Only an automatic
-            -- state transition (a resolved finding reopening) advances it.
-            revision = case when $9 then revision + 1 else revision end,
+            -- state transition (clear or reopen) advances it.
+            revision = case when $9 or $10 then revision + 1 else revision end,
             updated_by = $8,
             updated_at = now()
         where id = $1
@@ -528,6 +537,7 @@ async function materializeObservation(client, item, actor) {
             item.slaHours,
             actor,
             transition.shouldReopen,
+            transition.shouldResolve,
         ])
     const row = updated.rows[0]
     if (transition.shouldRecord) {

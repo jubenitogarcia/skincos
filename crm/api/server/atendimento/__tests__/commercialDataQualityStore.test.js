@@ -133,6 +133,24 @@ test('starts a new SLA window when an observed finding recurs after clearing', (
     assert.equal(reopen.eventType, 'reopened')
 })
 
+test('resolves an actionable finding when its positive observation clears', () => {
+    for (const previousStatus of ['open', 'acknowledged', 'in_progress']) {
+        const cleared = __testables.commercialObservationTransition({
+            previousStatus, previousCount: 84, observedCount: 0,
+        })
+        assert.equal(cleared.shouldResolve, true)
+        assert.equal(cleared.nextStatus, 'resolved')
+        assert.equal(cleared.eventType, 'cleared')
+        assert.equal(cleared.shouldRecord, true)
+    }
+
+    const suppressed = __testables.commercialObservationTransition({
+        previousStatus: 'suppressed', previousCount: 84, observedCount: 0,
+    })
+    assert.equal(suppressed.shouldResolve, false)
+    assert.equal(suppressed.nextStatus, 'suppressed')
+})
+
 test('automatically reopens a suppressed finding when it remains observed', () => {
     const reopen = __testables.commercialObservationTransition({
         previousStatus: 'suppressed', previousCount: 4, observedCount: 4,
