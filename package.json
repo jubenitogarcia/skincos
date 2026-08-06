@@ -31,6 +31,8 @@
     "module:crm:web:dev": "npm --prefix crm/console run dev",
     "module:crm:web:pages": "npm --prefix crm/console run dev:pages",
     "module:crm:api:test": "npm --prefix crm/api test",
+    "crm:continuous-workers:smoke": "node scripts/tests/clientes-continuous-worker-smoke.mjs",
+    "crm:continuous-workers:runtime:test": "bash scripts/runtime/test-install-continuous-worker-service.sh",
     "module:site-public:website:install": "npm --prefix website ci",
     "module:site-public:website:dev": "npm --prefix website run dev",
     "module:site-public:website:lint": "npm --prefix website run lint",

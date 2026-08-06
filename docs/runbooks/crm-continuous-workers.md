@@ -22,6 +22,22 @@ is a second, explicit gate for assisted mode and is never enabled by the unit
 template. No production commercial write, consent mutation, campaign action or
 external message is authorized by this worker foundation.
 
+The independent job runner is controlled separately by
+`CRM_CONTINUOUS_JOBS_ENABLED`. It registers three jobs with independent timers:
+
+| Job | Responsibility | Default interval | Failure handling |
+| --- | --- | ---: | --- |
+| `clientes.opt_out_ingestion` | Aggregate opt-out snapshot from `harmonia.contacts`; no phone payload is copied | 60 s | retry/backoff, then checkpoint dead-letter |
+| `clientes.source_update` | Target-bound Google Sheets source refresh; unit defaults to `dry-run` | 15 min | advisory lock, retry/backoff, then dead-letter |
+| `clientes.quality_refresh` | Refresh the Atendimento commercial data-quality queue | 30 min | target/identity gate, retry/backoff, then dead-letter |
+
+Each execution has a deterministic `job-id:scheduled-at` idempotency key. The
+checkpoint at `CRM_CONTINUOUS_JOBS_STATE_PATH` (default
+`$VAR_DIR/continuous-jobs-state.json`) retains the last execution, duration,
+lag, error/retry counts, next run and up to 100 dead-letter entries. A
+permanent failure keeps readiness at `503` until an operator reconciles or
+resets that job; it is never retried forever.
+
 ## Runtime and health
 
 The dedicated entrypoint is `crm/api/continuous-worker.js`; the native launcher
@@ -29,6 +45,15 @@ is `scripts/crm/run-continuous-workers-linux.sh`. The unit template is
 `ops/runtime/units/crm-jobs.service`. Install/render it with
 `scripts/runtime/install-continuous-worker-service.sh`; the installer does not
 start the service. Private `crm-jobs.env` is the only place to enable a runtime.
+The launcher does not source either environment file and never runs `npm
+install`; systemd supplies `EnvironmentFile` values and dependencies must be
+provisioned by the release. No variable or GitHub Environment is interpreted as
+shell.
+
+Activation is deliberately two-keyed in the private environment:
+`CRM_CONTINUOUS_WORKERS_ENABLED=1` starts the process and
+`CRM_CONTINUOUS_JOBS_ENABLED=1` enables the three Clientes jobs. The checked-in
+unit keeps both disabled by default and keeps source refresh at `dry-run`.
 
 The health server binds to loopback by default (`CRM_CONTINUOUS_WORKER_PORT`,
 default `8102`) and exposes:
@@ -40,10 +65,19 @@ default `8102`) and exposes:
 - all other paths: HTTP 404.
 
 Status reports mode, outbound policy, dependency reachability, queue counts and
-last loop/error timestamps. It does not expose task payloads, phone numbers,
-tokens or provider responses.
+last loop/error timestamps. The job section reports lag, last execution,
+duration, errors, retries and dead-letter count. It does not expose task
+payloads, phone numbers, tokens or provider responses. The health interface is
+loopback-only (`127.0.0.1` or `::1`); non-loopback hosts are rejected at
+startup. `/health` remains `200` while the process is alive even when the
+database is unavailable. `/readiness` is `503` until database, Harmonia queue,
+job checkpoint and required jobs are healthy.
 
 ## Rollback and promotion
+
+This tranche intentionally performs no production promotion, unit enablement,
+database migration or external message. It delivers the isolated code,
+templates, tests and evidence only.
 
 Before installing a unit, preserve the current unit file and record the
 release/source path. Roll back by restoring that unit, running `systemctl
@@ -63,6 +97,16 @@ curl --fail http://127.0.0.1:8102/readiness
 
 The final two checks are expected to fail readiness when the service is disabled
 or the database is unavailable; that is a safety signal, not proof of a deploy.
+
+For a local real-process smoke (including database-down health, readiness `503`,
+SIGTERM and port release), run:
+
+```sh
+node scripts/tests/clientes-continuous-worker-smoke.mjs
+```
+
+The smoke uses no production credentials and does not enable a write or an
+external provider.
 
 ## Schema gate
 
@@ -104,3 +148,11 @@ sudo -u skincos env \
 An apply follows the same command with `HARMONIA_MIGRATION_ACTION=apply`.
 Staging uses its dedicated migrator environment and the separate
 `/var/backups/skincos/clientes/staging` checkpoint root.
+
+## Superseded implementation
+
+PR #736 (`codex/admin/jobs-worker-foundation`) was a stale draft based on an
+older main line and is not incorporated. Its valid process-boundary idea was
+reimplemented on the current `origin/main` by the merged foundations in PRs
+#1121/#1122 and this additive job-runner change. The old PR must remain closed
+as superseded; do not merge or rebase its branch into this runtime.

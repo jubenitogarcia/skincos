@@ -20,7 +20,8 @@ Without --apply, renders the CRM continuous-worker unit in a temporary
 directory and verifies it with systemd-analyze. --apply installs only the
 unit and reloads systemd. --enable additionally enables it; it never starts
 the service. Runtime execution remains disabled until the private
-crm-jobs.env explicitly sets CRM_CONTINUOUS_WORKERS_ENABLED=1.
+crm-jobs.env explicitly sets CRM_CONTINUOUS_WORKERS_ENABLED=1 and, for the
+Clientes job set, CRM_CONTINUOUS_JOBS_ENABLED=1.
 EOF
 }
 
