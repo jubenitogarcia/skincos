@@ -6,7 +6,7 @@ const path = require('node:path');
 const ORGANIZER_ID = 'ccg-orchestrator-001';
 const ORGANIZER_NAME = 'Campaign Creative Creator Organizer';
 const CREATOR_WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
-const BUILDER_VERSION = '1.0.1';
+const BUILDER_VERSION = '1.0.2';
 
 function parseArgs(argv) {
   const result = {};
@@ -52,6 +52,11 @@ const object = (candidate) => candidate && typeof candidate === 'object' && !Arr
 const supplied = object(input.production_request);
 const executionId = value(typeof $execution !== 'undefined' && $execution.id, 'manual');
 const now = new Date().toISOString();
+const requestedMaxJobs = Number(input.max_jobs);
+// The safe static smoke uses three approved URI assets plus one composition job.
+const defaultMaxJobs = Number.isFinite(requestedMaxJobs) && requestedMaxJobs > 0
+  ? Math.floor(requestedMaxJobs)
+  : 4;
 const productionId = value(supplied.production_id, 'organizer-production-' + executionId);
 const contentId = value(supplied.content_id, 'organizer-content-' + executionId);
 const campaignId = value(supplied.campaign_id, 'organizer-campaign');
@@ -155,7 +160,7 @@ const request = Object.keys(supplied).length
         mock_provider: true,
         allowed_providers: ['mock'],
         max_cost: 0,
-        max_jobs: 1,
+        max_jobs: defaultMaxJobs,
         max_revisions: 0,
         require_human_approval: true,
         publish_allowed: false,
@@ -209,7 +214,7 @@ function buildOrganizer(source, options = {}) {
         assignments: [
           { id: 'ccg-organizer-content-type', name: 'content_type', value: 'STATIC_SINGLE', type: 'string' },
           { id: 'ccg-organizer-dry-run', name: 'dry_run', value: true, type: 'boolean' },
-          { id: 'ccg-organizer-max-jobs', name: 'max_jobs', value: 1, type: 'number' },
+          { id: 'ccg-organizer-max-jobs', name: 'max_jobs', value: 4, type: 'number' },
         ],
       },
       options: {},
