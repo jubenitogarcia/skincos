@@ -229,6 +229,14 @@ test('scopes Clientes commercial reads, queues, actions, cadences and offers to 
 
     await store.commercialOverview({}, { id: 'admin-via-pages', role: 'GESTOR', isGlobalAdmin: true, allowedUnits: [] })
     assert.equal(captured.filter((entry) => entry.kind === 'profiles').at(-1)?.params[1], null)
+
+    // The Pages actor parser keeps a stable `allowedUnits` property but marks
+    // an omitted claim as false. Such a global GESTOR must retain legacy
+    // cross-unit access; only an explicit empty claim is fail-closed.
+    await store.commercialOverview({}, {
+        id: 'gestor-without-scope-claim', role: 'GESTOR', allowedUnits: undefined, allowedUnitsDeclared: false,
+    })
+    assert.equal(captured.filter((entry) => entry.kind === 'profiles').at(-1)?.params[1], null)
 })
 
 test('returns a bounded, unit-scoped Customer 360 timeline from confirmed source events', async () => {
