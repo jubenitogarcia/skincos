@@ -2683,8 +2683,14 @@ function commercialUnitScope(actor) {
     // behavior even when they did not populate that parser marker.
     if (actor?.isGlobalAdmin === true || role === 'ADMIN') return null
     if (!Array.isArray(actor?.allowedUnits)) {
+        // The signed-actor parser always carries an `allowedUnits` property so
+        // its shape is stable, but marks whether the claim was present on the
+        // token separately.  Treat that explicit false marker as an omitted
+        // claim; only malformed direct callers without the marker retain the
+        // fail-closed empty-scope behavior.
         const scopeWasDeclared = actor?.allowedUnitsDeclared === true ||
-            Object.prototype.hasOwnProperty.call(actor || {}, 'allowedUnits')
+            (actor?.allowedUnitsDeclared === undefined &&
+                Object.prototype.hasOwnProperty.call(actor || {}, 'allowedUnits'))
         return scopeWasDeclared ? [] : null
     }
     return [...normalizeAllowedUnitKeys(actor)].sort()
