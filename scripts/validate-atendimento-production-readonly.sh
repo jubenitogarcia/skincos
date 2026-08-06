@@ -31,16 +31,19 @@ fi
 grep -Fq '"readOnlyRuntime":true' "$health_body" || { echo 'Health did not attest readOnlyRuntime=true.' >&2; exit 1; }
 grep -Fq '"module":"atendimento"' "$health_body" || { echo 'Health did not attest the Atendimento module.' >&2; exit 1; }
 
-sudo -n -u postgres psql --dbname=skincos_crm_local --set=ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | while IFS='|' read -r role_name role_login read_only schema_ok atendimento_ok caixa_ok; do
+sudo -n -u postgres psql --dbname=skincos_crm_local --set=ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | while IFS='|' read -r role_name role_login read_only schema_ok atendimento_ok caixa_ok harmonia_schema_ok harmonia_phone_ok harmonia_opt_out_ok; do
 select r.rolname,
        r.rolcanlogin,
        coalesce(array_to_string(r.rolconfig, ','), '') like '%default_transaction_read_only=on%',
        has_schema_privilege(r.rolname, 'crm_atendimento', 'USAGE'),
        has_table_privilege(r.rolname, 'crm_atendimento.global_client_identities', 'SELECT'),
-       has_table_privilege(r.rolname, 'crm_caixa.sales', 'SELECT')
+       has_table_privilege(r.rolname, 'crm_caixa.sales', 'SELECT'),
+       has_schema_privilege(r.rolname, 'harmonia', 'USAGE'),
+       has_column_privilege(r.rolname, 'harmonia.contacts', 'phone_raw', 'SELECT'),
+       has_column_privilege(r.rolname, 'harmonia.contacts', 'opted_out_at', 'SELECT')
   from pg_roles r where r.rolname = 'skincos_clientes_ro';
 SQL
-  [[ "$role_name" == 'skincos_clientes_ro' && "$role_login" == 't' && "$read_only" == 't' && "$schema_ok" == 't' && "$atendimento_ok" == 't' && "$caixa_ok" == 't' ]] || {
+  [[ "$role_name" == 'skincos_clientes_ro' && "$role_login" == 't' && "$read_only" == 't' && "$schema_ok" == 't' && "$atendimento_ok" == 't' && "$caixa_ok" == 't' && "$harmonia_schema_ok" == 't' && "$harmonia_phone_ok" == 't' && "$harmonia_opt_out_ok" == 't' ]] || {
     echo 'Read-only database role contract is incomplete.' >&2
     exit 1
   }

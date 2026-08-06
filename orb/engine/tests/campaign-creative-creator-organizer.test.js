@@ -24,6 +24,12 @@ test('Organizer builder produces a safe inactive subworkflow route to the operat
   const execute = workflow.nodes.find((node) => node.name === 'Execute Campaign Creative Creator');
   assert.equal(execute.parameters.workflowId.value, CREATOR_WORKFLOW_ID);
   assert.equal(execute.parameters.options.waitForSubWorkflow, true);
+  const request = workflow.nodes.find((node) => node.name === 'Build CCG Operational Request');
+  assert.match(request.parameters.jsCode, /organizer-mock-brand-logo-v1/);
+  assert.match(request.parameters.jsCode, /approval_status: 'approved'/);
+  assert.match(request.parameters.jsCode, /mock:\/\/approved-assets/);
+  assert.match(request.parameters.jsCode, /max_jobs: defaultMaxJobs/);
+  assert.equal(workflow.nodes.find((node) => node.name === 'Organizer Safe Defaults').parameters.assignments.assignments.find((assignment) => assignment.name === 'max_jobs').value, 4);
   assert.equal(workflow.connections['Build CCG Operational Request'].main[0][0].node, 'Execute Campaign Creative Creator');
   assert.equal(workflow.meta.publish_allowed, false);
   assert.equal(workflow.meta.no_public_webhook, true);

@@ -933,11 +933,24 @@ export type CommercialOverview = {
   profiles: CommercialProfile[]
 }
 
+export type CommercialTimelineEntry = {
+  id: string
+  type: 'attendance' | 'sale'
+  occurredOn: string | null
+  title: string
+  detail: string
+  unitName: string
+  source: string
+  amount: number | null
+  status: string
+}
+
 export type CommercialProfileDetail = {
   asOf: string
   policy: CommercialPolicy
   profile: CommercialProfile
   actions: CommercialAction[]
+  timeline: CommercialTimelineEntry[]
   clinicalCadences: Array<{ procedureId: string; procedureName: string; cadenceDays: number | null; status: 'approved' | 'not_configured'; notes: string; unitSlug: string; unitName: string; approvedAt: string | null; approvedBy: string }>
 }
 

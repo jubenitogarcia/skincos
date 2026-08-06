@@ -8,7 +8,7 @@ const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
 const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-error-v3';
 const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
-const BUILDER_VERSION = '4.0.0';
+const BUILDER_VERSION = '4.1.4';
 const ALL_FIXTURE_NAMES = [
   'Build CCG-00 dry-run fixture',
   'Build CCG-10 dry-run fixture',
@@ -421,6 +421,13 @@ for (const job of jobs) {
   if (!consentGranted) blockers.push('CONSENT_REQUIRED:' + text(job.job_id || job.id));
 }
 const dispatchAllowed = blockers.length === 0;
+const executorEndpoint = text(firstDefined(
+  policy.executor_base_url,
+  policy.executor_endpoint,
+  request.provider_policy?.executor_base_url,
+  request.executor_endpoint,
+  'http://127.0.0.1:8790'
+));
 const blockedJobs = jobs.map((job, index) => ({
   job_id: text(job.job_id || job.id || 'job-' + (index + 1)),
   status: 'NEEDS_REVIEW',
@@ -504,7 +511,7 @@ return [{
       execution_id: dispatchAllowed ? '' : blockedExecution.execution_id,
       dispatch_allowed: dispatchAllowed,
       dispatch_requested: mode === 'LIVE' || mode === 'DRY_RUN',
-      executor_endpoint: text($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790'),
+      executor_endpoint: executorEndpoint,
       publish_allowed: false,
       publish_requested: false,
       policy_blockers: blockers
@@ -610,7 +617,12 @@ const execution = {
   total_cost: number(candidate.total_cost || candidate.cost?.amount) || normalizedJobs.reduce((sum, job) => sum + (number(job.cost?.amount) || 0), 0),
   mode: text(candidate.mode || base.ccg_context?.mode || 'DRY_RUN').toUpperCase(),
   source: 'campaign-creative-executor',
-  executor_endpoint: text($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790'),
+  executor_endpoint: text(
+    base.execution_handoff?.executor_endpoint ||
+    base.executor_handoff?.executor_endpoint ||
+    base.production_request?.executor_endpoint ||
+    'http://127.0.0.1:8790'
+  ),
   publish_allowed: false,
   publish_requested: false,
   external_calls: list(candidate.external_calls),
@@ -670,6 +682,64 @@ function resolveErrorWorkflowId(value) {
 
 function nodeByName(nodes, name) {
   return nodes.find((node) => node.name === name);
+}
+
+const LANGCHAIN_MODEL_TYPE = '@n8n/n8n-nodes-langchain.lmChatOpenAi';
+const LANGCHAIN_STRUCTURED_PARSER_TYPE = '@n8n/n8n-nodes-langchain.outputParserStructured';
+
+function hasTypedConnection(workflow, source, outputType, target, targetType = outputType) {
+  const branches = workflow.connections?.[source]?.[outputType];
+  return Array.isArray(branches) && branches.some((branch) => Array.isArray(branch)
+    && branch.some((edge) => edge?.node === target && edge?.type === targetType));
+}
+
+function addTypedConnection(workflow, source, outputType, target, targetType = outputType, index = 0) {
+  workflow.connections ||= {};
+  workflow.connections[source] ||= {};
+  workflow.connections[source][outputType] ||= [];
+  const branches = workflow.connections[source][outputType];
+  while (branches.length <= index) branches.push([]);
+  if (!Array.isArray(branches[index])) branches[index] = [];
+  if (!hasTypedConnection(workflow, source, outputType, target, targetType)) {
+    branches[index].push({ node: target, type: targetType, index: 0 });
+  }
+}
+
+function incomingTypedConnections(workflow, target, targetType) {
+  const matches = [];
+  for (const [source, outputs] of Object.entries(workflow.connections || {})) {
+    for (const [outputType, branches] of Object.entries(outputs || {})) {
+      if (!Array.isArray(branches)) continue;
+      for (const branch of branches) {
+        for (const edge of Array.isArray(branch) ? branch : []) {
+          if (edge?.node === target && edge?.type === targetType) {
+            matches.push({ source, outputType, edge });
+          }
+        }
+      }
+    }
+  }
+  return matches;
+}
+
+function ensureStructuredParserModels(workflow) {
+  const parsers = workflow.nodes.filter((node) => node.type === LANGCHAIN_STRUCTURED_PARSER_TYPE
+    && node.parameters?.autoFix !== false);
+  for (const parser of parsers) {
+    const parserBranches = workflow.connections?.[parser.name]?.ai_outputParser;
+    const parserAgents = (Array.isArray(parserBranches) ? parserBranches : [])
+      .flatMap((branch) => Array.isArray(branch) ? branch : [])
+      .filter((edge) => edge?.type === 'ai_outputParser' && edge?.node)
+      .map((edge) => edge.node);
+    for (const agentName of parserAgents) {
+      const modelMatch = incomingTypedConnections(workflow, agentName, 'ai_languageModel')
+        .find((match) => workflow.nodes.some((node) => node.name === match.source && node.type === LANGCHAIN_MODEL_TYPE));
+      if (!modelMatch) continue;
+      addTypedConnection(workflow, modelMatch.source, 'ai_languageModel', parser.name, 'ai_languageModel');
+      break;
+    }
+  }
+  return workflow;
 }
 
 function assertSourceShape(source, options = {}) {
@@ -1015,9 +1085,7 @@ const maxRevisionsRaw = request.provider_policy?.max_revisions ?? request.produc
 const maximumRevisions = Math.max(0, Number.isFinite(Number(maxRevisionsRaw)) ? Number(maxRevisionsRaw) : 0);
 const maximumCostRaw = request.provider_policy?.max_cost ?? request.production_execution?.max_cost ?? request.budget?.max_cost ?? data.module_outputs?.CCG_00?.intake_manifest?.limits?.max_cost;
 const maximumCostConfigured = maximumCostRaw !== undefined && maximumCostRaw !== null && maximumCostRaw !== '' && Number.isFinite(Number(maximumCostRaw));
-const maximumCost = maximumCostConfigured ? Math.max(0, Number(maximumCostRaw)) : null;
-
-const brief = {`,
+const maximumCost = maximumCostConfigured ? Math.max(0, Number(maximumCostRaw)) : null;`,
   );
   updated = updated.replace(
     '    raw_job: job\n  };',
@@ -1784,7 +1852,6 @@ function executorHeaders() {
     sendHeaders: true,
     headerParameters: {
       parameters: [
-        { name: 'Authorization', value: "={{ $env.CCG_EXECUTOR_AUTH_TOKEN ? 'Bearer ' + $env.CCG_EXECUTOR_AUTH_TOKEN : '' }}" },
         { name: 'Content-Type', value: 'application/json' },
       ],
     },
@@ -1795,7 +1862,7 @@ function executionDispatchNode(position) {
   return {
     parameters: {
       method: 'POST',
-      url: "={{ ($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790') + '/v1/production-manifests' }}",
+      url: "={{ ($json.execution_handoff?.executor_endpoint || 'http://127.0.0.1:8790') + '/v1/production-manifests' }}",
       ...executorHeaders(),
       sendBody: true,
       contentType: 'raw',
@@ -1815,7 +1882,7 @@ function executionPollNode(position) {
   return {
     parameters: {
       method: 'GET',
-      url: "={{ ($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790') + '/v1/production-manifests/' + encodeURIComponent($json.execution_id || $json.production_execution_results?.execution_id || '') }}",
+      url: "={{ ($('CCG-80 Validate Execution Policy').first().json.execution_handoff?.executor_endpoint || 'http://127.0.0.1:8790') + '/v1/production-manifests/' + encodeURIComponent($json.execution_id || $json.production_execution_results?.execution_id || '') }}",
       ...executorHeaders(),
       options: { timeout: 120000 },
     },
@@ -1854,9 +1921,14 @@ function transformWorkflow(source, options = {}) {
   workflow.connections = workflow.connections && typeof workflow.connections === 'object' ? workflow.connections : {};
   removeNodesAndEdges(workflow, [...INTERMEDIATE_FIXTURES, 'Build CCG-99 retryable fixture']);
   patchUnsafeRuntime(workflow);
+  ensureStructuredParserModels(workflow);
 
   workflow.nodes.push({
-    parameters: {},
+    // n8n 2.8 validates the Execute Workflow Trigger's default input schema
+    // before starting a child execution. The operational contract already
+    // carries its own versioned envelope, so pass that envelope through
+    // unchanged instead of forcing the trigger to maintain a second schema.
+    parameters: { inputSource: 'passthrough' },
     id: 'ccg-operational-request-trigger',
     name: 'Operational Production Request',
     type: 'n8n-nodes-base.executeWorkflowTrigger',
@@ -1990,6 +2062,7 @@ module.exports = {
   buildErrorWorkflow,
   buildFixturesWorkflow,
   buildWorkflowPackage,
+  ensureStructuredParserModels,
   optionalSkipCode,
   sanitizeWorkflow,
   transformWorkflow,
