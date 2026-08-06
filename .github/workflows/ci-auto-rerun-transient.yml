@@ -1,45 +1,114 @@
-name: CI Auto Rerun (Transient)
+name: CI Retry (Incident-gated)
 
 on:
-  workflow_run:
-    workflows:
-      - CI Smoke (Assert)
-      - Central E2E Smoke
-      - CodeQL (Monorepo)
-      - Lint, Format & Static Analysis
-      - Security & Secrets Audit
-      - Test Coverage & Quality
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Failed workflow run ID to retry once.
+        required: true
+        type: string
+      incident_ref:
+        description: Traceable incident, provider-status or rate-limit reference.
+        required: true
+        type: string
+      failure_class:
+        description: Confirmed transient cause for this one retry.
+        required: true
+        type: choice
+        options:
+          - runner_outage
+          - external_rate_limit
+          - provider_transient
 
 concurrency:
-  group: ci-auto-rerun-${{ github.event.workflow_run.id }}
-  cancel-in-progress: true
+  group: ci-retry-${{ inputs.run_id }}
+  cancel-in-progress: false
 
 permissions:
   actions: write
-  contents: read
 
 jobs:
   rerun_failed_jobs_once:
-    name: Rerun failed jobs (once)
-    if: >-
-      ${{
-        github.event.workflow_run.conclusion == 'failure' &&
-        github.event.workflow_run.run_attempt == 1 &&
-        github.event.workflow_run.head_repository.full_name == github.repository
-      }}
+    name: Retry failed jobs (incident-gated)
     runs-on: ubuntu-latest
     steps:
-      - name: Rerun failed jobs
+      - name: Validate transient incident and retry failed jobs
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          REQUESTED_RUN_ID: ${{ inputs.run_id }}
+          INCIDENT_REF: ${{ inputs.incident_ref }}
+          FAILURE_CLASS: ${{ inputs.failure_class }}
         with:
           script: |
-            const run = context.payload.workflow_run;
+            const requestedRunId = String(process.env.REQUESTED_RUN_ID || "").trim();
+            const incidentRef = String(process.env.INCIDENT_REF || "").trim();
+            const failureClass = String(process.env.FAILURE_CLASS || "").trim();
+            const allowedClasses = new Set(["runner_outage", "external_rate_limit", "provider_transient"]);
+            const retryableWorkflows = new Set([
+              "Codex autonomy gate",
+              "Architecture governance",
+              "CI Smoke (Assert)",
+              "Central E2E Smoke",
+              "CodeQL (Monorepo)",
+              "Lint, Format & Static Analysis",
+              "Security & Secrets Audit",
+              "Timekeeping CI",
+            ]);
+            if (!/^\d+$/.test(requestedRunId)) {
+              core.setFailed("run_id must be a numeric GitHub Actions workflow run ID.");
+              return;
+            }
+            if (!/^[A-Za-z0-9][A-Za-z0-9._:/#-]{5,159}$/.test(incidentRef)) {
+              core.setFailed("incident_ref must be a traceable, single-line incident reference.");
+              return;
+            }
+            if (!allowedClasses.has(failureClass)) {
+              core.setFailed("failure_class must identify a permitted transient cause.");
+              return;
+            }
+
+            const runId = Number(requestedRunId);
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+            });
+            if (run.head_repository?.full_name !== context.payload.repository.full_name) {
+              core.setFailed("Refusing to retry a workflow run that did not originate in this repository.");
+              return;
+            }
+            if (!retryableWorkflows.has(run.name)) {
+              core.setFailed(`Refusing retry: ${run.name} is not an approved validation workflow.`);
+              return;
+            }
+            if (run.conclusion !== "failure") {
+              core.setFailed(`Refusing retry: run ${run.id} concluded ${run.conclusion || "without a terminal conclusion"}.`);
+              return;
+            }
+            if (run.run_attempt !== 1) {
+              core.setFailed(`Refusing retry: run ${run.id} is already attempt ${run.run_attempt}.`);
+              return;
+            }
+
+            const { data: jobs } = await github.rest.actions.listJobsForWorkflowRunAttempt({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: run.id,
+              attempt_number: run.run_attempt,
+              per_page: 100,
+            });
+            const failedJobs = jobs.jobs.filter((job) => ["failure", "cancelled", "timed_out"].includes(job.conclusion));
+            if (!failedJobs.length) {
+              core.setFailed(`Refusing retry: run ${run.id} has no failed terminal jobs to retry.`);
+              return;
+            }
+
             core.warning(
-              `Auto-rerun transient failure: ${run.name} (run_id=${run.id}, attempt=${run.run_attempt}, event=${run.event}, branch=${run.head_branch})`
+              `Incident-gated retry: run=${run.id} workflow=${run.name} class=${failureClass} incident=${incidentRef} jobs=${failedJobs.map((job) => job.name).join(", ")}`
             );
             await github.rest.actions.reRunWorkflowFailedJobs({
               owner: context.repo.owner,
               repo: context.repo.repo,
               run_id: run.id,
             });
+            core.notice(`Requested one failed-job retry for run ${run.id}; no successful jobs were restarted.`);

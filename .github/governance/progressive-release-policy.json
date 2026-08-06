@@ -44,6 +44,7 @@
     },
     "securityAudit": {
       "workflow": ".github/workflows/security-secrets-audit.yml",
+      "selector": "scripts/github-actions/validation-plan.mjs",
       "triggerPaths": [
         ".github/governance/progressive-release-policy.json",
         ".github/workflows/ponto-",

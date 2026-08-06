@@ -1,8 +1,15 @@
 name: codex-keep-prs-mergeable
 
 on:
+  # This workflow has write permissions, so it deliberately uses the base
+  # revision only: never add checkout or execute content supplied by a PR.
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch: {}
 
 concurrency:
@@ -10,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
   issues: write
 
@@ -21,7 +28,7 @@ jobs:
       - name: Keep codex PRs up-to-date (update-branch) + label conflicts
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
-          github-token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || github.token }}
+          github-token: ${{ github.token }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
@@ -131,12 +138,6 @@ jobs:
               }
             }
 
-            // Ensure labels exist (best-effort).
-            await ensureLabel(LABELS.updated);
-            await ensureLabel(LABELS.conflict);
-            await ensureLabel(LABELS.pending);
-            await ensureLabel(LABELS.enabled);
-
             const pulls = await github.paginate(github.rest.pulls.list, {
               owner,
               repo,
@@ -155,6 +156,16 @@ jobs:
             }).slice(0, 50);
 
             core.info(`Found ${candidates.length} open codex PR(s) to evaluate.`);
+            if (!candidates.length) {
+              core.info("No eligible Codex PRs; no labels or branches need reconciliation.");
+              return;
+            }
+
+            // Only create labels when there is a candidate that can use them.
+            await ensureLabel(LABELS.updated);
+            await ensureLabel(LABELS.conflict);
+            await ensureLabel(LABELS.pending);
+            await ensureLabel(LABELS.enabled);
 
             for (const pr of candidates) {
               const prNumber = pr.number;

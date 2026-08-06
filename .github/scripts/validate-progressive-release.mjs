@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { buildValidationPlan } from "../../scripts/github-actions/validation-plan.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -32,12 +33,28 @@ for (const target of ["staging", "production"]) {
 }
 if (governance?.attestation?.noAdministrativeBypass !== true || governance?.attestation?.automaticRollback !== true) fail("single-operator attestation must retain no-bypass and automatic rollback");
 const securityAudit = governance?.securityAudit;
-if (securityAudit?.workflow !== ".github/workflows/security-secrets-audit.yml" || !Array.isArray(securityAudit?.triggerPaths) || securityAudit.triggerPaths.length < 3) {
+if (
+  securityAudit?.workflow !== ".github/workflows/security-secrets-audit.yml"
+  || securityAudit?.selector !== "scripts/github-actions/validation-plan.mjs"
+  || !Array.isArray(securityAudit?.triggerPaths)
+  || securityAudit.triggerPaths.length < 3
+) {
   fail("Ponto governance must declare security audit coverage for its release surfaces");
 }
 const securityWorkflow = read(".github/workflows/security-secrets-audit.yml");
-for (const triggerPath of securityAudit?.triggerPaths ?? []) {
-  if (!securityWorkflow.includes(triggerPath)) fail(`security audit workflow is missing Ponto trigger path: ${triggerPath}`);
+const autonomyGate = read(".github/workflows/codex-autonomy-gate.yml");
+if (!securityWorkflow.includes("workflow_call:")) fail("security audit workflow must remain callable by the aggregate gate");
+if (!autonomyGate.includes("uses: ./.github/workflows/security-secrets-audit.yml")) fail("aggregate gate must call the security audit workflow");
+const pontoSecuritySamples = [
+  ".github/governance/progressive-release-policy.json",
+  ".github/workflows/ponto-progressive-release.yml",
+  ".github/scripts/ponto-required-checks.mjs",
+  "workforce/timekeeping/src/worker.ts"
+];
+for (const sample of pontoSecuritySamples) {
+  if (!buildValidationPlan([sample]).outputs.run_security) {
+    fail(`security audit selector does not cover the Ponto release surface: ${sample}`);
+  }
 }
 if (JSON.stringify(policy.stages) !== JSON.stringify(["preview", "staging", "pilot", "canary", "production"])) fail("policy stages must be preview, staging, pilot, canary, production in order");
 for (const [stage, predecessor] of Object.entries({ staging: "preview", pilot: "staging", canary: "pilot", production: "canary" })) {

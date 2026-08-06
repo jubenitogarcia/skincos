@@ -1,14 +1,10 @@
 name: UX/UI Infrastructure (informative)
 
 on:
-  pull_request:
-    paths:
-      - 'crm/console/**'
-      - 'website/**'
-      - 'scripts/ux-ui/**'
-      - '.lighthouserc.json'
-      - '.github/workflows/ux-ui-infrastructure.yml'
-      - 'docs/developer-experience/ux-ui-infrastructure/**'
+  # Informative visual baselines are intentionally batched once per day rather
+  # than rebuilding Storybook and browsers for every PR.
+  schedule:
+    - cron: "17 4 * * *"
   workflow_dispatch:
 
 permissions:

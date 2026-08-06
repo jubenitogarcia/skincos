@@ -1,39 +1,11 @@
 name: Central E2E Smoke
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/governance/**"
-      - ".github/workflows/codex-autonomy-gate.yml"
-  pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/governance/**"
-      - ".github/workflows/codex-autonomy-gate.yml"
-      - ".github/workflows/**"
-  workflow_dispatch: {}
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   e2e:
@@ -82,6 +54,9 @@ jobs:
       - name: Run Playwright smoke
         env:
           E2E_BASE_URL: http://127.0.0.1:5173
+          # Escala used to start a second, dedicated browser workflow.  Run it
+          # here with the same CRM fixture so one browser lifecycle covers it.
+          RUN_ESCALA_E2E_IN_CI: "1"
         run: |
           set -euxo pipefail
           cd crm/console

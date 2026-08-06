@@ -2,6 +2,7 @@ name: Codex autonomy gate
 
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -12,7 +13,9 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
+  security-events: write
 
 concurrency:
   group: codex-autonomy-gate-${{ github.event.pull_request.number || github.ref }}
@@ -25,6 +28,18 @@ jobs:
     outputs:
       risk: ${{ steps.risk.outputs.risk }}
       surfaces: ${{ steps.risk.outputs.surfaces }}
+      run_architecture: ${{ steps.plan.outputs.run_architecture }}
+      run_ci_smoke: ${{ steps.plan.outputs.run_ci_smoke }}
+      run_lint: ${{ steps.plan.outputs.run_lint }}
+      run_crm: ${{ steps.plan.outputs.run_crm }}
+      run_website: ${{ steps.plan.outputs.run_website }}
+      run_backend: ${{ steps.plan.outputs.run_backend }}
+      run_python: ${{ steps.plan.outputs.run_python }}
+      run_e2e: ${{ steps.plan.outputs.run_e2e }}
+      run_security: ${{ steps.plan.outputs.run_security }}
+      run_codeql: ${{ steps.plan.outputs.run_codeql }}
+      run_timekeeping: ${{ steps.plan.outputs.run_timekeeping }}
+      run_windows_continuity: ${{ steps.plan.outputs.run_windows_continuity }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -51,10 +66,14 @@ jobs:
           echo "sha=$base" >> "$GITHUB_OUTPUT"
       - id: risk
         run: node scripts/codex-risk-classifier.mjs --base "${{ steps.base.outputs.sha }}" --head "$GITHUB_SHA" --output risk-report.json
+      - id: plan
+        run: node scripts/github-actions/validation-plan.mjs --base "${{ steps.base.outputs.sha }}" --head "$GITHUB_SHA" --output validation-plan.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: codex-risk-report-${{ github.run_id }}
-          path: risk-report.json
+          name: codex-validation-plan-${{ github.run_id }}
+          path: |
+            risk-report.json
+            validation-plan.json
           retention-days: 30
 
   focused-validation:
@@ -79,6 +98,8 @@ jobs:
           node .github/scripts/validate-github-governance.mjs
           node --test .github/scripts/ponto-single-operator-governance.test.mjs
           node --test .github/scripts/atendimento-deployment-contract.test.mjs
+          node --test scripts/tests/github-actions-validation-plan.test.mjs
+          node --test scripts/tests/github-actions-workflow-contract.test.mjs
       - name: Supervisor contract
         if: ${{ contains(needs.classify.outputs.surfaces, 'codex-baseline') }}
         run: python3 -m unittest discover -s .codex/hooks/tests -p 'test_skincos_supervisor_gate.py' -v
@@ -89,18 +110,105 @@ jobs:
           node scripts/codex-release-manifest.mjs --source HEAD --surface codex-baseline --output /tmp/codex-release-manifest.json
           test -s /tmp/codex-release-manifest.json
 
+  architecture:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_architecture == 'true' }}
+    uses: ./.github/workflows/architecture-governance.yml
+
+  ci-smoke:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_ci_smoke == 'true' || needs.classify.outputs.run_windows_continuity == 'true' }}
+    uses: ./.github/workflows/ci-smoke.yml
+    with:
+      run_core_smoke: ${{ needs.classify.outputs.run_ci_smoke == 'true' }}
+      run_windows_continuity: ${{ needs.classify.outputs.run_windows_continuity == 'true' }}
+
+  lint:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_lint == 'true' }}
+    uses: ./.github/workflows/lint-format-static.yml
+    with:
+      run_crm: ${{ needs.classify.outputs.run_crm == 'true' }}
+      run_website: ${{ needs.classify.outputs.run_website == 'true' }}
+      run_backend: ${{ needs.classify.outputs.run_backend == 'true' }}
+      run_python: ${{ needs.classify.outputs.run_python == 'true' }}
+
+  central-e2e:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_e2e == 'true' }}
+    uses: ./.github/workflows/central-e2e-smoke.yml
+
+  security:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_security == 'true' }}
+    uses: ./.github/workflows/security-secrets-audit.yml
+    secrets:
+      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  codeql:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_codeql == 'true' }}
+    uses: ./.github/workflows/crm-codeql.yml
+
+  timekeeping:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_timekeeping == 'true' }}
+    uses: ./.github/workflows/timekeeping-ci.yml
+
   codex-autonomy-gate:
     name: codex-autonomy-gate
     if: ${{ always() }}
-    needs: [classify, focused-validation]
+    needs:
+      - classify
+      - focused-validation
+      - architecture
+      - ci-smoke
+      - lint
+      - central-e2e
+      - security
+      - codeql
+      - timekeeping
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate required validation
         env:
           CLASSIFY_RESULT: ${{ needs.classify.result }}
-          VALIDATION_RESULT: ${{ needs.focused-validation.result }}
+          FOCUSED_VALIDATION_RESULT: ${{ needs.focused-validation.result }}
+          ARCHITECTURE_RESULT: ${{ needs.architecture.result }}
+          CI_SMOKE_RESULT: ${{ needs.ci-smoke.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          E2E_RESULT: ${{ needs.central-e2e.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
+          TIMEKEEPING_RESULT: ${{ needs.timekeeping.result }}
         run: |
           set -euo pipefail
-          [[ "$CLASSIFY_RESULT" == success ]] || { echo "::error::risk classification did not complete"; exit 1; }
-          [[ "$VALIDATION_RESULT" == success ]] || { echo "::error::risk-selected validation did not complete"; exit 1; }
+          require_success() {
+            local label="$1"
+            local result="$2"
+            if [[ "$result" != success ]]; then
+              echo "::error::${label} did not complete successfully (result=${result})"
+              return 1
+            fi
+          }
+          allow_skipped() {
+            local label="$1"
+            local result="$2"
+            case "$result" in
+              success|skipped) return 0 ;;
+              *) echo "::error::${label} did not complete successfully (result=${result})"; return 1 ;;
+            esac
+          }
+
+          failed=0
+          require_success "risk classification" "$CLASSIFY_RESULT" || failed=1
+          require_success "focused validation" "$FOCUSED_VALIDATION_RESULT" || failed=1
+          allow_skipped "architecture validation" "$ARCHITECTURE_RESULT" || failed=1
+          allow_skipped "CI smoke validation" "$CI_SMOKE_RESULT" || failed=1
+          allow_skipped "lint validation" "$LINT_RESULT" || failed=1
+          allow_skipped "central E2E validation" "$E2E_RESULT" || failed=1
+          allow_skipped "security validation" "$SECURITY_RESULT" || failed=1
+          allow_skipped "CodeQL validation" "$CODEQL_RESULT" || failed=1
+          allow_skipped "timekeeping validation" "$TIMEKEEPING_RESULT" || failed=1
+          [[ "$failed" -eq 0 ]] || exit 1
           echo "Codex autonomy aggregate gate passed."

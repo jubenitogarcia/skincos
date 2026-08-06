@@ -1,62 +1,44 @@
 name: CI Smoke (Assert)
 
 on:
-  push:
-    branches: [ main ]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/governance/**"
-      - ".github/workflows/codex-autonomy-gate.yml"
-  pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/governance/**"
-      - ".github/workflows/codex-autonomy-gate.yml"
-      - ".github/workflows/**"
-  workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      run_core_smoke:
+        description: Run the backend/runtime mock smoke suite.
+        required: false
+        type: boolean
+        default: false
+      run_windows_continuity:
+        description: Run the Windows Codex continuity contract.
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      run_core_smoke:
+        description: Run the backend/runtime mock smoke suite.
+        required: false
+        type: boolean
+        default: true
+      run_windows_continuity:
+        description: Run the Windows Codex continuity contract.
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
 
 jobs:
   smoke:
     name: CI Smoke (Assert)
+    if: ${{ inputs.run_core_smoke }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (no submodules)
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
-
-      - name: Initialize submodules (if configured)
-        if: ${{ hashFiles('.gitmodules') != '' }}
-        run: |
-          set -euxo pipefail
-          if [ -z "${{ secrets.GH_TOKEN }}" ]; then
-            echo "::warning::GH_TOKEN not set; skipping submodule init."
-            exit 0
-          fi
-          git config --global url."https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/".insteadOf "https://github.com/"
-          git submodule sync --recursive
-          git submodule update --init --recursive
 
       - name: Guard zero-demo invariants
         run: |
@@ -74,15 +56,6 @@ jobs:
             exit 1
           fi
 
-      - name: Validate supervised Codex continuity
-        run: |
-          set -euo pipefail
-          python3 -m json.tool .codex/hooks.json >/dev/null
-          python3 -m json.tool .codex/supervisor.json >/dev/null
-          python3 -m unittest discover -s .codex/hooks/tests -p 'test_*.py' -v
-          bash skills/skincos-project-orchestrator/scripts/test-behavior.sh
-          bash .codex/hooks/tests/test-host-wrappers.sh
-
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -92,22 +65,6 @@ jobs:
 
       - name: Validate observability catalog
         run: node scripts/observability/validate-catalog.mjs
-
-      - name: Install website dependencies
-        working-directory: website
-        run: npm ci
-
-      - name: Website lint
-        working-directory: website
-        run: npm run lint
-
-      - name: Website tests
-        working-directory: website
-        run: npm run test
-
-      - name: Website build
-        working-directory: website
-        run: npm run build
 
       - name: Install CRM API dependencies
         working-directory: crm/api
@@ -140,6 +97,7 @@ jobs:
 
   supervised-continuity-windows:
     name: Supervised continuity (Windows)
+    if: ${{ inputs.run_windows_continuity }}
     runs-on: windows-latest
     steps:
       - name: Checkout

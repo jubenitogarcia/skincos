@@ -2,44 +2,7 @@
 name: CodeQL (Monorepo)
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-    paths:
-      - "crm/console/**"
-      - "crm/api/**"
-      - "website/**"
-      - "backend/**"
-      - "messaging/**"
-      - "orb/**"
-      - "api/**"
-      - "booking/**"
-      - "integration/**"
-      - "service/**"
-      - "social/**"
-      - "workforce/timekeeping/**"
-      - ".github/workflows/crm-codeql.yml"
-      - ".github/codeql/**"
-  pull_request:
-    branches:
-      - main
-      - develop
-    paths:
-      - "crm/console/**"
-      - "crm/api/**"
-      - "website/**"
-      - "backend/**"
-      - "messaging/**"
-      - "orb/**"
-      - "api/**"
-      - "booking/**"
-      - "integration/**"
-      - "service/**"
-      - "social/**"
-      - "workforce/timekeeping/**"
-      - ".github/workflows/crm-codeql.yml"
-      - ".github/codeql/**"
+  workflow_call:
   schedule:
     # Executa semanalmente às quartas-feiras às 02:00 UTC
     - cron: "0 2 * * 3"

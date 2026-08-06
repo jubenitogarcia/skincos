@@ -128,7 +128,7 @@ Configuração (repo → Settings):
   - (opcional) `CLOUDFLARE_PAGES_ENVIRONMENTS` (CSV, default sugerido: `production,preview`)
   - (opcional) `CLOUDFLARE_PAGES_EVENTS` (CSV)
 
-Observação: os alertas de **5xx/latência/D1/R2/429** podem depender de produtos/telemetria adicionais (ex.: Workers Observability) e podem não estar disponíveis diretamente via Alerting API v3; mantenha também o `uptime-slo.yml` como monitor sintético.
+Observação: os alertas de **5xx/latência/D1/R2/429** podem depender de produtos/telemetria adicionais (ex.: Workers Observability) e podem não estar disponíveis diretamente via Alerting API v3; mantenha também o `uptime-slo.yml` como monitor sintético. A cadência de 10 minutos não deve ser reduzida enquanto não houver evidência atual de monitor externo independente cobrindo esses mesmos sinais.
 Observação 2: por segurança, o agendamento semanal e os destinos de e-mail são opt-in explícitos.
 
 ### Checklist rápido (Cloudflare)

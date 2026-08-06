@@ -18,6 +18,56 @@ condicionado a checks verdes. Os environments de staging e produção usam
 política de branch customizada somente para `main`, conforme a governança de
 operador único registrada no issue #943.
 
+## Modelo de execução proporcional
+
+`codex-autonomy-gate` é o único workflow de PR/push para `main`. Após calcular
+o diff, ele usa `scripts/github-actions/validation-plan.mjs` para chamar,
+como workflows reutilizáveis, somente os componentes necessários:
+
+- arquitetura e governança para código, runtime, desconhecidos e alterações de CI;
+- qualidade CRM, website, backend e Python apenas para as superfícies afetadas;
+- Central E2E para CRM/Ponto — incluindo Escala no mesmo ciclo de navegador;
+- auditoria de secrets/dependências e CodeQL para superfícies sensíveis;
+- Timekeeping CI para toda mudança que possa alterar o contrato governado de Ponto.
+
+O agregador aceita somente `success` ou `skipped` para componentes não
+selecionados; qualquer falha, cancelamento ou indisponibilidade selecionada
+bloqueia `codex-autonomy-gate`. Caminhos de código novos ou não classificados
+selecionam o conjunto central conservador. A seleção é coberta por testes
+unitários versionados, portanto um novo root precisa ser explicitamente
+classificado em vez de criar uma lacuna silenciosa.
+
+O workflow de UX/UI é informativo e diário, com disparo manual disponível. Ele
+não compete com o gate obrigatório nem recria navegadores e Storybook em cada
+PR. Os monitores de disponibilidade e integrações operacionais continuam fora
+deste mecanismo porque são controles de operação, não checks de revisão.
+
+## Recuperação de falha transitória
+
+`CI Retry (Incident-gated)` substitui o antigo observador `workflow_run`: não
+há novo workflow em toda conclusão de CI e não existe retry automático de falha
+determinística. Para reexecutar uma falha transitória, use o disparo manual com:
+
+- `run_id` da execução que falhou;
+- `incident_ref` rastreável (incidente, status do provedor ou referência de rate limit);
+- uma classe confirmada: `runner_outage`, `external_rate_limit` ou
+  `provider_transient`.
+
+O workflow recusa runs externos, não finalizados como `failure`, tentativas
+anteriores a 1 e execuções sem job terminal falho. Só então pede uma única
+reexecução dos jobs falhos; jobs verdes não são reiniciados. Ele aceita apenas
+os workflows de validação explicitamente permitidos, nunca deploy, promoção ou
+automação operacional.
+
+## Reconciliação de PRs Codex
+
+`codex-keep-prs-mergeable` reage aos eventos de abertura/sincronização de PR,
+a pushes em `main` e mantém uma reconciliação horária como fallback. Como ele
+tem permissões de escrita, usa `pull_request_target` sem checkout e nunca pode
+executar arquivos trazidos pela PR. A automação limita candidatos a branches
+`codex/` do repositório e autor autorizado; labels só são criadas quando existe
+um candidato elegível.
+
 ## Pré-checagem
 
 Execute em uma branch baseada na `main` e com `gh auth status` válido:

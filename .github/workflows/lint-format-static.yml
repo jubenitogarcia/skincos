@@ -1,40 +1,49 @@
 name: Lint, Format & Static Analysis
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/governance/**"
-      - ".github/workflows/codex-autonomy-gate.yml"
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/governance/**"
-      - ".github/workflows/codex-autonomy-gate.yml"
-      - ".github/workflows/**"
+  workflow_call:
+    inputs:
+      run_crm:
+        required: false
+        type: boolean
+        default: false
+      run_website:
+        required: false
+        type: boolean
+        default: false
+      run_backend:
+        required: false
+        type: boolean
+        default: false
+      run_python:
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
+    inputs:
+      run_crm:
+        description: Run CRM console and API quality checks.
+        required: false
+        type: boolean
+        default: true
+      run_website:
+        description: Run website quality checks.
+        required: false
+        type: boolean
+        default: true
+      run_backend:
+        description: Run backend workspace checks.
+        required: false
+        type: boolean
+        default: true
+      run_python:
+        description: Run Python static analysis and coverage.
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
 
 jobs:
   js-ts-lint:
@@ -52,6 +61,7 @@ jobs:
           bash backend/scripts/ci-no-demo-guard.sh
 
       - name: Set up Node.js
+        if: ${{ inputs.run_crm || inputs.run_website || inputs.run_backend }}
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.12.0"
@@ -62,75 +72,89 @@ jobs:
             website/package-lock.json
 
       - name: Frontend install
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ inputs.run_crm && hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd crm/console
           npm ci
 
       - name: Frontend lint
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ inputs.run_crm && hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd crm/console
           npm run lint
 
       - name: Frontend typecheck
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ inputs.run_crm && hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd crm/console
           npm run typecheck
 
-      - name: Frontend unit tests
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+      - name: Frontend coverage
+        if: ${{ inputs.run_crm && hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd crm/console
-          npm run test
+          npm run test:coverage
 
       - name: Frontend build
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ inputs.run_crm && hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd crm/console
           npm run build
 
       - name: Website install
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ inputs.run_website && hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd website
           npm ci
 
       - name: Website lint
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ inputs.run_website && hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd website
           npm run lint
 
+      - name: Website typecheck
+        if: ${{ inputs.run_website && hashFiles('website/package-lock.json') != '' }}
+        run: |
+          set -euxo pipefail
+          cd website
+          npm run typecheck
+
+      - name: Website tests
+        if: ${{ inputs.run_website && hashFiles('website/package-lock.json') != '' }}
+        run: |
+          set -euxo pipefail
+          cd website
+          npm run test
+
       - name: Website build
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ inputs.run_website && hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
           cd website
           npm run build
 
       - name: Setup pnpm (for backend workspace)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
+        if: ${{ inputs.run_backend && hashFiles('backend/pnpm-lock.yaml') != '' }}
         run: |
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
 
       - name: Backend workspace install (pnpm)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
+        if: ${{ inputs.run_backend && hashFiles('backend/pnpm-lock.yaml') != '' }}
         run: |
           set -euxo pipefail
           pnpm -C backend install --frozen-lockfile
 
       - name: Backend lint/format/typecheck (workspace advisory)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
+        if: ${{ inputs.run_backend && hashFiles('backend/pnpm-lock.yaml') != '' }}
         run: |
           set -euxo pipefail
           pnpm -C backend -r run lint --if-present
@@ -138,7 +162,7 @@ jobs:
           pnpm -C backend -r run typecheck --if-present
 
       - name: CRM API tests
-        if: ${{ hashFiles('crm/api/package.json') != '' }}
+        if: ${{ (inputs.run_crm || inputs.run_backend) && hashFiles('crm/api/package.json') != '' }}
         run: |
           set -euxo pipefail
           npm --prefix crm/api ci
@@ -146,6 +170,7 @@ jobs:
 
   python-lint:
     name: Python Lint & Static Analysis
+    if: ${{ inputs.run_python }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -188,3 +213,14 @@ jobs:
         continue-on-error: true
         run: |
           python -m mypy backend/apps/automations/sales_chart_messenger backend/tools/scripts --ignore-missing-imports
+
+      - name: Run pytest with coverage
+        run: |
+          cd backend
+          python -m pytest tests/unit --cov=config --cov-fail-under=80 --cov-report=xml:coverage.xml --cov-report=term
+
+      - name: Upload coverage.xml
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-coverage
+          path: backend/coverage.xml

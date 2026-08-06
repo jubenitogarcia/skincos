@@ -26,3 +26,13 @@ Objetivo: bloquear push direto em `main` e exigir PR com o gate agregado verde.
   segue o gate proporcional à superfície: docs não acordam suítes pesadas,
   código comum usa um foco, e somente mudanças elevadas/excepcionais exigem
   segurança/rollback adicional; a habilitação não contorna a ruleset.
+- O único gatilho obrigatório de PR é o `codex-autonomy-gate`. Ele calcula um
+  plano versionado em `scripts/github-actions/validation-plan.mjs` e chama os
+  componentes reutilizáveis apenas quando suas superfícies são afetadas. Assim,
+  os nomes de checks de release (`CI Smoke (Assert)`, `Central E2E Smoke`,
+  `JS/TS Checks (workspace)`, `Scan for secrets (Gitleaks)` e
+  `Dependency Audit (JS/TS)`) continuam existindo nos fluxos que os exigem,
+  sem iniciar cópias independentes em todo PR.
+- Alterações desconhecidas que não sejam exclusivamente documentação falham
+  para o conjunto central conservador. A concorrência do gate cancela apenas a
+  execução obsoleta do mesmo PR/ref, nunca uma execução de outro PR.
