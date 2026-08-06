@@ -4,6 +4,23 @@ Este runbook prepara a transição de integrantes ativos da Escala para a
 identidade canônica `workforce_employee`. Ele não cria contas, não envia
 convites e não tenta resolver vínculos por nome, telefone ou e-mail.
 
+## Inventário multi-fonte
+
+Antes do plano específico da Escala, produzir o inventário governado de todas
+as fontes com o script `inventory/scripts/unifiedTeamInventoryReport.mjs`:
+
+```text
+node inventory/scripts/unifiedTeamInventoryReport.mjs --input <snapshot-privado.json>
+```
+
+O snapshot deve conter as listas `crmAccounts`, `crmOnboarding`,
+`workforceEmployees`, `escalaProfessionals`, `atendimentoProfessionals` e
+`pontoEmployees`. O resultado é somente leitura, tem `fingerprint`, cobertura,
+contagens e filas `ready`, `pending`, `conflicts` e `ignored`, sem devolver
+nomes, e-mails, telefones ou IDs brutos. Snapshot ausente, ID não explícito,
+órfão, duplicidade, funcionário inativo ou divergência de unidade impede a
+confirmação automática.
+
 ## Fluxo obrigatório
 
 1. Exportar um inventário somente-leitura da Escala para um arquivo privado,
