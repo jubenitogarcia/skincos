@@ -507,12 +507,12 @@ export async function handleAuthRoutes({
                 if (!userDb.ativo) {
                     await recordAuthFailure(identifier, 'USER_INACTIVE');
                     await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'USER_INACTIVE', username: userDb.username } });
-                    return withCORS(JSON.stringify({ error: "User inactive" }), { status: 403 }, appOrigin);
+                    return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
                 }
                 if (!userDb.passwordHash) {
                     await recordAuthFailure(identifier, 'PASSWORD_NOT_SET');
                     await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'PASSWORD_NOT_SET', username: userDb.username } });
-                    return withCORS(JSON.stringify({ error: "Password not set" }), { status: 401 }, appOrigin);
+                    return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
                 }
                 const verified = await verifyPassword(password, userDb.passwordHash);
                 if (!verified.ok) {
@@ -821,7 +821,10 @@ export async function handleAuthRoutes({
                     env.DB.prepare(`UPDATE ${passwordResetsTable} SET used_at = ? WHERE username = ? AND id <> ? AND used_at IS NULL`).bind(new Date().toISOString(), userDb.username, resetId)
                 ]);
                 await logAuthAudit({ action: 'AUTH_PASSWORD_RESET_REQUEST', actor: userDb.username, role: userDb.role || '', detail: { delivery: 'smtp' } });
-                return withCORS(JSON.stringify({ success: true, expiresAt }), { status: 200 }, appOrigin);
+                // Do not return the expiry before the one-time code is proven;
+                // the generic response must not reveal whether an account is
+                // active or configured for recovery.
+                return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
             }
