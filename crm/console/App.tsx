@@ -51,6 +51,16 @@ import { hasCrmModuleAccess } from '@/crmRoleAccess'
 import { canManagePonto } from '@/pontoAccess'
 import { ArrowDownUp, CalendarX2, CheckCircle2, ChevronDown, ChevronsUpDown, Download, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Upload, X } from 'lucide-react'
 
+function moduleFromLocation() {
+    try {
+        if (window.location.pathname === '/clientes' || window.location.pathname.startsWith('/clientes/')) return 'clientes'
+        const params = new URLSearchParams(window.location.search)
+        return params.get('module') || params.get('tab') || ''
+    } catch {
+        return ''
+    }
+}
+
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
 const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
@@ -375,8 +385,8 @@ export default function AppFunctionalNeatlab() {
 	    // Persist active module to survive remounts/reloads and avoid accidental resets
 	    const [active, setActive] = useState<string>(() => {
 		        try {
-		            const requested = new URLSearchParams(window.location.search).get('module') || new URLSearchParams(window.location.search).get('tab')
-            if (requested && crmModuleByKey.has(requested)) {
+	            const requested = moduleFromLocation()
+            if (requested && crmModuleByKey.has(requested) && UNLOCKED_MODULE_KEYS.has(requested)) {
                 return requested
             }
 		            const saved = localStorage.getItem('app.activeModule')
@@ -394,6 +404,17 @@ export default function AppFunctionalNeatlab() {
 		        } catch { /* ignore */ }
 		    }, [])
 		    const mountedModuleKeys = useMemo(() => [active], [active])
+
+	    // Deep links inside Clientes are owned by the module, while the shell
+	    // still observes browser navigation that leaves the module entirely.
+	    React.useEffect(() => {
+	        const onPopState = () => {
+	            const requested = moduleFromLocation()
+	            if (requested && crmModuleByKey.has(requested) && UNLOCKED_MODULE_KEYS.has(requested)) setActive(requested)
+	        }
+	        window.addEventListener('popstate', onPopState)
+	        return () => window.removeEventListener('popstate', onPopState)
+	    }, [UNLOCKED_MODULE_KEYS])
 
 	    React.useEffect(() => {
         if (crmModuleByKey.has(active)) return
@@ -648,8 +669,8 @@ export default function AppFunctionalNeatlab() {
 	        // `?module=ponto` never falls back to the previously saved module.
 	        if (initializing) return
 	        try {
-            const params = new URLSearchParams(window.location.search)
-            const requested = params.get('module') || params.get('tab')
+	            const params = new URLSearchParams(window.location.search)
+	            const requested = moduleFromLocation()
             const wantsInsumosShortcut =
                 params.has('insumosTab') ||
                 params.has('insumosAction') ||

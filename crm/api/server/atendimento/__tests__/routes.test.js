@@ -275,3 +275,55 @@ test('maps review payload and source-state conflicts to their client-safe status
     assert.equal(undo.state.status, 409)
     assert.deepEqual(undo.state.body, { ok: false, error: 'IDENTITY_REVIEW_CONFLICT', hint: undefined })
 })
+
+test('keeps the operational wallet and bulk assignment behind the existing GESTOR boundary', async () => {
+    const calls = []
+    const routes = captureAtendimentoRoutes({
+        async commercialWallet(query, actor) {
+            calls.push({ operation: 'wallet', query, actor })
+            return { contract: 'crm-clientes-wallet/v1', total: 0, profiles: [] }
+        },
+        async bulkAssignCommercialActions(payload, actor) {
+            calls.push({ operation: 'bulk-assign', payload, actor })
+            return { updated: 2, skipped: 1 }
+        },
+    })
+    const actor = { id: 'gestor-1', role: 'GESTOR', allowedModules: ['atendimento'] }
+    const wallet = captureResponse()
+    await routes.get('GET /commercial/wallet')({
+        atendimentoActor: actor,
+        query: { server: '0', limit: '50', offset: '100', assigned: 'none' },
+    }, wallet)
+    assert.equal(wallet.state.status, 200)
+    assert.deepEqual(wallet.state.body, { ok: true, contract: 'crm-clientes-wallet/v1', total: 0, profiles: [] })
+    assert.deepEqual(calls[0], {
+        operation: 'wallet',
+        query: { server: '0', limit: '50', offset: '100', assigned: 'none' },
+        actor,
+    })
+
+    const bulk = captureResponse()
+    await routes.get('POST /commercial/actions/bulk-assign')({
+        atendimentoActor: actor,
+        body: { identityIds: ['11111111-1111-4111-8111-111111111111'], owner: 'Dra. Ana' },
+    }, bulk)
+    assert.equal(bulk.state.status, 200)
+    assert.deepEqual(bulk.state.body, { ok: true, updated: 2, skipped: 1 })
+    assert.deepEqual(calls[1], {
+        operation: 'bulk-assign',
+        payload: { identityIds: ['11111111-1111-4111-8111-111111111111'], owner: 'Dra. Ana' },
+        actor,
+    })
+
+    const forbiddenRoutes = captureAtendimentoRoutes({
+        async commercialWallet() { throw new Error('STORE_SHOULD_NOT_BE_CALLED') },
+        async bulkAssignCommercialActions() { throw new Error('STORE_SHOULD_NOT_BE_CALLED') },
+    })
+    const forbiddenActor = { id: 'gerente-1', role: 'GERENTE' }
+    const forbiddenWallet = captureResponse()
+    await forbiddenRoutes.get('GET /commercial/wallet')({ atendimentoActor: forbiddenActor, query: {} }, forbiddenWallet)
+    assert.equal(forbiddenWallet.state.status, 403)
+    const forbiddenBulk = captureResponse()
+    await forbiddenRoutes.get('POST /commercial/actions/bulk-assign')({ atendimentoActor: forbiddenActor, body: {} }, forbiddenBulk)
+    assert.equal(forbiddenBulk.state.status, 403)
+})

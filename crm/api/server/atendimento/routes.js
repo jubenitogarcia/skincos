@@ -351,6 +351,18 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    // Separate read contract for the operational wallet. The store forces the
+    // SQL page path, so a legacy all-profiles response cannot leak into the
+    // UI as if it were a complete server-side result.
+    expressRouter.get('/commercial/wallet', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.commercialWallet(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.get('/commercial/review', async (req, res) => {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
@@ -451,6 +463,15 @@ export function createAtendimentoRouter(options = {}) {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
             return json(res, 200, { ok: true, ...(await store.createCommercialAction(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/actions/bulk-assign', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.bulkAssignCommercialActions(req.body || {}, req.atendimentoActor)) })
         } catch (error) {
             return errorResponse(res, error)
         }

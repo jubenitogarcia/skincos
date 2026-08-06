@@ -933,6 +933,10 @@ export type CommercialOverview = {
   profiles: CommercialProfile[]
 }
 
+export type CommercialWalletResponse = CommercialOverview & {
+  contract: 'crm-clientes-wallet/v1'
+}
+
 export type CommercialTimelineEntry = {
   id: string
   type: 'attendance' | 'sale'
@@ -1008,6 +1012,36 @@ export function fetchCommercialOverview(filters: { asOf?: string; unit?: string;
   return api<CommercialOverview>(`/commercial/overview${qs ? `?${qs}` : ''}`)
 }
 
+/**
+ * The operational wallet has its own read contract. It deliberately requires
+ * the PostgreSQL page path so a legacy all-profiles response can never be
+ * mistaken for a complete, filterable wallet.
+ */
+export type CommercialWalletFilters = {
+  asOf?: string
+  unit?: string
+  segment?: string
+  priority?: string
+  q?: string
+  limit?: number
+  offset?: number
+  sort?: string
+  direction?: 'asc' | 'desc'
+  assigned?: 'none' | 'any'
+  sla?: 'overdue'
+  permission?: 'expiring'
+  review?: 'pending'
+  stale?: 'stale'
+}
+
+export function fetchCommercialWallet(filters: CommercialWalletFilters = {}) {
+  const params = new URLSearchParams({ server: '1' })
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== '' && value !== 'all') params.set(key, String(value))
+  })
+  return api<CommercialWalletResponse>(`/commercial/wallet?${params.toString()}`)
+}
+
 export function fetchCommercialDataQuality(filters: {
   status?: CommercialDataQualityStatus
   severity?: CommercialDataQualitySeverity
@@ -1075,6 +1109,10 @@ export function createCommercialAction(payload: { identityId: string; segmentKey
 
 export function updateCommercialAction(id: string, payload: { status: CommercialAction['status']; owner?: string; outcomeNotes?: string }) {
   return api<{ id: string; status: CommercialAction['status']; contactEligibility: CommercialContactEligibility }>(`/commercial/actions/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+}
+
+export function assignCommercialActions(payload: { identityIds: string[]; owner: string; unit?: string }) {
+  return api<{ updated: number; skipped: number }>('/commercial/actions/bulk-assign', { method: 'POST', body: payload })
 }
 
 export type CommercialContactPermissionMutation =

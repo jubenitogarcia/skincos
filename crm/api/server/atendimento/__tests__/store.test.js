@@ -156,6 +156,9 @@ test('scopes Clientes commercial reads, queues, actions, cadences and offers to 
             if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
                 return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance_links', sales: 'sales' }], rowCount: 1 }
             }
+            if (sql.includes("to_regclass('crm_atendimento.client_merge_suggestions')")) {
+                return { rows: [{ merges: 'merges', attendance_caixa: 'attendance_caixa', app: 'app', leads: 'leads' }], rowCount: 1 }
+            }
             if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [{}], rowCount: 1 }
             if (sql.includes('with identities as')) {
                 captured.push({ kind: 'profiles', sql, params })
@@ -299,6 +302,9 @@ test('uses bounded SQL pagination and global percentile benchmarks for the comme
             if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
                 return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance_links', sales: 'sales' }], rowCount: 1 }
             }
+            if (sql.includes("to_regclass('crm_atendimento.client_merge_suggestions')")) {
+                return { rows: [{ merges: 'merges', attendance_caixa: 'attendance_caixa', app: 'app', leads: 'leads' }], rowCount: 1 }
+            }
             if (sql.startsWith('select active_contact_cooldown_days,')) {
                 return { rows: [{ active_contact_cooldown_days: 30, return_risk_thresholds: [90, 180, 365], commercial_contact_writes_enabled: false, commercial_contact_canary_identity_ids: [], updated_by: 'manager', updated_at: '2026-08-05T12:00:00.000Z', policy_version: 'a'.repeat(32) }], rowCount: 1 }
             }
@@ -334,11 +340,17 @@ test('uses bounded SQL pagination and global percentile benchmarks for the comme
         },
     ])
     const store = createAtendimentoStore({ pool })
-    const result = await store.commercialOverview({ server: '1', limit: 1, offset: 1, sort: 'lifetime_sales', direction: 'asc', q: 'cliente' }, { id: 'manager', role: 'GESTOR' })
+    const result = await store.commercialOverview({ server: '1', limit: 1, offset: 1, sort: 'lifetime_sales', direction: 'asc', q: 'cliente', assigned: 'none', sla: 'overdue', review: 'pending', stale: 'stale' }, { id: 'manager', role: 'GESTOR' })
     assert.equal(captured.length, 1)
     assert.match(captured[0].sql, /jsonb_array_length\(coalesce\(source_types, '\[\]'::jsonb\)\)/)
     assert.doesNotMatch(captured[0].sql, /cardinality\(source_types\)/)
+    assert.match(captured[0].sql, /\$12::text = 'none'/)
+    assert.match(captured[0].sql, /\$13::text = 'overdue'/)
+    assert.match(captured[0].sql, /\$14::text = 'pending'/)
+    assert.match(captured[0].sql, /identity_review_pending/)
+    assert.match(captured[0].sql, /\$15::text = 'stale'/)
     assert.deepEqual(captured[0].params.slice(3, 8), ['cliente', '', '', 1, 1])
+    assert.deepEqual(captured[0].params.slice(11), ['none', 'overdue', 'pending', 'stale'])
     assert.equal(result.pagination.mode, 'sql')
     assert.equal(result.pagination.sort, 'lifetime_sales')
     assert.equal(result.pagination.direction, 'asc')

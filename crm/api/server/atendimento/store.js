@@ -3564,6 +3564,77 @@ async function queryCommercialProfilesServerPage(pgPool, { asOf, unitSlugs, thre
     const search = normalizeText(query?.q || query?.search || '')
     const segment = String(query?.segment || '').trim()
     const priority = String(query?.priority || '').trim()
+    const assigned = String(query?.assigned || '').trim().toLowerCase()
+    const sla = String(query?.sla || '').trim().toLowerCase()
+    const permission = String(query?.permission || '').trim().toLowerCase()
+    const review = String(query?.review || '').trim().toLowerCase()
+    const stale = String(query?.stale || '').trim().toLowerCase()
+    const permissionPredicate = permission === 'expiring'
+        ? `and exists (select 1 from crm_atendimento.commercial_contact_permissions permission
+                       where permission.identity_id = ranked.identity_id
+                         and permission.channel = 'whatsapp'
+                         and permission.status = 'granted'
+                         and permission.expires_at is not null
+                         and permission.expires_at <= now() + interval '30 days')`
+        : ''
+    const identityReviewPendingCte = review === 'pending'
+        ? `identity_review_pending as (
+            select distinct member.identity_id
+            from crm_atendimento.global_client_identity_members member
+            join (
+                select 'attendance_client'::text as source_type, left_client_id::text as source_id
+                  from crm_atendimento.client_merge_suggestions
+                 where status = 'pending'
+                union all
+                select 'attendance_client', right_client_id::text
+                  from crm_atendimento.client_merge_suggestions
+                 where status = 'pending'
+                union all
+                select 'attendance_client', client_id::text
+                  from crm_atendimento.client_caixa_links
+                 where status in ('suggested', 'ambiguous')
+                union all
+                select 'caixa_customer', caixa_customer_id::text
+                  from crm_atendimento.client_caixa_links
+                 where status in ('suggested', 'ambiguous')
+                union all
+                select 'app_registration', app_registration_id
+                  from crm_atendimento.app_registration_attendance_links
+                 where status in ('suggested', 'ambiguous')
+                union all
+                select 'attendance_client', client_id::text
+                  from crm_atendimento.app_registration_attendance_links
+                 where status in ('suggested', 'ambiguous')
+                union all
+                select 'app_registration', app_registration_id
+                  from crm_atendimento.app_registration_caixa_links
+                 where status in ('suggested', 'ambiguous')
+                union all
+                select 'caixa_customer', caixa_customer_id::text
+                  from crm_atendimento.app_registration_caixa_links
+                 where status in ('suggested', 'ambiguous')
+                union all
+                select 'lead_profile', source_profile_id
+                  from crm_atendimento.supplemental_lead_profile_app_links
+                 where status in ('suggested', 'ambiguous')
+                union all
+                select 'app_registration', app_registration_id
+                  from crm_atendimento.supplemental_lead_profile_app_links
+                 where status in ('suggested', 'ambiguous')
+                union all
+                select 'lead_profile', source_profile_id
+                  from crm_atendimento.supplemental_lead_profile_caixa_links
+                 where status in ('suggested', 'ambiguous')
+                union all
+                select 'caixa_customer', caixa_customer_id::text
+                  from crm_atendimento.supplemental_lead_profile_caixa_links
+                 where status in ('suggested', 'ambiguous')
+            ) pending on pending.source_type = member.source_type and pending.source_id = member.source_id
+         )`
+        : `identity_review_pending as (
+            select null::uuid as identity_id
+            where false
+         )`
     const { key: sort, direction, orderBy } = commercialProfileSort(query)
     const result = await pgPool.query(
         `with identities as (
@@ -3628,7 +3699,9 @@ async function queryCommercialProfilesServerPage(pgPool, { asOf, unitSlugs, thre
             join crm_caixa.sale_items si on si.sale_id = sc.id and si.mapping_status = 'pending'
             group by sc.identity_id
          ), active_actions as (
-            select action.identity_id, count(*)::int as active_action_count, max(action.created_at) as last_action_at
+            select action.identity_id, count(*)::int as active_action_count, max(action.created_at) as last_action_at,
+                bool_or(nullif(trim(action.owner), '') is not null) as has_owner,
+                bool_or(action.due_date is not null and action.due_date < current_date) as has_sla_overdue
             from crm_atendimento.commercial_actions action
             left join crm_atendimento.units action_unit on action_unit.id = action.unit_id
             where action.status = any($3::text[])
@@ -3642,7 +3715,9 @@ async function queryCommercialProfilesServerPage(pgPool, { asOf, unitSlugs, thre
                 coalesce(s.sale_count, 0)::int as sale_count, coalesce(s.lifetime_sales, 0)::numeric as lifetime_sales,
                 coalesce(s.sales_12m, 0)::numeric as sales_12m, s.sales_units, s.phone,
                 p.purchased_procedures, coalesce(pending.pending_sale_items, 0)::int as pending_sale_items,
-                coalesce(actions.active_action_count, 0)::int as active_action_count, actions.last_action_at
+                coalesce(actions.active_action_count, 0)::int as active_action_count, actions.last_action_at,
+                coalesce(actions.has_owner, false) as has_owner,
+                coalesce(actions.has_sla_overdue, false) as has_sla_overdue
             from identities i
             left join attendance_aggregate a on a.identity_id = i.identity_id
             left join future_attendance f on f.identity_id = i.identity_id
@@ -3686,7 +3761,7 @@ async function queryCommercialProfilesServerPage(pgPool, { asOf, unitSlugs, thre
                     case when reactivation_potential then 'reactivation_potential' end
                 ], null) as segment_keys
             from classified
-         ), filtered as (
+         ), ${identityReviewPendingCte}, filtered as (
             select ranked.*
             from ranked
             where ($4::text = '' or position($4::text in lower(ranked.canonical_name)) > 0
@@ -3695,6 +3770,11 @@ async function queryCommercialProfilesServerPage(pgPool, { asOf, unitSlugs, thre
                        'aaaaaaeeeeiiiiooooouuuucn')) > 0)
               and ($5::text = '' or $5::text = any(ranked.segment_keys))
               and ($6::text = '' or ranked.priority_rank = case $6::text when 'high' then 3 when 'medium' then 2 when 'normal' then 1 else 0 end)
+              and ($12::text = '' or ($12::text = 'none' and not ranked.has_owner) or ($12::text = 'any' and ranked.has_owner))
+              and ($13::text = '' or ($13::text = 'overdue' and ranked.has_sla_overdue))
+              and ($14::text = '' or ($14::text = 'pending' and exists (select 1 from identity_review_pending pending where pending.identity_id = ranked.identity_id)))
+              and ($15::text = '' or ($15::text = 'stale' and (ranked.recency_days is null or ranked.recency_days >= 365)))
+              ${permissionPredicate}
          ), stats as (
             select count(*)::int as filtered_total,
                 count(*) filter (where return_at_risk)::int as return_at_risk_total,
@@ -3716,7 +3796,7 @@ async function queryCommercialProfilesServerPage(pgPool, { asOf, unitSlugs, thre
          select page.*, stats.*
          from stats
          left join page on true`,
-        [asOf, unitSlugs, COMMERCIAL_ACTIVE_ACTION_STATUSES, search, segment, priority, limit, offset, returnRisk, longAbsence, veryLongAbsence],
+        [asOf, unitSlugs, COMMERCIAL_ACTIVE_ACTION_STATUSES, search, segment, priority, limit, offset, returnRisk, longAbsence, veryLongAbsence, assigned, sla, review, stale],
     )
     const rows = result.rows || []
     const first = rows[0] || {}
@@ -5202,6 +5282,14 @@ export function createAtendimentoStore(options = {}) {
                 readCommercialPolicy(pgPool),
                 readCommercialContactAvailability(pgPool),
             ])
+            if (String(query?.permission || '').trim().toLowerCase() === 'expiring' && !commercialContactAvailability.permissions) {
+                const error = new Error('COMMERCIAL_WALLET_PERMISSION_FILTER_NOT_READY')
+                error.statusCode = 409
+                throw error
+            }
+            if (String(query?.review || '').trim().toLowerCase() === 'pending') {
+                await assertIdentityReviewSource(pgPool)
+            }
             const serverPage = String(query?.server || '').trim() === '1'
                 ? await queryCommercialProfilesServerPage(pgPool, {
                     asOf,
@@ -5313,6 +5401,14 @@ export function createAtendimentoStore(options = {}) {
                     hasNext: offset + limit < filtered.length,
                 },
                 profiles: (serverPage ? filtered : filtered.slice(offset, offset + limit)).map(minimizeCommercialProfile),
+            }
+        },
+
+        async commercialWallet(query, actor) {
+            const result = await this.commercialOverview({ ...(query || {}), server: '1' }, actor)
+            return {
+                ...result,
+                contract: 'crm-clientes-wallet/v1',
             }
         },
 
@@ -6060,6 +6156,55 @@ export function createAtendimentoStore(options = {}) {
                     eligibilityReason: contactEligibility.reason,
                 })
                 return { id, status, contactEligibility }
+            })
+        },
+
+        async bulkAssignCommercialActions(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const identityIds = [...new Set((Array.isArray(payload?.identityIds) ? payload.identityIds : [])
+                .map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))]
+            const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+            if (!identityIds.length || identityIds.length > 100 || identityIds.some((id) => !uuid.test(id))) {
+                throw commercialContactError('INVALID_COMMERCIAL_BULK_ASSIGNMENT', 400)
+            }
+            const owner = String(payload?.owner || '').trim()
+            if (!owner || owner.length > 180 || !isValidProfessionalIdentityName(owner)) {
+                throw commercialContactError('INVALID_COMMERCIAL_ACTION_OWNER', 400)
+            }
+            const requestedUnit = commercialUnit(payload?.unit)
+            if (requestedUnit) assertCommercialUnitInScope(actor, requestedUnit)
+            const actorIdentity = actorIdentityForMutation(actor)
+            return withPgTransaction(pgPool, async (client) => {
+                const rows = await client.query(
+                    `select action.id, action.identity_id, unit.slug as unit_slug
+                       from crm_atendimento.commercial_actions action
+                       left join crm_atendimento.units unit on unit.id = action.unit_id
+                      where action.identity_id = any($1::uuid[])
+                        and action.status = any($2::text[])
+                        and ($3::text = '' or unit.slug = $3)
+                      for update of action`,
+                    [identityIds, COMMERCIAL_ACTIVE_ACTION_STATUSES, requestedUnit],
+                )
+                const changed = new Set()
+                for (const row of rows.rows || []) {
+                    assertCommercialUnitInScope(actor, row.unit_slug)
+                    const canonicalOwner = await resolveCommercialActionOwner(client, owner, { slug: row.unit_slug })
+                    await client.query(
+                        `update crm_atendimento.commercial_actions
+                            set owner = $2, updated_by = $3, updated_at = now()
+                          where id = $1`,
+                        [row.id, canonicalOwner, actorIdentity],
+                    )
+                    await audit(client, 'commercial.action.bulk_assigned', actor, null, {
+                        actionId: row.id,
+                        identityId: row.identity_id,
+                        owner: canonicalOwner,
+                        unitSlug: row.unit_slug || '',
+                    })
+                    changed.add(String(row.identity_id))
+                }
+                return { updated: changed.size, skipped: Math.max(0, identityIds.length - changed.size) }
             })
         },
 

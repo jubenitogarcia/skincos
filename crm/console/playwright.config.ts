@@ -9,6 +9,10 @@ const parsedBaseURL = new URL(baseURL)
 if (parsedBaseURL.protocol !== 'http:' || !allowedLoopbackHosts.has(parsedBaseURL.hostname)) {
   throw new Error('E2E_BASE_URL must be an HTTP loopback URL for synthetic CRM tests')
 }
+const webServerPort = parsedBaseURL.port || '5173'
+if (!/^\d{2,5}$/.test(webServerPort) || Number(webServerPort) < 1024 || Number(webServerPort) > 65535) {
+  throw new Error('E2E_BASE_URL must use a valid loopback port')
+}
 const headed = process.env.HEADED === '1' || process.env.HEADED === 'true' || process.env.PWDEBUG === '1'
 const isCodex =
   process.env.CODEX_SHELL === '1' ||
@@ -75,7 +79,7 @@ export default defineConfig({
   ],
   webServer: startLocalServer
     ? {
-        command: 'npm run dev -- --host 127.0.0.1 --port 5173',
+      command: `npm run dev -- --host 127.0.0.1 --port ${webServerPort}`,
         url: baseURL,
         cwd: configDir,
         reuseExistingServer: !process.env.CI,
