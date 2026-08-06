@@ -21,6 +21,7 @@
     "migrate-commercial-contact": "node scripts/migrate-atendimento-commercial-contact.mjs",
     "migrate-commercial-contact-rollout": "node scripts/migrate-atendimento-commercial-contact-rollout.mjs",
     "migrate-commercial-action-ledger": "node scripts/migrate-atendimento-commercial-action-ledger.mjs",
+    "migrate-commercial-operations": "node scripts/migrate-atendimento-commercial-operations.mjs",
     "migrate-commercial-data-quality": "node scripts/migrate-atendimento-commercial-data-quality.mjs",
     "migrate-atendimento-staging": "node scripts/migrate-atendimento-staging.mjs",
     "refresh-commercial-data-quality": "node scripts/refresh-commercial-data-quality.mjs",

@@ -77,6 +77,23 @@ import {
     IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS,
     IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
 } from './identityReviewMigration.js'
+import {
+    COMMERCIAL_CAMPAIGN_STATES,
+    COMMERCIAL_OUTCOME_CODES,
+    COMMERCIAL_OPERATION_FLAGS,
+    actionQueueFlags,
+    aggregateCommercialActionMetrics,
+    campaignMemberState,
+    classifyCommercialAction,
+    computeAverageStageDurations,
+    normalizeCampaignPayload,
+    normalizeOperationMutation,
+    operationError,
+    planWalletBalance,
+    sanitizeTimelineEvent,
+    stableOperationFingerprint,
+} from './commercialOperations.js'
+import { COMMERCIAL_OPERATIONS_MIGRATION_ID } from './commercialOperationsMigration.js'
 
 let pool = null
 
@@ -2033,25 +2050,26 @@ async function recordCommercialActionEvent(client, {
     traceId,
     recordedBy,
     contactEligibility,
+    outcomeCode = null,
+    operationsReady = false,
     details = {},
 }) {
+    if (operationsReady) {
+        await client.query(
+            `insert into crm_atendimento.commercial_action_events(
+                action_id, identity_id, event_type, previous_status, status, trace_id, recorded_by,
+                contact_eligibility_status, contact_eligibility_reason, outcome_code, details)
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,
+            [actionId, identityId, eventType, previousStatus, status, traceId, recordedBy, contactEligibility?.status || null, contactEligibility?.reason || null, outcomeCode || null, JSON.stringify(details || {})],
+        )
+        return
+    }
     await client.query(
         `insert into crm_atendimento.commercial_action_events(
             action_id, identity_id, event_type, previous_status, status, trace_id, recorded_by,
             contact_eligibility_status, contact_eligibility_reason, details)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,
-        [
-            actionId,
-            identityId,
-            eventType,
-            previousStatus,
-            status,
-            traceId,
-            recordedBy,
-            contactEligibility?.status || null,
-            contactEligibility?.reason || null,
-            JSON.stringify(details || {}),
-        ],
+        [actionId, identityId, eventType, previousStatus, status, traceId, recordedBy, contactEligibility?.status || null, contactEligibility?.reason || null, JSON.stringify(details || {})],
     )
 }
 
@@ -2761,6 +2779,7 @@ function mapCommercialAction(row) {
     return {
         id: row.id,
         identityId: row.identity_id,
+        clientName: row.client_name || '',
         unitSlug: row.unit_slug || '',
         unitName: row.unit_name || '',
         segmentKey: row.segment_key,
@@ -2771,26 +2790,20 @@ function mapCommercialAction(row) {
         dueDate: row.due_date ? String(row.due_date).slice(0, 10) : null,
         notes: row.notes || '',
         outcomeNotes: row.outcome_notes || '',
+        outcomeCode: row.outcome_code || null,
+        outcomeRecordedAt: row.outcome_recorded_at || null,
+        revision: Number(row.revision || 1),
         createdBy: row.created_by || '',
         completedAt: row.completed_at || null,
         contactedAt: row.contacted_at || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
+        queueFlags: Array.isArray(row.queue_flags) ? row.queue_flags : [],
     }
 }
 
 function mapCommercialTimelineEntry(row) {
-    return {
-        id: row.event_id,
-        type: row.event_type,
-        occurredOn: row.occurred_on ? String(row.occurred_on).slice(0, 10) : null,
-        title: row.title || '',
-        detail: row.detail || '',
-        unitName: row.unit_name || '',
-        source: row.source_label || '',
-        amount: row.amount == null ? null : Number(row.amount),
-        status: row.event_status || 'confirmed',
-    }
+    return sanitizeTimelineEvent(row)
 }
 
 async function queryCommercialTimeline(pgPool, { identityId, asOf, unitSlugs, limit }) {
@@ -2844,7 +2857,328 @@ async function queryCommercialTimeline(pgPool, { identityId, asOf, unitSlugs, li
          limit $4`,
         [identityId, asOf, unitSlugs, limit],
     )
-    return result.rows.map(mapCommercialTimelineEntry)
+    const events = [...result.rows]
+    try {
+        const operations = await readCommercialOperationsAvailability(pgPool)
+        if (operations.ready) {
+            const [actions, campaigns, permissions, decisions, offers] = await Promise.all([
+                pgPool.query(
+                    `select concat('action:', event.event_order::text) as event_id,
+                            case when event.outcome_code in ('sale') or event.status = 'won_sale' then 'sale'::text
+                                 when event.outcome_code in ('clinical_return') or event.status = 'returned' then 'return'::text
+                                 when event.outcome_code = 'opt_out_requested' then 'opt_out'::text
+                                 when event.outcome_code in ('scheduled') or event.status = 'scheduled' then 'appointment'::text
+                                 when event.outcome_code in ('no_response','wrong_number','requested_follow_up','not_interested','completed_elsewhere','attended') or event.status = 'responded' then 'response'::text
+                                 when event.status = 'contacted' then 'contact'::text
+                                 else 'action'::text end as event_type,
+                            event.created_at::text as occurred_on, concat('Ação ', event.status)::text as title,
+                            coalesce(nullif(event.outcome_code,''), nullif(event.details->>'operation',''), event.contact_eligibility_reason, '')::text as detail,
+                            unit.name::text as unit_name, 'CRM'::text as source_label, event.recorded_by::text as actor_label,
+                            event.trace_id::text as trace_id, event.details->>'campaignId' as campaign_id,
+                            event.details->>'offerId' as offer_id, event.contact_eligibility_status as consent_review,
+                            null::numeric as amount, event.status::text as event_status
+                       from crm_atendimento.commercial_action_events event
+                       join crm_atendimento.commercial_actions action on action.id = event.action_id
+                       left join crm_atendimento.units unit on unit.id = action.unit_id
+                      where event.identity_id = $1::uuid and event.created_at <= $2::date + interval '1 day'
+                        and ($3::text[] is null or unit.slug = any($3::text[]))
+                      order by event.created_at desc, event.event_order desc limit $4`,
+                    [identityId, asOf, unitSlugs, limit],
+                ),
+                pgPool.query(
+                    `select concat('campaign:', event.event_order::text) as event_id, 'campaign'::text as event_type,
+                            event.created_at::text as occurred_on, campaign.name::text as title,
+                            event.event_type::text as detail, unit.name::text as unit_name, 'CRM'::text as source_label,
+                            event.actor_id::text as actor_label, event.trace_id::text as trace_id,
+                            campaign.id::text as campaign_id, campaign.offer_id::text as offer_id,
+                            null::text as consent_review, null::numeric as amount, event.event_type::text as event_status
+                       from crm_atendimento.commercial_campaign_events event
+                       join crm_atendimento.commercial_campaigns campaign on campaign.id = event.campaign_id
+                       join crm_atendimento.commercial_campaign_members member on member.id = event.member_id
+                       join crm_atendimento.units unit on unit.id = member.unit_id
+                      where member.identity_id = $1::uuid and event.created_at <= $2::date + interval '1 day'
+                        and ($3::text[] is null or unit.slug = any($3::text[]))
+                      order by event.created_at desc, event.event_order desc limit $4`,
+                    [identityId, asOf, unitSlugs, limit],
+                ),
+                pgPool.query(
+                    `select concat('permission:', event.id::text) as event_id, case when event.status = 'denied' then 'opt_out' else 'permission' end::text as event_type,
+                            event.created_at::text as occurred_on, concat('Permissão ', event.status)::text as title,
+                            event.evidence_source::text as detail, null::text as unit_name, 'Consentimento'::text as source_label,
+                            event.recorded_by::text as actor_label, event.trace_id::text as trace_id,
+                            null::text as campaign_id, null::text as offer_id, event.status::text as consent_review,
+                            null::numeric as amount, event.status::text as event_status
+                       from crm_atendimento.commercial_contact_permission_events event
+                      where event.identity_id = $1::uuid and event.created_at <= $2::date + interval '1 day'
+                      order by event.created_at desc limit $4`,
+                    [identityId, asOf, unitSlugs, limit],
+                ),
+                pgPool.query(
+                    `select concat('audit:', audit.id::text) as event_id,
+                            case when audit.event_type like 'client-identity.%' then 'identity_decision'::text
+                                 when audit.event_type like 'commercial.data-quality.%' then 'quality_finding'::text
+                                 else 'correction'::text end as event_type,
+                            audit.created_at::text as occurred_on,
+                            audit.event_type::text as title,
+                            ''::text as detail,
+                            null::text as unit_name, 'CRM'::text as source_label,
+                            coalesce(audit.actor->>'username', audit.actor->>'id', '')::text as actor_label,
+                            audit.payload->>'traceId' as trace_id,
+                            audit.payload->>'campaignId' as campaign_id,
+                            audit.payload->>'offerId' as offer_id,
+                            null::text as consent_review, null::numeric as amount, 'confirmed'::text as event_status
+                       from crm_atendimento.audit_events audit
+                      where audit.payload->>'identityId' = $1
+                        and audit.created_at <= $2::date + interval '1 day'
+                        and (audit.event_type like 'client-identity.%' or audit.event_type like 'commercial.data-quality.%' or audit.event_type like 'commercial.%correct%')
+                      order by audit.created_at desc limit $3`,
+                    [identityId, asOf, limit],
+                ),
+                pgPool.query(
+                    `select concat('offer:', campaign.id::text) as event_id, 'offer'::text as event_type,
+                            campaign.created_at::text as occurred_on, campaign.name::text as title,
+                            'Oferta congelada na coorte'::text as detail, unit.name::text as unit_name,
+                            'CRM'::text as source_label, campaign.author::text as actor_label,
+                            null::text as trace_id, campaign.id::text as campaign_id,
+                            campaign.offer_id::text as offer_id, null::text as consent_review,
+                            null::numeric as amount, campaign.state::text as event_status
+                       from crm_atendimento.commercial_campaigns campaign
+                       join crm_atendimento.commercial_campaign_members member on member.campaign_id = campaign.id
+                       join crm_atendimento.units unit on unit.id = member.unit_id
+                      where member.identity_id = $1::uuid and campaign.offer_id is not null
+                        and campaign.created_at <= $2::date + interval '1 day'
+                        and ($3::text[] is null or unit.slug = any($3::text[]))
+                      order by campaign.created_at desc limit $4`,
+                    [identityId, asOf, unitSlugs, limit],
+                ),
+            ])
+            events.push(...actions.rows, ...campaigns.rows, ...permissions.rows, ...decisions.rows, ...offers.rows)
+        }
+    } catch (error) {
+        if (String(error?.code || '') !== '42P01' && String(error?.code || '') !== '42703') throw error
+    }
+    return events
+        .sort((left, right) => String(right.occurred_on || '').localeCompare(String(left.occurred_on || '')) || String(right.event_id || '').localeCompare(String(left.event_id || '')))
+        .slice(0, limit)
+        .map(mapCommercialTimelineEntry)
+}
+
+async function readCommercialOperationsAvailability(pgPool) {
+    const empty = {
+        migrationId: COMMERCIAL_OPERATIONS_MIGRATION_ID,
+        ready: false,
+        actions: false,
+        mutations: false,
+        campaigns: false,
+        members: false,
+        campaignEvents: false,
+        absences: false,
+        reviewSources: false,
+    }
+    let result
+    try {
+        result = await pgPool.query(`select
+            to_regclass('crm_atendimento.commercial_actions') as actions,
+            to_regclass('crm_atendimento.commercial_operation_mutations') as mutations,
+            to_regclass('crm_atendimento.commercial_campaigns') as campaigns,
+            to_regclass('crm_atendimento.commercial_campaign_members') as members,
+            to_regclass('crm_atendimento.commercial_campaign_events') as campaign_events,
+            to_regclass('crm_atendimento.commercial_owner_absences') as absences,
+            to_regclass('crm_atendimento.schema_migrations') as migrations,
+            to_regclass('crm_atendimento.client_merge_suggestions') as merge_suggestions,
+            to_regclass('crm_atendimento.client_caixa_links') as caixa_links,
+            to_regclass('crm_atendimento.app_registration_attendance_links') as app_attendance_links,
+            to_regclass('crm_atendimento.app_registration_caixa_links') as app_caixa_links,
+            to_regclass('crm_atendimento.supplemental_lead_profile_app_links') as lead_app_links,
+            to_regclass('crm_atendimento.supplemental_lead_profile_caixa_links') as lead_caixa_links`)
+    } catch {
+        return empty
+    }
+    if (!result?.rows) return empty
+    const row = result.rows[0] || {}
+    const availability = {
+        ...empty,
+        actions: !!row.actions,
+        mutations: !!row.mutations,
+        campaigns: !!row.campaigns,
+        members: !!row.members,
+        campaignEvents: !!row.campaign_events,
+        absences: !!row.absences,
+        reviewSources: !!row.merge_suggestions && !!row.caixa_links && !!row.app_attendance_links && !!row.app_caixa_links && !!row.lead_app_links && !!row.lead_caixa_links,
+    }
+    if (!row.migrations || !availability.actions || !availability.mutations || !availability.campaigns || !availability.members || !availability.campaignEvents || !availability.absences) return availability
+    try {
+        const migration = await pgPool.query(
+            `select id from crm_atendimento.schema_migrations where id = $1 and rolled_back_at is null limit 1`,
+            [COMMERCIAL_OPERATIONS_MIGRATION_ID],
+        )
+        availability.ready = migration.rows.length === 1
+    } catch {
+        availability.ready = false
+    }
+    return availability
+}
+
+async function assertCommercialOperationsReady(pgPool) {
+    const availability = await readCommercialOperationsAvailability(pgPool)
+    if (!availability.ready) throw operationError('COMMERCIAL_OPERATIONS_NOT_READY', 409)
+    return availability
+}
+
+function commercialMutationKey(actor, operation, idempotencyKey) {
+    return `${commercialActorId(actor)}:${operation}:${String(idempotencyKey || '').trim()}`
+}
+
+function commercialActorId(actor) {
+    const identity = actorIdentityForMutation(actor)
+    return identity.includes('@') ? `actor:${stableOperationFingerprint(identity).slice(0, 24)}` : identity
+}
+
+function commercialAuditActor(actor) {
+    return { id: commercialActorId(actor) }
+}
+
+async function readCommercialOperationMutation(client, mutationKey) {
+    // Serialize the idempotency key before reading it. A unique index alone
+    // would turn a concurrent replay into a transaction-aborting 23505 error.
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [mutationKey])
+    const result = await client.query(
+        `select operation, request_fingerprint, response from crm_atendimento.commercial_operation_mutations where mutation_key = $1 for share`,
+        [mutationKey],
+    )
+    return result.rows[0] || null
+}
+
+async function recordCommercialOperationMutation(client, { mutationKey, operation, actorId, requestFingerprint, response }) {
+    await client.query(
+        `insert into crm_atendimento.commercial_operation_mutations(mutation_key, operation, actor_id, request_fingerprint, response)
+         values ($1,$2,$3,$4,$5::jsonb)`,
+        [mutationKey, operation, actorId, requestFingerprint, JSON.stringify(response || {})],
+    )
+}
+
+async function queryCommercialOperationalFlags(pgPool, identityIds, availability) {
+    const ids = [...new Set((identityIds || []).map((value) => String(value || '').trim()).filter(Boolean))]
+    const flags = new Map(ids.map((id) => [id, { sourceStale: false, identityInReview: false }]))
+    if (!ids.length) return flags
+    if (availability?.reviewSources) {
+        const pending = await pgPool.query(
+            `select distinct member.identity_id::text as identity_id
+               from crm_atendimento.global_client_identity_members member
+              where member.identity_id = any($1::uuid[])
+                and ((member.source_type = 'attendance_client' and exists (select 1 from crm_atendimento.client_merge_suggestions suggestion where suggestion.status = 'pending' and suggestion.left_client_id::text = member.source_id))
+                 or (member.source_type = 'caixa_customer' and exists (select 1 from crm_atendimento.client_caixa_links link where link.status in ('suggested','ambiguous') and (link.client_id::text = member.source_id or link.caixa_customer_id::text = member.source_id)))
+                 or (member.source_type = 'app_registration' and exists (select 1 from crm_atendimento.app_registration_attendance_links link where link.status in ('suggested','ambiguous') and link.app_registration_id = member.source_id))
+                 or (member.source_type = 'app_registration' and exists (select 1 from crm_atendimento.app_registration_caixa_links link where link.status in ('suggested','ambiguous') and link.app_registration_id = member.source_id))
+                 or (member.source_type = 'lead_profile' and exists (select 1 from crm_atendimento.supplemental_lead_profile_app_links link where link.status in ('suggested','ambiguous') and link.source_profile_id = member.source_id))
+                 or (member.source_type = 'lead_profile' and exists (select 1 from crm_atendimento.supplemental_lead_profile_caixa_links link where link.status in ('suggested','ambiguous') and link.source_profile_id = member.source_id)))`,
+            [ids],
+        )
+        for (const row of pending.rows) if (flags.has(String(row.identity_id))) flags.get(String(row.identity_id)).identityInReview = true
+    }
+    try {
+        const stale = await pgPool.query(
+            `with latest_decision as (
+                select member.identity_id::text as identity_id, max(decision.created_at) as decided_at
+                  from crm_atendimento.global_client_identity_members member
+                  join crm_atendimento.identity_review_decisions decision on decision.source_id = member.source_id
+                 where member.identity_id = any($1::uuid[])
+                 group by member.identity_id
+             )
+             select identity.id::text as identity_id
+               from crm_atendimento.global_client_identities identity
+               left join latest_decision on latest_decision.identity_id = identity.id::text
+              where identity.id = any($1::uuid[])
+                and latest_decision.decided_at is not null
+                and identity.updated_at > latest_decision.decided_at`,
+            [ids],
+        )
+        for (const row of stale.rows) if (flags.has(String(row.identity_id))) flags.get(String(row.identity_id)).sourceStale = true
+    } catch (error) {
+        // A pre-workflow database has no decision ledger. It is safer to leave
+        // stale state unknown than to turn a missing optional source into a PII
+        // bearing error or a blocking read.
+        if (String(error?.code || '') !== '42P01' && String(error?.code || '') !== '42703') throw error
+    }
+    return flags
+}
+
+async function queryCommercialOperationsActions(pgPool, { unitSlugs = null, query = {}, actorIds = [] } = {}) {
+    const params = [unitSlugs]
+    const where = ['($1::text[] is null or unit.slug = any($1::text[]))']
+    const search = String(query?.q || query?.search || '').trim()
+    if (search) { params.push(`%${search}%`); where.push(`identity.canonical_name ilike $${params.length}`) }
+    const status = String(query?.status || '').trim()
+    if (status) { params.push(status); where.push(`action.status = $${params.length}`) }
+    const owner = String(query?.owner || '').trim()
+    if (owner) { params.push(owner); where.push(`action.owner = $${params.length}`) }
+    if (String(query?.mine || '').toLowerCase() === 'true' && actorIds.length) { params.push(actorIds.map((value) => value.toLowerCase())); where.push(`lower(action.owner) = any($${params.length}::text[])`) }
+    const unbounded = query?.all === true
+    const limit = sanitizeLimit(query?.limit, 100, 250)
+    const offset = sanitizeOffset(query?.offset, 0)
+    if (!unbounded) params.push(limit, offset)
+    const result = await pgPool.query(
+        `select action.id, action.identity_id, identity.canonical_name as client_name,
+                action.unit_id, unit.slug as unit_slug, unit.name as unit_name,
+                action.segment_key, action.action_type, action.contact_channel, action.status,
+                action.owner, action.due_date, action.notes, action.outcome_notes,
+                action.outcome_code, action.outcome_recorded_at, action.revision,
+                action.created_by, action.completed_at, action.contacted_at, action.created_at, action.updated_at,
+                count(*) over()::int as total_count
+           from crm_atendimento.commercial_actions action
+           join crm_atendimento.global_client_identities identity on identity.id = action.identity_id
+           left join crm_atendimento.units unit on unit.id = action.unit_id
+          where ${where.join(' and ')}
+          order by action.due_date nulls last, action.updated_at desc, action.id
+          ${unbounded ? '' : `limit $${params.length - 1} offset $${params.length}`}`,
+        params,
+    )
+    return { rows: result.rows, total: Number(result.rows[0]?.total_count || 0), limit, offset }
+}
+
+async function queryCommercialOperationsMetricRows(pgPool, { unitSlugs = null, query = {}, actorIds = [] } = {}) {
+    const params = [unitSlugs]
+    const where = ['($1::text[] is null or unit.slug = any($1::text[]))']
+    const search = String(query?.q || query?.search || '').trim()
+    if (search) { params.push(`%${search}%`); where.push(`identity.canonical_name ilike $${params.length}`) }
+    const status = String(query?.status || '').trim()
+    if (status) { params.push(status); where.push(`action.status = $${params.length}`) }
+    const owner = String(query?.owner || '').trim()
+    if (owner) { params.push(owner); where.push(`action.owner = $${params.length}`) }
+    if (String(query?.mine || '').toLowerCase() === 'true' && actorIds.length) { params.push(actorIds.map((value) => value.toLowerCase())); where.push(`lower(action.owner) = any($${params.length}::text[])`) }
+    const result = await pgPool.query(
+        `select action.id, action.identity_id, action.status, action.owner, action.due_date, action.outcome_code,
+                action.created_at, action.updated_at
+           from crm_atendimento.commercial_actions action
+           join crm_atendimento.global_client_identities identity on identity.id = action.identity_id
+           left join crm_atendimento.units unit on unit.id = action.unit_id
+          where ${where.join(' and ')}
+          order by action.updated_at desc, action.id`,
+        params,
+    )
+    return result.rows
+}
+
+async function queryCommercialOwnerAbsences(pgPool, { unitSlugs = null, asOf = new Date().toISOString().slice(0, 10) } = {}) {
+    const result = await pgPool.query(
+        `select absence.id, absence.owner, unit.slug as unit_slug, unit.name as unit_name,
+                absence.absence_type, absence.starts_at, absence.ends_at, absence.substitute_owner,
+                absence.reason, absence.revision, absence.created_by, absence.updated_by,
+                absence.created_at, absence.updated_at
+           from crm_atendimento.commercial_owner_absences absence
+           join crm_atendimento.units unit on unit.id = absence.unit_id
+          where ($1::text[] is null or unit.slug = any($1::text[]))
+            and absence.ends_at >= $2::date
+          order by absence.starts_at, absence.owner`,
+        [unitSlugs, asOf],
+    )
+    return result.rows.map((row) => ({
+        id: row.id, owner: row.owner, unitSlug: row.unit_slug, unitName: row.unit_name,
+        absenceType: row.absence_type, startsAt: row.starts_at, endsAt: row.ends_at,
+        substituteOwner: row.substitute_owner || null, reason: row.reason,
+        revision: Number(row.revision || 1), createdBy: row.created_by, updatedBy: row.updated_by,
+        createdAt: row.created_at, updatedAt: row.updated_at,
+    }))
 }
 
 async function assertCommercialIdentitySource(pgPool) {
@@ -2860,6 +3194,19 @@ async function assertCommercialIdentitySource(pgPool) {
         error.statusCode = 409
         throw error
     }
+}
+
+async function assertCommercialCampaignOffer(client, offerId, unitSlug) {
+    if (!offerId) return
+    const result = await client.query(
+        `select offer.id
+           from crm_atendimento.commercial_offers offer
+           join crm_atendimento.units unit on unit.id = offer.unit_id
+          where offer.id = $1::uuid and unit.slug = $2
+          limit 1`,
+        [offerId, unitSlug],
+    )
+    if (!result.rows[0]) throw operationError('COMMERCIAL_CAMPAIGN_OFFER_NOT_FOUND', 404)
 }
 
 async function readCommercialPolicy(pgPool) {
@@ -5843,6 +6190,11 @@ export function createAtendimentoStore(options = {}) {
         async createCommercialAction(payload, actor) {
             await ensureReady()
             assertCommercialManager(actor)
+            const mutation = normalizeOperationMutation(payload || {}, { requireIdempotency: false })
+            const operationsRequested = !!mutation.idempotencyKey || mutation.expectedRevision != null || !!mutation.outcomeCode
+            if (operationsRequested && !mutation.idempotencyKey) throw operationError('COMMERCIAL_IDEMPOTENCY_KEY_REQUIRED')
+            const operationsAvailability = operationsRequested ? await assertCommercialOperationsReady(pgPool) : null
+            const actorIdentity = actorIdentityForMutation(actor)
             const identityId = String(payload?.identityId || '').trim()
             const segmentKey = String(payload?.segmentKey || '').trim()
             const actionType = String(payload?.actionType || 'contact').trim()
@@ -5860,6 +6212,15 @@ export function createAtendimentoStore(options = {}) {
             await assertCommercialIdentitySource(pgPool)
             const contactAvailability = await assertCommercialContactCooldownControls(pgPool)
             return withCommercialContactTransaction(pgPool, async (client) => {
+                const mutationKey = operationsRequested ? commercialMutationKey(actor, 'action_create', mutation.idempotencyKey || `legacy-${identityId}-${segmentKey}-${dueDate || ''}`) : null
+                const fingerprint = operationsRequested ? stableOperationFingerprint({ identityId, segmentKey, actionType, contactChannel, owner, dueDate, notes: String(payload?.notes || '').trim(), unitSlug }) : null
+                if (mutationKey) {
+                    const replay = await readCommercialOperationMutation(client, mutationKey)
+                    if (replay) {
+                        if (replay.request_fingerprint !== fingerprint) throw operationError('COMMERCIAL_IDEMPOTENCY_CONFLICT', 409)
+                        return { ...(replay.response || {}), idempotentReplay: true }
+                    }
+                }
                 // Creation joins the same per-identity lock as `contacted`.
                 // This prevents two queue writes from both observing an empty
                 // cadence window and creates a stable ordering with the first
@@ -5904,11 +6265,18 @@ export function createAtendimentoStore(options = {}) {
                     throw error
                 }
                 const created = await client.query(
-                    `insert into crm_atendimento.commercial_actions(
-                        identity_id, unit_id, segment_key, action_type, contact_channel, owner, due_date, notes, created_by, updated_by)
-                     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
-                     returning id, status`,
-                    [identityId, unit.rows[0]?.id || null, segmentKey, actionType, contactChannel, canonicalOwner, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor)],
+                    operationsRequested
+                        ? `insert into crm_atendimento.commercial_actions(
+                            identity_id, unit_id, segment_key, action_type, contact_channel, owner, due_date, notes, created_by, updated_by, idempotency_key)
+                           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10)
+                           returning id, status, revision`
+                        : `insert into crm_atendimento.commercial_actions(
+                            identity_id, unit_id, segment_key, action_type, contact_channel, owner, due_date, notes, created_by, updated_by)
+                           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+                           returning id, status`,
+                    operationsRequested
+                        ? [identityId, unit.rows[0]?.id || null, segmentKey, actionType, contactChannel, canonicalOwner, dueDate, String(payload?.notes || '').trim() || null, actorIdentity, mutation.idempotencyKey]
+                        : [identityId, unit.rows[0]?.id || null, segmentKey, actionType, contactChannel, canonicalOwner, dueDate, String(payload?.notes || '').trim() || null, actorIdentity],
                 )
                 const traceId = randomUUID()
                 const actionId = created.rows[0]?.id
@@ -5921,6 +6289,8 @@ export function createAtendimentoStore(options = {}) {
                     traceId,
                     recordedBy: actorLabel(actor),
                     contactEligibility,
+                    outcomeCode: mutation.outcomeCode || null,
+                    operationsReady: !!operationsAvailability?.ready,
                     details: { segmentKey, actionType, contactChannel, unitSlug },
                 })
                 await audit(client, 'commercial.action.created', actor, null, {
@@ -5934,7 +6304,9 @@ export function createAtendimentoStore(options = {}) {
                     eligibilityStatus: contactEligibility.status,
                     eligibilityReason: contactEligibility.reason,
                 })
-                return { id: actionId, contactEligibility }
+                const response = { id: actionId, revision: Number(created.rows[0]?.revision || 1), contactEligibility }
+                if (mutationKey) await recordCommercialOperationMutation(client, { mutationKey, operation: 'action_create', actorId: actorIdentity, requestFingerprint: fingerprint, response })
+                return response
             })
         },
 
@@ -5942,6 +6314,10 @@ export function createAtendimentoStore(options = {}) {
             await ensureReady()
             assertCommercialManager(actor)
             const actorIdentity = actorIdentityForMutation(actor)
+            const mutation = normalizeOperationMutation(payload || {}, { requireIdempotency: false })
+            const operationsRequested = !!mutation.idempotencyKey || mutation.expectedRevision != null || !!mutation.outcomeCode
+            if (operationsRequested && !mutation.idempotencyKey) throw operationError('COMMERCIAL_IDEMPOTENCY_KEY_REQUIRED')
+            const operationsAvailability = operationsRequested ? await assertCommercialOperationsReady(pgPool) : null
             const id = String(actionId || '').trim()
             const status = String(payload?.status || '').trim()
             if (!id || !COMMERCIAL_ACTION_STATUSES.has(status)) {
@@ -5958,11 +6334,21 @@ export function createAtendimentoStore(options = {}) {
             }
             const actorUnitScope = commercialUnitScope(actor)
             return withCommercialContactTransaction(pgPool, async (client) => {
+                const mutationKey = operationsRequested ? commercialMutationKey(actor, 'action_update', mutation.idempotencyKey) : null
+                const fingerprint = operationsRequested ? stableOperationFingerprint({ actionId: id, status, owner: String(payload?.owner || '').trim(), outcomeNotes: String(payload?.outcomeNotes || '').trim(), outcomeCode: mutation.outcomeCode || null, expectedRevision: mutation.expectedRevision, reason: mutation.reason }) : null
+                if (mutationKey) {
+                    const replay = await readCommercialOperationMutation(client, mutationKey)
+                    if (replay) {
+                        if (replay.request_fingerprint !== fingerprint) throw operationError('COMMERCIAL_IDEMPOTENCY_CONFLICT', 409)
+                        return { ...(replay.response || {}), idempotentReplay: true }
+                    }
+                }
                 const contactedAtSelection = availability.actionContactedAt
                     ? ', action.contacted_at'
                     : ', null::timestamptz as contacted_at'
+                const operationsSelection = operationsRequested ? ', action.revision, action.outcome_code' : ''
                 const action = await client.query(
-                    `select action.id, action.identity_id, action.status${contactedAtSelection}, unit.slug as unit_slug
+                    `select action.id, action.identity_id, action.status${contactedAtSelection}${operationsSelection}, unit.slug as unit_slug
                      from crm_atendimento.commercial_actions action
                      left join crm_atendimento.units unit on unit.id = action.unit_id
                      where action.id = $1 for update of action`,
@@ -5970,6 +6356,7 @@ export function createAtendimentoStore(options = {}) {
                 )
                 const current = action.rows[0]
                 if (!current?.id) throw commercialContactError('COMMERCIAL_ACTION_NOT_FOUND', 404)
+                if (operationsRequested && mutation.expectedRevision != null && mutation.expectedRevision !== Number(current.revision)) throw operationError('COMMERCIAL_ACTION_CONFLICT', 409)
                 if (actorUnitScope !== null) {
                     // The action row is locked above, so the unit used for the
                     // authorization decision cannot change before this write.
@@ -6027,15 +6414,23 @@ export function createAtendimentoStore(options = {}) {
                     ? `contacted_at = case when $2 = 'contacted' and contacted_at is null then now() else contacted_at end,`
                     : ''
                 const traceId = randomUUID()
-                await client.query(
-                    `update crm_atendimento.commercial_actions
-                     set status = $2, owner = coalesce(nullif($3, ''), owner), outcome_notes = coalesce(nullif($4, ''), outcome_notes),
-                          completed_at = case when $2 in ('won_sale','returned','closed','cancelled') then now() else completed_at end,
-                          ${contactedAtUpdate}
-                          updated_by = $5, updated_at = now()
-                     where id = $1`,
-                    [id, status, canonicalOwner, String(payload?.outcomeNotes || '').trim(), actorIdentity],
-                )
+                const updateSql = operationsRequested
+                    ? `update crm_atendimento.commercial_actions
+                       set status = $2, owner = coalesce(nullif($3, ''), owner), outcome_notes = coalesce(nullif($4, ''), outcome_notes),
+                            completed_at = case when $2 in ('won_sale','returned','closed','cancelled') then now() else completed_at end,
+                            ${contactedAtUpdate}
+                            outcome_code = coalesce(nullif($6, ''), outcome_code), outcome_recorded_at = case when nullif($6, '') is null then outcome_recorded_at else now() end,
+                            revision = revision + 1, idempotency_key = coalesce(idempotency_key, $7), updated_by = $5, updated_at = now()
+                       where id = $1 returning revision, outcome_code, outcome_recorded_at`
+                    : `update crm_atendimento.commercial_actions
+                       set status = $2, owner = coalesce(nullif($3, ''), owner), outcome_notes = coalesce(nullif($4, ''), outcome_notes),
+                            completed_at = case when $2 in ('won_sale','returned','closed','cancelled') then now() else completed_at end,
+                            ${contactedAtUpdate}
+                            updated_by = $5, updated_at = now()
+                       where id = $1`
+                const updated = await client.query(updateSql, operationsRequested
+                    ? [id, status, canonicalOwner, String(payload?.outcomeNotes || '').trim(), actorIdentity, mutation.outcomeCode || '', mutation.idempotencyKey]
+                    : [id, status, canonicalOwner, String(payload?.outcomeNotes || '').trim(), actorIdentity])
                 await recordCommercialActionEvent(client, {
                     actionId: id,
                     identityId: current.identity_id,
@@ -6045,6 +6440,8 @@ export function createAtendimentoStore(options = {}) {
                     traceId,
                     recordedBy: actorIdentity,
                     contactEligibility,
+                    outcomeCode: mutation.outcomeCode || null,
+                    operationsReady: !!operationsAvailability?.ready,
                     details: {
                         statusChanged: current.status !== status,
                         contactedAtRecorded: recordingContact,
@@ -6059,7 +6456,378 @@ export function createAtendimentoStore(options = {}) {
                     eligibilityStatus: contactEligibility.status,
                     eligibilityReason: contactEligibility.reason,
                 })
-                return { id, status, contactEligibility }
+                const response = { id, status, revision: Number(updated.rows[0]?.revision || current.revision || 1), outcomeCode: updated.rows[0]?.outcome_code || mutation.outcomeCode || null, contactEligibility }
+                if (mutationKey) await recordCommercialOperationMutation(client, { mutationKey, operation: 'action_update', actorId: actorIdentity, requestFingerprint: fingerprint, response })
+                return response
+            })
+        },
+
+        async commercialOperations(query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialIdentitySource(pgPool)
+            const availability = {
+                ...(await readCommercialContactAvailability(pgPool)),
+                ...(await assertCommercialOperationsReady(pgPool)),
+            }
+            const unitSlugs = commercialUnitSlugsForQuery(actor, query?.unit)
+            const actorIds = [actor?.id, actor?.username, actor?.email, actor?.name, actor?.displayName].map((value) => String(value || '').trim()).filter(Boolean)
+            const [policy, actionPage, absences, metricRows] = await Promise.all([
+                readCommercialPolicy(pgPool),
+                queryCommercialOperationsActions(pgPool, { unitSlugs, query, actorIds }),
+                queryCommercialOwnerAbsences(pgPool, { unitSlugs, asOf: commercialAsOf(query?.asOf) }),
+                queryCommercialOperationsMetricRows(pgPool, { unitSlugs, query, actorIds }),
+            ])
+            const identityIds = [...new Set([...actionPage.rows, ...metricRows].map((row) => String(row.identity_id || '')).filter(Boolean))]
+            const [eligibilityByIdentity, operationalFlags] = await Promise.all([
+                queryCommercialContactEligibility(pgPool, identityIds, { unitSlugs }),
+                queryCommercialOperationalFlags(pgPool, identityIds, availability),
+            ])
+            const actions = actionPage.rows.map((row) => {
+                const identityId = String(row.identity_id)
+                const flags = operationalFlags.get(identityId) || {}
+                const classified = classifyCommercialAction({ ...row, dueDate: row.due_date, queueFlags: [] }, {
+                    actorIds,
+                    eligibility: eligibilityByIdentity.get(identityId),
+                    sourceStale: !!flags.sourceStale,
+                    identityInReview: !!flags.identityInReview,
+                })
+                return mapCommercialAction({ ...row, queue_flags: classified.queueFlags })
+            })
+            const metricActions = metricRows.map((row) => {
+                const flags = operationalFlags.get(String(row.identity_id)) || {}
+                return classifyCommercialAction(row, {
+                    today: commercialAsOf(query?.asOf),
+                    actorIds,
+                    eligibility: eligibilityByIdentity.get(String(row.identity_id)),
+                    sourceStale: !!flags.sourceStale,
+                    identityInReview: !!flags.identityInReview,
+                })
+            })
+            let stageDurations = {}
+            try {
+                const events = await pgPool.query(
+                    `select action_id, status, created_at from crm_atendimento.commercial_action_events
+                     where action_id = any($1::uuid[]) order by action_id, event_order`,
+                    [metricRows.map((row) => row.id)],
+                )
+                stageDurations = computeAverageStageDurations(events.rows)
+            } catch (error) {
+                if (String(error?.code || '') !== '42P01' && String(error?.code || '') !== '42703') throw error
+            }
+            const metrics = aggregateCommercialActionMetrics(metricActions, { today: commercialAsOf(query?.asOf) })
+            return {
+                asOf: commercialAsOf(query?.asOf),
+                scope: unitSlugs,
+                wallet: {
+                    total: actionPage.total,
+                    actions,
+                    countsByFlag: Object.fromEntries(COMMERCIAL_OPERATION_FLAGS.map((flag) => [flag, metricActions.filter((action) => action.queueFlags.includes(flag)).length])),
+                    pagination: { limit: actionPage.limit, offset: actionPage.offset, hasPrevious: actionPage.offset > 0, hasNext: actionPage.offset + actionPage.rows.length < actionPage.total },
+                },
+                team: { ...metrics, stageDurations, slaHours: Number(query?.slaHours || 24) || 24 },
+                absences,
+                controls: {
+                    migrationReady: availability.ready,
+                    commercialContactWritesEnabled: false,
+                    messagesEnabled: false,
+                    policyVersion: policy.policyVersion,
+                },
+                privacy: { piiInMetrics: false, phoneOrEmailInList: false },
+            }
+        },
+
+        async commercialCampaigns(query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const availability = {
+                ...(await readCommercialContactAvailability(pgPool)),
+                ...(await assertCommercialOperationsReady(pgPool)),
+            }
+            const unitSlugs = commercialUnitSlugsForQuery(actor, query?.unit)
+            const params = [unitSlugs]
+            const where = ['($1::text[] is null or unit.slug = any($1::text[]))']
+            if (query?.state) { params.push(String(query.state)); where.push(`campaign.state = $${params.length}`) }
+            if (query?.id) { params.push(String(query.id)); where.push(`campaign.id = $${params.length}::uuid`) }
+            const result = await pgPool.query(
+                `select campaign.id, campaign.name, campaign.revision, campaign.segment_key, campaign.segment_version,
+                        campaign.filters_snapshot, campaign.cutoff_at, unit.slug as unit_slug, unit.name as unit_name,
+                        campaign.owner, campaign.offer_id, campaign.assignment_window_start, campaign.assignment_window_end,
+                        campaign.control_group_percent, campaign.state, campaign.author, campaign.reason,
+                        campaign.created_at, campaign.updated_at,
+                        count(member.id)::int as member_count,
+                        count(member.id) filter (where member.state = 'eligible')::int as eligible_count,
+                        count(member.id) filter (where member.state = 'blocked')::int as blocked_count,
+                        count(member.id) filter (where member.state = 'review')::int as review_count,
+                        count(member.id) filter (where member.state = 'control')::int as control_count,
+                        count(member.id) filter (where member.state in ('assigned','completed'))::int as assigned_count
+                   from crm_atendimento.commercial_campaigns campaign
+                   join crm_atendimento.units unit on unit.id = campaign.unit_id
+                   left join crm_atendimento.commercial_campaign_members member on member.campaign_id = campaign.id
+                  where ${where.join(' and ')}
+                  group by campaign.id, unit.slug, unit.name
+                  order by campaign.updated_at desc
+                  limit 100`,
+                params,
+            )
+            return {
+                availability,
+                campaigns: result.rows.map((row) => ({
+                    id: row.id, name: row.name, revision: Number(row.revision || 1), segmentKey: row.segment_key,
+                    segmentVersion: row.segment_version, filters: row.filters_snapshot || {}, cutoffAt: row.cutoff_at,
+                    unitSlug: row.unit_slug, unitName: row.unit_name, owner: row.owner, offerId: row.offer_id || null,
+                    assignmentWindowStart: row.assignment_window_start, assignmentWindowEnd: row.assignment_window_end,
+                    controlGroupPercent: Number(row.control_group_percent || 0), state: row.state, author: row.author,
+                    reason: row.reason, createdAt: row.created_at, updatedAt: row.updated_at,
+                    counts: { total: Number(row.member_count || 0), eligible: Number(row.eligible_count || 0), blocked: Number(row.blocked_count || 0), review: Number(row.review_count || 0), control: Number(row.control_count || 0), assigned: Number(row.assigned_count || 0) },
+                })),
+            }
+        },
+
+        async commercialCampaign(payload, actor) {
+            const response = await this.commercialCampaigns({ id: payload?.id, unit: payload?.unit }, actor)
+            const campaign = response.campaigns[0]
+            if (!campaign) throw operationError('COMMERCIAL_CAMPAIGN_NOT_FOUND', 404)
+            const members = await pgPool.query(
+                `select member.id, member.identity_id, member.unit_id, unit.slug as unit_slug,
+                        member.owner, member.offer_id, member.control_group, member.state,
+                        member.eligibility_snapshot, member.action_id, member.revision,
+                        member.created_at, member.updated_at
+                   from crm_atendimento.commercial_campaign_members member
+                   join crm_atendimento.units unit on unit.id = member.unit_id
+                  where member.campaign_id = $1::uuid
+                  order by member.created_at, member.id
+                  limit 500`,
+                [campaign.id],
+            )
+            return { ...response, campaign: { ...campaign, members: members.rows.map((row) => ({ id: row.id, identityId: row.identity_id, unitSlug: row.unit_slug, owner: row.owner, offerId: row.offer_id || null, controlGroup: !!row.control_group, state: row.state, eligibility: row.eligibility_snapshot || {}, actionId: row.action_id || null, revision: Number(row.revision || 1), createdAt: row.created_at, updatedAt: row.updated_at })) } }
+        },
+
+        async previewCommercialCampaign(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const normalized = normalizeCampaignPayload({ ...payload, idempotencyKey: payload?.idempotencyKey || 'preview' })
+            const unitSlugs = commercialUnitSlugsForQuery(actor, normalized.unit)
+            const availability = {
+                ...(await readCommercialContactAvailability(pgPool)),
+                ...(await assertCommercialOperationsReady(pgPool)),
+            }
+            const ids = normalized.identityIds
+            const existing = await pgPool.query(`select id::text as identity_id from crm_atendimento.global_client_identities where id = any($1::uuid[])`, [ids])
+            if (existing.rows.length !== ids.length) throw operationError('COMMERCIAL_CAMPAIGN_IDENTITY_NOT_FOUND', 404)
+            if (!await resolveCommercialActionOwner(pgPool, normalized.owner, { slug: normalized.unit })) throw operationError('INVALID_COMMERCIAL_CAMPAIGN_OWNER')
+            await assertCommercialCampaignOffer(pgPool, normalized.offerId, normalized.unit)
+            for (const identityId of ids) await assertCommercialIdentityUnitMembership(pgPool, { identityId, unitSlug: normalized.unit, availability })
+            const [eligibilityByIdentity, operationalFlags] = await Promise.all([
+                queryCommercialContactEligibility(pgPool, ids, { unitSlugs }),
+                queryCommercialOperationalFlags(pgPool, ids, availability),
+            ])
+            const summary = { total: ids.length, eligible: 0, blocked: 0, review: 0, control: 0, permissionExpiring: 0, sourceStale: 0, identityReview: 0, impact: 'no_messages_no_outbound_contact' }
+            for (const identityId of ids) {
+                const eligibility = eligibilityByIdentity.get(identityId)
+                const flags = operationalFlags.get(identityId) || {}
+                const isReview = !!flags.identityInReview || !!flags.sourceStale
+                if (eligibility?.status === 'eligible' && !isReview) summary.eligible += 1
+                else if (isReview) summary.review += 1
+                else summary.blocked += 1
+                if (eligibility?.expiresAt && actionQueueFlags({}, { eligibility }).includes('permission_expiring')) summary.permissionExpiring += 1
+                if (flags.sourceStale) summary.sourceStale += 1
+                if (flags.identityInReview) summary.identityReview += 1
+            }
+            summary.control = normalized.controlGroupPercent ? Math.floor((summary.eligible * normalized.controlGroupPercent) / 100) : 0
+            return { campaign: { name: normalized.name, segmentKey: normalized.segmentKey, segmentVersion: normalized.segmentVersion, unit: normalized.unit, state: normalized.state }, summary, controls: { messagesEnabled: false, commercialContactWritesEnabled: false }, privacy: { piiExposed: false } }
+        },
+
+        async createCommercialCampaign(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const normalized = normalizeCampaignPayload(payload || {})
+            const mutation = normalizeOperationMutation(payload || {})
+            const actorId = commercialActorId(actor)
+            const availability = {
+                ...(await readCommercialContactAvailability(pgPool)),
+                ...(await assertCommercialOperationsReady(pgPool)),
+            }
+            assertCommercialUnitInScope(actor, normalized.unit)
+            const fingerprint = stableOperationFingerprint({ operation: 'campaign_create', payload: normalized })
+            const mutationKey = commercialMutationKey(actor, 'campaign_create', mutation.idempotencyKey)
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const replay = await readCommercialOperationMutation(client, mutationKey)
+                if (replay) {
+                    if (replay.request_fingerprint !== fingerprint) throw operationError('COMMERCIAL_IDEMPOTENCY_CONFLICT', 409)
+                    return { ...(replay.response || {}), idempotentReplay: true }
+                }
+                const unit = await client.query(`select id, slug, name from crm_atendimento.units where slug = $1 limit 1`, [normalized.unit])
+                if (!unit.rows[0]) throw operationError('COMMERCIAL_UNIT_NOT_FOUND', 404)
+                const canonicalOwner = await resolveCommercialActionOwner(client, normalized.owner, { slug: normalized.unit })
+                if (!canonicalOwner) throw operationError('INVALID_COMMERCIAL_CAMPAIGN_OWNER')
+                await assertCommercialCampaignOffer(client, normalized.offerId, normalized.unit)
+                const identityRows = await client.query(`select id::text as identity_id from crm_atendimento.global_client_identities where id = any($1::uuid[])`, [normalized.identityIds])
+                if (identityRows.rows.length !== normalized.identityIds.length) throw operationError('COMMERCIAL_CAMPAIGN_IDENTITY_NOT_FOUND', 404)
+                for (const identityId of normalized.identityIds) await assertCommercialIdentityUnitMembership(client, { identityId, unitSlug: normalized.unit, availability })
+                const eligibilityByIdentity = await queryCommercialContactEligibility(client, normalized.identityIds, { unitSlugs: [normalized.unit] })
+                const operationalFlags = await queryCommercialOperationalFlags(client, normalized.identityIds, availability)
+                const created = await client.query(
+                    `insert into crm_atendimento.commercial_campaigns(name, segment_key, segment_version, filters_snapshot, cutoff_at, unit_id, owner, offer_id, assignment_window_start, assignment_window_end, control_group_percent, state, author, reason)
+                     values ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id, revision, created_at, updated_at`,
+                    [normalized.name, normalized.segmentKey, normalized.segmentVersion, JSON.stringify(normalized.filters), normalized.cutoffAt, unit.rows[0].id, canonicalOwner, normalized.offerId, normalized.assignmentWindowStart, normalized.assignmentWindowEnd, normalized.controlGroupPercent, normalized.state, actorId, normalized.reason],
+                )
+                const campaignId = created.rows[0].id
+                const members = []
+                for (const identityId of normalized.identityIds) {
+                    const eligibility = eligibilityByIdentity.get(identityId) || {}
+                    const flags = operationalFlags.get(identityId) || {}
+                    const isEligible = eligibility.status === 'eligible' && !flags.sourceStale && !flags.identityInReview
+                    const control = isEligible && normalized.controlGroupPercent > 0 && (Number.parseInt(stableOperationFingerprint({ campaignId, identityId }).slice(0, 8), 16) % 100) < normalized.controlGroupPercent
+                    const state = campaignMemberState({ eligible: isEligible, controlGroup: control, identityInReview: !!flags.identityInReview, sourceStale: !!flags.sourceStale })
+                    const snapshot = { status: eligibility.status || 'unknown', reason: eligibility.reason || '', permissionStatus: eligibility.permissionStatus || 'unknown', expiresAt: eligibility.expiresAt || null, sourceStale: !!flags.sourceStale, identityInReview: !!flags.identityInReview }
+                    const member = await client.query(
+                        `insert into crm_atendimento.commercial_campaign_members(campaign_id, identity_id, unit_id, segment_key, segment_version, cutoff_at, owner, offer_id, control_group, state, eligibility_snapshot)
+                         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb) returning id, state`,
+                         [campaignId, identityId, unit.rows[0].id, normalized.segmentKey, normalized.segmentVersion, normalized.cutoffAt, canonicalOwner, normalized.offerId, control, state, JSON.stringify(snapshot)],
+                    )
+                    members.push({ id: member.rows[0].id, identityId, state, controlGroup: control })
+                    await client.query(`insert into crm_atendimento.commercial_campaign_events(campaign_id, member_id, event_type, actor_id, trace_id, payload) values ($1,$2,'member_added',$3,$4,$5::jsonb)`, [campaignId, member.rows[0].id, actorId, randomUUID(), JSON.stringify({ state, controlGroup: control })])
+                }
+                await client.query(`insert into crm_atendimento.commercial_campaign_events(campaign_id, event_type, actor_id, trace_id, payload) values ($1,'created',$2,$3,$4::jsonb)`, [campaignId, actorId, randomUUID(), JSON.stringify({ segmentKey: normalized.segmentKey, segmentVersion: normalized.segmentVersion, cutoffAt: normalized.cutoffAt, memberCount: members.length })])
+                const response = { campaign: { id: campaignId, revision: Number(created.rows[0].revision || 1), name: normalized.name, state: normalized.state, unitSlug: normalized.unit, owner: canonicalOwner, memberCount: members.length, members }, controls: { messagesEnabled: false, commercialContactWritesEnabled: false } }
+                await recordCommercialOperationMutation(client, { mutationKey, operation: 'campaign_create', actorId, requestFingerprint: fingerprint, response })
+                await audit(client, 'commercial.campaign.created', commercialAuditActor(actor), null, { campaignId, unitSlug: normalized.unit, segmentKey: normalized.segmentKey, segmentVersion: normalized.segmentVersion, memberCount: members.length, messagesEnabled: false })
+                return response
+            })
+        },
+
+        async updateCommercialCampaign(campaignId, payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const mutation = normalizeOperationMutation(payload || {})
+            const actorId = commercialActorId(actor)
+            const availability = await assertCommercialOperationsReady(pgPool)
+            const state = String(payload?.state || '').trim().toLowerCase()
+            if (!COMMERCIAL_CAMPAIGN_STATES.includes(state)) throw operationError('INVALID_COMMERCIAL_CAMPAIGN_STATE')
+            const reason = String(payload?.reason || '').trim()
+            if (reason.length < 3) throw operationError('COMMERCIAL_CAMPAIGN_REASON_REQUIRED')
+            const fingerprint = stableOperationFingerprint({ campaignId, state, reason, expectedRevision: mutation.expectedRevision })
+            const mutationKey = commercialMutationKey(actor, 'campaign_update', mutation.idempotencyKey)
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const replay = await readCommercialOperationMutation(client, mutationKey)
+                if (replay) { if (replay.request_fingerprint !== fingerprint) throw operationError('COMMERCIAL_IDEMPOTENCY_CONFLICT', 409); return { ...(replay.response || {}), idempotentReplay: true } }
+                const current = await client.query(`select campaign.id, campaign.revision, campaign.state, unit.slug as unit_slug from crm_atendimento.commercial_campaigns campaign join crm_atendimento.units unit on unit.id = campaign.unit_id where campaign.id = $1::uuid for update`, [campaignId])
+                const row = current.rows[0]
+                if (!row) throw operationError('COMMERCIAL_CAMPAIGN_NOT_FOUND', 404)
+                assertCommercialUnitInScope(actor, row.unit_slug)
+                if (mutation.expectedRevision != null && mutation.expectedRevision !== Number(row.revision)) throw operationError('COMMERCIAL_CAMPAIGN_CONFLICT', 409)
+                const updated = await client.query(`update crm_atendimento.commercial_campaigns set state=$2, revision=revision+1, reason=$3, updated_at=now() where id=$1::uuid returning id, revision, state, updated_at`, [campaignId, state, reason])
+                await client.query(`insert into crm_atendimento.commercial_campaign_events(campaign_id, event_type, actor_id, trace_id, payload) values ($1,'state_changed',$2,$3,$4::jsonb)`, [campaignId, actorId, randomUUID(), JSON.stringify({ previousState: row.state, state, reason })])
+                const response = { id: campaignId, revision: Number(updated.rows[0].revision), state: updated.rows[0].state, updatedAt: updated.rows[0].updated_at }
+                await recordCommercialOperationMutation(client, { mutationKey, operation: 'campaign_update', actorId, requestFingerprint: fingerprint, response })
+                await audit(client, 'commercial.campaign.state_changed', commercialAuditActor(actor), null, { campaignId, previousState: row.state, state })
+                return response
+            })
+        },
+
+        async reassignCommercialAction(actionId, payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const mutation = normalizeOperationMutation(payload || {})
+            const actorId = commercialActorId(actor)
+            await assertCommercialOperationsReady(pgPool)
+            const owner = String(payload?.owner || '').trim()
+            if (!owner) throw operationError('INVALID_COMMERCIAL_ACTION_OWNER')
+            const fingerprint = stableOperationFingerprint({ actionId, owner, expectedRevision: mutation.expectedRevision, reason: mutation.reason })
+            const mutationKey = commercialMutationKey(actor, 'action_reassign', mutation.idempotencyKey)
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const replay = await readCommercialOperationMutation(client, mutationKey)
+                if (replay) { if (replay.request_fingerprint !== fingerprint) throw operationError('COMMERCIAL_IDEMPOTENCY_CONFLICT', 409); return { ...(replay.response || {}), idempotentReplay: true } }
+                const current = await client.query(`select action.id, action.identity_id, action.status, action.owner, action.revision, unit.slug as unit_slug from crm_atendimento.commercial_actions action left join crm_atendimento.units unit on unit.id = action.unit_id where action.id = $1::uuid for update`, [actionId])
+                const row = current.rows[0]
+                if (!row) throw operationError('COMMERCIAL_ACTION_NOT_FOUND', 404)
+                assertCommercialUnitInScope(actor, row.unit_slug)
+                if (mutation.expectedRevision != null && mutation.expectedRevision !== Number(row.revision)) throw operationError('COMMERCIAL_ACTION_CONFLICT', 409)
+                const nextOwner = await resolveCommercialActionOwner(client, owner, { slug: row.unit_slug })
+                if (!nextOwner) throw operationError('INVALID_COMMERCIAL_ACTION_OWNER')
+                const updated = await client.query(`update crm_atendimento.commercial_actions set owner=$2, revision=revision+1, updated_by=$3, updated_at=now() where id=$1::uuid returning id, owner, revision, updated_at`, [actionId, nextOwner, actorId])
+                await recordCommercialActionEvent(client, { actionId, identityId: row.identity_id, eventType: 'updated', previousStatus: row.status, status: row.status, traceId: randomUUID(), recordedBy: actorId, details: { operation: 'reassigned', previousOwner: row.owner || null, owner: nextOwner, reason: mutation.reason || null } })
+                const response = { id: actionId, owner: updated.rows[0].owner, revision: Number(updated.rows[0].revision), updatedAt: updated.rows[0].updated_at }
+                await recordCommercialOperationMutation(client, { mutationKey, operation: 'action_reassign', actorId, requestFingerprint: fingerprint, response })
+                await audit(client, 'commercial.action.reassigned', commercialAuditActor(actor), null, { actionId, previousOwner: row.owner || null, owner: nextOwner })
+                return response
+            })
+        },
+
+        async upsertCommercialOwnerAbsence(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const mutation = normalizeOperationMutation(payload || {})
+            const actorId = commercialActorId(actor)
+            await assertCommercialOperationsReady(pgPool)
+            const unitSlug = commercialUnit(payload?.unit)
+            assertCommercialUnitInScope(actor, unitSlug)
+            const owner = String(payload?.owner || '').trim()
+            const absenceType = String(payload?.absenceType || payload?.absence_type || '').trim().toLowerCase()
+            const startsAt = String(payload?.startsAt || payload?.starts_at || '').slice(0, 10)
+            const endsAt = String(payload?.endsAt || payload?.ends_at || '').slice(0, 10)
+            if (!unitSlug || !owner || !['vacation', 'absence', 'leave'].includes(absenceType) || !isValidIsoDate(startsAt) || !isValidIsoDate(endsAt) || endsAt < startsAt || mutation.reason.length < 3) throw operationError('INVALID_COMMERCIAL_OWNER_ABSENCE')
+            const canonicalOwner = await resolveCommercialActionOwner(pgPool, owner, { slug: unitSlug })
+            if (!canonicalOwner) throw operationError('INVALID_COMMERCIAL_OWNER_ABSENCE')
+            const substituteOwnerInput = String(payload?.substituteOwner || '').trim()
+            const canonicalSubstituteOwner = substituteOwnerInput ? await resolveCommercialActionOwner(pgPool, substituteOwnerInput, { slug: unitSlug }) : null
+            if (substituteOwnerInput && !canonicalSubstituteOwner) throw operationError('INVALID_COMMERCIAL_OWNER_ABSENCE')
+            const fingerprint = stableOperationFingerprint({ owner: canonicalOwner, unitSlug, absenceType, startsAt, endsAt, substituteOwner: canonicalSubstituteOwner, expectedRevision: mutation.expectedRevision, reason: mutation.reason })
+            const mutationKey = commercialMutationKey(actor, 'absence_upsert', mutation.idempotencyKey)
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const replay = await readCommercialOperationMutation(client, mutationKey)
+                if (replay) { if (replay.request_fingerprint !== fingerprint) throw operationError('COMMERCIAL_IDEMPOTENCY_CONFLICT', 409); return { ...(replay.response || {}), idempotentReplay: true } }
+                const unit = await client.query(`select id, slug from crm_atendimento.units where slug=$1 limit 1`, [unitSlug])
+                if (!unit.rows[0]) throw operationError('COMMERCIAL_UNIT_NOT_FOUND', 404)
+                const existing = await client.query(`select id, revision from crm_atendimento.commercial_owner_absences where owner=$1 and unit_id=$2 and starts_at=$3::date and ends_at=$4::date for update`, [canonicalOwner, unit.rows[0].id, startsAt, endsAt])
+                if (existing.rows[0] && mutation.expectedRevision != null && mutation.expectedRevision !== Number(existing.rows[0].revision)) throw operationError('COMMERCIAL_ABSENCE_CONFLICT', 409)
+                const result = existing.rows[0]
+                    ? await client.query(`update crm_atendimento.commercial_owner_absences set absence_type=$2, substitute_owner=$3, reason=$4, revision=revision+1, updated_by=$5, updated_at=now() where id=$1 returning id, revision, updated_at`, [existing.rows[0].id, absenceType, canonicalSubstituteOwner, mutation.reason, actorId])
+                    : await client.query(`insert into crm_atendimento.commercial_owner_absences(owner, unit_id, absence_type, starts_at, ends_at, substitute_owner, reason, created_by, updated_by) values ($1,$2,$3,$4::date,$5::date,$6,$7,$8,$8) returning id, revision, updated_at`, [canonicalOwner, unit.rows[0].id, absenceType, startsAt, endsAt, canonicalSubstituteOwner, mutation.reason, actorId])
+                const response = { id: result.rows[0].id, owner: canonicalOwner, unitSlug, absenceType, startsAt, endsAt, revision: Number(result.rows[0].revision || 1), updatedAt: result.rows[0].updated_at }
+                await recordCommercialOperationMutation(client, { mutationKey, operation: 'absence_upsert', actorId, requestFingerprint: fingerprint, response })
+                await audit(client, 'commercial.owner_absence.upserted', commercialAuditActor(actor), null, { absenceId: response.id, owner: canonicalOwner, unitSlug, absenceType, startsAt, endsAt })
+                return response
+            })
+        },
+
+        async rebalanceCommercialWallet(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const mutation = normalizeOperationMutation(payload || {})
+            const actorId = commercialActorId(actor)
+            const availability = await assertCommercialOperationsReady(pgPool)
+            const unitSlugs = commercialUnitSlugsForQuery(actor, payload?.unit)
+            const capacities = payload?.capacities && typeof payload.capacities === 'object' ? payload.capacities : {}
+            const apply = payload?.apply === true
+            if (apply && mutation.reason.length < 3) throw operationError('COMMERCIAL_OPERATION_REASON_INVALID')
+            const actionPage = await queryCommercialOperationsActions(pgPool, { unitSlugs, query: { limit: 250 }, actorIds: [] })
+            const absences = await queryCommercialOwnerAbsences(pgPool, { unitSlugs })
+            const today = new Date().toISOString().slice(0, 10)
+            const actions = actionPage.rows.map((row) => ({ id: row.id, owner: row.owner, status: row.status, absentOwner: absences.some((absence) => absence.owner === row.owner && absence.unitSlug === row.unit_slug && absence.startsAt <= today && absence.endsAt >= today) }))
+            const moves = planWalletBalance(actions, capacities)
+            if (!apply) return { apply: false, moves, controls: { messagesEnabled: false, commercialContactWritesEnabled: false } }
+            const fingerprint = stableOperationFingerprint({ unitSlugs, capacities, moves, reason: mutation.reason })
+            const mutationKey = commercialMutationKey(actor, 'rebalance', mutation.idempotencyKey)
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const replay = await readCommercialOperationMutation(client, mutationKey)
+                if (replay) { if (replay.request_fingerprint !== fingerprint) throw operationError('COMMERCIAL_IDEMPOTENCY_CONFLICT', 409); return { ...(replay.response || {}), idempotentReplay: true } }
+                const applied = []
+                for (const move of moves) {
+                    const current = await client.query(`select action.id, action.identity_id, action.status, action.owner, action.revision, unit.slug as unit_slug from crm_atendimento.commercial_actions action left join crm_atendimento.units unit on unit.id = action.unit_id where action.id=$1::uuid for update of action`, [move.actionId])
+                    if (!current.rows[0]) continue
+                    const row = current.rows[0]
+                    const owner = await resolveCommercialActionOwner(client, move.toOwner, { slug: row.unit_slug })
+                    if (!owner) continue
+                    const updated = await client.query(`update crm_atendimento.commercial_actions set owner=$2, revision=revision+1, updated_by=$3, updated_at=now() where id=$1::uuid returning revision`, [move.actionId, owner, actorId])
+                    await recordCommercialActionEvent(client, { actionId: move.actionId, identityId: row.identity_id, eventType: 'updated', previousStatus: row.status, status: row.status, traceId: randomUUID(), recordedBy: actorId, details: { operation: 'rebalanced', previousOwner: row.owner || null, owner, reason: mutation.reason } })
+                    applied.push({ ...move, toOwner: owner, revision: Number(updated.rows[0].revision) })
+                }
+                const response = { apply: true, moves: applied, controls: { messagesEnabled: false, commercialContactWritesEnabled: false } }
+                await recordCommercialOperationMutation(client, { mutationKey, operation: 'rebalance', actorId, requestFingerprint: fingerprint, response })
+                await audit(client, 'commercial.wallet.rebalanced', commercialAuditActor(actor), null, { moveCount: applied.length, unitScope: unitSlugs })
+                return response
             })
         },
 

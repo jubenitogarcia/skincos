@@ -1,0 +1,2 @@
+-- Rollback is registry-only and deliberately non-destructive. Historical
+-- actions, campaigns, outcomes and append-only event evidence are retained.

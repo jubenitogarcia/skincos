@@ -20,4 +20,10 @@ describe('Clientes commercial pagination', () => {
     expect(apiSource).toContain("direction?: 'asc' | 'desc'")
     expect(apiSource).toContain("if (value === true) params.set(key, '1')")
   })
+
+  it('exposes total-aware pagination for the assisted operations queue', () => {
+    expect(apiSource).toContain('hasPrevious: boolean; hasNext: boolean')
+    expect(apiSource).toContain('offset?: number')
+    expect(readFileSync(new URL('../CommercialOperationsPanel.tsx', import.meta.url), 'utf8')).toContain('wallet.pagination.hasNext')
+  })
 })

@@ -11,6 +11,8 @@ describe('Clientes workspace navigation', () => {
     expect(moduleSource).toContain('role="tablist"')
     expect(moduleSource).toContain('role="tab"')
     expect(moduleSource).toContain('data-testid="clientes-workspace-nav"')
+    expect(moduleSource).toContain('CommercialOperationsPanel')
+    expect(moduleSource).toContain("workspaceView === 'actions' ? <CommercialOperationsPanel")
   })
 
   it('keeps the selected subarea addressable without creating a new backend route', () => {
@@ -23,5 +25,9 @@ describe('Clientes workspace navigation', () => {
 
   it('does not render the identity queue as an unscoped duplicate on every subarea', () => {
     expect(moduleSource).not.toContain('\n    <IdentityReviewQueue />')
+  })
+
+  it('keeps assisted operations free of implicit outbound messaging', () => {
+    expect(readFileSync(new URL('../CommercialOperationsPanel.tsx', import.meta.url), 'utf8')).toContain('Nenhuma mensagem foi enviada')
   })
 })

@@ -1,0 +1,4 @@
+-- Canonical migration source for the Clientes commercial operations layer.
+-- Apply only through migrate-atendimento-commercial-operations.mjs after the
+-- strict local/staging destination and prerequisite checks pass.
+-- The executable statement list lives in commercialOperationsMigration.js.

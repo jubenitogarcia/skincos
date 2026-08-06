@@ -83,6 +83,35 @@ test('keeps Clientes routes exclusive to GESTOR, matching the CRM module policy'
     assert.equal(__testables.isCommercialManager({ role: 'INJETOR' }), false)
 })
 
+test('exposes assisted operations and campaign routes only to GESTOR', async () => {
+    const calls = []
+    const store = {
+        async commercialOperations(query, actor) { calls.push(['operations', query, actor]); return { wallet: { total: 0 } } },
+        async commercialCampaigns(query, actor) { calls.push(['campaigns', query, actor]); return { campaigns: [] } },
+        async previewCommercialCampaign(payload, actor) { calls.push(['preview', payload, actor]); return { summary: { total: 0 } } },
+        async createCommercialCampaign(payload, actor) { calls.push(['create', payload, actor]); return { campaign: { id: 'campaign-1' } } },
+        async reassignCommercialAction(id, payload, actor) { calls.push(['reassign', id, payload, actor]); return { id } },
+        async upsertCommercialOwnerAbsence(payload, actor) { calls.push(['absence', payload, actor]); return { id: 'absence-1' } },
+        async rebalanceCommercialWallet(payload, actor) { calls.push(['rebalance', payload, actor]); return { moves: [] } },
+    }
+    const routes = captureAtendimentoRoutes(store)
+    const gestor = { id: 'gestor-1', role: 'GESTOR' }
+    const gerente = { id: 'gerente-1', role: 'GERENTE' }
+    const operations = captureResponse()
+    await routes.get('GET /commercial/operations')({ atendimentoActor: gestor, query: { unit: 'novo-hamburgo' } }, operations)
+    assert.equal(operations.state.status, 200)
+    const preview = captureResponse()
+    await routes.get('POST /commercial/campaigns/preview')({ atendimentoActor: gestor, body: { name: 'synthetic' } }, preview)
+    assert.equal(preview.state.status, 200)
+    const rebalance = captureResponse()
+    await routes.get('POST /commercial/team/rebalance')({ atendimentoActor: gestor, body: { capacities: {} } }, rebalance)
+    assert.equal(rebalance.state.status, 200)
+    assert.deepEqual(calls.map((call) => call[0]), ['operations', 'preview', 'rebalance'])
+    const blocked = captureResponse()
+    await routes.get('POST /commercial/campaigns')({ atendimentoActor: gerente, body: {} }, blocked)
+    assert.equal(blocked.state.status, 403)
+})
+
 test('exposes the production read-only runtime flag only when explicitly enabled', () => {
     const before = process.env.CRM_ATENDIMENTO_READ_ONLY
     try {

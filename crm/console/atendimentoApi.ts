@@ -831,6 +831,7 @@ export type CommercialProfile = {
 export type CommercialAction = {
   id: string
   identityId: string
+  clientName?: string
   unitSlug: string
   unitName: string
   segmentKey: string
@@ -841,11 +842,63 @@ export type CommercialAction = {
   dueDate: string | null
   notes: string
   outcomeNotes: string
+  outcomeCode?: 'no_response' | 'wrong_number' | 'requested_follow_up' | 'not_interested' | 'completed_elsewhere' | 'scheduled' | 'attended' | 'cancelled' | 'sale' | 'clinical_return' | 'opt_out_requested' | null
+  outcomeRecordedAt?: string | null
+  revision: number
   createdBy: string
   completedAt: string | null
   contactedAt: string | null
   createdAt: string
   updatedAt: string
+  queueFlags?: string[]
+}
+
+export type CommercialOperationAction = CommercialAction & { queueFlags: string[]; active?: boolean }
+export type CommercialOperations = {
+  asOf: string
+  scope: string[] | null
+  wallet: { total: number; actions: CommercialOperationAction[]; countsByFlag: Record<string, number>; pagination: { limit: number; offset: number; hasPrevious: boolean; hasNext: boolean } }
+  team: {
+    totals: { total: number; active: number; dueToday: number; overdue: number; completed: number; responded: number; scheduled: number; attended: number; sale: number; returned: number; cancelled: number; completionRate: number; responseRate: number; schedulingRate: number; attendanceRate: number; saleRate: number; returnRate: number; cancellationRate: number }
+    byStatus: Record<string, number>
+    byOwner: Array<{ owner: string; total: number; active: number; overdue: number; completed: number; responded: number; scheduled: number; attended: number; sale: number; returned: number; cancelled: number; statuses: Record<string, number> }>
+    stageDurations: Record<string, { hours: number; samples: number }>
+    slaHours: number
+  }
+  absences: Array<{ id: string; owner: string; unitSlug: string; unitName: string; absenceType: string; startsAt: string; endsAt: string; substituteOwner: string | null; reason: string; revision: number; updatedAt: string }>
+  controls: { migrationReady: boolean; commercialContactWritesEnabled: false; messagesEnabled: false; policyVersion: string }
+  privacy: { piiInMetrics: false; phoneOrEmailInList: false }
+}
+
+export type CommercialCampaign = {
+  id: string
+  name: string
+  revision: number
+  segmentKey: string
+  segmentVersion: string
+  filters: Record<string, unknown>
+  cutoffAt: string
+  unitSlug: string
+  unitName: string
+  owner: string
+  offerId: string | null
+  assignmentWindowStart: string
+  assignmentWindowEnd: string
+  controlGroupPercent: number
+  state: 'draft' | 'scheduled' | 'active' | 'paused' | 'completed' | 'cancelled'
+  author: string
+  reason: string
+  createdAt: string
+  updatedAt: string
+  counts?: { total: number; eligible: number; blocked: number; review: number; control: number; assigned: number }
+  members?: Array<{ id: string; identityId: string; unitSlug: string; owner: string; offerId: string | null; controlGroup: boolean; state: string; eligibility: Record<string, unknown>; actionId: string | null; revision: number; createdAt: string; updatedAt: string }>
+}
+
+export type CommercialCampaignPreview = {
+  campaign: { name: string; segmentKey: string; segmentVersion: string; unit: string; state: string }
+  summary: { total: number; eligible: number; blocked: number; review: number; control: number; permissionExpiring: number; sourceStale: number; identityReview: number; impact: string }
+  controls: { messagesEnabled: false; commercialContactWritesEnabled: false }
+  privacy: { piiExposed: false }
 }
 
 export type CommercialPolicy = {
@@ -935,12 +988,17 @@ export type CommercialOverview = {
 
 export type CommercialTimelineEntry = {
   id: string
-  type: 'attendance' | 'sale'
+  type: 'attendance' | 'sale' | 'action' | 'contact' | 'response' | 'appointment' | 'campaign' | 'offer' | 'permission' | 'opt_out' | 'identity_decision' | 'quality_finding' | 'correction' | string
   occurredOn: string | null
   title: string
   detail: string
   unitName: string
   source: string
+  actor?: string
+  correlationId?: string | null
+  campaignId?: string | null
+  offerId?: string | null
+  consentReview?: string | null
   amount: number | null
   status: string
 }
@@ -1008,6 +1066,35 @@ export function fetchCommercialOverview(filters: { asOf?: string; unit?: string;
   return api<CommercialOverview>(`/commercial/overview${qs ? `?${qs}` : ''}`)
 }
 
+export function fetchCommercialOperations(filters: { asOf?: string; unit?: string; q?: string; status?: string; owner?: string; mine?: boolean; limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === true) params.set(key, 'true')
+    else if (value !== undefined && value !== '' && value !== 'all') params.set(key, String(value))
+  })
+  const qs = params.toString()
+  return api<CommercialOperations>(`/commercial/operations${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchCommercialCampaigns(filters: { unit?: string; state?: string; id?: string } = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '' && value !== 'all') params.set(key, String(value)) })
+  const qs = params.toString()
+  return api<{ campaigns: CommercialCampaign[] }>(`/commercial/campaigns${qs ? `?${qs}` : ''}`)
+}
+
+export function previewCommercialCampaign(payload: Record<string, unknown>) {
+  return api<CommercialCampaignPreview>('/commercial/campaigns/preview', { method: 'POST', body: payload })
+}
+
+export function createCommercialCampaign(payload: Record<string, unknown>) {
+  return api<{ campaign: CommercialCampaign; controls: { messagesEnabled: false; commercialContactWritesEnabled: false } }>('/commercial/campaigns', { method: 'POST', body: payload })
+}
+
+export function updateCommercialCampaign(id: string, payload: { state: CommercialCampaign['state']; reason: string; expectedRevision: number; idempotencyKey: string }) {
+  return api<{ id: string; revision: number; state: CommercialCampaign['state']; updatedAt: string }>(`/commercial/campaigns/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+}
+
 export function fetchCommercialDataQuality(filters: {
   status?: CommercialDataQualityStatus
   severity?: CommercialDataQualitySeverity
@@ -1069,12 +1156,24 @@ export function fetchCommercialProfile(identityId: string, filters: { asOf?: str
   return api<CommercialProfileDetail>(`/commercial/profiles/${encodeURIComponent(identityId)}${qs ? `?${qs}` : ''}`)
 }
 
-export function createCommercialAction(payload: { identityId: string; segmentKey: string; actionType: CommercialAction['actionType']; contactChannel?: 'whatsapp'; owner?: string; unit?: string; dueDate?: string; notes?: string }) {
+export function createCommercialAction(payload: { identityId: string; segmentKey: string; actionType: CommercialAction['actionType']; contactChannel?: 'whatsapp'; owner?: string; unit?: string; dueDate?: string; notes?: string; idempotencyKey?: string }) {
   return api<{ id: string; contactEligibility: CommercialContactEligibility }>('/commercial/actions', { method: 'POST', body: payload })
 }
 
-export function updateCommercialAction(id: string, payload: { status: CommercialAction['status']; owner?: string; outcomeNotes?: string }) {
+export function updateCommercialAction(id: string, payload: { status: CommercialAction['status']; owner?: string; outcomeNotes?: string; outcomeCode?: CommercialAction['outcomeCode']; expectedRevision?: number; idempotencyKey?: string; reason?: string }) {
   return api<{ id: string; status: CommercialAction['status']; contactEligibility: CommercialContactEligibility }>(`/commercial/actions/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+}
+
+export function reassignCommercialAction(id: string, payload: { owner: string; expectedRevision: number; idempotencyKey: string; reason: string }) {
+  return api<{ id: string; owner: string; revision: number; updatedAt: string }>(`/commercial/actions/${encodeURIComponent(id)}/reassign`, { method: 'POST', body: payload })
+}
+
+export function upsertCommercialOwnerAbsence(payload: { owner: string; unit: string; absenceType: 'vacation' | 'absence' | 'leave'; startsAt: string; endsAt: string; substituteOwner?: string; reason: string; expectedRevision?: number; idempotencyKey: string }) {
+  return api<{ id: string; revision: number; owner: string; unitSlug: string; startsAt: string; endsAt: string }>('/commercial/owner-absences', { method: 'PUT', body: payload })
+}
+
+export function rebalanceCommercialWallet(payload: { unit?: string; capacities: Record<string, number>; apply?: boolean; reason?: string; idempotencyKey?: string }) {
+  return api<{ apply: boolean; moves: Array<{ actionId: string; fromOwner: string | null; toOwner: string; revision?: number }>; controls: { messagesEnabled: false; commercialContactWritesEnabled: false } }>('/commercial/team/rebalance', { method: 'POST', body: payload })
 }
 
 export type CommercialContactPermissionMutation =
