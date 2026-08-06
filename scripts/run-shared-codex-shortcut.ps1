@@ -2317,6 +2317,10 @@ function Start-CrmInstanceRuntime {
     $module = [string]$Spec.module
     $localAuthAdmin = if ([bool]$Spec.auth.testUserAdmin) { "true" } else { "false" }
     $allowedModules = @($Spec.auth.allowedModules) -join ","
+    $allowedUnits = @($Spec.auth.allowedUnits) -join ","
+    if ([string]::IsNullOrWhiteSpace($allowedUnits) -and $module -eq 'insumos') {
+        $allowedUnits = 'novo-hamburgo,barra-shopping-sul'
+    }
     $withInsumos = if ([bool]$Spec.dependencies.insumos) { 1 } else { 0 }
     $withTimekeeping = if ([bool]$Spec.dependencies.timekeeping) { 1 } else { 0 }
     $withWhatsapp = if ([bool]$Spec.dependencies.whatsapp) { 1 } else { 0 }
@@ -2354,6 +2358,7 @@ function Start-CrmInstanceRuntime {
         "LOCAL_AUTH_EMAIL=$email",
         "LOCAL_AUTH_NAME=$displayName",
         "LOCAL_AUTH_ALLOWED_MODULES=$allowedModules",
+        "LOCAL_AUTH_ALLOWED_UNITS=$allowedUnits",
         "LOCAL_AUTH_ALLOWED_HOSTS=$publicHost",
         "CRM_VITE_PORT=$([int]$Spec.ports.vite)",
         "CRM_PAGES_PORT=$([int]$Spec.ports.pages)",
