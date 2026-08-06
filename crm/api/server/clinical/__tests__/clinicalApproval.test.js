@@ -110,6 +110,19 @@ test('route exposes health without auth and protects approval decisions by role'
     const internalReadiness = response()
     await routes.get('GET /readiness')({ actor: { id: 'clinical-1', role: 'CLINICAL_APPROVER', allowedUnits: ['Novo Hamburgo'] } }, internalReadiness)
     assert.equal(internalReadiness.state.status, 503)
+    const readyRoutes = captureRoutes({
+        async health() { return { ok: true, ready: true, domain: 'clinical-approval', writesEnabled: false, pii: false } },
+        async readiness() { return { ok: true, ready: true, domain: 'clinical-approval', dependencies: { database: true, schema: true } } },
+        async listRules() { return { rules: [], total: 0 } },
+    })
+    const readyHealth = response()
+    await readyRoutes.get('GET /health')({}, readyHealth)
+    assert.equal(readyHealth.state.status, 200)
+    assert.equal(readyHealth.state.body.ready, true)
+    const readyReadiness = response()
+    await readyRoutes.get('GET /readiness')({ actor: { id: 'clinical-1', role: 'CLINICAL_APPROVER', allowedUnits: ['Novo Hamburgo'] } }, readyReadiness)
+    assert.equal(readyReadiness.state.status, 200)
+    assert.equal(readyReadiness.state.body.dependencies.database, true)
     const authorized = response()
     await routes.get('GET /approvals')({ query: {}, actor: { id: 'clinical-1', role: 'CLINICAL_APPROVER', allowedUnits: ['Novo Hamburgo'] } }, authorized)
     assert.equal(authorized.state.status, 200)
