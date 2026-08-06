@@ -63,7 +63,8 @@ import { useInsumosInventoryMutationsController } from '@/useInsumosInventoryMut
 import { useInsumosMovementsController } from '@/useInsumosMovementsController'
 import { useInsumosQuickLookupController } from '@/useInsumosQuickLookupController'
 import { useInsumosQuickOperationsController } from '@/useInsumosQuickOperationsController'
-import { resolveInsumosUnitAccess } from '@/insumosUnitAccess'
+import { INSUMOS_ALL_UNITS, resolveInsumosUnitAccess } from '@/insumosUnitAccess'
+import { mergeInsumosByUnitResponses } from '@/insumosAggregate'
 import {
   CANONICAL_TIPOS_UNIDADE,
   brToIsoDate,
@@ -669,9 +670,12 @@ export function InsumosModule() {
     [unidade, user?.allowedUnits, user?.role],
   )
   const allowedUnits = unitAccess.allowedUnits
+  const readableUnits = unitAccess.visibleUnits
+  const isAllUnits = unidade === INSUMOS_ALL_UNITS && unitAccess.isAllUnits
   // Inventory data is never public: until identity is resolved, and whenever
   // the actor has no authorized unit, fail closed without issuing data calls.
   const canUseApi = serviceReady && unitAccessReady && isAuthed && unitAccess.hasAuthorizedUnit
+  const canMutateApi = canUseApi && !isAllUnits
 
   const isManagerRole = ['GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
 
@@ -803,6 +807,7 @@ export function InsumosModule() {
     overviewPeriod,
     overviewSectionRef,
     overviewVisible,
+    readableUnits,
     setInsightsAlertas,
     setInsightsLoaded,
     setInsightsLoading,
@@ -1289,19 +1294,18 @@ export function InsumosModule() {
       if (!codigo) return []
       const cached = readCachedInsumosByCodigo({ codigoBarras: codigo, ctxUnidade })
       if (cached.length) return cached
-      const params = new URLSearchParams({
-        unidade: ctxUnidade,
-        q: codigo,
-        pagina: '1',
-        limite: '80'
-      })
-      const out = await apiJson<{ success?: boolean; data?: Insumo[]; resumo?: any }>(`/insumos?${params.toString()}`)
-      const list = Array.isArray(out?.data) ? out.data : []
+      const units = ctxUnidade === INSUMOS_ALL_UNITS ? readableUnits : [ctxUnidade]
+      const responses = await Promise.all(units.filter(Boolean).map(async (unit) => {
+        const params = new URLSearchParams({ unidade: unit, q: codigo, pagina: '1', limite: '80' })
+        const out = await apiJson<{ success?: boolean; data?: Insumo[]; resumo?: any }>(`/insumos?${params.toString()}`)
+        return { unit, items: Array.isArray(out?.data) ? out.data : [] }
+      }))
+      const list = ctxUnidade === INSUMOS_ALL_UNITS ? mergeInsumosByUnitResponses(responses) : (responses[0]?.items || [])
       if (list.length) upsertInsumosCache(list)
       const exact = list.filter((i) => getInsumoBarcodes(i).includes(codigo))
       return exact.length ? exact : list
     },
-    [apiJson, readCachedInsumosByCodigo, upsertInsumosCache]
+    [apiJson, readableUnits.join('|'), readCachedInsumosByCodigo, upsertInsumosCache]
   )
 
   const lookupInsumosByCodigos = React.useCallback(
@@ -1313,12 +1317,16 @@ export function InsumosModule() {
       const cachedCodes = new Set(cachedItems.flatMap((item) => getInsumoBarcodes(item)))
       const missingCodes = cleaned.filter((codigo) => !cachedCodes.has(codigo))
       if (!missingCodes.length) return cachedItems
-      const params = new URLSearchParams({ unidade: ctxUnidade })
-      const out = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos/lookup?${params.toString()}`, {
-        method: 'POST',
-        body: { codigos: missingCodes }
-      })
-      const fetched = Array.isArray(out?.data) ? out.data : []
+       const units = ctxUnidade === INSUMOS_ALL_UNITS ? readableUnits : [ctxUnidade]
+       const responses = await Promise.all(units.filter(Boolean).map(async (unit) => {
+         const params = new URLSearchParams({ unidade: unit })
+         const out = await apiJson<{ success?: boolean; data?: Insumo[] }>(`/insumos/lookup?${params.toString()}`, {
+           method: 'POST',
+           body: { codigos: missingCodes }
+         })
+         return { unit, items: Array.isArray(out?.data) ? out.data : [] }
+       }))
+       const fetched = ctxUnidade === INSUMOS_ALL_UNITS ? mergeInsumosByUnitResponses(responses) : (responses[0]?.items || [])
       if (fetched.length) upsertInsumosCache(fetched)
       const deduped = new Map<string, Insumo>()
       for (const item of [...cachedItems, ...fetched]) {
@@ -1328,7 +1336,7 @@ export function InsumosModule() {
       }
       return Array.from(deduped.values())
     },
-    [apiJson, readCachedInsumosByCodigo, upsertInsumosCache]
+    [apiJson, readableUnits.join('|'), readCachedInsumosByCodigo, upsertInsumosCache]
   )
 
   const {
@@ -1418,6 +1426,10 @@ export function InsumosModule() {
         context?: InsumosOperationContext | null
       }
     ) => {
+      if (isAllUnits) {
+        toast.info('Selecione uma unidade específica para registrar uma operação.')
+        return
+      }
       resetQuickOperationState()
       const context = prefill?.context || null
       if (context) {
@@ -1446,7 +1458,7 @@ export function InsumosModule() {
       if (prefill?.toUnidade) setTransferTo(String(prefill.toUnidade))
       setQuickOp(op)
     },
-    [resetQuickOperationState, selectQuickCodigo]
+    [isAllUnits, resetQuickOperationState, selectQuickCodigo]
   )
 
   React.useEffect(() => {
@@ -1830,6 +1842,7 @@ export function InsumosModule() {
   }, [allUnidades.join('|'), allowedUnits.join('|'), unidade, user?.role])
 
   const unidadeLabel = React.useCallback((u: string) => {
+    if (String(u || '').trim() === INSUMOS_ALL_UNITS) return 'Todas unidades'
     return String(u || '')
       .split('-')
       .filter(Boolean)
@@ -1839,10 +1852,11 @@ export function InsumosModule() {
 
   const selectAuthorizedUnit = React.useCallback((value: string) => {
     const requested = resolveInsumosUnitAccess({ role: user?.role, allowedUnits, savedUnit: value, availableUnits: allUnidades })
-    if (!requested.requestedUnit || !requested.visibleUnits.includes(requested.requestedUnit)) return
-    setUnidade(requested.requestedUnit)
+    const nextUnit = requested.selectedUnit
+    if (!nextUnit || (nextUnit !== INSUMOS_ALL_UNITS && !requested.visibleUnits.includes(nextUnit))) return
+    setUnidade(nextUnit)
     try {
-      window.localStorage.setItem(INSUMOS_UNIT_KEY, requested.requestedUnit)
+      window.localStorage.setItem(INSUMOS_UNIT_KEY, nextUnit)
     } catch {
       // Request gating remains authoritative if persistence is unavailable.
     }
@@ -1864,14 +1878,15 @@ export function InsumosModule() {
 	  }, [])
 
   React.useEffect(() => {
-    setTransferFrom(unidade)
+    const sourceUnit = unidade === INSUMOS_ALL_UNITS ? (unitAccess.visibleUnits[0] || '') : unidade
+    setTransferFrom(sourceUnit)
     setTransferTo((prev) => {
-      const candidates = unidadeOptions.filter((u) => u !== unidade)
-      if (!candidates.length) return unidade
-      if (prev && prev !== unidade && candidates.includes(prev)) return prev
+      const candidates = unidadeOptions.filter((u) => u !== sourceUnit)
+      if (!candidates.length) return sourceUnit
+      if (prev && prev !== sourceUnit && candidates.includes(prev)) return prev
       return candidates[0]
     })
-  }, [unidade, unidadeOptions.join('|')])
+  }, [unitAccess.visibleUnits.join('|'), unidade, unidadeOptions.join('|')])
 
   const refreshCsrf = React.useCallback(async () => {
     try {
@@ -2050,8 +2065,8 @@ export function InsumosModule() {
 	      toast.error('Somente gestores podem alterar políticas.')
 	      return
 	    }
-	    if (!canUseApi) {
-	      toast.error('API indisponível ou não pronta. Aguarde carregar e tente novamente.')
+    if (!canMutateApi) {
+      toast.error('API indisponível ou não pronta. Aguarde carregar e tente novamente.')
 	      return
 	    }
 	    const label = String(policyFormLabel || '').trim()
@@ -2099,7 +2114,7 @@ export function InsumosModule() {
       toast.error(e instanceof Error ? e.message : String(e))
     }
 	  }, [
-	    canUseApi,
+	    canMutateApi,
 	    isAuthed,
 	    isManagerRole,
 	    loadAdminCategoryPolicies,
@@ -2124,8 +2139,8 @@ export function InsumosModule() {
 	        toast.error('Somente gestores podem excluir políticas.')
 	        return
 	      }
-	      if (!canUseApi) {
-	        toast.error('API indisponível ou não pronta. Aguarde carregar e tente novamente.')
+	      if (!canMutateApi) {
+        toast.error('API indisponível ou não pronta. Aguarde carregar e tente novamente.')
 	        return
 	      }
 	      const slug = String(slugRaw || '').trim()
@@ -2153,7 +2168,7 @@ export function InsumosModule() {
       }
     },
 	    [
-	      canUseApi,
+	      canMutateApi,
 	      isAuthed,
 	      isManagerRole,
 	      loadAdminCategoryPolicies,
@@ -2426,17 +2441,29 @@ export function InsumosModule() {
       const append = opts?.append === true
       const isInitialLoad = pagina === 1 && !append
 
-      setInsumosLoading(true)
-      try {
-        const params = new URLSearchParams()
-        params.set('unidade', unidade)
-        params.set('pagina', String(pagina))
-        params.set('limite', String(limite))
-        if (q) params.set('q', q)
-        const out = await apiJson<{ success?: boolean; data?: Insumo[]; resumo?: any }>(`/insumos?${params.toString()}`)
-        const items = Array.isArray(out?.data) ? out.data : []
-        const total = Number(out?.resumo?.total)
-        const totalOut = Number.isFinite(total) ? total : null
+       setInsumosLoading(true)
+       try {
+         const units = unidade === INSUMOS_ALL_UNITS ? readableUnits : [unidade]
+         const responses = await Promise.all(units.filter(Boolean).map(async (unit) => {
+           const params = new URLSearchParams()
+           params.set('unidade', unit)
+           params.set('pagina', String(pagina))
+           params.set('limite', String(limite))
+           if (q) params.set('q', q)
+           const out = await apiJson<{ success?: boolean; data?: Insumo[]; resumo?: any }>(`/insumos?${params.toString()}`)
+           const total = Number(out?.resumo?.total)
+           return {
+             unit,
+             items: Array.isArray(out?.data) ? out.data : [],
+             total: Number.isFinite(total) ? total : null,
+           }
+         }))
+         const items = unidade === INSUMOS_ALL_UNITS
+           ? mergeInsumosByUnitResponses(responses)
+           : (responses[0]?.items || [])
+         const totalOut = unidade === INSUMOS_ALL_UNITS
+           ? (responses.length ? items.length : null)
+           : (responses[0]?.total ?? null)
           const merged = (() => {
           if (!append) return items
           const byRegistro = new Map<string, Insumo>()
@@ -2454,7 +2481,7 @@ export function InsumosModule() {
         setInsumos(merged)
         const mergedCount = merged.length
         setInsumosTotal(totalOut)
-        setInsumosHasMore(totalOut != null ? mergedCount < totalOut : items.length >= limite)
+         setInsumosHasMore(unidade === INSUMOS_ALL_UNITS ? responses.some((response) => response.items.length >= limite) : (totalOut != null ? mergedCount < totalOut : items.length >= limite))
         setInsumosPagina(pagina)
         setInsumosLimite(limite)
         setInsumosLoadError(null)
@@ -2475,7 +2502,7 @@ export function InsumosModule() {
         setInsumosLoading(false)
       }
     },
-    [canUseApi, insumosLimite, insumosPagina, insumosQuery, isAuthed, unidade]
+    [apiJson, canUseApi, insumosLimite, insumosPagina, insumosQuery, isAuthed, readableUnits.join('|'), unidade]
   )
 
   const insumosListContainerRef = React.useRef<HTMLDivElement | null>(null)
@@ -2562,6 +2589,7 @@ export function InsumosModule() {
     setMovLoading,
     setMovLoadError,
     setMovimentacoes,
+    readableUnits,
     unidade,
   })
 
@@ -2597,7 +2625,7 @@ export function InsumosModule() {
       toast.error('Informe o motivo do estorno.')
       return
     }
-    if (!canUseApi || !isAuthed) return
+    if (!canMutateApi || !isAuthed) return
     setReverseMovSaving(true)
     try {
       const out = await mutateJson<{ success?: boolean }>(
@@ -2624,7 +2652,7 @@ export function InsumosModule() {
     } finally {
       setReverseMovSaving(false)
     }
-  }, [canUseApi, isAuthed, loadMovimentacoes, mutateJson, refreshInsumos, reverseMovReason, reverseMovTarget, schedulePostMutationRefresh, unidade])
+  }, [canMutateApi, isAuthed, loadMovimentacoes, mutateJson, refreshInsumos, reverseMovReason, reverseMovTarget, schedulePostMutationRefresh, unidade])
 
   const openContextHistory = React.useCallback(
     (context: InsumosOperationContext) => {
@@ -2647,7 +2675,7 @@ export function InsumosModule() {
     saveEdit,
     saveLot,
   } = useInsumosInventoryMutationsController({
-    canUseApi,
+    canUseApi: canMutateApi,
     createCalibre,
     createCategoria,
     createCategoriaFefo,
@@ -2739,13 +2767,15 @@ export function InsumosModule() {
         : null,
       unidades: unidadeOptions,
       allowedUnits,
+      canAggregateUnits: unitAccess.canAggregate,
     }),
-    [allowedUnits, authLoaded, health, healthLoaded, isAuthed, unidadeOptions],
+    [allowedUnits, authLoaded, health, healthLoaded, isAuthed, unitAccess.canAggregate, unidadeOptions],
   )
 
   useInsumosHeaderBridge({
     allUnidades,
     allowedUnits,
+    canAggregateUnits: unitAccess.canAggregate,
     loadInsights,
     loadOverview,
     loadingPercent,
@@ -2770,7 +2800,7 @@ export function InsumosModule() {
   })
 
   const { runQuickOperation, runTransfer } = useInsumosQuickOperationsController({
-    canUseApi,
+    canUseApi: canMutateApi,
     isAuthed,
     loadMovimentacoes,
     mutateJson,
@@ -3950,6 +3980,7 @@ export function InsumosModule() {
         open={insumosListModalOpen}
         dialogClassName={dialogWideClass}
         isAuthed={isAuthed}
+        readOnly={isAllUnits}
         unit={unidade}
         unitLabel={unidadeLabel}
         query={insumosQuery}
@@ -4031,7 +4062,7 @@ export function InsumosModule() {
         dialogClassName={dialogSmallClass}
         items={offlineItems}
         debugUi={debugUi}
-        isAuthed={isAuthed}
+        isAuthed={canMutateApi}
         fmtAge={fmtAge}
         onOpenChange={setOfflineDialogOpen}
         onSync={() => void syncOfflineQueue()}
@@ -4063,7 +4094,7 @@ export function InsumosModule() {
         operation={quickOp}
         context={quickContext}
         dialogClassName={dialogLargeClass}
-        isAuthed={isAuthed}
+        isAuthed={canMutateApi}
         shouldShowDashboardLoading={shouldShowDashboardLoading}
         renderDashboardLoadingButton={() => <DashboardLoadingButton size="sm" />}
         unit={unidade}
@@ -4145,7 +4176,7 @@ export function InsumosModule() {
         dialogClassName={dialogLargeClass}
         context={contextHistory}
         movements={contextHistoryMovements}
-        isAuthed={isAuthed}
+        isAuthed={canMutateApi}
         reversingId={reverseMovTarget?.id ? String(reverseMovTarget.id) : null}
         unitLabel={unidadeLabel}
         onOpenChange={(open) => {
@@ -4181,7 +4212,7 @@ export function InsumosModule() {
       <InsumosPurchaseDialog
         actionables={overviewActionables}
         dialogClassName={dialogMediumClass}
-        isAuthed={isAuthed}
+        isAuthed={canMutateApi}
         loading={overviewLoading}
         open={purchaseDialogOpen}
         onOpenChange={setPurchaseDialogOpen}
@@ -4195,7 +4226,7 @@ export function InsumosModule() {
         open={guidedCountDialogOpen}
         onOpenChange={setGuidedCountDialogOpen}
         dialogClassName={dialogWideClass}
-        isAuthed={isAuthed}
+        isAuthed={canMutateApi}
         managerRole={['ADMIN', 'GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())}
         unit={unidade}
         unitLabel={unidadeLabel}
@@ -4290,8 +4321,8 @@ export function InsumosModule() {
                               alertasSortDir={alertasSortDir}
                               rows={alertasLinhasOrdenadas}
                               recommendationByCode={alertasRecommendationByCode}
-                              purchaseDisabled={!isAuthed || !(overviewActionables?.reposicao || []).length}
-                              isAuthed={isAuthed}
+                              purchaseDisabled={!canMutateApi || !(overviewActionables?.reposicao || []).length}
+                              isAuthed={canMutateApi}
                               emptyContent={renderListPlaceholder(insightsLoading, 'Sem alertas.')}
                               onToggleOpen={() => setDetailsKeyOpen(OVERVIEW_PANEL_OPEN_KEYS.alerts, !panelOpen)}
                               onOpenPurchaseDialog={() => setPurchaseDialogOpen(true)}

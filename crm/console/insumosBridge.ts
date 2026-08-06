@@ -50,7 +50,7 @@ export function normalizeInsumosHeaderState(detail: unknown): InsumosHeaderState
         saidaValor: payload.stock.saidaValor == null ? null : Number(payload.stock.saidaValor),
       }
     : null
-  const status = payload.status && typeof payload.status === 'object'
+  const status: InsumosHeaderState['status'] = payload.status && typeof payload.status === 'object'
     ? {
         online: payload.status.online == null ? null : Boolean(payload.status.online),
         authed: payload.status.authed == null ? null : Boolean(payload.status.authed),
@@ -59,6 +59,9 @@ export function normalizeInsumosHeaderState(detail: unknown): InsumosHeaderState
         allowedUnits: Array.isArray(payload.status.allowedUnits) ? payload.status.allowedUnits.map((item) => String(item)) : [],
       }
     : null
+  if (status && payload.status && Object.prototype.hasOwnProperty.call(payload.status, 'canAggregateUnits')) {
+    status.canAggregateUnits = Boolean(payload.status.canAggregateUnits)
+  }
   const overview = normalizeOverviewQuery(payload.overview) || { period: '30d' as const }
   if (!isOverviewPeriod(overview.period)) {
     overview.period = '30d'

@@ -2,6 +2,7 @@ import React from 'react'
 import { toast } from 'sonner'
 
 import { dateInputToIso } from '@/insumosShared'
+import { INSUMOS_ALL_UNITS } from '@/insumosUnitAccess'
 import type { Movimentacao } from '@/insumosTypes'
 
 type ApiJsonFn = <T>(path: string, opts?: { signal?: AbortSignal }) => Promise<T>
@@ -22,6 +23,7 @@ type UseInsumosMovementsControllerArgs = {
   setMovLoading: React.Dispatch<React.SetStateAction<boolean>>
   setMovLoadError: React.Dispatch<React.SetStateAction<MovementLoadError>>
   setMovimentacoes: React.Dispatch<React.SetStateAction<Movimentacao[]>>
+  readableUnits: string[]
   unidade: string
 }
 
@@ -65,6 +67,7 @@ export function useInsumosMovementsController({
   setMovLoading,
   setMovLoadError,
   setMovimentacoes,
+  readableUnits,
   unidade,
 }: UseInsumosMovementsControllerArgs) {
   const loadMovimentacoes = React.useCallback(async () => {
@@ -72,32 +75,38 @@ export function useInsumosMovementsController({
     setMovLoading(true)
     try {
       const limite = 200
-      let pagina = 1
-      let merged: Movimentacao[] = []
-      let totalOut: number | null = null
-
-      while (true) {
-        const params = buildMovimentacoesQuery({
-          unidade,
-          limite,
-          pagina,
-          movTipo,
-          selectedCodigoBarras,
-          movDe,
-          movAte,
-        })
-        const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
-          `/movimentacoes?${params.toString()}`
-        )
-        const list = (out as any)?.movimentos ?? out?.data
-        const items = Array.isArray(list) ? list : []
-        merged = [...merged, ...items]
-        const total = Number((out as any)?.resumo?.totalMovimentacoes)
-        if (Number.isFinite(total)) totalOut = total
-        if (items.length < limite) break
-        if (totalOut != null && merged.length >= totalOut) break
-        pagina += 1
+      const units = unidade === INSUMOS_ALL_UNITS ? readableUnits : [unidade]
+      const loadUnit = async (unit: string) => {
+        let pagina = 1
+        let itemsForUnit: Movimentacao[] = []
+        let totalOut: number | null = null
+        while (true) {
+          const params = buildMovimentacoesQuery({
+            unidade: unit,
+            limite,
+            pagina,
+            movTipo,
+            selectedCodigoBarras,
+            movDe,
+            movAte,
+          })
+          const out = await apiJson<{ success?: boolean; data?: Movimentacao[]; movimentos?: Movimentacao[]; resumo?: any }>(
+            `/movimentacoes?${params.toString()}`
+          )
+          const list = (out as any)?.movimentos ?? out?.data
+          const items = Array.isArray(list) ? list : []
+          itemsForUnit = [...itemsForUnit, ...items.map((item) => ({ ...item, unidade: String(item?.unidade || unit) }))]
+          const total = Number((out as any)?.resumo?.totalMovimentacoes)
+          if (Number.isFinite(total)) totalOut = total
+          if (items.length < limite) break
+          if (totalOut != null && itemsForUnit.length >= totalOut) break
+          pagina += 1
+        }
+        return itemsForUnit
       }
+
+      const perUnit = await Promise.all(units.filter(Boolean).map(loadUnit))
+      const merged = perUnit.flat()
 
       setMovimentacoes(merged)
       setMovLoadError(null)
@@ -125,6 +134,7 @@ export function useInsumosMovementsController({
     setMovLoading,
     setMovLoadError,
     setMovimentacoes,
+    readableUnits,
     unidade,
   ])
 
@@ -134,7 +144,7 @@ export function useInsumosMovementsController({
     } catch {
       // ignore
     }
-  }, [movAte, movDe, movFilterCategoria, movFilterMarca, movListContainerRef, movTipo, selectedCodigoBarras, unidade])
+  }, [movAte, movDe, movFilterCategoria, movFilterMarca, movListContainerRef, movTipo, readableUnits.join('|'), selectedCodigoBarras, unidade])
 
   React.useEffect(() => {
     if (!canUseApi || !isAuthed) return
@@ -146,7 +156,7 @@ export function useInsumosMovementsController({
       void loadMovimentacoes()
     }, 250)
     return () => window.clearTimeout(timeoutId)
-  }, [canUseApi, isAuthed, loadMovimentacoes, movAte, movDe, movTipo, selectedCodigoBarras, unidade])
+  }, [canUseApi, isAuthed, loadMovimentacoes, movAte, movDe, movTipo, readableUnits.join('|'), selectedCodigoBarras, unidade])
 
   return {
     loadMovimentacoes,
