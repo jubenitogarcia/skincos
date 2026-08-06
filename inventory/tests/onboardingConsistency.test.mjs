@@ -112,6 +112,14 @@ test('team usernames remain reserved across lifecycle history', async () => {
   assert.match(migration, /WHERE requested_username IS NOT NULL/);
 });
 
+test('centralized team mode disables every legacy password-management route', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  assert.equal((admin.match(/UNIFIED_TEAM_ROUTE_DISABLED/g) || []).length, 4);
+  assert.match(admin, /A senha deve ser criada pelo próprio integrante/);
+  assert.equal((admin.match(/legacyUserRoutesDisabled\(env\)/g) || []).length, 5);
+  assert.ok((admin.match(/status: 410/g) || []).length >= 4);
+});
+
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {
   const telemetry = await readFile(new URL('../src/services/teamTelemetry.js', import.meta.url), 'utf8');
   assert.match(telemetry, /item_count/);

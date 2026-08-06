@@ -21,6 +21,10 @@ function unifiedTeamEnabled(env) {
   return ['1', 'true', 'yes', 'on'].includes(value);
 }
 
+function legacyUserRoutesDisabled(env) {
+  return unifiedTeamEnabled(env);
+}
+
 function slugifyCategory(value) {
   const s0 = String(value || '').trim().toLowerCase();
   if (!s0) return '';
@@ -1478,6 +1482,9 @@ export async function handleAdminRoutes({
 
   // GET /admin/users
   if (url.pathname === '/admin/users' && request.method === 'GET') {
+    if (legacyUserRoutesDisabled(env)) {
+      return withCORS(JSON.stringify({ success: false, error: 'Use a gestão centralizada de equipe.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' }), { status: 410 }, appOrigin);
+    }
     try {
       const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
       const limit = Math.max(1, Math.min(200, parseInt(url.searchParams.get('limit') || '100', 10) || 100));
@@ -1525,6 +1532,9 @@ export async function handleAdminRoutes({
 
   // POST /admin/users
   if (url.pathname === '/admin/users' && request.method === 'POST') {
+    if (legacyUserRoutesDisabled(env)) {
+      return withCORS(JSON.stringify({ success: false, error: 'Use a gestão centralizada de equipe e convites.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' }), { status: 410 }, appOrigin);
+    }
     try {
       if (normalizeRole(auth?.user?.role) !== 'ADMIN' || String(env?.ALLOW_ADMIN_USER_PROVISIONING || '').trim().toLowerCase() !== 'true') {
         return withCORS(JSON.stringify({ success: false, error: 'Criação direta desabilitada. Use um convite autorizado.', code: 'INVITE_REQUIRED' }), { status: 403 }, appOrigin);
@@ -1621,6 +1631,9 @@ export async function handleAdminRoutes({
 
   // PUT /admin/users/:username
   if (url.pathname.startsWith('/admin/users/') && request.method === 'PUT') {
+    if (legacyUserRoutesDisabled(env)) {
+      return withCORS(JSON.stringify({ success: false, error: 'Use a gestão centralizada de equipe e convites.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' }), { status: 410 }, appOrigin);
+    }
     try {
       const target = decodeURIComponent(url.pathname.slice('/admin/users/'.length)).trim();
       if (!target) return withCORS(JSON.stringify({ success: false, error: 'USERNAME_REQUIRED' }), { status: 400 }, appOrigin);
@@ -1721,6 +1734,9 @@ export async function handleAdminRoutes({
 
   // POST /admin/users/:username/reset-password
   if (url.pathname.startsWith('/admin/users/') && url.pathname.endsWith('/reset-password') && request.method === 'POST') {
+    if (legacyUserRoutesDisabled(env)) {
+      return withCORS(JSON.stringify({ success: false, error: 'A senha deve ser criada pelo próprio integrante após o convite.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' }), { status: 410 }, appOrigin);
+    }
     try {
       const target = decodeURIComponent(url.pathname.slice('/admin/users/'.length, -'/reset-password'.length)).trim();
       if (!target) return withCORS(JSON.stringify({ success: false, error: 'USERNAME_REQUIRED' }), { status: 400 }, appOrigin);
