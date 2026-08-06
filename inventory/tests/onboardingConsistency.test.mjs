@@ -102,6 +102,16 @@ test('team edits expose a fail-closed local persistence compensation boundary', 
   assert.match(updateBlock, /outcome: 'PENDING'/);
 });
 
+test('team usernames remain reserved across lifecycle history', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const usernameBlock = admin.slice(admin.indexOf('if (onboardingHasUsername) {'), admin.indexOf('const at = new Date().toISOString();'));
+  assert.match(usernameBlock, /LOWER\(requested_username\)=LOWER\(\?\) AND id<>\?/);
+  assert.doesNotMatch(usernameBlock, /account_status NOT IN/);
+  const migration = await readFile(new URL('../migrations/0024_unified_team_identity.sql', import.meta.url), 'utf8');
+  assert.match(migration, /idx_crm_employee_onboarding_requested_username/);
+  assert.match(migration, /WHERE requested_username IS NOT NULL/);
+});
+
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {
   const telemetry = await readFile(new URL('../src/services/teamTelemetry.js', import.meta.url), 'utf8');
   assert.match(telemetry, /item_count/);

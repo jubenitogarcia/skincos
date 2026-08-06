@@ -486,7 +486,10 @@ export async function handleAdminRoutes({
       if (onboardingHasUsername) {
         const usernameTaken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(requestedUsername).first();
         if (usernameTaken) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está cadastrado', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
-        const pendingUsername = await env.DB.prepare('SELECT 1 FROM crm_employee_onboarding WHERE LOWER(requested_username)=LOWER(?) AND id<>? AND account_status NOT IN (\'TERMINATED\', \'SUSPENDED\') LIMIT 1').bind(requestedUsername, id).first();
+        // Usernames are immutable login identifiers and remain reserved after
+        // suspension or termination so history and audit references cannot be
+        // rebound to another person.
+        const pendingUsername = await env.DB.prepare('SELECT 1 FROM crm_employee_onboarding WHERE LOWER(requested_username)=LOWER(?) AND id<>? LIMIT 1').bind(requestedUsername, id).first();
         if (pendingUsername) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está reservado', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
         if (invitesHasUsername) {
           const invitedUsername = await env.DB.prepare(`SELECT 1 FROM ${invitesTable} WHERE LOWER(requested_username)=LOWER(?) AND LOWER(invitee_email)<>LOWER(?) AND COALESCE(revoked, 0)=0 LIMIT 1`).bind(requestedUsername, input.corporateEmail).first();
