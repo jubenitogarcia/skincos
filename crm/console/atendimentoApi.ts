@@ -844,8 +844,58 @@ export type CommercialAction = {
   createdBy: string
   completedAt: string | null
   contactedAt: string | null
+  offerId: string | null
+  offerRevision: number | null
+  offerContextHash: string | null
+  offerContext: AtendimentoCommercialOffer | null
+  offerUnitSlug: string
+  offerValidityEnd: string | null
+  campaignKey: string
   createdAt: string
   updatedAt: string
+}
+
+export type CommercialWhatsappTemplate = {
+  key: string
+  revision: number
+  body: string
+  offerRequired: boolean
+  unitSlug: string | null
+  validFrom: string | null
+  validUntil: string | null
+}
+
+export type CommercialWhatsappPreview = {
+  identityId: string
+  actionId: string
+  unitSlug: string
+  recipientMasked: string
+  phoneStatus: 'correlated' | 'ambiguous' | 'missing' | string
+  eligibility: CommercialContactEligibility
+  freshness: { thresholdHours: number; mirrorAgeHours: number | null; latestImportAgeHours: number | null; lastValidExecution: { mirror: string | null; import: string | null } }
+  emergency: { global: { emergencyOff: boolean; reason: string; updatedAt: string | null }; unit: { emergencyOff: boolean; reason: string; updatedAt: string | null } | null }
+  campaignKey: string
+  offer: { offerId: string; revision: number; contextHash: string; title: string; priceCents: number | null; conditions: string; validityEnd: string | null }
+  template: { key: string; revision: number }
+  messagePreview: string
+  requiresFinalConfirmation: true
+  providerSend: false
+}
+
+export type CommercialWhatsappAttempt = {
+  id: string
+  idempotencyKey: string
+  actionId: string
+  unitSlug: string
+  offerId: string
+  offerRevision: number
+  offerContextHash: string
+  templateKey: string
+  templateRevision: number
+  status: string
+  campaignKey: string
+  recipientMasked: string
+  createdAt: string
 }
 
 export type CommercialPolicy = {
@@ -910,6 +960,89 @@ export type CommercialDataQualityFindingMutation = {
   expectedRevision: number
   owner?: string
   status?: CommercialDataQualityStatus
+}
+
+export type CommercialAnalyticsScope = { kind: 'global' | 'unit'; units: string[] | null }
+
+export type CommercialAnalyticsQuality = {
+  scope: CommercialAnalyticsScope
+  scopeRestricted?: boolean
+  filters: Record<string, unknown>
+  findings: Array<{ findingKey: string; severity: string; status: string; observedCount: number; ownerCovered: boolean }>
+  events: Array<{ findingKey: string; eventType: string; status: string; observedCount: number; createdAt: string }>
+  timeSeries: {
+    granularity: 'day' | 'week' | 'month'
+    byFinding: Record<string, Array<{ date: string; observedCount: number; events: number; status: string }>>
+    backlogAging: Array<{ findingKey: string; ageHours: number; observedCount: number }>
+    timing: { timeToRecognitionHours: number | null; timeToStartHours: number | null; timeToResolutionHours: number | null }
+    reopenRate: number | null
+    ownerCoverage: number | null
+    activeFindings: number | null
+    overdueSla: number
+    metrics: Array<{ bucket_date?: string; source_key?: string; finding_key?: string; metrics?: Record<string, unknown> }>
+  }
+  metrics: {
+    identity?: { total: number; confirmedMultiSource: number; coverage: number | null }
+    salesClassification?: { total: number; classified: number; coverage: number | null }
+    consent?: { available: boolean; granted: number | null; coverage: number | null }
+    correlatedPhone?: { correlated: number; total: number; coverage: number | null }
+    ownerCoverage?: { actions: number; owned: number; coverage: number | null }
+    overdueSla?: number
+    freshness?: { thresholdHours: number; mirrorAgeHours: number | null; latestImportAgeHours: number | null }
+    lastValidExecution?: { mirror: string | null; import: string | null }
+    global?: boolean
+  }
+}
+
+export const commercialAnalyticsFunnelStages = ['eligible', 'selected', 'action_created', 'contacted', 'delivered', 'responded', 'scheduled', 'attended', 'purchased', 'returned'] as const
+export type CommercialAnalyticsFunnelStage = (typeof commercialAnalyticsFunnelStages)[number]
+
+export type CommercialAnalyticsFunnel = {
+  scope: CommercialAnalyticsScope
+  version: string
+  windows: { version: string; responseDays: number; appointmentDays: number; attendanceDays: number; saleDays: number; returnDays: number }
+  filters: Record<string, unknown>
+  stages: Record<CommercialAnalyticsFunnelStage, { observed: number; attributed: number; incremental: number }>
+  attribution: { version: string; windows: CommercialAnalyticsFunnel['windows']; observed: boolean; attributed: boolean; incremental: boolean }
+  dataAvailability: { observedEvents: number; actionRows: number; eligibleIdentities: number; attribution: boolean }
+}
+
+export type CommercialAnalyticsExperiment = {
+  id: string
+  key: string
+  version: number
+  unit: string | null
+  policyVersion: string
+  attributionWindowVersion: string
+  periodStart: string
+  periodEnd: string
+  controlPercent: number
+  state: string
+  author: string
+  reason: string
+  createdAt: string
+  assignments: number
+  controlAssignments: number
+  treatmentAssignments: number
+}
+
+export type CommercialAnalyticsSegment = {
+  key: string
+  name: string
+  description: string
+  id: string
+  version: number
+  criteria: Record<string, unknown>
+  thresholds: Record<string, unknown>
+  percentiles: Record<string, unknown>
+  effectiveFrom: string
+  effectiveTo: string | null
+  author: string
+  population: number
+  distribution: Record<string, number>
+  postMetrics: Record<string, unknown>
+  snapshots: Array<{ id: string; date: string; unit: string | null; population: number; included: number; distribution: Record<string, number>; drift: Record<string, unknown>; createdAt: string }>
+  drift: { available: boolean; reason?: string; dimensions?: Array<{ key: string; current: number; previous: number; delta: number; relativeDelta: number | null }> }
 }
 
 export type CommercialOverview = {
@@ -1020,6 +1153,53 @@ export function fetchCommercialDataQuality(filters: {
   return api<CommercialDataQualityQueue>(`/commercial/data-quality${qs ? `?${qs}` : ''}`)
 }
 
+function analyticsQuery(filters: Record<string, unknown> = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return
+    if (Array.isArray(value)) value.forEach((item) => params.append(key, String(item)))
+    else params.set(key, String(value))
+  })
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
+}
+
+export function fetchCommercialAnalyticsQuality(filters: Record<string, unknown> = {}) {
+  return api<CommercialAnalyticsQuality>(`/commercial/analytics/quality${analyticsQuery(filters)}`)
+}
+
+export function fetchCommercialAnalyticsFunnel(filters: Record<string, unknown> = {}) {
+  return api<CommercialAnalyticsFunnel>(`/commercial/analytics/funnel${analyticsQuery(filters)}`)
+}
+
+export function fetchCommercialAnalyticsExperiments(filters: Record<string, unknown> = {}) {
+  return api<{ scope: CommercialAnalyticsScope; experiments: CommercialAnalyticsExperiment[] }>(`/commercial/analytics/experiments${analyticsQuery(filters)}`)
+}
+
+export function previewCommercialAnalyticsExperiment(payload: Record<string, unknown>) {
+  return api<{ scope: CommercialAnalyticsScope; preview: { key: string; version: number; policyVersion: string; attributionWindowVersion: string; periodStart: string; periodEnd: string; controlPercent: number; counts: Record<string, number>; eligible: number; population: number; contactBlockedDuringExperiment: boolean; reason: string } }>('/commercial/analytics/experiments/preview', { method: 'POST', body: payload })
+}
+
+export function createCommercialAnalyticsExperiment(payload: Record<string, unknown>) {
+  return api<{ experiment: { id: string; key: string; version: number; unit: string | null; assignments: number; controlAssignments: number; treatmentAssignments: number; state: string; contactBlockedDuringExperiment: boolean } }>('/commercial/analytics/experiments', { method: 'POST', body: payload })
+}
+
+export function fetchCommercialAnalyticsExperimentResults(id: string) {
+  return api<{ experiment: CommercialAnalyticsExperiment; result: { control: { sample: number; conversions: number; rate: number; revenue: number; confidenceInterval95: [number, number] | null }; treatment: { sample: number; conversions: number; rate: number; revenue: number; confidenceInterval95: [number, number] | null }; lift: number | null; incrementalRevenue: number | null; confidenceIntervalAdequate: boolean; warning: string | null } }>(`/commercial/analytics/experiments/${encodeURIComponent(id)}/results`)
+}
+
+export function fetchCommercialAnalyticsSegments(filters: Record<string, unknown> = {}) {
+  return api<{ scope: CommercialAnalyticsScope; segments: CommercialAnalyticsSegment[] }>(`/commercial/analytics/segments${analyticsQuery(filters)}`)
+}
+
+export function createCommercialAnalyticsSegmentVersion(payload: Record<string, unknown>) {
+  return api<{ segment: { key: string; version: number; id: string; criteria: Record<string, unknown>; population: number; included: number; distribution: Record<string, number>; snapshotDate: string; scope: CommercialAnalyticsScope } }>('/commercial/analytics/segments/versions', { method: 'POST', body: payload })
+}
+
+export function recordCommercialAnalyticsEvent(payload: Record<string, unknown>) {
+  return api<{ recorded: boolean; duplicate: boolean; id: string | null }>('/commercial/analytics/events', { method: 'POST', body: payload })
+}
+
 export function updateCommercialDataQualityFinding(id: string, payload: CommercialDataQualityFindingMutation) {
   return api<{ finding: CommercialDataQualityFinding }>(`/commercial/data-quality/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
 }
@@ -1069,12 +1249,38 @@ export function fetchCommercialProfile(identityId: string, filters: { asOf?: str
   return api<CommercialProfileDetail>(`/commercial/profiles/${encodeURIComponent(identityId)}${qs ? `?${qs}` : ''}`)
 }
 
-export function createCommercialAction(payload: { identityId: string; segmentKey: string; actionType: CommercialAction['actionType']; contactChannel?: 'whatsapp'; owner?: string; unit?: string; dueDate?: string; notes?: string }) {
-  return api<{ id: string; contactEligibility: CommercialContactEligibility }>('/commercial/actions', { method: 'POST', body: payload })
+export function createCommercialAction(payload: { identityId: string; segmentKey: string; actionType: CommercialAction['actionType']; contactChannel?: 'whatsapp'; owner?: string; unit?: string; dueDate?: string; notes?: string; offerId?: string; offerRevision?: number; campaignKey?: string }) {
+  return api<{ id: string; contactEligibility: CommercialContactEligibility; offer?: { offerId: string; revision: number; contextHash: string; unitSlug: string; validityEnd: string | null } | null }>('/commercial/actions', { method: 'POST', body: payload })
 }
 
 export function updateCommercialAction(id: string, payload: { status: CommercialAction['status']; owner?: string; outcomeNotes?: string }) {
   return api<{ id: string; status: CommercialAction['status']; contactEligibility: CommercialContactEligibility }>(`/commercial/actions/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+}
+
+export function fetchCommercialWhatsappTemplates(filters: { unit?: string } = {}) {
+  const params = new URLSearchParams()
+  if (filters.unit && filters.unit !== 'all') params.set('unit', filters.unit)
+  const qs = params.toString()
+  return api<{ templates: CommercialWhatsappTemplate[] }>(`/commercial/whatsapp/templates${qs ? `?${qs}` : ''}`)
+}
+
+export function previewCommercialWhatsapp(payload: { identityId: string; actionId: string; templateKey: string; templateRevision: number }) {
+  return api<{ preview: CommercialWhatsappPreview }>('/commercial/whatsapp/preview', { method: 'POST', body: payload })
+}
+
+export function confirmCommercialWhatsapp(payload: { identityId: string; actionId: string; templateKey: string; templateRevision: number; offerContextHash: string; confirmation: 'CONFIRMAR_ENVIO_ASSISTIDO'; idempotencyKey: string }) {
+  return api<{ duplicate: boolean; attempt: CommercialWhatsappAttempt; recipientMasked: string; clickToSendUrl: string; providerSend: false }>('/commercial/whatsapp/confirm', { method: 'POST', body: payload, headers: { 'idempotency-key': payload.idempotencyKey } })
+}
+
+export function fetchCommercialWhatsappEmergency(unit?: string) {
+  const params = new URLSearchParams()
+  if (unit && unit !== 'all') params.set('unit', unit)
+  const qs = params.toString()
+  return api<{ emergency: { global: { emergencyOff: boolean; reason: string; updatedAt: string | null }; unit: { emergencyOff: boolean; reason: string; updatedAt: string | null } | null } }>(`/commercial/contact/emergency-off${qs ? `?${qs}` : ''}`)
+}
+
+export function setCommercialWhatsappEmergency(payload: { unit?: string; emergencyOff: boolean; reason: string }) {
+  return api<{ emergency: { scopeKey: string; emergencyOff: boolean; reason: string; updatedAt: string | null } }>('/commercial/contact/emergency-off', { method: 'PUT', body: payload })
 }
 
 export type CommercialContactPermissionMutation =

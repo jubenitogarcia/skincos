@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import express from 'express'
 import { createAtendimentoStore, canAccessAtendimento } from './store.js'
 import { createCommercialDataQualityStore } from './commercialDataQualityStore.js'
+import { createCommercialAnalyticsStore } from './commercialAnalyticsStore.js'
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
 import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
 
@@ -37,6 +38,30 @@ function verifyMetaAdsOfferContextToken(req, expectedToken) {
     const authorization = String(req?.headers?.authorization || '')
     const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
     return !!expectedToken && safeEqual(token, expectedToken)
+}
+
+function canonicalWebhookValue(value) {
+    if (Array.isArray(value)) return value.map(canonicalWebhookValue)
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalWebhookValue(value[key])]))
+    }
+    return value
+}
+
+function verifyCommercialWhatsappWebhook(req, expectedSecret) {
+    const secret = String(expectedSecret || '').trim()
+    if (!secret) return false
+    const timestamp = String(req?.headers?.['x-commercial-whatsapp-timestamp'] || '').trim()
+    const signatureHeader = String(req?.headers?.['x-commercial-whatsapp-signature'] || '').trim()
+    const signature = signatureHeader.replace(/^sha256=/i, '').trim()
+    const body = req?.body && typeof req.body === 'object' ? req.body : {}
+    const eventKey = String(body.providerEventKey || body.eventId || '').trim()
+    const timestampNumber = Number(timestamp)
+    if (!timestamp || !Number.isFinite(timestampNumber) || Math.abs(Date.now() - timestampNumber) > 5 * 60 * 1000) return false
+    if (!eventKey || !signature) return false
+    const canonical = JSON.stringify(canonicalWebhookValue(body))
+    const expected = b64UrlEncode(createHmac('sha256', secret).update(`${timestamp}.${eventKey}.${canonical}`).digest())
+    return safeEqual(signature, expected)
 }
 
 function normalizeRole(value) {
@@ -199,6 +224,10 @@ export function createAtendimentoRouter(options = {}) {
         pool: options.commercialDataQualityPool,
         databaseUrl: options.databaseUrl,
     })
+    const commercialAnalyticsStore = options.commercialAnalyticsStore || createCommercialAnalyticsStore({
+        pool: options.commercialAnalyticsPool,
+        databaseUrl: options.databaseUrl,
+    })
     const actorKey = String(
         options.actorHmacKey ||
         process.env.ATENDIMENTO_ACTOR_HMAC_KEY ||
@@ -208,6 +237,9 @@ export function createAtendimentoRouter(options = {}) {
     ).trim()
     const metaAdsOfferContextToken = String(
         options.metaAdsOfferContextToken || process.env.META_ADS_OFFER_CONTEXT_TOKEN || '',
+    ).trim()
+    const commercialWhatsappWebhookSecret = String(
+        options.commercialWhatsappWebhookSecret || process.env.COMMERCIAL_WHATSAPP_WEBHOOK_SECRET || '',
     ).trim()
     const getDevSession = options.getDevSession || null
     const expressRouter = options.routerFactory ? options.routerFactory() : express.Router()
@@ -240,6 +272,13 @@ export function createAtendimentoRouter(options = {}) {
                 if (!verifyMetaAdsOfferContextToken(req, metaAdsOfferContextToken)) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
                 req.atendimentoActor = { id: 'meta-ads-publish', role: 'SERVICE' }
                 req.metaAdsOfferContext = true
+                return next()
+            }
+            if (req.path === '/internal/commercial/whatsapp/webhook') {
+                if (!commercialWhatsappWebhookSecret) return json(res, 503, { ok: false, error: 'COMMERCIAL_WHATSAPP_WEBHOOK_SECRET_NOT_CONFIGURED' })
+                if (!verifyCommercialWhatsappWebhook(req, commercialWhatsappWebhookSecret)) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
+                req.atendimentoActor = { id: 'whatsapp-webhook', role: 'SERVICE' }
+                req.commercialWhatsappWebhook = true
                 return next()
             }
             if (!actorKey && String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
@@ -465,6 +504,62 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    expressRouter.get('/commercial/whatsapp/templates', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.commercialWhatsappTemplates(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/whatsapp/preview', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.previewCommercialWhatsapp(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/whatsapp/confirm', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            const body = { ...(req.body || {}) }
+            if (!body.idempotencyKey) body.idempotencyKey = String(req.headers['idempotency-key'] || '').trim()
+            return json(res, 200, { ok: true, ...(await store.confirmCommercialWhatsapp(body, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/contact/emergency-off', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.commercialWhatsappEmergency(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.put('/commercial/contact/emergency-off', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.setCommercialWhatsappEmergency(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/internal/commercial/whatsapp/webhook', async (req, res) => {
+        try {
+            if (!req.commercialWhatsappWebhook) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
+            return json(res, 200, { ok: true, ...(await store.processCommercialWhatsappWebhook(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.get('/commercial/data-quality', async (req, res) => {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
@@ -496,6 +591,87 @@ export function createAtendimentoRouter(options = {}) {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
             return json(res, 200, { ok: true, ...(await commercialDataQualityStore.events(String(req.params.id || ''), req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/quality', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialAnalyticsStore.quality(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/funnel', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialAnalyticsStore.funnel(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/experiments', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialAnalyticsStore.listExperiments(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/experiments/preview', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialAnalyticsStore.previewExperiment(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/experiments', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 201, { ok: true, ...(await commercialAnalyticsStore.createExperiment(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/experiments/:id/results', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialAnalyticsStore.experimentResults(String(req.params.id || ''), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/segments', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await commercialAnalyticsStore.listSegments(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/segments/versions', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 201, { ok: true, ...(await commercialAnalyticsStore.createSegmentVersion(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/events', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 201, { ok: true, ...(await commercialAnalyticsStore.recordEvent(req.body || {}, req.atendimentoActor)) })
         } catch (error) {
             return errorResponse(res, error)
         }
@@ -764,5 +940,7 @@ export const __testables = {
     redactLocalDiagnostic,
     safeEqual,
     verifyMetaAdsOfferContextToken,
+    canonicalWebhookValue,
+    verifyCommercialWhatsappWebhook,
     verifySignedActor,
 }

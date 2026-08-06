@@ -1,0 +1,3 @@
+-- Rollback is intentionally non-destructive. The canonical runner records the
+-- rollback in schema_migrations while retaining definitions, assignments,
+-- events and quality history for audit and replay.

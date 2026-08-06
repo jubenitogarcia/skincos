@@ -43,6 +43,14 @@ import {
     rollbackCommercialDataQualityMigration,
 } from '../server/atendimento/commercialDataQualityMigration.js'
 import {
+    applyCommercialAnalyticsMigration,
+    rollbackCommercialAnalyticsMigration,
+} from '../server/atendimento/commercialAnalyticsMigration.js'
+import {
+    applyCommercialAssistedCommunicationMigration,
+    rollbackCommercialAssistedCommunicationMigration,
+} from '../server/atendimento/commercialAssistedCommunicationMigration.js'
+import {
     applyIdentityReviewWorkflowMigration,
     rollbackIdentityReviewWorkflowMigration,
 } from '../server/atendimento/identityReviewMigration.js'
@@ -67,6 +75,8 @@ const migrations = [
     { id: '20260805_client_identity_materialization_schema_v1', apply: applyClientIdentityMaterializationMigration, rollback: rollbackClientIdentityMaterializationMigration },
     { id: '20260805_commercial_action_ledger_v1', apply: applyCommercialActionLedgerMigration, rollback: rollbackCommercialActionLedgerMigration },
     { id: '20260805_commercial_data_quality_queue_v1', apply: applyCommercialDataQualityMigration, rollback: rollbackCommercialDataQualityMigration },
+    { id: '20260806_commercial_analytics_v1', apply: applyCommercialAnalyticsMigration, rollback: rollbackCommercialAnalyticsMigration },
+    { id: '20260806_commercial_assisted_communication_v1', apply: applyCommercialAssistedCommunicationMigration, rollback: rollbackCommercialAssistedCommunicationMigration },
     { id: '20260805_identity_review_workflow_v1', apply: applyIdentityReviewWorkflowMigration, rollback: rollbackIdentityReviewWorkflowMigration },
 ]
 

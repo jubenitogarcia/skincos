@@ -389,6 +389,58 @@ async function querySourceObservations(client) {
     })
 }
 
+// The quality queue is the source event ledger.  This additive projection keeps
+// a daily, aggregate-only time series for analytics without changing the queue
+// state machine or ever copying customer identifiers into the metric table.
+async function recordAnalyticsMetricSnapshots(client, observations, actor) {
+    const available = await client.query(`select to_regclass('crm_atendimento.commercial_data_quality_metric_snapshots') as relation`)
+    if (!available.rows[0]?.relation) return { recorded: false, count: 0 }
+    const execution = await client.query(`select
+        (select synced_at from crm_atendimento.local_mirror_state where singleton = true) as mirror_synced_at,
+        (select max(created_at) from crm_atendimento.import_batches) as latest_import_created_at`)
+    const row = execution.rows[0] || {}
+    let count = 0
+    for (const item of observations || []) {
+        await client.query(`insert into crm_atendimento.commercial_data_quality_metric_snapshots(
+            bucket_date, unit_id, finding_key, source_key, metrics, recorded_by)
+            select current_date, null, $1, 'finding.observation', $2::jsonb, $3
+             where not exists (
+                 select 1 from crm_atendimento.commercial_data_quality_metric_snapshots
+                  where bucket_date = current_date and unit_id is null
+                    and finding_key = $1 and source_key = 'finding.observation')`, [
+            item.key,
+            JSON.stringify(sanitizeMetrics(item.metrics)),
+            actor,
+        ])
+        count += 1
+    }
+    const freshnessMetrics = {
+        mirrorAgeHours: observations.find((item) => item.key === 'source.local_mirror_stale')?.metrics?.mirrorSyncedAgeHours ?? null,
+        latestImportAgeHours: observations.find((item) => item.key === 'source.local_mirror_stale')?.metrics?.latestImportAgeHours ?? null,
+        thresholdHours: COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS,
+    }
+    await client.query(`insert into crm_atendimento.commercial_data_quality_metric_snapshots(
+        bucket_date, unit_id, finding_key, source_key, metrics, recorded_by)
+        select current_date, null, 'source.local_mirror_stale', 'freshness.source', $1::jsonb, $2
+         where not exists (
+             select 1 from crm_atendimento.commercial_data_quality_metric_snapshots
+              where bucket_date = current_date and unit_id is null
+                and finding_key = 'source.local_mirror_stale' and source_key = 'freshness.source')`, [JSON.stringify(freshnessMetrics), actor])
+    count += 1
+    await client.query(`insert into crm_atendimento.commercial_data_quality_metric_snapshots(
+        bucket_date, unit_id, finding_key, source_key, metrics, recorded_by)
+        select current_date, null, null, 'source.last_valid_execution', $1::jsonb, $2
+         where not exists (
+             select 1 from crm_atendimento.commercial_data_quality_metric_snapshots
+              where bucket_date = current_date and unit_id is null
+                and finding_key is null and source_key = 'source.last_valid_execution')`, [JSON.stringify({
+        mirror: row.mirror_synced_at || null,
+        import: row.latest_import_created_at || null,
+    }), actor])
+    count += 1
+    return { recorded: true, count }
+}
+
 // A session lock is deliberately acquired before beginning the repeatable-read
 // transaction.  That makes a waiting refresh take its source snapshot only
 // after the earlier materialization has completed, instead of later writing a
@@ -621,11 +673,13 @@ export function createCommercialDataQualityStore(options = {}) {
                     const materialized = await materializeObservation(client, item, actorId)
                     if (materialized) findings.push(materialized)
                 }
+                const metricSnapshot = await recordAnalyticsMetricSnapshots(client, observations, actorId)
                 const sourceFreshness = findings.find((item) => item.findingKey === 'source.local_mirror_stale')?.metrics || {}
                 return {
                     refreshed: findings.length,
                     findings,
                     sourceFreshness,
+                    metricSnapshot,
                 }
             })
         },

@@ -1,0 +1,3 @@
+-- Non-destructive rollback: preserve offer snapshots, click-to-send attempts,
+-- webhook evidence and emergency controls. The runner only marks the
+-- migration rolled back; it never drops customer or communication evidence.

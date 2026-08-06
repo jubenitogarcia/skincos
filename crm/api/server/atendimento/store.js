@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
 import { lockContactPhone } from '../contactPhoneLock.js'
 import {
@@ -38,6 +38,7 @@ import {
     transitionCommercialAction,
     validateCommercialPermission,
 } from './clientCommercialContact.js'
+import { COMMERCIAL_ASSISTED_COMMUNICATION_MIGRATION_ID } from './commercialAssistedCommunicationMigration.js'
 import {
     PROFESSIONAL_IDENTITY_VERSION,
     isValidProfessionalIdentityName,
@@ -2446,6 +2447,73 @@ function commercialOfferSelect(whereSql = '') {
         order by o.updated_at desc`
 }
 
+async function captureCommercialOfferRevision(client, mapped, actor) {
+    if (!mapped?.offerId || !Number.isInteger(Number(mapped.revision)) || !mapped.contextHash) {
+        throw commercialOfferError('OFFER_CONTEXT_INVALID', 409)
+    }
+    await client.query(`insert into crm_atendimento.commercial_offer_revisions(
+        offer_id, revision, context, context_hash, captured_by)
+        values ($1,$2,$3::jsonb,$4,$5)
+        on conflict(offer_id, revision) do nothing`, [
+        mapped.offerId,
+        Number(mapped.revision),
+        JSON.stringify({ ...mapped }),
+        mapped.contextHash,
+        String(actor || 'system').slice(0, 160),
+    ])
+    return mapped
+}
+
+async function commercialOfferContextForAction(client, { identityId, unitSlug, offerId, offerRevision, actor }) {
+    const id = String(offerId || '').trim()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+        throw commercialOfferError('INVALID_OFFER_ID', 400)
+    }
+    const result = await client.query(commercialOfferSelect('where o.id = $1'), [id])
+    const row = result.rows[0]
+    if (!row) throw commercialOfferError('OFFER_NOT_FOUND', 404)
+    const mapped = mapCommercialOffer(row)
+    await captureCommercialOfferRevision(client, mapped, actor)
+    const normalizedUnit = commercialUnit(unitSlug)
+    if (!normalizedUnit || mapped.unitSlug !== normalizedUnit) throw commercialOfferError('OFFER_UNIT_MISMATCH', 409)
+    if (!['approved', 'active'].includes(mapped.status) || !mapped.approvedBy || !mapped.approvedAt) throw commercialOfferError('OFFER_NOT_CURRENTLY_APPROVED', 409)
+    const today = new Date().toISOString().slice(0, 10)
+    if ((mapped.validityStart && mapped.validityStart > today) || (mapped.validityEnd && mapped.validityEnd < today)) {
+        throw commercialOfferError('OFFER_OUTSIDE_VALIDITY', 409)
+    }
+    const expectedRevision = offerRevision == null || offerRevision === '' ? mapped.revision : Number(offerRevision)
+    if (!Number.isInteger(expectedRevision) || expectedRevision !== mapped.revision) throw commercialOfferError('OFFER_REVISION_STALE', 409)
+    const procedureIds = mapped.procedures.map((procedure) => String(procedure.id || '').trim()).filter(Boolean)
+    if (!procedureIds.length) throw commercialOfferError('OFFER_PROCEDURES_MISSING', 409)
+    const compatible = await client.query(`select exists(
+            select 1
+              from crm_atendimento.global_client_identity_members member
+              join crm_atendimento.attendance_client_links attendance_link on attendance_link.client_id = member.source_id::uuid
+              join crm_atendimento.attendances attendance on attendance.id = attendance_link.attendance_id
+              join crm_atendimento.units unit on unit.id = attendance.unit_id
+             where member.identity_id = $1::uuid and member.source_type = 'attendance_client'
+               and attendance.deleted_at is null and attendance.service_date <= current_date
+               and unit.slug = $2 and attendance.procedure_id = any($3::uuid[])
+        ) or exists(
+            select 1
+              from crm_atendimento.global_client_identity_members member
+              join crm_caixa.sales sale on sale.customer_id = member.source_id::uuid
+              join crm_caixa.sale_items item on item.sale_id = sale.id and item.mapping_status = 'mapped'
+              join crm_atendimento.units unit on unit.id = sale.unit_id
+             where member.identity_id = $1::uuid and member.source_type = 'caixa_customer'
+               and unit.slug = $2 and item.procedure_id = any($3::uuid[])
+        ) as compatible`, [identityId, normalizedUnit, procedureIds])
+    if (compatible.rows[0]?.compatible !== true) throw commercialOfferError('OFFER_PROCEDURE_INCOMPATIBLE', 409)
+    return {
+        offerId: mapped.offerId,
+        revision: mapped.revision,
+        contextHash: mapped.contextHash,
+        context: { ...mapped },
+        unitSlug: mapped.unitSlug,
+        validityEnd: mapped.validityEnd,
+    }
+}
+
 function normalizeGoalMonth(value) {
     const raw = String(value || '').trim()
     if (/^\d{4}-\d{2}$/.test(raw)) return `${raw}-01`
@@ -2774,6 +2842,13 @@ function mapCommercialAction(row) {
         createdBy: row.created_by || '',
         completedAt: row.completed_at || null,
         contactedAt: row.contacted_at || null,
+        offerId: row.offer_id || null,
+        offerRevision: row.offer_revision == null ? null : Number(row.offer_revision),
+        offerContextHash: row.offer_context_hash || null,
+        offerContext: row.offer_context || null,
+        offerUnitSlug: row.offer_unit_slug || '',
+        offerValidityEnd: row.offer_validity_end ? String(row.offer_validity_end).slice(0, 10) : null,
+        campaignKey: row.campaign_key || '',
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     }
@@ -2907,6 +2982,156 @@ function commercialContactError(code, statusCode = 409) {
     const error = new Error(code)
     error.statusCode = statusCode
     return error
+}
+
+const COMMERCIAL_WHATSAPP_EVENT_TYPES = new Set(['confirmed', 'opened', 'sent', 'delivered', 'read', 'replied', 'failed', 'stop'])
+const COMMERCIAL_WHATSAPP_TEMPLATE_KEY = /^[a-z][a-z0-9_.-]{2,96}$/
+const COMMERCIAL_ASSISTED_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+async function assertCommercialAssistedCommunicationReady(pgPool) {
+    const result = await pgPool.query(`select
+        to_regclass('crm_atendimento.commercial_offer_revisions') as offer_revisions,
+        to_regclass('crm_atendimento.commercial_whatsapp_templates') as templates,
+        to_regclass('crm_atendimento.commercial_whatsapp_attempts') as attempts,
+        to_regclass('crm_atendimento.commercial_whatsapp_events') as events,
+        to_regclass('crm_atendimento.commercial_contact_emergency_controls') as emergency_controls,
+        exists(select 1 from information_schema.columns where table_schema = 'crm_atendimento' and table_name = 'commercial_actions' and column_name = 'offer_context_hash') as action_context`)
+    const row = result.rows[0] || {}
+    if (!row.offer_revisions || !row.templates || !row.attempts || !row.events || !row.emergency_controls || row.action_context !== true) {
+        throw commercialContactError('COMMERCIAL_ASSISTED_COMMUNICATION_NOT_READY', 503)
+    }
+    const migration = await pgPool.query(`select id from crm_atendimento.schema_migrations where id = $1 and rolled_back_at is null`, [COMMERCIAL_ASSISTED_COMMUNICATION_MIGRATION_ID])
+    if (!migration.rows[0]?.id) throw commercialContactError('COMMERCIAL_ASSISTED_COMMUNICATION_NOT_READY', 503)
+}
+
+function normalizeCommercialWhatsappIdempotency(value) {
+    const key = String(value || '').trim()
+    if (key.length < 8 || key.length > 180 || /[\u0000-\u001f\u007f]/.test(key)) throw commercialContactError('INVALID_COMMERCIAL_WHATSAPP_IDEMPOTENCY', 400)
+    return key
+}
+
+function normalizeCommercialWhatsappTemplateKey(value) {
+    const key = String(value || '').trim().toLowerCase()
+    if (!COMMERCIAL_WHATSAPP_TEMPLATE_KEY.test(key)) throw commercialContactError('INVALID_COMMERCIAL_WHATSAPP_TEMPLATE', 400)
+    return key
+}
+
+function maskCommercialPhone(phone) {
+    const digits = String(phone || '').replace(/\D/g, '')
+    return digits.length >= 4 ? `••••${digits.slice(-4)}` : '••••'
+}
+
+function commercialPhoneHash(phone) {
+    return createHash('sha256').update(String(phone || '')).digest('hex')
+}
+
+function sanitizeCommercialWhatsappPayload(value) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+    const allowed = ['templateKey', 'templateRevision', 'offerKey', 'offerRevision', 'offerContextHash', 'campaignKey', 'eventType', 'providerEventKey', 'reason']
+    return Object.fromEntries(allowed
+        .filter((key) => source[key] !== undefined && source[key] !== null)
+        .map((key) => [key, String(source[key]).slice(0, 300)]))
+}
+
+function renderCommercialWhatsappTemplate(body, { offer, campaignKey }) {
+    const template = String(body || '').trim()
+    if (!template || template.length > 4096 || /{{\s*(?!offer\.(?:title|price|conditions)|campaign)\w[^}]*}}/i.test(template)) {
+        throw commercialContactError('COMMERCIAL_WHATSAPP_TEMPLATE_VARIABLE_FORBIDDEN', 400)
+    }
+    const price = offer?.priceCents == null
+        ? (offer?.priceQualifier === 'on_request' ? 'sob consulta' : 'valor não informado')
+        : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: offer.currency || 'BRL' }).format(Number(offer.priceCents) / 100)
+    return template
+        .replaceAll('{{offer.title}}', String(offer?.title || ''))
+        .replaceAll('{{offer.price}}', price)
+        .replaceAll('{{offer.conditions}}', String(offer?.conditions || ''))
+        .replaceAll('{{campaign}}', String(campaignKey || ''))
+        .slice(0, 4096)
+}
+
+async function readCommercialFreshnessGate(client) {
+    let result
+    try {
+        result = await client.query(`with mirror as (
+            select synced_at from crm_atendimento.local_mirror_state where singleton = true
+        ), latest_import as (
+            select max(created_at) as created_at from crm_atendimento.import_batches
+        ) select
+            (select synced_at from mirror) as mirror_synced_at,
+            (select created_at from latest_import) as latest_import_created_at,
+            case when (select synced_at from mirror) is null then null else floor(extract(epoch from now() - (select synced_at from mirror)) / 3600)::int end as mirror_age_hours,
+            case when (select created_at from latest_import) is null then null else floor(extract(epoch from now() - (select created_at from latest_import)) / 3600)::int end as latest_import_age_hours`)
+    } catch (error) {
+        if (String(error?.code || '') === '42P01') throw commercialContactError('COMMERCIAL_SOURCE_STALE', 409)
+        throw error
+    }
+    const row = result.rows[0] || {}
+    const mirrorAge = row.mirror_age_hours == null ? null : Math.max(0, Number(row.mirror_age_hours))
+    const importAge = row.latest_import_age_hours == null ? null : Math.max(0, Number(row.latest_import_age_hours))
+    const healthy = (mirrorAge != null && mirrorAge < 48) || (importAge != null && importAge < 48)
+    if (!healthy) throw commercialContactError('COMMERCIAL_SOURCE_STALE', 409)
+    return {
+        thresholdHours: 48,
+        mirrorAgeHours: mirrorAge,
+        latestImportAgeHours: importAge,
+        lastValidExecution: { mirror: row.mirror_synced_at || null, import: row.latest_import_created_at || null },
+    }
+}
+
+async function readCommercialEmergencyControls(client, unitSlug = null, { enforce = true } = {}) {
+    const normalized = commercialUnit(unitSlug)
+    const result = await client.query(`select scope_key, emergency_off, reason, updated_at
+        from crm_atendimento.commercial_contact_emergency_controls
+       where scope_key = 'global' or ($1::text is not null and scope_key = $2)
+       order by scope_key`, [normalized || null, normalized ? `unit:${normalized}` : 'unit:'])
+    const global = result.rows.find((row) => row.scope_key === 'global')
+    if (!global) throw commercialContactError('COMMERCIAL_EMERGENCY_CONTROL_NOT_READY', 503)
+    const unit = normalized ? result.rows.find((row) => row.scope_key === `unit:${normalized}`) : null
+    if (enforce && (global.emergency_off || unit?.emergency_off)) throw commercialContactError('COMMERCIAL_EMERGENCY_OFF', 409)
+    return { global: { emergencyOff: global.emergency_off === true, reason: global.reason || '', updatedAt: global.updated_at || null }, unit: unit ? { emergencyOff: unit.emergency_off === true, reason: unit.reason || '', updatedAt: unit.updated_at || null } : null }
+}
+
+async function readCommercialWhatsappPhone(client, identityId, unitSlug, availability) {
+    const phones = await queryCommercialIdentityPhoneKeys(client, [identityId], availability, [unitSlug])
+    const values = [...(phones.get(identityId) || new Set())].filter((value) => /^\d{8,15}$/.test(value)).sort()
+    if (values.length !== 1) throw commercialContactError(values.length ? 'COMMERCIAL_PHONE_AMBIGUOUS' : 'COMMERCIAL_PHONE_NOT_CORRELATED', 409)
+    return values[0]
+}
+
+async function readApprovedCommercialWhatsappTemplate(client, { templateKey, templateRevision, unitSlug }) {
+    const key = normalizeCommercialWhatsappTemplateKey(templateKey)
+    const revision = Number(templateRevision)
+    if (!Number.isInteger(revision) || revision < 1) throw commercialContactError('INVALID_COMMERCIAL_WHATSAPP_TEMPLATE_REVISION', 400)
+    const result = await client.query(`select template.id, template.template_key, template.revision, template.body_template,
+            template.offer_required, template.valid_from, template.valid_until, unit.slug as unit_slug
+        from crm_atendimento.commercial_whatsapp_templates template
+        left join crm_atendimento.units unit on unit.id = template.unit_id
+       where template.template_key = $1 and template.revision = $2 and template.status = 'approved'
+         and (template.valid_from is null or template.valid_from <= now())
+         and (template.valid_until is null or template.valid_until > now())
+         and (unit.slug is null or unit.slug = $3)`, [key, revision, unitSlug])
+    const row = result.rows[0]
+    if (!row) throw commercialContactError('COMMERCIAL_WHATSAPP_TEMPLATE_NOT_APPROVED', 409)
+    return { key: row.template_key, revision: Number(row.revision), body: row.body_template, offerRequired: row.offer_required !== false, unitSlug: row.unit_slug || null, validFrom: row.valid_from || null, validUntil: row.valid_until || null }
+}
+
+function mapCommercialWhatsappAttempt(row) {
+    if (!row) return null
+    return {
+        id: row.id,
+        idempotencyKey: row.idempotency_key,
+        actionId: row.action_id,
+        unitSlug: row.unit_slug || '',
+        offerId: row.offer_id,
+        offerRevision: Number(row.offer_revision),
+        offerContextHash: row.offer_context_hash,
+        templateKey: row.template_key,
+        templateRevision: Number(row.template_revision),
+        status: row.status,
+        campaignKey: row.campaign_key || '',
+        recipientMasked: row.recipient_masked || '••••',
+        createdAt: row.created_at,
+    }
 }
 
 function emptyCommercialContactEligibility(reason, {
@@ -5086,6 +5311,7 @@ export function createAtendimentoStore(options = {}) {
 
         async commercialOffers(query, actor) {
             await ensureReady()
+            assertCommercialManager(actor)
             const where = []
             const params = []
             const unitSlugs = commercialUnitSlugsForQuery(actor, query?.unit)
@@ -5095,9 +5321,15 @@ export function createAtendimentoStore(options = {}) {
             }
             const status = String(query?.status || '').trim().toLowerCase()
             if (status && status !== 'all') {
-                if (!COMMERCIAL_OFFER_STATUSES.has(status)) throw commercialOfferError('INVALID_OFFER_STATUS')
-                params.push(status)
-                where.push(`o.status = $${params.length}`)
+                if (status === 'approved_active') {
+                    where.push(`o.status in ('approved','active')`)
+                    where.push(`(o.validity_start is null or o.validity_start <= current_date)`)
+                    where.push(`(o.validity_end is null or o.validity_end >= current_date)`)
+                } else if (!COMMERCIAL_OFFER_STATUSES.has(status)) throw commercialOfferError('INVALID_OFFER_STATUS')
+                else {
+                    params.push(status)
+                    where.push(`o.status = $${params.length}`)
+                }
             }
             const sql = commercialOfferSelect(where.length ? `where ${where.join(' and ')}` : '')
             const result = await pgPool.query(sql, params)
@@ -5156,6 +5388,9 @@ export function createAtendimentoStore(options = {}) {
                 }
                 const result = await client.query(commercialOfferSelect('where o.id = $1'), [offerId])
                 const mapped = mapCommercialOffer(result.rows[0])
+                // A revision snapshot is immutable. Future catalog edits can
+                // therefore never rewrite the context attached to an action.
+                await captureCommercialOfferRevision(client, mapped, actorLabel(actor))
                 await audit(client, 'commercial-offer.upserted', actor, null, {
                     offerId: mapped.offerId,
                     offerKey: mapped.offerKey,
@@ -5190,6 +5425,246 @@ export function createAtendimentoStore(options = {}) {
                 asOf: new Date().toISOString().slice(0, 10),
                 offers: rows.rows.map(mapCommercialOffer),
             }
+        },
+
+        async commercialWhatsappTemplates(query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialAssistedCommunicationReady(pgPool)
+            const unitSlugs = commercialUnitSlugsForQuery(actor, query?.unit)
+            const params = [unitSlugs]
+            const result = await pgPool.query(`select template.template_key, template.revision, template.body_template,
+                    template.offer_required, template.valid_from, template.valid_until, unit.slug as unit_slug
+                from crm_atendimento.commercial_whatsapp_templates template
+                left join crm_atendimento.units unit on unit.id = template.unit_id
+               where template.status = 'approved'
+                 and (template.valid_from is null or template.valid_from <= now())
+                 and (template.valid_until is null or template.valid_until > now())
+                 and ($1::text[] is null or unit.slug is null or unit.slug = any($1::text[]))
+               order by template.template_key, template.revision desc`, params)
+            return { templates: result.rows.map((row) => ({ key: row.template_key, revision: Number(row.revision), body: row.body_template, offerRequired: row.offer_required !== false, unitSlug: row.unit_slug || null, validFrom: row.valid_from || null, validUntil: row.valid_until || null })) }
+        },
+
+        async previewCommercialWhatsapp(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialAssistedCommunicationReady(pgPool)
+            const identityId = String(payload?.identityId || '').trim()
+            const actionId = String(payload?.actionId || '').trim()
+            if (!COMMERCIAL_ASSISTED_UUID.test(identityId) || !COMMERCIAL_ASSISTED_UUID.test(actionId)) throw commercialContactError('INVALID_COMMERCIAL_WHATSAPP_TARGET', 400)
+            const action = await pgPool.query(`select action.*, unit.slug as unit_slug
+                from crm_atendimento.commercial_actions action
+                left join crm_atendimento.units unit on unit.id = action.unit_id
+               where action.id = $1 and action.identity_id = $2`, [actionId, identityId])
+            const row = action.rows[0]
+            if (!row) throw commercialContactError('COMMERCIAL_ACTION_NOT_FOUND', 404)
+            assertCommercialUnitInScope(actor, row.unit_slug)
+            if (!row.offer_id || !row.offer_context_hash) throw commercialContactError('COMMERCIAL_ACTION_OFFER_CONTEXT_REQUIRED', 409)
+            const offer = {
+                offerId: row.offer_id,
+                revision: Number(row.offer_revision),
+                contextHash: row.offer_context_hash,
+                context: row.offer_context,
+                unitSlug: row.offer_unit_slug || row.unit_slug,
+                validityEnd: row.offer_validity_end || null,
+            }
+            const template = await readApprovedCommercialWhatsappTemplate(pgPool, { templateKey: payload?.templateKey, templateRevision: payload?.templateRevision, unitSlug: row.unit_slug })
+            if (template.offerRequired && !offer.context) throw commercialContactError('COMMERCIAL_ACTION_OFFER_CONTEXT_REQUIRED', 409)
+            const availability = await readCommercialContactAvailability(pgPool)
+            const eligibility = await readCommercialContactEligibility(pgPool, identityId, { unitSlugs: [row.unit_slug] })
+            const phones = await queryCommercialIdentityPhoneKeys(pgPool, [identityId], availability, [row.unit_slug])
+            const phoneValues = [...(phones.get(identityId) || new Set())].filter((value) => /^\d{8,15}$/.test(value)).sort()
+            const freshness = await readCommercialFreshnessGate(pgPool)
+            const emergency = await readCommercialEmergencyControls(pgPool, row.unit_slug)
+            const body = renderCommercialWhatsappTemplate(template.body, { offer: offer.context, campaignKey: row.campaign_key })
+            return {
+                preview: {
+                    identityId,
+                    actionId,
+                    unitSlug: row.unit_slug,
+                    recipientMasked: phoneValues.length === 1 ? maskCommercialPhone(phoneValues[0]) : '••••',
+                    phoneStatus: phoneValues.length === 1 ? 'correlated' : phoneValues.length ? 'ambiguous' : 'missing',
+                    eligibility,
+                    freshness,
+                    emergency,
+                    campaignKey: row.campaign_key || '',
+                    offer: { offerId: offer.offerId, revision: offer.revision, contextHash: offer.contextHash, title: offer.context?.title || '', priceCents: offer.context?.priceCents ?? null, conditions: offer.context?.conditions || '', validityEnd: offer.validityEnd },
+                    template: { key: template.key, revision: template.revision },
+                    messagePreview: body,
+                    requiresFinalConfirmation: true,
+                    providerSend: false,
+                },
+            }
+        },
+
+        async confirmCommercialWhatsapp(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialAssistedCommunicationReady(pgPool)
+            const identityId = String(payload?.identityId || '').trim()
+            const actionId = String(payload?.actionId || '').trim()
+            const idempotencyKey = normalizeCommercialWhatsappIdempotency(payload?.idempotencyKey)
+            if (!COMMERCIAL_ASSISTED_UUID.test(identityId) || !COMMERCIAL_ASSISTED_UUID.test(actionId)) throw commercialContactError('INVALID_COMMERCIAL_WHATSAPP_TARGET', 400)
+            if (String(payload?.confirmation || '').trim() !== 'CONFIRMAR_ENVIO_ASSISTIDO') throw commercialContactError('COMMERCIAL_WHATSAPP_CONFIRMATION_REQUIRED', 400)
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                await assertCommercialAssistedCommunicationReady(client)
+                await acquireCommercialContactIdentityLock(client, identityId)
+                const duplicate = await client.query(`select attempt.*, unit.slug as unit_slug
+                    from crm_atendimento.commercial_whatsapp_attempts attempt
+                    join crm_atendimento.units unit on unit.id = attempt.unit_id
+                   where attempt.idempotency_key = $1`, [idempotencyKey])
+                if (duplicate.rows[0]) {
+                    const duplicateRow = duplicate.rows[0]
+                    assertCommercialUnitInScope(actor, duplicateRow.unit_slug)
+                    if (String(duplicateRow.identity_id) !== identityId || String(duplicateRow.action_id) !== actionId) {
+                        throw commercialContactError('COMMERCIAL_WHATSAPP_IDEMPOTENCY_CONFLICT', 409)
+                    }
+                    return { duplicate: true, attempt: mapCommercialWhatsappAttempt(duplicateRow), providerSend: false }
+                }
+                const action = await client.query(`select action.*, unit.slug as unit_slug
+                    from crm_atendimento.commercial_actions action
+                    left join crm_atendimento.units unit on unit.id = action.unit_id
+                   where action.id = $1 and action.identity_id = $2 for update of action`, [actionId, identityId])
+                const row = action.rows[0]
+                if (!row) throw commercialContactError('COMMERCIAL_ACTION_NOT_FOUND', 404)
+                assertCommercialUnitInScope(actor, row.unit_slug)
+                if (!row.offer_id || !row.offer_context_hash || !row.offer_context) throw commercialContactError('COMMERCIAL_ACTION_OFFER_CONTEXT_REQUIRED', 409)
+                if (payload.offerContextHash && String(payload.offerContextHash) !== String(row.offer_context_hash)) throw commercialContactError('COMMERCIAL_ACTION_OFFER_CONTEXT_STALE', 409)
+                if (['closed', 'cancelled'].includes(row.status)) throw commercialContactError('COMMERCIAL_ACTION_NOT_CONTACTABLE', 409)
+                const offer = {
+                    offerId: row.offer_id,
+                    revision: Number(row.offer_revision),
+                    contextHash: row.offer_context_hash,
+                    context: row.offer_context,
+                    unitSlug: row.offer_unit_slug || row.unit_slug,
+                    validityEnd: row.offer_validity_end || null,
+                }
+                const currentOffer = await commercialOfferContextForAction(client, { identityId, unitSlug: row.unit_slug, offerId: offer.offerId, offerRevision: offer.revision, actor: actorLabel(actor) })
+                if (currentOffer.contextHash !== offer.contextHash) throw commercialContactError('COMMERCIAL_ACTION_OFFER_CONTEXT_STALE', 409)
+                const template = await readApprovedCommercialWhatsappTemplate(client, { templateKey: payload?.templateKey, templateRevision: payload?.templateRevision, unitSlug: row.unit_slug })
+                const availability = await readCommercialContactAvailability(client)
+                const eligibility = await readCommercialContactEligibility(client, identityId, { lockHarmonia: true, unitSlugs: [row.unit_slug] })
+                if (eligibility.status !== 'eligible' || eligibility.contactAllowed !== true) throw commercialContactError('COMMERCIAL_CONTACT_BLOCKED', 409)
+                const phone = await readCommercialWhatsappPhone(client, identityId, row.unit_slug, availability)
+                const freshness = await readCommercialFreshnessGate(client)
+                const emergency = await readCommercialEmergencyControls(client, row.unit_slug)
+                await assertCommercialContactWriteRollout(client, identityId)
+                const policy = await client.query(`select active_contact_cooldown_days from crm_atendimento.commercial_policy_config where singleton = true for share`)
+                const cooldownDays = Number(policy.rows[0]?.active_contact_cooldown_days || 30)
+                await assertCommercialContactCooldown(client, { identityId, actionId, cooldownDays })
+                const recentAttempt = await client.query(`select id from crm_atendimento.commercial_whatsapp_attempts
+                    where identity_id = $1 and created_at >= now() - ($2::int * interval '1 day')
+                      and status not in ('failed','blocked','opted_out')
+                    order by created_at desc limit 1 for update`, [identityId, cooldownDays])
+                if (recentAttempt.rows[0]?.id) throw commercialContactError('COMMERCIAL_CONTACT_COOLDOWN_ACTIVE', 409)
+                const message = renderCommercialWhatsappTemplate(template.body, { offer: offer.context, campaignKey: row.campaign_key })
+                const attempt = await client.query(`insert into crm_atendimento.commercial_whatsapp_attempts(
+                    idempotency_key, identity_id, action_id, unit_id, offer_id, offer_revision, offer_context_hash,
+                    template_key, template_revision, recipient_phone_hash, recipient_masked, status, campaign_key, created_by, payload)
+                    values ($1,$2,$3,(select id from crm_atendimento.units where slug = $4),$5,$6,$7,$8,$9,$10,$11,'confirmed',$12,$13,$14::jsonb)
+                    returning id, idempotency_key, action_id, unit_id, offer_id, offer_revision, offer_context_hash,
+                        template_key, template_revision, recipient_masked, status, campaign_key, created_at`, [
+                    idempotencyKey, identityId, actionId, row.unit_slug, offer.offerId, offer.revision, offer.contextHash,
+                    template.key, template.revision, commercialPhoneHash(phone), maskCommercialPhone(phone), row.campaign_key || null, actorLabel(actor),
+                    JSON.stringify(sanitizeCommercialWhatsappPayload({ templateKey: template.key, templateRevision: template.revision, offerKey: offer.context?.offerKey, offerRevision: offer.revision, offerContextHash: offer.contextHash, campaignKey: row.campaign_key })),
+                ])
+                const attemptRow = attempt.rows[0]
+                await client.query(`insert into crm_atendimento.commercial_whatsapp_events(
+                    attempt_id, provider_event_key, event_type, occurred_at, recorded_by, payload)
+                    values ($1,$2,'confirmed',$3,$4,$5::jsonb)`, [attemptRow.id, `human:${attemptRow.id}:confirmed`, new Date(), actorLabel(actor), JSON.stringify({ action: 'click_to_send_ready' })])
+                await audit(client, 'commercial.whatsapp.assisted.confirmed', actor, null, {
+                    attemptId: attemptRow.id,
+                    actionId,
+                    identityId,
+                    unitSlug: row.unit_slug,
+                    offerId: offer.offerId,
+                    offerRevision: offer.revision,
+                    offerContextHash: offer.contextHash,
+                    templateKey: template.key,
+                    templateRevision: template.revision,
+                    freshness,
+                    emergency,
+                    providerSend: false,
+                })
+                return {
+                    duplicate: false,
+                    attempt: mapCommercialWhatsappAttempt({ ...attemptRow, unit_slug: row.unit_slug }),
+                    eligibility,
+                    recipientMasked: maskCommercialPhone(phone),
+                    clickToSendUrl: `https://wa.me/${phone}?text=${encodeURIComponent(message)}`,
+                    providerSend: false,
+                }
+            })
+        },
+
+        async commercialWhatsappEmergency(query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialAssistedCommunicationReady(pgPool)
+            const unit = String(query?.unit || '').trim() || null
+            assertCommercialUnitInScope(actor, unit)
+            return { emergency: await readCommercialEmergencyControls(pgPool, unit, { enforce: false }) }
+        },
+
+        async setCommercialWhatsappEmergency(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialAssistedCommunicationReady(pgPool)
+            const requestedUnit = String(payload?.unit || '').trim() || null
+            const emergencyOff = payload?.emergencyOff === true
+            const reason = String(payload?.reason || '').trim()
+            if (reason.length < 3 || reason.length > 1000) throw commercialContactError('COMMERCIAL_EMERGENCY_REASON_REQUIRED', 400)
+            assertCommercialUnitInScope(actor, requestedUnit)
+            if (!requestedUnit && commercialUnitScope(actor) !== null) throw commercialContactError('COMMERCIAL_GLOBAL_SCOPE_REQUIRED', 403)
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const unit = requestedUnit ? await client.query(`select id, slug from crm_atendimento.units where slug = $1`, [commercialUnit(requestedUnit)]) : { rows: [] }
+                if (requestedUnit && !unit.rows[0]) throw commercialContactError('COMMERCIAL_UNIT_NOT_FOUND', 404)
+                const scopeKey = requestedUnit ? `unit:${commercialUnit(requestedUnit)}` : 'global'
+                const result = await client.query(`insert into crm_atendimento.commercial_contact_emergency_controls(scope_key, unit_id, emergency_off, reason, updated_by)
+                    values ($1,$2,$3,$4,$5)
+                    on conflict(scope_key) do update set emergency_off = excluded.emergency_off, reason = excluded.reason, updated_by = excluded.updated_by, updated_at = now()
+                    returning scope_key, emergency_off, reason, updated_by, updated_at`, [scopeKey, unit.rows[0]?.id || null, emergencyOff, reason, actorLabel(actor)])
+                await audit(client, 'commercial.whatsapp.emergency.updated', actor, null, { scopeKey, emergencyOff, reason })
+                return { emergency: { scopeKey, emergencyOff: result.rows[0].emergency_off === true, reason: result.rows[0].reason, updatedAt: result.rows[0].updated_at } }
+            })
+        },
+
+        async processCommercialWhatsappWebhook(payload, actor = { id: 'whatsapp-webhook', role: 'SERVICE' }) {
+            await ensureReady()
+            await assertCommercialAssistedCommunicationReady(pgPool)
+            const providerEventKey = String(payload?.providerEventKey || payload?.eventId || '').trim()
+            const attemptId = String(payload?.attemptId || '').trim()
+            const eventType = String(payload?.eventType || '').trim().toLowerCase()
+            if (!providerEventKey || providerEventKey.length > 180 || !COMMERCIAL_ASSISTED_UUID.test(attemptId) || !COMMERCIAL_WHATSAPP_EVENT_TYPES.has(eventType)) throw commercialContactError('INVALID_COMMERCIAL_WHATSAPP_WEBHOOK', 400)
+            const occurredAt = String(payload?.occurredAt || new Date().toISOString())
+            if (!Number.isFinite(new Date(occurredAt).getTime())) throw commercialContactError('INVALID_COMMERCIAL_WHATSAPP_EVENT_TIME', 400)
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const duplicate = await client.query(`select id from crm_atendimento.commercial_whatsapp_events where provider_event_key = $1`, [providerEventKey])
+                if (duplicate.rows[0]) return { duplicate: true, eventId: duplicate.rows[0].id }
+                const attempt = await client.query(`select attempt.id, attempt.identity_id, attempt.action_id, unit.slug as unit_slug
+                    from crm_atendimento.commercial_whatsapp_attempts attempt
+                    join crm_atendimento.units unit on unit.id = attempt.unit_id
+                   where attempt.id = $1 for update`, [attemptId])
+                if (!attempt.rows[0]) throw commercialContactError('COMMERCIAL_WHATSAPP_ATTEMPT_NOT_FOUND', 404)
+                const row = attempt.rows[0]
+                await client.query(`insert into crm_atendimento.commercial_whatsapp_events(
+                    attempt_id, provider_event_key, event_type, occurred_at, recorded_by, payload)
+                    values ($1,$2,$3,$4::timestamptz,$5,$6::jsonb)`, [attemptId, providerEventKey, eventType, occurredAt, actorLabel(actor), JSON.stringify(sanitizeCommercialWhatsappPayload(payload))])
+                const attemptStatusByEvent = { confirmed: 'confirmed', opened: 'opened', sent: 'sent', delivered: 'delivered', read: 'read', replied: 'replied', failed: 'failed', stop: 'opted_out' }
+                await client.query(`update crm_atendimento.commercial_whatsapp_attempts
+                    set status = $2 where id = $1 and status not in ('opted_out','blocked')`, [attemptId, attemptStatusByEvent[eventType]])
+                if (eventType === 'stop') {
+                    await acquireCommercialContactIdentityLock(client, row.identity_id)
+                    const previous = await client.query(`select status from crm_atendimento.commercial_contact_permissions where identity_id = $1 and channel = 'whatsapp' for update`, [row.identity_id])
+                    await client.query(`insert into crm_atendimento.commercial_contact_permissions(identity_id, channel, status, evidence_source, evidence_reference, expires_at, recorded_by)
+                        values ($1,'whatsapp','denied','whatsapp_webhook_stop',$2,null,'whatsapp-webhook')
+                        on conflict(identity_id, channel) do update set status = 'denied', evidence_source = excluded.evidence_source, evidence_reference = excluded.evidence_reference, expires_at = null, recorded_by = excluded.recorded_by, revision = crm_atendimento.commercial_contact_permissions.revision + 1, updated_at = now()`, [row.identity_id, providerEventKey])
+                    await client.query(`insert into crm_atendimento.commercial_contact_permission_events(identity_id, channel, previous_status, status, evidence_source, evidence_reference, expires_at, recorded_by, trace_id)
+                        values ($1,'whatsapp',$2,'denied','whatsapp_webhook_stop',$3,null,'whatsapp-webhook',$3)`, [row.identity_id, previous.rows[0]?.status || null, providerEventKey])
+                    await audit(client, 'commercial.whatsapp.opt_out.received', actor, null, { attemptId, identityId: row.identity_id, unitSlug: row.unit_slug, providerEventKey })
+                }
+                return { duplicate: false, eventId: providerEventKey, stopApplied: eventType === 'stop' }
+            })
         },
 
         async commercialOverview(query, actor) {
@@ -5849,15 +6324,24 @@ export function createAtendimentoStore(options = {}) {
             const contactChannel = String(payload?.contactChannel || COMMERCIAL_CONTACT_CHANNEL).trim()
             const owner = String(payload?.owner || '').trim()
             const dueDate = String(payload?.dueDate || '').trim() || null
+            const offerId = String(payload?.offerId || '').trim() || null
+            const offerRevision = payload?.offerRevision == null || payload?.offerRevision === '' ? null : Number(payload.offerRevision)
+            const campaignKey = String(payload?.campaignKey || '').trim() || null
             if (!identityId || !segmentKey || !COMMERCIAL_ACTION_TYPES.has(actionType)
-                || contactChannel !== COMMERCIAL_CONTACT_CHANNEL || (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) {
+                || contactChannel !== COMMERCIAL_CONTACT_CHANNEL || (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))
+                || (offerId && !COMMERCIAL_ASSISTED_UUID.test(offerId))
+                || (offerId && offerRevision != null && (!Number.isInteger(offerRevision) || offerRevision < 1))) {
                 const error = new Error('INVALID_COMMERCIAL_ACTION')
                 error.statusCode = 400
                 throw error
             }
+            if (campaignKey && !offerId) throw commercialContactError('COMMERCIAL_CAMPAIGN_REQUIRES_OFFER', 400)
+            if (campaignKey && campaignKey.length > 160) throw commercialContactError('INVALID_COMMERCIAL_CAMPAIGN', 400)
             const unitSlug = commercialUnit(payload?.unit)
+            if (offerId && !unitSlug) throw commercialOfferError('OFFER_UNIT_REQUIRED', 400)
             if (commercialUnitScope(actor) !== null) assertCommercialUnitInScope(actor, unitSlug)
             await assertCommercialIdentitySource(pgPool)
+            if (offerId) await assertCommercialAssistedCommunicationReady(pgPool)
             const contactAvailability = await assertCommercialContactCooldownControls(pgPool)
             return withCommercialContactTransaction(pgPool, async (client) => {
                 // Creation joins the same per-identity lock as `contacted`.
@@ -5888,6 +6372,15 @@ export function createAtendimentoStore(options = {}) {
                     unitSlug,
                     availability: contactAvailability,
                 })
+                const offerContext = offerId
+                    ? await commercialOfferContextForAction(client, {
+                        identityId,
+                        unitSlug,
+                        offerId,
+                        offerRevision,
+                        actor: actorLabel(actor),
+                    })
+                    : null
                 const canonicalOwner = await resolveCommercialActionOwner(client, owner, { slug: unitSlug })
                 const contactEligibility = await readCommercialContactEligibility(client, identityId)
                 const cooldown = Number(policy.rows[0]?.active_contact_cooldown_days || 30)
@@ -5903,13 +6396,22 @@ export function createAtendimentoStore(options = {}) {
                     error.statusCode = 409
                     throw error
                 }
-                const created = await client.query(
-                    `insert into crm_atendimento.commercial_actions(
-                        identity_id, unit_id, segment_key, action_type, contact_channel, owner, due_date, notes, created_by, updated_by)
-                     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
-                     returning id, status`,
-                    [identityId, unit.rows[0]?.id || null, segmentKey, actionType, contactChannel, canonicalOwner, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor)],
-                )
+                const created = offerContext
+                    ? await client.query(
+                        `insert into crm_atendimento.commercial_actions(
+                            identity_id, unit_id, segment_key, action_type, contact_channel, owner, due_date, notes, created_by, updated_by,
+                            offer_id, offer_revision, offer_context_hash, offer_context, offer_unit_slug, offer_validity_end, campaign_key)
+                         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11,$12,$13::jsonb,$14,$15,$16)
+                         returning id, status`,
+                        [identityId, unit.rows[0]?.id || null, segmentKey, actionType, contactChannel, canonicalOwner, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor), offerContext.offerId, offerContext.revision, offerContext.contextHash, JSON.stringify(offerContext.context), offerContext.unitSlug, offerContext.validityEnd, campaignKey],
+                    )
+                    : await client.query(
+                        `insert into crm_atendimento.commercial_actions(
+                            identity_id, unit_id, segment_key, action_type, contact_channel, owner, due_date, notes, created_by, updated_by)
+                         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+                         returning id, status`,
+                        [identityId, unit.rows[0]?.id || null, segmentKey, actionType, contactChannel, canonicalOwner, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor)],
+                    )
                 const traceId = randomUUID()
                 const actionId = created.rows[0]?.id
                 const actionStatus = created.rows[0]?.status || 'open'
@@ -5921,7 +6423,7 @@ export function createAtendimentoStore(options = {}) {
                     traceId,
                     recordedBy: actorLabel(actor),
                     contactEligibility,
-                    details: { segmentKey, actionType, contactChannel, unitSlug },
+                    details: { segmentKey, actionType, contactChannel, unitSlug, offerId: offerContext?.offerId || null, offerRevision: offerContext?.revision || null, offerContextHash: offerContext?.contextHash || null, campaignKey },
                 })
                 await audit(client, 'commercial.action.created', actor, null, {
                     traceId,
@@ -5933,8 +6435,12 @@ export function createAtendimentoStore(options = {}) {
                     unitSlug,
                     eligibilityStatus: contactEligibility.status,
                     eligibilityReason: contactEligibility.reason,
+                    offerId: offerContext?.offerId || null,
+                    offerRevision: offerContext?.revision || null,
+                    offerContextHash: offerContext?.contextHash || null,
+                    campaignKey,
                 })
-                return { id: actionId, contactEligibility }
+                return { id: actionId, contactEligibility, offer: offerContext ? { offerId: offerContext.offerId, revision: offerContext.revision, contextHash: offerContext.contextHash, unitSlug: offerContext.unitSlug, validityEnd: offerContext.validityEnd } : null }
             })
         },
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, CircleDollarSign, RefreshCw, Save, ShieldCheck, UserRoundCheck, UsersRound } from 'lucide-react'
 import { Button } from '@/button'
+import { CommercialAnalyticsPanel } from '@/CommercialAnalyticsPanel'
 import {
   createCommercialAction,
   commercialCadenceManagerStatuses,
@@ -10,6 +11,12 @@ import {
   fetchCommercialDataQuality,
   fetchCommercialOverview,
   fetchCommercialProfile,
+  fetchAtendimentoCommercialOffers,
+  fetchCommercialWhatsappTemplates,
+  previewCommercialWhatsapp,
+  confirmCommercialWhatsapp,
+  fetchCommercialWhatsappEmergency,
+  setCommercialWhatsappEmergency,
   isCommercialDataQualityScopeDenied,
   recordCommercialContactPermission,
   undoClientIdentityReview,
@@ -26,6 +33,9 @@ import {
   type CommercialProfile,
   type CommercialProfileDetail,
   type ClientIdentityReviewItem,
+  type AtendimentoCommercialOffer,
+  type CommercialWhatsappPreview,
+  type CommercialWhatsappTemplate,
 } from '@/atendimentoApi'
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -180,16 +190,41 @@ function ActionForm({ detail, units, professionals, onSaved }: { detail: Commerc
   const [actionType, setActionType] = useState<CommercialAction['actionType']>('contact')
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
+  const [offers, setOffers] = useState<AtendimentoCommercialOffer[]>([])
+  const [offerId, setOfferId] = useState('')
+  const [campaignKey, setCampaignKey] = useState('')
+  const [offersLoading, setOffersLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const firstSegment = detail.profile.segments[0]
   const contactEligibility = safeContactEligibility(detail.profile.contactEligibility)
+  const effectiveUnit = unit || (units.length === 1 ? units[0].slug : '')
+  useEffect(() => {
+    let cancelled = false
+    if (!effectiveUnit) {
+      setOffers([])
+      setOfferId('')
+      return () => { cancelled = true }
+    }
+    setOffersLoading(true)
+    void fetchAtendimentoCommercialOffers({ unit: effectiveUnit, status: 'approved_active' }).then((result) => {
+      if (cancelled) return
+      const today = new Date().toISOString().slice(0, 10)
+      const eligible = result.ok
+        ? result.offers.filter((offer) => ['approved', 'active'].includes(offer.status) && (!offer.validityStart || offer.validityStart <= today) && (!offer.validityEnd || offer.validityEnd >= today))
+        : []
+      setOffers(eligible)
+      setOfferId((current) => current && eligible.some((offer) => offer.offerId === current) ? current : '')
+    }).catch(() => { if (!cancelled) setOffers([]) }).finally(() => { if (!cancelled) setOffersLoading(false) })
+    return () => { cancelled = true }
+  }, [effectiveUnit])
+  const selectedOffer = offers.find((offer) => offer.offerId === offerId) || null
   const save = async () => {
     try {
       setBusy(true); setError('')
-      const result = await createCommercialAction({ identityId: detail.profile.identityId, segmentKey: firstSegment?.key || 'manual_follow_up', actionType, contactChannel: 'whatsapp', owner, dueDate, notes, unit: unit || (units.length === 1 ? units[0].slug : undefined) })
+      const result = await createCommercialAction({ identityId: detail.profile.identityId, segmentKey: firstSegment?.key || 'manual_follow_up', actionType, contactChannel: 'whatsapp', owner, dueDate, notes, unit: effectiveUnit || undefined, offerId: selectedOffer?.offerId, offerRevision: selectedOffer?.revision, campaignKey: campaignKey.trim() || undefined })
       if (!result.ok) throw new Error(result.error || 'Não foi possível registrar a ação.')
-      setNotes(''); setDueDate('')
+      setNotes(''); setDueDate(''); setCampaignKey(''); setOfferId('')
       await onSaved()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível registrar a ação.')
@@ -204,12 +239,77 @@ function ActionForm({ detail, units, professionals, onSaved }: { detail: Commerc
       <select value={actionType} onChange={(event) => setActionType(event.target.value as CommercialAction['actionType'])} className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"><option value="contact">Contato consultivo</option><option value="follow_up">Acompanhamento</option><option value="appointment">Agendamento</option><option value="relationship">Relacionamento</option></select>
       <select value={unit} onChange={(event) => setUnit(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"><option value="">Unidade vinculada</option>{units.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select>
       <input type="date" aria-label="Data prevista" value={dueDate} onChange={(event) => setDueDate(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-slate-100" />
+      <label className="text-xs text-slate-400 sm:col-span-2">Oferta aprovada (opcional para a fila; necessária para click-to-send)
+        <select aria-label="Oferta aprovada" value={offerId} onChange={(event) => setOfferId(event.target.value)} disabled={offersLoading || !effectiveUnit} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"><option value="">Sem oferta contextual</option>{offers.map((offer) => <option key={offer.offerId} value={offer.offerId}>{offer.title} · revisão {offer.revision}{offer.priceCents != null ? ` · ${currency.format(offer.priceCents / 100)}` : ''}</option>)}</select>
+      </label>
+      {selectedOffer ? <div className="rounded-lg border border-sky-300/20 bg-sky-500/5 p-2 text-xs text-slate-300 sm:col-span-2"><span className="font-medium text-sky-100">{selectedOffer.title}</span>{selectedOffer.conditions ? ` · ${selectedOffer.conditions}` : ''}{selectedOffer.validityEnd ? ` · válida até ${formatDate(selectedOffer.validityEnd)}` : ''}<div className="mt-1 text-[11px] text-slate-500">Compatibilidade com procedimentos classificados será validada no servidor; isto não é recomendação clínica.</div></div> : null}
+      <input aria-label="Campanha da ação" value={campaignKey} onChange={(event) => setCampaignKey(event.target.value)} maxLength={120} placeholder="Campanha (opcional)" className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 sm:col-span-2" />
       <Button size="sm" onClick={() => void save()} disabled={busy || !firstSegment || !contactEligibility.contactWriteControlsReady} className="bg-emerald-500 text-slate-950 hover:bg-emerald-400 sm:col-span-2"><Save className="mr-2 h-4 w-4" />Adicionar à fila</Button>
     </div>
     {!contactEligibility.contactWriteControlsReady ? <p className="mt-2 text-xs text-amber-200">A fila depende da migration de cadência de contato; nenhuma ação nova será criada antes dela.</p> : null}
     <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Contexto, combinado ou observação para a equipe" className="mt-2 min-h-20 w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" />
     {error ? <div className="mt-2 text-xs text-rose-200">{error}</div> : null}
   </section>
+}
+
+function WhatsAppAssist({ action, contactEligibility, contactRolloutAllowed }: { action: CommercialAction; contactEligibility: CommercialProfile['contactEligibility']; contactRolloutAllowed: boolean }) {
+  const [templates, setTemplates] = useState<CommercialWhatsappTemplate[]>([])
+  const [templateKey, setTemplateKey] = useState('')
+  const [templateRevision, setTemplateRevision] = useState<number | null>(null)
+  const [preview, setPreview] = useState<CommercialWhatsappPreview | null>(null)
+  const [confirmation, setConfirmation] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  useEffect(() => {
+    let cancelled = false
+    if (!action.offerId) return () => { cancelled = true }
+    void fetchCommercialWhatsappTemplates({ unit: action.unitSlug }).then((result) => {
+      if (cancelled) return
+      const next = result.ok ? result.templates : []
+      setTemplates(next)
+      setTemplateKey(next[0]?.key || '')
+      setTemplateRevision(next[0]?.revision || null)
+    }).catch(() => { if (!cancelled) setTemplates([]) })
+    return () => { cancelled = true }
+  }, [action.offerId, action.unitSlug])
+  const selectedTemplate = templates.find((template) => template.key === templateKey && template.revision === templateRevision) || null
+  const runPreview = async () => {
+    if (!selectedTemplate) return
+    try {
+      setBusy(true); setError(''); setNotice('')
+      const result = await previewCommercialWhatsapp({ identityId: action.identityId, actionId: action.id, templateKey: selectedTemplate.key, templateRevision: selectedTemplate.revision })
+      if (!result.ok) throw new Error(result.error || 'Não foi possível gerar a prévia segura.')
+      setPreview(result.preview)
+      setConfirmation('')
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível gerar a prévia segura.') } finally { setBusy(false) }
+  }
+  const confirm = async () => {
+    if (!preview || !selectedTemplate || confirmation.trim() !== 'CONFIRMAR_ENVIO_ASSISTIDO') return
+    try {
+      setBusy(true); setError(''); setNotice('')
+      const idempotencyKey = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `assist-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const result = await confirmCommercialWhatsapp({ identityId: action.identityId, actionId: action.id, templateKey: selectedTemplate.key, templateRevision: selectedTemplate.revision, offerContextHash: preview.offer.contextHash, confirmation: 'CONFIRMAR_ENVIO_ASSISTIDO', idempotencyKey })
+      if (!result.ok) throw new Error(result.error || 'O envio assistido foi bloqueado na revalidação.')
+      setNotice(result.duplicate ? 'A tentativa idempotente já existia. Nenhuma nova mensagem foi preparada.' : 'Tentativa registrada. O WhatsApp será aberto para revisão e envio manual.')
+      setConfirmation('')
+      if (!result.duplicate && result.clickToSendUrl) window.open(result.clickToSendUrl, '_blank', 'noopener,noreferrer')
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'O envio assistido foi bloqueado na revalidação.') } finally { setBusy(false) }
+  }
+  if (!action.offerId) return null
+  return <div className="mt-3 rounded-lg border border-sky-300/20 bg-sky-500/[0.04] p-3">
+    <div className="flex items-center gap-2 text-xs font-medium text-sky-100"><ShieldCheck className="h-3.5 w-3.5" />WhatsApp assistido — click-to-send humano</div>
+    <p className="mt-1 text-[11px] text-slate-500">Oferta, permissão, telefone, freshness, cooldown, unidade, canário e emergency off são revalidados no instante da confirmação. Nenhum disparo automático ou em massa.</p>
+    {!contactRolloutAllowed ? <p className="mt-2 text-[11px] text-amber-200">O canário de contato não está aberto para esta identidade; a confirmação continuará bloqueada.</p> : null}
+    {contactEligibility.status !== 'eligible' ? <p className="mt-2 text-[11px] text-amber-200">Elegibilidade atual: {contactEligibilityLabel(contactEligibility)}.</p> : null}
+    <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+      <select aria-label="Template aprovado de WhatsApp" value={`${templateKey}:${templateRevision || ''}`} onChange={(event) => { const [key, revision] = event.target.value.split(':'); setTemplateKey(key); setTemplateRevision(Number(revision) || null); setPreview(null) }} disabled={busy || !templates.length} className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"><option value="">Selecione um template aprovado</option>{templates.map((template) => <option key={`${template.key}:${template.revision}`} value={`${template.key}:${template.revision}`}>{template.key} · revisão {template.revision}</option>)}</select>
+      <Button size="sm" variant="outline" onClick={() => void runPreview()} disabled={busy || !selectedTemplate}>Gerar prévia</Button>
+    </div>
+    {preview ? <div className="mt-3 space-y-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-xs"><div className="flex flex-wrap gap-x-4 gap-y-1 text-slate-400"><span>Destinatário: <b className="text-slate-100">{preview.recipientMasked}</b></span><span>Telefone: {preview.phoneStatus}</span><span>Campanha: {preview.campaignKey || '—'}</span><span>Oferta: {preview.offer.title} · rev. {preview.offer.revision}</span></div><div className="rounded border border-slate-800 bg-slate-900 p-2 whitespace-pre-wrap text-slate-200">{preview.messagePreview}</div><div className="text-[11px] text-slate-500">Freshness: mirror {preview.freshness.mirrorAgeHours ?? '—'}h · importação {preview.freshness.latestImportAgeHours ?? '—'}h · emergência global {preview.emergency.global.emergencyOff ? 'ATIVA' : 'inativa'}{preview.emergency.unit ? ` · unidade ${preview.emergency.unit.emergencyOff ? 'ATIVA' : 'inativa'}` : ''}</div><label className="block text-[11px] text-slate-400">Digite <code className="text-sky-200">CONFIRMAR_ENVIO_ASSISTIDO</code> para habilitar a abertura do WhatsApp<input aria-label="Confirmação final do envio assistido" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 text-xs text-slate-100" /></label><Button size="sm" onClick={() => void confirm()} disabled={busy || confirmation.trim() !== 'CONFIRMAR_ENVIO_ASSISTIDO' || !preview.requiresFinalConfirmation}>Confirmar e abrir WhatsApp</Button></div> : null}
+    {error ? <div className="mt-2 text-[11px] text-rose-200">{error}</div> : null}
+    {notice ? <div className="mt-2 text-[11px] text-emerald-200">{notice}</div> : null}
+  </div>
 }
 
 function ActionHistory({ actions, contactEligibility, contactRolloutAllowed, onUpdated }: { actions: CommercialAction[]; contactEligibility: CommercialProfile['contactEligibility']; contactRolloutAllowed: boolean; onUpdated: () => Promise<void> }) {
@@ -238,6 +338,8 @@ function ActionHistory({ actions, contactEligibility, contactRolloutAllowed, onU
       <div className="mt-1 text-xs text-slate-400">{action.owner || 'Sem responsável'} · {action.segmentKey}</div>
       {action.contactedAt ? <div className="mt-1 text-xs text-emerald-300">Contato registrado em {formatDate(action.contactedAt)}</div> : null}
       {action.notes ? <div className="mt-2 text-xs text-slate-300">{action.notes}</div> : null}
+      {action.offerId ? <div className="mt-2 text-[11px] text-sky-200">Oferta contextual: {action.offerContext?.title || action.offerId} · revisão {action.offerRevision || '—'}{action.campaignKey ? ` · campanha ${action.campaignKey}` : ''}{action.offerValidityEnd ? ` · válida até ${formatDate(action.offerValidityEnd)}` : ''}</div> : null}
+      <WhatsAppAssist action={action} contactEligibility={contactEligibility} contactRolloutAllowed={contactRolloutAllowed} />
       {['open', 'contacted', 'responded', 'scheduled'].includes(action.status) ? <select disabled={busyId === action.id} value={action.status} onChange={(event) => void changeStatus(action, event.target.value as CommercialAction['status'])} className="mt-2 w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"><option value="open">Aberta</option><option value="contacted" disabled={contactOptionDisabled}>Contatado {contactOptionHint}</option><option value="responded">Respondeu</option><option value="scheduled">Agendado</option><option value="won_sale">Venda registrada</option><option value="returned">Retorno clínico</option><option value="closed">Encerrada</option><option value="cancelled">Cancelada</option></select> : null}
     </div>})}</div>}
     {error ? <div className="mt-2 text-xs text-rose-200">{error}</div> : null}
@@ -486,6 +588,33 @@ function CanarySelection({ profiles, selectedIds, disabled, onToggle, onClear }:
   </div>
 }
 
+function CommercialEmergencyControl({ units }: { units: Array<{ slug: string; name: string }> }) {
+  const [scope, setScope] = useState('global')
+  const [emergencyOff, setEmergencyOff] = useState(false)
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const load = useCallback(async (nextScope = scope) => {
+    const result = await fetchCommercialWhatsappEmergency(nextScope === 'global' ? undefined : nextScope)
+    if (!result.ok) throw new Error(result.error || 'Não foi possível carregar o emergency off.')
+    const state = nextScope === 'global' ? result.emergency.global : result.emergency.unit
+    setEmergencyOff(state?.emergencyOff === true)
+    setReason(state?.reason || '')
+  }, [scope])
+  useEffect(() => { void load().catch((cause) => setError(cause instanceof Error ? cause.message : 'Não foi possível carregar o emergency off.')) }, [load])
+  const save = async () => {
+    try {
+      setBusy(true); setError(''); setNotice('')
+      const result = await setCommercialWhatsappEmergency({ unit: scope === 'global' ? undefined : scope, emergencyOff, reason: reason.trim() || (emergencyOff ? 'Desligamento emergencial solicitado pelo gestor' : 'Reativação após validação operacional') })
+      if (!result.ok) throw new Error(result.error || 'Não foi possível atualizar o emergency off.')
+      setNotice(`Controle ${emergencyOff ? 'ativado' : 'desativado'} com auditoria.`)
+      await load(scope)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar o emergency off.') } finally { setBusy(false) }
+  }
+  return <div className="mt-4 rounded-lg border border-rose-300/20 bg-rose-500/[0.04] p-3"><div className="text-xs font-medium text-rose-100">Emergency off de comunicação assistida</div><p className="mt-1 text-[11px] text-slate-500">Bloqueia confirmações no escopo escolhido. Não envia, cancela ou altera mensagens já abertas.</p><div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"><select aria-label="Escopo do emergency off" value={scope} onChange={(event) => { setScope(event.target.value); void load(event.target.value).catch((cause) => setError(cause instanceof Error ? cause.message : 'Não foi possível carregar o escopo.')) }} className="rounded border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"><option value="global">Global</option>{units.map((unit) => <option key={unit.slug} value={unit.slug}>Unidade: {unit.name}</option>)}</select><input aria-label="Motivo do emergency off" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} placeholder="Motivo obrigatório" className="rounded border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-slate-200 placeholder:text-slate-500" /><Button size="sm" variant={emergencyOff ? 'default' : 'outline'} onClick={() => void save()} disabled={busy || reason.trim().length < 3}>{emergencyOff ? 'Desligar comunicação' : 'Reativar comunicação'}</Button></div><div className={`mt-2 text-[11px] ${emergencyOff ? 'text-rose-200' : 'text-emerald-200'}`}>Estado atual: {emergencyOff ? 'EMERGENCY OFF ativo' : 'normal'}</div>{error ? <div className="mt-2 text-[11px] text-rose-200">{error}</div> : null}{notice ? <div className="mt-2 text-[11px] text-emerald-200">{notice}</div> : null}</div>
+}
+
 export function ClientCommercialModule() {
   const [overview, setOverview] = useState<CommercialOverview | null>(null)
   const [detail, setDetail] = useState<CommercialProfileDetail | null>(null)
@@ -697,10 +826,11 @@ export function ClientCommercialModule() {
     <ClientesWorkspaceNav active={workspaceView} onChange={selectWorkspaceView} />
     {error ? <div className="rounded-xl border border-rose-300/30 bg-rose-500/10 p-4 text-sm text-rose-100">{error}</div> : null}
     {workspaceView === 'overview' && overview ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100"><div className="flex gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><div><b>Uso comercial seguro:</b> a recência considera apenas o último atendimento realizado. Compras antecipadas não representam procedimento realizado. {overview.dataQuality.futureAttendancesExcluded ? `${overview.dataQuality.futureAttendancesExcluded} atendimento(s) futuro(s) foram excluídos desta métrica. ` : ''}{overview.dataQuality.activeAttendanceClientsWithoutIdentity ? `${overview.dataQuality.activeAttendanceClientsWithoutIdentity} cliente(s) de Atendimento ainda não têm identidade comercial. ` : ''}{contactSummary.controlsReady ? `${contactSummary.eligible} apto(s), ${contactSummary.blocked} bloqueado(s) e ${contactSummary.reviewRequired} em revisão para WhatsApp${contactScopeSuffix}. ` : 'Os controles de contato ainda não foram migrados; nenhum contato pode ser marcado. '}{!contactSummary.contactWriteControlsReady ? 'A cadência de contato aguarda a migration explícita; filas novas, concessões e registros de contato seguem bloqueados. ' : overview.policy.commercialContactWritesEnabled ? `Canário de contato ativo para ${overview.policy.commercialContactCanaryIdentityIds?.length || 0} identidade(s).` : 'Registro de contato e novas permissões concedidas seguem bloqueados até a abertura explícita de um canário.'}</div></div></div> : null}
-    {workspaceView === 'governance' ? <section className="grid gap-4 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 xl:grid-cols-2"><div><h2 className="font-semibold text-white">Política de reativação</h2><p className="mt-1 text-sm text-slate-500">Define o intervalo entre contatos assistidos e as faixas de ausência, sem alterar o histórico clínico.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs text-slate-400">Intervalo mínimo de contato (dias)<input type="number" value={cooldown} onChange={(event) => setCooldown(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label><label className="text-xs text-slate-400">Faixas de ausência<input value={thresholds} onChange={(event) => setThresholds(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label></div>{!policyWriteControlsReady ? <p className="mt-4 text-xs text-amber-200">A migration de rollout ainda não está presente neste ambiente. As faixas podem ser salvas, mas o canário permanece indisponível.</p> : null}<label className="mt-4 flex items-start gap-2 text-xs text-amber-100"><input type="checkbox" checked={commercialContactWritesEnabled} disabled={!policyWriteControlsReady} onChange={(event) => setCommercialContactWritesEnabled(event.target.checked)} className="mt-0.5" />Abrir somente o canário de registros de contato. Isto não envia mensagens.</label><CanarySelection profiles={overview?.profiles || []} selectedIds={selectedCanaryIdentityIds} disabled={!policyWriteControlsReady} onToggle={toggleCanaryIdentity} onClear={() => setSelectedCanaryIdentityIds([])} /><Button size="sm" onClick={() => void savePolicy()} disabled={busy} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar política</Button></div><div className="border-t border-slate-800 pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"><h2 className="font-semibold text-white">Cadência clínica</h2><p className="mt-1 text-sm text-slate-500">Gestores podem manter rascunhos ou desativar regras não aprovadas. A aprovação clínica exige um fluxo verificado e não está disponível neste módulo.</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><select value={cadenceProcedure} onChange={(event) => setCadenceProcedure(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"><option value="">Procedimento</option>{procedureOptions.map((procedure) => <option key={procedure.id} value={procedure.id}>{procedure.name}</option>)}</select><input type="number" min="1" placeholder="Dias" value={cadenceDays} onChange={(event) => setCadenceDays(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><select value={cadenceStatus} onChange={(event) => setCadenceStatus(event.target.value as CommercialCadenceManagerStatus)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white">{commercialCadenceManagerStatuses.map((status) => <option key={status} value={status}>{commercialCadenceStatusLabels[status]}</option>)}</select></div><Button size="sm" variant="outline" onClick={() => void saveCadence()} disabled={busy || !cadenceProcedure || !cadenceDays} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar cadência</Button>{cadenceNotice ? <div className="mt-2 text-xs text-slate-400">{cadenceNotice}</div> : null}</div></section> : null}
+    {workspaceView === 'governance' ? <section className="grid gap-4 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 xl:grid-cols-2"><div><h2 className="font-semibold text-white">Política de reativação</h2><p className="mt-1 text-sm text-slate-500">Define o intervalo entre contatos assistidos e as faixas de ausência, sem alterar o histórico clínico.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs text-slate-400">Intervalo mínimo de contato (dias)<input type="number" value={cooldown} onChange={(event) => setCooldown(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label><label className="text-xs text-slate-400">Faixas de ausência<input value={thresholds} onChange={(event) => setThresholds(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label></div>{!policyWriteControlsReady ? <p className="mt-4 text-xs text-amber-200">A migration de rollout ainda não está presente neste ambiente. As faixas podem ser salvas, mas o canário permanece indisponível.</p> : null}<label className="mt-4 flex items-start gap-2 text-xs text-amber-100"><input type="checkbox" checked={commercialContactWritesEnabled} disabled={!policyWriteControlsReady} onChange={(event) => setCommercialContactWritesEnabled(event.target.checked)} className="mt-0.5" />Abrir somente o canário de registros de contato. Isto não envia mensagens.</label><CanarySelection profiles={overview?.profiles || []} selectedIds={selectedCanaryIdentityIds} disabled={!policyWriteControlsReady} onToggle={toggleCanaryIdentity} onClear={() => setSelectedCanaryIdentityIds([])} /><Button size="sm" onClick={() => void savePolicy()} disabled={busy} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar política</Button><CommercialEmergencyControl units={units} /></div><div className="border-t border-slate-800 pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"><h2 className="font-semibold text-white">Cadência clínica</h2><p className="mt-1 text-sm text-slate-500">Gestores podem manter rascunhos ou desativar regras não aprovadas. A aprovação clínica exige um fluxo verificado e não está disponível neste módulo.</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><select value={cadenceProcedure} onChange={(event) => setCadenceProcedure(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"><option value="">Procedimento</option>{procedureOptions.map((procedure) => <option key={procedure.id} value={procedure.id}>{procedure.name}</option>)}</select><input type="number" min="1" placeholder="Dias" value={cadenceDays} onChange={(event) => setCadenceDays(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><select value={cadenceStatus} onChange={(event) => setCadenceStatus(event.target.value as CommercialCadenceManagerStatus)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white">{commercialCadenceManagerStatuses.map((status) => <option key={status} value={status}>{commercialCadenceStatusLabels[status]}</option>)}</select></div><Button size="sm" variant="outline" onClick={() => void saveCadence()} disabled={busy || !cadenceProcedure || !cadenceDays} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar cadência</Button>{cadenceNotice ? <div className="mt-2 text-xs text-slate-400">{cadenceNotice}</div> : null}</div></section> : null}
     {workspaceView === 'overview' ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Metric label="Retorno em risco" value={overview?.summary.returnAtRisk ?? '—'} detail="Sem presença registrada na faixa configurada" icon={CalendarClock} /><Metric label="Alto valor inativo" value={overview?.summary.highValueInactive ?? '—'} detail="Valor e ausência combinados" icon={CircleDollarSign} /><Metric label="Potencial de reativação" value={overview?.summary.reactivationPotential ?? '—'} detail="Prioridade para a equipe" icon={UserRoundCheck} /><Metric label="Aptos para WhatsApp" value={overview ? contactSummary.eligible : '—'} detail="Permissão explícita e bloqueios verificados" icon={UsersRound} /></div> : null}
     {workspaceView === 'quality' && commercialDataQualityError ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100">{commercialDataQualityError}</div> : null}
     {workspaceView === 'quality' && commercialDataQuality ? <CommercialDataQualityPanel queue={commercialDataQuality} loading={commercialDataQualityBusy} onRefresh={loadCommercialDataQuality} /> : null}
+    {workspaceView === 'quality' ? <CommercialAnalyticsPanel unit={unit} /> : null}
     {showProfileWorkspace ? <>
     <div className="flex flex-wrap gap-2 rounded-xl border border-slate-800/80 bg-slate-950/45 p-3"><select aria-label="Unidade" value={unit} onChange={(event) => setUnit(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="all">Todas as unidades</option>{units.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select><select aria-label="Segmento" value={segment} onChange={(event) => setSegment(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100">{segmentOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select><select aria-label="Prioridade" value={priority} onChange={(event) => setPriority(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Todas as prioridades</option><option value="high">Alta</option><option value="medium">Média</option><option value="normal">Normal</option></select><input aria-label="Buscar cliente" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente" className="min-w-48 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><select aria-label="Ordenar clientes" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="priority">Prioridade</option><option value="recency">Recência</option><option value="lifetime_sales">Faturamento</option><option value="visits">Visitas</option><option value="sales">Compras</option><option value="last_attendance">Último atendimento</option><option value="name">Nome</option></select><select aria-label="Direção da ordenação" value={direction} onChange={(event) => setDirection(event.target.value as 'asc' | 'desc')} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="desc">Maior primeiro</option><option value="asc">Menor primeiro</option></select><Button size="sm" onClick={() => void load({ offset: 0 })} disabled={busy}>Aplicar</Button><div className="flex w-full flex-wrap gap-2 border-t border-slate-800/80 pt-3"><input aria-label="Nome da visão salva" value={savedViewName} onChange={(event) => setSavedViewName(event.target.value)} placeholder="Nome da visão" className="min-w-48 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><Button size="sm" variant="outline" onClick={saveCurrentView} disabled={busy}>Salvar visão</Button>{savedViews.length ? <select aria-label="Visões salvas" defaultValue="" onChange={(event) => { const view = savedViews.find((item) => item.name === event.target.value); if (view) applySavedView(view); event.currentTarget.value = '' }} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Abrir visão salva</option>{savedViews.map((view) => <option key={view.name} value={view.name}>{view.name}</option>)}</select> : null}</div></div>
     <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.7fr)_minmax(22rem,0.8fr)]">

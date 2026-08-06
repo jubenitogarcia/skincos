@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
 
 import { __testables, createAtendimentoRouter } from '../routes.js'
 
@@ -74,6 +75,19 @@ test('accepts only the dedicated bearer token for the Meta Ads offer context', (
     assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer wrong' } }, 'offer-context-secret'), false)
     assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Basic offer-context-secret' } }, 'offer-context-secret'), false)
     assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer offer-context-secret' } }, ''), false)
+})
+
+test('verifies assisted WhatsApp webhook HMAC, timestamp and canonical payload without exposing secrets', () => {
+    const secret = 'synthetic-webhook-secret'
+    const timestamp = String(Date.now())
+    const body = { eventType: 'stop', attemptId: '4bd4ef58-66a2-4e57-a818-fd482d241101', providerEventKey: 'provider-event-1', reason: 'STOP' }
+    const canonical = JSON.stringify(__testables.canonicalWebhookValue(body))
+    const signature = createHmac('sha256', secret).update(`${timestamp}.${body.providerEventKey}.${canonical}`).digest().toString('base64url')
+    const request = { headers: { 'x-commercial-whatsapp-timestamp': timestamp, 'x-commercial-whatsapp-signature': `sha256=${signature}` }, body }
+    assert.equal(__testables.verifyCommercialWhatsappWebhook(request, secret), true)
+    assert.equal(__testables.verifyCommercialWhatsappWebhook({ ...request, headers: { ...request.headers, 'x-commercial-whatsapp-signature': 'wrong' } }, secret), false)
+    assert.equal(__testables.verifyCommercialWhatsappWebhook({ ...request, headers: { ...request.headers, 'x-commercial-whatsapp-timestamp': String(Date.now() - (6 * 60 * 1000)) } }, secret), false)
+    assert.equal(__testables.verifyCommercialWhatsappWebhook(request, ''), false)
 })
 
 test('keeps Clientes routes exclusive to GESTOR, matching the CRM module policy', () => {
