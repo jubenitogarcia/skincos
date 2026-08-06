@@ -7217,7 +7217,7 @@ export function createAtendimentoStore(options = {}) {
             }
         },
 
-        async importGerenciaWorkbook({ workbook, actor, dryRun = false }) {
+        async importGerenciaWorkbook({ workbook, actor, dryRun = false, retireMissing = false }) {
             const summary = {
                 tabs: workbook.tabs.length,
                 rawRows: workbook.rawRows.length,
@@ -7244,12 +7244,18 @@ export function createAtendimentoStore(options = {}) {
                     [workbook.spreadsheetId, JSON.stringify(actor || {}), JSON.stringify(summary)],
                 )
 
-                await client.query(`delete from crm_atendimento.raw_sheet_rows where source_sheet_id = $1`, [workbook.spreadsheetId])
-                await client.query(`delete from crm_atendimento.management_items where source_sheet_id = $1`, [workbook.spreadsheetId])
-                await client.query(`delete from crm_atendimento.inventory_items where source_sheet_id = $1`, [workbook.spreadsheetId])
-                await client.query(`delete from crm_atendimento.goal_table_rows where source_sheet_id = $1`, [workbook.spreadsheetId])
-                await client.query(`delete from crm_atendimento.monthly_unit_goals where source_sheet_id = $1`, [workbook.spreadsheetId])
-                await client.query(`delete from crm_atendimento.monthly_unit_goal_levels where source_sheet_id = $1`, [workbook.spreadsheetId])
+                // Continuous source operations are additive by default. A row
+                // missing from a read is not evidence that it was deleted or
+                // retired at the source; only an explicitly requested legacy
+                // replacement may remove rows.
+                if (retireMissing === true) {
+                    await client.query(`delete from crm_atendimento.raw_sheet_rows where source_sheet_id = $1`, [workbook.spreadsheetId])
+                    await client.query(`delete from crm_atendimento.management_items where source_sheet_id = $1`, [workbook.spreadsheetId])
+                    await client.query(`delete from crm_atendimento.inventory_items where source_sheet_id = $1`, [workbook.spreadsheetId])
+                    await client.query(`delete from crm_atendimento.goal_table_rows where source_sheet_id = $1`, [workbook.spreadsheetId])
+                    await client.query(`delete from crm_atendimento.monthly_unit_goals where source_sheet_id = $1`, [workbook.spreadsheetId])
+                    await client.query(`delete from crm_atendimento.monthly_unit_goal_levels where source_sheet_id = $1`, [workbook.spreadsheetId])
+                }
 
                 const procedureCache = new Map()
                 const procedureCodeCache = new Set()

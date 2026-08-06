@@ -5,12 +5,12 @@ let pool = null
 const actorLabel = (actor) => String(actor?.id || actor?.username || actor?.email || '').trim() || 'system'
 const money = (value) => Math.round(Number(value) * 100) / 100
 
-export function createCaixaStore({ databaseUrl = process.env.DATABASE_URL } = {}) {
-    if (!pool) pool = createPgPool(databaseUrl)
+export function createCaixaStore({ databaseUrl = process.env.DATABASE_URL, pool: providedPool = null } = {}) {
+    const pgPool = providedPool || (pool || (pool = createPgPool(databaseUrl)))
     let ready = null
     async function ensureReady() {
-        if (!pool) { const error = new Error('DATABASE_URL_not_configured'); error.statusCode = 503; throw error }
-        if (!ready) ready = withPgTransaction(pool, async (client) => {
+        if (!pgPool) { const error = new Error('DATABASE_URL_not_configured'); error.statusCode = 503; throw error }
+        if (!ready) ready = withPgTransaction(pgPool, async (client) => {
             for (const sql of [
                 'create extension if not exists pgcrypto',
                 'create schema if not exists crm_caixa',
@@ -48,11 +48,11 @@ export function createCaixaStore({ databaseUrl = process.env.DATABASE_URL } = {}
         async health() { await ensureReady(); return { database: 'ok' } },
         async importRecords({ records, actor, dryRun = true, sourceSheetId }) {
             await ensureReady()
-            const procedures = await procedureIndex(pool)
-            const classified = await Promise.all(records.map((record) => classify(pool, record, procedures)))
+            const procedures = await procedureIndex(pgPool)
+            const classified = await Promise.all(records.map((record) => classify(pgPool, record, procedures)))
             const preview = await summary(records, classified)
             if (dryRun) return { dryRun: true, ...preview }
-            return withPgTransaction(pool, async (client) => {
+            return withPgTransaction(pgPool, async (client) => {
                 let inserted = 0; let updated = 0; let customersCreated = 0; let customersReused = 0
                 for (let index = 0; index < records.length; index += 1) {
                     const record = records[index]; const unit = await client.query('select id from crm_atendimento.units where slug=$1', [record.unit.slug])
@@ -84,10 +84,10 @@ export function createCaixaStore({ databaseUrl = process.env.DATABASE_URL } = {}
             if (query.classification === 'mapped') where.push("not exists (select 1 from crm_caixa.sale_items filter_items where filter_items.sale_id=s.id and filter_items.mapping_status='pending')")
             const clause = where.length ? `where ${where.join(' and ')}` : ''
             const [summaryResult, salesResult, pendingResult, latestResult] = await Promise.all([
-                pool.query(`select count(*)::int as sales, coalesce(sum(s.total),0)::float as total, count(distinct s.customer_id)::int as customers from crm_caixa.sales s join crm_atendimento.units u on u.id=s.unit_id ${clause}`, params),
-                pool.query(`select s.id,s.occurred_on::text as date,s.occurred_at::text as time,s.client_name,s.phone_raw,s.total::float as total,s.raw_service,u.slug as unit_slug,u.name as unit_name,count(i.id)::int as item_count,count(i.id) filter(where i.mapping_status='pending')::int as pending_items from crm_caixa.sales s join crm_atendimento.units u on u.id=s.unit_id left join crm_caixa.sale_items i on i.sale_id=s.id ${clause} group by s.id,u.slug,u.name order by s.occurred_on desc,s.occurred_at desc nulls last limit 100`, params),
-                pool.query(`select i.raw_name,count(*)::int as count from crm_caixa.sale_items i join crm_caixa.sales s on s.id=i.sale_id join crm_atendimento.units u on u.id=s.unit_id ${clause ? `${clause} and` : 'where'} i.mapping_status='pending' group by i.raw_name order by count desc,i.raw_name limit 100`, params),
-                pool.query('select source_sheet_id,summary,created_at from crm_caixa.import_batches order by created_at desc limit 1'),
+                pgPool.query(`select count(*)::int as sales, coalesce(sum(s.total),0)::float as total, count(distinct s.customer_id)::int as customers from crm_caixa.sales s join crm_atendimento.units u on u.id=s.unit_id ${clause}`, params),
+                pgPool.query(`select s.id,s.occurred_on::text as date,s.occurred_at::text as time,s.client_name,s.phone_raw,s.total::float as total,s.raw_service,u.slug as unit_slug,u.name as unit_name,count(i.id)::int as item_count,count(i.id) filter(where i.mapping_status='pending')::int as pending_items from crm_caixa.sales s join crm_atendimento.units u on u.id=s.unit_id left join crm_caixa.sale_items i on i.sale_id=s.id ${clause} group by s.id,u.slug,u.name order by s.occurred_on desc,s.occurred_at desc nulls last limit 100`, params),
+                pgPool.query(`select i.raw_name,count(*)::int as count from crm_caixa.sale_items i join crm_caixa.sales s on s.id=i.sale_id join crm_atendimento.units u on u.id=s.unit_id ${clause ? `${clause} and` : 'where'} i.mapping_status='pending' group by i.raw_name order by count desc,i.raw_name limit 100`, params),
+                pgPool.query('select source_sheet_id,summary,created_at from crm_caixa.import_batches order by created_at desc limit 1'),
             ])
             return { summary: summaryResult.rows[0], sales: salesResult.rows, pending: pendingResult.rows, latestImport: latestResult.rows[0] || null }
         },

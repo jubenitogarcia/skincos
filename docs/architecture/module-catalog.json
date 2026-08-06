@@ -128,15 +128,15 @@
       "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },
       "dataOwnership": ["Customer, lead, operator identity, permissions and CRM operational state"],
       "dependencies": { "hard": ["shared"], "optional": ["ads", "api", "booking", "finance", "inventory", "messaging", "service", "social", "workforce"] },
-      "services": ["Cloudflare Pages CRM console", "crm/api Node service", "systemd crm.service"],
-      "datastores": ["CRM PostgreSQL/runtime store", "R2:skincos-share for shared artifacts"],
-      "routes": ["https://crm.skincos.com.br/*", "GET /health", "GET /api/health"],
-      "healthChecks": [{ "name": "CRM API health", "command": "curl -fsS https://crm.skincos.com.br/api/health" }],
-      "testCommands": ["npm --prefix crm/api test", "npm --prefix crm/console run test", "npm --prefix crm/console run typecheck"],
+      "services": ["Cloudflare Pages CRM console", "crm/api Node service", "systemd crm.service", "systemd crm-clientes-source-operations.service (loopback, disabled by default)"],
+      "datastores": ["CRM PostgreSQL/runtime store", "crm_atendimento.clientes_source_runs/checkpoints/dead_letters", "R2:skincos-share for shared artifacts"],
+      "routes": ["https://crm.skincos.com.br/*", "GET /health", "GET /api/health", "loopback:8103 /health, /readiness, /sources (source operations)"],
+      "healthChecks": [{ "name": "CRM API health", "command": "curl -fsS https://crm.skincos.com.br/api/health" }, { "name": "Clientes source operations readiness", "command": "curl -fsS http://127.0.0.1:8103/readiness" }],
+      "testCommands": ["npm --prefix crm/api test", "npm --prefix crm/console run test", "npm --prefix crm/console run typecheck", "npm --prefix crm/api run clientes-source-operations:smoke"],
       "featureFlag": { "key": "not-yet-implemented", "defaultState": "not-applicable", "enforcement": "The console has per-capability gates but no single CRM module flag; new modules must be hidden and server-denied until explicitly released." },
       "fallback": "Keep authenticated core CRM available, isolate an unhealthy optional module behind its API error state, and avoid cross-module retries from the UI.",
       "slo": { "availability": "99.5% monthly", "latency": "p95 <= 1 s for core authenticated reads", "measurement": "CRM health, targeted smoke and proxy-status checks" },
-      "rollback": "Promote the previous Pages and API artifacts together only when their contract changed; retain database compatibility and disable the affected optional module."
+      "rollback": "Promote the previous Pages and API artifacts together only when their contract changed; retain database compatibility, restore a source backup, and disable the affected optional module."
     },
     {
       "id": "finance",

@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node server.js",
     "start:continuous-workers": "node continuous-worker.js",
-    "test": "node --test server/__tests__/*.test.js server/harmonia/__tests__/*.test.js server/atendimento/__tests__/*.test.js server/caixa/__tests__/*.test.js services/__tests__/*.test.js scripts/*.test.mjs",
+    "start:clientes-source-operations": "node clientes-sources-worker.js",
+    "test": "node --test server/__tests__/*.test.js server/harmonia/__tests__/*.test.js server/atendimento/__tests__/*.test.js server/caixa/__tests__/*.test.js server/clientes/__tests__/*.test.js services/__tests__/*.test.js scripts/*.test.mjs",
     "import-atendimento-sheet": "node scripts/import-atendimento-sheet.mjs",
     "refresh-atendimento-source": "node scripts/refresh-atendimento-source.mjs",
     "import-gerencia-sheet": "node scripts/import-gerencia-sheet.mjs",
@@ -23,6 +24,9 @@
     "migrate-commercial-action-ledger": "node scripts/migrate-atendimento-commercial-action-ledger.mjs",
     "migrate-commercial-data-quality": "node scripts/migrate-atendimento-commercial-data-quality.mjs",
     "migrate-atendimento-staging": "node scripts/migrate-atendimento-staging.mjs",
+    "migrate-clientes-source-operations": "node scripts/migrate-clientes-source-operations.mjs",
+    "clientes-source-operations:status": "node scripts/clientes-source-status.mjs",
+    "clientes-source-operations:smoke": "node scripts/clientes-source-operations-smoke.mjs",
     "refresh-commercial-data-quality": "node scripts/refresh-commercial-data-quality.mjs",
     "refresh-commercial-data-quality-staging": "node scripts/refresh-commercial-data-quality-staging.mjs",
     "migrate-harmonia-schema": "node scripts/migrate-harmonia-schema.mjs"

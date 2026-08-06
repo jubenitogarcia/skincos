@@ -49,6 +49,7 @@ const lifecycleUnits = [
   "cloudflare-orb.service",
   "cloudflare-runtime.service",
   "crm-jobs.service",
+  "crm-clientes-source-operations.service",
 ];
 for (const unit of lifecycleUnits) {
   const source = fs.readFileSync(path.join(root, "ops/runtime/units", unit), "utf8");
@@ -56,6 +57,23 @@ for (const unit of lifecycleUnits) {
   if (/^ReadWritePaths=.*__TMP_ROOT__/m.test(source)) {
     fail(`${unit} cannot bind __TMP_ROOT__ while PrivateTmp hides the host /var/tmp tree`);
   }
+}
+
+const crmHttpEntry = fs.readFileSync(path.join(root, "crm/api/server.js"), "utf8");
+if (/clientes-sources-worker|server\/clientes\/sourceService/.test(crmHttpEntry)) {
+  fail("crm/api/server.js must not initialize the Clientes source operations worker");
+}
+const sourceWorkerEntry = fs.readFileSync(path.join(root, "crm/api/clientes-sources-worker.js"), "utf8");
+if (!sourceWorkerEntry.includes("createClientesSourceOperationsService")) {
+  fail("Clientes source operations entrypoint must compose its own service");
+}
+const sourceLauncher = fs.readFileSync(path.join(root, "scripts/runtime/run-clientes-source-operations-native.sh"), "utf8");
+if (/\beval\b|bash\s+-c|npm\s+(install|ci|run)/i.test(sourceLauncher)) {
+  fail("Clientes source launcher must not execute arbitrary shell or install commands");
+}
+const sourceUnit = fs.readFileSync(path.join(root, "ops/runtime/units/crm-clientes-source-operations.service"), "utf8");
+if (!/^Environment=CRM_CLIENTES_SOURCE_OPS_HOST=(127\.0\.0\.1|::1)$/m.test(sourceUnit)) {
+  fail("Clientes source operations health must bind to loopback");
 }
 
 const orbUnit = fs.readFileSync(path.join(root, "ops/runtime/units/orb.service"), "utf8");

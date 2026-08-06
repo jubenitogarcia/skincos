@@ -1,0 +1,32 @@
+[Unit]
+Description=Skincos Clientes continuous source operations (local or isolated staging)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+WorkingDirectory=__REPO_ROOT__
+Environment=CLIENTES_SOURCE_OPERATIONS_TARGET=local
+Environment=CRM_CLIENTES_SOURCE_OPS_ENABLED=0
+Environment=CRM_CLIENTES_SOURCE_OPS_MODE=dry-run
+Environment=CRM_CLIENTES_SOURCE_APPLY_CONFIRMED=0
+Environment=CRM_CLIENTES_SOURCE_OPS_HOST=127.0.0.1
+Environment=CRM_CLIENTES_SOURCE_OPS_PORT=8103
+Environment=CRM_CLIENTES_SOURCE_BACKUP_ROOT=__BACKUP_ROOT__
+EnvironmentFile=-__CONFIG_ROOT__/crm-clientes-source-operations.env
+ExecStart=__REPO_ROOT__/scripts/runtime/run-clientes-source-operations-native.sh
+Restart=on-failure
+RestartSec=10s
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__BACKUP_ROOT__ __LOG_ROOT__/crm-clientes-source-operations
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

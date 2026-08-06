@@ -204,6 +204,13 @@ function latestSourceUpdateAt(snapshot) {
 function sourcePreflightEvidence(identity, snapshot, observedAt) {
     const rowCounts = Object.fromEntries(MIRROR_TABLES.map((table) => [table, snapshot.tables[table]?.rows?.length || 0]))
     return {
+        snapshotComplete: true,
+        snapshotProof: {
+            kind: 'repeatable_read_full_table_scan',
+            tables: [...MIRROR_TABLES],
+            nonEmptyRequiredTable: 'attendances',
+            requiredTableRows: rowCounts.attendances,
+        },
         sourceFingerprint: snapshotFingerprint(identity, snapshot),
         rowCounts,
         attendances: rowCounts.attendances,

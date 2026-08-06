@@ -1,0 +1,2 @@
+-- Non-destructive rollback. The source ledger and its dead-letter evidence are
+-- retained; the guarded migration runner only records rolled_back_at.
