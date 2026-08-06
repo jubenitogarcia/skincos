@@ -60,6 +60,7 @@ test('onboarding status changes stay hierarchical, synchronized, audited and fai
   assert.match(statusBlock, /uses_count=0/);
   assert.match(statusBlock, /TEAM_TERMINATION_REASON_REQUIRED/);
   assert.match(statusBlock, /terminationReasonProvided/);
+  assert.match(statusBlock, /terminationReason: nextStatus === 'TERMINATED'/);
   assert.match(statusBlock, /teamUnitsVisible\(auth, onboarding\.units_json\)/);
   assert.match(admin, /IDENTITY_ONBOARDING_MANAGED/);
 });

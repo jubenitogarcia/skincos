@@ -159,7 +159,8 @@ function historyChange(entry: TeamHistoryEntry) {
     const transition = previousStatus && String(previousStatus) !== String(accountStatus)
       ? `: ${statusLabel(String(previousStatus))} → ${statusLabel(String(accountStatus))}`
       : `: ${statusLabel(String(accountStatus))}`
-    return `Conta${transition}`
+    const reason = after.terminationReason ? ` · Motivo: ${String(after.terminationReason)}` : ''
+    return `Conta${transition}${reason}`
   }
   const profile = after.profile || after.jobTitle
   const units = Array.isArray(after.units) ? after.units.map((unit) => unitLabels[String(unit)] || String(unit)).join(', ') : ''

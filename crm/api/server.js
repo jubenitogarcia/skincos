@@ -1667,7 +1667,7 @@ if (DEV_AUTH_ENABLED) {
             const invite = store.invites.find((row) => row.id === member.inviteId)
             if (invite && !invite.revoked) invite.revoked = true
         }
-        localAudit(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', id, { accountStatus: nextStatus, historyPreserved: true, terminationReasonProvided: nextStatus === 'TERMINATED', localPreview: true }, { accountStatus: currentStatus })
+        localAudit(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', id, { accountStatus: nextStatus, historyPreserved: true, terminationReasonProvided: nextStatus === 'TERMINATED', terminationReason: nextStatus === 'TERMINATED' ? terminationReason : null, localPreview: true }, { accountStatus: currentStatus })
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
