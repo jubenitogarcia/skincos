@@ -4,6 +4,7 @@
 
 - Base verificada: `origin/main` em `d498aa4812aad098abca93db02df3ebf33c9e623`.
 - Branch isolada: `codex/admin/clientes-clinical-approval-hardening-20260806`.
+- Commit: `af2d2c0621ebc372e01afc299971f57e1eaeacb0`; PR aberta: `https://github.com/jubenitogarcia/skincos/pull/1175` (checks remotos ainda sem runners).
 - O checkout compartilhado estava sujo e não foi alterado.
 - A PR antiga do worker Harmonia (#736) está fechada/draft e não foi incorporada.
 - A PR de ofertas/WhatsApp assistido (#1170) está aberta e bloqueada; sua branch divergente não foi incorporada. O delta clínico foi reimplementado sobre o `main` atual.
