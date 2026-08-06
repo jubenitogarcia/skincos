@@ -17,6 +17,8 @@ test('isolated Clientes production unit is loopback-configured and cannot broade
   assert.match(read('scripts/provision-atendimento-production-readonly.sh'), /CRM_ATENDIMENTO_READ_ONLY=true/)
   assert.match(read('scripts/provision-atendimento-production-readonly.sh'), /CRM_ATENDIMENTO_CLIENTES_ONLY=true/)
   assert.match(read('scripts/provision-atendimento-production-readonly.sh'), /default_transaction_read_only = on/)
+  assert.match(read('scripts/provision-atendimento-production-readonly.sh'), /grant usage on schema harmonia/)
+  assert.match(read('scripts/provision-atendimento-production-readonly.sh'), /grant select \(phone_raw, opted_out_at\) on table harmonia\.contacts/)
   assert.match(read('scripts/runtime/manage-native-runtime.sh'), /crm-atendimento-production\.service/)
 })
 
@@ -27,6 +29,8 @@ test('production validation proves the API and database write barriers without s
   assert.match(validation, /skincos_clientes_ro/)
   assert.match(validation, /global_client_identities/)
   assert.match(validation, /crm_caixa\.sales/)
+  assert.match(validation, /harmonia\.contacts/)
+  assert.match(validation, /has_column_privilege/)
   assert.doesNotMatch(validation, /curl[^\n]*https?:\/\/(?!127\.0\.0\.1)/)
 })
 
