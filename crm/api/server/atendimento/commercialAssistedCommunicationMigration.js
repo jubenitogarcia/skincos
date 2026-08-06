@@ -116,7 +116,6 @@ const STATEMENTS = [
 
 const APPEND_ONLY_TABLES = [
     'commercial_offer_revisions',
-    'commercial_whatsapp_attempts',
     'commercial_whatsapp_events',
 ]
 
@@ -128,6 +127,41 @@ for (const table of APPEND_ONLY_TABLES) {
     STATEMENTS.push(`create trigger ${table}_no_truncate before truncate on crm_atendimento.${table}
         for each statement execute function crm_atendimento.prevent_commercial_assisted_append_only()`)
 }
+
+STATEMENTS.push(`create or replace function crm_atendimento.prevent_commercial_assisted_attempt_mutation()
+        returns trigger language plpgsql as $$
+        begin
+            if tg_op = 'UPDATE' and (
+                new.id is distinct from old.id or
+                new.idempotency_key is distinct from old.idempotency_key or
+                new.identity_id is distinct from old.identity_id or
+                new.action_id is distinct from old.action_id or
+                new.unit_id is distinct from old.unit_id or
+                new.offer_id is distinct from old.offer_id or
+                new.offer_revision is distinct from old.offer_revision or
+                new.offer_context_hash is distinct from old.offer_context_hash or
+                new.template_key is distinct from old.template_key or
+                new.template_revision is distinct from old.template_revision or
+                new.recipient_phone_hash is distinct from old.recipient_phone_hash or
+                new.recipient_masked is distinct from old.recipient_masked or
+                new.campaign_key is distinct from old.campaign_key or
+                new.created_by is distinct from old.created_by or
+                new.created_at is distinct from old.created_at or
+                new.payload is distinct from old.payload
+            ) then
+                raise exception 'commercial whatsapp attempt evidence is immutable';
+            end if;
+            if tg_op = 'DELETE' then
+                raise exception 'commercial whatsapp attempt evidence is append-only';
+            end if;
+            return new;
+        end $$`)
+STATEMENTS.push(`drop trigger if exists commercial_whatsapp_attempts_immutable on crm_atendimento.commercial_whatsapp_attempts`)
+STATEMENTS.push(`create trigger commercial_whatsapp_attempts_immutable before update or delete on crm_atendimento.commercial_whatsapp_attempts
+        for each row execute function crm_atendimento.prevent_commercial_assisted_attempt_mutation()`)
+STATEMENTS.push(`drop trigger if exists commercial_whatsapp_attempts_no_truncate on crm_atendimento.commercial_whatsapp_attempts`)
+STATEMENTS.push(`create trigger commercial_whatsapp_attempts_no_truncate before truncate on crm_atendimento.commercial_whatsapp_attempts
+        for each statement execute function crm_atendimento.prevent_commercial_assisted_append_only()`)
 
 function migrationError(code) {
     const error = new Error(code)
@@ -142,7 +176,7 @@ function runtimeGrantStatements(target) {
         `grant usage on schema crm_atendimento to ${role}`,
         `grant select on table crm_atendimento.commercial_offer_revisions to ${role}`,
         `grant select on table crm_atendimento.commercial_whatsapp_templates to ${role}`,
-        `grant select, insert on table crm_atendimento.commercial_whatsapp_attempts to ${role}`,
+        `grant select, insert, update on table crm_atendimento.commercial_whatsapp_attempts to ${role}`,
         `grant select, insert on table crm_atendimento.commercial_whatsapp_events to ${role}`,
         `grant select, insert, update on table crm_atendimento.commercial_contact_emergency_controls to ${role}`,
         `grant select on table crm_atendimento.commercial_actions to ${role}`,

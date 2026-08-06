@@ -102,5 +102,62 @@ BEGIN
   RAISE EXCEPTION 'commercial assisted communication evidence is append-only';
 END $$;
 
--- The canonical JS runner installs row and TRUNCATE guards and destination
--- specific grants. No provider-send privilege is part of this migration.
+CREATE OR REPLACE FUNCTION crm_atendimento.prevent_commercial_assisted_attempt_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND (
+    NEW.id IS DISTINCT FROM OLD.id OR
+    NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key OR
+    NEW.identity_id IS DISTINCT FROM OLD.identity_id OR
+    NEW.action_id IS DISTINCT FROM OLD.action_id OR
+    NEW.unit_id IS DISTINCT FROM OLD.unit_id OR
+    NEW.offer_id IS DISTINCT FROM OLD.offer_id OR
+    NEW.offer_revision IS DISTINCT FROM OLD.offer_revision OR
+    NEW.offer_context_hash IS DISTINCT FROM OLD.offer_context_hash OR
+    NEW.template_key IS DISTINCT FROM OLD.template_key OR
+    NEW.template_revision IS DISTINCT FROM OLD.template_revision OR
+    NEW.recipient_phone_hash IS DISTINCT FROM OLD.recipient_phone_hash OR
+    NEW.recipient_masked IS DISTINCT FROM OLD.recipient_masked OR
+    NEW.campaign_key IS DISTINCT FROM OLD.campaign_key OR
+    NEW.created_by IS DISTINCT FROM OLD.created_by OR
+    NEW.created_at IS DISTINCT FROM OLD.created_at OR
+    NEW.payload IS DISTINCT FROM OLD.payload
+  ) THEN
+    RAISE EXCEPTION 'commercial whatsapp attempt evidence is immutable';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'commercial whatsapp attempt evidence is append-only';
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS commercial_offer_revisions_immutable ON crm_atendimento.commercial_offer_revisions;
+CREATE TRIGGER commercial_offer_revisions_immutable
+  BEFORE UPDATE OR DELETE ON crm_atendimento.commercial_offer_revisions
+  FOR EACH ROW EXECUTE FUNCTION crm_atendimento.prevent_commercial_assisted_append_only();
+DROP TRIGGER IF EXISTS commercial_offer_revisions_no_truncate ON crm_atendimento.commercial_offer_revisions;
+CREATE TRIGGER commercial_offer_revisions_no_truncate
+  BEFORE TRUNCATE ON crm_atendimento.commercial_offer_revisions
+  FOR EACH STATEMENT EXECUTE FUNCTION crm_atendimento.prevent_commercial_assisted_append_only();
+
+DROP TRIGGER IF EXISTS commercial_whatsapp_events_immutable ON crm_atendimento.commercial_whatsapp_events;
+CREATE TRIGGER commercial_whatsapp_events_immutable
+  BEFORE UPDATE OR DELETE ON crm_atendimento.commercial_whatsapp_events
+  FOR EACH ROW EXECUTE FUNCTION crm_atendimento.prevent_commercial_assisted_append_only();
+DROP TRIGGER IF EXISTS commercial_whatsapp_events_no_truncate ON crm_atendimento.commercial_whatsapp_events;
+CREATE TRIGGER commercial_whatsapp_events_no_truncate
+  BEFORE TRUNCATE ON crm_atendimento.commercial_whatsapp_events
+  FOR EACH STATEMENT EXECUTE FUNCTION crm_atendimento.prevent_commercial_assisted_append_only();
+
+DROP TRIGGER IF EXISTS commercial_whatsapp_attempts_immutable ON crm_atendimento.commercial_whatsapp_attempts;
+CREATE TRIGGER commercial_whatsapp_attempts_immutable
+  BEFORE UPDATE OR DELETE ON crm_atendimento.commercial_whatsapp_attempts
+  FOR EACH ROW EXECUTE FUNCTION crm_atendimento.prevent_commercial_assisted_attempt_mutation();
+DROP TRIGGER IF EXISTS commercial_whatsapp_attempts_no_truncate ON crm_atendimento.commercial_whatsapp_attempts;
+CREATE TRIGGER commercial_whatsapp_attempts_no_truncate
+  BEFORE TRUNCATE ON crm_atendimento.commercial_whatsapp_attempts
+  FOR EACH STATEMENT EXECUTE FUNCTION crm_atendimento.prevent_commercial_assisted_append_only();
+
+-- The canonical JS runner applies destination-specific grants. The application
+-- role may update only the current status of an attempt; no provider-send
+-- permission is part of this migration.
