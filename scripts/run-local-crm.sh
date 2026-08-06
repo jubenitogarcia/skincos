@@ -25,6 +25,7 @@ crm_source_git() {
 }
 
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
+CRM_BIND_HOST="${CRM_BIND_HOST:-127.0.0.1}"
 if [[ -n "${CRM_VITE_PORT+x}" ]]; then
   CRM_VITE_PORT_EXPLICIT=1
 else
@@ -1035,7 +1036,7 @@ start_insumos_local() {
   (
     cd "$ROOT_DIR"
     ALLOW_DEV_AUTH_BYPASS="$auth_bypass" ./backend/scripts/insumos.sh dev \
-      --ip 127.0.0.1 \
+      --ip "$CRM_BIND_HOST" \
       --port "$CRM_INSUMOS_PORT" \
       "${insumos_args[@]}"
   ) >>"$LOG_FILE" 2>&1 &

@@ -2308,6 +2308,7 @@ function Start-CrmInstanceRuntime {
         "LOCAL_AUTH_ALLOWED_MODULES=$allowedModules",
         "CRM_VITE_PORT=$([int]$Spec.ports.vite)",
         "CRM_PAGES_PORT=$([int]$Spec.ports.pages)",
+        "CRM_BIND_HOST=0.0.0.0",
         "CRM_WITH_INSUMOS=$withInsumos",
         "CRM_INSUMOS_PORT=$([int]$Spec.ports.insumos)",
         "CRM_INSUMOS_PERSIST_DIR=$insumosStateWsl",
