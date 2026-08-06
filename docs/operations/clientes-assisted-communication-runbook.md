@@ -34,12 +34,16 @@ O schema cria:
 - `commercial_whatsapp_templates`: templates aprovados e versionados, com vigência e
   escopo opcional de unidade;
 - `commercial_whatsapp_attempts`: tentativa idempotente, telefone apenas como hash e
-  máscara, campanha, oferta e revisão;
+  máscara, campanha, oferta e revisão. O registro mantém somente a transição de
+  status autorizada pelos webhooks; todos os demais campos são protegidos por trigger
+  imutável e não há exclusão/truncate;
 - `commercial_whatsapp_events`: eventos append-only e chave externa única;
 - `commercial_contact_emergency_controls`: emergency off global ou por unidade.
 
-O papel de runtime pode ler catálogo/contexto e inserir evidência. Não recebe permissão
-de envio de provedor, alteração de evidência, DDL ou execução arbitrária.
+O papel de runtime pode ler catálogo/contexto, inserir tentativas/eventos e atualizar
+somente o status corrente da tentativa sob lock; os eventos permanecem append-only. Não
+recebe permissão de envio de provedor, alteração dos campos de evidência, DDL ou
+execução arbitrária.
 
 ## Oferta contextual
 
