@@ -39,6 +39,7 @@ function parseArgs(argv) {
     if (argv[index] === '--input') result.input = argv[++index];
     if (argv[index] === '--error-input') result.errorInput = argv[++index];
     if (argv[index] === '--fixtures-input') result.fixturesInput = argv[++index];
+    if (argv[index] === '--error-workflow-id') result.errorWorkflowId = argv[++index];
   }
   return result;
 }
@@ -121,7 +122,7 @@ function assertModuleContinuity(workflow) {
   }
 }
 
-function validateWorkflow(workflow) {
+function validateWorkflow(workflow, options = {}) {
   if (!workflow || workflow.id !== WORKFLOW_ID || workflow.name !== WORKFLOW_NAME) {
     throw new Error('Candidate identity does not match Campaign Creative Creator');
   }
@@ -152,7 +153,7 @@ function validateWorkflow(workflow) {
   if (names.get('CCG-80 Dispatch Production Manifest').type !== 'n8n-nodes-base.httpRequest') {
     throw new Error('CCG-80 dispatch must be an HTTP handoff to the native executor');
   }
-  if (workflow.settings?.errorWorkflow !== ERROR_WORKFLOW_ID) {
+  if (workflow.settings?.errorWorkflow !== (options.errorWorkflowId || ERROR_WORKFLOW_ID)) {
     throw new Error('Main workflow is not configured with the separate CCG-99 error workflow');
   }
   const requiredEdges = [
@@ -205,8 +206,8 @@ function validateWorkflow(workflow) {
   return { nodeCount: workflow.nodes.length, edgeCount: countEdges(workflow) };
 }
 
-function validateErrorWorkflow(workflow) {
-  if (!workflow || workflow.id !== ERROR_WORKFLOW_ID || workflow.name !== 'Campaign Creative Creator - Error Handler') {
+function validateErrorWorkflow(workflow, options = {}) {
+  if (!workflow || workflow.id !== (options.errorWorkflowId || ERROR_WORKFLOW_ID) || workflow.name !== 'Campaign Creative Creator - Error Handler') {
     throw new Error('Error workflow identity does not match Campaign Creative Creator - Error Handler');
   }
   if (workflow.active === true) throw new Error('Error workflow must remain inactive');
@@ -253,9 +254,10 @@ function main() {
   const workflow = JSON.parse(fs.readFileSync(path.resolve(inputPath), 'utf8').replace(/^\uFEFF/, ''));
   const errorInputPath = args.errorInput || process.env.CCG_ERROR_OUTPUT_FILE;
   const fixturesInputPath = args.fixturesInput || process.env.CCG_FIXTURES_OUTPUT_FILE;
-  const result = validateWorkflow(workflow);
+  const validationOptions = { errorWorkflowId: args.errorWorkflowId };
+  const result = validateWorkflow(workflow, validationOptions);
   const errorResult = errorInputPath
-    ? validateErrorWorkflow(JSON.parse(fs.readFileSync(path.resolve(errorInputPath), 'utf8').replace(/^\uFEFF/, '')))
+    ? validateErrorWorkflow(JSON.parse(fs.readFileSync(path.resolve(errorInputPath), 'utf8').replace(/^\uFEFF/, '')), validationOptions)
     : null;
   const fixturesResult = fixturesInputPath
     ? validateFixturesWorkflow(JSON.parse(fs.readFileSync(path.resolve(fixturesInputPath), 'utf8').replace(/^\uFEFF/, '')))

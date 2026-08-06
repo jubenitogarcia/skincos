@@ -18,7 +18,7 @@
     "active": false,
     "publish_allowed": false,
     "publish_requested": false,
-    "error_workflow_id": "ccg-campaign-creative-creator-error-handler-v3",
+    "error_workflow_id": "9j7WMFTNVNYmNZHC",
     "operational_trigger": "executeWorkflowTrigger",
     "final_output_type": "CONTENT_PACKAGE",
     "credentials_stripped_for_git": true,
