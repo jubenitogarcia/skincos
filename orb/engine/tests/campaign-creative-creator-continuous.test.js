@@ -240,6 +240,18 @@ test('build package is valid, idempotent, and keeps the operational route fixtur
   assert.equal(packageValue.main.meta.credentials_stripped_for_git, true);
 });
 
+test('every generated Code node compiles before n8n import', () => {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  for (const workflow of [generatedMain(), generatedError()]) {
+    for (const node of workflow.nodes.filter((candidate) => candidate.type === 'n8n-nodes-base.code')) {
+      assert.doesNotThrow(
+        () => new AsyncFunction('$input', '$env', '$', '$execution', node.parameters.jsCode),
+        node.name,
+      );
+    }
+  }
+});
+
 test('manual smoke and operational subworkflow triggers are separate', () => {
   const workflow = buildWorkflowPackage(sourceFixture(), { strictSource: false }).main;
   assert.equal(workflow.nodes.filter((candidate) => candidate.type === 'n8n-nodes-base.executeWorkflowTrigger').length, 1);

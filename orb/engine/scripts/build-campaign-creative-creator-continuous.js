@@ -8,7 +8,7 @@ const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
 const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-error-v3';
 const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
-const BUILDER_VERSION = '4.1.1';
+const BUILDER_VERSION = '4.1.2';
 const ALL_FIXTURE_NAMES = [
   'Build CCG-00 dry-run fixture',
   'Build CCG-10 dry-run fixture',
@@ -1073,9 +1073,7 @@ const maxRevisionsRaw = request.provider_policy?.max_revisions ?? request.produc
 const maximumRevisions = Math.max(0, Number.isFinite(Number(maxRevisionsRaw)) ? Number(maxRevisionsRaw) : 0);
 const maximumCostRaw = request.provider_policy?.max_cost ?? request.production_execution?.max_cost ?? request.budget?.max_cost ?? data.module_outputs?.CCG_00?.intake_manifest?.limits?.max_cost;
 const maximumCostConfigured = maximumCostRaw !== undefined && maximumCostRaw !== null && maximumCostRaw !== '' && Number.isFinite(Number(maximumCostRaw));
-const maximumCost = maximumCostConfigured ? Math.max(0, Number(maximumCostRaw)) : null;
-
-const brief = {`,
+const maximumCost = maximumCostConfigured ? Math.max(0, Number(maximumCostRaw)) : null;`,
   );
   updated = updated.replace(
     '    raw_job: job\n  };',
