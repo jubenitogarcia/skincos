@@ -8,7 +8,7 @@ const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
 const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-error-v3';
 const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
-const BUILDER_VERSION = '4.1.3';
+const BUILDER_VERSION = '4.1.4';
 const ALL_FIXTURE_NAMES = [
   'Build CCG-00 dry-run fixture',
   'Build CCG-10 dry-run fixture',
@@ -426,7 +426,7 @@ const executorEndpoint = text(firstDefined(
   policy.executor_endpoint,
   request.provider_policy?.executor_base_url,
   request.executor_endpoint,
-  'n8n-env:CCG_EXECUTOR_BASE_URL'
+  'http://127.0.0.1:8790'
 ));
 const blockedJobs = jobs.map((job, index) => ({
   job_id: text(job.job_id || job.id || 'job-' + (index + 1)),
@@ -621,7 +621,7 @@ const execution = {
     base.execution_handoff?.executor_endpoint ||
     base.executor_handoff?.executor_endpoint ||
     base.production_request?.executor_endpoint ||
-    'n8n-env:CCG_EXECUTOR_BASE_URL'
+    'http://127.0.0.1:8790'
   ),
   publish_allowed: false,
   publish_requested: false,
@@ -1852,7 +1852,6 @@ function executorHeaders() {
     sendHeaders: true,
     headerParameters: {
       parameters: [
-        { name: 'Authorization', value: "={{ $env.CCG_EXECUTOR_AUTH_TOKEN ? 'Bearer ' + $env.CCG_EXECUTOR_AUTH_TOKEN : '' }}" },
         { name: 'Content-Type', value: 'application/json' },
       ],
     },
@@ -1863,7 +1862,7 @@ function executionDispatchNode(position) {
   return {
     parameters: {
       method: 'POST',
-      url: "={{ ($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790') + '/v1/production-manifests' }}",
+      url: "={{ ($json.execution_handoff?.executor_endpoint || 'http://127.0.0.1:8790') + '/v1/production-manifests' }}",
       ...executorHeaders(),
       sendBody: true,
       contentType: 'raw',
@@ -1883,7 +1882,7 @@ function executionPollNode(position) {
   return {
     parameters: {
       method: 'GET',
-      url: "={{ ($env.CCG_EXECUTOR_BASE_URL || 'http://127.0.0.1:8790') + '/v1/production-manifests/' + encodeURIComponent($json.execution_id || $json.production_execution_results?.execution_id || '') }}",
+      url: "={{ ($('CCG-80 Validate Execution Policy').first().json.execution_handoff?.executor_endpoint || 'http://127.0.0.1:8790') + '/v1/production-manifests/' + encodeURIComponent($json.execution_id || $json.production_execution_results?.execution_id || '') }}",
       ...executorHeaders(),
       options: { timeout: 120000 },
     },

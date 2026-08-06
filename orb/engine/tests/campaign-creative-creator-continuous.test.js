@@ -252,10 +252,9 @@ test('every generated Code node compiles before n8n import', () => {
   }
 });
 
-test('executor policy and normalization do not read blocked n8n Code-node environment access', () => {
-  const codeNodes = generatedMain().nodes.filter((candidate) => candidate.type === 'n8n-nodes-base.code');
-  for (const nodeValue of codeNodes) {
-    assert.doesNotMatch(nodeValue.parameters.jsCode || '', /\$env\b/, nodeValue.name);
+test('generated executor nodes do not read blocked n8n environment access', () => {
+  for (const nodeValue of generatedMain().nodes) {
+    assert.doesNotMatch(JSON.stringify(nodeValue.parameters || {}), /\$env\b/, nodeValue.name);
   }
 });
 
