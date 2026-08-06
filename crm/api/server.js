@@ -1741,7 +1741,6 @@ if (DEV_AUTH_ENABLED) {
         const fingerprint = `${id}|${state}|${professionalId}|${errorCode}`
         if (replay) {
             if (replay.fingerprint !== fingerprint) return res.status(409).json({ success: false, error: 'A chave de idempotência já foi usada para outro estado', code: 'ESCALA_SYNC_IDEMPOTENCY_CONFLICT' })
-            if (state === 'SYNCED' && professionalId) member.schedule = { ...member.schedule, professionalId }
             member.scheduleSync = localNormalizeScheduleSync(replay.result, member.schedule?.professionalId)
             return res.status(200).set('cache-control', 'no-store').json({ success: true, replayed: true, data: { scheduleSync: member.scheduleSync } })
         }
