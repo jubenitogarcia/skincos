@@ -3381,12 +3381,19 @@ function commercialTimelineLimit(value) {
     return Math.min(parsed, 100)
 }
 
-async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) {
+async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds, identityId = null }) {
+    // Customer 360 is an identity-detail read.  Keep the legacy all-profile
+    // query available for compatibility, but constrain every source CTE when
+    // a detail identity is requested.  Without this bound the route computes
+    // every customer and hydrates every contact-control row before selecting
+    // one profile, which can block the isolated read-only runtime.
+    const targetIdentityId = String(identityId || '').trim()
     const result = await pgPool.query(
         `with identities as (
             select gi.id as identity_id, gi.canonical_name, gi.source_types
             from crm_atendimento.global_client_identities gi
-            where exists (select 1 from crm_atendimento.global_client_identity_members gm where gm.identity_id = gi.id)
+            where ($4::text = '' or gi.id::text = $4)
+              and exists (select 1 from crm_atendimento.global_client_identity_members gm where gm.identity_id = gi.id)
          ), attendance_members as (
             -- Keep the physical canonical member here.  A retired S and its
             -- survivor T are intentionally one identity component, but ACL
@@ -3396,6 +3403,7 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
             from crm_atendimento.global_client_identity_members gm
             join crm_atendimento.canonical_clients cc on cc.id = gm.source_id::uuid
             where gm.source_type = 'attendance_client'
+              and ($4::text = '' or gm.identity_id::text = $4)
          ), attendance_core as (
             select am.identity_id, a.id, a.service_date, p.name as procedure_name, u.name as unit_name
             from attendance_members am
@@ -3424,6 +3432,7 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
             select distinct gm.identity_id, gm.source_id::uuid as customer_id
             from crm_atendimento.global_client_identity_members gm
             where gm.source_type = 'caixa_customer'
+              and ($4::text = '' or gm.identity_id::text = $4)
          ), sale_core as (
             select sm.identity_id, s.id, s.occurred_on, s.total, s.phone_raw, u.name as unit_name
             from sale_members sm
@@ -3453,6 +3462,7 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
             from crm_atendimento.commercial_actions action
             left join crm_atendimento.units action_unit on action_unit.id = action.unit_id
             where action.status = any($3::text[])
+              and ($4::text = '' or action.identity_id::text = $4)
               and ($2::text[] is null or action_unit.slug = any($2::text[]))
             group by action.identity_id
          )
@@ -3469,13 +3479,17 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) 
          left join active_actions actions on actions.identity_id = i.identity_id
          where $2::text[] is null or a.identity_id is not null or s.identity_id is not null
          order by i.canonical_name`,
-        [asOf, unitSlugs, COMMERCIAL_ACTIVE_ACTION_STATUSES],
+        [asOf, unitSlugs, COMMERCIAL_ACTIVE_ACTION_STATUSES, targetIdentityId],
     )
-    const profiles = segmentCommercialProfiles(result.rows.map(commercialProfileRowInput), { asOf, thresholds }).map((profile) => ({
-        ...profile,
-        activeActionCount: Number(result.rows.find((row) => row.identity_id === profile.identityId)?.active_action_count || 0),
-        lastActionAt: result.rows.find((row) => row.identity_id === profile.identityId)?.last_action_at || null,
-    }))
+    const rowsByIdentity = new Map(result.rows.map((row) => [String(row.identity_id), row]))
+    const profiles = segmentCommercialProfiles(result.rows.map(commercialProfileRowInput), { asOf, thresholds }).map((profile) => {
+        const row = rowsByIdentity.get(profile.identityId)
+        return {
+            ...profile,
+            activeActionCount: Number(row?.active_action_count || 0),
+            lastActionAt: row?.last_action_at || null,
+        }
+    })
     const eligibilityByIdentity = await queryCommercialContactEligibility(pgPool, profiles.map((profile) => profile.identityId), { unitSlugs })
     return profiles.map((profile) => ({
         ...profile,
@@ -5475,6 +5489,7 @@ export function createAtendimentoStore(options = {}) {
                 asOf,
                 unitSlugs,
                 thresholds: policy.returnRiskThresholds,
+                identityId: id,
             })
             const profile = profiles.find((item) => item.identityId === id)
             if (!profile) {
