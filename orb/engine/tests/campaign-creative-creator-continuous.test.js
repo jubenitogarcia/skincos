@@ -224,6 +224,7 @@ test('build package is valid, idempotent, and keeps the operational route fixtur
 
   assert.equal(first.active, false);
   assert.equal(first.nodes.filter((candidate) => candidate.name === 'Operational Production Request').length, 1);
+  assert.equal(first.nodes.find((candidate) => candidate.name === 'Operational Production Request').parameters.inputSource, 'passthrough');
   assert.equal(first.nodes.some((candidate) => candidate.name === 'CCG-80 Production Executor'), false);
   for (const fixture of INTERMEDIATE_FIXTURES) assert.equal(first.nodes.some((candidate) => candidate.name === fixture), false, fixture);
   assert.equal(first.nodes.some((candidate) => candidate.name === 'Build CCG-99 retryable fixture'), false);

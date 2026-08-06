@@ -365,7 +365,7 @@
   },
   "meta": {
     "codex_builder": "campaign-creative-creator-continuous",
-    "codex_builder_version": "4.1.0",
+    "codex_builder_version": "4.1.1",
     "architecture": "separate-error-workflow-with-executor-recovery",
     "source_workflow_id": "TxE9eMS1xfE6kq38",
     "no_publication": true,

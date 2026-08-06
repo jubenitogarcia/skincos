@@ -196,6 +196,10 @@ function validateWorkflow(workflow, options = {}) {
   if (workflow.nodes.filter((node) => node.name === 'Operational Production Request').length !== 1) {
     throw new Error('Expected exactly one operational trigger');
   }
+  const operationalTrigger = workflow.nodes.find((node) => node.name === 'Operational Production Request');
+  if (operationalTrigger.parameters?.inputSource !== 'passthrough') {
+    throw new Error('Operational trigger must pass through the versioned production envelope');
+  }
   for (const name of EXECUTION_NODE_NAMES) {
     if (!names.has(name)) throw new Error('Production execution node is missing: ' + name);
   }

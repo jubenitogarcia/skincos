@@ -8,7 +8,7 @@ const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
 const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-error-v3';
 const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
-const BUILDER_VERSION = '4.1.0';
+const BUILDER_VERSION = '4.1.1';
 const ALL_FIXTURE_NAMES = [
   'Build CCG-00 dry-run fixture',
   'Build CCG-10 dry-run fixture',
@@ -1915,7 +1915,11 @@ function transformWorkflow(source, options = {}) {
   ensureStructuredParserModels(workflow);
 
   workflow.nodes.push({
-    parameters: {},
+    // n8n 2.8 validates the Execute Workflow Trigger's default input schema
+    // before starting a child execution. The operational contract already
+    // carries its own versioned envelope, so pass that envelope through
+    // unchanged instead of forcing the trigger to maintain a second schema.
+    parameters: { inputSource: 'passthrough' },
     id: 'ccg-operational-request-trigger',
     name: 'Operational Production Request',
     type: 'n8n-nodes-base.executeWorkflowTrigger',

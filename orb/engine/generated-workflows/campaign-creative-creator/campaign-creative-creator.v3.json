@@ -1753,7 +1753,9 @@
       ]
     },
     {
-      "parameters": {},
+      "parameters": {
+        "inputSource": "passthrough"
+      },
       "id": "ccg-operational-request-trigger",
       "name": "Operational Production Request",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
@@ -3182,7 +3184,7 @@
   },
   "meta": {
     "codex_builder": "campaign-creative-creator-continuous",
-    "codex_builder_version": "4.1.0",
+    "codex_builder_version": "4.1.1",
     "architecture": "continuous-with-native-production-executor-and-separate-error-workflow",
     "source_workflow_id": "TxE9eMS1xfE6kq38",
     "source_version_id": "941bec10-3e41-49be-baed-753ca60787ad",
