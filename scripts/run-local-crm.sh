@@ -1287,6 +1287,13 @@ refresh_insumos_snapshot_if_needed
 
 stop_existing
 rotate_current_log
+crm_persona_runtime_write_manifest starting
+
+# Building does not bind any service port. Do it before selecting the dynamic
+# bundle so a long build cannot turn an otherwise-free candidate into a stale
+# reservation while unrelated tools start and stop around it.
+prepare_frontend_artifact
+ensure_playwright_chromium
 crm_port_plan_acquire_bundle_lock
 if [[ "$CRM_DYNAMIC_PORT_BUNDLE" == "1" ]]; then
   crm_port_plan_select_dynamic_bundle
@@ -1326,8 +1333,6 @@ assert_port_free "$CRM_PAGES_PORT" "pages"
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
   assert_port_free "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
 fi
-prepare_frontend_artifact
-ensure_playwright_chromium
 
 INSUMOS_PID=""
 WHATSAPP_ORCHESTRATOR_PID=""

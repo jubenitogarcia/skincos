@@ -200,6 +200,10 @@ test('thread preview only materializes the invoking registered worktree and allo
   assert.match(launcher, /function Get-CrmManifestPublicUri/)
   assert.match(launcher, /\$endpointHost = \$Uri\.Host/)
   assert.doesNotMatch(launcher, /^\s*\$host = \$Uri\.Host/m)
+  assert.match(
+    crmRunner,
+    /prepare_frontend_artifact\s*\nensure_playwright_chromium\s*\ncrm_port_plan_acquire_bundle_lock\s*\nif \[\[ "\$CRM_DYNAMIC_PORT_BUNDLE" == "1" \]\]; then\s*\n  crm_port_plan_select_dynamic_bundle/,
+  )
   assert.doesNotMatch(launcher, /Write-Host "\[crm-thread-preview\] URL:/)
 })
 
