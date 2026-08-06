@@ -91,6 +91,32 @@ if (crmRunner.includes("/../../../..")) {
   fail("CRM runner escapes the native source release by resolving four parent directories");
 }
 
+// The HTTP composition root and the continuous-job composition root are
+// intentionally disjoint. Keep this check close to the architecture gate so a
+// future refactor cannot silently reintroduce a background worker on request
+// startup.
+const crmHttp = fs.readFileSync(path.join(root, "crm/api/server.js"), "utf8");
+if (/continuous-worker|startHarmoniaWorker|createContinuousWorkerService|createWorkerHealthServer/.test(crmHttp)) {
+  fail("crm/api/server.js must never import or start the continuous worker");
+}
+const continuousRunner = fs.readFileSync(path.join(root, "scripts/crm/run-continuous-workers-linux.sh"), "utf8");
+if (/npm\s+install/.test(continuousRunner) || /(^|\n)\s*(source|\.)\s+.*crm(?:-jobs)?\.env/.test(continuousRunner)) {
+  fail("continuous worker launcher must not install dependencies or source shell from runtime variables");
+}
+const jobsUnit = fs.readFileSync(path.join(root, "ops/runtime/units/crm-jobs.service"), "utf8");
+if (!/^Environment=CRM_CONTINUOUS_WORKER_HOST=127\.0\.0\.1$/m.test(jobsUnit)) {
+  fail("crm-jobs.service must bind health only to loopback");
+}
+if (!/^Environment=CRM_CONTINUOUS_JOBS_STATE_PATH=__STATE_ROOT__\/crm\/continuous-jobs-state\.json$/m.test(jobsUnit)) {
+  fail("crm-jobs.service must declare the durable continuous-jobs checkpoint");
+}
+for (const relativePath of ["crm/api/server/workers/jobRunner.js", "crm/api/server/workers/clientesJobs.js"]) {
+  const source = fs.readFileSync(path.join(root, relativePath), "utf8");
+  if (/node:child_process|\bspawn\b|\beval\s*\(/.test(source)) {
+    fail(`${relativePath} must not execute arbitrary shell commands`);
+  }
+}
+
 const crmPagesWorkflow = fs.readFileSync(path.join(root, ".github/workflows", "deploy-crm-pages.yml"), "utf8");
 if (
   !/^concurrency:\r?\n\s+group:\s+ponto-surface-mutation\r?\n\s+cancel-in-progress:\s+false/m.test(crmPagesWorkflow)
