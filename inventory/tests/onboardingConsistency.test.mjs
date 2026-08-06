@@ -89,6 +89,19 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.doesNotMatch(admin, /teamUnitsVisible\(auth, onboarding\)/);
 });
 
+test('team edits expose a fail-closed local persistence compensation boundary', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const updateBlock = admin.slice(admin.indexOf('const teamMemberMatch'), admin.indexOf("if (url.pathname === '/admin/team' && request.method === 'GET')"));
+  assert.match(updateBlock, /let workforceSynchronized = false/);
+  assert.match(updateBlock, /localPersistenceStage = 'ONBOARDING_UPDATE'/);
+  assert.match(updateBlock, /localPersistenceStage = 'TEAM_UPDATE'/);
+  assert.match(updateBlock, /LOCAL_TEAM_UPDATE_PENDING/);
+  assert.match(updateBlock, /EMPLOYEE_TEAM_COMPENSATION_PENDING/);
+  assert.match(updateBlock, /TEAM_LOCAL_PERSISTENCE_PENDING/);
+  assert.match(updateBlock, /failClosed: true/);
+  assert.match(updateBlock, /outcome: 'PENDING'/);
+});
+
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {
   const telemetry = await readFile(new URL('../src/services/teamTelemetry.js', import.meta.url), 'utf8');
   assert.match(telemetry, /item_count/);

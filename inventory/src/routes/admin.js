@@ -970,9 +970,13 @@ export async function handleAdminRoutes({
 
   const teamMemberMatch = url.pathname.match(/^\/admin\/team\/([^/]+)$/);
   if (teamMemberMatch && request.method === 'PUT') {
+    let onboardingId = '';
+    let current = null;
+    let workforceSynchronized = false;
+    let localPersistenceStage = 'PREPARATION';
     try {
-      const onboardingId = decodeURIComponent(teamMemberMatch[1] || '').trim();
-      const current = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
+      onboardingId = decodeURIComponent(teamMemberMatch[1] || '').trim();
+      current = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
         FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
       if (!current) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
       if (!teamUnitsVisible(auth, current.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
@@ -1018,7 +1022,9 @@ export async function handleAdminRoutes({
         department: nextDepartment,
         createdBy: String(auth?.user?.username || ''),
       }, requestId);
+      workforceSynchronized = true;
 
+      localPersistenceStage = 'ONBOARDING_UPDATE';
       const sets = ['full_name=?', 'profile=?', 'job_title=?', 'department_name=?', 'units_json=?', 'updated_at=?'];
       const values = [nextName, nextProfile.profile || nextProfile, displayJobTitle(nextProfile.profile || nextProfile), nextDepartment, JSON.stringify(nextUnits), new Date().toISOString()];
       if (nextPersonalEmail) {
@@ -1030,13 +1036,16 @@ export async function handleAdminRoutes({
         values.push(nextPhoneEncrypted, nextPhoneHash);
       }
       values.push(onboardingId);
-      await env.DB.prepare(`UPDATE crm_employee_onboarding SET ${sets.join(', ')} WHERE id=?`).bind(...values).run();
+      const onboardingUpdate = await env.DB.prepare(`UPDATE crm_employee_onboarding SET ${sets.join(', ')} WHERE id=?`).bind(...values).run();
+      if (Number(onboardingUpdate?.meta?.changes ?? 0) !== 1) throw new Error('TEAM_ONBOARDING_LOCAL_UPDATE_NOT_APPLIED');
 
+      localPersistenceStage = 'TEAM_UPDATE';
       const teamData = normalizeTeamData(body.team, nextUnits);
-      await env.DB.prepare(`UPDATE crm_employee_team SET schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
+      const teamUpdate = await env.DB.prepare(`UPDATE crm_employee_team SET schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
         teamData.professionalId || current.schedule_professional_id || null, teamData.status || null, teamData.role || null, teamData.shift || null,
         teamData.nickname || null, teamData.instagram || null, teamData.color || null, JSON.stringify(teamData.units), new Date().toISOString(), onboardingId,
       ).run();
+      if (Number(teamUpdate?.meta?.changes ?? 0) !== 1) throw new Error('TEAM_LOCAL_UPDATE_NOT_APPLIED');
       const updated = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
         FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
       const links = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE workforce_employee_id=? ORDER BY created_at DESC').bind(updated.workforce_employee_id).all();
@@ -1045,6 +1054,28 @@ export async function handleAdminRoutes({
       return withCORS(JSON.stringify({ success: true, data: publicTeamMember(updated, (links?.results || []).map(publicIdentityLink)) }), { status: 200 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'TEAM_UPDATE_FAILED');
+      if (workforceSynchronized && ['ONBOARDING_UPDATE', 'TEAM_UPDATE'].includes(localPersistenceStage)) {
+        const now = new Date().toISOString();
+        const safeErrorCode = message.slice(0, 120);
+        await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='LOCAL_TEAM_UPDATE_PENDING', last_error_code=?, updated_at=? WHERE id=?")
+          .bind(safeErrorCode, now, onboardingId)
+          .run()
+          .catch(() => {});
+        await Promise.resolve(appendAuditLog?.({
+          env,
+          actor: auth.user.username,
+          role: auth.user.role,
+          ip,
+          userAgent,
+          action: 'EMPLOYEE_TEAM_COMPENSATION_PENDING',
+          entity: 'EMPLOYEE_ONBOARDING',
+          entityId: onboardingId,
+          unidade: normalizeAllowedUnits(current?.units_json).join(','),
+          after: { stage: localPersistenceStage, workforceSynchronized: true, requestId, failClosed: true },
+        })).catch(() => {});
+        await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_UPDATED', actorRole: auth.user.role, outcome: 'PENDING', itemCount: 1, unitCount: normalizeAllowedUnits(current?.units_json).length });
+        return withCORS(JSON.stringify({ success: false, error: 'Atualização local da equipe pendente de compensação', code: 'TEAM_LOCAL_PERSISTENCE_PENDING' }), { status: 503 }, appOrigin);
+      }
       const status = /^WORKFORCE_|^IDENTITY_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Atualização da identidade pendente' : 'Não foi possível atualizar a equipe', code: message.slice(0, 120) }), { status }, appOrigin);
     }
