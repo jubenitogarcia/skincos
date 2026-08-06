@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
 import { lockContactPhone } from '../contactPhoneLock.js'
 import {
@@ -63,6 +63,20 @@ import {
 import {
     collectAutomaticIdentityLinkTransitions,
 } from './identityProjection.js'
+import {
+    COMMERCIAL_CANARY_CANDIDATE_TTL_MS,
+    COMMERCIAL_CANARY_MAX_IDENTITIES,
+    COMMERCIAL_CANARY_VALIDATION_TYPES,
+    assertCanaryMutationPayload,
+    candidateEligibility,
+    candidateValidationStatus,
+    hashIdentitySet,
+    maskIdentityName,
+    normalizeCanaryCandidateFilters,
+    normalizeCanarySearch,
+    normalizeCanaryUnit,
+    summarizeCommercialCanaryCandidates,
+} from './commercialCanaryDomain.js'
 import {
     chooseIdentitySurvivor,
     IDENTITY_GRAPH_LOCK_KEY,
@@ -3006,7 +3020,8 @@ async function readCommercialContactAvailability(pgPool) {
                       and column_name = 'commercial_contact_writes_enabled') as rollout_enabled,
                 exists(select 1 from information_schema.columns
                     where table_schema = 'crm_atendimento' and table_name = 'commercial_policy_config'
-                      and column_name = 'commercial_contact_canary_identity_ids') as rollout_canary`,
+                      and column_name = 'commercial_contact_canary_identity_ids') as rollout_canary,
+                to_regclass('crm_atendimento.commercial_canary_cohorts') as commercial_canary_cohorts`,
     )
     const row = result.rows[0] || {}
     const commercialLedgerReady = !!row.permission_events && !!row.action_events && !!row.permission_event_trace_id &&
@@ -3029,6 +3044,7 @@ async function readCommercialContactAvailability(pgPool) {
         actionChannel: !!row.action_channel,
         actionContactedAt: !!row.action_contacted_at,
         rolloutConfig: !!row.rollout_enabled && !!row.rollout_canary,
+        commercialCanaryCohorts: !!row.commercial_canary_cohorts,
         controlsReady: !!row.permissions && !!row.permission_events && !!row.action_channel && commercialLedgerReady,
         contactWriteControlsReady: !!row.permissions && !!row.permission_events && !!row.action_channel && commercialLedgerReady &&
             !!row.action_contacted_at && !!row.rollout_enabled && !!row.rollout_canary,
@@ -3221,19 +3237,25 @@ async function assertCommercialContactCooldownControls(pgPool) {
 
 async function assertCommercialContactWriteRollout(client, identityId) {
     const result = await client.query(
-        `select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids
+        `select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,
+                to_regclass('crm_atendimento.commercial_canary_cohorts') as commercial_canary_cohorts
          from crm_atendimento.commercial_policy_config where singleton = true for share`,
     )
     const row = result.rows[0] || {}
     if (row.commercial_contact_writes_enabled !== true) {
         throw commercialContactError('COMMERCIAL_CONTACT_ROLLOUT_DISABLED')
     }
+    if (row.commercial_canary_cohorts) {
+        const active = await client.query(`select 1 from crm_atendimento.commercial_canary_cohorts cohort
+            join crm_atendimento.commercial_canary_cohort_members member on member.cohort_id=cohort.id
+            where cohort.status='active' and member.identity_id=$1::uuid limit 1`, [identityId])
+        if (!active.rows[0]) throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED')
+        return
+    }
     const identities = Array.isArray(row.commercial_contact_canary_identity_ids)
         ? row.commercial_contact_canary_identity_ids.map(String)
         : []
-    if (!identities.includes(String(identityId || '').trim())) {
-        throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED')
-    }
+    if (!identities.includes(String(identityId || '').trim())) throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED')
 }
 
 async function assertCommercialContactCooldown(client, { identityId, actionId, cooldownDays }) {
@@ -3373,6 +3395,421 @@ function commercialExpectedPermissionRevision(value) {
         throw commercialContactError('INVALID_COMMERCIAL_CONTACT_PERMISSION_REVISION', 400)
     }
     return revision
+}
+
+function commercialCanaryError(code, statusCode = 409, details = undefined) {
+    const error = new Error(code)
+    error.statusCode = statusCode
+    if (details && typeof details === 'object') error.details = details
+    return error
+}
+
+function commercialCanaryActorLabel(actor) {
+    return String(actor?.id || actor?.username || actor?.role || 'commercial-canary').trim().slice(0, 160) || 'commercial-canary'
+}
+
+function commercialCanarySelectorSecret() {
+    const configured = String(
+        process.env.COMMERCIAL_CANARY_SELECTOR_HMAC_KEY ||
+        process.env.ATENDIMENTO_ACTOR_HMAC_KEY ||
+        process.env.ESCALA_ACTOR_HMAC_KEY ||
+        '',
+    ).trim()
+    if (configured) return configured
+    if (String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production') {
+        throw commercialCanaryError('COMMERCIAL_CANARY_SELECTOR_KEY_NOT_CONFIGURED', 503)
+    }
+    return 'crm-local-commercial-canary-selector'
+}
+
+function commercialCanarySelectorKey() {
+    return createHash('sha256').update(commercialCanarySelectorSecret()).digest()
+}
+
+function encodeCommercialCanaryCandidateRef(identityId) {
+    const issuedAt = Date.now()
+    const iv = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', commercialCanarySelectorKey(), iv)
+    const payload = Buffer.from(JSON.stringify({ v: 1, identityId: String(identityId), issuedAt }))
+    const ciphertext = Buffer.concat([cipher.update(payload), cipher.final()])
+    return `cc1.${iv.toString('base64url')}.${ciphertext.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}`
+}
+
+function decodeCommercialCanaryCandidateRef(value) {
+    const raw = String(value || '').trim()
+    const parts = raw.split('.')
+    if (parts.length !== 4 || parts[0] !== 'cc1') throw commercialCanaryError('INVALID_COMMERCIAL_CANARY_CANDIDATE', 400)
+    const [version, encodedIv, encodedCiphertext, encodedTag] = parts
+    let parsed
+    try {
+        const decipher = createDecipheriv('aes-256-gcm', commercialCanarySelectorKey(), Buffer.from(encodedIv, 'base64url'))
+        decipher.setAuthTag(Buffer.from(encodedTag, 'base64url'))
+        parsed = JSON.parse(Buffer.concat([decipher.update(Buffer.from(encodedCiphertext, 'base64url')), decipher.final()]).toString('utf8'))
+    } catch { throw commercialCanaryError('INVALID_COMMERCIAL_CANARY_CANDIDATE', 400) }
+    if (parsed?.v !== 1 || !isValidCommercialCanaryIdentityId(parsed.identityId)
+        || !Number.isFinite(Number(parsed.issuedAt))
+        || Math.abs(Date.now() - Number(parsed.issuedAt)) > COMMERCIAL_CANARY_CANDIDATE_TTL_MS) {
+        throw commercialCanaryError('COMMERCIAL_CANARY_CANDIDATE_EXPIRED', 409)
+    }
+    return { version, identityId: String(parsed.identityId).trim().toLowerCase(), issuedAt: Number(parsed.issuedAt) }
+}
+
+function isValidCommercialCanaryIdentityId(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim())
+}
+
+function commercialCanaryFreshnessStatus(timestamp) {
+    if (!timestamp) return 'unknown'
+    const ageHours = (Date.now() - Date.parse(String(timestamp))) / (60 * 60 * 1000)
+    if (!Number.isFinite(ageHours) || ageHours < 0) return 'unknown'
+    if (ageHours > 48) return 'stale'
+    if (ageHours > 24) return 'preventive'
+    return 'healthy'
+}
+
+function commercialCanaryFreshnessRank(value) {
+    return ({ healthy: 0, preventive: 1, unknown: 2, stale: 3 }[String(value || '').trim()] ?? 2)
+}
+
+function commercialCanaryWorstFreshness(sourceFreshness = {}) {
+    const values = Object.values(sourceFreshness)
+    if (!values.length) return 'unknown'
+    return values.sort((left, right) => commercialCanaryFreshnessRank(right) - commercialCanaryFreshnessRank(left))[0] || 'unknown'
+}
+
+async function readCommercialCanaryAvailability(pgPool) {
+    const result = await pgPool.query(`select
+        to_regclass('crm_atendimento.commercial_canary_cohorts') as cohorts,
+        to_regclass('crm_atendimento.commercial_canary_cohort_members') as members,
+        to_regclass('crm_atendimento.commercial_canary_identity_validations') as validations,
+        to_regclass('crm_atendimento.commercial_canary_events') as events,
+        to_regclass('crm_atendimento.commercial_canary_validation_events') as validation_events,
+        to_regclass('crm_atendimento.global_client_identities') as identities,
+        to_regclass('crm_atendimento.global_client_identity_members') as identity_members,
+        to_regclass('crm_atendimento.canonical_clients') as canonical_clients,
+        to_regclass('crm_atendimento.attendance_client_links') as attendance_links,
+        to_regclass('crm_atendimento.attendances') as attendances,
+        to_regclass('crm_atendimento.units') as units,
+        to_regclass('crm_caixa.sales') as sales,
+        to_regclass('crm_atendimento.commercial_policy_config') as policy`)
+    const row = result.rows[0] || {}
+    return {
+        ready: !!row.cohorts && !!row.members && !!row.validations && !!row.events && !!row.validation_events,
+        cohorts: !!row.cohorts,
+        members: !!row.members,
+        validations: !!row.validations,
+        events: !!row.events,
+        validationEvents: !!row.validation_events,
+        identities: !!row.identities,
+        identityMembers: !!row.identity_members,
+        canonicalClients: !!row.canonical_clients,
+        attendanceLinks: !!row.attendance_links,
+        attendances: !!row.attendances,
+        units: !!row.units,
+        sales: !!row.sales,
+        policy: !!row.policy,
+    }
+}
+
+async function assertCommercialCanaryReady(pgPool) {
+    const availability = await readCommercialCanaryAvailability(pgPool)
+    if (!availability.ready || !availability.identities || !availability.identityMembers || !availability.policy) {
+        throw commercialCanaryError('COMMERCIAL_CANARY_SELECTOR_NOT_READY', 503)
+    }
+    return availability
+}
+
+async function readCommercialCanarySourceFreshness(pgPool) {
+    const latest = {}
+    const safeLatest = async (key, sql) => {
+        try {
+            const result = await pgPool.query(sql)
+            latest[key] = result.rows[0]?.observed_at || result.rows[0]?.updated_at || result.rows[0]?.created_at || null
+        } catch {
+            latest[key] = null
+        }
+    }
+    await Promise.all([
+        safeLatest('atendimento', `select coalesce(synced_at, updated_at) as observed_at from crm_atendimento.local_mirror_state where singleton=true limit 1`),
+        safeLatest('cadastro', `select max(created_at) as created_at from crm_atendimento.app_client_registrations`),
+        safeLatest('leads', `select max(created_at) as created_at from crm_atendimento.supplemental_lead_profiles`),
+        safeLatest('vendas', `select max(updated_at) as updated_at from crm_caixa.sales`),
+        safeLatest('identidade', `select max(updated_at) as updated_at from crm_atendimento.global_client_identities`),
+        safeLatest('consentimento', `select max(updated_at) as updated_at from crm_atendimento.commercial_contact_permissions`),
+    ])
+    const statuses = Object.fromEntries(Object.entries(latest).map(([key, timestamp]) => [key, commercialCanaryFreshnessStatus(timestamp)]))
+    return {
+        observedAt: latest,
+        statuses,
+        overall: commercialCanaryWorstFreshness(statuses),
+    }
+}
+
+function commercialCanaryUnitLinkSql(availability) {
+    const parts = []
+    if (availability.canonicalClients && availability.attendanceLinks && availability.attendances && availability.units) {
+        parts.push(`select member.identity_id, unit.slug as unit_slug
+            from crm_atendimento.global_client_identity_members member
+            join crm_atendimento.canonical_clients client on client.id = member.source_id::uuid
+            join crm_atendimento.attendance_client_links link on link.client_id = client.id
+            join crm_atendimento.attendances attendance on attendance.id = link.attendance_id
+            join crm_atendimento.units unit on unit.id = attendance.unit_id
+            where member.source_type='attendance_client' and attendance.deleted_at is null`)
+    }
+    if (availability.sales && availability.units) {
+        parts.push(`select member.identity_id, unit.slug as unit_slug
+            from crm_atendimento.global_client_identity_members member
+            join crm_caixa.sales sale on sale.customer_id = member.source_id::uuid
+            join crm_atendimento.units unit on unit.id = sale.unit_id
+            where member.source_type='caixa_customer'`)
+    }
+    return parts.length ? parts.join('\nunion\n') : `select null::uuid as identity_id, null::text as unit_slug where false`
+}
+
+async function queryCommercialCanaryCandidates(pgPool, { actor, query = {}, identityIds = null } = {}) {
+    const availability = await readCommercialCanaryAvailability(pgPool)
+    const filters = normalizeCanaryCandidateFilters(query)
+    const unitSlugs = commercialUnitSlugsForQuery(actor, filters.unit)
+    const sourceFreshness = await readCommercialCanarySourceFreshness(pgPool)
+    const ids = Array.isArray(identityIds)
+        ? [...new Set(identityIds.map((value) => String(value || '').trim().toLowerCase()).filter(isValidCommercialCanaryIdentityId))]
+        : null
+    const search = normalizeCanarySearch(filters.q).toLowerCase()
+    const unitLinkSql = commercialCanaryUnitLinkSql(availability)
+    const result = await pgPool.query(
+        `with unit_links as (${unitLinkSql}), base as (
+            select identity.id::text as identity_id, identity.canonical_name, identity.source_types,
+                   array_remove(array_agg(distinct unit_links.unit_slug), null)::text[] as unit_slugs
+            from crm_atendimento.global_client_identities identity
+            join crm_atendimento.global_client_identity_members member on member.identity_id=identity.id
+            left join unit_links on unit_links.identity_id=identity.id
+            where ($1::text = '' or lower(identity.canonical_name) like '%'||$1||'%')
+              and ($2::text[] is null or exists (select 1 from unit_links scoped where scoped.identity_id=identity.id and scoped.unit_slug=any($2::text[])))
+              and ($3::text[] is null or identity.id::text=any($3::text[]))
+            group by identity.id, identity.canonical_name, identity.source_types
+            order by identity.canonical_name nulls last, identity.id
+            limit $4 offset $5
+        ) select * from base`,
+        [search, unitSlugs, ids, ids ? Math.max(ids.length, 1) : filters.limit, ids ? 0 : filters.offset],
+    )
+    const rows = result.rows || []
+    const candidateIds = rows.map((row) => String(row.identity_id || '').trim().toLowerCase()).filter(Boolean)
+    const [eligibilityByIdentity, validations] = await Promise.all([
+        queryCommercialContactEligibility(pgPool, candidateIds, { unitSlugs }),
+        availability.validations
+            ? pgPool.query(`select identity_id::text as identity_id, validation_type, reason, approved_at, expires_at, revision
+                from crm_atendimento.commercial_canary_identity_validations where identity_id=any($1::uuid[])`, [candidateIds])
+            : Promise.resolve({ rows: [] }),
+    ])
+    const validationByIdentity = new Map((validations.rows || []).map((row) => [String(row.identity_id || '').trim().toLowerCase(), row]))
+    const allowed = commercialUnitScope(actor)
+    const candidates = rows.map((row) => {
+        const identityId = String(row.identity_id || '').trim().toLowerCase()
+        const sourceTypes = Array.isArray(row.source_types)
+            ? row.source_types.map(String)
+            : (typeof row.source_types === 'string' ? (() => { try { return JSON.parse(row.source_types) } catch { return [] } })() : [])
+        const identityQuality = sourceTypes.length >= 2 ? 'confirmed_multi_source' : 'unresolved_single_source'
+        const unitSlugsForIdentity = Array.isArray(row.unit_slugs) ? row.unit_slugs.map(String).filter(Boolean) : []
+        const validation = validationByIdentity.get(identityId) || {}
+        const eligibility = eligibilityByIdentity.get(identityId) || emptyCommercialContactEligibility('commercial_contact_controls_not_ready')
+        const sourceStatuses = { ...sourceFreshness.statuses }
+        // A source that is not represented by this identity is not allowed to
+        // make the candidate stale; its freshness is still exposed globally.
+        const relevantSources = sourceTypes.map((source) => {
+            const normalized = String(source).toLowerCase()
+            if (normalized.includes('attendance')) return 'atendimento'
+            if (normalized.includes('caixa') || normalized.includes('sale')) return 'vendas'
+            if (normalized.includes('app') || normalized.includes('registration')) return 'cadastro'
+            if (normalized.includes('lead')) return 'leads'
+            return 'identidade'
+        })
+        const freshness = Object.fromEntries([...new Set(relevantSources)].map((source) => [source, sourceStatuses[source] || 'unknown']))
+        const freshnessStatus = commercialCanaryWorstFreshness(freshness)
+        const validationStatus = candidateValidationStatus({
+            validationType: validation.validation_type,
+            validationExpiresAt: validation.expires_at,
+        })
+        const contactStatus = eligibility.status || 'review_required'
+        const candidate = {
+            identityId,
+            candidateRef: encodeCommercialCanaryCandidateRef(identityId),
+            displayNameMasked: maskIdentityName(row.canonical_name),
+            unitSlugs: unitSlugsForIdentity,
+            identityQuality,
+            sourceTypes,
+            validationStatus,
+            validationReason: validation.reason || '',
+            validationRevision: Number(validation.revision || 0),
+            contactStatus: contactStatus === 'eligible' ? 'eligible' : contactStatus === 'blocked' ? 'blocked' : 'review',
+            contactReason: eligibility.reason || 'contact_review_required',
+            permissionStatus: eligibility.permissionStatus || 'unknown',
+            expiresAt: eligibility.expiresAt || null,
+            phoneStatus: eligibility.hasPhone ? 'correlated' : 'uncorrelated',
+            hasPhone: eligibility.hasPhone === true,
+            optOut: eligibility.optOutRecorded === true,
+            freshnessStatus,
+            sourceFreshness: freshness,
+            sourceLastReadAt: sourceFreshness.observedAt,
+            inclusionReason: validationStatus === 'not_validated'
+                ? 'identity_validation_required'
+                : identityQuality === 'confirmed_multi_source' ? 'confirmed_multi_source_identity' : 'single_source_identity_review',
+            inActorScope: allowed === null || (unitSlugsForIdentity.length > 0 && unitSlugsForIdentity.some((unit) => allowed.includes(normalizeCanaryUnit(unit)))),
+        }
+        return candidate
+    }).filter((candidate) => {
+        if (!candidate.inActorScope) return false
+        if (filters.quality && candidate.identityQuality !== filters.quality) return false
+        if (filters.permission && candidate.permissionStatus !== filters.permission) return false
+        if (filters.phone && candidate.phoneStatus !== filters.phone) return false
+        if (filters.optOut === 'yes' && !candidate.optOut) return false
+        if (filters.optOut === 'no' && candidate.optOut) return false
+        if (filters.freshness && candidate.freshnessStatus !== filters.freshness) return false
+        return true
+    })
+    return { candidates, total: candidates.length, filters, sourceFreshness, availability }
+}
+
+async function readCommercialCanaryState(pgPool, actor) {
+    const availability = await assertCommercialCanaryReady(pgPool)
+    const [active, policy] = await Promise.all([
+        pgPool.query(`select id::text as id, version, status, policy_version, cohort_hash, member_count, justification, created_by, created_at, updated_at
+            from crm_atendimento.commercial_canary_cohorts where status in ('active','emergency_off') order by version desc limit 1`),
+        readCommercialPolicy(pgPool),
+    ])
+    const cohort = active.rows[0] || null
+    let memberSummary = { eligible: 0, blocked: 0, review: 0, staleSources: 0 }
+    if (cohort?.id) {
+        const scope = commercialUnitScope(actor)
+        const summary = await pgPool.query(`select eligibility_status, source_freshness, count(*)::int as count
+            from crm_atendimento.commercial_canary_cohort_members
+            where cohort_id=$1::uuid and ($2::text[] is null or unit_slug=any($2::text[]))
+            group by eligibility_status, source_freshness`, [cohort.id, scope])
+        memberSummary = summary.rows.reduce((acc, row) => {
+            const count = Number(row.count || 0)
+            if (row.eligibility_status === 'eligible') acc.eligible += count
+            else if (row.eligibility_status === 'blocked') acc.blocked += count
+            else acc.review += count
+            if (row.source_freshness === 'stale') acc.staleSources += count
+            return acc
+        }, memberSummary)
+    }
+    return {
+        ready: availability.ready,
+        emergencyOff: cohort?.status === 'emergency_off',
+        commercialContactWritesEnabled: false,
+        cohort: cohort ? {
+            id: cohort.id,
+            version: Number(cohort.version || 0),
+            status: cohort.status,
+            policyVersion: cohort.policy_version || '',
+            cohortHash: cohort.cohort_hash || '',
+            memberCount: commercialUnitScope(actor) === null
+                ? Number(cohort.member_count || 0)
+                : memberSummary.eligible + memberSummary.blocked + memberSummary.review,
+            createdBy: cohort.created_by || '',
+            createdAt: cohort.created_at || null,
+            updatedAt: cohort.updated_at || null,
+            summary: memberSummary,
+        } : null,
+        policyVersion: policy.policyVersion || '',
+        writesDefault: false,
+        messagesEnabled: false,
+    }
+}
+
+async function resolveCommercialCanarySelection(pgPool, actor, payload = {}) {
+    const rawRefs = Array.isArray(payload.candidateRefs) ? payload.candidateRefs : []
+    if (rawRefs.length > COMMERCIAL_CANARY_MAX_IDENTITIES) throw commercialCanaryError('COMMERCIAL_CANARY_SELECTION_TOO_LARGE', 400)
+    const decoded = rawRefs.map(decodeCommercialCanaryCandidateRef)
+    const identityIds = decoded.map((item) => item.identityId)
+    const duplicateCount = identityIds.length - new Set(identityIds).size
+    const selected = await queryCommercialCanaryCandidates(pgPool, { actor, query: { unit: payload.unit, limit: COMMERCIAL_CANARY_MAX_IDENTITIES } }, identityIds)
+    const found = new Set(selected.candidates.map((candidate) => candidate.identityId))
+    if (found.size !== new Set(identityIds).size) throw commercialCanaryError('COMMERCIAL_CANARY_SELECTION_SCOPE_OR_SOURCE_CHANGED', 409)
+    const candidates = identityIds.map((identityId) => selected.candidates.find((candidate) => candidate.identityId === identityId)).filter(Boolean)
+    const summary = summarizeCommercialCanaryCandidates(candidates)
+    summary.duplicateSelections = duplicateCount
+    summary.outOfScope = identityIds.filter((identityId) => !found.has(identityId)).length
+    summary.canApply = summary.totalCohort > 0 && summary.eligible === summary.totalCohort
+        && summary.duplicateSelections === 0 && summary.outOfScope === 0 && summary.staleSources === 0 && summary.notValidated === 0
+    return { candidates, summary, sourceFreshness: selected.sourceFreshness }
+}
+
+function canaryMemberSnapshot(candidate) {
+    return {
+        identityQuality: candidate.identityQuality,
+        sourceTypes: candidate.sourceTypes,
+        permissionStatus: candidate.permissionStatus,
+        phoneStatus: candidate.phoneStatus,
+        optOut: candidate.optOut,
+        freshnessStatus: candidate.freshnessStatus,
+        validationStatus: candidate.validationStatus,
+    }
+}
+
+async function executeCommercialCanaryRemoval({ pgPool, actor, payload, emergency = false }) {
+    const mutation = assertCanaryMutationPayload(payload)
+    const expectedCohortVersion = Number(payload.expectedCohortVersion)
+    if (!Number.isInteger(expectedCohortVersion) || expectedCohortVersion < 0) {
+        throw commercialCanaryError('COMMERCIAL_CANARY_COHORT_VERSION_REQUIRED', 428)
+    }
+    const requestHash = hashIdentitySet([`remove:${emergency ? 'emergency' : 'normal'}`, mutation.justification, String(expectedCohortVersion)])
+    return withCommercialContactTransaction(pgPool, async (client) => {
+        const duplicate = await client.query(`select event_type, cohort_id::text as cohort_id, payload
+            from crm_atendimento.commercial_canary_events where idempotency_key=$1 limit 1`, [mutation.idempotencyKey])
+        if (duplicate.rows[0]) {
+            if (duplicate.rows[0].payload?.request_hash && duplicate.rows[0].payload.request_hash !== requestHash) {
+                throw commercialCanaryError('COMMERCIAL_CANARY_IDEMPOTENCY_CONFLICT')
+            }
+            return { replayed: true, eventType: duplicate.rows[0].event_type, cohortId: duplicate.rows[0].cohort_id || null, messagesSent: 0 }
+        }
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, ['crm_atendimento:commercial-canary-cohort'])
+        const policyResult = await client.query(`select ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version
+            from crm_atendimento.commercial_policy_config where singleton=true for update`)
+        const policyVersion = String(policyResult.rows[0]?.policy_version || '').trim().toLowerCase()
+        if (policyVersion !== mutation.expectedPolicyVersion) throw commercialCanaryError('COMMERCIAL_CANARY_POLICY_CONFLICT')
+        const active = await client.query(`select id::text as id, version, member_count from crm_atendimento.commercial_canary_cohorts
+            where status='active'${commercialUnitScope(actor) === null ? '' : ''} limit 1 for update`)
+        const current = active.rows[0] || null
+        if (Number(current?.version || 0) !== expectedCohortVersion) throw commercialCanaryError('COMMERCIAL_CANARY_COHORT_CONFLICT')
+        if (current?.id) {
+            await client.query(`update crm_atendimento.commercial_canary_cohorts
+                set status=$2, removed_at=now(), updated_at=now() where id=$1::uuid`, [current.id, emergency ? 'emergency_off' : 'removed'])
+        }
+        const eventType = emergency ? 'emergency_off' : 'cohort_removed'
+        await client.query(`insert into crm_atendimento.commercial_canary_events(
+            event_type,idempotency_key,cohort_id,policy_version,actor,justification,payload)
+            values($1,$2,$3::uuid,$4,$5,$6,$7::jsonb)`, [
+            eventType,
+            mutation.idempotencyKey,
+            current?.id || null,
+            policyVersion,
+            commercialCanaryActorLabel(actor),
+            mutation.justification,
+            JSON.stringify({ request_hash: requestHash, member_count: Number(current?.member_count || 0), messages_sent: 0 }),
+        ])
+        const rollout = await readCommercialContactAvailability(client)
+        if (rollout.rolloutConfig) {
+            await client.query(`update crm_atendimento.commercial_policy_config
+                set commercial_contact_writes_enabled=false, commercial_contact_canary_identity_ids='{}'::uuid[], updated_by=$1, updated_at=now()
+                where singleton=true`, [commercialCanaryActorLabel(actor)])
+        }
+        await audit(client, `commercial.canary.${eventType}`, actor, null, {
+            requestHash,
+            cohortVersion: expectedCohortVersion,
+            memberCount: Number(current?.member_count || 0),
+            messagesSent: 0,
+            commercialContactWritesEnabled: false,
+        })
+        return {
+            replayed: false,
+            eventType,
+            cohortId: current?.id || null,
+            cohortVersion: expectedCohortVersion,
+            commercialContactWritesEnabled: false,
+            messagesSent: 0,
+        }
+    })
 }
 
 function commercialTimelineLimit(value) {
@@ -5673,6 +6110,13 @@ export function createAtendimentoStore(options = {}) {
             if (changesRollout && !availability.contactWriteControlsReady) {
                 throw commercialContactError('COMMERCIAL_CONTACT_COOLDOWN_CONTROLS_NOT_READY')
             }
+            if (availability.commercialCanaryCohorts && requestedCanaryIdentityIds?.length) {
+                // Once the selector migration exists, raw UUID arrays are no
+                // longer an operational input. The cohort ledger is the only
+                // authority and this legacy field is kept empty for rollback
+                // compatibility with older runtimes.
+                throw commercialContactError('COMMERCIAL_CANARY_SELECTOR_REQUIRED', 400)
+            }
             return withCommercialContactTransaction(pgPool, async (client) => {
                 if (!availability.contactWriteControlsReady) {
                     const current = await client.query(
@@ -5727,9 +6171,12 @@ export function createAtendimentoStore(options = {}) {
                         ? currentRow.commercial_contact_canary_identity_ids.map(String).filter(Boolean)
                         : [])
                     : requestedCanaryIdentityIds
-                await assertCommercialCanaryIdentities(client, canaryIdentityIds)
-                if (writesEnabled && !canaryIdentityIds.length) {
-                    throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED', 400)
+                if (availability.commercialCanaryCohorts) {
+                    const activeCohort = await client.query(`select 1 from crm_atendimento.commercial_canary_cohorts where status='active' limit 1`)
+                    if (writesEnabled && !activeCohort.rows[0]) throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED', 400)
+                } else {
+                    await assertCommercialCanaryIdentities(client, canaryIdentityIds)
+                    if (writesEnabled && !canaryIdentityIds.length) throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED', 400)
                 }
                 const result = await client.query(
                     `update crm_atendimento.commercial_policy_config
@@ -7423,6 +7870,264 @@ export function createAtendimentoStore(options = {}) {
                     importedAt: batch.rows[0]?.created_at,
                     ...summary,
                 }
+            })
+        },
+
+        async commercialCanaryState(actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            return readCommercialCanaryState(pgPool, actor)
+        },
+
+        async commercialCanaryCandidates(query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const result = await queryCommercialCanaryCandidates(pgPool, { actor, query: query || {} })
+            return {
+                candidates: result.candidates,
+                total: result.total,
+                limit: result.filters.limit,
+                offset: result.filters.offset,
+                sourceFreshness: result.sourceFreshness,
+                writesEnabled: false,
+                messagesEnabled: false,
+            }
+        },
+
+        async commercialCanaryPreview(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialCanaryReady(pgPool)
+            const selection = await resolveCommercialCanarySelection(pgPool, actor, payload || {})
+            return {
+                preview: {
+                    ...selection.summary,
+                    sourceFreshness: selection.sourceFreshness,
+                    impact: {
+                        ...selection.summary.impact,
+                        identitiesSelected: selection.summary.totalCohort,
+                        identitiesAdded: selection.summary.canApply ? selection.summary.totalCohort : 0,
+                        writesRemainDisabled: true,
+                    },
+                },
+                candidates: selection.candidates,
+                policyVersion: (await readCommercialPolicy(pgPool)).policyVersion || '',
+                confirmRequired: true,
+                messagesEnabled: false,
+            }
+        },
+
+        async validateCommercialCanaryIdentity(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialCanaryReady(pgPool)
+            const mutation = assertCanaryMutationPayload(payload || {})
+            const validationType = String(payload?.validationType || '').trim().toLowerCase()
+            if (!COMMERCIAL_CANARY_VALIDATION_TYPES.includes(validationType)) throw commercialCanaryError('INVALID_COMMERCIAL_CANARY_VALIDATION', 400)
+            const decoded = decodeCommercialCanaryCandidateRef(payload?.candidateRef)
+            const selected = await queryCommercialCanaryCandidates(pgPool, { actor, query: { unit: payload?.unit, limit: 1 } }, [decoded.identityId])
+            const candidate = selected.candidates[0]
+            if (!candidate || !candidate.inActorScope) throw commercialCanaryError('COMMERCIAL_CANARY_IDENTITY_SCOPE_FORBIDDEN', 403)
+            if (validationType === 'synthetic' && !candidate.sourceTypes.some((source) => String(source).toLowerCase().includes('synthetic'))) {
+                throw commercialCanaryError('COMMERCIAL_CANARY_SYNTHETIC_VALIDATION_REQUIRED', 400)
+            }
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                await acquireCommercialContactIdentityLock(client, decoded.identityId)
+                const policy = await client.query(`select ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version
+                    from crm_atendimento.commercial_policy_config where singleton=true for update`)
+                const policyVersion = String(policy.rows[0]?.policy_version || '').trim().toLowerCase()
+                if (policyVersion !== mutation.expectedPolicyVersion) throw commercialCanaryError('COMMERCIAL_CANARY_POLICY_CONFLICT')
+                const duplicate = await client.query(`select event_type, payload from crm_atendimento.commercial_canary_events where idempotency_key=$1 limit 1`, [mutation.idempotencyKey])
+                if (duplicate.rows[0]) {
+                    if (duplicate.rows[0].payload?.request_hash !== hashIdentitySet([decoded.identityId, validationType, mutation.justification])) throw commercialCanaryError('COMMERCIAL_CANARY_IDEMPOTENCY_CONFLICT')
+                    return { replayed: true, validationStatus: validationType, identityRef: hashIdentitySet([decoded.identityId]) }
+                }
+                const current = await client.query(`select revision from crm_atendimento.commercial_canary_identity_validations where identity_id=$1::uuid for update`, [decoded.identityId])
+                const previousRevision = Number(current.rows[0]?.revision || 0)
+                const expectedRevision = payload?.expectedValidationRevision === undefined ? previousRevision : Number(payload.expectedValidationRevision)
+                if (!Number.isInteger(expectedRevision) || expectedRevision !== previousRevision) throw commercialCanaryError('COMMERCIAL_CANARY_VALIDATION_CONFLICT')
+                const nextRevision = previousRevision + 1
+                await client.query(`insert into crm_atendimento.commercial_canary_identity_validations(identity_id,validation_type,reason,approved_by,expires_at,revision,updated_at)
+                    values($1::uuid,$2,$3,$4,$5,$6,now())
+                    on conflict(identity_id) do update set validation_type=excluded.validation_type, reason=excluded.reason,
+                        approved_by=excluded.approved_by, expires_at=excluded.expires_at, revision=excluded.revision, updated_at=now()`,
+                [decoded.identityId, validationType, mutation.justification, commercialCanaryActorLabel(actor), payload?.expiresAt || null, nextRevision])
+                await client.query(`insert into crm_atendimento.commercial_canary_validation_events(identity_id,validation_type,reason,actor,revision)
+                    values($1::uuid,$2,$3,$4,$5)`, [decoded.identityId, validationType, mutation.justification, commercialCanaryActorLabel(actor), nextRevision])
+                const requestHash = hashIdentitySet([decoded.identityId, validationType, mutation.justification])
+                await client.query(`insert into crm_atendimento.commercial_canary_events(event_type,idempotency_key,policy_version,actor,justification,payload)
+                    values('identity_validated',$1,$2,$3,$4,$5::jsonb)`, [
+                    mutation.idempotencyKey,
+                    policyVersion,
+                    commercialCanaryActorLabel(actor),
+                    mutation.justification,
+                    JSON.stringify({ request_hash: requestHash, validation_type: validationType, revision: nextRevision }),
+                ])
+                await audit(client, 'commercial.canary.identity.validated', actor, null, {
+                    identityRef: hashIdentitySet([decoded.identityId]),
+                    validationType,
+                    revision: nextRevision,
+                })
+                return { replayed: false, validationStatus: validationType, validationRevision: nextRevision, identityRef: hashIdentitySet([decoded.identityId]) }
+            })
+        },
+
+        async saveCommercialCanary(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialCanaryReady(pgPool)
+            const mutation = assertCanaryMutationPayload(payload || {})
+            const expectedCohortVersion = Number(payload?.expectedCohortVersion)
+            if (!Number.isInteger(expectedCohortVersion) || expectedCohortVersion < 0) throw commercialCanaryError('COMMERCIAL_CANARY_COHORT_VERSION_REQUIRED', 428)
+            const initialSelection = await resolveCommercialCanarySelection(pgPool, actor, payload || {})
+            if (!initialSelection.summary.canApply) throw commercialCanaryError('COMMERCIAL_CANARY_SELECTION_NOT_ELIGIBLE', 422, initialSelection.summary)
+            const selectedIds = initialSelection.candidates.map((candidate) => candidate.identityId)
+            const requestHash = hashIdentitySet([...selectedIds, mutation.justification, String(payload?.unit || '')])
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const duplicate = await client.query(`select event_type, cohort_id::text as cohort_id, payload
+                    from crm_atendimento.commercial_canary_events where idempotency_key=$1 limit 1`, [mutation.idempotencyKey])
+                if (duplicate.rows[0]) {
+                    if (duplicate.rows[0].payload?.request_hash !== requestHash) throw commercialCanaryError('COMMERCIAL_CANARY_IDEMPOTENCY_CONFLICT')
+                    return { replayed: true, cohortId: duplicate.rows[0].cohort_id || null, messagesSent: 0, commercialContactWritesEnabled: false }
+                }
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, ['crm_atendimento:commercial-canary-cohort'])
+                for (const identityId of [...selectedIds].sort()) await acquireCommercialContactIdentityLock(client, identityId)
+                const policy = await client.query(`select ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version
+                    from crm_atendimento.commercial_policy_config where singleton=true for update`)
+                const policyVersion = String(policy.rows[0]?.policy_version || '').trim().toLowerCase()
+                if (policyVersion !== mutation.expectedPolicyVersion) throw commercialCanaryError('COMMERCIAL_CANARY_POLICY_CONFLICT')
+                const active = await client.query(`select id::text as id, version from crm_atendimento.commercial_canary_cohorts where status='active' limit 1 for update`)
+                const current = active.rows[0] || null
+                if (Number(current?.version || 0) !== expectedCohortVersion) throw commercialCanaryError('COMMERCIAL_CANARY_COHORT_CONFLICT')
+                const refreshed = await queryCommercialCanaryCandidates(client, { actor, query: { unit: payload?.unit, limit: COMMERCIAL_CANARY_MAX_IDENTITIES } }, selectedIds)
+                if (!refreshed.candidates.length || !summarizeCommercialCanaryCandidates(refreshed.candidates).canApply) {
+                    throw commercialCanaryError('COMMERCIAL_CANARY_SELECTION_CHANGED', 409, summarizeCommercialCanaryCandidates(refreshed.candidates))
+                }
+                const nextVersionResult = await client.query(`select coalesce(max(version),0)::bigint as version from crm_atendimento.commercial_canary_cohorts`)
+                const nextVersion = Number(nextVersionResult.rows[0]?.version || 0) + 1
+                const cohortHash = hashIdentitySet(selectedIds)
+                const insertCohort = await client.query(`insert into crm_atendimento.commercial_canary_cohorts(
+                    version,status,policy_version,cohort_hash,justification,member_count,created_by)
+                    values($1,'active',$2,$3,$4,$5,$6)
+                    returning id::text as id, version, status, policy_version, cohort_hash, member_count, created_at`, [
+                    nextVersion,
+                    policyVersion,
+                    cohortHash,
+                    mutation.justification,
+                    refreshed.candidates.length,
+                    commercialCanaryActorLabel(actor),
+                ])
+                const cohort = insertCohort.rows[0]
+                for (const candidate of refreshed.candidates) {
+                    const unitSlug = normalizeCanaryUnit(payload?.unit) || normalizeCanaryUnit(candidate.unitSlugs[0])
+                    if (!unitSlug || !candidate.inActorScope) throw commercialCanaryError('COMMERCIAL_CANARY_IDENTITY_SCOPE_FORBIDDEN', 403)
+                    await client.query(`insert into crm_atendimento.commercial_canary_cohort_members(
+                        cohort_id,identity_id,unit_slug,inclusion_reason,validation_type,source_freshness,identity_quality,eligibility_status,snapshot)
+                        values($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9::jsonb)`, [
+                        cohort.id,
+                        candidate.identityId,
+                        unitSlug,
+                        candidate.inclusionReason,
+                        candidate.validationStatus,
+                        candidate.freshnessStatus,
+                        candidate.identityQuality,
+                        candidateEligibility(candidate).status,
+                        JSON.stringify(canaryMemberSnapshot(candidate)),
+                    ])
+                }
+                if (current?.id) await client.query(`update crm_atendimento.commercial_canary_cohorts set status='removed', removed_at=now(), updated_at=now() where id=$1::uuid`, [current.id])
+                await client.query(`insert into crm_atendimento.commercial_canary_events(
+                    event_type,idempotency_key,cohort_id,previous_cohort_id,policy_version,actor,justification,payload)
+                    values('cohort_saved',$1,$2::uuid,$3::uuid,$4,$5,$6,$7::jsonb)`, [
+                    mutation.idempotencyKey,
+                    cohort.id,
+                    current?.id || null,
+                    policyVersion,
+                    commercialCanaryActorLabel(actor),
+                    mutation.justification,
+                    JSON.stringify({ request_hash: requestHash, member_count: refreshed.candidates.length, eligible: refreshed.candidates.length, blocked: 0, review: 0, writes_enabled: false, messages_sent: 0 }),
+                ])
+                await audit(client, 'commercial.canary.cohort.saved', actor, null, {
+                    cohortVersion: nextVersion,
+                    cohortHash,
+                    memberCount: refreshed.candidates.length,
+                    writesEnabled: false,
+                    messagesSent: 0,
+                })
+                return {
+                    replayed: false,
+                    cohort: { id: cohort.id, version: Number(cohort.version), status: cohort.status, policyVersion: cohort.policy_version, cohortHash: cohort.cohort_hash, memberCount: Number(cohort.member_count), createdAt: cohort.created_at },
+                    preview: { ...initialSelection.summary, eligible: refreshed.candidates.length, inReview: 0, blocked: 0, canApply: true },
+                    commercialContactWritesEnabled: false,
+                    messagesSent: 0,
+                }
+            })
+        },
+
+        async removeCommercialCanary(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialCanaryReady(pgPool)
+            return executeCommercialCanaryRemoval({ pgPool, actor, payload: payload || {}, emergency: false })
+        },
+
+        async emergencyOffCommercialCanary(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertCommercialCanaryReady(pgPool)
+            return executeCommercialCanaryRemoval({ pgPool, actor, payload: payload || {}, emergency: true })
+        },
+
+        async rollbackCommercialCanary(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            assertCommercialGlobalScope(actor)
+            await assertCommercialCanaryReady(pgPool)
+            const mutation = assertCanaryMutationPayload(payload || {})
+            const expectedCohortVersion = Number(payload?.expectedCohortVersion)
+            const targetVersion = Number(payload?.targetVersion)
+            if (!Number.isInteger(expectedCohortVersion) || expectedCohortVersion < 0 || !Number.isInteger(targetVersion) || targetVersion < 1) throw commercialCanaryError('COMMERCIAL_CANARY_ROLLBACK_VERSION_REQUIRED', 428)
+            const requestHash = hashIdentitySet(['rollback', String(targetVersion), mutation.justification])
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const duplicate = await client.query(`select event_type, cohort_id::text as cohort_id, payload from crm_atendimento.commercial_canary_events where idempotency_key=$1 limit 1`, [mutation.idempotencyKey])
+                if (duplicate.rows[0]) {
+                    if (duplicate.rows[0].payload?.request_hash !== requestHash) throw commercialCanaryError('COMMERCIAL_CANARY_IDEMPOTENCY_CONFLICT')
+                    return { replayed: true, eventType: 'rollback', cohortId: duplicate.rows[0].cohort_id || null, messagesSent: 0 }
+                }
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, ['crm_atendimento:commercial-canary-cohort'])
+                const policy = await client.query(`select ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version from crm_atendimento.commercial_policy_config where singleton=true for update`)
+                const policyVersion = String(policy.rows[0]?.policy_version || '').trim().toLowerCase()
+                if (policyVersion !== mutation.expectedPolicyVersion) throw commercialCanaryError('COMMERCIAL_CANARY_POLICY_CONFLICT')
+                const active = await client.query(`select id::text as id, version from crm_atendimento.commercial_canary_cohorts where status='active' limit 1 for update`)
+                const current = active.rows[0] || null
+                if (Number(current?.version || 0) !== expectedCohortVersion) throw commercialCanaryError('COMMERCIAL_CANARY_COHORT_CONFLICT')
+                const target = await client.query(`select id::text as id, version, member_count, cohort_hash from crm_atendimento.commercial_canary_cohorts where version=$1 and status <> 'active' limit 1 for update`, [targetVersion])
+                const targetRow = target.rows[0]
+                if (!targetRow?.id) throw commercialCanaryError('COMMERCIAL_CANARY_ROLLBACK_TARGET_NOT_FOUND', 404)
+                const targetMembers = await client.query(`select identity_id::text as identity_id
+                    from crm_atendimento.commercial_canary_cohort_members
+                    where cohort_id=$1::uuid order by identity_id`, [targetRow.id])
+                const targetIdentityIds = targetMembers.rows.map((row) => String(row.identity_id || '').trim().toLowerCase()).filter(isValidCommercialCanaryIdentityId)
+                const refreshedTarget = await queryCommercialCanaryCandidates(client, { actor, query: { limit: COMMERCIAL_CANARY_MAX_IDENTITIES } }, targetIdentityIds)
+                const targetSummary = summarizeCommercialCanaryCandidates(refreshedTarget.candidates)
+                if (targetIdentityIds.length !== targetMembers.rows.length || refreshedTarget.candidates.length !== targetIdentityIds.length || !targetSummary.canApply) {
+                    throw commercialCanaryError('COMMERCIAL_CANARY_ROLLBACK_TARGET_NOT_ELIGIBLE', 422, targetSummary)
+                }
+                if (current?.id) await client.query(`update crm_atendimento.commercial_canary_cohorts set status='rolled_back', updated_at=now() where id=$1::uuid`, [current.id])
+                await client.query(`update crm_atendimento.commercial_canary_cohorts set status='active', updated_at=now(), removed_at=null, emergency_off_at=null where id=$1::uuid`, [targetRow.id])
+                await client.query(`insert into crm_atendimento.commercial_canary_events(event_type,idempotency_key,cohort_id,previous_cohort_id,policy_version,actor,justification,payload)
+                    values('rollback',$1,$2::uuid,$3::uuid,$4,$5,$6,$7::jsonb)`, [
+                    mutation.idempotencyKey, targetRow.id, current?.id || null, policyVersion, commercialCanaryActorLabel(actor), mutation.justification,
+                    JSON.stringify({ request_hash: requestHash, target_version: targetVersion, member_count: Number(targetRow.member_count || 0), writes_enabled: false, messages_sent: 0 }),
+                ])
+                await audit(client, 'commercial.canary.rollback', actor, null, {
+                    targetVersion,
+                    previousVersion: Number(current?.version || 0),
+                    cohortHash: targetRow.cohort_hash || '',
+                    writesEnabled: false,
+                    messagesSent: 0,
+                })
+                return { replayed: false, eventType: 'rollback', cohortId: targetRow.id, cohortVersion: targetVersion, commercialContactWritesEnabled: false, messagesSent: 0 }
             })
         },
 

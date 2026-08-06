@@ -154,6 +154,7 @@ function errorPayload(error) {
     const message = String(error?.message || error || 'ERROR')
     const status = Number(error?.statusCode || error?.status || 500)
     const clientError = Number.isInteger(status) && status >= 400 && status < 500
+    const details = error?.details && typeof error.details === 'object' ? error.details : undefined
     return {
         status,
         body: {
@@ -161,7 +162,8 @@ function errorPayload(error) {
         error: clientError ? message : 'INTERNAL_ERROR',
         hint: clientError && message === 'DATABASE_URL_not_configured'
             ? 'Configure DATABASE_URL no crm-api antes de usar o módulo de Acompanhamento de Atendimento.'
-            : undefined,
+        : undefined,
+        ...(clientError && details ? { details } : {}),
         },
     }
 }
@@ -397,6 +399,78 @@ export function createAtendimentoRouter(options = {}) {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
             return json(res, 200, { ok: true, ...(await store.commercialPolicy(req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/canary/state', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.commercialCanaryState(req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/canary/candidates', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.commercialCanaryCandidates(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary/preview', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.commercialCanaryPreview(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary/identities/validate', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.validateCommercialCanaryIdentity(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.saveCommercialCanary(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary/remove', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.removeCommercialCanary(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary/emergency-off', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.emergencyOffCommercialCanary(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary/rollback', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.rollbackCommercialCanary(req.body || {}, req.atendimentoActor)) })
         } catch (error) {
             return errorResponse(res, error)
         }

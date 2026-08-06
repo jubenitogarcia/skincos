@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, CircleDollarSign, RefreshCw, Save, ShieldCheck, UserRoundCheck, UsersRound } from 'lucide-react'
 import { Button } from '@/button'
+import { CommercialCanaryManager } from '@/CommercialCanaryManager'
 import {
   createCommercialAction,
   commercialCadenceManagerStatuses,
@@ -105,10 +106,11 @@ function safeContactEligibility(value: CommercialProfile['contactEligibility'] |
   return value || unavailableContactEligibility
 }
 
-function commercialRolloutAllows(policy: CommercialProfileDetail['policy'], identityId: string) {
-  return policy?.commercialContactWritesEnabled === true
-    && Array.isArray(policy?.commercialContactCanaryIdentityIds)
-    && policy.commercialContactCanaryIdentityIds.includes(identityId)
+function commercialRolloutAllows(_policy: CommercialProfileDetail['policy'], _identityId: string) {
+  // The active selector cohort is resolved server-side. The legacy UUID array
+  // is intentionally never used by the Clientes UI; writes remain disabled
+  // until the separate operational rollout gate is opened.
+  return false
 }
 
 function contactEligibilityLabel(input: CommercialProfile['contactEligibility'] | null | undefined) {
@@ -471,21 +473,6 @@ export function IdentityReviewQueue() {
   </section>
 }
 
-function CanarySelection({ profiles, selectedIds, disabled, onToggle, onClear }: {
-  profiles: CommercialOverview['profiles']
-  selectedIds: string[]
-  disabled: boolean
-  onToggle: (identityId: string) => void
-  onClear: () => void
-}) {
-  const candidates = profiles.filter((profile) => profile.contactEligibility?.contactAllowed === true).slice(0, 24)
-  return <div className="mt-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-    <div className="flex items-start justify-between gap-3"><div><div className="text-xs font-medium text-slate-300">Seleção assistida do canário</div><p className="mt-1 text-xs text-slate-500">Escolha identidades visíveis e aptas para contato. A seleção é auditada; nenhum UUID é digitado e nenhuma mensagem é enviada.</p></div><Button size="sm" variant="ghost" onClick={onClear} disabled={disabled || !selectedIds.length}>Limpar</Button></div>
-    {candidates.length ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{candidates.map((profile) => <label key={profile.identityId} className="flex items-start gap-2 rounded-md border border-slate-800/80 p-2 text-xs text-slate-300 hover:border-sky-400/40"><input type="checkbox" checked={selectedIds.includes(profile.identityId)} disabled={disabled} onChange={() => onToggle(profile.identityId)} className="mt-0.5" aria-label={`Selecionar ${profile.name} para o canário`} /><span className="min-w-0"><span className="block truncate text-slate-100">{profile.name}</span><span className="block text-[11px] text-emerald-300">{contactEligibilityLabel(profile.contactEligibility)}</span></span></label>)}</div> : <p className="mt-3 text-xs text-amber-200">Nenhuma identidade visível está apta agora. Permissão, telefone correlacionado e bloqueios do Harmonia precisam estar verdes antes da seleção.</p>}
-    <div className="mt-3 text-[11px] text-slate-500">{selectedIds.length} identidade(s) selecionada(s) · limite operacional de 100</div>
-  </div>
-}
-
 export function ClientCommercialModule() {
   const [overview, setOverview] = useState<CommercialOverview | null>(null)
   const [detail, setDetail] = useState<CommercialProfileDetail | null>(null)
@@ -506,8 +493,6 @@ export function ClientCommercialModule() {
   const [error, setError] = useState('')
   const [cooldown, setCooldown] = useState(30)
   const [thresholds, setThresholds] = useState('90,180,365')
-  const [commercialContactWritesEnabled, setCommercialContactWritesEnabled] = useState(false)
-  const [selectedCanaryIdentityIds, setSelectedCanaryIdentityIds] = useState<string[]>([])
   const [cadenceProcedure, setCadenceProcedure] = useState('')
   const [cadenceDays, setCadenceDays] = useState('')
   const [cadenceStatus, setCadenceStatus] = useState<CommercialCadenceManagerStatus>('draft')
@@ -517,7 +502,6 @@ export function ClientCommercialModule() {
   const [commercialDataQualityBusy, setCommercialDataQualityBusy] = useState(false)
   const [commercialDataQualityError, setCommercialDataQualityError] = useState('')
   const contactSummary = overview?.dataQuality?.contactEligibility || { eligible: 0, blocked: 0, reviewRequired: 0, controlsReady: false, contactWriteControlsReady: false }
-  const policyWriteControlsReady = overview?.policy.commercialContactWriteControlsReady === true
 
   const loadCommercialDataQuality = useCallback(async () => {
     try {
@@ -565,8 +549,8 @@ export function ClientCommercialModule() {
       setDirection(requestDirection)
       setOverview(commercial); setUnits(references.units); setProfessionals(references.professionals.map((person) => ({ name: person.name }))); setProcedureOptions(references.procedures.map((procedure) => ({ id: procedure.id, name: procedure.name })))
       setCooldown(commercial.policy.activeContactCooldownDays); setThresholds(commercial.policy.returnRiskThresholds.join(','))
-      setCommercialContactWritesEnabled(commercial.policy.commercialContactWritesEnabled === true)
-      setSelectedCanaryIdentityIds(Array.isArray(commercial.policy.commercialContactCanaryIdentityIds) ? commercial.policy.commercialContactCanaryIdentityIds : [])
+      // Rollout membership is now owned by CommercialCanaryManager. Keep the
+      // legacy policy response read-only and never hydrate manual UUID state.
       const selectedId = next?.selectIdentityId || detail?.profile.identityId
       const candidate = commercial.profiles.find((profile) => profile.identityId === selectedId) || commercial.profiles[0]
       if (candidate) await loadDetail(candidate.identityId, commercial.asOf)
@@ -632,26 +616,16 @@ export function ClientCommercialModule() {
     try {
       setBusy(true); setError('')
       const values = thresholds.split(',').map((value) => Number(value.trim())).filter(Boolean)
-      const canaryIdentityIds = [...new Set(selectedCanaryIdentityIds.map((value) => value.trim().toLowerCase()).filter(Boolean))].sort()
-      const persistedCanaryIdentityIds = [...new Set((overview?.policy.commercialContactCanaryIdentityIds || [])
-        .map((value) => value.trim().toLowerCase()).filter(Boolean))].sort()
-      const rolloutChanged = policyWriteControlsReady && (
-        commercialContactWritesEnabled !== (overview?.policy.commercialContactWritesEnabled === true)
-        || canaryIdentityIds.join(',') !== persistedCanaryIdentityIds.join(',')
-      )
       const policy: {
         activeContactCooldownDays: number
         returnRiskThresholds: number[]
         expectedPolicyVersion: string
-        commercialContactWritesEnabled?: boolean
-        commercialContactCanaryIdentityIds?: string[]
       } = {
         activeContactCooldownDays: Number(cooldown),
         returnRiskThresholds: values,
         expectedPolicyVersion: overview?.policy.policyVersion || '',
       }
       if (!overview?.policy.policyVersion) throw new Error('A versão atual da política não está disponível. Recarregue antes de salvar.')
-      if (rolloutChanged) Object.assign(policy, { commercialContactWritesEnabled, commercialContactCanaryIdentityIds: canaryIdentityIds })
       const result = await updateCommercialPolicy(policy)
       if (!result.ok) {
         if (result.error === 'COMMERCIAL_POLICY_CONFLICT') {
@@ -680,12 +654,6 @@ export function ClientCommercialModule() {
     } catch (cause) { setCadenceNotice(cause instanceof Error ? cause.message : 'Não foi possível salvar a cadência.') } finally { setBusy(false) }
   }
 
-  const toggleCanaryIdentity = (identityId: string) => {
-    setSelectedCanaryIdentityIds((current) => current.includes(identityId)
-      ? current.filter((value) => value !== identityId)
-      : [...current, identityId])
-  }
-
   const segmentOptions = useMemo(() => [{ key: '', label: 'Todos os segmentos' }, { key: 'return_at_risk', label: 'Retorno em risco' }, { key: 'high_value_inactive', label: 'Alto valor inativo' }, { key: 'frequent', label: 'Assíduos' }, { key: 'balanced_vip', label: 'VIP equilibrado' }, { key: 'first_return', label: 'Primeiro retorno' }, { key: 'reactivation_potential', label: 'Potencial de reativação' }], [])
   const contactScopeSuffix = contactSummary.scope === 'page' ? ' na página atual' : ''
 
@@ -696,8 +664,8 @@ export function ClientCommercialModule() {
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h1 className="text-2xl font-bold tracking-tight">Clientes</h1><p className="mt-1 text-sm text-slate-400">Prioridades comerciais baseadas em presença registrada, vendas e procedimentos confirmados.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className={`mr-2 h-4 w-4 ${busy ? 'animate-spin' : ''}`} />Atualizar</Button><Button variant="outline" onClick={() => selectWorkspaceView('governance')}><ShieldCheck className="mr-2 h-4 w-4" />Governança</Button></div></header>
     <ClientesWorkspaceNav active={workspaceView} onChange={selectWorkspaceView} />
     {error ? <div className="rounded-xl border border-rose-300/30 bg-rose-500/10 p-4 text-sm text-rose-100">{error}</div> : null}
-    {workspaceView === 'overview' && overview ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100"><div className="flex gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><div><b>Uso comercial seguro:</b> a recência considera apenas o último atendimento realizado. Compras antecipadas não representam procedimento realizado. {overview.dataQuality.futureAttendancesExcluded ? `${overview.dataQuality.futureAttendancesExcluded} atendimento(s) futuro(s) foram excluídos desta métrica. ` : ''}{overview.dataQuality.activeAttendanceClientsWithoutIdentity ? `${overview.dataQuality.activeAttendanceClientsWithoutIdentity} cliente(s) de Atendimento ainda não têm identidade comercial. ` : ''}{contactSummary.controlsReady ? `${contactSummary.eligible} apto(s), ${contactSummary.blocked} bloqueado(s) e ${contactSummary.reviewRequired} em revisão para WhatsApp${contactScopeSuffix}. ` : 'Os controles de contato ainda não foram migrados; nenhum contato pode ser marcado. '}{!contactSummary.contactWriteControlsReady ? 'A cadência de contato aguarda a migration explícita; filas novas, concessões e registros de contato seguem bloqueados. ' : overview.policy.commercialContactWritesEnabled ? `Canário de contato ativo para ${overview.policy.commercialContactCanaryIdentityIds?.length || 0} identidade(s).` : 'Registro de contato e novas permissões concedidas seguem bloqueados até a abertura explícita de um canário.'}</div></div></div> : null}
-    {workspaceView === 'governance' ? <section className="grid gap-4 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 xl:grid-cols-2"><div><h2 className="font-semibold text-white">Política de reativação</h2><p className="mt-1 text-sm text-slate-500">Define o intervalo entre contatos assistidos e as faixas de ausência, sem alterar o histórico clínico.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs text-slate-400">Intervalo mínimo de contato (dias)<input type="number" value={cooldown} onChange={(event) => setCooldown(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label><label className="text-xs text-slate-400">Faixas de ausência<input value={thresholds} onChange={(event) => setThresholds(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label></div>{!policyWriteControlsReady ? <p className="mt-4 text-xs text-amber-200">A migration de rollout ainda não está presente neste ambiente. As faixas podem ser salvas, mas o canário permanece indisponível.</p> : null}<label className="mt-4 flex items-start gap-2 text-xs text-amber-100"><input type="checkbox" checked={commercialContactWritesEnabled} disabled={!policyWriteControlsReady} onChange={(event) => setCommercialContactWritesEnabled(event.target.checked)} className="mt-0.5" />Abrir somente o canário de registros de contato. Isto não envia mensagens.</label><CanarySelection profiles={overview?.profiles || []} selectedIds={selectedCanaryIdentityIds} disabled={!policyWriteControlsReady} onToggle={toggleCanaryIdentity} onClear={() => setSelectedCanaryIdentityIds([])} /><Button size="sm" onClick={() => void savePolicy()} disabled={busy} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar política</Button></div><div className="border-t border-slate-800 pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"><h2 className="font-semibold text-white">Cadência clínica</h2><p className="mt-1 text-sm text-slate-500">Gestores podem manter rascunhos ou desativar regras não aprovadas. A aprovação clínica exige um fluxo verificado e não está disponível neste módulo.</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><select value={cadenceProcedure} onChange={(event) => setCadenceProcedure(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"><option value="">Procedimento</option>{procedureOptions.map((procedure) => <option key={procedure.id} value={procedure.id}>{procedure.name}</option>)}</select><input type="number" min="1" placeholder="Dias" value={cadenceDays} onChange={(event) => setCadenceDays(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><select value={cadenceStatus} onChange={(event) => setCadenceStatus(event.target.value as CommercialCadenceManagerStatus)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white">{commercialCadenceManagerStatuses.map((status) => <option key={status} value={status}>{commercialCadenceStatusLabels[status]}</option>)}</select></div><Button size="sm" variant="outline" onClick={() => void saveCadence()} disabled={busy || !cadenceProcedure || !cadenceDays} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar cadência</Button>{cadenceNotice ? <div className="mt-2 text-xs text-slate-400">{cadenceNotice}</div> : null}</div></section> : null}
+    {workspaceView === 'overview' && overview ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100"><div className="flex gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><div><b>Uso comercial seguro:</b> a recência considera apenas o último atendimento realizado. Compras antecipadas não representam procedimento realizado. {overview.dataQuality.futureAttendancesExcluded ? `${overview.dataQuality.futureAttendancesExcluded} atendimento(s) futuro(s) foram excluídos desta métrica. ` : ''}{overview.dataQuality.activeAttendanceClientsWithoutIdentity ? `${overview.dataQuality.activeAttendanceClientsWithoutIdentity} cliente(s) de Atendimento ainda não têm identidade comercial. ` : ''}{contactSummary.controlsReady ? `${contactSummary.eligible} apto(s), ${contactSummary.blocked} bloqueado(s) e ${contactSummary.reviewRequired} em revisão para WhatsApp${contactScopeSuffix}. ` : 'Os controles de contato ainda não foram migrados; nenhum contato pode ser marcado. '}{!contactSummary.contactWriteControlsReady ? 'A cadência de contato aguarda a migration explícita; filas novas, concessões e registros de contato seguem bloqueados. ' : 'O rollout comercial é gerenciado pelo seletor auditável e permanece desligado até confirmação explícita.'}</div></div></div> : null}
+    {workspaceView === 'governance' ? <section className="space-y-4"><div className="grid gap-4 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 xl:grid-cols-2"><div><h2 className="font-semibold text-white">Política comercial</h2><p className="mt-1 text-sm text-slate-500">Define apenas intervalo e faixas de reativação. O rollout e o canário são gerenciados no seletor auditável abaixo.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs text-slate-400">Intervalo mínimo de contato (dias)<input type="number" value={cooldown} onChange={(event) => setCooldown(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label><label className="text-xs text-slate-400">Faixas de ausência<input value={thresholds} onChange={(event) => setThresholds(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label></div><p className="mt-4 text-xs text-amber-200">Escrita comercial permanece desativada por padrão. Salvar esta política não cria coorte, contato ou mensagem.</p><Button size="sm" onClick={() => void savePolicy()} disabled={busy} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar política comercial</Button></div><div className="border-t border-slate-800 pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"><h2 className="font-semibold text-white">Cadência clínica</h2><p className="mt-1 text-sm text-slate-500">Este painel só mantém rascunhos ou desativações. Gestores comerciais não aprovam regras clínicas; a aprovação exige o fluxo clínico autorizado.</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><select value={cadenceProcedure} onChange={(event) => setCadenceProcedure(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"><option value="">Procedimento</option>{procedureOptions.map((procedure) => <option key={procedure.id} value={procedure.id}>{procedure.name}</option>)}</select><input type="number" min="1" placeholder="Dias" value={cadenceDays} onChange={(event) => setCadenceDays(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><select value={cadenceStatus} onChange={(event) => setCadenceStatus(event.target.value as CommercialCadenceManagerStatus)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white">{commercialCadenceManagerStatuses.map((status) => <option key={status} value={status}>{commercialCadenceStatusLabels[status]}</option>)}</select></div><Button size="sm" variant="outline" onClick={() => void saveCadence()} disabled={busy || !cadenceProcedure || !cadenceDays} className="mt-3">{<Save className="mr-2 h-4 w-4" />}Salvar rascunho</Button>{cadenceNotice ? <div className="mt-2 text-xs text-slate-400">{cadenceNotice}</div> : null}</div></div><CommercialCanaryManager unit={unit === 'all' ? '' : unit} units={units} onChanged={async () => { await load() }} /></section> : null}
     {workspaceView === 'overview' ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Metric label="Retorno em risco" value={overview?.summary.returnAtRisk ?? '—'} detail="Sem presença registrada na faixa configurada" icon={CalendarClock} /><Metric label="Alto valor inativo" value={overview?.summary.highValueInactive ?? '—'} detail="Valor e ausência combinados" icon={CircleDollarSign} /><Metric label="Potencial de reativação" value={overview?.summary.reactivationPotential ?? '—'} detail="Prioridade para a equipe" icon={UserRoundCheck} /><Metric label="Aptos para WhatsApp" value={overview ? contactSummary.eligible : '—'} detail="Permissão explícita e bloqueios verificados" icon={UsersRound} /></div> : null}
     {workspaceView === 'quality' && commercialDataQualityError ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100">{commercialDataQualityError}</div> : null}
     {workspaceView === 'quality' && commercialDataQuality ? <CommercialDataQualityPanel queue={commercialDataQuality} loading={commercialDataQualityBusy} onRefresh={loadCommercialDataQuality} /> : null}

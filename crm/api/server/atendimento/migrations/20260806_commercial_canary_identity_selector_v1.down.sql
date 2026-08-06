@@ -1,0 +1,2 @@
+-- Rollback is intentionally non-destructive. Historical cohort and validation
+-- evidence remains available; the registry records the rollback instead.
