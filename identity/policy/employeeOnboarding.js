@@ -83,6 +83,41 @@ export function suggestEmployeeUsername(fullName, corporateEmail = '') {
   return candidate || '';
 }
 
+// The onboarding saga stores only this digest. It binds retries to the
+// employment facts and operational payload without putting personal contact
+// data in an idempotency ledger.
+export function buildEmployeeOnboardingFingerprintPayload({
+  input = {},
+  requestedUsername = '',
+  personalEmailHash = '',
+  mobilePhoneHash = '',
+  team = null,
+} = {}) {
+  const normalizedTeam = team === null ? null : {
+    professionalId: String(team?.professionalId || '').trim(),
+    status: String(team?.status || '').trim(),
+    role: String(team?.role || '').trim(),
+    shift: String(team?.shift || '').trim(),
+    nickname: String(team?.nickname || '').trim(),
+    instagram: String(team?.instagram || '').trim(),
+    color: String(team?.color || '').trim(),
+    units: normalizeAllowedUnits(team?.units).slice().sort(),
+  };
+  return {
+    version: 1,
+    fullName: String(input?.fullName || '').trim().replace(/\s+/g, ' '),
+    corporateEmail: normalizeCorporateEmail(input?.corporateEmail),
+    personalEmailHash: String(personalEmailHash || '').trim().toLowerCase(),
+    mobilePhoneHash: String(mobilePhoneHash || '').trim().toLowerCase(),
+    profile: String(input?.profile || '').trim().toUpperCase(),
+    department: String(input?.department || '').trim().replace(/\s+/g, ' '),
+    units: normalizeAllowedUnits(input?.units).slice().sort(),
+    accountStatus: String(input?.accountStatus || '').trim().toUpperCase(),
+    requestedUsername: normalizeEmployeeUsername(requestedUsername),
+    team: normalizedTeam,
+  };
+}
+
 export function isAllowedCorporateEmail(fullName, corporateEmail) {
   const email = normalizeCorporateEmail(corporateEmail);
   const generated = buildCorporateEmail(fullName);

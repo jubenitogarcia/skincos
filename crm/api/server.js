@@ -1510,6 +1510,18 @@ if (DEV_AUTH_ENABLED) {
         }
     }
 
+    const localTeamRequestFingerprint = (input) => createHash('sha256').update(JSON.stringify({
+        version: 1,
+        fullName: input.fullName,
+        corporateEmail: input.corporateEmail,
+        personalEmail: input.personalEmail,
+        mobilePhone: input.mobilePhone,
+        profile: input.profile,
+        department: input.department,
+        units: [...input.units].sort(),
+        schedule: input.schedule,
+    })).digest('hex')
+
     const localAudit = (store, session, action, entityId, after, before = null, idempotencyKey = null) => {
         const audit = Array.isArray(store.audit) ? store.audit : []
         audit.unshift({
@@ -1599,6 +1611,16 @@ if (DEV_AUTH_ENABLED) {
         const hierarchyError = localTeamHierarchyError(session, input.profile, input.units)
         if (hierarchyError) return res.status(403).json({ success: false, error: 'Sem permissão para cadastrar este cargo ou unidade', code: hierarchyError })
 
+        const requestIdempotencyKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim().slice(0, 180)
+        const requestFingerprint = localTeamRequestFingerprint(input)
+        if (requestIdempotencyKey) {
+            const replay = store.team.find((member) => member.requestIdempotencyKey === requestIdempotencyKey)
+            if (replay) {
+                if (replay.requestFingerprint !== requestFingerprint) return res.status(409).json({ success: false, error: 'A chave de idempotência já foi usada para outro cadastro', code: 'ONBOARDING_IDEMPOTENCY_CONFLICT' })
+                return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(replay), replayed: true })
+            }
+        }
+
         const generatedCollision = store.team.some((member) => String(member.corporateEmail || '').toLowerCase() === input.generatedCorporateEmail.toLowerCase()) ||
             store.users.some((user) => String(user.email || '').toLowerCase() === input.generatedCorporateEmail.toLowerCase()) ||
             store.invites.some((invite) => String(invite.corporateEmail || invite.inviteeEmail || '').toLowerCase() === input.generatedCorporateEmail.toLowerCase() && !invite.revoked)
@@ -1637,6 +1659,8 @@ if (DEV_AUTH_ENABLED) {
             createdAt: at,
             updatedAt: at,
             createdBy: session.user.username || session.user.email || 'gestor-local',
+            requestIdempotencyKey: requestIdempotencyKey || null,
+            requestFingerprint,
         })
         store.team.unshift(member)
         const initialScheduleOperationKey = localScheduleOperationKey(`local-escala-sync-${id}-${randomUUID()}`)
@@ -1663,7 +1687,7 @@ if (DEV_AUTH_ENABLED) {
             createdBy: session.user.username || session.user.email || 'gestor-local',
             createdAt: at,
         })
-        localAudit(store, session, 'EMPLOYEE_TEAM_CREATED', id, { profile: input.profile, units: input.units, inviteIssued: true, localPreview: true })
+        localAudit(store, session, 'EMPLOYEE_TEAM_CREATED', id, { profile: input.profile, units: input.units, inviteIssued: true, localPreview: true }, null, requestIdempotencyKey)
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_CREATED', 'SUCCESS', 1, input.units.length)
         await saveLocalCrmStore(store)
         return res.status(201).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })

@@ -5,7 +5,7 @@ import { resolveCrmTables } from '../d1Store.js';
 import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
 import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
-import { canCreateEmployee, displayJobTitle, publicOnboarding, resolveEmployeeProfile, suggestEmployeeUsername, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
+import { buildEmployeeOnboardingFingerprintPayload, canCreateEmployee, displayJobTitle, publicOnboarding, resolveEmployeeProfile, suggestEmployeeUsername, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
 import { syncIdentityWorkforceOnboarding, syncIdentityWorkforceStatus } from '../../../shared/identity-runtime/workforce-onboarding.js';
 import { isValidAccountTransition, normalizeAccountState, shouldIssueInvite } from '../../../shared/identity-runtime/onboarding-state.js';
 import { recordTeamTelemetry } from '../services/teamTelemetry.js';
@@ -538,6 +538,7 @@ export async function handleAdminRoutes({
   const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
   const invitesHasInviteeEmail = await tableHasColumn(env, invitesTable, 'invitee_email');
   const onboardingHasUsername = await tableHasColumn(env, 'crm_employee_onboarding', 'requested_username');
+  const onboardingHasRequestFingerprint = await tableHasColumn(env, 'crm_employee_onboarding', 'request_fingerprint');
   const invitesHasUsername = await tableHasColumn(env, invitesTable, 'requested_username');
   const onboardingHasSaga = await tableHasColumn(env, 'crm_employee_onboarding', 'provisioning_state') && await tableHasColumn(env, 'crm_employee_onboarding', 'invite_token_encrypted');
   const teamTablesReady = await tableExists(env, 'crm_employee_team')
@@ -545,7 +546,7 @@ export async function handleAdminRoutes({
     && await tableExists(env, 'crm_team_operations')
     && await tableExists(env, 'crm_team_telemetry');
 
-  if (isTeamRoute && (!onboardingHasUsername || !invitesHasUsername || !onboardingHasSaga || !teamTablesReady)) {
+  if (isTeamRoute && (!onboardingHasUsername || !onboardingHasRequestFingerprint || !invitesHasUsername || !onboardingHasSaga || !teamTablesReady)) {
     return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
   }
 
@@ -576,9 +577,23 @@ export async function handleAdminRoutes({
         return withCORS(JSON.stringify({ success: false, error: 'Migração de usuário da equipe pendente', code: 'TEAM_USERNAME_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
       }
 
+      const personalEmailHash = await sha256Hex(input.personalEmail);
+      const mobilePhoneHash = await sha256Hex(input.mobilePhone);
+      const requestFingerprint = onboardingHasRequestFingerprint
+        ? await sha256Hex(JSON.stringify(buildEmployeeOnboardingFingerprintPayload({
+          input,
+          requestedUsername,
+          personalEmailHash,
+          mobilePhoneHash,
+          team: url.pathname === '/admin/team' ? teamData : null,
+        })))
+        : '';
       const idempotency = String(request.headers.get('idempotency-key') || body.idempotencyKey || '').trim().slice(0, 180);
       if (idempotency) {
         const existing = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE idempotency_key=? LIMIT 1').bind(idempotency).first();
+        if (existing && url.pathname === '/admin/team' && (!existing.request_fingerprint || existing.request_fingerprint !== requestFingerprint)) {
+          throw new Error(existing.request_fingerprint ? 'ONBOARDING_IDEMPOTENCY_CONFLICT' : 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+        }
         if (existing?.provisioning_state === 'COMPLETED') return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
       }
       const existingUser = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(input.corporateEmail).first();
@@ -606,6 +621,10 @@ export async function handleAdminRoutes({
       const at = new Date().toISOString();
       const requestId = String(request.headers.get('x-request-id') || `identity-onboarding-${id}`).slice(0, 180);
       const existingOnboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
+      if (existingOnboarding && url.pathname === '/admin/team') {
+        if (!existingOnboarding.request_fingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+        if (existingOnboarding.request_fingerprint !== requestFingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_CONFLICT');
+      }
       if (existingOnboarding?.provisioning_state === 'COMPLETED') {
         return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
       }
@@ -621,8 +640,8 @@ export async function handleAdminRoutes({
             'compensation_state', 'correlation_id',
           ];
           const values = [
-            id, input.fullName, input.corporateEmail, encryptedPersonal, await sha256Hex(input.personalEmail),
-            encryptedPhone, await sha256Hex(input.mobilePhone), input.profile, displayJobTitle(input.profile),
+            id, input.fullName, input.corporateEmail, encryptedPersonal, personalEmailHash,
+            encryptedPhone, mobilePhoneHash, input.profile, displayJobTitle(input.profile),
             input.department, JSON.stringify(input.units), input.accountStatus, null, null, idempotency || null,
             String(auth?.user?.username || ''), at, at, 'PROVISIONING', null, null, requestId,
           ];
@@ -630,10 +649,17 @@ export async function handleAdminRoutes({
             columns.push('requested_username');
             values.push(requestedUsername);
           }
+          if (onboardingHasRequestFingerprint) {
+            columns.push('request_fingerprint');
+            values.push(requestFingerprint);
+          }
           await env.DB.prepare(`INSERT INTO crm_employee_onboarding (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).bind(...values).run();
         } catch (insertError) {
           const raced = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
           if (!raced) throw insertError;
+          if (url.pathname === '/admin/team' && (!raced.request_fingerprint || raced.request_fingerprint !== requestFingerprint)) {
+            throw new Error(raced.request_fingerprint ? 'ONBOARDING_IDEMPOTENCY_CONFLICT' : 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+          }
         }
       }
 
@@ -738,7 +764,9 @@ export async function handleAdminRoutes({
       return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created), team: url.pathname === '/admin/team' ? { ...normalizeTeamData(teamData, input.units), scheduleSync: publicScheduleSync(scheduleSync?.scheduleSync || { state: hasScheduleIntent(teamData) ? 'PENDING' : 'NOT_CONFIGURED' }, '') } : undefined }), { status: existingOnboarding ? 200 : 201 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_FAILED');
-      const status = message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' || message === 'AUTH_EMAIL_NOT_CONFIGURED' || /^WORKFORCE_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
+      const status = ['ONBOARDING_IDEMPOTENCY_CONFLICT', 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED'].includes(message)
+        ? 409
+        : message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' || message === 'AUTH_EMAIL_NOT_CONFIGURED' || /^WORKFORCE_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Configuração segura de cadastro pendente' : 'Não foi possível concluir o cadastro', code: message }), { status }, appOrigin);
     }
   }

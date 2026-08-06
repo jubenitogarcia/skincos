@@ -33,6 +33,17 @@ test('unified team identity migration is additive and creates explicit link ledg
   assert.doesNotMatch(atendimento, /\bDROP\b/i);
 });
 
+test('onboarding retries require a payload fingerprint after the unified identity migration', async () => {
+  const migration = await readFile(new URL('../migrations/0025_onboarding_idempotency_fingerprint.sql', import.meta.url), 'utf8');
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  assert.match(migration, /request_fingerprint/i);
+  assert.match(migration, /CREATE INDEX IF NOT EXISTS/i);
+  assert.match(admin, /buildEmployeeOnboardingFingerprintPayload/);
+  assert.match(admin, /ONBOARDING_IDEMPOTENCY_CONFLICT/);
+  assert.match(admin, /ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED/);
+  assert.doesNotMatch(migration, /\bDROP\b/i);
+});
+
 test('invite activation has an audited retry boundary and does not mint a second token', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   assert.ok(admin.includes("const activationMatch = url.pathname.match(/^\\/admin\\/onboarding\\/([^/]+)\\/activate$/);"));
