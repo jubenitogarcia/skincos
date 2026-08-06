@@ -68,7 +68,11 @@ systemd-analyze verify "$rendered_service" "$rendered_timer"
 
 if [[ "$APPLY" == "1" ]]; then
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  sudo -n install -d -m 0750 "$BACKUP_ROOT"
+  # The unit runs as skincos and systemd refuses to start a sandbox when a
+  # ReadWritePaths entry is absent.  Provision both writable surfaces here so
+  # a fresh host cannot fail with 226/NAMESPACE before the runner executes.
+  sudo -n install -d -o root -g skincos -m 0750 "$BACKUP_ROOT"
+  sudo -n install -d -o skincos -g skincos -m 0750 "$LOG_ROOT/crm-clientes-source-refresh"
   for unit in crm-clientes-source-refresh.service crm-clientes-source-refresh.timer; do
     if sudo -n test -f "$UNIT_DEST/$unit"; then
       sudo -n cp -p "$UNIT_DEST/$unit" "$BACKUP_ROOT/$unit.$stamp"
