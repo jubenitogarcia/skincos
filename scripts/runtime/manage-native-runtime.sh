@@ -8,6 +8,7 @@ units=(
   messaging-whatsapp.service
   crm.service
   crm-atendimento-staging.service
+  crm-atendimento-production.service
   booking.service
   cloudflare-orb.service
   cloudflare-runtime.service

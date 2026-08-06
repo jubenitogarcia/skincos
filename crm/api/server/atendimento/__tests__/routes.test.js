@@ -83,6 +83,40 @@ test('keeps Clientes routes exclusive to GESTOR, matching the CRM module policy'
     assert.equal(__testables.isCommercialManager({ role: 'INJETOR' }), false)
 })
 
+test('exposes the production read-only runtime flag only when explicitly enabled', () => {
+    const before = process.env.CRM_ATENDIMENTO_READ_ONLY
+    try {
+        delete process.env.CRM_ATENDIMENTO_READ_ONLY
+        assert.equal(__testables.atendimentoReadOnlyRuntime(), false)
+        process.env.CRM_ATENDIMENTO_READ_ONLY = 'true'
+        assert.equal(__testables.atendimentoReadOnlyRuntime(), true)
+        process.env.CRM_ATENDIMENTO_READ_ONLY = 'TRUE'
+        assert.equal(__testables.atendimentoReadOnlyRuntime(), true)
+        process.env.CRM_ATENDIMENTO_READ_ONLY = '1'
+        assert.equal(__testables.atendimentoReadOnlyRuntime(), false)
+    } finally {
+        if (before === undefined) delete process.env.CRM_ATENDIMENTO_READ_ONLY
+        else process.env.CRM_ATENDIMENTO_READ_ONLY = before
+    }
+})
+
+test('limits the isolated production surface to commercial Clientes routes when enabled', () => {
+    const before = process.env.CRM_ATENDIMENTO_CLIENTES_ONLY
+    try {
+        delete process.env.CRM_ATENDIMENTO_CLIENTES_ONLY
+        assert.equal(__testables.atendimentoClientesOnlyRuntime(), false)
+        process.env.CRM_ATENDIMENTO_CLIENTES_ONLY = 'true'
+        assert.equal(__testables.atendimentoClientesOnlyRuntime(), true)
+        assert.equal(__testables.isClientesCommercialPath('/commercial/overview'), true)
+        assert.equal(__testables.isClientesCommercialPath('/commercial/review'), true)
+        assert.equal(__testables.isClientesCommercialPath('/attendances'), false)
+        assert.equal(__testables.isClientesCommercialPath('/offers'), false)
+    } finally {
+        if (before === undefined) delete process.env.CRM_ATENDIMENTO_CLIENTES_ONLY
+        else process.env.CRM_ATENDIMENTO_CLIENTES_ONLY = before
+    }
+})
+
 test('blocks a commercial clinical-approval request before the cadence store write', async () => {
     let calls = 0
     const routes = captureAtendimentoRoutes({

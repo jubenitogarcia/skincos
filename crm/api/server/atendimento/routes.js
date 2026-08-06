@@ -137,6 +137,19 @@ function isLocalRequest(req) {
     return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
 }
 
+function atendimentoReadOnlyRuntime() {
+    return String(process.env.CRM_ATENDIMENTO_READ_ONLY || '').trim().toLowerCase() === 'true'
+}
+
+function atendimentoClientesOnlyRuntime() {
+    return String(process.env.CRM_ATENDIMENTO_CLIENTES_ONLY || '').trim().toLowerCase() === 'true'
+}
+
+function isClientesCommercialPath(requestPath) {
+    const path = String(requestPath || '')
+    return path === '/commercial' || path.startsWith('/commercial/')
+}
+
 function errorPayload(error) {
     const message = String(error?.message || error || 'ERROR')
     const status = Number(error?.statusCode || error?.status || 500)
@@ -206,6 +219,7 @@ export function createAtendimentoRouter(options = {}) {
             return json(res, moduleControl.ready ? 200 : 503, {
                 ok: moduleControl.ready,
                 ...health,
+                readOnlyRuntime: atendimentoReadOnlyRuntime(),
                 moduleControl,
             })
         } catch (error) {
@@ -235,6 +249,16 @@ export function createAtendimentoRouter(options = {}) {
             if (!actor) actor = devSessionActor(req, getDevSession)
             if (!actor) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
             if (!canAccessAtendimento(actor, req.path, req.method)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            if (atendimentoClientesOnlyRuntime() && !isClientesCommercialPath(req.path)) {
+                return json(res, 404, { ok: false, error: 'CLIENTES_SURFACE_ONLY' })
+            }
+            if (atendimentoReadOnlyRuntime() && !['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || '').toUpperCase())) {
+                return json(res, 405, {
+                    ok: false,
+                    error: 'READ_ONLY_RUNTIME',
+                    hint: 'Este runtime de Clientes aceita somente leituras autenticadas.',
+                }, { allow: 'GET, HEAD, OPTIONS' })
+            }
             req.atendimentoActor = actor
             next()
         } catch (error) {
@@ -743,6 +767,9 @@ export const __testables = {
     requestsClinicalCadenceApproval,
     parseActorHeader,
     isLocalRequest,
+    atendimentoReadOnlyRuntime,
+    atendimentoClientesOnlyRuntime,
+    isClientesCommercialPath,
     redactLocalDiagnostic,
     safeEqual,
     verifyMetaAdsOfferContextToken,
