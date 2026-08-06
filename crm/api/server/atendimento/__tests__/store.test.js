@@ -231,6 +231,47 @@ test('scopes Clientes commercial reads, queues, actions, cadences and offers to 
     assert.equal(captured.filter((entry) => entry.kind === 'profiles').at(-1)?.params[1], null)
 })
 
+test('returns a bounded, unit-scoped Customer 360 timeline from confirmed source events', async () => {
+    const identityId = '11111111-1111-4111-8111-111111111111'
+    const profileRow = {
+        identity_id: identityId,
+        canonical_name: 'Cliente 360',
+        source_types: ['attendance_client', 'caixa_customer'],
+        last_attendance: '2026-01-10', visit_count: 1, procedure_count: 1,
+        completed_procedures: ['Botox'], attendance_units: ['Novo Hamburgo'], future_attendance_count: 0,
+        sale_count: 1, lifetime_sales: 900, sales_12m: 900, sales_units: ['Novo Hamburgo'],
+        phone: '5551999991111', purchased_procedures: ['Botox'], pending_sale_items: 0,
+        active_action_count: 0, last_action_at: null,
+    }
+    const captured = []
+    const pool = createFakePool([
+        (sql, params) => {
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities') as identities")) {
+                return { rows: [{ identities: 'identities', members: 'members', attendance_links: 'attendance_links', sales: 'sales' }], rowCount: 1 }
+            }
+            if (sql.includes('with identities as')) return { rows: [profileRow], rowCount: 1 }
+            if (sql.includes('with attendance_members as')) {
+                captured.push({ sql, params })
+                return { rows: [{
+                    event_id: 'sale:22222222-2222-4222-8222-222222222222', event_type: 'sale', occurred_on: '2026-01-09',
+                    title: 'Compra registrada', detail: 'Botox', unit_name: 'Novo Hamburgo', source_label: 'Caixa',
+                    amount: '900.00', event_status: 'confirmed',
+                }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool })
+    const detail = await store.commercialProfile(identityId, { timelineLimit: 120 }, { id: 'gestor-nh', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'] })
+
+    assert.equal(detail.timeline.length, 1)
+    assert.deepEqual(detail.timeline[0], {
+        id: 'sale:22222222-2222-4222-8222-222222222222', type: 'sale', occurredOn: '2026-01-09',
+        title: 'Compra registrada', detail: 'Botox', unitName: 'Novo Hamburgo', source: 'Caixa', amount: 900, status: 'confirmed',
+    })
+    assert.deepEqual(captured[0].params, [identityId, detail.asOf, ['novo-hamburgo'], 100])
+})
+
 test('uses bounded SQL pagination and global percentile benchmarks for the commercial overview', async () => {
     const identityId = '11111111-1111-4111-8111-111111111111'
     const availability = {
