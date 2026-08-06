@@ -432,15 +432,16 @@ function commercialObservationTransition({ previousStatus, previousCount, observ
     const shouldStartObservationWindow = nextCount > 0 && (priorCount === 0 || shouldReopen)
     // A positive observation is the actionable state; once that observation
     // clears, the queue should converge to resolved without waiting for an
-    // operator to close a stale zero-count row.  Suppressed and already
-    // resolved findings retain their historical state, while an acknowledged
-    // or in-progress finding is resolved only after a positive observation has
-    // actually cleared.
-    const shouldResolve = priorCount > 0 && nextCount === 0
+    // operator to close a stale zero-count row.  This also repairs legacy
+    // actionable rows that were already persisted with observed_count = 0.
+    // Suppressed and already resolved findings retain their historical state.
+    const shouldResolve = nextCount === 0
         && ['open', 'acknowledged', 'in_progress'].includes(previousStatus)
     const nextStatus = shouldReopen ? 'open' : shouldResolve ? 'resolved' : previousStatus
     const eventType = shouldReopen
         ? 'reopened'
+        : shouldResolve
+            ? 'cleared'
         : priorCount === 0 && nextCount > 0
             ? 'detected'
             : priorCount > 0 && nextCount === 0

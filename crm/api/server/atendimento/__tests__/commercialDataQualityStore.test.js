@@ -144,6 +144,13 @@ test('resolves an actionable finding when its positive observation clears', () =
         assert.equal(cleared.shouldRecord, true)
     }
 
+    const legacyCleared = __testables.commercialObservationTransition({
+        previousStatus: 'open', previousCount: 0, observedCount: 0,
+    })
+    assert.equal(legacyCleared.shouldResolve, true)
+    assert.equal(legacyCleared.nextStatus, 'resolved')
+    assert.equal(legacyCleared.eventType, 'cleared')
+
     const suppressed = __testables.commercialObservationTransition({
         previousStatus: 'suppressed', previousCount: 84, observedCount: 0,
     })
