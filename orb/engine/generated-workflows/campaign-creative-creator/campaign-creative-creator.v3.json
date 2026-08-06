@@ -1978,6 +1978,20 @@
         16416,
         920
       ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst item = $input.first();\nconst data = item && item.json ? item.json : {};\nconst request = data.production_request && typeof data.production_request === 'object'\n  ? data.production_request\n  : data;\nconst current = data.ccg_context && typeof data.ccg_context === 'object'\n  ? data.ccg_context\n  : {};\n\nfunction text(value, fallback = '') {\n  if (value === undefined || value === null) return fallback;\n  return String(value).trim().slice(0, 256);\n}\n\nfunction hash(value) {\n  const source = String(value);\n  let result = 2166136261;\n  for (let index = 0; index < source.length; index += 1) {\n    result ^= source.charCodeAt(index);\n    result = Math.imul(result, 16777619);\n  }\n  return (result >>> 0).toString(16).padStart(8, '0');\n}\n\nconst seed = [\n  text(request.production_id),\n  text(request.content_id),\n  text(request.campaign_id),\n  text(request.run_id),\n  text(request.idempotency_key)\n].join('|');\nconst fingerprint = hash(seed || 'ccg-recovery-context');\nconst runId = text(current.run_id || request.run_id || request.production_id, 'untracked-' + fingerprint);\nconst requestHash = text(current.request_hash || request.request_hash, 'input-' + fingerprint);\nconst idempotencyKey = text(\n  current.idempotency_key || request.idempotency_key,\n  'ccg:recovery:' + runId + ':' + requestHash.slice(0, 16)\n);\nconst tier = text(current.production_tier || request.production_tier, 'STANDARD').toUpperCase();\nconst maxAttempts = tier === 'FAST' ? 2 : tier === 'PREMIUM' ? 4 : 3;\nconst mode = request.dry_run === true\n  ? 'DRY_RUN'\n  : request.dry_run === false\n    ? 'LIVE'\n    : 'UNKNOWN';\n\nconst recoveryContext = {\n  schema_version: '1.0.0',\n  run_id: runId,\n  production_id: text(current.production_id || request.production_id),\n  content_id: text(current.content_id || request.content_id),\n  campaign_id: text(current.campaign_id || request.campaign_id),\n  request_hash: requestHash,\n  idempotency_key: idempotencyKey,\n  production_tier: tier,\n  mode,\n  module: 'CCG-00',\n  checkpoint_module: 'CCG-00',\n  current_attempt: 1,\n  max_attempts: maxAttempts,\n  recovery_policy: {\n    dispatch_enabled: false,\n    allow_execution_retry: true,\n    allow_checkpoint_resume: true,\n    maximum_backoff_seconds: 900\n  }\n};\n\nreturn [{\n  json: {\n    ...data,\n    ccg_recovery_context: recoveryContext\n  },\n  binary: item && item.binary\n}];\n"
+      },
+      "id": "ccg-00-capture-recovery-context",
+      "name": "CCG-00 Capture Recovery Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        180
+      ]
     }
   ],
   "connections": {
@@ -2007,7 +2021,7 @@
       "main": [
         [
           {
-            "node": "CCG-00 Validate Contract",
+            "node": "CCG-00 Capture Recovery Context",
             "type": "main",
             "index": 0
           }
@@ -3046,6 +3060,17 @@
         ]
       ]
     },
+    "CCG-00 Capture Recovery Context": {
+      "main": [
+        [
+          {
+            "node": "CCG-00 Validate Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "CCG-80 Validate Execution Policy": {
       "main": [
         [
@@ -3176,7 +3201,7 @@
   },
   "meta": {
     "codex_builder": "campaign-creative-creator-continuous",
-    "codex_builder_version": "4.1.4",
+    "codex_builder_version": "4.1.5",
     "architecture": "continuous-with-native-production-executor-and-separate-error-workflow",
     "source_workflow_id": "TxE9eMS1xfE6kq38",
     "source_version_id": "941bec10-3e41-49be-baed-753ca60787ad",

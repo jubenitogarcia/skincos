@@ -1,7 +1,7 @@
 {
   "package_version": "4.0.0",
   "builder": "campaign-creative-creator-continuous",
-  "builder_version": "4.1.4",
+  "builder_version": "4.1.5",
   "source": {
     "workflow_id": "TxE9eMS1xfE6kq38",
     "workflow_name": "Campaign Creative Creator",
@@ -27,8 +27,8 @@
     "no_paid_calls_in_ci": true
   },
   "counts": {
-    "main_nodes": 97,
-    "main_edges": 117,
+    "main_nodes": 98,
+    "main_edges": 118,
     "error_nodes": 10,
     "error_edges": 12,
     "fixture_nodes": 11
