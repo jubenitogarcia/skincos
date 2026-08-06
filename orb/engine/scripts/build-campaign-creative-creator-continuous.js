@@ -8,7 +8,7 @@ const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
 const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-error-v3';
 const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
-const BUILDER_VERSION = '4.0.0';
+const BUILDER_VERSION = '4.1.0';
 const ALL_FIXTURE_NAMES = [
   'Build CCG-00 dry-run fixture',
   'Build CCG-10 dry-run fixture',
@@ -670,6 +670,64 @@ function resolveErrorWorkflowId(value) {
 
 function nodeByName(nodes, name) {
   return nodes.find((node) => node.name === name);
+}
+
+const LANGCHAIN_MODEL_TYPE = '@n8n/n8n-nodes-langchain.lmChatOpenAi';
+const LANGCHAIN_STRUCTURED_PARSER_TYPE = '@n8n/n8n-nodes-langchain.outputParserStructured';
+
+function hasTypedConnection(workflow, source, outputType, target, targetType = outputType) {
+  const branches = workflow.connections?.[source]?.[outputType];
+  return Array.isArray(branches) && branches.some((branch) => Array.isArray(branch)
+    && branch.some((edge) => edge?.node === target && edge?.type === targetType));
+}
+
+function addTypedConnection(workflow, source, outputType, target, targetType = outputType, index = 0) {
+  workflow.connections ||= {};
+  workflow.connections[source] ||= {};
+  workflow.connections[source][outputType] ||= [];
+  const branches = workflow.connections[source][outputType];
+  while (branches.length <= index) branches.push([]);
+  if (!Array.isArray(branches[index])) branches[index] = [];
+  if (!hasTypedConnection(workflow, source, outputType, target, targetType)) {
+    branches[index].push({ node: target, type: targetType, index: 0 });
+  }
+}
+
+function incomingTypedConnections(workflow, target, targetType) {
+  const matches = [];
+  for (const [source, outputs] of Object.entries(workflow.connections || {})) {
+    for (const [outputType, branches] of Object.entries(outputs || {})) {
+      if (!Array.isArray(branches)) continue;
+      for (const branch of branches) {
+        for (const edge of Array.isArray(branch) ? branch : []) {
+          if (edge?.node === target && edge?.type === targetType) {
+            matches.push({ source, outputType, edge });
+          }
+        }
+      }
+    }
+  }
+  return matches;
+}
+
+function ensureStructuredParserModels(workflow) {
+  const parsers = workflow.nodes.filter((node) => node.type === LANGCHAIN_STRUCTURED_PARSER_TYPE
+    && node.parameters?.autoFix !== false);
+  for (const parser of parsers) {
+    const parserBranches = workflow.connections?.[parser.name]?.ai_outputParser;
+    const parserAgents = (Array.isArray(parserBranches) ? parserBranches : [])
+      .flatMap((branch) => Array.isArray(branch) ? branch : [])
+      .filter((edge) => edge?.type === 'ai_outputParser' && edge?.node)
+      .map((edge) => edge.node);
+    for (const agentName of parserAgents) {
+      const modelMatch = incomingTypedConnections(workflow, agentName, 'ai_languageModel')
+        .find((match) => workflow.nodes.some((node) => node.name === match.source && node.type === LANGCHAIN_MODEL_TYPE));
+      if (!modelMatch) continue;
+      addTypedConnection(workflow, modelMatch.source, 'ai_languageModel', parser.name, 'ai_languageModel');
+      break;
+    }
+  }
+  return workflow;
 }
 
 function assertSourceShape(source, options = {}) {
@@ -1854,6 +1912,7 @@ function transformWorkflow(source, options = {}) {
   workflow.connections = workflow.connections && typeof workflow.connections === 'object' ? workflow.connections : {};
   removeNodesAndEdges(workflow, [...INTERMEDIATE_FIXTURES, 'Build CCG-99 retryable fixture']);
   patchUnsafeRuntime(workflow);
+  ensureStructuredParserModels(workflow);
 
   workflow.nodes.push({
     parameters: {},
@@ -1990,6 +2049,7 @@ module.exports = {
   buildErrorWorkflow,
   buildFixturesWorkflow,
   buildWorkflowPackage,
+  ensureStructuredParserModels,
   optionalSkipCode,
   sanitizeWorkflow,
   transformWorkflow,
