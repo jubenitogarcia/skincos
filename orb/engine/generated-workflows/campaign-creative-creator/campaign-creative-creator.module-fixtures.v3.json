@@ -151,7 +151,7 @@
   "settings": {},
   "meta": {
     "codex_builder": "campaign-creative-creator-continuous",
-    "codex_builder_version": "4.0.0",
+    "codex_builder_version": "4.1.4",
     "architecture": "versioned-fixture-catalog",
     "source_workflow_id": "TxE9eMS1xfE6kq38",
     "no_publication": true,

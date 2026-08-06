@@ -106,6 +106,54 @@ function assertGraphTargetsExist(workflow) {
   }
 }
 
+function assertStructuredParserModels(workflow) {
+  const parserNames = new Set(workflow.nodes
+    .filter((node) => node.type === '@n8n/n8n-nodes-langchain.outputParserStructured'
+      && node.parameters?.autoFix !== false)
+    .map((node) => node.name));
+  if (!parserNames.size) return;
+
+  const incoming = new Map();
+  for (const [source, outputs] of Object.entries(workflow.connections || {})) {
+    for (const [outputType, branches] of Object.entries(outputs || {})) {
+      if (!Array.isArray(branches)) continue;
+      for (const branch of branches) {
+        for (const edge of Array.isArray(branch) ? branch : []) {
+          if (edge?.node && edge?.type) {
+            const key = `${edge.node}\u0000${edge.type}`;
+            const sources = incoming.get(key) || [];
+            sources.push({ source, outputType });
+            incoming.set(key, sources);
+          }
+        }
+      }
+    }
+  }
+
+  for (const parserName of parserNames) {
+    const parserBranches = workflow.connections?.[parserName]?.ai_outputParser;
+    const parserAgents = (Array.isArray(parserBranches) ? parserBranches : [])
+      .flatMap((branch) => Array.isArray(branch) ? branch : [])
+      .filter((edge) => edge?.type === 'ai_outputParser' && edge?.node)
+      .map((edge) => edge.node);
+    const hasModel = parserAgents.some((parserAgent) => {
+      const modelSources = incoming.get(`${parserAgent}\u0000ai_languageModel`) || [];
+      return modelSources.some(({ source: model }) => {
+        const modelNode = workflow.nodes.find((node) => node.name === model);
+        return modelNode?.type === '@n8n/n8n-nodes-langchain.lmChatOpenAi'
+          && hasTypedEdge(workflow, model, 'ai_languageModel', parserName, 'ai_languageModel');
+      });
+    });
+    if (!hasModel) throw new Error(`Structured parser is missing its Model connection: ${parserName}`);
+  }
+}
+
+function hasTypedEdge(workflow, source, outputType, target, targetType) {
+  const branches = workflow.connections?.[source]?.[outputType];
+  return Array.isArray(branches) && branches.some((branch) => Array.isArray(branch)
+    && branch.some((edge) => edge?.node === target && edge?.type === targetType));
+}
+
 function assertModuleContinuity(workflow) {
   for (const moduleName of MODULES.slice(0, 9)) {
     const node = workflow.nodes.find((candidate) => candidate.name === `${moduleName} Return Module Result`);
@@ -131,6 +179,7 @@ function validateWorkflow(workflow, options = {}) {
   assertUniqueIds(workflow.nodes);
   assertUniqueNames(workflow.nodes);
   assertGraphTargetsExist(workflow);
+  assertStructuredParserModels(workflow);
   for (const name of REQUIRED_MODULE_NODES) {
     if (!names.has(name)) throw new Error('Candidate is missing node: ' + name);
   }
@@ -146,6 +195,10 @@ function validateWorkflow(workflow, options = {}) {
   }
   if (workflow.nodes.filter((node) => node.name === 'Operational Production Request').length !== 1) {
     throw new Error('Expected exactly one operational trigger');
+  }
+  const operationalTrigger = workflow.nodes.find((node) => node.name === 'Operational Production Request');
+  if (operationalTrigger.parameters?.inputSource !== 'passthrough') {
+    throw new Error('Operational trigger must pass through the versioned production envelope');
   }
   for (const name of EXECUTION_NODE_NAMES) {
     if (!names.has(name)) throw new Error('Production execution node is missing: ' + name);

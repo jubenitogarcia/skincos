@@ -13,6 +13,7 @@ const {
   WORKFLOW_ID,
   WORKFLOW_NAME,
   buildWorkflowPackage,
+  ensureStructuredParserModels,
   transformWorkflow,
 } = require('../scripts/build-campaign-creative-creator-continuous');
 const {
@@ -223,6 +224,7 @@ test('build package is valid, idempotent, and keeps the operational route fixtur
 
   assert.equal(first.active, false);
   assert.equal(first.nodes.filter((candidate) => candidate.name === 'Operational Production Request').length, 1);
+  assert.equal(first.nodes.find((candidate) => candidate.name === 'Operational Production Request').parameters.inputSource, 'passthrough');
   assert.equal(first.nodes.some((candidate) => candidate.name === 'CCG-80 Production Executor'), false);
   for (const fixture of INTERMEDIATE_FIXTURES) assert.equal(first.nodes.some((candidate) => candidate.name === fixture), false, fixture);
   assert.equal(first.nodes.some((candidate) => candidate.name === 'Build CCG-99 retryable fixture'), false);
@@ -238,6 +240,24 @@ test('build package is valid, idempotent, and keeps the operational route fixtur
   assert.equal(packageValue.main.meta.credentials_stripped_for_git, true);
 });
 
+test('every generated Code node compiles before n8n import', () => {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  for (const workflow of [generatedMain(), generatedError()]) {
+    for (const node of workflow.nodes.filter((candidate) => candidate.type === 'n8n-nodes-base.code')) {
+      assert.doesNotThrow(
+        () => new AsyncFunction('$input', '$env', '$', '$execution', node.parameters.jsCode),
+        node.name,
+      );
+    }
+  }
+});
+
+test('generated executor nodes do not read blocked n8n environment access', () => {
+  for (const nodeValue of generatedMain().nodes) {
+    assert.doesNotMatch(JSON.stringify(nodeValue.parameters || {}), /\$env\b/, nodeValue.name);
+  }
+});
+
 test('manual smoke and operational subworkflow triggers are separate', () => {
   const workflow = buildWorkflowPackage(sourceFixture(), { strictSource: false }).main;
   assert.equal(workflow.nodes.filter((candidate) => candidate.type === 'n8n-nodes-base.executeWorkflowTrigger').length, 1);
@@ -247,6 +267,31 @@ test('manual smoke and operational subworkflow triggers are separate', () => {
   for (const fixture of ALL_FIXTURE_NAMES.slice(1)) {
     assert.equal(workflow.nodes.some((candidate) => candidate.name === fixture), false, fixture);
   }
+});
+
+test('structured parsers receive the same model used by their agents', () => {
+  const workflow = {
+    nodes: [
+      node('Agent', 0, { type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 2.2 }),
+      node('Parser', 1, {
+        type: '@n8n/n8n-nodes-langchain.outputParserStructured',
+        typeVersion: 1.3,
+        parameters: { autoFix: true },
+      }),
+      node('Model', 2, { type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', typeVersion: 1.2 }),
+    ],
+    connections: {
+      Parser: { ai_outputParser: [[{ node: 'Agent', type: 'ai_outputParser', index: 0 }]] },
+      Model: { ai_languageModel: [[{ node: 'Agent', type: 'ai_languageModel', index: 0 }]] },
+    },
+  };
+
+  ensureStructuredParserModels(workflow);
+  ensureStructuredParserModels(workflow);
+  assert.deepEqual(workflow.connections.Model.ai_languageModel, [[
+    { node: 'Agent', type: 'ai_languageModel', index: 0 },
+    { node: 'Parser', type: 'ai_languageModel', index: 0 },
+  ]]);
 });
 
 test('each content type carries one lineage object through CCG-90', () => {

@@ -73,6 +73,8 @@ grant connect on database $DB_NAME to $APP_ROLE;
 revoke create on schema crm_atendimento, crm_caixa from $APP_ROLE;
 grant usage on schema crm_atendimento, crm_caixa to $APP_ROLE;
 grant select on all tables in schema crm_atendimento, crm_caixa to $APP_ROLE;
+grant usage on schema harmonia to $APP_ROLE;
+grant select (phone_raw, opted_out_at) on table harmonia.contacts to $APP_ROLE;
 alter default privileges for role skincos in schema crm_atendimento grant select on tables to $APP_ROLE;
 alter default privileges for role skincos in schema crm_caixa grant select on tables to $APP_ROLE;
 alter default privileges for role postgres in schema crm_atendimento grant select on tables to $APP_ROLE;
