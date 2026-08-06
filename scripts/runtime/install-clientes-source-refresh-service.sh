@@ -71,7 +71,9 @@ if [[ "$APPLY" == "1" ]]; then
   # The unit runs as skincos and systemd refuses to start a sandbox when a
   # ReadWritePaths entry is absent.  Provision both writable surfaces here so
   # a fresh host cannot fail with 226/NAMESPACE before the runner executes.
-  sudo -n install -d -o root -g skincos -m 0750 "$BACKUP_ROOT"
+  # The checkpoint is created by the skincos service account; keep the parent
+  # owned by root while granting its technical group write access.
+  sudo -n install -d -o root -g skincos -m 0770 "$BACKUP_ROOT"
   sudo -n install -d -o skincos -g skincos -m 0750 "$LOG_ROOT/crm-clientes-source-refresh"
   for unit in crm-clientes-source-refresh.service crm-clientes-source-refresh.timer; do
     if sudo -n test -f "$UNIT_DEST/$unit"; then
