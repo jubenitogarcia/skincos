@@ -280,6 +280,48 @@ function Invoke-ShortcutWsl {
     }
 }
 
+function Resolve-CrmRuntimePublicHost {
+    param(
+        [string]$WorkingProjectRoot = $launcherProjectRoot
+    )
+
+    try {
+        $raw = Invoke-ShortcutWsl `
+            -WorkingProjectRoot $WorkingProjectRoot `
+            -Executable 'hostname' `
+            -ArgumentList @('-I') `
+            -SkipBootstrapCheck `
+            -SkipNodeCheck `
+            -SkipNpmCheck `
+            -SkipGitCheck `
+            -SkipRepoCheck
+        $text = [string]($raw -join ' ')
+        $candidates = @(
+            [regex]::Matches($text, '(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])') |
+                ForEach-Object { $_.Value } |
+                Select-Object -Unique
+        ) | Where-Object {
+            $parsed = $null
+            [Net.IPAddress]::TryParse($_, [ref]$parsed) -and
+                $parsed.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork -and
+                $_ -notmatch '^(127|0|169\.254)\.'
+        }
+        $preferred = @(
+            $candidates | Where-Object { $_ -match '^172\.' }
+            $candidates | Where-Object { $_ -match '^10\.' }
+            $candidates | Where-Object { $_ -match '^192\.168\.' }
+            $candidates
+        ) | Select-Object -First 1
+        if (-not [string]::IsNullOrWhiteSpace([string]$preferred)) {
+            return [string]$preferred
+        }
+    } catch {
+        # localhost remains the safe fallback when WSL localhost forwarding
+        # is available or an address cannot be discovered.
+    }
+    return 'localhost'
+}
+
 function Get-CrmLocalReviewRef {
     if (-not [string]::IsNullOrWhiteSpace($env:CRM_LOCAL_REVIEW_REF)) {
         return $env:CRM_LOCAL_REVIEW_REF.Trim()
@@ -1899,6 +1941,7 @@ function Write-CrmThreadPreviewDescriptor {
         [Parameter(Mandatory = $true)][string]$MaterializedSourceRoot,
         [Parameter(Mandatory = $true)][string]$TargetCommit,
         [Parameter(Mandatory = $true)][string]$SourceFingerprint,
+        [string]$PublicHost = 'localhost',
         # The lifecycle state lives in the runtime's current.json. This
         # descriptor is provenance/ownership metadata written before the
         # detached launcher can finish, so "requested" remains truthful even
@@ -1922,7 +1965,7 @@ function Write-CrmThreadPreviewDescriptor {
         runtimeId = [string]$Spec.runtimeId
         role = [string]$Spec.role
         module = [string]$Spec.module
-        url = "http://localhost:$([int]$Spec.ports.pages)/?module=$([string]$Spec.module)"
+        url = "http://${PublicHost}:$([int]$Spec.ports.pages)/?module=$([string]$Spec.module)"
         runtimeManifest = 'current.json'
         updatedAt = (Get-Date).ToString('o')
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Get-CrmThreadPreviewDescriptorPath -Spec $Spec) -Encoding utf8
@@ -2183,10 +2226,14 @@ function Open-CrmInstanceUrl {
     )
     $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
     $expectedProfile = Join-Path $runtimeRoot "browser\profile"
-    $fallbackUrl = "http://localhost:$([int]$Spec.ports.pages)/?module=$([string]$Spec.module)"
+    $fallbackHost = Resolve-CrmRuntimePublicHost -WorkingProjectRoot $ProjectRoot
+    $fallbackUrl = "http://${fallbackHost}:$([int]$Spec.ports.pages)/?module=$([string]$Spec.module)"
     $url = if (-not [string]::IsNullOrWhiteSpace([string]$Manifest.url)) { [string]$Manifest.url } else { $fallbackUrl }
     $uri = [Uri]$url
-    if ($uri.Scheme -ne "http" -or $uri.Host -notin @("localhost", "127.0.0.1") -or $uri.Port -ne [int]$Spec.ports.pages) {
+    $publicHost = Resolve-CrmRuntimePublicHost -WorkingProjectRoot $ProjectRoot
+    if ($uri.Scheme -ne "http" -or
+        ($uri.Host -notin @("localhost", "127.0.0.1") -and $uri.Host -ne $publicHost) -or
+        $uri.Port -ne [int]$Spec.ports.pages) {
         throw "URL inválida no manifesto '$([string]$Spec.runtimeId)': '$url'."
     }
     $sourceRoot = Convert-WslPathToWindows -Path ([string]$Manifest.worktree)
@@ -2285,6 +2332,7 @@ function Start-CrmInstanceRuntime {
     New-Item -ItemType Directory -Path $BuildPaths.Root -Force | Out-Null
     New-Item -ItemType Directory -Path $crmPlaywrightCacheRoot -Force | Out-Null
 
+    $publicHost = Resolve-CrmRuntimePublicHost -WorkingProjectRoot $SourceRoot
     $runtimeEnv = @(
         "CRM_RUNTIME_ID=$([string]$Spec.runtimeId)",
         "CRM_RUNTIME_MODULE=$module",
@@ -2308,6 +2356,8 @@ function Start-CrmInstanceRuntime {
         "LOCAL_AUTH_ALLOWED_MODULES=$allowedModules",
         "CRM_VITE_PORT=$([int]$Spec.ports.vite)",
         "CRM_PAGES_PORT=$([int]$Spec.ports.pages)",
+        "CRM_HOST=$publicHost",
+        "CRM_PUBLIC_HOST=$publicHost",
         "CRM_BIND_HOST=0.0.0.0",
         "CRM_WITH_INSUMOS=$withInsumos",
         "CRM_INSUMOS_PORT=$([int]$Spec.ports.insumos)",
@@ -2604,12 +2654,14 @@ function Invoke-CrmThreadPreviewAction {
         $baseSpec = Resolve-CrmLocalModuleSpec -Role $Role -Module $Module -SourceRoot $materializedSource
         $spec = Get-CrmThreadPreviewSpec -BaseSpec $baseSpec -SourceRoot $materializedSource -SourceCheckout $sourceCheckout
         $null = Assert-CrmThreadPreviewOwnership -Spec $spec -SourceCheckout $sourceCheckout
+        $publicHost = Resolve-CrmRuntimePublicHost -WorkingProjectRoot $sourceCheckout
         Write-CrmThreadPreviewDescriptor `
             -Spec $spec `
             -SourceCheckout $sourceCheckout `
             -MaterializedSourceRoot $materializedSource `
             -TargetCommit $targetCommit `
-            -SourceFingerprint ([string]$snapshot.Fingerprint)
+            -SourceFingerprint ([string]$snapshot.Fingerprint) `
+            -PublicHost $publicHost
         Start-CrmThreadPreviewBackgroundUpdate `
             -Spec $spec `
             -SourceCheckout $sourceCheckout `
@@ -2618,7 +2670,7 @@ function Invoke-CrmThreadPreviewAction {
             -SourceFingerprint ([string]$snapshot.Fingerprint)
         Write-Host "[crm-thread-preview] Fonte: $sourceCheckout"
         Write-Host "[crm-thread-preview] Commit: $targetCommit | Snapshot: $([string]$snapshot.Fingerprint)"
-        Write-Host "[crm-thread-preview] URL: http://localhost:$([int]$spec.ports.pages)/?module=$([string]$spec.module)"
+        Write-Host "[crm-thread-preview] URL: http://${publicHost}:$([int]$spec.ports.pages)/?module=$([string]$spec.module)"
     } finally {
         Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
     }

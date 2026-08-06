@@ -26,6 +26,7 @@ crm_source_git() {
 
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
 CRM_BIND_HOST="${CRM_BIND_HOST:-127.0.0.1}"
+CRM_PUBLIC_HOST="${CRM_PUBLIC_HOST:-localhost}"
 if [[ -n "${CRM_VITE_PORT+x}" ]]; then
   CRM_VITE_PORT_EXPLICIT=1
 else
@@ -260,7 +261,7 @@ if [[ -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
   CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "metaAdsLocalScenario" "$CRM_META_ADS_SCENARIO")"
 fi
 
-DEFAULT_URL="http://localhost:${CRM_PAGES_PORT}${CRM_ROUTE}"
+DEFAULT_URL="http://${CRM_PUBLIC_HOST}:${CRM_PAGES_PORT}${CRM_ROUTE}"
 NETWORK_URL="http://${CRM_HOST}:${CRM_PAGES_PORT}${CRM_ROUTE}"
 
 collect_descendants() {

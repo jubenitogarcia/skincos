@@ -20,9 +20,19 @@ if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$uri)) {
 }
 
 $loopbackHost = $uri.DnsSafeHost.Trim('[', ']').ToLowerInvariant()
+$privateIpv4 = $false
+$parsedAddress = $null
+if ([Net.IPAddress]::TryParse($loopbackHost, [ref]$parsedAddress) -and
+    $parsedAddress.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) {
+    $bytes = $parsedAddress.GetAddressBytes()
+    $privateIpv4 =
+        $bytes[0] -eq 10 -or
+        ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
+        ($bytes[0] -eq 192 -and $bytes[1] -eq 168)
+}
 if (
     $uri.Scheme -ne 'http' -or
-    $loopbackHost -notin @('localhost', '127.0.0.1', '::1') -or
+    ($loopbackHost -notin @('localhost', '127.0.0.1', '::1') -and -not $privateIpv4) -or
     -not [string]::IsNullOrEmpty($uri.UserInfo) -or
     $uri.Port -lt 1 -or
     $uri.Port -gt 65535
