@@ -332,6 +332,8 @@ test('uses bounded SQL pagination and global percentile benchmarks for the comme
     const store = createAtendimentoStore({ pool })
     const result = await store.commercialOverview({ server: '1', limit: 1, offset: 1, sort: 'lifetime_sales', direction: 'asc', q: 'cliente' }, { id: 'manager', role: 'GESTOR' })
     assert.equal(captured.length, 1)
+    assert.match(captured[0].sql, /jsonb_array_length\(coalesce\(source_types, '\[\]'::jsonb\)\)/)
+    assert.doesNotMatch(captured[0].sql, /cardinality\(source_types\)/)
     assert.deepEqual(captured[0].params.slice(3, 8), ['cliente', '', '', 1, 1])
     assert.equal(result.pagination.mode, 'sql')
     assert.equal(result.pagination.sort, 'lifetime_sales')
