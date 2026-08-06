@@ -2773,6 +2773,74 @@ function mapCommercialAction(row) {
     }
 }
 
+function mapCommercialTimelineEntry(row) {
+    return {
+        id: row.event_id,
+        type: row.event_type,
+        occurredOn: row.occurred_on ? String(row.occurred_on).slice(0, 10) : null,
+        title: row.title || '',
+        detail: row.detail || '',
+        unitName: row.unit_name || '',
+        source: row.source_label || '',
+        amount: row.amount == null ? null : Number(row.amount),
+        status: row.event_status || 'confirmed',
+    }
+}
+
+async function queryCommercialTimeline(pgPool, { identityId, asOf, unitSlugs, limit }) {
+    const result = await pgPool.query(
+        `with attendance_members as (
+             select distinct gm.source_id::uuid as client_id
+             from crm_atendimento.global_client_identity_members gm
+             where gm.identity_id = $1 and gm.source_type = 'attendance_client'
+         ), attendance_events as (
+             select distinct concat('attendance:', a.id::text) as event_id,
+                    'attendance'::text as event_type,
+                    a.service_date::text as occurred_on,
+                    p.name::text as title,
+                    ''::text as detail,
+                    u.name::text as unit_name,
+                    'Atendimento'::text as source_label,
+                    null::numeric as amount,
+                    'confirmed'::text as event_status
+             from attendance_members am
+             join crm_atendimento.attendance_client_links acl on acl.client_id = am.client_id
+             join crm_atendimento.attendances a on a.id = acl.attendance_id
+             join crm_atendimento.procedures p on p.id = a.procedure_id
+             join crm_atendimento.units u on u.id = a.unit_id
+             where a.deleted_at is null
+               and a.service_date <= $2::date
+               and ($3::text[] is null or u.slug = any($3::text[]))
+         ), sale_members as (
+             select distinct gm.source_id::uuid as customer_id
+             from crm_atendimento.global_client_identity_members gm
+             where gm.identity_id = $1 and gm.source_type = 'caixa_customer'
+         ), sale_events as (
+             select distinct concat('sale:', s.id::text) as event_id,
+                    'sale'::text as event_type,
+                    s.occurred_on::text as occurred_on,
+                    'Compra registrada'::text as title,
+                    coalesce(nullif(trim(s.raw_service), ''), 'Item não classificado')::text as detail,
+                    u.name::text as unit_name,
+                    'Caixa'::text as source_label,
+                    s.total::numeric as amount,
+                    'confirmed'::text as event_status
+             from sale_members sm
+             join crm_caixa.sales s on s.customer_id = sm.customer_id
+             join crm_atendimento.units u on u.id = s.unit_id
+             where s.occurred_on <= $2::date
+               and ($3::text[] is null or u.slug = any($3::text[]))
+         )
+         select * from attendance_events
+         union all
+         select * from sale_events
+         order by occurred_on desc, event_id desc
+         limit $4`,
+        [identityId, asOf, unitSlugs, limit],
+    )
+    return result.rows.map(mapCommercialTimelineEntry)
+}
+
 async function assertCommercialIdentitySource(pgPool) {
     const tables = await pgPool.query(
         `select to_regclass('crm_atendimento.global_client_identities') as identities,
@@ -3299,6 +3367,12 @@ function commercialExpectedPermissionRevision(value) {
         throw commercialContactError('INVALID_COMMERCIAL_CONTACT_PERMISSION_REVISION', 400)
     }
     return revision
+}
+
+function commercialTimelineLimit(value) {
+    const parsed = Number(value)
+    if (!Number.isInteger(parsed) || parsed < 1) return 50
+    return Math.min(parsed, 100)
 }
 
 async function queryCommercialProfiles(pgPool, { asOf, unitSlugs, thresholds }) {
@@ -5402,7 +5476,7 @@ export function createAtendimentoStore(options = {}) {
                 error.statusCode = 404
                 throw error
             }
-            const [actions, cadences] = await Promise.all([
+            const [actions, cadences, timeline] = await Promise.all([
                 pgPool.query(
                     `select action.*, unit.slug as unit_slug, unit.name as unit_name
                      from crm_atendimento.commercial_actions action
@@ -5424,12 +5498,19 @@ export function createAtendimentoStore(options = {}) {
                      order by procedure.name`,
                     [profile.completedProcedures, unitSlugs],
                 ),
+                queryCommercialTimeline(pgPool, {
+                    identityId: id,
+                    asOf,
+                    unitSlugs,
+                    limit: commercialTimelineLimit(query?.timelineLimit),
+                }),
             ])
             return {
                 asOf,
                 policy: commercialPolicyForActor(policy, actor),
                 profile: minimizeCommercialProfile(profile),
                 actions: actions.rows.map(mapCommercialAction),
+                timeline,
                 clinicalCadences: cadences.rows.map((row) => ({
                     procedureId: row.id,
                     procedureName: row.name,
