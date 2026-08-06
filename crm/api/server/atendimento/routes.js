@@ -5,6 +5,10 @@ import { createCommercialDataQualityStore } from './commercialDataQualityStore.j
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
 import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
 
+const ACTOR_SIGNATURE_VERSIONS = Object.freeze(['1', '2'])
+const ACTOR_NONCE_PATTERN = /^[A-Za-z0-9._~-]{16,128}$/
+const actorReplayCache = new Map()
+
 const json = (res, status, body, headers = {}) => {
     res.status(status)
     res.set('cache-control', 'no-store')
@@ -20,6 +24,41 @@ function b64UrlDecode(input) {
 
 function b64UrlEncode(buffer) {
     return Buffer.from(buffer).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function configuredActorSignatureVersion() {
+    const raw = String(process.env.CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION || '').trim()
+    if (!raw) return '1'
+    return ACTOR_SIGNATURE_VERSIONS.includes(raw) ? raw : null
+}
+
+function requestBinding(req) {
+    const method = String(req?.method || 'GET').trim().toUpperCase()
+    const path = String(req?.originalUrl || req?.url || req?.path || '/').trim() || '/'
+    return { method, path }
+}
+
+function actorSignatureMessage({ version, timestamp, nonce, encoded, method, path }) {
+    if (String(version) === '2') {
+        return `atendimento-actor/v2.${timestamp}.${nonce}.${method}.${path}.${encoded}`
+    }
+    return `${timestamp}.${encoded}`
+}
+
+function pruneActorReplayCache(now = Date.now()) {
+    const cutoff = now - 10 * 60 * 1000
+    for (const [key, expiresAt] of actorReplayCache) {
+        if (expiresAt <= cutoff) actorReplayCache.delete(key)
+    }
+    while (actorReplayCache.size > 4096) {
+        const first = actorReplayCache.keys().next().value
+        if (first === undefined) break
+        actorReplayCache.delete(first)
+    }
+}
+
+function clearActorReplayCache() {
+    actorReplayCache.clear()
 }
 
 function safeEqual(left, right) {
@@ -85,12 +124,32 @@ async function verifySignedActor(req, actorKey) {
     }
     const ts = String(req.headers['x-crm-ts'] || '').trim()
     const sig = String(req.headers['x-crm-signature'] || '').trim()
+    const signatureVersion = String(req.headers['x-crm-signature-version'] || configuredActorSignatureVersion()).trim()
+    const nonce = String(req.headers['x-crm-nonce'] || '').trim()
     const encoded = String(req.headers['x-crm-user'] || '').trim()
     const tsNum = Number(ts)
     if (!ts || !sig || !Number.isFinite(tsNum)) return null
     if (Math.abs(Date.now() - tsNum) > 5 * 60 * 1000) return null
-    const expected = b64UrlEncode(createHmac('sha256', actorKey).update(`${ts}.${encoded}`).digest())
+    if (!ACTOR_SIGNATURE_VERSIONS.includes(signatureVersion)) return null
+    const configuredVersion = configuredActorSignatureVersion()
+    if (!configuredVersion || signatureVersion !== configuredVersion) return null
+    const binding = requestBinding(req)
+    if (signatureVersion === '2' && !ACTOR_NONCE_PATTERN.test(nonce)) return null
+    const expected = b64UrlEncode(createHmac('sha256', actorKey).update(actorSignatureMessage({
+        version: signatureVersion,
+        timestamp: ts,
+        nonce,
+        encoded,
+        method: binding.method,
+        path: binding.path,
+    })).digest())
     if (!safeEqual(sig, expected)) return null
+    if (signatureVersion === '2') {
+        pruneActorReplayCache()
+        const replayKey = `${actor.id}:${nonce}`
+        if (actorReplayCache.has(replayKey)) return null
+        actorReplayCache.set(replayKey, Date.now())
+    }
     return actor
 }
 
@@ -135,6 +194,33 @@ function isLocalRequest(req) {
     // unsigned local-development actor or the local mirror diagnostics.
     const remote = String(req.socket?.remoteAddress || req.connection?.remoteAddress || '').trim().toLowerCase()
     return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+}
+
+function isInternalReadinessRequest(req) {
+    if (isLocalRequest(req)) return true
+    const configuredToken = String(process.env.CRM_ATENDIMENTO_READINESS_TOKEN || '').trim()
+    const suppliedToken = String(req?.headers?.['x-skincos-internal-readiness'] || '').trim()
+    return !!configuredToken && safeEqual(suppliedToken, configuredToken)
+}
+
+function publicModuleControl(control) {
+    const clean = (value, max = 128) => {
+        const text = String(value || '').trim()
+        return /^[A-Za-z0-9_.:-]+$/.test(text) ? text.slice(0, max) : undefined
+    }
+    const releaseSha = /^[0-9a-f]{40}$/i.test(String(control?.releaseSha || ''))
+        ? String(control.releaseSha).toLowerCase()
+        : undefined
+    return {
+        configured: control?.configured === true,
+        module: clean(control?.module, 32) || 'atendimento',
+        state: clean(control?.state, 32) || 'unknown',
+        ready: control?.ready === true,
+        syntheticOnly: control?.syntheticOnly === true,
+        ...(releaseSha ? { releaseSha } : {}),
+        ...(clean(control?.updatedAt, 64) ? { updatedAt: clean(control.updatedAt, 64) } : {}),
+        ...(clean(control?.reason, 128) ? { reason: clean(control.reason, 128) } : {}),
+    }
 }
 
 function atendimentoReadOnlyRuntime() {
@@ -220,10 +306,32 @@ export function createAtendimentoRouter(options = {}) {
                 ok: moduleControl.ready,
                 ...health,
                 readOnlyRuntime: atendimentoReadOnlyRuntime(),
-                moduleControl,
+                moduleControl: publicModuleControl(moduleControl),
             })
         } catch (error) {
             return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/readiness', async (req, res) => {
+        if (!isInternalReadinessRequest(req)) return json(res, 404, { ok: false, error: 'NOT_FOUND' })
+        const moduleControl = readAtendimentoModuleControl()
+        if (atendimentoModuleUnavailable(moduleControl)) {
+            return json(res, 503, { ok: false, error: 'MODULE_MAINTENANCE', moduleControl: publicModuleControl(moduleControl) })
+        }
+        try {
+            const readiness = await store.readiness()
+            const ok = moduleControl.ready && readiness.ok === true
+            return json(res, ok ? 200 : 503, {
+                ok,
+                ...readiness,
+                moduleControl: publicModuleControl(moduleControl),
+            })
+        } catch (error) {
+            // Readiness is an internal dependency probe. A database outage is
+            // a 503 (and never a public stack/connection error); /health stays
+            // independent and continues to answer while the outage is active.
+            return json(res, 503, { ok: false, error: 'DEPENDENCY_UNAVAILABLE', moduleControl: publicModuleControl(moduleControl) })
         }
     })
 
@@ -765,4 +873,9 @@ export const __testables = {
     safeEqual,
     verifyMetaAdsOfferContextToken,
     verifySignedActor,
+    actorSignatureMessage,
+    configuredActorSignatureVersion,
+    clearActorReplayCache,
+    isInternalReadinessRequest,
+    publicModuleControl,
 }

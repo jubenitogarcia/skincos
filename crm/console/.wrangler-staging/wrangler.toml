@@ -22,6 +22,8 @@ binding = "MODULE_CONTROL"
 id = "e69fe06b6abc46eca4f4c00198d078f2"
 
 [env.production.vars]
+ATENDIMENTO_API_TARGET = "https://crm-atendimento-staging.skincos.com.br"
+ATENDIMENTO_ACTOR_SIGNATURE_VERSION = "2"
 INSUMOS_API_TARGET = "https://api-staging.skincos.com.br"
 FINANCE_API_TARGET = "https://api-staging.skincos.com.br"
 PONTO_API_TARGET = "https://api-staging.skincos.com.br"
@@ -49,6 +51,8 @@ binding = "MODULE_CONTROL"
 id = "e69fe06b6abc46eca4f4c00198d078f2"
 
 [env.preview.vars]
+ATENDIMENTO_API_TARGET = "https://crm-atendimento-staging.skincos.com.br"
+ATENDIMENTO_ACTOR_SIGNATURE_VERSION = "2"
 INSUMOS_API_TARGET = "https://api-staging.skincos.com.br"
 FINANCE_API_TARGET = "https://api-staging.skincos.com.br"
 PONTO_API_TARGET = "https://api-staging.skincos.com.br"

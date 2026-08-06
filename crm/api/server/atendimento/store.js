@@ -4905,6 +4905,34 @@ export function createAtendimentoStore(options = {}) {
             }
         },
 
+        async readiness() {
+            requirePool(pgPool)
+            const expectedDatabase = String(process.env.CRM_ATENDIMENTO_EXPECTED_DATABASE || '').trim()
+            const expectedUser = String(process.env.CRM_ATENDIMENTO_EXPECTED_DATABASE_USER || '').trim()
+            const result = await pgPool.query(`
+                select
+                    current_database() as database_name,
+                    current_user as database_user,
+                    (current_setting('transaction_read_only', true) = 'on'
+                        or current_setting('default_transaction_read_only', true) = 'on') as transaction_read_only,
+                    to_regclass('crm_atendimento.schema_migrations') is not null as migrations_table,
+                    to_regclass('crm_atendimento.global_client_identities') is not null as identities_table,
+                    to_regclass('crm_atendimento.commercial_policy_config') is not null as commercial_policy_table
+            `)
+            const row = result.rows[0] || {}
+            const schemaReady = row.migrations_table === true && row.identities_table === true && row.commercial_policy_table === true
+            const databaseIdentity = (!expectedDatabase || row.database_name === expectedDatabase)
+                && (!expectedUser || row.database_user === expectedUser)
+            return {
+                ok: schemaReady && row.transaction_read_only === true && databaseIdentity,
+                databaseReachable: true,
+                databaseIdentity,
+                schemaManaged,
+                schemaReady,
+                transactionReadOnly: row.transaction_read_only === true,
+            }
+        },
+
         async migrate() {
             await ensureReady()
             return { ok: true }

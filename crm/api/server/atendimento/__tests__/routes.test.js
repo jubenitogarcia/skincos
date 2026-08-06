@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
 
 import { __testables, createAtendimentoRouter } from '../routes.js'
 
@@ -54,6 +55,73 @@ test('accepts an unsigned actor only from an explicit loopback development runti
         if (before === undefined) delete process.env.CRM_LOCAL_NO_AUTH
         else process.env.CRM_LOCAL_NO_AUTH = before
     }
+})
+
+test('accepts a v2 actor signature once and rejects its replay', async () => {
+    const before = process.env.CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION
+    process.env.CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION = '2'
+    __testables.clearActorReplayCache()
+    const actor = { id: 'synthetic-readonly', role: 'GESTOR', allowedModules: ['atendimento'] }
+    const encoded = actorHeader(actor)
+    const nonce = 'synthetic-readonly-nonce-001'
+    const ts = String(Date.now())
+    const path = '/api/atendimento/commercial/policy'
+    const message = __testables.actorSignatureMessage({ version: '2', timestamp: ts, nonce, encoded, method: 'GET', path })
+    const signature = createHmac('sha256', 'test-actor-key').update(message).digest('base64url')
+    const request = { headers: {
+        'x-crm-user': encoded,
+        'x-crm-ts': ts,
+        'x-crm-signature': signature,
+        'x-crm-signature-version': '2',
+        'x-crm-nonce': nonce,
+    }, method: 'GET', originalUrl: path, socket: { remoteAddress: '10.0.0.2' } }
+    try {
+        assert.equal((await __testables.verifySignedActor(request, 'test-actor-key'))?.id, actor.id)
+        assert.equal(await __testables.verifySignedActor(request, 'test-actor-key'), null)
+    } finally {
+        __testables.clearActorReplayCache()
+        if (before === undefined) delete process.env.CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION
+        else process.env.CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION = before
+    }
+})
+
+test('rejects an invalid configured actor signature version instead of downgrading', async () => {
+    const before = process.env.CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION
+    process.env.CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION = '3'
+    try {
+        assert.equal(__testables.configuredActorSignatureVersion(), null)
+        assert.equal(await __testables.verifySignedActor({ headers: {} }, 'test-actor-key'), null)
+    } finally {
+        if (before === undefined) delete process.env.CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION
+        else process.env.CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION = before
+    }
+})
+
+test('readiness is internal and maps dependency failures to 503 without changing health', async () => {
+    const before = process.env.CRM_MODULE_CONTROL_FILE
+    const domainBefore = process.env.CRM_DOMAIN
+    delete process.env.CRM_MODULE_CONTROL_FILE
+    delete process.env.CRM_DOMAIN
+    const routes = captureAtendimentoRoutes({
+        async health() { return { ok: true, databaseConfigured: true } },
+        async readiness() { throw new Error('database unavailable') },
+    })
+    const readiness = captureResponse()
+    await routes.get('GET /readiness')({ socket: { remoteAddress: '10.0.0.2' }, headers: {} }, readiness)
+    assert.equal(readiness.state.status, 404)
+    const localReadiness = captureResponse()
+    await routes.get('GET /readiness')({ socket: { remoteAddress: '127.0.0.1' }, headers: {} }, localReadiness)
+    assert.equal(localReadiness.state.status, 503)
+    assert.deepEqual(localReadiness.state.body, { ok: false, error: 'DEPENDENCY_UNAVAILABLE', moduleControl: localReadiness.state.body.moduleControl })
+    const health = captureResponse()
+    await routes.get('GET /health')({ socket: { remoteAddress: '10.0.0.2' }, headers: {} }, health)
+    assert.equal(health.state.status, 200)
+    assert.equal(health.state.body.ok, true)
+    assert.equal(health.state.body.databaseConfigured, true)
+    if (before === undefined) delete process.env.CRM_MODULE_CONTROL_FILE
+    else process.env.CRM_MODULE_CONTROL_FILE = before
+    if (domainBefore === undefined) delete process.env.CRM_DOMAIN
+    else process.env.CRM_DOMAIN = domainBefore
 })
 
 test('redacts untrusted internal failures before returning them to a browser', () => {

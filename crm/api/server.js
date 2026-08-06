@@ -35,6 +35,7 @@ import { createCaixaRouter } from './server/caixa/routes.js'
 import { configuredCorsOrigins, isAllowedCrmCorsOrigin } from './server/corsPolicy.js'
 import { effectiveAllowedModules, normalizeCrmRole as normalizeRole } from './server/crmRolePolicy.js'
 import { resolveEvolutionMediaUrl } from './server/whatsappMediaUrl.js'
+import { installGracefulShutdown } from './server/gracefulShutdown.js'
 
 // Axios for facade requests to Unified System
 import axios from 'axios'
@@ -113,6 +114,9 @@ function normalizeBoolean(value, defaultValue = false) {
 // Gateway hardening (Unit Monitor LAN gateway behind a tunnel)
 // -------------------------------------------------------------
 const IS_GATEWAY_MODE = String(process.env.SKINCOS_GATEWAY || '') === '1'
+// The dedicated Clientes process is an API boundary, not a second copy of the
+// shared CRM. This flag also keeps its operational logs free of client IPs.
+const IS_ATENDIMENTO_RUNTIME = String(process.env.CRM_DOMAIN || '').trim().toLowerCase() === 'atendimento'
 
 // Correlation id for diagnostics across Pages -> Gateway -> child processes.
 app.use((req, res, next) => {
@@ -135,7 +139,7 @@ app.use((req, res, next) => {
             path: req.originalUrl || req.path || '/',
             status,
             duration_ms: Date.now() - startedAt,
-            ip: req.ip,
+            ...(IS_ATENDIMENTO_RUNTIME ? {} : { ip: req.ip }),
         }
         if (shouldLog(level)) {
             console.log(JSON.stringify(payload))
@@ -151,6 +155,16 @@ app.use((req, res, next) => {
     const p = req.path || '/'
     if (p === '/health' || p.startsWith('/api/unit-monitor')) return next()
     return res.status(404).json({ ok: false, error: 'Not found' })
+})
+
+// Keep every non-Atendimento route unreachable even if a future module is
+// accidentally registered below this guard.
+app.use((req, res, next) => {
+    if (!IS_ATENDIMENTO_RUNTIME) return next()
+    if (req.method === 'OPTIONS') return res.sendStatus(200)
+    const requestPath = req.path || '/'
+    if (requestPath === '/health' || requestPath === '/api/health' || requestPath === '/api/atendimento' || requestPath.startsWith('/api/atendimento/')) return next()
+    return res.status(404).json({ ok: false, error: 'ATENDIMENTO_RUNTIME_SCOPE' })
 })
 
 // -------------------------------------------------------------
@@ -720,28 +734,34 @@ app.put('/api/visual-theme', async (req, res) => {
 // Ponto (registro de ponto com identificação facial)
 // Persistência em arquivo (backend/var/core/ponto_store.v1.json)
 // -------------------------------------------------------------
-try {
-    registerPontoRoutes(app, { coreStateDir: CORE_STATE_DIR })
-    console.log('✅ Ponto routes registered')
-} catch (e) {
-    console.warn('⚠️  Ponto routes failed to register:', e?.message || String(e))
+if (!IS_ATENDIMENTO_RUNTIME) {
+    try {
+        registerPontoRoutes(app, { coreStateDir: CORE_STATE_DIR })
+        console.log('✅ Ponto routes registered')
+    } catch (e) {
+        console.warn('⚠️  Ponto routes failed to register:', e?.message || String(e))
+    }
 }
 
 // -------------------------------------------------------------
 // Harmonia (Decision API for n8n executor)
 // -------------------------------------------------------------
-try {
-    app.use('/api/harmonia', createHarmoniaRouter({ varDir: VAR_DIR }))
-    console.log('✅ Harmonia routes registered')
-} catch (e) {
-    console.warn('⚠️  Harmonia routes failed to register:', e?.message || String(e))
+if (!IS_ATENDIMENTO_RUNTIME) {
+    try {
+        app.use('/api/harmonia', createHarmoniaRouter({ varDir: VAR_DIR }))
+        console.log('✅ Harmonia routes registered')
+    } catch (e) {
+        console.warn('⚠️  Harmonia routes failed to register:', e?.message || String(e))
+    }
 }
 
-try {
-    app.use('/api/tracking', createTrackingDashboardRouter())
-    console.log('✅ Tracking dashboard routes registered')
-} catch (e) {
-    console.warn('⚠️  Tracking dashboard routes failed to register:', e?.message || String(e))
+if (!IS_ATENDIMENTO_RUNTIME) {
+    try {
+        app.use('/api/tracking', createTrackingDashboardRouter())
+        console.log('✅ Tracking dashboard routes registered')
+    } catch (e) {
+        console.warn('⚠️  Tracking dashboard routes failed to register:', e?.message || String(e))
+    }
 }
 
 try {
@@ -751,11 +771,13 @@ try {
     console.warn('⚠️  Atendimento routes failed to register:', e?.message || String(e))
 }
 
-try {
-    app.use('/api/caixa', createCaixaRouter({ getDevSession: devAuthSessionResolver }))
-    console.log('✅ Caixa routes registered')
-} catch (e) {
-    console.warn('⚠️  Caixa routes failed to register:', e?.message || String(e))
+if (!IS_ATENDIMENTO_RUNTIME) {
+    try {
+        app.use('/api/caixa', createCaixaRouter({ getDevSession: devAuthSessionResolver }))
+        console.log('✅ Caixa routes registered')
+    } catch (e) {
+        console.warn('⚠️  Caixa routes failed to register:', e?.message || String(e))
+    }
 }
 
 // -------------------------------------------------------------
@@ -6924,9 +6946,20 @@ app.use((req, res, next) => {
 // CRM Backend API configuration - default port 8099 (separate from frontend on 5000)
 const PORT = process.env.CRM_API_PORT || process.env.PORT || 8099
 const HOST = process.env.CRM_API_HOST || '0.0.0.0'
-app.listen(PORT, HOST, () => {
+if (String(process.env.CRM_DOMAIN || '').trim().toLowerCase() === 'atendimento' && normalizeBoolean(process.env.HARMONIA_WORKER_ENABLED, false)) {
+    throw new Error('HARMONIA_WORKER_MUST_RUN_IN_CONTINUOUS_WORKER_PROCESS')
+}
+const httpServer = app.listen(PORT, HOST, () => {
     console.log(`🚀 CRM Backend API running on http://${HOST}:${PORT}`)
     console.log(`📊 Health check: http://localhost:${PORT}/health`)
     console.log(`🎯 API endpoints: http://localhost:${PORT}/api/`)
     console.log(`⚙️  Mode: ${process.env.NODE_ENV || 'development'}`)
 })
+
+// The isolated Clientes runtime opts into graceful shutdown explicitly. The
+// shared CRM process keeps its historical lifecycle until it is migrated under
+// the same operational gate, so this switch cannot broaden a production
+// restart to unrelated modules.
+if (normalizeBoolean(process.env.CRM_GRACEFUL_SHUTDOWN, false)) {
+    installGracefulShutdown({ server: httpServer })
+}

@@ -2,7 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const ATENDIMENTO_CONTROL_FILE = "/etc/skincos/atendimento/module-control.json";
+export const ATENDIMENTO_CONTROL_FILES = Object.freeze({
+  staging: "/etc/skincos/atendimento/module-control.json",
+  production: "/etc/skincos/atendimento-production/module-control.json",
+});
+// Backwards-compatible staging alias for existing contract consumers.
+export const ATENDIMENTO_CONTROL_FILE = ATENDIMENTO_CONTROL_FILES.staging;
 
 // These identifiers are resolved by the versioned native runtime scripts and
 // are deliberately not shell command strings. This validator never invokes a
@@ -15,7 +20,7 @@ export const ATENDIMENTO_COMMAND_IDS = Object.freeze({
 
 export const ATENDIMENTO_HEALTH_URLS = Object.freeze({
   staging: "https://crm-atendimento-staging.skincos.com.br/api/atendimento/health",
-  production: "https://crm.skincos.com.br/api/atendimento/health",
+  production: "https://crm-atendimento.skincos.com.br/api/atendimento/health",
 });
 
 const TARGETS = new Set(["preview", "staging", "production"]);
@@ -91,7 +96,7 @@ export function validateAtendimentoDeploymentContract(environment = process.env)
     errors,
     "controlFile",
     string(environment.CRM_MODULE_CONTROL_FILE),
-    ATENDIMENTO_CONTROL_FILE,
+    ATENDIMENTO_CONTROL_FILES[target],
     "CRM_MODULE_CONTROL_FILE",
   );
   checkExact(

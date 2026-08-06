@@ -35,6 +35,18 @@ Este catálogo define os serviços críticos do repositório, suas dependências
 - Gates mínimos: `npm --prefix crm/api test`.
 - Runbooks: `docs/observability.md`, `docs/auth.md`.
 
+## Atendimento / Clientes isolado
+
+- Caminho: `crm/api/server/atendimento/` e `crm/console/functions/api/atendimento/`.
+- Runtime nativo: `crm-atendimento-staging.service` e `crm-atendimento-production.service`; o processo `crm.service` não é reiniciado.
+- Propósito: superfície Clientes/Atendimento com release imutável por SHA, banco/role próprios, health público sanitizado e readiness interno.
+- Estado inicial de produção: somente GET/HEAD/diagnósticos autorizados; `commercialContactWritesEnabled=false`, canário vazio e nenhuma gravação comercial, consentimento, contato, mensagem, campanha ou decisão de identidade.
+- Dependências críticas: PostgreSQL dedicado, schema pré-gerenciado, HMAC de ator v2 com nonce anti-replay, túnel dedicado e arquivo de controle fail-closed.
+- O refresh genérico de fontes permanece desabilitado na primeira promoção porque seu alvo histórico de produção é o CRM compartilhado; a ingestão isolada exige runner target-bound para o banco Clientes dedicado.
+- SLO alvo: health p95 <= 1000 ms; readiness 503 durante indisponibilidade de banco; sem PII em logs/métricas/artefatos.
+- Gates mínimos: `npm --prefix crm/api test`, `npm --prefix crm/console run typecheck`, smoke assinado sintético e `scripts/validate-atendimento-production-readonly.sh`.
+- Runbooks: `docs/runbooks/clientes-production-readonly-runtime.md`, `docs/runbooks/atendimento-independent-release.md`.
+
 ## Escala API
 
 - Caminho: `workforce/schedule/`

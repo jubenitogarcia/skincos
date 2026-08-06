@@ -20,7 +20,8 @@ binding = "MODULE_CONTROL"
 id = "__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__"
 
 [env.production.vars]
-ATENDIMENTO_API_TARGET = "https://cs-api.skincos.com.br"
+ATENDIMENTO_API_TARGET = "https://crm-atendimento.skincos.com.br"
+ATENDIMENTO_ACTOR_SIGNATURE_VERSION = "2"
 INSUMOS_API_TARGET = "https://api.skincos.com.br"
 ESCALA_API_TARGET = "https://escala-api.skincos.com.br"
 PONTO_API_TARGET = "https://api.skincos.com.br"
@@ -52,6 +53,8 @@ binding = "MODULE_CONTROL"
 id = "e69fe06b6abc46eca4f4c00198d078f2"
 
 [env.preview.vars]
+ATENDIMENTO_API_TARGET = "https://crm-atendimento-staging.skincos.com.br"
+ATENDIMENTO_ACTOR_SIGNATURE_VERSION = "2"
 INSUMOS_API_TARGET = "https://api.skincos.com.br"
 ESCALA_API_TARGET = "https://escala-api-staging.skincos.com.br"
 PONTO_API_TARGET = "https://api-staging.skincos.com.br"

@@ -13,7 +13,7 @@ function createContext(url: string, env: Record<string, unknown>) {
 }
 
 describe('Atendimento Clientes proxy access', () => {
-  beforeEach(() => vi.restoreAllMocks())
+  beforeEach(() => { vi.restoreAllMocks(); vi.clearAllMocks() })
   afterEach(() => vi.unstubAllGlobals())
 
   it('rejects GERENTE from a Clientes route before opening the upstream request', async () => {
@@ -47,6 +47,77 @@ describe('Atendimento Clientes proxy access', () => {
     expect(response.status).toBe(200)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect((fetchMock.mock.calls[0][0] as Request).url).toBe('https://crm-api.skincos.com.br/api/atendimento/commercial/overview')
+  })
+
+  it('serves public health without CRM login and strips upstream fields', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      databaseConfigured: true,
+      readOnlyRuntime: true,
+      moduleControl: {
+        configured: true,
+        module: 'atendimento',
+        state: 'active',
+        ready: true,
+        releaseSha: 'a'.repeat(40),
+        actor: 'must-not-leak',
+        email: 'hidden@example.test',
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await onRequest(createContext(
+      'https://crm.skincos.com.br/api/atendimento/health',
+      { ATENDIMENTO_API_TARGET: 'https://crm-atendimento.skincos.com.br' },
+    ))
+
+    expect(response.status).toBe(200)
+    expect(requireCrmUser).not.toHaveBeenCalled()
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      databaseConfigured: true,
+      readOnlyRuntime: true,
+      moduleControl: {
+        configured: true,
+        module: 'atendimento',
+        state: 'active',
+        ready: true,
+        syntheticOnly: false,
+        releaseSha: 'a'.repeat(40),
+      },
+    })
+    expect((fetchMock.mock.calls[0][0] as Request).url).toBe('https://crm-atendimento.skincos.com.br/api/atendimento/health')
+  })
+
+  it('fails closed when only a shared target is configured', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await onRequest(createContext(
+      'https://crm.skincos.com.br/api/atendimento/health',
+      { CRM_API_TARGET: 'https://cs-api.skincos.com.br' },
+    ))
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toEqual({ ok: false, error: 'UPSTREAM_NOT_CONFIGURED' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('binds the actor signature to v2 nonce and request path when configured', async () => {
+    ;(requireCrmUser as Mock).mockResolvedValue({ id: 'gestor-1', role: 'GESTOR', allowedModules: ['atendimento'] })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await onRequest({
+      request: new Request('https://crm.skincos.com.br/api/atendimento/commercial/overview?unit=nh', { headers: { accept: 'application/json' } }),
+      env: { ATENDIMENTO_API_TARGET: 'https://crm-atendimento.skincos.com.br', ATENDIMENTO_ACTOR_HMAC_KEY: 'test-secret', ATENDIMENTO_ACTOR_SIGNATURE_VERSION: '2' },
+    })
+
+    expect(response.status).toBe(200)
+    const upstream = fetchMock.mock.calls[0][0] as Request
+    expect(upstream.headers.get('x-crm-signature-version')).toBe('2')
+    expect(upstream.headers.get('x-crm-nonce')).toMatch(/^[A-Za-z0-9-]{16,}$/)
+    expect(upstream.headers.get('x-crm-signature')).toMatch(/^[A-Za-z0-9_-]+$/)
   })
 
   it('forwards a GESTOR source-state identity review decision to the configured upstream', async () => {

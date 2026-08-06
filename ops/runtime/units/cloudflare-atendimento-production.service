@@ -1,0 +1,27 @@
+[Unit]
+Description=Skincos dedicated Cloudflare tunnel for isolated Atendimento production
+After=network-online.target crm-atendimento-production.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+Environment=CLOUDFLARE_TUNNEL_ID=__TUNNEL_ID__
+Environment=CLOUDFLARED_CONFIG_PATH=__CONFIG_ROOT__/cloudflare/atendimento-production/config.yml
+ExecStart=/usr/bin/cloudflared tunnel --protocol http2 --config __CONFIG_ROOT__/cloudflare/atendimento-production/config.yml run __TUNNEL_ID__
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__LOG_ROOT__/cloudflare-atendimento-production
+UMask=0027
+StandardOutput=append:__LOG_ROOT__/cloudflare-atendimento-production/tunnel.out.log
+StandardError=append:__LOG_ROOT__/cloudflare-atendimento-production/tunnel.err.log
+
+[Install]
+WantedBy=multi-user.target

@@ -74,6 +74,13 @@ async function signHmacSha256B64Url(secret: string, message: string): Promise<st
   return b64UrlEncodeBytes(sig)
 }
 
+function actorSignatureMessage(version: string, timestamp: string, nonce: string, method: string, path: string, encoded: string): string {
+  if (String(version) === '2') {
+    return `atendimento-actor/v2.${timestamp}.${nonce}.${method}.${path}.${encoded}`
+  }
+  return `${timestamp}.${encoded}`
+}
+
 function buildTargetUrl(targetOrigin: string, requestUrl: string, rest: string): string {
   const incoming = new URL(requestUrl)
   const target = new URL(targetOrigin)
@@ -149,22 +156,76 @@ function upstreamUnavailableResponse(requestId: string): Response {
   return json(502, { ok: false, error: 'UPSTREAM_UNREACHABLE' }, { 'x-request-id': requestId })
 }
 
+function publicHealthPayload(value: unknown): JsonBody {
+  const input = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const control = input.moduleControl && typeof input.moduleControl === 'object'
+    ? input.moduleControl as Record<string, unknown>
+    : {}
+  const cleanToken = (candidate: unknown, max = 128) => {
+    const text = String(candidate || '').trim()
+    return /^[A-Za-z0-9_.:-]+$/.test(text) ? text.slice(0, max) : undefined
+  }
+  const releaseSha = /^[0-9a-f]{40}$/i.test(String(control.releaseSha || ''))
+    ? String(control.releaseSha).toLowerCase()
+    : undefined
+  return {
+    ok: input.ok === true,
+    databaseConfigured: input.databaseConfigured === true,
+    readOnlyRuntime: input.readOnlyRuntime === true,
+    moduleControl: {
+      configured: control.configured === true,
+      module: cleanToken(control.module, 32) || 'atendimento',
+      state: cleanToken(control.state, 32) || 'unknown',
+      ready: control.ready === true,
+      syntheticOnly: control.syntheticOnly === true,
+      ...(releaseSha ? { releaseSha } : {}),
+      ...(cleanToken(control.updatedAt, 64) ? { updatedAt: cleanToken(control.updatedAt, 64) } : {}),
+      ...(cleanToken(control.reason, 128) ? { reason: cleanToken(control.reason, 128) } : {}),
+    },
+  }
+}
+
+async function forwardPublicHealth(targetOrigin: string, request: Request, rest: string, requestId: string): Promise<Response> {
+  if (!['GET', 'HEAD'].includes((request.method || 'GET').toUpperCase())) {
+    return json(405, { ok: false, error: 'METHOD_NOT_ALLOWED' }, { allow: 'GET, HEAD', 'x-request-id': requestId })
+  }
+  if (!targetOrigin) return json(503, { ok: false, error: 'UPSTREAM_NOT_CONFIGURED' }, { 'x-request-id': requestId })
+  const upstreamUrl = buildTargetUrl(targetOrigin, request.url, rest)
+  const upstream = await fetch(new Request(upstreamUrl, {
+    method: request.method,
+    headers: { accept: 'application/json', 'x-request-id': requestId },
+    redirect: 'manual',
+  })).catch(() => null)
+  if (!upstream) return upstreamUnavailableResponse(requestId)
+  let payload: unknown = {}
+  try { payload = await upstream.clone().json() } catch { payload = {} }
+  const safeBody = publicHealthPayload(payload)
+  return json(upstream.status, safeBody, { 'x-request-id': requestId })
+}
+
 export async function onRequest(context: AtendimentoProxyContext): Promise<Response> {
   const request: Request = context.request
   const url = new URL(request.url)
   const requestId = newRequestId()
+  const env = context.env || {}
+  // Atendimento is an isolated runtime. Falling back to a shared CRM or
+  // Insumos target would make a missing production route look healthy and
+  // could reintroduce cross-module writes, so the dedicated target is the
+  // only accepted upstream for this proxy.
+  const targetOrigin = String(env.ATENDIMENTO_API_TARGET || '').trim()
+  const prefix = '/api/atendimento'
+  const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
+  if (rest === '/health' || rest === '/health/') {
+    return forwardPublicHealth(targetOrigin, request, rest, requestId)
+  }
   const userOrRes = await requireCrmUser(context)
   if (userOrRes instanceof Response) return userOrRes
   if (!hasModuleAccess(userOrRes)) {
     return json(403, { ok: false, error: 'FORBIDDEN' }, { 'x-request-id': requestId })
   }
 
-  const env = context.env || {}
-  const targetOrigin = String(env.ATENDIMENTO_API_TARGET || env.CRM_API_TARGET || env.INSUMOS_API_TARGET || '').trim()
   const actorKey = resolveAtendimentoActorHmacKey(env)
   const unsignedLocalProxyAllowed = shouldAllowUnsignedLocalProxy(context, actorKey)
-  const prefix = '/api/atendimento'
-  const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
   if (!hasCommercialAccess(userOrRes, rest)) {
     return json(403, { ok: false, error: 'FORBIDDEN' }, { 'x-request-id': requestId })
@@ -181,7 +242,7 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
       actorKeyConfigured: !!actorKey || unsignedLocalProxyAllowed,
       mode: unsignedLocalProxyAllowed ? 'upstream-local-bypass' : 'upstream',
       hint: !targetOrigin
-        ? 'Configure ATENDIMENTO_API_TARGET ou CRM_API_TARGET no Cloudflare Pages/Functions.'
+        ? 'Configure ATENDIMENTO_API_TARGET no Cloudflare Pages/Functions.'
         : (!actorKey && !unsignedLocalProxyAllowed
           ? 'Configure ATENDIMENTO_ACTOR_HMAC_KEY ou ESCALA_ACTOR_HMAC_KEY para assinar o ator do CRM.'
           : undefined),
@@ -192,7 +253,7 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
     return json(503, {
       ok: false,
       error: 'ATENDIMENTO_API_TARGET nao configurado',
-      hint: 'Defina ATENDIMENTO_API_TARGET ou CRM_API_TARGET no Cloudflare Pages/Functions.',
+      hint: 'Defina ATENDIMENTO_API_TARGET no Cloudflare Pages/Functions.',
     }, { 'x-request-id': requestId })
   }
   if (!actorKey && !unsignedLocalProxyAllowed) {
@@ -205,15 +266,19 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
 
   const actor = toAtendimentoActor(userOrRes as CrmUserLike)
   const actorB64 = b64UrlEncodeString(JSON.stringify(actor))
+  const method = (request.method || 'GET').toUpperCase()
+  const signingPath = `${url.pathname}${url.search}`
   const headers = buildUpstreamHeaders(request, requestId)
   headers.set('x-crm-user', actorB64)
   if (actorKey) {
     const actorTs = String(Date.now())
+    const actorSignatureVersion = String(env.ATENDIMENTO_ACTOR_SIGNATURE_VERSION || '1').trim()
+    const actorNonce = actorSignatureVersion === '2' ? (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(16).slice(2)}`) : ''
     headers.set('x-crm-ts', actorTs)
-    headers.set('x-crm-signature', await signHmacSha256B64Url(actorKey, `${actorTs}.${actorB64}`))
+    headers.set('x-crm-signature-version', actorSignatureVersion)
+    if (actorNonce) headers.set('x-crm-nonce', actorNonce)
+    headers.set('x-crm-signature', await signHmacSha256B64Url(actorKey, actorSignatureMessage(actorSignatureVersion, actorTs, actorNonce, method, signingPath, actorB64)))
   }
-
-  const method = (request.method || 'GET').toUpperCase()
   const body = method === 'GET' || method === 'HEAD' ? undefined : request.body
   // Node's fetch implementation requires this marker for a streamed request
   // body, while the Pages runtime safely ignores it.
@@ -244,6 +309,7 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
 }
 
 export const __testables = {
+  actorSignatureMessage,
   buildUpstreamHeaders,
   buildTargetUrl,
   hasCommercialAccess,
@@ -252,6 +318,8 @@ export const __testables = {
   resolveAtendimentoActorHmacKey,
   shouldAllowUnsignedLocalProxy,
   toAtendimentoActor,
+  publicHealthPayload,
+  forwardPublicHealth,
   upstreamUnavailableResponse,
 }
 
