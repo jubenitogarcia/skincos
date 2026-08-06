@@ -1331,6 +1331,7 @@ if [[ "$CRM_PROFILE" == "realistic" ]]; then
   export LOCAL_AUTH_TEST_USER_ADMIN="${LOCAL_AUTH_TEST_USER_ADMIN:-true}"
   export LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}"
   export LOCAL_AUTH_NAME="${LOCAL_AUTH_NAME:-Teste CRM Local}"
+  export LOCAL_AUTH_ALLOWED_HOSTS="${LOCAL_AUTH_ALLOWED_HOSTS:-}"
   if local_timekeeping_requested; then
     if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
       export PONTO_API_TARGET="http://127.0.0.1:${CRM_TIMEKEEPING_PORT}"

@@ -2354,6 +2354,7 @@ function Start-CrmInstanceRuntime {
         "LOCAL_AUTH_EMAIL=$email",
         "LOCAL_AUTH_NAME=$displayName",
         "LOCAL_AUTH_ALLOWED_MODULES=$allowedModules",
+        "LOCAL_AUTH_ALLOWED_HOSTS=$publicHost",
         "CRM_VITE_PORT=$([int]$Spec.ports.vite)",
         "CRM_PAGES_PORT=$([int]$Spec.ports.pages)",
         "CRM_HOST=$publicHost",
