@@ -13,6 +13,7 @@ const {
   WORKFLOW_ID,
   WORKFLOW_NAME,
   buildWorkflowPackage,
+  ensureStructuredParserModels,
   transformWorkflow,
 } = require('../scripts/build-campaign-creative-creator-continuous');
 const {
@@ -247,6 +248,31 @@ test('manual smoke and operational subworkflow triggers are separate', () => {
   for (const fixture of ALL_FIXTURE_NAMES.slice(1)) {
     assert.equal(workflow.nodes.some((candidate) => candidate.name === fixture), false, fixture);
   }
+});
+
+test('structured parsers receive the same model used by their agents', () => {
+  const workflow = {
+    nodes: [
+      node('Agent', 0, { type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 2.2 }),
+      node('Parser', 1, {
+        type: '@n8n/n8n-nodes-langchain.outputParserStructured',
+        typeVersion: 1.3,
+        parameters: { autoFix: true },
+      }),
+      node('Model', 2, { type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', typeVersion: 1.2 }),
+    ],
+    connections: {
+      Parser: { ai_outputParser: [[{ node: 'Agent', type: 'ai_outputParser', index: 0 }]] },
+      Model: { ai_languageModel: [[{ node: 'Agent', type: 'ai_languageModel', index: 0 }]] },
+    },
+  };
+
+  ensureStructuredParserModels(workflow);
+  ensureStructuredParserModels(workflow);
+  assert.deepEqual(workflow.connections.Model.ai_languageModel, [[
+    { node: 'Agent', type: 'ai_languageModel', index: 0 },
+    { node: 'Parser', type: 'ai_languageModel', index: 0 },
+  ]]);
 });
 
 test('each content type carries one lineage object through CCG-90', () => {
