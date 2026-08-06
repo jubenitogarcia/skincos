@@ -245,8 +245,12 @@ async function handleOverview(env, actor) {
 
 async function handleProfessionals(env, unit, actor) {
   const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
+  const hasWorkforceColumn = await tableHasColumn(env, 'professionals', 'workforce_employee_id')
+  const identitySelect = hasWorkforceColumn
+    ? `id, name, status, role, shift, nickname, phone, email, instagram, ${hasColorColumn ? 'color' : 'null as color'}, workforce_employee_id, units_json`
+    : `name, status, role, shift, nickname, phone, email, instagram, ${hasColorColumn ? 'color' : 'null as color'}, units_json`
   const res = await env.DB.prepare(
-    `select name, status, role, shift, nickname, phone, email, instagram, ${hasColorColumn ? 'color' : 'null as color'}, units_json
+    `select ${identitySelect}
      from professionals
      order by name`
   ).all()
@@ -263,6 +267,8 @@ async function handleProfessionals(env, unit, actor) {
       const unitKeys = Array.isArray(units) ? units.map((u) => normalizeUnitKey(u)).filter(Boolean) : []
       return {
         ...row,
+        professionalId: row.id || null,
+        workforceEmployeeId: row.workforce_employee_id || null,
         units: Array.isArray(units) ? units : [],
         unitKeys
       }
@@ -294,8 +300,9 @@ function buildScheduleWhere(params) {
 
 async function handleSchedule(env, unit, month, actor) {
   const { where, values } = buildScheduleWhere({ unit, month })
+  const hasProfessionalId = await tableHasColumn(env, 'schedule_entries', 'professional_id')
   const scheduleRes = await env.DB.prepare(
-    `select date, unit, professional_name as professional
+    `select date, unit, professional_name as professional${hasProfessionalId ? ', professional_id' : ''}
      from schedule_entries
      ${where}
      order by date asc, professional_name asc`
@@ -316,7 +323,7 @@ async function handleSchedule(env, unit, month, actor) {
   ).bind(...values).all()
 
   return {
-    schedule: (scheduleRes.results || []).filter((row) => isUnitVisibleForActor(actor, row.unit)),
+    schedule: (scheduleRes.results || []).filter((row) => isUnitVisibleForActor(actor, row.unit)).map((row) => hasProfessionalId ? ({ ...row, professionalId: row.professional_id || null }) : row),
     closedDays: (closedRes.results || []).filter((row) => isUnitVisibleForActor(actor, row.unit)),
     holidays: (holidaysRes.results || []).filter((row) => isUnitVisibleForActor(actor, row.unit))
   }
@@ -416,6 +423,17 @@ async function listKnownProfessionals(env, names) {
   return (res.results || []).map((r) => r.name)
 }
 
+async function professionalIdsByName(env, names) {
+  if (!(await tableHasColumn(env, 'schedule_entries', 'professional_id'))) return new Map()
+  const unique = Array.from(new Set(names.map(normalizeName).filter(Boolean)))
+  if (!unique.length) return new Map()
+  const placeholders = unique.map(() => '?').join(',')
+  const res = await env.DB.prepare(
+    `select id, name from professionals where name in (${placeholders})`
+  ).bind(...unique).all()
+  return new Map((res.results || []).map((row) => [normalizeName(row.name), String(row.id || '').trim()]))
+}
+
 async function runStatements(env, statements) {
   if (!statements.length) return
   if (typeof env.DB.batch === 'function') {
@@ -429,16 +447,16 @@ async function runStatements(env, statements) {
 
 async function handleProfessionalPut(env, actor, body) {
   const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
+  const hasWorkforceColumn = await tableHasColumn(env, 'professionals', 'workforce_employee_id')
   const currentName = normalizeName(body?.currentName)
   const nextName = normalizeName(body?.name)
   const status = normalizeName(body?.status)
   const role = normalizeName(body?.role)
   const shift = normalizeName(body?.shift)
   const nickname = normalizeName(body?.nickname)
-  const phone = normalizeName(body?.phone)
-  const email = normalizeName(body?.email)
   const instagram = normalizeName(body?.instagram)
   const color = normalizeName(body?.color)
+  const workforceEmployeeId = normalizeName(body?.workforceEmployeeId)
   const unitsInput = Array.isArray(body?.units) ? body.units : []
   const units = Array.from(new Set(unitsInput.map(normalizeName).filter(Boolean)))
 
@@ -451,11 +469,26 @@ async function handleProfessionalPut(env, actor, body) {
   }
 
   const existing = await env.DB.prepare(
-    `select name from professionals where name = ?1`
+    hasWorkforceColumn ? `select id, name, phone, email, workforce_employee_id, units_json from professionals where name = ?1` : `select id, name, phone, email, units_json from professionals where name = ?1`
   ).bind(currentName).first()
   if (!existing) {
     return { ok: false, status: 404, body: { ok: false, error: 'PROFESSIONAL_NOT_FOUND' } }
   }
+
+  const existingUnits = safeJsonParse(existing.units_json, [])
+  if (actor.allowedUnitKeys.length && (!Array.isArray(existingUnits) || !existingUnits.length || existingUnits.some((unit) => !isUnitVisibleForActor(actor, unit)))) {
+    return { ok: false, status: 403, body: { ok: false, error: 'FORBIDDEN_EXISTING_UNIT' } }
+  }
+
+  // Identity edits do not necessarily include the private phone field. An
+  // omitted value preserves the operational record; an explicit empty value
+  // remains a deliberate clear from the Escala editor.
+  const phone = Object.prototype.hasOwnProperty.call(body || {}, 'phone')
+    ? normalizeName(body?.phone)
+    : normalizeName(existing?.phone)
+  const email = Object.prototype.hasOwnProperty.call(body || {}, 'email')
+    ? normalizeName(body?.email)
+    : normalizeName(existing?.email)
 
   if (currentName !== nextName) {
     const conflicting = await env.DB.prepare(
@@ -466,8 +499,26 @@ async function handleProfessionalPut(env, actor, body) {
     }
   }
 
+  const nextWorkforceEmployeeId = workforceEmployeeId || String(existing?.workforce_employee_id || '').trim()
+  if (hasWorkforceColumn && nextWorkforceEmployeeId) {
+    const linked = await env.DB.prepare(
+      `select name from professionals where workforce_employee_id = ?1 and name <> ?2 limit 1`
+    ).bind(nextWorkforceEmployeeId, currentName).first()
+    if (linked) {
+      return { ok: false, status: 409, body: { ok: false, error: 'WORKFORCE_EMPLOYEE_LINK_CONFLICT' } }
+    }
+  }
+
   const now = new Date().toISOString()
-  if (hasColorColumn) {
+  if (hasColorColumn && hasWorkforceColumn) {
+    await env.DB.prepare(
+      `update professionals
+       set name = ?1, status = ?2, role = ?3, shift = ?4, nickname = ?5, phone = ?6,
+           email = ?7, instagram = ?8, color = ?9, workforce_employee_id = ?10,
+           units_json = ?11, updated_at = ?12
+       where name = ?13`
+    ).bind(nextName, status || null, role || null, shift || null, nickname || null, phone || null, email || null, instagram || null, color || null, nextWorkforceEmployeeId || null, JSON.stringify(units), now, currentName).run()
+  } else if (hasColorColumn) {
     await env.DB.prepare(
       `update professionals
        set name = ?1,
@@ -496,6 +547,14 @@ async function handleProfessionalPut(env, actor, body) {
       now,
       currentName,
     ).run()
+  } else if (hasWorkforceColumn) {
+    await env.DB.prepare(
+      `update professionals
+       set name = ?1, status = ?2, role = ?3, shift = ?4, nickname = ?5, phone = ?6,
+           email = ?7, instagram = ?8, workforce_employee_id = ?9, units_json = ?10,
+           updated_at = ?11
+       where name = ?12`
+    ).bind(nextName, status || null, role || null, shift || null, nickname || null, phone || null, email || null, instagram || null, nextWorkforceEmployeeId || null, JSON.stringify(units), now, currentName).run()
   } else {
     await env.DB.prepare(
       `update professionals
@@ -535,11 +594,12 @@ async function handleProfessionalPut(env, actor, body) {
     ).bind(nextName, now, actor.id, currentName).run()
   }
 
-  return { ok: true, status: 200, body: { ok: true } }
+  return { ok: true, status: 200, body: { ok: true, data: { professionalId: existing?.id || null, workforceEmployeeId: nextWorkforceEmployeeId || null } } }
 }
 
 async function handleProfessionalPost(env, actor, body) {
   const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
+  const hasWorkforceColumn = await tableHasColumn(env, 'professionals', 'workforce_employee_id')
   const name = normalizeName(body?.name)
   const status = normalizeName(body?.status)
   const role = normalizeName(body?.role)
@@ -549,6 +609,7 @@ async function handleProfessionalPost(env, actor, body) {
   const email = normalizeName(body?.email)
   const instagram = normalizeName(body?.instagram)
   const color = normalizeName(body?.color)
+  const workforceEmployeeId = normalizeName(body?.workforceEmployeeId)
   const unitsInput = Array.isArray(body?.units) ? body.units : []
   const units = Array.from(new Set(unitsInput.map(normalizeName).filter(Boolean)))
 
@@ -567,14 +628,28 @@ async function handleProfessionalPost(env, actor, body) {
     return { ok: false, status: 409, body: { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' } }
   }
 
+  if (hasWorkforceColumn && workforceEmployeeId) {
+    const linked = await env.DB.prepare(
+      `select name from professionals where workforce_employee_id = ?1 limit 1`
+    ).bind(workforceEmployeeId).first()
+    if (linked) return { ok: false, status: 409, body: { ok: false, error: 'WORKFORCE_EMPLOYEE_LINK_CONFLICT' } }
+  }
+
   const now = new Date().toISOString()
-  if (hasColorColumn) {
+  const professionalId = crypto.randomUUID()
+  if (hasColorColumn && hasWorkforceColumn) {
+    await env.DB.prepare(
+      `insert into professionals
+       (id, name, status, role, shift, nickname, phone, email, instagram, color, workforce_employee_id, units_json, created_at, updated_at)
+       values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`
+    ).bind(professionalId, name, status || null, role || null, shift || null, nickname || null, phone || null, email || null, instagram || null, color || null, workforceEmployeeId || null, JSON.stringify(units), now, now).run()
+  } else if (hasColorColumn) {
     await env.DB.prepare(
       `insert into professionals
        (id, name, status, role, shift, nickname, phone, email, instagram, color, units_json, created_at, updated_at)
        values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
     ).bind(
-      crypto.randomUUID(),
+      professionalId,
       name,
       status || null,
       role || null,
@@ -588,13 +663,22 @@ async function handleProfessionalPost(env, actor, body) {
       now,
       now,
     ).run()
+  } else if (hasWorkforceColumn) {
+    await env.DB.prepare(
+      `insert into professionals
+       (id, name, status, role, shift, nickname, phone, email, instagram, workforce_employee_id, units_json, created_at, updated_at)
+       values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
+    ).bind(
+      professionalId, name, status || null, role || null, shift || null, nickname || null, phone || null,
+      email || null, instagram || null, workforceEmployeeId || null, JSON.stringify(units), now, now,
+    ).run()
   } else {
     await env.DB.prepare(
       `insert into professionals
        (id, name, status, role, shift, nickname, phone, email, instagram, units_json, created_at, updated_at)
        values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
     ).bind(
-      crypto.randomUUID(),
+      professionalId,
       name,
       status || null,
       role || null,
@@ -609,7 +693,7 @@ async function handleProfessionalPost(env, actor, body) {
     ).run()
   }
 
-  return { ok: true, status: 200, body: { ok: true } }
+  return { ok: true, status: 200, body: { ok: true, data: { professionalId, workforceEmployeeId: workforceEmployeeId || null } } }
 }
 
 async function handleSchedulePost(env, actor, body) {
@@ -628,14 +712,23 @@ async function handleSchedulePost(env, actor, body) {
   if (known.length !== names.length) {
     return { ok: false, status: 400, body: { ok: false, error: 'UNKNOWN_PROFESSIONAL' } }
   }
+  const professionalIds = await professionalIdsByName(env, names)
+  const hasProfessionalId = await tableHasColumn(env, 'schedule_entries', 'professional_id')
   const now = new Date().toISOString()
-  const stmt = env.DB.prepare(
-    `insert or ignore into schedule_entries
-     (id, date, unit, professional_name, created_at, updated_at, created_by, updated_by)
-     values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
-  )
   for (const name of names) {
-    await stmt.bind(crypto.randomUUID(), date, unit, name, now, now, actor.id, actor.id).run()
+    if (hasProfessionalId) {
+      await env.DB.prepare(
+        `insert or ignore into schedule_entries
+         (id, date, unit, professional_name, professional_id, created_at, updated_at, created_by, updated_by)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
+      ).bind(crypto.randomUUID(), date, unit, name, professionalIds.get(name) || null, now, now, actor.id, actor.id).run()
+    } else {
+      await env.DB.prepare(
+        `insert or ignore into schedule_entries
+         (id, date, unit, professional_name, created_at, updated_at, created_by, updated_by)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+      ).bind(crypto.randomUUID(), date, unit, name, now, now, actor.id, actor.id).run()
+    }
   }
   return { ok: true, status: 200, body: { ok: true } }
 }
@@ -661,6 +754,8 @@ async function handleSchedulePut(env, actor, body) {
   if (known.length !== uniqueNames.length) {
     return { ok: false, status: 400, body: { ok: false, error: 'UNKNOWN_PROFESSIONAL' } }
   }
+  const professionalIds = await professionalIdsByName(env, uniqueNames)
+  const hasProfessionalId = await tableHasColumn(env, 'schedule_entries', 'professional_id')
   const now = new Date().toISOString()
   const statements = []
   let updatedEntries = 0
@@ -671,11 +766,17 @@ async function handleSchedulePut(env, actor, body) {
     for (const name of entry.professionals) {
       updatedEntries += 1
       statements.push(
-        env.DB.prepare(
-          `insert into schedule_entries
-           (id, date, unit, professional_name, created_at, updated_at, created_by, updated_by)
-           values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
-        ).bind(crypto.randomUUID(), entry.date, unit, name, now, now, actor.id, actor.id),
+        hasProfessionalId
+          ? env.DB.prepare(
+            `insert into schedule_entries
+             (id, date, unit, professional_name, professional_id, created_at, updated_at, created_by, updated_by)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
+          ).bind(crypto.randomUUID(), entry.date, unit, name, professionalIds.get(name) || null, now, now, actor.id, actor.id)
+          : env.DB.prepare(
+            `insert into schedule_entries
+             (id, date, unit, professional_name, created_at, updated_at, created_by, updated_by)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+          ).bind(crypto.randomUUID(), entry.date, unit, name, now, now, actor.id, actor.id),
       )
     }
   }

@@ -36,6 +36,11 @@ icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmThreadPreview"
 
 [[actions]]
+name = "CRM – Prévia Usuários Equipe Thread"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmUsersThreadPreview"
+
+[[actions]]
 name = "EF App"
 icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action EfAppMenu"

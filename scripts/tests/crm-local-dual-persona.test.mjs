@@ -62,6 +62,10 @@ test('Codex App and Windows expose stable CRM actions plus the isolated thread p
       name: 'CRM – Prévia da Thread',
       command: 'powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmThreadPreview',
     },
+    {
+      name: 'CRM – Prévia Usuários Equipe Thread',
+      command: 'powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmUsersThreadPreview',
+    },
   ])
   assert.ok(!tomlActions(environment).some(({ name }) => name === 'Local'))
   assert.doesNotMatch(environment, /CRM – Local \(Gestor\)|CRM – Consultor \(Ponto\)/)
@@ -74,6 +78,7 @@ test('Codex App and Windows expose stable CRM actions plus the isolated thread p
     { name: 'CRM – Local', action: 'CrmLocal' },
     { name: 'CRM – Módulos', action: 'CrmModules' },
     { name: 'CRM – Prévia da Thread', action: 'CrmThreadPreview' },
+    { name: 'CRM – Prévia Usuários Equipe Thread', action: 'CrmUsersThreadPreview' },
   ])
   assert.doesNotMatch(shortcutBlock, /Name = "Local"|CRM – Local \(Gestor\)|CRM – Consultor \(Ponto\)/)
   assert.match(installer, /\$moduleRoot = Join-Path \$TargetRoot "CRM – Módulos"/)
@@ -185,8 +190,9 @@ test('thread preview only materializes the invoking registered worktree in its o
   assert.match(launcher, /-CrmThreadPreviewDetachedStart/)
   assert.match(launcher, /\[switch\]\$CrmThreadPreviewStop/)
   assert.match(launcher, /O encerramento da prévia exige -CrmRole e -CrmModule/)
-  assert.match(launcher, /\$SelectedAction -like 'Crm\*' -and \$SelectedAction -ne 'CrmThreadPreview'/)
+  assert.match(launcher, /\$SelectedAction -like 'Crm\*' -and \$SelectedAction -notin @\('CrmThreadPreview', 'CrmUsersThreadPreview'\)/)
   assert.match(launcher, /"CrmThreadPreview"\s*\{[\s\S]*?Show-CrmThreadPreviewMenu/)
+  assert.match(launcher, /"CrmUsersThreadPreview"\s*\{[\s\S]*?Invoke-CrmThreadPreviewAction -Role Gestor -Module "users"/)
 })
 
 test('launcher derives local auth grants from the canonical role policy', () => {

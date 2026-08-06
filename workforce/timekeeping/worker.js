@@ -907,6 +907,11 @@ async function syncIdentityOnboarding(db, body, requestId) {
     try { metadata = JSON.parse(existing.metadata_json || '{}') } catch {}
     if (metadata?.identityOnboardingId !== onboardingId) throw new Error('LOGIN_EMAIL_ALREADY_IN_USE')
     const existingState = normalizeAccountState(existing.access_state || (existing.status === 'ACTIVE' ? 'ACTIVE' : existing.status === 'TERMINATED' ? 'TERMINATED' : 'SUSPENDED'))
+    if (existing.display_name !== name || existing.job_title !== jobTitle) {
+      await db.prepare('UPDATE workforce_employees SET display_name=?, job_title=?, updated_at=? WHERE id=?').bind(name, jobTitle, now(), existing.id).run()
+      const actor = { id: 'identity-service', role: 'ADMIN', email: 'identity-service@internal', allowedUnits: units, name: 'Identity service' }
+      await (await audit(db, { actor, action: 'IDENTITY_ONBOARDING_PROFILE_SYNC', entityType: 'workforce_employee', entityId: existing.id, requestId, before: { displayName: existing.display_name || null, jobTitle: existing.job_title || null }, after: { displayName: name, jobTitle } })).run()
+    }
     if (existingState !== accountStatus && ['PENDING_ACCESS', 'INVITED'].includes(accountStatus)) {
       await syncIdentityOnboardingStatus(db, { onboardingId, employeeId: existing.id, accountStatus, allowFailClosedRepair: true }, requestId)
     }
