@@ -74,3 +74,41 @@ conflito ou divergência interrompe a aplicação e mantém o estado anterior.
 O preview local usa fixture sintética e armazenamento privado do runtime; ele
 é apropriado para testar edição, suspensão, convite, revogação e preservação
 de agenda sem enviar mensagens ou tocar bancos remotos.
+
+## Migrações e validação de staging
+
+As migrações devem ser aplicadas pelo runner versionado do Worker de Inventário,
+nunca por SQL manual no console do D1. A sequência esperada é `0024` seguida de
+`0025`; a segunda adiciona o fingerprint completo da requisição de onboarding e
+fecha a possibilidade de reutilizar uma chave de idempotência com outro payload.
+
+Antes da aplicação, registrar no checkpoint privado:
+
+- release/commit efetivamente publicado no Worker e no console;
+- estado de `d1_migrations`, contagens das tabelas afetadas e export/backup
+  verificável do banco de staging;
+- fingerprint do inventário aprovado e estado da flag
+  `UNIFIED_TEAM_ENABLED`.
+
+Depois da aplicação, confirmar que os dois tags aparecem em `d1_migrations`,
+que a coluna `request_fingerprint` e seu índice existem e que a reaplicação é
+`noop`. A API só pode ser exercitada depois dessa confirmação. O primeiro
+exercício deve usar identidade sintética, unidade autorizada e destinatário de
+teste controlado; registrar resposta, auditoria e telemetria agregada, sem
+armazenar senha, token ou conteúdo de mensagem.
+
+O gate de staging é encerrado somente quando a jornada sintética comprovar:
+
+1. cadastro idempotente e rejeição de payload divergente com a mesma chave;
+2. convite único, criação de senha pelo próprio usuário e login por usuário e
+   e-mail corporativo;
+3. edição, desativação, revogação e preservação da agenda;
+4. acesso permitido para Gestor/Gerente na unidade autorizada e bloqueio de
+   Consultor, de unidade externa e de vínculo implícito;
+5. sincronização da Escala com vínculo explícito e Atendimento/Ponto sem
+   associação por semelhança de nome.
+
+Qualquer ausência de binding, release, destinatário de teste ou evidência de
+backup mantém a flag desligada e a Escala em contingência. O relatório deve
+separar claramente `local`, `staging` e `produção`; sucesso de um ambiente não
+é evidência de publicação ou convite nos demais.
