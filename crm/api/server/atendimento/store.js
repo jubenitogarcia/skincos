@@ -3429,7 +3429,7 @@ function commercialCanarySelectorKey() {
 function encodeCommercialCanaryCandidateRef(identityId) {
     const issuedAt = Date.now()
     const iv = randomBytes(12)
-    const cipher = createCipheriv('aes-256-gcm', commercialCanarySelectorKey(), iv)
+    const cipher = createCipheriv('aes-256-gcm', commercialCanarySelectorKey(), iv, { authTagLength: 16 })
     const payload = Buffer.from(JSON.stringify({ v: 1, identityId: String(identityId), issuedAt }))
     const ciphertext = Buffer.concat([cipher.update(payload), cipher.final()])
     return `cc1.${iv.toString('base64url')}.${ciphertext.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}`
@@ -3442,7 +3442,7 @@ function decodeCommercialCanaryCandidateRef(value) {
     const [version, encodedIv, encodedCiphertext, encodedTag] = parts
     let parsed
     try {
-        const decipher = createDecipheriv('aes-256-gcm', commercialCanarySelectorKey(), Buffer.from(encodedIv, 'base64url'))
+        const decipher = createDecipheriv('aes-256-gcm', commercialCanarySelectorKey(), Buffer.from(encodedIv, 'base64url'), { authTagLength: 16 })
         decipher.setAuthTag(Buffer.from(encodedTag, 'base64url'))
         parsed = JSON.parse(Buffer.concat([decipher.update(Buffer.from(encodedCiphertext, 'base64url')), decipher.final()]).toString('utf8'))
     } catch { throw commercialCanaryError('INVALID_COMMERCIAL_CANARY_CANDIDATE', 400) }
