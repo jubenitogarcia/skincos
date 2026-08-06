@@ -6,7 +6,7 @@ const crypto = require('crypto');
 
 const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
-const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-creator-error-handler-v3';
+const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-error-v3';
 const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
 const BUILDER_VERSION = '4.0.0';
 const ALL_FIXTURE_NAMES = [
@@ -643,13 +643,14 @@ function parseArgs(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (['--input', '--output', '--error-output', '--fixtures-output', '--manifest-output'].includes(arg)) {
+    if (['--input', '--output', '--error-output', '--fixtures-output', '--manifest-output', '--error-workflow-id'].includes(arg)) {
       const key = {
         '--input': 'input',
         '--output': 'output',
         '--error-output': 'errorOutput',
         '--fixtures-output': 'fixturesOutput',
         '--manifest-output': 'manifestOutput',
+        '--error-workflow-id': 'errorWorkflowId',
       }[arg];
       result[key] = argv[++index];
     } else if (arg === '--allow-noncanonical-source') {
@@ -657,6 +658,14 @@ function parseArgs(argv) {
     }
   }
   return result;
+}
+
+function resolveErrorWorkflowId(value) {
+  const id = String(value || ERROR_WORKFLOW_ID).trim();
+  if (!id || id.length > 36 || !/^[A-Za-z0-9_-]+$/.test(id)) {
+    throw new Error('error workflow id must contain only letters, numbers, hyphens, or underscores and be at most 36 characters');
+  }
+  return id;
 }
 
 function nodeByName(nodes, name) {
@@ -1589,7 +1598,8 @@ function patchErrorWorkflow(workflow) {
   return workflow;
 }
 
-function buildErrorWorkflow(source) {
+function buildErrorWorkflow(source, options = {}) {
+  const errorWorkflowId = resolveErrorWorkflowId(options.errorWorkflowId);
   const reachable = reachableNodeNames(source, 'Error Trigger');
   const allowedNames = ERROR_HANDLER_NODE_NAMES.filter((name) => reachable.has(name) || name === 'Error Trigger');
   const nodes = source.nodes.filter((node) => allowedNames.includes(node.name));
@@ -1597,7 +1607,7 @@ function buildErrorWorkflow(source) {
     throw new Error('Cannot build error workflow without Error Trigger');
   }
   const handler = {
-    id: ERROR_WORKFLOW_ID,
+    id: errorWorkflowId,
     name: ERROR_WORKFLOW_NAME,
     active: false,
     nodes,
@@ -1653,9 +1663,10 @@ function sha256(value) {
 
 function buildWorkflowPackage(source, options = {}) {
   assertSourceShape(source, options);
+  const errorWorkflowId = resolveErrorWorkflowId(options.errorWorkflowId);
   const sourceSha256 = options.sourceSha256 || sha256(Buffer.from(JSON.stringify(source)));
-  const errorHandler = transformForOutput(buildErrorWorkflow(source));
-  const main = transformForOutput(transformWorkflow(source, options));
+  const errorHandler = transformForOutput(buildErrorWorkflow(source, { ...options, errorWorkflowId }));
+  const main = transformForOutput(transformWorkflow(source, { ...options, errorWorkflowId }));
   const fixtures = transformForOutput(buildFixturesWorkflow(source));
   const manifest = {
     package_version: '4.0.0',
@@ -1677,7 +1688,7 @@ function buildWorkflowPackage(source, options = {}) {
       active: false,
       publish_allowed: false,
       publish_requested: false,
-      error_workflow_id: ERROR_WORKFLOW_ID,
+      error_workflow_id: errorWorkflowId,
       operational_trigger: 'executeWorkflowTrigger',
       final_output_type: 'CONTENT_PACKAGE',
       credentials_stripped_for_git: true,
@@ -1904,7 +1915,7 @@ function transformWorkflow(source, options = {}) {
   workflow.active = false;
   workflow.settings = {
     ...(workflow.settings || {}),
-    errorWorkflow: ERROR_WORKFLOW_ID,
+    errorWorkflow: resolveErrorWorkflowId(options.errorWorkflowId),
   };
   workflow.meta = {
     ...(workflow.meta || {}),
@@ -1914,7 +1925,7 @@ function transformWorkflow(source, options = {}) {
     source_workflow_id: WORKFLOW_ID,
     source_version_id: source.versionId || (source.meta && source.meta.source_version_id) || null,
     no_publication: true,
-    error_workflow_id: ERROR_WORKFLOW_ID,
+    error_workflow_id: resolveErrorWorkflowId(options.errorWorkflowId),
     fixtures_catalog: 'Campaign Creative Creator - Module Fixtures',
     live_provider_adapter: 'campaign-creative-executor-registry',
     executor_endpoint: 'CCG_EXECUTOR_BASE_URL',
@@ -1929,13 +1940,14 @@ function main() {
   const inputPath = args.input || process.env.CCG_SOURCE_FILE;
   const outputPath = args.output || process.env.CCG_OUTPUT_FILE;
   if (!inputPath || !outputPath) {
-    throw new Error('Usage: build... --input <export.json> --output <candidate.json> [--error-output <error.json> --fixtures-output <fixtures.json> --manifest-output <manifest.json>]');
+    throw new Error('Usage: build... --input <export.json> --output <candidate.json> [--error-output <error.json> --fixtures-output <fixtures.json> --manifest-output <manifest.json> --error-workflow-id <n8n-id>]');
   }
   const sourceBuffer = fs.readFileSync(path.resolve(inputPath));
   const source = JSON.parse(sourceBuffer.toString('utf8').replace(/^\uFEFF/, ''));
   const outputDirectory = path.dirname(path.resolve(outputPath));
   const packageValue = buildWorkflowPackage(source, {
     allowNoncanonicalSource: args.allowNoncanonicalSource,
+    errorWorkflowId: args.errorWorkflowId,
     sourceSha256: sha256(sourceBuffer),
   });
   const errorOutput = args.errorOutput || path.join(outputDirectory, 'campaign-creative-creator-error-handler.v3.json');

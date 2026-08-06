@@ -3133,7 +3133,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate",
     "availableInMCP": false,
-    "errorWorkflow": "ccg-campaign-creative-creator-error-handler-v3"
+    "errorWorkflow": "9j7WMFTNVNYmNZHC"
   },
   "meta": {
     "codex_builder": "campaign-creative-creator-continuous",
@@ -3142,7 +3142,7 @@
     "source_workflow_id": "TxE9eMS1xfE6kq38",
     "source_version_id": "941bec10-3e41-49be-baed-753ca60787ad",
     "no_publication": true,
-    "error_workflow_id": "ccg-campaign-creative-creator-error-handler-v3",
+    "error_workflow_id": "9j7WMFTNVNYmNZHC",
     "fixtures_catalog": "Campaign Creative Creator - Module Fixtures",
     "live_provider_adapter": "campaign-creative-executor-registry",
     "executor_endpoint": "CCG_EXECUTOR_BASE_URL",

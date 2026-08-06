@@ -30,6 +30,7 @@ done
 
 directories=(
   "$STATE_ROOT/orb"
+  "$STATE_ROOT/orb/ccg-executor"
   "$STATE_ROOT/messaging-whatsapp/instances"
   "$STATE_ROOT/messaging-whatsapp/store"
   "$STATE_ROOT/crm/var"
@@ -51,6 +52,7 @@ directories=(
   "$TMP_ROOT/crm"
   "$TMP_ROOT/booking"
   "$ARTIFACT_ROOT/booking"
+  "$ARTIFACT_ROOT/orb/ccg-executor"
   "$BACKUP_ROOT/orb/daily"
 )
 
