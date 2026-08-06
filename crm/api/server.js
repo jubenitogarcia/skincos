@@ -1230,6 +1230,56 @@ if (DEV_AUTH_ENABLED) {
         }
     }
 
+    const LOCAL_SCHEDULE_SYNC_STATES = new Set(['NOT_CONFIGURED', 'PENDING', 'SYNCED', 'FAILED', 'BLOCKED'])
+    const LOCAL_SCHEDULE_OPERATION_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/
+    const LOCAL_SCHEDULE_ERROR_CODE_RE = /^[A-Z0-9][A-Z0-9_:-]{1,79}$/
+    const localNormalizeScheduleSync = (value, fallbackProfessionalId = '') => {
+        const input = value && typeof value === 'object' ? value : {}
+        const candidate = String(input.state ?? input.status ?? '').trim().toUpperCase()
+        const state = LOCAL_SCHEDULE_SYNC_STATES.has(candidate) ? candidate : (fallbackProfessionalId ? 'SYNCED' : 'PENDING')
+        const professionalId = String(input.professionalId ?? input.professional_id ?? fallbackProfessionalId ?? '').trim().slice(0, 160)
+        const errorCandidate = String(input.errorCode ?? input.error_code ?? '').trim().toUpperCase().slice(0, 80)
+        const errorCode = LOCAL_SCHEDULE_ERROR_CODE_RE.test(errorCandidate) ? errorCandidate : ''
+        const attemptValue = Number(input.attempt ?? 0)
+        const attempt = Number.isFinite(attemptValue) ? Math.max(0, Math.min(999, Math.trunc(attemptValue))) : 0
+        const parsedUpdatedAt = Date.parse(String(input.updatedAt ?? input.updated_at ?? ''))
+        return {
+            state,
+            professionalId: professionalId || null,
+            errorCode: errorCode || null,
+            attempt,
+            updatedAt: Number.isFinite(parsedUpdatedAt) ? new Date(parsedUpdatedAt).toISOString() : null,
+        }
+    }
+    const localHasScheduleIntent = (schedule) => [
+        schedule?.professionalId,
+        schedule?.status,
+        schedule?.role,
+        schedule?.shift,
+        schedule?.nickname,
+        schedule?.instagram,
+        schedule?.color,
+    ].some((value) => String(value || '').trim() !== '')
+    const localBuildScheduleSync = (state, current = {}, details = {}) => {
+        const normalizedState = LOCAL_SCHEDULE_SYNC_STATES.has(String(state || '').toUpperCase())
+            ? String(state).toUpperCase()
+            : 'PENDING'
+        const errorCandidate = String(details.errorCode || (normalizedState === 'FAILED' ? 'ESCALA_SYNC_FAILED' : normalizedState === 'BLOCKED' ? 'ESCALA_SYNC_BLOCKED' : '')).trim().toUpperCase().slice(0, 80)
+        const errorCode = LOCAL_SCHEDULE_ERROR_CODE_RE.test(errorCandidate) ? errorCandidate : ''
+        const at = new Date().toISOString()
+        return localNormalizeScheduleSync({
+            state: normalizedState,
+            professionalId: ['SYNCED', 'FAILED', 'BLOCKED'].includes(normalizedState) ? details.professionalId || current.schedule?.professionalId : '',
+            errorCode,
+            attempt: Number(current.scheduleSync?.attempt || 0) + 1,
+            updatedAt: at,
+        })
+    }
+    const localScheduleOperationKey = (value) => {
+        const key = String(value || '').trim().slice(0, 180)
+        return LOCAL_SCHEDULE_OPERATION_KEY_RE.test(key) ? key : ''
+    }
+
     const localNormalizeTeamMember = (member) => {
         if (!member || typeof member !== 'object') return null
         const profile = String(member.profile || localProfileForTitle(member.jobTitle) || 'CONSULTOR').toUpperCase()
@@ -1251,6 +1301,7 @@ if (DEV_AUTH_ENABLED) {
             inviteId: String(member.inviteId || '').trim() || null,
             provisioningState: String(member.provisioningState || 'COMPLETED').trim(),
             schedule: localNormalizeSchedule(member.schedule, units),
+            scheduleSync: localNormalizeScheduleSync(member.scheduleSync, member.schedule?.professionalId),
             identityLinks: Array.isArray(member.identityLinks) ? member.identityLinks : [],
             createdAt: member.createdAt || new Date().toISOString(),
             updatedAt: member.updatedAt || member.createdAt || new Date().toISOString(),
@@ -1300,6 +1351,7 @@ if (DEV_AUTH_ENABLED) {
         createdAt: member.createdAt || null,
         updatedAt: member.updatedAt || null,
         schedule: localNormalizeSchedule(member.schedule, member.units),
+        scheduleSync: localNormalizeScheduleSync(member.scheduleSync, member.schedule?.professionalId),
         identityLinks: (member.identityLinks || []).map(localPublicIdentityLink),
     })
 
@@ -1319,7 +1371,10 @@ if (DEV_AUTH_ENABLED) {
                     items.push({ memberId, kind: 'IDENTITY_LINK', source: String(link?.source || '').toUpperCase(), status: 'PENDING_REVIEW' })
                 }
             }
-            if (!row?.schedule?.professionalId && String(row?.accountStatus || '').toUpperCase() !== 'TERMINATED') {
+            const scheduleSync = localNormalizeScheduleSync(row?.scheduleSync, row?.schedule?.professionalId)
+            if (['PENDING', 'FAILED', 'BLOCKED'].includes(scheduleSync.state) && String(row?.accountStatus || '').toUpperCase() !== 'TERMINATED') {
+                items.push({ memberId, kind: 'ESCALA_SYNC', status: scheduleSync.state })
+            } else if (!row?.schedule?.professionalId && scheduleSync.state !== 'NOT_CONFIGURED' && String(row?.accountStatus || '').toUpperCase() !== 'TERMINATED') {
                 items.push({ memberId, kind: 'ESCALA_LINK', status: 'PENDING' })
             }
         }
@@ -1352,6 +1407,7 @@ if (DEV_AUTH_ENABLED) {
         const auditIn = Array.isArray(store?.audit) ? store.audit : []
         const telemetryIn = Array.isArray(store?.telemetry) ? store.telemetry : []
         const bulkOperationsIn = Array.isArray(store?.bulkOperations) ? store.bulkOperations : []
+        const scheduleOperationsIn = Array.isArray(store?.scheduleOperations) ? store.scheduleOperations : []
         let changed = false
         const users = usersIn.map((user) => {
             if (!user || typeof user !== 'object') return user
@@ -1369,7 +1425,7 @@ if (DEV_AUTH_ENABLED) {
         })
         const team = teamIn.map(localNormalizeTeamMember).filter(Boolean)
         if (JSON.stringify(team) !== JSON.stringify(teamIn)) changed = true
-        return { store: { version: 3, users, invites, team, audit: auditIn, telemetry: telemetryIn, bulkOperations: bulkOperationsIn }, changed }
+        return { store: { version: 3, users, invites, team, audit: auditIn, telemetry: telemetryIn, bulkOperations: bulkOperationsIn, scheduleOperations: scheduleOperationsIn }, changed }
     }
 
     const loadLocalCrmStore = async () => {
@@ -1384,6 +1440,7 @@ if (DEV_AUTH_ENABLED) {
                 audit: Array.isArray(json?.audit) ? json.audit : [],
                 telemetry: Array.isArray(json?.telemetry) ? json.telemetry : [],
                 bulkOperations: Array.isArray(json?.bulkOperations) ? json.bulkOperations : [],
+                scheduleOperations: Array.isArray(json?.scheduleOperations) ? json.scheduleOperations : [],
             })
             if (normalized.changed) {
                 await fs.writeFile(LOCAL_CRM_STORE_FILE, JSON.stringify(normalized.store, null, 2), 'utf8')
@@ -1400,7 +1457,7 @@ if (DEV_AUTH_ENABLED) {
                     // Keep an empty local store if the optional fixture is unavailable.
                 }
             }
-            return { version: 3, users: [], invites: [], team: [], audit: [], telemetry: [], bulkOperations: [] }
+            return { version: 3, users: [], invites: [], team: [], audit: [], telemetry: [], bulkOperations: [], scheduleOperations: [] }
         }
     }
     const saveLocalCrmStore = async (store) => {
@@ -1453,7 +1510,7 @@ if (DEV_AUTH_ENABLED) {
         }
     }
 
-    const localAudit = (store, session, action, entityId, after, before = null) => {
+    const localAudit = (store, session, action, entityId, after, before = null, idempotencyKey = null) => {
         const audit = Array.isArray(store.audit) ? store.audit : []
         audit.unshift({
             id: `local-audit-${randomUUID()}`,
@@ -1462,6 +1519,7 @@ if (DEV_AUTH_ENABLED) {
             entityId,
             actor: session?.user?.username || session?.user?.email || 'gestor-local',
             role: normalizeRole(session?.user?.role || ''),
+            idempotencyKey: idempotencyKey || null,
             createdAt: new Date().toISOString(),
             before,
             after,
@@ -1574,12 +1632,21 @@ if (DEV_AUTH_ENABLED) {
             inviteId,
             provisioningState: 'COMPLETED',
             schedule: input.schedule,
+            scheduleSync: localBuildScheduleSync(localHasScheduleIntent(input.schedule) ? 'PENDING' : 'NOT_CONFIGURED'),
             identityLinks: [],
             createdAt: at,
             updatedAt: at,
             createdBy: session.user.username || session.user.email || 'gestor-local',
         })
         store.team.unshift(member)
+        const initialScheduleOperationKey = localScheduleOperationKey(`local-escala-sync-${id}-${randomUUID()}`)
+        store.scheduleOperations = [{
+            operationKey: initialScheduleOperationKey,
+            memberId: id,
+            state: member.scheduleSync.state,
+            result: member.scheduleSync,
+            createdAt: at,
+        }, ...(store.scheduleOperations || [])].slice(0, 500)
         store.invites.unshift({
             id: inviteId,
             inviteeEmail: input.personalEmail,
@@ -1634,11 +1701,64 @@ if (DEV_AUTH_ENABLED) {
             schedule: input.schedule,
             updatedAt: new Date().toISOString(),
         })
+        const scheduleState = localHasScheduleIntent(updated.schedule) || updated.schedule.professionalId ? 'PENDING' : 'NOT_CONFIGURED'
+        updated.scheduleSync = localBuildScheduleSync(scheduleState, current)
         store.team[index] = updated
-        localAudit(store, session, 'EMPLOYEE_TEAM_UPDATED', id, { profile: updated.profile, units: updated.units, localPreview: true }, { profile: current.profile, units: current.units, scheduleProfessionalId: current.schedule?.professionalId || null })
+        const updateScheduleOperationKey = localScheduleOperationKey(`local-escala-sync-${id}-${randomUUID()}`)
+        store.scheduleOperations = [{ operationKey: updateScheduleOperationKey, memberId: id, state: updated.scheduleSync.state, result: updated.scheduleSync, createdAt: updated.updatedAt }, ...(store.scheduleOperations || [])].slice(0, 500)
+        localAudit(store, session, 'EMPLOYEE_TEAM_UPDATED', id, { profile: updated.profile, units: updated.units, scheduleSyncState: updated.scheduleSync.state, localPreview: true }, { profile: current.profile, units: current.units, scheduleProfessionalId: current.schedule?.professionalId || null })
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_UPDATED', 'SUCCESS', 1, updated.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(updated) })
+    })
+    app.post(['/api/crm/admin/team/:id/schedule-sync', '/admin/team/:id/schedule-sync'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const id = String(req.params.id || '').trim()
+        const member = store.team.find((row) => row.id === id)
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const hierarchyError = localTeamHierarchyError(session, member.profile, member.units)
+        if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia não permite sincronizar este membro', code: hierarchyError })
+
+        const body = req.body && typeof req.body === 'object' ? req.body : {}
+        const state = String(body.state ?? body.status ?? '').trim().toUpperCase()
+        if (!LOCAL_SCHEDULE_SYNC_STATES.has(state)) return res.status(400).json({ success: false, error: 'Estado de sincronização inválido', code: 'ESCALA_SYNC_STATE_INVALID' })
+        const professionalId = String(body.professionalId ?? body.professional_id ?? '').trim().slice(0, 160)
+        if (state === 'SYNCED' && !professionalId) return res.status(400).json({ success: false, error: 'A sincronização concluída precisa do identificador da Escala', code: 'ESCALA_PROFESSIONAL_ID_REQUIRED' })
+        if (state === 'NOT_CONFIGURED' && professionalId) return res.status(409).json({ success: false, error: 'Um vínculo configurado não pode ser marcado como não configurado', code: 'ESCALA_SYNC_STATE_CONFLICT' })
+        const errorCandidate = String(body.errorCode ?? body.error_code ?? '').trim().toUpperCase().slice(0, 80)
+        const errorCode = LOCAL_SCHEDULE_ERROR_CODE_RE.test(errorCandidate)
+            ? errorCandidate
+            : state === 'FAILED' ? 'ESCALA_SYNC_FAILED' : state === 'BLOCKED' ? 'ESCALA_SYNC_BLOCKED' : ''
+        if (['FAILED', 'BLOCKED'].includes(state) && !errorCode) return res.status(400).json({ success: false, error: 'A falha precisa de um código operacional', code: 'ESCALA_SYNC_ERROR_CODE_REQUIRED' })
+        const operationKey = localScheduleOperationKey(req.headers['idempotency-key'] || body.operationKey || body.requestId)
+        if (!operationKey) return res.status(400).json({ success: false, error: 'A sincronização exige uma chave de idempotência', code: 'ESCALA_SYNC_IDEMPOTENCY_REQUIRED' })
+
+        const replay = (store.scheduleOperations || []).find((operation) => operation.operationKey === operationKey)
+        const fingerprint = `${id}|${state}|${professionalId}|${errorCode}`
+        if (replay) {
+            if (replay.fingerprint !== fingerprint) return res.status(409).json({ success: false, error: 'A chave de idempotência já foi usada para outro estado', code: 'ESCALA_SYNC_IDEMPOTENCY_CONFLICT' })
+            if (state === 'SYNCED' && professionalId) member.schedule = { ...member.schedule, professionalId }
+            member.scheduleSync = localNormalizeScheduleSync(replay.result, member.schedule?.professionalId)
+            return res.status(200).set('cache-control', 'no-store').json({ success: true, replayed: true, data: { scheduleSync: member.scheduleSync } })
+        }
+
+        if (state === 'SYNCED') {
+            const explicitLink = (member.identityLinks || []).some((link) => String(link?.source || '').toUpperCase() === 'ESCALA' && String(link?.sourceId || '') === professionalId && String(link?.reviewStatus || '').toUpperCase() === 'CONFIRMED')
+            if (!explicitLink) return res.status(409).json({ success: false, error: 'Confirme primeiro o vínculo explícito com a Escala', code: 'TEAM_ESCALA_LINK_REQUIRED' })
+            member.schedule = { ...member.schedule, professionalId }
+        }
+        const result = localBuildScheduleSync(state, member, { professionalId, errorCode })
+        member.scheduleSync = result
+        member.updatedAt = result.updatedAt || new Date().toISOString()
+        store.scheduleOperations = [{ operationKey, fingerprint, memberId: id, state, result, createdAt: member.updatedAt }, ...(store.scheduleOperations || [])].slice(0, 500)
+        localAudit(store, session, 'EMPLOYEE_ESCALA_SYNC_RECORDED', id, { scheduleSyncState: state, professionalId: professionalId || null, errorCode: errorCode || null, attempt: result.attempt, localPreview: true }, null, operationKey)
+        localTeamTelemetry(store, session, 'EMPLOYEE_ESCALA_SYNC_RECORDED', state, 1, member.units.length)
+        await saveLocalCrmStore(store)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, replayed: false, data: { scheduleSync: member.scheduleSync } })
     })
     app.post(['/api/crm/admin/team/:id/status', '/admin/team/:id/status'], async (req, res) => {
         const session = requireDevAdmin(req, res)

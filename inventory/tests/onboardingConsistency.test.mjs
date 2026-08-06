@@ -67,6 +67,7 @@ test('onboarding status changes stay hierarchical, synchronized, audited and fai
 
 test('unified team management is explicit about RBAC, scope, idempotency and aggregate telemetry', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const localApi = await readFile(new URL('../../crm/api/server.js', import.meta.url), 'utf8');
   const teamBlock = admin.slice(admin.indexOf("const isTeamRoute"), admin.indexOf("// POST /admin/onboarding"));
   assert.match(admin, /TEAM_ADMIN_ROLES = \['ADMIN', 'GESTOR', 'GERENTE'\]/);
   assert.match(admin, /TEAM_READ_ROLES = \[\.\.\.TEAM_ADMIN_ROLES, 'SUPERVISOR'\]/);
@@ -81,12 +82,20 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(admin, /const isOnboardingRoute/);
   assert.match(admin, /crm_team_telemetry/);
   assert.match(admin, /const teamHistoryMatch/);
+  assert.match(admin, /schedule-sync/);
+  assert.match(admin, /TEAM_ESCALA_LINK_REQUIRED/);
+  assert.match(admin, /EMPLOYEE_ESCALA_SYNC_RECORDED/);
+  assert.match(admin, /kind: 'ESCALA_SYNC'/);
   assert.match(admin, /after_json LIKE/);
   assert.match(admin, /entity: 'EMPLOYEE_TEAM'/);
   assert.match(admin, /pendingSync: pendingIds\.includes\(row\.id\)/);
   assert.match(admin, /compensationState/);
   assert.match(admin, /teamUnitsVisible\(auth, onboarding\.units_json\)/);
   assert.doesNotMatch(admin, /teamUnitsVisible\(auth, onboarding\)/);
+  assert.match(localApi, /team\/:id\/schedule-sync/);
+  assert.match(localApi, /scheduleOperations/);
+  assert.match(localApi, /EMPLOYEE_ESCALA_SYNC_RECORDED/);
+  assert.match(localApi, /ESCALA_SYNC_IDEMPOTENCY_CONFLICT/);
 });
 
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {

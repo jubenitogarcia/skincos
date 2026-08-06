@@ -49,6 +49,20 @@ confirmação automática.
    ser enviados apenas pelo fluxo de onboarding hospedado e após confirmação
    explícita do relatório.
 
+## Estado operacional da Escala
+
+O cadastro central expõe `scheduleSync` com os estados `NOT_CONFIGURED`,
+`PENDING`, `SYNCED`, `FAILED` e `BLOCKED`. A confirmação exige o vínculo
+explícito `source=ESCALA` + `source_id` do profissional; nomes semelhantes não
+resolvem a identidade. Falhas são persistidas somente como códigos operacionais
+sem PII e podem ser repetidas pela rota autenticada
+`POST /admin/team/:id/schedule-sync`, sempre com `Idempotency-Key` único.
+
+O preview local mantém o mesmo contrato em armazenamento privado e registra
+tentativas, auditoria e telemetria agregada. O botão de nova tentativa só deve
+ser habilitado depois que o identificador explícito do profissional estiver
+disponível; a Escala continua contingência até a flag ser liberada pelo gate.
+
 ## Rollback
 
 O rollback não apaga profissionais, agendas, nomes históricos, auditoria ou
