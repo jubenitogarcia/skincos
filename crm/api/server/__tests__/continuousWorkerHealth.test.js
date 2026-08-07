@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createWorkerHealthServer } from '../workers/healthServer.js'
+import { assertWorkerHealthHost, createWorkerHealthServer } from '../workers/healthServer.js'
+
+test('health interface refuses non-loopback bindings', () => {
+    assert.throws(() => createWorkerHealthServer({ host: '0.0.0.0' }), (error) => error.code === 'WORKER_HEALTH_HOST_NOT_ALLOWED')
+    assert.equal(assertWorkerHealthHost('127.0.0.1'), '127.0.0.1')
+    assert.equal(assertWorkerHealthHost('::1'), '::1')
+})
 
 test('continuous worker health and readiness endpoints expose safe status', async () => {
     let status = { ready: false, mode: 'observe' }
