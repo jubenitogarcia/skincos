@@ -82,7 +82,6 @@ test('preview snapshot integrity and private output boundary fail closed', () =>
 
 test('wrangler command is argument-based, configured, read-only, and batches the inventory reads', () => {
   const args = exporter.wranglerArguments({
-    executable: 'npx',
     dbName: 'skincos-db',
     configPath: '/private/source/inventory/wrangler.toml',
   }, ' SELECT  *\n FROM insumos_items ');
@@ -91,7 +90,6 @@ test('wrangler command is argument-based, configured, read-only, and batches the
     '--config', '/private/source/inventory/wrangler.toml', '--command', 'SELECT * FROM insumos_items',
   ]);
   const batchArgs = exporter.wranglerArguments({
-    executable: 'npx',
     dbName: 'skincos-db-staging',
     configPath: '/private/source/inventory/wrangler.toml',
     environment: 'staging',
@@ -100,6 +98,20 @@ test('wrangler command is argument-based, configured, read-only, and batches the
     '--no-install', 'wrangler', 'd1', 'execute', 'skincos-db-staging', '--remote', '--json',
     '--config', '/private/source/inventory/wrangler.toml', '--env', 'staging',
     '--command', 'SELECT registro FROM insumos_items;\nSELECT id FROM insumos_movements',
+  ]);
+});
+
+test('snapshot exporter never accepts a caller-selected executable', () => {
+  const options = exporter.resolveOptions({
+    INSUMOS_D1_CONFIG: path.join(root, 'inventory', 'wrangler.toml'),
+    INSUMOS_D1_MIGRATIONS_DIR: path.join(root, 'inventory', 'migrations'),
+    INSUMOS_D1_WRANGLER_BIN: path.join(os.tmpdir(), 'untrusted-wrangler'),
+    WRNGLR_BIN: path.join(os.tmpdir(), 'another-untrusted-wrangler'),
+  });
+
+  assert.equal('executable' in options, false);
+  assert.deepEqual(exporter.wranglerArguments(options, 'SELECT registro FROM insumos_items').slice(0, 2), [
+    '--no-install', 'wrangler',
   ]);
 });
 

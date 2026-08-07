@@ -195,8 +195,7 @@ case "$cmd" in
     )
     ;;
   snapshot-export)
-    INSUMOS_D1_WRANGLER_BIN="$INSUMOS_DIR/node_modules/.bin/wrangler" \
-      INSUMOS_D1_CONFIG="$INSUMOS_DIR/wrangler.toml" \
+    INSUMOS_D1_CONFIG="$INSUMOS_DIR/wrangler.toml" \
       INSUMOS_D1_MIGRATIONS_DIR="$INSUMOS_DIR/migrations" \
       node "$ROOT_DIR/backend/scripts/insumos-d1-export.cjs" "$@"
     ;;

@@ -230,22 +230,17 @@ function resolveOptions(env = process.env) {
   const migrationsDir = path.resolve(env.INSUMOS_D1_MIGRATIONS_DIR || path.join(path.dirname(configPath), 'migrations'));
   if (!fs.existsSync(configPath)) throw new Error('INSUMOS_D1_CONFIG_NOT_FOUND');
   if (!fs.existsSync(migrationsDir)) throw new Error('INSUMOS_D1_MIGRATIONS_NOT_FOUND');
-  const executable = String(env.INSUMOS_D1_WRANGLER_BIN || env.WRNGLR_BIN || 'npx').trim();
-  if (!executable) throw new Error('INSUMOS_D1_WRANGLER_NOT_CONFIGURED');
   return {
     configPath,
     migrationsDir,
     dbName: assertDatabaseName(env.INSUMOS_D1_DB || 'skincos-db'),
     databaseId: String(env.INSUMOS_D1_DATABASE_ID || parseDatabaseId(configPath) || '').trim() || null,
     environment: String(env.INSUMOS_D1_ENV || 'production').trim() || 'production',
-    executable,
     maxBuffer: Number(env.INSUMOS_D1_MAX_BUFFER_BYTES || 64 * 1024 * 1024),
   };
 }
 
 function wranglerArguments(options, sql) {
-  const executableName = path.basename(options.executable).toLowerCase();
-  const prefix = executableName === 'npx' || executableName === 'npx.cmd' ? ['--no-install', 'wrangler'] : [];
   const command = Array.isArray(sql)
     ? sql.map((statement) => normalizeSql(statement)).filter(Boolean).join(';\n')
     : normalizeSql(sql);
@@ -253,7 +248,7 @@ function wranglerArguments(options, sql) {
     ? ['--env', options.environment]
     : [];
   return [
-    ...prefix,
+    '--no-install', 'wrangler',
     'd1', 'execute', options.dbName,
     '--remote',
     '--json',
@@ -284,11 +279,19 @@ function runBatch(options, statements, label) {
   const attempts = Number.isInteger(options.queryAttempts) && options.queryAttempts > 0 ? options.queryAttempts : 2;
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = spawnSync(options.executable, wranglerArguments(options, safeStatements), {
+    const spawnOptions = {
       cwd: path.dirname(options.configPath),
       encoding: 'utf8',
       maxBuffer: Number.isFinite(options.maxBuffer) && options.maxBuffer > 0 ? options.maxBuffer : 64 * 1024 * 1024,
-    });
+    };
+    // This is deliberately a fixed local package-manager command.  The
+    // exporter must never accept an executable path from the caller's
+    // environment: a preview refresh is read-only D1 access, not a general
+    // command runner.  `--no-install wrangler` below resolves the reviewed
+    // dependency from inventory/node_modules in the configured working dir.
+    const result = process.platform === 'win32'
+      ? spawnSync('npx.cmd', wranglerArguments(options, safeStatements), spawnOptions)
+      : spawnSync('npx', wranglerArguments(options, safeStatements), spawnOptions);
     if (!result.error && result.status === 0) {
       try {
         return parseWranglerResults(result.stdout, safeStatements.length);
