@@ -571,7 +571,7 @@ for (const [source, label, gate, mutation] of [
   [
     corePublisher,
     'Ponto Core staging publisher',
-    'Verify exact cataloged Ponto Core staging bootstrap predecessor',
+    'Verify cataloged Ponto Core staging predecessor',
     'Deploy only the selected operational unit',
   ],
   [
@@ -589,25 +589,29 @@ for (const [source, label, gate, mutation] of [
 ]) {
   const gateIndex = source.indexOf(gate);
   const mutationIndex = source.indexOf(mutation);
+  const consumesHistoricalBootstrap = source.includes('ponto-core-bootstrap-evidence.mjs') && source.includes('remoteSnapshot');
+  const consumesCatalogedPredecessor = source.includes('ponto-core-staging-precondition.mjs') && source.includes('CORE_STAGING_INCUMBENT_VERSION_ID');
   if (
     gateIndex < 0
     || mutationIndex < 0
     || gateIndex >= mutationIndex
-    || !source.includes('ponto-core-bootstrap-evidence.mjs')
-    || !source.includes('remoteSnapshot')
+    || (!consumesHistoricalBootstrap && !consumesCatalogedPredecessor)
   ) {
     fail(`${label} must consume and live-reattest the exact bootstrap evidence before mutation`);
   }
 }
 const rootGateIndex = coordinator.indexOf('Prove selected root separation before any candidate mutation');
 const baselineGateIndex = coordinator.indexOf('Resolve and verify the immutable production baseline before pilot mutation');
+const stagingPredecessorGateIndex = coordinator.indexOf('Attest cataloged Ponto Core staging predecessor before any candidate mutation');
 const coordinatorMutationIndex = coordinator.indexOf('Put Ponto in maintenance before staging or live mutation');
 if (
   rootGateIndex < 0
   || baselineGateIndex < 0
+  || stagingPredecessorGateIndex < 0
   || coordinatorMutationIndex < 0
   || rootGateIndex >= coordinatorMutationIndex
   || baselineGateIndex >= coordinatorMutationIndex
+  || stagingPredecessorGateIndex >= coordinatorMutationIndex
   || !workerCustody.includes('ponto-root-custody.mjs write')
   || !pagesCustody.includes('rootFingerprint')
   || !timekeepingPublisher.includes('ponto-root-custody.mjs write')
