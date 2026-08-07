@@ -49,6 +49,7 @@ function sourceFixture() {
     ...ALL_FIXTURE_NAMES,
     ...ERROR_HANDLER_NODE_NAMES,
     'Manual safe dry-run smoke',
+    'CCG-00 Validate Contract',
     'CCG-60 Switch Audio Direction Mode',
     'CCG-70 Switch Timeline Mode',
     'CCG-10 Prepare Evidence Dossier',
@@ -262,11 +263,53 @@ test('manual smoke and operational subworkflow triggers are separate', () => {
   const workflow = buildWorkflowPackage(sourceFixture(), { strictSource: false }).main;
   assert.equal(workflow.nodes.filter((candidate) => candidate.type === 'n8n-nodes-base.executeWorkflowTrigger').length, 1);
   assert.equal(hasEdge(workflow, 'Operational Production Request', 'CCG-00 Parse & Normalize'), true);
+  assert.equal(hasEdge(workflow, 'CCG-00 Parse & Normalize', 'CCG-00 Capture Recovery Context'), true);
+  assert.equal(hasEdge(workflow, 'CCG-00 Capture Recovery Context', 'CCG-00 Validate Contract'), true);
   assert.equal(hasEdge(workflow, 'Manual safe dry-run smoke', 'Build CCG-00 dry-run fixture'), true);
   assert.equal(hasEdge(workflow, 'Build CCG-00 dry-run fixture', 'CCG-00 Parse & Normalize'), true);
   for (const fixture of ALL_FIXTURE_NAMES.slice(1)) {
     assert.equal(workflow.nodes.some((candidate) => candidate.name === fixture), false, fixture);
   }
+});
+
+test('CCG-00 emits a sanitized recovery lineage before strict contract validation', async () => {
+  const workflow = generatedMain();
+  const capture = workflow.nodes.find((nodeValue) => nodeValue.name === 'CCG-00 Capture Recovery Context');
+  const captured = await runCodeNode(capture, {
+    production_request: {
+      run_id: 'run-recovery-context',
+      production_id: 'production-recovery-context',
+      content_id: 'content-recovery-context',
+      campaign_id: 'campaign-recovery-context',
+      request_hash: 'request-recovery-context',
+      idempotency_key: 'idempotency-recovery-context',
+      production_tier: 'FAST',
+      dry_run: true,
+      unapproved_metadata: 'must-not-be-captured',
+    },
+  });
+  assert.deepEqual(captured.json.ccg_recovery_context, {
+    schema_version: '1.0.0',
+    run_id: 'run-recovery-context',
+    production_id: 'production-recovery-context',
+    content_id: 'content-recovery-context',
+    campaign_id: 'campaign-recovery-context',
+    request_hash: 'request-recovery-context',
+    idempotency_key: 'idempotency-recovery-context',
+    production_tier: 'FAST',
+    mode: 'DRY_RUN',
+    module: 'CCG-00',
+    checkpoint_module: 'CCG-00',
+    current_attempt: 1,
+    max_attempts: 2,
+    recovery_policy: {
+      dispatch_enabled: false,
+      allow_execution_retry: true,
+      allow_checkpoint_resume: true,
+      maximum_backoff_seconds: 900,
+    },
+  });
+  assert.equal(JSON.stringify(captured.json.ccg_recovery_context).includes('must-not-be-captured'), false);
 });
 
 test('structured parsers receive the same model used by their agents', () => {
@@ -499,6 +542,7 @@ test('CCG-99 classifies executor 429 and resumes from its checkpoint idempotentl
   assert.equal(normalized.json.normalized_error_event.source.failed_job_id, 'job-ccg99-001');
   assert.equal(normalized.json.normalized_error_event.recovery_context.executor_execution_id, 'executor-ccg99-001');
   assert.equal(normalized.json.normalized_error_event.recovery_context.provider_job_id, 'provider-job-ccg99-001');
+  assert.equal(normalized.json.normalized_error_event.ccg_context.request_hash, 'request-ccg99-executor');
 
   const classified = await runCodeNode(errorNodes.get('CCG-99 Classify & Decide Recovery'), normalized.json);
   assert.equal(classified.json.recovery_decision.category, 'RATE_LIMIT');
@@ -518,6 +562,62 @@ test('CCG-99 classifies executor 429 and resumes from its checkpoint idempotentl
   const resume = await runCodeNode(errorNodes.get('CCG-99 Build Resume Handoff'), resumeClassified.json);
   assert.equal(resume.json.recovery_handoff.executor_execution_id, 'executor-ccg99-001');
   assert.equal(resume.json.recovery_handoff.failed_job_id, 'job-ccg99-001');
+});
+
+test('CCG-99 accepts the sanitized lineage attached by the native n8n error dispatcher', async () => {
+  const errorNodes = new Map(generatedError().nodes.map((nodeValue) => [nodeValue.name, nodeValue]));
+  const event = {
+    execution: {
+      id: 'n8n-native-error-001',
+      mode: 'integrated',
+      lastNodeExecuted: 'CCG-00 Validate Contract',
+      error: {
+        name: 'NodeOperationError',
+        message: '[CCG-00/CONTRACT] Requisição rejeitada: cta ausente',
+        ccg_recovery_context: {
+          schema_version: '1.0.0',
+          run_id: 'run-native-lineage',
+          production_id: 'production-native-lineage',
+          content_id: 'content-native-lineage',
+          campaign_id: 'campaign-native-lineage',
+          request_hash: 'request-native-lineage',
+          idempotency_key: 'idempotency-native-lineage',
+          production_tier: 'STANDARD',
+          mode: 'DRY_RUN',
+          module: 'CCG-00',
+          checkpoint_module: 'CCG-00',
+          current_attempt: 1,
+          max_attempts: 3,
+          recovery_policy: {
+            dispatch_enabled: false,
+            allow_execution_retry: true,
+            allow_checkpoint_resume: true,
+            maximum_backoff_seconds: 900,
+          },
+        },
+      },
+    },
+    workflow: { id: WORKFLOW_ID, name: WORKFLOW_NAME },
+  };
+  const normalized = await runCodeNode(errorNodes.get('CCG-99 Normalize & Redact Error Event'), event);
+  assert.deepEqual(normalized.json.normalized_error_event.ccg_context, {
+    run_id: 'run-native-lineage',
+    idempotency_key: 'idempotency-native-lineage',
+    production_id: 'production-native-lineage',
+    campaign_id: 'campaign-native-lineage',
+    content_id: 'content-native-lineage',
+    request_hash: 'request-native-lineage',
+    production_tier: 'STANDARD',
+    mode: 'DRY_RUN',
+  });
+  assert.equal(normalized.json.normalized_error_event.source.execution_id, 'n8n-native-error-001');
+  assert.equal(normalized.json.normalized_error_event.recovery_context.checkpoint_module, 'CCG-00');
+  const classified = await runCodeNode(errorNodes.get('CCG-99 Classify & Decide Recovery'), normalized.json);
+  assert.equal(classified.json.recovery_decision.category, 'VALIDATION_OR_CONTRACT');
+  assert.equal(classified.json.recovery_decision.action, 'HOLD_FOR_REVIEW');
+  const handoff = await runCodeNode(errorNodes.get('CCG-99 Build Review Handoff'), classified.json);
+  const finalized = await runCodeNode(errorNodes.get('CCG-99 Finalize Incident & Ledger'), handoff.json);
+  assert.equal(finalized.json.incident_report.context.request_hash, 'request-native-lineage');
 });
 
 test('no later-module fixture id appears in an E2E route started by CCG-00', () => {

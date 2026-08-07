@@ -31,6 +31,31 @@ os testes. O error workflow permanece ativo porque essa é a semântica do n8n
 para um workflow iniciado por `Error Trigger`; isso não publica nem ativa
 anúncios.
 
+## Bootstrap nativo do CCG-99
+
+O source candidate posterior a esta promoção mantém o mesmo contrato de
+workflows e adiciona o bootstrap nativo necessário para a rota automática de
+erro técnico:
+
+- builder contínuo `4.1.5`, com 98 nodes e 118 conexões no Creator;
+- o `CCG-00 Capture Recovery Context` registra somente lineage sanitizado antes
+  da validação estrita do contrato;
+- `orb.service` inicia n8n por `start-n8n-runtime.sh`, que pré-carrega o
+  bootstrap de error workflow antes de `WorkflowRunner` ser resolvido pelo
+  container de dependências;
+- o bootstrap conserva o dispatcher nativo do n8n e acrescenta apenas o
+  contexto permitido em `error.ccg_recovery_context`; não transporta request
+  bruto, assets, claims, secrets ou binários;
+- a guarda nativa evita que CCG-99 dispare a si próprio. Creator e Organizer
+  continuam inativos; somente o CCG-99 permanece ativo para receber falhas.
+
+O motivo do bootstrap é específico da versão instalada do n8n: a ordem de
+imports CommonJS podia resolver `WorkflowRunner` como dependência indefinida
+de `WorkflowExecutionService`, interrompendo a execução do error workflow
+antes de qualquer CCG-99. O bootstrap falha fechado se os módulos nativos
+esperados não existirem, em vez de iniciar Orb com a rota de recuperação
+incompleta.
+
 A importação usou o mecanismo existente:
 `orb/engine/scripts/prepare-campaign-creative-creator-live-import.js` e
 `n8n import:workflow --projectId=...`. As nove referências de modelos OpenAI
@@ -178,10 +203,10 @@ seguir a semântica de ativação exigida pelo `Error Trigger`.
 
 ## Riscos restantes
 
-1. A rota automática de CCG-99 para uma falha técnica forçada encontrou no
-   n8n instalado um erro de dependência circular ao resolver o owner do error
-   workflow. Os testes direcionados do CCG-99 passam, mas a execução automática
-   nativa desse caminho ainda requer uma verificação/fix específico do runtime.
+1. O bootstrap da rota automática de CCG-99 deve receber um smoke nativo
+   controlado após a promoção do source candidate: uma falha técnica sintética
+   precisa produzir exatamente um incidente, lineage sanitizado e nenhuma
+   recursão. Até esse smoke, Creator e Organizer devem permanecer inativos.
 2. Não existe evidência de canary live nesta promoção. Provider pago, storage
    real, URI acessível e custo real continuam não validados.
 3. O backup corrente ainda não tem `restoreVerified`; executar um restore drill
