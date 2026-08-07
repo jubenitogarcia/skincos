@@ -1,5 +1,5 @@
 import React from 'react'
-import { Ban, CircleAlert, Link2, ListChecks, Mail, Pencil, Power, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react'
+import { Ban, Check, CircleAlert, Link2, ListChecks, Mail, Pencil, Power, RefreshCw, Search, ShieldCheck, UsersRound, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { addEscalaProfessional, updateEscalaProfessional } from '@/escalaApi'
 import { Badge } from '@/badge'
@@ -219,6 +219,7 @@ export function UsersModule() {
   const [linkSource, setLinkSource] = React.useState<'ESCALA' | 'ATENDIMENTO'>('ESCALA')
   const [linkSourceId, setLinkSourceId] = React.useState('')
   const [linkSaving, setLinkSaving] = React.useState(false)
+  const [linkReviewingId, setLinkReviewingId] = React.useState<string | null>(null)
   const usernameWasEdited = React.useRef(false)
 
   const role = String(me?.user?.role || '').toUpperCase()
@@ -391,6 +392,32 @@ export function UsersModule() {
       toast.error(error?.message || 'Não foi possível registrar o vínculo.')
     } finally {
       setLinkSaving(false)
+    }
+  }
+
+  const reviewIdentityLink = async (link: NonNullable<UnifiedTeamMember['identityLinks']>[number], reviewStatus: 'CONFIRMED' | 'REJECTED') => {
+    if (!editingRow || !link.id || !canManage) return
+    const reason = reviewStatus === 'REJECTED'
+      ? window.prompt('Informe o motivo da rejeição (obrigatório):', '')?.trim() || ''
+      : ''
+    if (reviewStatus === 'REJECTED' && reason.length < 5) {
+      toast.error('Informe um motivo com pelo menos 5 caracteres para rejeitar o vínculo.')
+      return
+    }
+    if (reviewStatus === 'CONFIRMED' && !window.confirm(`Confirmar o vínculo ${link.sourceId} com ${link.source === 'ATENDIMENTO' ? 'o Atendimento' : 'a Escala'}?`)) return
+    setLinkReviewingId(link.id)
+    try {
+      await api(`/admin/team/${encodeURIComponent(editingRow.id)}/links/${encodeURIComponent(link.id)}/review`, {
+        method: 'POST',
+        csrf: me?.csrfToken,
+        body: { reviewStatus, ...(reason ? { reason } : {}) },
+      })
+      toast.success(reviewStatus === 'CONFIRMED' ? 'Vínculo confirmado.' : 'Vínculo rejeitado.')
+      await load()
+    } catch (error: any) {
+      toast.error(error?.message || 'Não foi possível atualizar a revisão do vínculo.')
+    } finally {
+      setLinkReviewingId(null)
     }
   }
 
@@ -850,7 +877,7 @@ export function UsersModule() {
                     <div><h3 id="team-links-title" className="text-sm font-semibold text-white">Vínculos de identidade</h3><p className="mt-1 text-xs text-blue-100/55">Atendimento e Escala só podem ser associados por identificador explícito. Casos novos ficam pendentes de revisão.</p></div>
                   </div>
                   <div className="space-y-2">
-                    {(editingRow?.identityLinks || []).length > 0 ? editingRow?.identityLinks?.map((link) => <div key={link.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2 text-xs"><span className="font-medium text-white">{link.source === 'ATENDIMENTO' ? 'Atendimento' : 'Escala'}</span><span className="font-mono text-blue-100/70">{link.sourceId}</span><Badge variant={link.reviewStatus === 'CONFIRMED' ? 'success' : link.reviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[10px]">{link.reviewStatus === 'CONFIRMED' ? 'Confirmado' : link.reviewStatus === 'REJECTED' ? 'Rejeitado' : 'Revisão pendente'}</Badge></div>) : <p className="text-sm text-blue-100/60">Nenhum vínculo registrado.</p>}
+                    {(editingRow?.identityLinks || []).length > 0 ? editingRow?.identityLinks?.map((link) => <div key={link.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2 text-xs"><div className="flex min-w-0 flex-wrap items-center gap-2"><span className="font-medium text-white">{link.source === 'ATENDIMENTO' ? 'Atendimento' : 'Escala'}</span><span className="max-w-[220px] truncate font-mono text-blue-100/70" title={link.sourceId}>{link.sourceId}</span><Badge variant={link.reviewStatus === 'CONFIRMED' ? 'success' : link.reviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[10px]">{link.reviewStatus === 'CONFIRMED' ? 'Confirmado' : link.reviewStatus === 'REJECTED' ? 'Rejeitado' : 'Revisão pendente'}</Badge></div>{canManage && link.reviewStatus === 'PENDING_REVIEW' && <div className="flex items-center gap-1"><TooltipButton label="Confirmar vínculo"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-emerald-100 hover:bg-emerald-200/10" aria-label={`Confirmar vínculo ${link.sourceId}`} disabled={linkReviewingId === link.id} onClick={() => void reviewIdentityLink(link, 'CONFIRMED')}><Check className="size-3.5" aria-hidden="true" /></Button></TooltipButton><TooltipButton label="Rejeitar vínculo"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label={`Rejeitar vínculo ${link.sourceId}`} disabled={linkReviewingId === link.id} onClick={() => void reviewIdentityLink(link, 'REJECTED')}><X className="size-3.5" aria-hidden="true" /></Button></TooltipButton></div>}</div>) : <p className="text-sm text-blue-100/60">Nenhum vínculo registrado.</p>}
                   </div>
                   {canManage && editingId && <div className="mt-4 grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)_auto] sm:items-end"><label className="space-y-1 text-xs text-blue-100/75">Origem<Select value={linkSource} onValueChange={(value: 'ESCALA' | 'ATENDIMENTO') => setLinkSource(value)}><SelectTrigger aria-label="Origem do vínculo"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ESCALA">Escala</SelectItem><SelectItem value="ATENDIMENTO">Atendimento</SelectItem></SelectContent></Select></label><label className="space-y-1 text-xs text-blue-100/75">Identificador<Input value={linkSourceId} onChange={(event) => setLinkSourceId(event.target.value)} placeholder="ID explícito do sistema de origem" /></label><Button type="button" disabled={linkSaving || !linkSourceId.trim()} onClick={() => void addIdentityLink()}><Link2 className="mr-2 size-4" aria-hidden="true" />{linkSaving ? 'Vinculando…' : 'Registrar vínculo'}</Button></div>}
                 </section>

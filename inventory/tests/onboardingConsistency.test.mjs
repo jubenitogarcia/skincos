@@ -99,6 +99,14 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(admin, /kind: 'ESCALA_SYNC'/);
   assert.match(admin, /after_json LIKE/);
   assert.match(admin, /entity: 'EMPLOYEE_TEAM'/);
+  assert.match(admin, /const teamLinkReviewMatch/);
+  assert.match(admin, /TEAM_LINK_REJECTION_REASON_REQUIRED/);
+  assert.match(admin, /body\.reviewStatus \|\| 'PENDING_REVIEW'/);
+  assert.match(localApi, /req\.body\?\.reviewStatus \|\| 'PENDING_REVIEW'/);
+  assert.match(admin, /EMPLOYEE_IDENTITY_LINK_REVIEWED/);
+  assert.match(admin, /TEAM_LINK_CONFIRMED_IMMUTABLE/);
+  assert.match(admin, /mobilePhoneHash: nextPhoneHash \|\| current\.mobile_phone_hash/);
+  assert.match(admin, /normalizeTeamData\(body\.team, nextUnits, \{/);
   assert.match(admin, /pendingSync: pendingIds\.includes\(row\.id\)/);
   assert.match(admin, /compensationState/);
   assert.match(admin, /teamUnitsVisible\(auth, onboarding\.units_json\)/);
@@ -107,6 +115,10 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(localApi, /scheduleOperations/);
   assert.match(localApi, /EMPLOYEE_ESCALA_SYNC_RECORDED/);
   assert.match(localApi, /ESCALA_SYNC_IDEMPOTENCY_CONFLICT/);
+  assert.match(localApi, /links\/:linkId\/review/);
+  assert.match(localApi, /TEAM_LINK_REJECTION_REASON_REQUIRED/);
+  assert.match(localApi, /EMPLOYEE_IDENTITY_LINK_REVIEWED/);
+  assert.match(localApi, /requestedUsername: input\.requestedUsername/);
 });
 
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {
@@ -115,4 +127,18 @@ test('team telemetry accepts only aggregate fields and cannot persist identity P
   assert.match(telemetry, /unit_count/);
   const implementation = telemetry.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   assert.doesNotMatch(implementation, /email|phone|fullName|entityId|memberId/i);
+});
+
+test('unified team rollout is explicit, staging-only and fail-closed by default', async () => {
+  const workflow = await readFile(
+    new URL('../../.github/workflows/deploy-core-workers.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /unified_team_enabled:/);
+  assert.match(workflow, /default: false/);
+  assert.match(workflow, /UNIFIED_TEAM_ENABLED: \$\{\{ inputs\.unified_team_enabled \}\}/);
+  assert.match(workflow, /Unified team routes can only be enabled in staging/);
+  assert.match(workflow, /Unified team routes require the inventory unit/);
+  assert.match(workflow, /unified_team_var=false/);
+  assert.match(workflow, /--var "UNIFIED_TEAM_ENABLED:\$unified_team_var"/);
 });

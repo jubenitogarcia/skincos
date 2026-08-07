@@ -58,6 +58,17 @@ resolvem a identidade. Falhas são persistidas somente como códigos operacionai
 sem PII e podem ser repetidas pela rota autenticada
 `POST /admin/team/:id/schedule-sync`, sempre com `Idempotency-Key` único.
 
+Vínculos novos entram como `PENDING_REVIEW` quando não vieram de uma resposta
+confirmada da origem. A decisão humana usa
+`POST /admin/team/:id/links/:linkId/review` com `CONFIRMED` ou `REJECTED`;
+rejeições exigem motivo, a confirmação é auditada e um vínculo confirmado não
+é rebaixado neste fluxo. Isso fecha a fila de exceções sem permitir que a
+interface resolva identidade por nome.
+
+Edições parciais preservam os dados operacionais já persistidos da Escala. A
+alteração de telefone recalcula o hash enviado ao Workforce e não expõe o
+telefone pessoal nas respostas do cadastro.
+
 O preview local mantém o mesmo contrato em armazenamento privado e registra
 tentativas, auditoria e telemetria agregada. O botão de nova tentativa só deve
 ser habilitado depois que o identificador explícito do profissional estiver

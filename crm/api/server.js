@@ -1536,6 +1536,7 @@ if (DEV_AUTH_ENABLED) {
         version: 1,
         fullName: input.fullName,
         corporateEmail: input.corporateEmail,
+        requestedUsername: input.requestedUsername,
         personalEmail: input.personalEmail,
         mobilePhone: input.mobilePhone,
         profile: input.profile,
@@ -1960,6 +1961,43 @@ if (DEV_AUTH_ENABLED) {
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
     })
+    app.post(['/api/crm/admin/team/:id/links/:linkId/review', '/admin/team/:id/links/:linkId/review'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const member = store.team.find((row) => row.id === String(req.params.id || '').trim())
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const hierarchyError = localTeamHierarchyError(session, member.profile, member.units)
+        if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia não permite revisar este vínculo', code: hierarchyError })
+        const nextStatus = String(req.body?.reviewStatus || req.body?.review_status || '').trim().toUpperCase()
+        const confidence = String(req.body?.confidence || '').trim().toUpperCase()
+        const reason = String(req.body?.reason || '').trim().replace(/\s+/g, ' ').slice(0, 500)
+        if (!['PENDING_REVIEW', 'CONFIRMED', 'REJECTED'].includes(nextStatus) || (confidence && !['HIGH', 'MEDIUM', 'LOW'].includes(confidence))) return res.status(400).json({ success: false, error: 'Revisão do vínculo inválida', code: 'TEAM_LINK_REVIEW_INVALID' })
+        if (nextStatus === 'REJECTED' && reason.length < 5) return res.status(400).json({ success: false, error: 'A rejeição exige um motivo', code: 'TEAM_LINK_REJECTION_REASON_REQUIRED' })
+        const linkId = String(req.params.linkId || '').trim()
+        const index = (member.identityLinks || []).findIndex((link) => String(link?.id || '') === linkId)
+        if (index < 0) return res.status(404).json({ success: false, error: 'Vínculo não encontrado para este membro', code: 'TEAM_LINK_NOT_FOUND' })
+        const current = member.identityLinks[index]
+        const currentStatus = String(current.reviewStatus || 'PENDING_REVIEW').trim().toUpperCase()
+        if (currentStatus === 'CONFIRMED' && nextStatus !== 'CONFIRMED') return res.status(409).json({ success: false, error: 'Um vínculo confirmado não pode ser rebaixado neste fluxo', code: 'TEAM_LINK_CONFIRMED_IMMUTABLE' })
+        if (currentStatus === nextStatus) return res.status(200).json({ success: true, data: localPublicIdentityLink(current), replayed: true })
+        const at = new Date().toISOString()
+        const reviewed = {
+            ...current,
+            confidence: confidence || current.confidence,
+            reviewStatus: nextStatus,
+            metadata: { ...(current.metadata || {}), review: { status: nextStatus, reviewedAt: at, reviewedBy: session.user.username || session.user.email || 'gestor-local', reasonProvided: Boolean(reason) } },
+        }
+        member.identityLinks = [...member.identityLinks.slice(0, index), reviewed, ...member.identityLinks.slice(index + 1)]
+        if (nextStatus === 'CONFIRMED' && String(reviewed.source || '').toUpperCase() === 'ESCALA') member.schedule = { ...member.schedule, professionalId: reviewed.sourceId }
+        member.updatedAt = at
+        localAudit(store, session, 'EMPLOYEE_IDENTITY_LINK_REVIEWED', member.id, { linkId, source: reviewed.source, sourceId: reviewed.sourceId, reviewStatus: nextStatus, confidence: reviewed.confidence, reason: reason || null }, { reviewStatus: currentStatus, confidence: current.confidence })
+        localTeamTelemetry(store, session, 'EMPLOYEE_IDENTITY_LINK_REVIEWED', nextStatus, 1, member.units.length)
+        await saveLocalCrmStore(store)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicIdentityLink(reviewed) })
+    })
     app.get(['/api/crm/admin/team/:id/links', '/admin/team/:id/links'], async (req, res) => {
         const session = getDevSession(req) || getLocalProxySession(req)
         const role = normalizeRole(session?.user?.role)
@@ -1985,9 +2023,11 @@ if (DEV_AUTH_ENABLED) {
         const sourceId = String(req.body?.sourceId || req.body?.source_id || '').trim().slice(0, 160)
         const matchMethod = String(req.body?.matchMethod || req.body?.match_method || 'EXPLICIT_WORKFORCE_ID').trim().toUpperCase()
         const confidence = String(req.body?.confidence || 'HIGH').trim().toUpperCase()
-        const reviewStatus = String(req.body?.reviewStatus || 'CONFIRMED').trim().toUpperCase()
+        const reviewStatus = String(req.body?.reviewStatus || 'PENDING_REVIEW').trim().toUpperCase()
+        const reviewReason = String(req.body?.reason || req.body?.reviewReason || '').trim().slice(0, 500)
         if (!['ESCALA', 'ATENDIMENTO'].includes(source) || !sourceId || ['NAME', 'NAME_ONLY', 'SIMILAR_NAME'].includes(matchMethod)) return res.status(400).json({ success: false, error: 'Vínculo exige identificador explícito; nome não é suficiente', code: 'TEAM_LINK_EXPLICIT_ID_REQUIRED' })
         if (!['HIGH', 'MEDIUM', 'LOW'].includes(confidence) || !['PENDING_REVIEW', 'CONFIRMED', 'REJECTED'].includes(reviewStatus)) return res.status(400).json({ success: false, error: 'Estado de revisão do vínculo inválido', code: 'TEAM_LINK_REVIEW_INVALID' })
+        if (reviewStatus === 'REJECTED' && reviewReason.length < 5) return res.status(400).json({ success: false, error: 'A rejeição exige um motivo', code: 'TEAM_LINK_REJECTION_REASON_REQUIRED' })
         const boundElsewhere = store.team.find((row) => row.id !== member.id && (row.identityLinks || []).some((link) => link.source === source && link.sourceId === sourceId))
         if (boundElsewhere) return res.status(409).json({ success: false, error: 'Este identificador já está vinculado a outro funcionário', code: 'TEAM_LINK_CONFLICT' })
         const existing = (member.identityLinks || []).find((link) => link.source === source)
@@ -1999,7 +2039,7 @@ if (DEV_AUTH_ENABLED) {
             matchMethod,
             confidence,
             reviewStatus,
-            metadata: { explicit: true, localPreview: true },
+            metadata: { explicit: true, localPreview: true, ...(reviewStatus === 'REJECTED' ? { review: { status: reviewStatus, reason: reviewReason, reviewedAt: new Date().toISOString(), reviewedBy: session.user.username || session.user.email || 'gestor-local' } } : {}) },
             createdBy: session.user.username || session.user.email || 'gestor-local',
             createdAt: new Date().toISOString(),
         }
