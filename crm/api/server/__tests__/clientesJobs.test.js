@@ -3,8 +3,10 @@ import test from 'node:test'
 
 import {
     CLIENTES_CONTINUOUS_JOB_IDS,
+    assertClientesSourceOperationsDatabaseIdentity,
     createClientesContinuousJobs,
-    runClientesSourceRefresh,
+    normalizeClientesSourceOperationsTarget,
+    runClientesSourceOperations,
     runOptOutIngestion,
     runQualityRefresh,
 } from '../workers/clientesJobs.js'
@@ -30,8 +32,8 @@ test('Clientes continuous job catalog keeps opt-outs, source, quality and clinic
         pool: fakePool(),
         databaseUrl: LOCAL_DATABASE_URL,
         env: {
-            CRM_CLIENTES_SOURCE_REFRESH_TARGET: 'production',
-            CRM_CLIENTES_SOURCE_REFRESH_ACTION: 'dry-run',
+            CRM_CLIENTES_SOURCE_OPERATIONS_TARGET: 'local',
+            CRM_CLIENTES_SOURCE_OPERATIONS_MODE: 'dry-run',
         },
     })
     assert.deepEqual(jobs.map((job) => job.id), Object.values(CLIENTES_CONTINUOUS_JOB_IDS))
@@ -63,7 +65,7 @@ test('continuous job catalog propagates the persisted execution key to each job'
     const jobs = createClientesContinuousJobs({
         pool: fakePool(),
         databaseUrl: LOCAL_DATABASE_URL,
-        env: { CRM_CLIENTES_SOURCE_REFRESH_TARGET: 'production' },
+        env: { CRM_CLIENTES_SOURCE_OPERATIONS_TARGET: 'local' },
         optOutRunner: async (context) => { received.push(['opt-out', context.executionKey]) },
         sourceRunner: async (context) => { received.push(['source', context.executionKey]) },
         qualityRunner: async (context) => { received.push(['quality', context.executionKey]) },
@@ -89,25 +91,37 @@ test('continuous job catalog propagates the persisted execution key to each job'
     ])
 })
 
-test('source refresh is target-bound, locked and idempotent at the adapter boundary', async () => {
-    let imported = 0
-    const result = await runClientesSourceRefresh({
+test('source operations are target-bound, ledger-backed and expose only safe results', async () => {
+    let received
+    const result = await runClientesSourceOperations({
         pool: fakePool(),
         databaseUrl: LOCAL_DATABASE_URL,
         env: {
-            CRM_CLIENTES_SOURCE_REFRESH_TARGET: 'production',
-            CRM_CLIENTES_SOURCE_REFRESH_ACTION: 'dry-run',
+            CRM_CLIENTES_SOURCE_OPERATIONS_TARGET: 'local',
+            CRM_CLIENTES_SOURCE_OPERATIONS_MODE: 'dry-run',
         },
-        importer: async () => {
-            imported += 1
-            return { dryRun: true, records: 2, inserted: 0, updated: 0, skipped: 2, tabs: ['Novo Hamburgo'] }
-        },
-        storeFactory: () => ({}),
+        storeFactory: () => ({ store: true }),
+        adaptersFactory: () => ({ adapter: true }),
+        runnerFactory: (options) => ({
+            async runDue(context) {
+                received = { options, context }
+                return {
+                    ready: false,
+                    unhealthyRequired: ['cadastro.app_registrations'],
+                    results: [{ sourceId: 'cadastro.app_registrations', status: 'unavailable', error: { code: 'SOURCE_CONNECTOR_UNAVAILABLE' } }],
+                }
+            },
+        }),
+        executionKey: 'clientes.test:2026-08-07T00:00:00.000Z',
     })
-    assert.equal(imported, 1)
-    assert.equal(result.target, 'production')
-    assert.equal(result.dryRun, true)
-    assert.equal(result.records, 2)
+    assert.equal(received.options.target, 'local')
+    assert.equal(received.context.mode, 'dry-run')
+    assert.equal(result.target, 'local')
+    assert.equal(result.ready, false)
+    assert.deepEqual(result.unhealthyRequired, ['cadastro.app_registrations'])
+    assert.deepEqual(result.sources, [{
+        sourceId: 'cadastro.app_registrations', status: 'unavailable', recordsRead: 0, recordsApplied: 0, errorCode: 'SOURCE_CONNECTOR_UNAVAILABLE',
+    }])
 })
 
 test('quality refresh uses an explicit global admin actor', async () => {
@@ -115,7 +129,7 @@ test('quality refresh uses an explicit global admin actor', async () => {
     const result = await runQualityRefresh({
         pool: fakePool(),
         databaseUrl: LOCAL_DATABASE_URL,
-        env: { CRM_CLIENTES_SOURCE_REFRESH_TARGET: 'production' },
+        env: { CRM_CLIENTES_SOURCE_OPERATIONS_TARGET: 'local' },
         qualityStoreFactory: () => ({
             refresh: async (value) => {
                 actor = value
@@ -127,4 +141,16 @@ test('quality refresh uses an explicit global admin actor', async () => {
     assert.equal(actor.isGlobalAdmin, true)
     assert.equal(result.refreshed, 3)
     assert.equal(result.findings, 1)
+})
+
+test('source operations reject production and require an explicit safe database identity', () => {
+    assert.throws(() => normalizeClientesSourceOperationsTarget('production'), /CLIENTES_SOURCE_OPERATIONS_TARGET_INVALID/)
+    assert.throws(
+        () => assertClientesSourceOperationsDatabaseIdentity({ database_name: 'skincos_crm_local', current_user: 'postgres' }, 'local'),
+        /CLIENTES_SOURCE_OPERATIONS_LOCAL_IDENTITY_UNSAFE/,
+    )
+    assert.deepEqual(
+        assertClientesSourceOperationsDatabaseIdentity({ database_name: 'skincos_staging', current_user: 'skincos_staging_crm_app' }, 'staging'),
+        { target: 'staging', database: 'skincos_staging', user: 'skincos_staging_crm_app' },
+    )
 })
