@@ -16,7 +16,7 @@ const INSUMOS_LEGACY_LAYOUT_EVENT = 'skincos:insumos:layout'
 const INSUMOS_LEGACY_STOCK_EVENT = 'skincos:insumos:estoque'
 
 function isOverviewPeriod(value: unknown): value is InsumosOverviewPeriod {
-  return value === '7d' || value === '30d' || value === '1y' || value === 'custom'
+  return value === 'currentWeek' || value === 'currentMonth' || value === '7d' || value === '30d' || value === '1y' || value === 'custom'
 }
 
 function isQuickOperation(value: unknown): value is InsumosQuickOperation {
@@ -50,7 +50,7 @@ export function normalizeInsumosHeaderState(detail: unknown): InsumosHeaderState
         saidaValor: payload.stock.saidaValor == null ? null : Number(payload.stock.saidaValor),
       }
     : null
-  const status = payload.status && typeof payload.status === 'object'
+  const status: InsumosHeaderState['status'] = payload.status && typeof payload.status === 'object'
     ? {
         online: payload.status.online == null ? null : Boolean(payload.status.online),
         authed: payload.status.authed == null ? null : Boolean(payload.status.authed),
@@ -59,6 +59,9 @@ export function normalizeInsumosHeaderState(detail: unknown): InsumosHeaderState
         allowedUnits: Array.isArray(payload.status.allowedUnits) ? payload.status.allowedUnits.map((item) => String(item)) : [],
       }
     : null
+  if (status && payload.status && Object.prototype.hasOwnProperty.call(payload.status, 'canAggregateUnits')) {
+    status.canAggregateUnits = Boolean(payload.status.canAggregateUnits)
+  }
   const overview = normalizeOverviewQuery(payload.overview) || { period: '30d' as const }
   if (!isOverviewPeriod(overview.period)) {
     overview.period = '30d'
@@ -67,6 +70,7 @@ export function normalizeInsumosHeaderState(detail: unknown): InsumosHeaderState
     status,
     stock,
     selectedUnit: String(payload.selectedUnit || ''),
+    layoutExpanded: payload.layoutExpanded == null ? undefined : Boolean(payload.layoutExpanded),
     overview: {
       period: overview.period,
       from: overview.from,

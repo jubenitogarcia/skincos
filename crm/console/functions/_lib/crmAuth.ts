@@ -68,7 +68,9 @@ export function isLocalDevAuthBypassEnabled(context: any): boolean {
   let localHost = false
   try {
     const { hostname } = new URL(requestUrl)
-    localHost = isLocalHostname(hostname)
+    const allowedHosts = parseList(env.LOCAL_AUTH_ALLOWED_HOSTS)
+      ?.map((value) => value.toLowerCase()) || []
+    localHost = isLocalHostname(hostname) || allowedHosts.includes(hostname.toLowerCase())
   } catch {
     return false
   }

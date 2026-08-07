@@ -180,7 +180,7 @@ test('Vite uses strictPort and the local adapter refreshes dependencies by lockf
     /DEFAULT_DATABASE_URL="postgresql:\/\/\$\{RUN_AS_USER\}@\/skincos_crm_local/,
   );
   assert.match(crmRunner, /export WRANGLER_REGISTRY_PATH="\$CRM_WRANGLER_REGISTRY_PATH"/);
-  assert.match(crmRunner, /--ip 127\.0\.0\.1\s+\\\s+--port "\$CRM_INSUMOS_PORT"/);
+  assert.match(crmRunner, /--ip "\$CRM_BIND_HOST"\s+\\\s+--port "\$CRM_INSUMOS_PORT"/);
   assert.match(crmRunner, /readlink -f "\$FRONTEND_DIR\/node_modules"/);
   assert.match(
     crmRunner,
@@ -540,7 +540,7 @@ function toWindowsPath(sourcePath) {
   return result.stdout.trim();
 }
 
-test('browser launcher accepts only loopback URLs and profiles inside the private runtime', () => {
+test('browser launcher accepts local or private WSL URLs and profiles inside the private runtime', () => {
   const scriptPath = toWindowsPath(browserLauncherPath);
   const validProfile =
     'C:\\CodexRuntime\\operator\\admin\\skincos\\runtime\\crm-local\\instances\\test\\browser-profile';
@@ -564,6 +564,46 @@ test('browser launcher accepts only loopback URLs and profiles inside the privat
   assert.equal(validResult.status, 0, `${validResult.stdout}\n${validResult.stderr}`);
   assert.match(validResult.stdout, /msedge\.exe|chrome\.exe/i);
 
+  const privateWslResult = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      scriptPath,
+      '-Url',
+      'http://172.18.61.30:25010/?module=insumos',
+      '-ProfilePath',
+      validProfile,
+      '-DryRun',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(privateWslResult.status, 0, `${privateWslResult.stdout}\n${privateWslResult.stderr}`);
+
+  const unreachableResult = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      scriptPath,
+      '-Url',
+      'http://127.0.0.1:1/?module=insumos',
+      '-ProfilePath',
+      validProfile,
+      '-ReachabilityTimeoutSeconds',
+      '1',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.notEqual(unreachableResult.status, 0);
+  assert.match(unreachableResult.stderr, /o navegador não foi aberto/);
+
   const remoteResult = spawnSync(
     'powershell.exe',
     [
@@ -582,7 +622,7 @@ test('browser launcher accepts only loopback URLs and profiles inside the privat
     { encoding: 'utf8' },
   );
   assert.notEqual(remoteResult.status, 0);
-  assert.match(remoteResult.stderr, /host loopback/);
+  assert.match(remoteResult.stderr, /host local ou IP privado/);
 
   const outsideProfileResult = spawnSync(
     'powershell.exe',

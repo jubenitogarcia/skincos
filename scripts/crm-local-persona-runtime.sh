@@ -366,7 +366,9 @@ const payload = {
   startedAt: process.env.CRM_RUNTIME_STARTED_AT,
   updatedAt: process.env.CRM_RUNTIME_UPDATED_AT,
   worktree: process.env.ROOT_DIR,
-  url: process.env.DEFAULT_URL,
+  // A listener candidate is not a user-facing URL until the full startup gate
+  // has succeeded. Consumers must use current.json only when state=ready.
+  url: process.env.CRM_RUNTIME_STATE === 'ready' ? process.env.DEFAULT_URL : null,
   targetCommit: process.env.CRM_RUNTIME_TARGET_COMMIT || null,
   buildCommit: process.env.CRM_RUNTIME_BUILD_COMMIT || null,
   sourceFingerprint: process.env.CRM_RUNTIME_SOURCE_FINGERPRINT || null,

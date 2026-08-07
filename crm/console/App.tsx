@@ -32,7 +32,6 @@ import {
 } from '@/alert-dialog'
 import { Tabs, TabsContent } from '@/tabs'
 import { Input } from '@/input'
-import { BrDatePickerInput } from '@/br-date-picker'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Tooltip, TooltipButton, TooltipContent, TooltipLabel, TooltipTrigger } from '@/tooltip'
 import { useKV } from '@/spark-mock'
@@ -40,7 +39,8 @@ import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
 import { dispatchEscalaHeaderAction, subscribeEscalaHeaderState } from '@/escalaHeaderBridge'
 import type { EscalaHeaderState, EscalaHighlightMode } from '@/escalaTypes'
 import { dispatchInsumosHeaderAction, subscribeInsumosHeaderState } from '@/insumosBridge'
-import type { InsumosHeaderState, InsumosOverviewPeriod } from '@/insumosTypes'
+import type { InsumosHeaderState, InsumosOverviewPeriod, InsumosQuickOperation } from '@/insumosTypes'
+import { INSUMOS_ALL_UNITS } from '@/insumosUnitAccess'
 import { dispatchMetaAdsHeaderAction, subscribeMetaAdsHeaderState } from '@/metaAdsHeaderBridge'
 import type { MetaAdsHeaderState } from '@/metaAdsTypes'
 import { dispatchSiteTrackingHeaderAction, subscribeSiteTrackingHeaderState } from '@/siteTrackingHeaderBridge'
@@ -86,6 +86,8 @@ function formatLocalIsoDate(date: Date) {
 
 type AtendimentoQuickPreset = 'last7' | 'last30' | 'currentWeek' | 'currentMonth'
 
+type InsumosQuickPreset = Extract<InsumosOverviewPeriod, 'currentWeek' | 'currentMonth'>
+
 const ATENDIMENTO_QUICK_PRESETS: Array<{
     key: AtendimentoQuickPreset
     label: string
@@ -100,6 +102,27 @@ const ATENDIMENTO_QUICK_PRESETS: Array<{
 const ATENDIMENTO_PERIOD_PICKER_PRESETS: Array<Pick<(typeof ATENDIMENTO_QUICK_PRESETS)[number], 'key' | 'label' | 'tooltip'>> = [
     { key: 'last7', label: '7d', tooltip: 'Últimos 7 dias' },
     { key: 'last30', label: '30d', tooltip: 'Últimos 30 dias' },
+]
+
+const INSUMOS_QUICK_PRESETS: Array<{
+    key: InsumosQuickPreset
+    label: string
+    tooltip: string
+    tooltipDescription: string
+    icon: 'currentWeek' | 'currentMonth'
+}> = [
+    { key: 'currentWeek', label: 'Semana atual', tooltip: 'Semana atual', tooltipDescription: 'Da segunda-feira até hoje.', icon: 'currentWeek' },
+    { key: 'currentMonth', label: 'Mês atual', tooltip: 'Mês atual', tooltipDescription: 'Do primeiro dia do mês até hoje.', icon: 'currentMonth' },
+]
+
+const INSUMOS_PERIOD_PICKER_PRESETS: Array<{
+    key: Extract<InsumosOverviewPeriod, '7d' | '30d' | '1y'>
+    label: string
+    tooltip: string
+}> = [
+    { key: '7d', label: '7d', tooltip: 'Últimos 7 dias' },
+    { key: '30d', label: '30d', tooltip: 'Últimos 30 dias' },
+    { key: '1y', label: '1 ano', tooltip: 'Último ano' },
 ]
 
 function AtendimentoCurrentWeekIcon() {
@@ -171,6 +194,13 @@ function formatAtendimentoPeriodRange(from?: string, to?: string) {
     const end = format(to)
     if (start && end) return `${start} - ${end}`
     return start || end || ''
+}
+
+function normalizeStoredInsumosPeriod(value: string | null): InsumosOverviewPeriod {
+    if (value === 'currentWeek' || value === 'currentMonth' || value === 'custom' || value === '1y') return value
+    if (value === '7d') return 'currentWeek'
+    if (value === '30d') return 'currentMonth'
+    return 'currentMonth'
 }
 
 type ApiError = {
@@ -406,6 +436,10 @@ export default function AppFunctionalNeatlab() {
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
         const [atendimentoPeriodPickerOpen, setAtendimentoPeriodPickerOpen] = useState(false)
         const [atendimentoPeriodDraft, setAtendimentoPeriodDraft] = useState({ from: '', to: '' })
+        const [insumosPeriodPickerOpen, setInsumosPeriodPickerOpen] = useState(false)
+        const [insumosPeriodDraft, setInsumosPeriodDraft] = useState({ from: '', to: '' })
+        const [insumosMobilePeriodPickerOpen, setInsumosMobilePeriodPickerOpen] = useState(false)
+        const [insumosMobilePeriodDraft, setInsumosMobilePeriodDraft] = useState({ from: '', to: '' })
         const [escalaHeaderState, setEscalaHeaderState] = useState<EscalaHeaderState | null>(null)
         const [metaAdsHeaderState, setMetaAdsHeaderState] = useState<MetaAdsHeaderState | null>(null)
         const [siteTrackingHeaderState, setSiteTrackingHeaderState] = useState<SiteTrackingHeaderState | null>(null)
@@ -418,6 +452,7 @@ export default function AppFunctionalNeatlab() {
             () => (siteTrackingHeaderState?.sites || []).find((site) => site.id === siteTrackingHeaderState?.selectedSiteId) || null,
             [siteTrackingHeaderState],
         )
+				    const [insumosHeaderState, setInsumosHeaderState] = useState<InsumosHeaderState | null>(null)
 				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<InsumosHeaderState['status']>(null)
 				    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<InsumosHeaderState['stock']>(null)
                     const defaultEstoqueThresholds = React.useMemo(() => ({ warning: 50000, critical: 20000 }), [])
@@ -455,9 +490,11 @@ export default function AppFunctionalNeatlab() {
 				    const insumosUnitsForHeaderSelect = useMemo(() => {
 				        const fromApi = insumosHeaderStatus?.unidades?.length ? insumosHeaderStatus.unidades : canonicalUnitValues
 				        const out = [...new Set(fromApi)].filter((u) => String(u) !== 'custom')
-				        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
+				        if (insumosHeaderStatus?.canAggregateUnits && out.length > 1 && !out.includes(INSUMOS_ALL_UNITS)) out.unshift(INSUMOS_ALL_UNITS)
+				        if (selectedUnit && selectedUnit !== INSUMOS_ALL_UNITS && !out.includes(selectedUnit)) out.unshift(selectedUnit)
+				        if (selectedUnit === INSUMOS_ALL_UNITS && !insumosHeaderStatus?.canAggregateUnits) return out.filter((unit) => unit !== INSUMOS_ALL_UNITS)
 			        return out
-			    }, [canonicalUnitValues, insumosHeaderStatus?.unidades?.join('|'), selectedUnit])
+			    }, [canonicalUnitValues, insumosHeaderStatus?.canAggregateUnits, insumosHeaderStatus?.unidades?.join('|'), selectedUnit])
 			    const unitMonitorUnitsForHeaderSelect = useMemo(() => {
 			        const out = [...new Set(canonicalUnitValues)].filter((u) => String(u) !== 'custom')
 			        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
@@ -466,10 +503,9 @@ export default function AppFunctionalNeatlab() {
 			    const [insumosOverviewPeriod, setInsumosOverviewPeriod] = useState<InsumosOverviewPeriod>(() => {
 			        try {
 			            const raw = localStorage.getItem(INSUMOS_OVERVIEW_PERIOD_KEY)
-			            const v = raw === '7d' || raw === '30d' || raw === '1y' || raw === 'custom' ? raw : '30d'
-		            return v
+			            return normalizeStoredInsumosPeriod(raw)
 		        } catch {
-		            return '30d'
+		            return 'currentMonth'
 		        }
 		    })
 		    const [insumosOverviewFrom, setInsumosOverviewFrom] = useState<string>(() => {
@@ -487,12 +523,14 @@ export default function AppFunctionalNeatlab() {
 		        }
 		    })
 
-			    const formatUnitLabel = (u: string) =>
-			        String(u || '')
+			    const formatUnitLabel = (u: string) => {
+			        if (String(u || '').trim() === INSUMOS_ALL_UNITS) return 'Todas unidades'
+			        return String(u || '')
 			            .split('-')
 		            .filter(Boolean)
 		            .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
 		            .join(' ')
+			    }
 
                 const parseCurrencyInput = React.useCallback((raw: string) => {
                     if (!raw) return null
@@ -555,6 +593,13 @@ export default function AppFunctionalNeatlab() {
                 }, [atendimentoHeaderState?.periodOperationalDays, atendimentoQuickWindow])
                 const atendimentoLayoutExpanded = atendimentoHeaderState?.layoutExpanded === true
                 const atendimentoLayoutLabel = atendimentoLayoutExpanded ? 'Contrair tudo' : 'Expandir tudo'
+                const insumosLayoutExpanded = insumosHeaderState?.layoutExpanded !== false
+                const insumosLayoutLabel = insumosLayoutExpanded ? 'Contrair tudo' : 'Expandir tudo'
+                const insumosCustomPeriodLabel = React.useMemo(() => {
+                    if (insumosOverviewPeriod !== 'custom') return ''
+                    return formatAtendimentoPeriodRange(insumosOverviewFrom, insumosOverviewTo)
+                }, [insumosOverviewFrom, insumosOverviewPeriod, insumosOverviewTo])
+                const insumosLegacyPeriodLabel = insumosOverviewPeriod === '1y' ? 'Último ano' : ''
                 const setAtendimentoQuickWindow = React.useCallback((preset: AtendimentoQuickPreset) => {
                     const { from, to } = buildAtendimentoQuickRange(preset)
                     dispatchAtendimentoHeaderAction({
@@ -582,6 +627,224 @@ export default function AppFunctionalNeatlab() {
                     })
                     setAtendimentoPeriodPickerOpen(false)
                 }, [atendimentoPeriodDraft])
+                const setInsumosQuickPeriod = React.useCallback((preset: InsumosQuickPreset) => {
+                    setInsumosOverviewPeriod(preset)
+                    setInsumosOverviewFrom('')
+                    setInsumosOverviewTo('')
+                    setInsumosPeriodPickerOpen(false)
+                    setInsumosMobilePeriodPickerOpen(false)
+                    try {
+                        localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, preset)
+                        localStorage.removeItem(INSUMOS_OVERVIEW_FROM_KEY)
+                        localStorage.removeItem(INSUMOS_OVERVIEW_TO_KEY)
+                    } catch { /* ignore */ }
+                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: preset, from: '', to: '' } })
+                }, [])
+                const setInsumosLegacyPeriod = React.useCallback((period: Extract<InsumosOverviewPeriod, '7d' | '30d' | '1y'>) => {
+                    setInsumosOverviewPeriod(period)
+                    try { localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, period) } catch { /* ignore */ }
+                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period, from: insumosOverviewFrom, to: insumosOverviewTo } })
+                    setInsumosPeriodPickerOpen(false)
+                    setInsumosMobilePeriodPickerOpen(false)
+                }, [insumosOverviewFrom, insumosOverviewTo])
+                const openInsumosPeriodPicker = React.useCallback((open: boolean) => {
+                    setInsumosPeriodPickerOpen(open)
+                    if (open) {
+                        setInsumosPeriodDraft({ from: insumosOverviewFrom, to: insumosOverviewTo })
+                    }
+                }, [insumosOverviewFrom, insumosOverviewTo])
+                const openInsumosMobilePeriodPicker = React.useCallback((open: boolean) => {
+                    setInsumosMobilePeriodPickerOpen(open)
+                    if (open) {
+                        setInsumosMobilePeriodDraft({ from: insumosOverviewFrom, to: insumosOverviewTo })
+                    }
+                }, [insumosOverviewFrom, insumosOverviewTo])
+                const commitInsumosCustomPeriod = React.useCallback((draft: { from: string; to: string }) => {
+                    if (!draft.from || !draft.to || draft.from > draft.to) return false
+                    setInsumosOverviewPeriod('custom')
+                    setInsumosOverviewFrom(draft.from)
+                    setInsumosOverviewTo(draft.to)
+                    try {
+                        localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, 'custom')
+                        localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, draft.from)
+                        localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, draft.to)
+                    } catch { /* ignore */ }
+                    dispatchInsumosHeaderAction({
+                        type: 'set-overview',
+                        value: { period: 'custom', from: draft.from, to: draft.to },
+                    })
+                    return true
+                }, [])
+                const applyInsumosCustomPeriod = React.useCallback(() => {
+                    if (commitInsumosCustomPeriod(insumosPeriodDraft)) setInsumosPeriodPickerOpen(false)
+                }, [commitInsumosCustomPeriod, insumosPeriodDraft])
+                const applyInsumosMobileCustomPeriod = React.useCallback(() => {
+                    if (commitInsumosCustomPeriod(insumosMobilePeriodDraft)) setInsumosMobilePeriodPickerOpen(false)
+                }, [commitInsumosCustomPeriod, insumosMobilePeriodDraft])
+                const renderInsumosPeriodControls = React.useCallback((compact = false) => {
+                    const pickerOpen = compact ? insumosMobilePeriodPickerOpen : insumosPeriodPickerOpen
+                    const pickerDraft = compact ? insumosMobilePeriodDraft : insumosPeriodDraft
+                    const openPicker = compact ? openInsumosMobilePeriodPicker : openInsumosPeriodPicker
+                    const closePicker = compact ? setInsumosMobilePeriodPickerOpen : setInsumosPeriodPickerOpen
+                    const setPickerDraft = compact ? setInsumosMobilePeriodDraft : setInsumosPeriodDraft
+                    const applyPicker = compact ? applyInsumosMobileCustomPeriod : applyInsumosCustomPeriod
+                    return (
+                    <div className={compact ? 'flex flex-wrap items-center gap-1.5' : 'flex items-center gap-1.5'}>
+                        <div className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] p-1">
+                            {INSUMOS_QUICK_PRESETS.map((preset) => (
+                                <Tooltip key={preset.key}>
+                                    <TooltipTrigger asChild>
+                                        <button
+                                            type="button"
+                                            aria-label={preset.label}
+                                            title={preset.tooltip}
+                                            className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-xs transition ${
+                                                insumosOverviewPeriod === preset.key
+                                                    ? 'bg-white/16 text-white'
+                                                    : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                            }`}
+                                            onClick={() => setInsumosQuickPeriod(preset.key)}
+                                        >
+                                            <span className="inline-flex items-center justify-center opacity-90">{renderAtendimentoQuickPresetIcon(preset.icon)}</span>
+                                        </button>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-56">
+                                        <div className="space-y-1">
+                                            <div className="text-[11px] font-medium leading-tight text-white">{preset.tooltip}</div>
+                                            <div className="text-[10px] leading-snug text-slate-300/92">{preset.tooltipDescription}</div>
+                                        </div>
+                                    </TooltipContent>
+                                </Tooltip>
+                            ))}
+                            <DropdownMenu open={pickerOpen} onOpenChange={openPicker}>
+                                <DropdownMenuTrigger asChild>
+                                    <button
+                                        type="button"
+                                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
+                                            insumosCustomPeriodLabel
+                                                ? 'bg-white/16 text-white'
+                                                : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                        }`}
+                                        aria-label="Selecionar período personalizado"
+                                        title="Selecionar período personalizado"
+                                    >
+                                        <CalendarX2 className="size-4" aria-hidden="true" />
+                                    </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-[22rem] border-slate-700 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-xl">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <DropdownMenuLabel className="px-0 text-slate-200">Período personalizado</DropdownMenuLabel>
+                                        <button
+                                            type="button"
+                                            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-300 transition hover:bg-white/10 hover:text-white"
+                                            aria-label="Fechar seletor de período"
+                                            onClick={() => closePicker(false)}
+                                        >
+                                            <X className="size-4" aria-hidden="true" />
+                                        </button>
+                                    </div>
+                                    <DropdownMenuSeparator className="-mx-3 bg-slate-800" />
+                                    <div className="grid gap-3 pt-3">
+                                        <div className="space-y-1.5">
+                                            <div className="text-[10px] font-medium uppercase tracking-[0.1em] text-slate-500">Atalhos</div>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                {INSUMOS_PERIOD_PICKER_PRESETS.map((preset) => (
+                                                    <button
+                                                        key={preset.key}
+                                                        type="button"
+                                                        aria-label={preset.tooltip}
+                                                        className={`rounded-lg border px-2.5 py-2 text-left text-xs transition ${
+                                                            insumosOverviewPeriod === preset.key
+                                                                ? 'border-sky-300/45 bg-sky-400/12 text-sky-100'
+                                                                : 'border-slate-700 bg-slate-900/55 text-slate-200 hover:border-slate-600 hover:bg-slate-800'
+                                                        }`}
+                                                        onClick={() => setInsumosLegacyPeriod(preset.key)}
+                                                    >
+                                                        <span className="block font-semibold">{preset.label}</span>
+                                                        <span className="mt-0.5 block text-[10px] text-slate-400">{preset.tooltip}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <Input
+                                                type="date"
+                                                value={pickerDraft.from}
+                                                onChange={(event) => setPickerDraft((current) => ({ ...current, from: event.target.value }))}
+                                                className="h-8 bg-white/[0.06] border-white/20 text-white"
+                                                aria-label="Data inicial"
+                                            />
+                                            <Input
+                                                type="date"
+                                                value={pickerDraft.to}
+                                                onChange={(event) => setPickerDraft((current) => ({ ...current, to: event.target.value }))}
+                                                className="h-8 bg-white/[0.06] border-white/20 text-white"
+                                                aria-label="Data final"
+                                            />
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            className="h-8 w-full bg-sky-500/90 text-slate-950 hover:bg-sky-400"
+                                            onClick={applyPicker}
+                                            disabled={!pickerDraft.from || !pickerDraft.to || pickerDraft.from > pickerDraft.to}
+                                        >
+                                            Aplicar período
+                                        </Button>
+                                    </div>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                            {insumosCustomPeriodLabel || insumosLegacyPeriodLabel ? (
+                                <span className="inline-flex h-7 max-w-48 items-center truncate rounded-full border border-sky-300/35 bg-sky-400/10 px-2.5 text-[11px] font-medium text-sky-100">
+                                    {insumosCustomPeriodLabel || insumosLegacyPeriodLabel}
+                                </span>
+                            ) : null}
+                        </div>
+                    </div>
+                    )
+				}, [applyInsumosCustomPeriod, applyInsumosMobileCustomPeriod, insumosCustomPeriodLabel, insumosLegacyPeriodLabel, insumosMobilePeriodDraft.from, insumosMobilePeriodDraft.to, insumosMobilePeriodPickerOpen, insumosOverviewPeriod, insumosPeriodDraft.from, insumosPeriodDraft.to, insumosPeriodPickerOpen, openInsumosMobilePeriodPicker, openInsumosPeriodPicker, setInsumosLegacyPeriod, setInsumosQuickPeriod])
+				const renderInsumosQuickOperations = React.useCallback((compact = false) => {
+				    const disabled = selectedUnit === INSUMOS_ALL_UNITS
+				    const operations: Array<{ value: InsumosQuickOperation; label: string; tone: string; icon: string }> = [
+				        { value: 'ENTRADA', label: 'Entrada', tone: 'emerald', icon: '/icons/shortcut-entrada.svg' },
+				        { value: 'BAIXA', label: 'Saída', tone: 'rose', icon: '/icons/shortcut-saida.svg' },
+				        { value: 'TRANSFERENCIA', label: 'Transferência', tone: 'sky', icon: '/icons/shortcut-transferencia.svg' },
+				    ]
+				    const toneClasses: Record<string, string> = {
+				        emerald: 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100 hover:border-emerald-300/45 hover:bg-emerald-500/20',
+				        rose: 'border-rose-400/25 bg-rose-500/10 text-rose-100 hover:border-rose-300/45 hover:bg-rose-500/20',
+				        sky: 'border-sky-400/25 bg-sky-500/10 text-sky-100 hover:border-sky-300/45 hover:bg-sky-500/20',
+				    }
+				    return (
+				        <div
+				            className={`flex items-center gap-1 rounded-xl border border-white/10 bg-slate-950/35 p-1 ${compact ? 'w-fit' : ''}`}
+				            role="group"
+				            aria-label="Operações rápidas"
+				            data-testid="insumos-header-quick-operations"
+				        >
+				            {!compact ? <span className="px-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-200/55">Operações</span> : null}
+				            {operations.map((operation) => (
+				                <TooltipButton
+				                    key={operation.value}
+				                    label={disabled ? 'Selecione uma unidade para operar' : operation.label}
+				                    pinOnClick={false}
+				                >
+				                    <Button
+				                        size={compact ? 'icon' : 'sm'}
+				                        variant="ghost"
+				                        className={`${compact ? 'size-10 rounded-lg' : 'h-8 rounded-lg px-2.5'} gap-1.5 border ${disabled ? 'cursor-not-allowed border-white/10 bg-white/[0.03] text-white/35' : toneClasses[operation.tone]}`}
+				                        onClick={() => dispatchInsumosHeaderAction({ type: 'quick-op', value: operation.value })}
+				                        disabled={disabled}
+				                        aria-label={operation.label}
+				                        data-testid={`insumos-header-action-${operation.value.toLowerCase()}`}
+				                    >
+				                        <img src={operation.icon} alt="" aria-hidden className={compact ? 'size-6' : 'size-4'} />
+				                        {!compact ? <span className="hidden xl:inline">{operation.label}</span> : null}
+				                    </Button>
+				                </TooltipButton>
+				            ))}
+				        </div>
+				    )
+				}, [selectedUnit])
 			    const lastInsumosUnitRef = React.useRef<string | null>(null)
 			    React.useEffect(() => {
 			        if (!insumosMounted) return
@@ -592,6 +855,7 @@ export default function AppFunctionalNeatlab() {
 
                 React.useEffect(() => {
                     return subscribeInsumosHeaderState((detail) => {
+                        setInsumosHeaderState(detail)
                         setInsumosHeaderStatus(detail?.status || null)
                         setInsumosHeaderEstoque(detail?.stock || null)
                         if (detail?.selectedUnit && detail.selectedUnit !== effectiveUnitRef.current) {
@@ -678,6 +942,7 @@ export default function AppFunctionalNeatlab() {
 
 				    React.useEffect(() => {
 				        if (active !== 'insumos' || !isAuthenticated) {
+				            setInsumosHeaderState(null)
 				            setInsumosHeaderStatus(null)
 				            setInsumosHeaderEstoque(null)
 				        }
@@ -1219,95 +1484,10 @@ export default function AppFunctionalNeatlab() {
 				                                                        ))}
 				                                                    </SelectContent>
 				                                                </Select>
-					                                                <div className="flex items-center gap-1 ml-2">
-					                                                    <Select
-					                                                        value={insumosOverviewPeriod}
-					                                                        onValueChange={(v) => {
-				                                                            const next = (v as any) as InsumosOverviewPeriod
-				                                                            setInsumosOverviewPeriod(next)
-				                                                            try { localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, next) } catch { /* ignore */ }
-				                                                            dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: next, from: insumosOverviewFrom, to: insumosOverviewTo } })
-				                                                        }}
-				                                                    >
-					                                                    <SelectTrigger className="h-8 w-40 bg-white/[0.06] border-white/20 text-white">
-					                                                            <SelectValue placeholder="Período" />
-					                                                        </SelectTrigger>
-				                                                        <SelectContent>
-				                                                            <SelectItem value="7d">Última semana</SelectItem>
-				                                                            <SelectItem value="30d">Último mês</SelectItem>
-				                                                            <SelectItem value="1y">Último ano</SelectItem>
-				                                                            <SelectItem value="custom">Personalizado</SelectItem>
-				                                                        </SelectContent>
-				                                                    </Select>
-
-					                                                    {insumosOverviewPeriod === 'custom' ? (
-					                                                        <>
-					                                                            <BrDatePickerInput
-					                                                                value={insumosOverviewFrom}
-				                                                                onChange={(next) => {
-				                                                                    setInsumosOverviewFrom(next)
-				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, next) } catch { /* ignore */ }
-				                                                                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } })
-					                                                                }}
-					                                                                placeholder="De (DD/MM/AA)"
-					                                                                className="h-8 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-					                                                                ariaLabel="De"
-					                                                            />
-					                                                            <BrDatePickerInput
-					                                                                value={insumosOverviewTo}
-				                                                                onChange={(next) => {
-				                                                                    setInsumosOverviewTo(next)
-				                                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, next) } catch { /* ignore */ }
-				                                                                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } })
-					                                                                }}
-					                                                                placeholder="Até (DD/MM/AA)"
-					                                                                className="h-8 w-36 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-					                                                                ariaLabel="Até"
-					                                                            />
-					                                                        </>
-					                                                    ) : null}
-
-						                                                    <TooltipButton label="Entrada">
-						                                                        <Button
-						                                                            size="icon"
-						                                                            variant="ghost"
-						                                                            className="h-9 w-9 rounded-md bg-emerald-500/25 text-emerald-100 hover:bg-emerald-500/35"
-					                                                            onClick={() => {
-				                                                                dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
-	                                                            }}
-			                                                            aria-label="Entrada"
-			                                                        >
-				                                                            <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
-			                                                        </Button>
-						                                                    </TooltipButton>
-						                                                    <TooltipButton label="Saída">
-						                                                        <Button
-						                                                            size="icon"
-						                                                            variant="ghost"
-						                                                            className="h-9 w-9 rounded-md bg-rose-500/30 text-rose-100 hover:bg-rose-500/40"
-					                                                            onClick={() => {
-				                                                                dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
-	                                                            }}
-			                                                            aria-label="Saída"
-			                                                        >
-				                                                            <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
-			                                                        </Button>
-						                                                    </TooltipButton>
-				                                                    <TooltipButton label="Transferência">
-				                                                        <Button
-				                                                            size="icon"
-				                                                            variant="ghost"
-				                                                            className="h-9 w-9 rounded-md bg-sky-500/30 text-sky-100 hover:bg-sky-500/40"
-				                                                            onClick={() => {
-				                                                                dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
-	                                                            }}
-			                                                            aria-label="Transferência"
-				                                                        >
-					                                                            <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
-					                                                        </Button>
-				                                                    </TooltipButton>
-					
-			                                                </div>
+				                                                <div className="flex items-center gap-1 ml-2">
+                                                                    {renderInsumosPeriodControls()}
+				                                                    {renderInsumosQuickOperations()}
+	                                                </div>
 						                                            </>
 						                                        ) : null}
 				                                        {active === 'ponto' && pontoCanAdmin ? (
@@ -2119,54 +2299,31 @@ export default function AppFunctionalNeatlab() {
 		                                    ) : null}
 		                                    {active === 'insumos' ? (
 		                                        <div className="flex items-center gap-1">
-		                                            <TooltipButton label="Expandir tudo">
-		                                                <Button
-		                                                    size="icon"
-		                                                    variant="ghost"
-		                                                    className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
-		                                                    onClick={() => {
-		                                                        dispatchInsumosHeaderAction({ type: 'layout', value: 'expandAll' })
-	                                                    }}
-		                                                    aria-label="Expandir tudo"
-		                                                >
-		                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-		                                                    <path d="M7 9l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-		                                                    <path d="M7 14l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-		                                                </svg>
-		                                                </Button>
-		                                            </TooltipButton>
-		                                            <TooltipButton label="Contrair tudo">
-		                                                <Button
-		                                                    size="icon"
-		                                                    variant="ghost"
-		                                                    className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
-		                                                    onClick={() => {
-		                                                        dispatchInsumosHeaderAction({ type: 'layout', value: 'collapseAll' })
-	                                                    }}
-		                                                    aria-label="Contrair tudo"
-		                                                >
-		                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-		                                                    <path d="M7 15l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-		                                                    <path d="M7 10l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-		                                                </svg>
-		                                                </Button>
-		                                            </TooltipButton>
-		                                            <TooltipButton label="Resetar layout">
-		                                                <Button
-		                                                    size="icon"
-		                                                    variant="ghost"
-		                                                    className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
-		                                                    onClick={() => {
-		                                                        dispatchInsumosHeaderAction({ type: 'layout', value: 'reset' })
-	                                                    }}
-		                                                    aria-label="Resetar layout"
-		                                                >
-		                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-		                                                    <path d="M21 12a9 9 0 1 1-3.1-6.7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-		                                                    <path d="M21 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-		                                                </svg>
-		                                                </Button>
-		                                            </TooltipButton>
+                                                    <TooltipButton label={insumosLayoutLabel} pinOnClick={false}>
+                                                        <Button
+                                                            size="icon"
+                                                            variant="ghost"
+                                                            className="h-9 w-9 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                            onClick={() => dispatchInsumosHeaderAction({ type: 'layout', value: insumosLayoutExpanded ? 'collapseAll' : 'expandAll' })}
+                                                            aria-label={insumosLayoutLabel}
+                                                            data-testid="insumos-header-layout-toggle"
+                                                        >
+                                                            <ChevronsUpDown className="size-3.5" aria-hidden="true" />
+                                                        </Button>
+                                                    </TooltipButton>
+                                                    <TooltipButton label="Atualizar Insumos" pinOnClick={false}>
+                                                        <Button
+                                                            size="icon"
+                                                            variant="ghost"
+                                                            className="h-9 w-9 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                            onClick={() => dispatchInsumosHeaderAction({ type: 'reload-overview' })}
+                                                            disabled={insumosHeaderEstoque?.loading}
+                                                            aria-label="Atualizar Insumos"
+                                                            data-testid="insumos-header-refresh"
+                                                        >
+                                                            <RefreshCw className={`size-3.5 ${insumosHeaderEstoque?.loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                                        </Button>
+                                                    </TooltipButton>
 		                                        </div>
 		                                    ) : null}
                                     {UNLOCKED_MODULE_KEYS.has('notifications') && hasModuleAccess('notifications') ? (
@@ -2198,54 +2355,7 @@ export default function AppFunctionalNeatlab() {
 
 	                            {active === 'insumos' ? (
 	                                <div className="mt-4 flex flex-col gap-2 lg:hidden">
-	                                    <div className="flex items-center gap-2">
-	                                        <Select
-	                                            value={insumosOverviewPeriod}
-	                                            onValueChange={(v) => {
-	                                                const next = (v as any) as InsumosOverviewPeriod
-	                                                setInsumosOverviewPeriod(next)
-	                                                try { localStorage.setItem(INSUMOS_OVERVIEW_PERIOD_KEY, next) } catch { /* ignore */ }
-	                                                dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: next, from: insumosOverviewFrom, to: insumosOverviewTo } })
-	                                            }}
-	                                        >
-	                                            <SelectTrigger className="h-10 w-full bg-white/[0.06] border-white/20 text-white">
-	                                                <SelectValue placeholder="Período" />
-	                                            </SelectTrigger>
-	                                            <SelectContent>
-	                                                <SelectItem value="7d">Última semana</SelectItem>
-	                                                <SelectItem value="30d">Último mês</SelectItem>
-	                                                <SelectItem value="1y">Último ano</SelectItem>
-	                                                <SelectItem value="custom">Personalizado</SelectItem>
-	                                            </SelectContent>
-	                                        </Select>
-		                                    </div>
-
-	                                    {insumosOverviewPeriod === 'custom' ? (
-	                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-	                                            <Input
-	                                                value={insumosOverviewFrom}
-	                                                onChange={(e) => {
-	                                                    const next = e.target.value
-	                                                    setInsumosOverviewFrom(next)
-	                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_FROM_KEY, next) } catch { /* ignore */ }
-	                                                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: insumosOverviewPeriod, from: next, to: insumosOverviewTo } })
-	                                                }}
-	                                                placeholder="De (DD/MM/AAAA)"
-	                                                className="h-10 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-	                                            />
-	                                            <Input
-	                                                value={insumosOverviewTo}
-	                                                onChange={(e) => {
-	                                                    const next = e.target.value
-	                                                    setInsumosOverviewTo(next)
-	                                                    try { localStorage.setItem(INSUMOS_OVERVIEW_TO_KEY, next) } catch { /* ignore */ }
-	                                                    dispatchInsumosHeaderAction({ type: 'set-overview', value: { period: insumosOverviewPeriod, from: insumosOverviewFrom, to: next } })
-	                                                }}
-	                                                placeholder="Até (DD/MM/AAAA)"
-	                                                className="h-10 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
-	                                            />
-	                                        </div>
-	                                    ) : null}
+	                                    {renderInsumosPeriodControls(true)}
 
 		                                    <div className="flex items-center gap-2">
 		                                        <div className="flex-1">
@@ -2262,48 +2372,7 @@ export default function AppFunctionalNeatlab() {
 		                                                </SelectContent>
 		                                            </Select>
 		                                        </div>
-		                                        <div className="flex items-center gap-1">
-	                                                <TooltipButton label="Entrada">
-	                                                    <Button
-	                                                        size="icon"
-	                                                        variant="ghost"
-                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-                                                        onClick={() => {
-                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
-                                                        }}
-                                                        aria-label="Entrada"
-                                                    >
-                                                    <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-11 w-11" />
-                                                    </Button>
-                                                </TooltipButton>
-                                                <TooltipButton label="Saída">
-                                                    <Button
-                                                        size="icon"
-                                                        variant="ghost"
-                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-                                                        onClick={() => {
-                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
-                                                        }}
-                                                        aria-label="Saída"
-                                                    >
-                                                    <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-11 w-11" />
-                                                    </Button>
-                                                </TooltipButton>
-                                                <TooltipButton label="Transferência">
-                                                    <Button
-                                                        size="icon"
-                                                        variant="ghost"
-                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-                                                        onClick={() => {
-                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
-                                                        }}
-                                                        aria-label="Transferência"
-                                                    >
-	                                                <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-11 w-11" />
-                                                    </Button>
-                                                </TooltipButton>
-		
-	                                        </div>
+	                                        {renderInsumosQuickOperations(true)}
 	                                    </div>
 	                                </div>
 	                            ) : null}
