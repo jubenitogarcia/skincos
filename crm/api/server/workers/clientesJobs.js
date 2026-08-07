@@ -1,15 +1,9 @@
-import { importAtendimentoFromGoogleSheet } from '../atendimento/importer.js'
-import { createAtendimentoStore } from '../atendimento/store.js'
-import {
-    assertClientesSourceRefreshDatabaseIdentity,
-    assertClientesSourceRefreshDatabaseUrl,
-    normalizeClientesSourceRefreshAction,
-    normalizeClientesSourceRefreshTarget,
-    sourceRefreshActor,
-    summarizeClientesSourceRefresh,
-} from '../atendimento/sourceRefresh.js'
 import { createCommercialDataQualityStore } from '../atendimento/commercialDataQualityStore.js'
 import { createClinicalApprovalExpiryJob } from '../clinical/clinicalApprovalExpiryJob.js'
+import { CLIENTES_SOURCE_CATALOG } from '../clientes/sourceCatalog.js'
+import { createClientesSourceAdapters } from '../clientes/sourceAdapters.js'
+import { createClientesSourceOperationsRunner } from '../clientes/sourceOperations.js'
+import { createClientesSourceOperationsStore } from '../clientes/sourceOperationsStore.js'
 
 export const CLIENTES_CONTINUOUS_JOB_IDS = Object.freeze({
     OPT_OUT_INGESTION: 'clientes.opt_out_ingestion',
@@ -19,6 +13,7 @@ export const CLIENTES_CONTINUOUS_JOB_IDS = Object.freeze({
 })
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
+const CLIENTES_SOURCE_OPERATION_TARGETS = new Set(['local', 'staging'])
 
 function isTruthy(value) {
     return TRUE_VALUES.has(String(value || '').trim().toLowerCase())
@@ -52,6 +47,31 @@ async function readDatabaseIdentity(pool) {
     return result.rows[0] || {}
 }
 
+export function normalizeClientesSourceOperationsTarget(value) {
+    const target = String(value || '').trim().toLowerCase()
+    if (!CLIENTES_SOURCE_OPERATION_TARGETS.has(target)) throw jobError('CLIENTES_SOURCE_OPERATIONS_TARGET_INVALID')
+    return target
+}
+
+export function normalizeClientesSourceOperationsMode(value) {
+    const mode = String(value || 'dry-run').trim().toLowerCase()
+    if (!['dry-run', 'apply'].includes(mode)) throw jobError('CLIENTES_SOURCE_OPERATIONS_MODE_INVALID')
+    return mode
+}
+
+export function assertClientesSourceOperationsDatabaseIdentity(identity = {}, targetValue) {
+    const target = normalizeClientesSourceOperationsTarget(targetValue)
+    const database = String(identity.database_name || identity.databaseName || '').trim()
+    const user = String(identity.current_user || identity.currentUser || '').trim()
+    if (target === 'local' && (database !== 'skincos_crm_local' || !user || user === 'postgres')) {
+        throw jobError('CLIENTES_SOURCE_OPERATIONS_LOCAL_IDENTITY_UNSAFE')
+    }
+    if (target === 'staging' && (database !== 'skincos_staging' || !user || user === 'postgres')) {
+        throw jobError('CLIENTES_SOURCE_OPERATIONS_STAGING_IDENTITY_UNSAFE')
+    }
+    return { target, database, user }
+}
+
 /**
  * Ingests only an aggregate opt-out snapshot. The worker never copies phone
  * numbers into its checkpoint and never turns a missing source row into
@@ -72,43 +92,50 @@ export async function runOptOutIngestion({ pool, executionKey } = {}) {
     }
 }
 
-export async function runClientesSourceRefresh({
+export async function runClientesSourceOperations({
     pool,
     databaseUrl,
     env = process.env,
     executionKey,
-    importer = importAtendimentoFromGoogleSheet,
-    storeFactory = createAtendimentoStore,
+    catalog = CLIENTES_SOURCE_CATALOG,
+    storeFactory = createClientesSourceOperationsStore,
+    adaptersFactory = createClientesSourceAdapters,
+    runnerFactory = createClientesSourceOperationsRunner,
 } = {}) {
     requiredPool(pool)
-    const targetValue = String(env.CRM_CLIENTES_SOURCE_REFRESH_TARGET || '').trim()
-    const target = normalizeClientesSourceRefreshTarget(targetValue)
-    const action = normalizeClientesSourceRefreshAction(env.CRM_CLIENTES_SOURCE_REFRESH_ACTION || 'dry-run')
-    assertClientesSourceRefreshDatabaseUrl(databaseUrl, target)
-    if (action === 'apply' && !isTruthy(env.CRM_CLIENTES_SOURCE_REFRESH_APPLY_CONFIRMED)) {
-        throw jobError('CLIENTES_SOURCE_REFRESH_APPLY_NOT_CONFIRMED')
+    const target = normalizeClientesSourceOperationsTarget(env.CRM_CLIENTES_SOURCE_OPERATIONS_TARGET)
+    const mode = normalizeClientesSourceOperationsMode(env.CRM_CLIENTES_SOURCE_OPERATIONS_MODE)
+    const normalizedKey = normalizedExecutionKey(executionKey)
+    if (!normalizedKey) throw jobError('CLIENTES_SOURCE_OPERATIONS_EXECUTION_KEY_REQUIRED')
+    if (mode === 'apply' && (!isTruthy(env.CRM_CLIENTES_SOURCE_OPERATIONS_APPLY_ENABLED) || !isTruthy(env.CRM_CLIENTES_SOURCE_OPERATIONS_APPLY_CONFIRMED))) {
+        throw jobError('CLIENTES_SOURCE_OPERATIONS_APPLY_DISABLED')
     }
-
-    const lockClient = await pool.connect()
-    let lockAcquired = false
-    try {
-        const identity = assertClientesSourceRefreshDatabaseIdentity(await readDatabaseIdentity(pool), target)
-        const lock = await lockClient.query(`select pg_try_advisory_lock(hashtext('skincos:clientes:source-refresh')) as acquired`)
-        lockAcquired = lock.rows[0]?.acquired === true
-        if (!lockAcquired) throw jobError('CLIENTES_SOURCE_REFRESH_IN_PROGRESS')
-
-        const store = storeFactory({ pool, databaseUrl, schemaManaged: true })
-        const result = await importer(store, {
-            actor: sourceRefreshActor(target),
-            dryRun: action === 'dry-run',
-            executionKey: normalizedExecutionKey(executionKey),
-        })
-        return { ...summarizeClientesSourceRefresh({ target, action, identity, result }), executionKey: normalizedExecutionKey(executionKey) }
-    } finally {
-        if (lockAcquired) {
-            try { await lockClient.query(`select pg_advisory_unlock(hashtext('skincos:clientes:source-refresh'))`) } catch { /* release is best effort */ }
-        }
-        lockClient.release()
+    const identity = assertClientesSourceOperationsDatabaseIdentity(await readDatabaseIdentity(pool), target)
+    const store = storeFactory({ pool, databaseUrl, catalog })
+    const adapters = adaptersFactory({ pool, env })
+    const runner = runnerFactory({
+        catalog,
+        adapters,
+        store,
+        target,
+        applyEnabled: isTruthy(env.CRM_CLIENTES_SOURCE_OPERATIONS_APPLY_ENABLED),
+        applyConfirmed: isTruthy(env.CRM_CLIENTES_SOURCE_OPERATIONS_APPLY_CONFIRMED),
+    })
+    const result = await runner.runDue({ executionKey: normalizedKey, mode })
+    return {
+        target,
+        database: identity.database,
+        mode,
+        ready: result.ready === true,
+        unhealthyRequired: Array.isArray(result.unhealthyRequired) ? result.unhealthyRequired : [],
+        sources: (Array.isArray(result.results) ? result.results : []).map((item) => ({
+            sourceId: item.sourceId,
+            status: item.status,
+            recordsRead: Number(item.recordsRead || 0),
+            recordsApplied: Number(item.recordsApplied || 0),
+            errorCode: item.error?.code || null,
+        })),
+        executionKey: normalizedKey,
     }
 }
 
@@ -120,9 +147,8 @@ export async function runQualityRefresh({
     qualityStoreFactory = createCommercialDataQualityStore,
 } = {}) {
     requiredPool(pool)
-    const target = normalizeClientesSourceRefreshTarget(String(env.CRM_CLIENTES_SOURCE_REFRESH_TARGET || '').trim())
-    assertClientesSourceRefreshDatabaseUrl(databaseUrl, target)
-    const identity = assertClientesSourceRefreshDatabaseIdentity(await readDatabaseIdentity(pool), target)
+    const target = normalizeClientesSourceOperationsTarget(env.CRM_CLIENTES_SOURCE_OPERATIONS_TARGET)
+    const identity = assertClientesSourceOperationsDatabaseIdentity(await readDatabaseIdentity(pool), target)
     const actor = {
         id: `clientes-quality-refresh-${target}`,
         username: `clientes-quality-refresh-${target}`,
@@ -146,7 +172,7 @@ export function createClientesContinuousJobs({
     databaseUrl,
     env = process.env,
     optOutRunner = runOptOutIngestion,
-    sourceRunner = runClientesSourceRefresh,
+    sourceRunner = runClientesSourceOperations,
     qualityRunner = runQualityRefresh,
     clinicalExpiryJobFactory = createClinicalApprovalExpiryJob,
 } = {}) {
@@ -159,7 +185,9 @@ export function createClientesContinuousJobs({
         },
         {
             id: CLIENTES_CONTINUOUS_JOB_IDS.SOURCE_UPDATE,
-            intervalMs: interval('CRM_CONTINUOUS_JOB_SOURCE_INTERVAL_SECONDS', 900),
+            // The durable source ledger applies each source's own cadence;
+            // this small scheduler tick merely notices which source is due.
+            intervalMs: interval('CRM_CONTINUOUS_JOB_SOURCE_INTERVAL_SECONDS', 60),
             run: (context) => sourceRunner({ pool, databaseUrl, env, executionKey: context?.executionKey }),
         },
         {
@@ -176,4 +204,5 @@ export const __testables = {
     positiveSeconds,
     normalizedExecutionKey,
     jobError,
+    CLIENTES_SOURCE_OPERATION_TARGETS,
 }
