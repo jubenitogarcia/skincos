@@ -14,7 +14,7 @@ test('commercial operations migration is additive, append-only and denies messag
     const grants = __testables.runtimeGrantStatements('staging').join('\n').toLowerCase()
 
     assert.equal(plan.id, COMMERCIAL_OPERATIONS_MIGRATION_ID)
-    assert.deepEqual(plan.appendOnlyTables, ['commercial_operation_mutations', 'commercial_campaign_events'])
+    assert.deepEqual(plan.appendOnlyTables, ['commercial_action_events', 'commercial_operation_mutations', 'commercial_campaign_events'])
     assert.match(plan.messagePolicy, /never dispatch a message/i)
     assert.match(plan.piiPolicy, /no phone, email, message payload/i)
     assert.doesNotMatch(sql, /drop\s+trigger/)
@@ -32,8 +32,11 @@ test('commercial operations migration is additive, append-only and denies messag
     assert.match(grants, /grant select, insert on table crm_atendimento\.commercial_campaign_events/)
 })
 
-test('commercial operations trigger readiness verifies both immutable ledgers', () => {
+test('commercial operations trigger readiness verifies inherited and new immutable ledgers', () => {
     const readiness = __testables.triggerReadinessStatement()
+    assert.match(readiness, /commercial_action_events_immutable/)
+    assert.match(readiness, /commercial_action_events_no_truncate/)
+    assert.match(readiness, /prevent_commercial_ledger_mutation/)
     assert.match(readiness, /commercial_operation_mutations_v2_immutable/)
     assert.match(readiness, /commercial_operation_mutations_v2_no_truncate/)
     assert.match(readiness, /commercial_campaign_events_v2_immutable/)

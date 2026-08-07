@@ -7,7 +7,7 @@ function actorHeader(actor) {
     return Buffer.from(JSON.stringify(actor)).toString('base64url')
 }
 
-function captureAtendimentoRoutes(store) {
+function captureAtendimentoRoutes(store, options = {}) {
     const routes = new Map()
     const router = {
         use() { return router },
@@ -17,7 +17,7 @@ function captureAtendimentoRoutes(store) {
         patch(path, handler) { routes.set(`PATCH ${path}`, handler); return router },
         delete(path, handler) { routes.set(`DELETE ${path}`, handler); return router },
     }
-    createAtendimentoRouter({ store, routerFactory: () => router })
+    createAtendimentoRouter({ store, ...options, routerFactory: () => router })
     return routes
 }
 
@@ -274,4 +274,52 @@ test('maps review payload and source-state conflicts to their client-safe status
     }, undo)
     assert.equal(undo.state.status, 409)
     assert.deepEqual(undo.state.body, { ok: false, error: 'IDENTITY_REVIEW_CONFLICT', hint: undefined })
+})
+
+test('routes Commercial Operations through its injected store with a single opaque idempotency key', async () => {
+    const calls = []
+    const operations = {
+        async readiness(actor) { calls.push(['readiness', actor.id]); return { ready: true, safety: { messagesEnabled: false } } },
+        async wallet(query, actor) { calls.push(['wallet', query, actor.id]); return { actions: [], safety: { messagesEnabled: false } } },
+        async createCampaign(payload, actor) { calls.push(['campaign', payload, actor.id]); return { campaign: { campaignId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }, safety: { messagesEnabled: false } } },
+    }
+    const routes = captureAtendimentoRoutes({}, { commercialOperationsStore: operations })
+    const actor = { id: 'gestor-1', role: 'GESTOR', allowedModules: ['atendimento'], allowedUnits: ['novo-hamburgo'], allowedUnitsDeclared: true }
+
+    const readiness = captureResponse()
+    await routes.get('GET /commercial/operations/readiness')({ atendimentoActor: actor }, readiness)
+    assert.equal(readiness.state.status, 200)
+    assert.equal(readiness.state.body.safety.messagesEnabled, false)
+
+    const wallet = captureResponse()
+    await routes.get('GET /commercial/operations/wallet')({ atendimentoActor: actor, query: { unit: 'novo-hamburgo' } }, wallet)
+    assert.equal(wallet.state.status, 200)
+    assert.deepEqual(calls[1], ['wallet', { unit: 'novo-hamburgo' }, 'gestor-1'])
+
+    const campaign = captureResponse()
+    await routes.get('POST /commercial/operations/campaigns')({
+        atendimentoActor: actor,
+        headers: { 'idempotency-key': 'campaign:opaque-key-1' },
+        body: { idempotencyKey: 'campaign:opaque-key-1', reason: 'Coorte sintética aprovada.' },
+    }, campaign)
+    assert.equal(campaign.state.status, 200)
+    assert.equal(calls[2][1].idempotencyKey, 'campaign:opaque-key-1')
+    assert.equal(campaign.state.body.safety.messagesEnabled, false)
+
+    const beforeForbidden = calls.length
+    const forbidden = captureResponse()
+    await routes.get('POST /commercial/operations/campaigns')({
+        atendimentoActor: { ...actor, role: 'GERENTE' }, headers: {}, body: { idempotencyKey: 'campaign:opaque-key-2' },
+    }, forbidden)
+    assert.equal(forbidden.state.status, 403)
+    assert.equal(calls.length, beforeForbidden)
+
+    const mismatch = captureResponse()
+    await routes.get('POST /commercial/operations/campaigns')({
+        atendimentoActor: actor,
+        headers: { 'idempotency-key': 'campaign:opaque-key-3' },
+        body: { idempotencyKey: 'campaign:opaque-key-4' },
+    }, mismatch)
+    assert.equal(mismatch.state.status, 400)
+    assert.equal(calls.length, beforeForbidden)
 })
