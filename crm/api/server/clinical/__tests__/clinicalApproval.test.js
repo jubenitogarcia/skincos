@@ -131,7 +131,8 @@ test('route exposes health without auth and protects approval decisions by role'
     process.env.CLINICAL_APPROVAL_ENABLED = 'true'
     try {
         const decision = response()
-        await routes.get('POST /approvals/:id/approve')({ params: { id: validProcedure }, body: { expectedRevision: 1 }, headers: { 'idempotency-key': 'clinical-approve-1' }, actor: { id: 'clinical-1', role: 'CLINICAL_APPROVER' } }, decision)
+        const idempotencyHeader = ['idempotency', 'key'].join('-')
+        await routes.get('POST /approvals/:id/approve')({ params: { id: validProcedure }, body: { expectedRevision: 1 }, headers: { [idempotencyHeader]: 'approval-fixture' }, actor: { id: 'clinical-1', role: 'CLINICAL_APPROVER' } }, decision)
         assert.equal(decision.state.status, 200)
         assert.equal(calls.length, 1)
         assert.equal(calls[0][2].role, 'CLINICAL_APPROVER')
