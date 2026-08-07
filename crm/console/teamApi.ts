@@ -14,6 +14,7 @@ export type UnifiedTeamMember = {
   department: string
   units: string[]
   accountStatus: string
+  provisioningState?: string | null
   compensationState?: string | null
   schedule?: {
     professionalId?: string | null

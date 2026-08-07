@@ -111,6 +111,7 @@ export async function fetchEscalaProfessionals(unit?: string) {
 }
 
 export async function updateEscalaProfessional(payload: {
+  professionalId?: string | null
   currentName: string
   name: string
   status: string

@@ -448,7 +448,9 @@ async function runStatements(env, statements) {
 async function handleProfessionalPut(env, actor, body) {
   const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
   const hasWorkforceColumn = await tableHasColumn(env, 'professionals', 'workforce_employee_id')
+  const hasScheduleProfessionalId = await tableHasColumn(env, 'schedule_entries', 'professional_id')
   const currentName = normalizeName(body?.currentName)
+  const professionalId = normalizeName(body?.professionalId ?? body?.professional_id)
   const nextName = normalizeName(body?.name)
   const status = normalizeName(body?.status)
   const role = normalizeName(body?.role)
@@ -460,7 +462,7 @@ async function handleProfessionalPut(env, actor, body) {
   const unitsInput = Array.isArray(body?.units) ? body.units : []
   const units = Array.from(new Set(unitsInput.map(normalizeName).filter(Boolean)))
 
-  if (!currentName || !nextName) {
+  if ((!currentName && !professionalId) || !nextName) {
     return { ok: false, status: 400, body: { ok: false, error: 'INVALID_INPUT' } }
   }
   for (const unit of units) {
@@ -468,12 +470,18 @@ async function handleProfessionalPut(env, actor, body) {
     if (!unitAllowed.ok) return unitAllowed
   }
 
+  const lookupValue = professionalId || currentName
+  const lookupClause = professionalId ? 'id = ?1' : 'name = ?1'
   const existing = await env.DB.prepare(
-    hasWorkforceColumn ? `select id, name, phone, email, workforce_employee_id, units_json from professionals where name = ?1` : `select id, name, phone, email, units_json from professionals where name = ?1`
-  ).bind(currentName).first()
+    hasWorkforceColumn ? `select id, name, phone, email, workforce_employee_id, units_json from professionals where ${lookupClause}` : `select id, name, phone, email, units_json from professionals where ${lookupClause}`
+  ).bind(lookupValue).first()
   if (!existing) {
     return { ok: false, status: 404, body: { ok: false, error: 'PROFESSIONAL_NOT_FOUND' } }
   }
+
+  // A canonical id takes precedence over a stale display name supplied by an
+  // older client. The name remains a compatibility field for legacy callers.
+  const existingName = normalizeName(existing.name) || currentName
 
   const existingUnits = safeJsonParse(existing.units_json, [])
   if (actor.allowedUnitKeys.length && (!Array.isArray(existingUnits) || !existingUnits.length || existingUnits.some((unit) => !isUnitVisibleForActor(actor, unit)))) {
@@ -490,7 +498,7 @@ async function handleProfessionalPut(env, actor, body) {
     ? normalizeName(body?.email)
     : normalizeName(existing?.email)
 
-  if (currentName !== nextName) {
+  if (existingName !== nextName) {
     const conflicting = await env.DB.prepare(
       `select name from professionals where name = ?1`
     ).bind(nextName).first()
@@ -503,7 +511,7 @@ async function handleProfessionalPut(env, actor, body) {
   if (hasWorkforceColumn && nextWorkforceEmployeeId) {
     const linked = await env.DB.prepare(
       `select name from professionals where workforce_employee_id = ?1 and name <> ?2 limit 1`
-    ).bind(nextWorkforceEmployeeId, currentName).first()
+    ).bind(nextWorkforceEmployeeId, existingName).first()
     if (linked) {
       return { ok: false, status: 409, body: { ok: false, error: 'WORKFORCE_EMPLOYEE_LINK_CONFLICT' } }
     }
@@ -517,7 +525,7 @@ async function handleProfessionalPut(env, actor, body) {
            email = ?7, instagram = ?8, color = ?9, workforce_employee_id = ?10,
            units_json = ?11, updated_at = ?12
        where name = ?13`
-    ).bind(nextName, status || null, role || null, shift || null, nickname || null, phone || null, email || null, instagram || null, color || null, nextWorkforceEmployeeId || null, JSON.stringify(units), now, currentName).run()
+    ).bind(nextName, status || null, role || null, shift || null, nickname || null, phone || null, email || null, instagram || null, color || null, nextWorkforceEmployeeId || null, JSON.stringify(units), now, existingName).run()
   } else if (hasColorColumn) {
     await env.DB.prepare(
       `update professionals
@@ -545,7 +553,7 @@ async function handleProfessionalPut(env, actor, body) {
       color || null,
       JSON.stringify(units),
       now,
-      currentName,
+      existingName,
     ).run()
   } else if (hasWorkforceColumn) {
     await env.DB.prepare(
@@ -554,7 +562,7 @@ async function handleProfessionalPut(env, actor, body) {
            email = ?7, instagram = ?8, workforce_employee_id = ?9, units_json = ?10,
            updated_at = ?11
        where name = ?12`
-    ).bind(nextName, status || null, role || null, shift || null, nickname || null, phone || null, email || null, instagram || null, nextWorkforceEmployeeId || null, JSON.stringify(units), now, currentName).run()
+    ).bind(nextName, status || null, role || null, shift || null, nickname || null, phone || null, email || null, instagram || null, nextWorkforceEmployeeId || null, JSON.stringify(units), now, existingName).run()
   } else {
     await env.DB.prepare(
       `update professionals
@@ -580,18 +588,30 @@ async function handleProfessionalPut(env, actor, body) {
       instagram || null,
       JSON.stringify(units),
       now,
-      currentName,
+      existingName,
     ).run()
   }
 
-  if (currentName !== nextName) {
-    await env.DB.prepare(
-      `update schedule_entries
-       set professional_name = ?1,
-           updated_at = ?2,
-           updated_by = ?3
-       where professional_name = ?4`
-    ).bind(nextName, now, actor.id, currentName).run()
+  if (existingName !== nextName) {
+    if (hasScheduleProfessionalId) {
+      await env.DB.prepare(
+        `update schedule_entries
+         set professional_name = ?1,
+             professional_id = ?2,
+             updated_at = ?3,
+             updated_by = ?4
+         where professional_id = ?5
+            or (professional_id is null and professional_name = ?6)`
+      ).bind(nextName, existing.id, now, actor.id, existing.id, existingName).run()
+    } else {
+      await env.DB.prepare(
+        `update schedule_entries
+         set professional_name = ?1,
+             updated_at = ?2,
+             updated_by = ?3
+         where professional_name = ?4`
+      ).bind(nextName, now, actor.id, existingName).run()
+    }
   }
 
   return { ok: true, status: 200, body: { ok: true, data: { professionalId: existing?.id || null, workforceEmployeeId: nextWorkforceEmployeeId || null } } }

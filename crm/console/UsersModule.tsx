@@ -200,6 +200,7 @@ export function UsersModule() {
   const [teamConfig, setTeamConfig] = React.useState<UnifiedTeamConfig>({ enabled: false, legacyEscalaEditor: true })
   const [open, setOpen] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
+  const [loadError, setLoadError] = React.useState('')
   const [saving, setSaving] = React.useState(false)
   const [syncingEscala, setSyncingEscala] = React.useState(false)
   const [editingId, setEditingId] = React.useState<string | null>(null)
@@ -220,7 +221,9 @@ export function UsersModule() {
   const [linkSourceId, setLinkSourceId] = React.useState('')
   const [linkSaving, setLinkSaving] = React.useState(false)
   const [linkReviewingId, setLinkReviewingId] = React.useState<string | null>(null)
+  const [activationRetryingId, setActivationRetryingId] = React.useState<string | null>(null)
   const usernameWasEdited = React.useRef(false)
+  const loadSequence = React.useRef(0)
 
   const role = String(me?.user?.role || '').toUpperCase()
   const actorUnits = Array.isArray(me?.user?.allowedUnits) ? me!.user!.allowedUnits!.filter(Boolean) : []
@@ -237,19 +240,24 @@ export function UsersModule() {
   const editTitles = Array.from(new Set([editingRow?.jobTitle, ...selectableTitles].filter((value): value is string => Boolean(value))))
 
   const load = React.useCallback(async () => {
+    const sequence = ++loadSequence.current
     setLoading(true)
+    setLoadError('')
     try {
-      const auth = await api<Me>('/auth/me').catch(() => null)
+      const auth = await api<Me>('/auth/me')
+      if (sequence !== loadSequence.current) return
       setMe(auth)
-      if (!auth?.user?.username) return
-      const configResult = await api<{ success?: boolean; data?: UnifiedTeamConfig }>('/admin/team?mode=config', { csrf: auth.csrfToken }).catch(() => null)
+      if (!auth?.user?.username) throw new RequestError('Sessão não identificada. Entre novamente para consultar a equipe.')
+      const configResult = await api<{ success?: boolean; data?: UnifiedTeamConfig }>('/admin/team?mode=config', { csrf: auth.csrfToken })
+      if (sequence !== loadSequence.current) return
       const config = configResult?.data || { enabled: false, legacyEscalaEditor: true }
       setTeamConfig(config)
       if (config.enabled) {
         const params = new URLSearchParams()
         if (statusFilter) params.set('status', statusFilter)
         if (searchQuery.trim()) params.set('q', searchQuery.trim())
-        const result = await api<{ success?: boolean; data?: UnifiedTeamMember[]; summary?: TeamSummary; pendingItems?: TeamPendingItem[] }>(`/admin/team?${params.toString()}`, { csrf: auth.csrfToken }).catch(() => null)
+        const result = await api<{ success?: boolean; data?: UnifiedTeamMember[]; summary?: TeamSummary; pendingItems?: TeamPendingItem[] }>(`/admin/team?${params.toString()}`, { csrf: auth.csrfToken })
+        if (sequence !== loadSequence.current) return
         const members = Array.isArray(result?.data) ? result!.data! : []
         setTeamRows(members)
         setSelectedIds((current) => current.filter((id) => members.some((member) => member.id === id)))
@@ -257,14 +265,18 @@ export function UsersModule() {
       } else {
         const params = new URLSearchParams({ status: statusFilter || 'ALL' })
         if (searchQuery.trim()) params.set('q', searchQuery.trim())
-        const result = await api<{ success?: boolean; data?: Onboarding[]; summary?: TeamSummary }>(`/admin/onboarding?${params.toString()}`, { csrf: auth.csrfToken }).catch(() => null)
+        const result = await api<{ success?: boolean; data?: Onboarding[]; summary?: TeamSummary }>(`/admin/onboarding?${params.toString()}`, { csrf: auth.csrfToken })
+        if (sequence !== loadSequence.current) return
         const legacyRows = Array.isArray(result?.data) ? result!.data! : []
         setTeamRows(legacyRows.map((row) => ({ ...row, schedule: undefined, identityLinks: [] })))
         setSelectedIds([])
         setSummary(result?.summary || { members: legacyRows.length })
       }
+      if (sequence === loadSequence.current) setLoadError('')
+    } catch (error: any) {
+      if (sequence === loadSequence.current) setLoadError(error?.message || 'Não foi possível carregar a equipe. Tente novamente.')
     } finally {
-      setLoading(false)
+      if (sequence === loadSequence.current) setLoading(false)
     }
   }, [searchQuery, statusFilter])
 
@@ -426,6 +438,7 @@ export function UsersModule() {
     setSyncingEscala(true)
     try {
       const schedulePayload = {
+        professionalId: member.schedule?.professionalId || member.scheduleSync?.professionalId || undefined,
         name: form.fullName,
         status: form.scheduleStatus,
         units: form.units,
@@ -506,14 +519,17 @@ export function UsersModule() {
         headers: editingId ? {} : { 'idempotency-key': `crm-team-${Date.now()}-${Math.random().toString(16).slice(2)}` },
         body,
       })
+      let escalaSynced = true
       if (result.data && teamConfig.enabled && !result.replayed) {
-        await syncEscala(result.data as UnifiedTeamMember, !editingId)
+        escalaSynced = (await syncEscala(result.data as UnifiedTeamMember, !editingId)) !== false
       }
       setCollisionRequired(false)
       setForm(initialForm)
       setEditingId(null)
       setOpen(false)
-      toast.success(editingId ? 'Membro atualizado.' : 'Cadastro criado; convite enviado para o e-mail pessoal.')
+      toast.success(escalaSynced
+        ? (editingId ? 'Membro atualizado.' : 'Cadastro criado; convite enviado para o e-mail pessoal.')
+        : (editingId ? 'Membro atualizado; vínculo com a Escala pendente.' : 'Cadastro criado; vínculo com a Escala pendente.'))
       await load()
     } catch (error: any) {
       if (error instanceof RequestError && (error.code === 'EMAIL_TAKEN' || error.code === 'CORPORATE_EMAIL_OVERRIDE_REQUIRES_COLLISION')) {
@@ -563,6 +579,21 @@ export function UsersModule() {
       await load()
     } catch (error: any) {
       toast.error(error?.message || `Não foi possível ${action === 'resend' ? 'reenviar' : 'revogar'} o convite.`)
+    }
+  }
+
+  const retryActivation = async (row: UnifiedTeamMember) => {
+    if (!teamConfig.enabled || !canManage || String(row.accountStatus || '').toUpperCase() !== 'INVITED' || String(row.provisioningState || '').toUpperCase() !== 'FAILED') return
+    if (!window.confirm(`Concluir a ativação de ${row.fullName}? O funcionário precisa já ter criado a própria senha pelo convite.`)) return
+    setActivationRetryingId(row.id)
+    try {
+      await api(`/admin/team/${encodeURIComponent(row.id)}/activate`, { method: 'POST', csrf: me?.csrfToken })
+      toast.success('Acesso ativado e Workforce reconciliado.')
+      await load()
+    } catch (error: any) {
+      toast.error(error?.code === 'INVITE_REGISTRATION_REQUIRED' ? 'O funcionário ainda não criou a senha pelo convite.' : error?.message || 'Não foi possível concluir a ativação.')
+    } finally {
+      setActivationRetryingId(null)
     }
   }
 
@@ -626,6 +657,11 @@ export function UsersModule() {
             </div>
           </CardHeader>
           <CardContent className="p-3 sm:p-5">
+            {loadError && <div className="mb-4 flex items-start gap-3 rounded-2xl border border-rose-200/20 bg-rose-400/[0.08] px-3 py-3 text-sm text-rose-50" role="alert">
+              <CircleAlert className="mt-0.5 size-4 shrink-0 text-rose-200" aria-hidden="true" />
+              <div className="min-w-0 flex-1"><p>{loadError}</p><p className="mt-1 text-xs text-rose-100/65">Os dados exibidos podem estar desatualizados.</p></div>
+              <TooltipButton label="Tentar carregar novamente"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label="Tentar carregar novamente" onClick={() => void load()}><RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" /></Button></TooltipButton>
+            </div>}
             {canRead && (
               <div className="mb-4 space-y-3">
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -639,7 +675,7 @@ export function UsersModule() {
                       <SelectContent>
                         <SelectItem value="ACTIVE">Ativos e convites</SelectItem>
                         <SelectItem value="INVITED">Convites enviados</SelectItem>
-                        <SelectItem value="PENDING_ACCESS">Aguardando convite</SelectItem>
+                        <SelectItem value="PENDING_ACCESS">Aguardando acesso</SelectItem>
                         <SelectItem value="SUSPENDED">Suspensos</SelectItem>
                         <SelectItem value="TERMINATED">Desativados</SelectItem>
                         <SelectItem value="ALL">Todos os estados</SelectItem>
@@ -808,6 +844,7 @@ export function UsersModule() {
                     <TooltipButton label="Reenviar convite"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-amber-100 hover:bg-amber-200/10" aria-label="Reenviar convite" onClick={() => void changeInvite(editingRow, 'resend')}><Mail className="size-4" aria-hidden="true" /></Button></TooltipButton>
                     <TooltipButton label="Revogar convite"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label="Revogar convite" onClick={() => void changeInvite(editingRow, 'revoke')}><Ban className="size-4" aria-hidden="true" /></Button></TooltipButton>
                   </>}
+                  {canManage && editingRow.accountStatus === 'INVITED' && String(editingRow.provisioningState || '').toUpperCase() === 'FAILED' && <TooltipButton label="Tentar concluir ativação"><Button type="button" size="sm" variant="outline" disabled={activationRetryingId === editingRow.id} onClick={() => void retryActivation(editingRow)}><RefreshCw className={`mr-2 size-3.5 ${activationRetryingId === editingRow.id ? 'animate-spin' : ''}`} aria-hidden="true" />{activationRetryingId === editingRow.id ? 'Tentando…' : 'Concluir ativação'}</Button></TooltipButton>}
                   {canManage && editingRow.accountStatus !== 'TERMINATED' && editingRow.accountStatus !== 'PENDING_ACCESS' && <Button type="button" size="sm" variant={editingIsSuspended ? 'default' : 'outline'} aria-label={editingIsSuspended ? 'Ativar membro' : 'Suspender membro'} onClick={() => void changeStatus(editingRow, editingIsSuspended ? 'ACTIVE' : 'SUSPENDED')}>
                     <Power className="mr-2 size-4" aria-hidden="true" />
                     {editingIsSuspended ? 'Ativar' : 'Suspender'}
