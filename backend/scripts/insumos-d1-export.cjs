@@ -21,6 +21,10 @@ const TABLES = [
     key: 'insumosItems',
     required: true,
     watermark: 'dataAtualizacao',
+    // Production can legitimately be on the pre-0019 schema. Missing
+    // additive fields are represented as null so the fresh local schema can
+    // apply its documented defaults without inventing remote business data.
+    legacyNullableColumns: [{ column: 'archived_at', alias: 'archivedAt' }],
     sql: `SELECT registro, codigo_barras as codigoBarras, produto, categoria, marca, especificacao, concentracao, volume, calibre, tipo_unidade as tipoUnidade,
                  fonte, preco_custo as precoCusto, estoque_minimo as estoqueMinimo, lote, data_validade as dataValidade,
                  policy_requires_lot as policyRequiresLot, policy_requires_expiry as policyRequiresExpiry, policy_fefo as policyFefo,
@@ -40,6 +44,11 @@ const TABLES = [
     key: 'insumosMovements',
     required: true,
     watermark: 'dataHora',
+    legacyNullableColumns: [
+      { column: 'status', alias: 'status' },
+      { column: 'estorno_de', alias: 'estornoDe' },
+      { column: 'tipo_compensacao', alias: 'tipoCompensacao' },
+    ],
     sql: `SELECT id, data_hora as dataHora, tipo, codigo_barras as codigoBarras, registro_insumo as registroInsumo, lote, data_validade as dataValidade, produto, quantidade,
                  estoque_anterior as estoqueAnterior, estoque_novo as estoqueNovo, unidade, unidade_origem as unidadeOrigem, unidade_destino as unidadeDestino,
                  id_transferencia as transferId, usuario, motivo, observacoes, status, estorno_de as estornoDe, tipo_compensacao as tipoCompensacao
@@ -153,6 +162,30 @@ function canonicalJson(value) {
 
 function normalizeSql(sql) {
   return String(sql || '').replace(/\s+/g, ' ').trim();
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function compatibleSql(spec, columns) {
+  const availableColumns = columns instanceof Set ? columns : new Set(columns || []);
+  let sql = spec.sql;
+  for (const field of spec.legacyNullableColumns || []) {
+    if (availableColumns.has(field.column)) continue;
+    const selector = field.column === field.alias
+      ? new RegExp(`\\b${escapeRegExp(field.column)}\\b`, 'i')
+      : new RegExp(`\\b${escapeRegExp(field.column)}\\s+as\\s+${escapeRegExp(field.alias)}\\b`, 'i');
+    if (!selector.test(sql)) {
+      throw new Error(`D1_LEGACY_FIELD_MAPPING_INVALID:${spec.key}:${field.column}`);
+    }
+    sql = sql.replace(selector, `NULL as ${field.alias}`);
+  }
+  return sql;
+}
+
+function schemaColumns(rows) {
+  return new Set((rows || []).map((row) => String(row?.name || '')).filter(Boolean));
 }
 
 function normalizeOutputPath(outputPath) {
@@ -325,8 +358,21 @@ function buildPreviewSnapshot(options) {
   // Schema discovery is separate only to omit genuinely unavailable optional
   // tables. All business reads below are one remote D1 batch, so normal stock
   // writes cannot interleave and create a cross-table mixed snapshot.
-  const [tables] = runBatch(options, [`SELECT name FROM sqlite_master WHERE type = 'table'`], 'schema');
-  const availableSpecs = TABLES.map((spec) => ({ ...spec, available: tableExists(tables, spec.table) }));
+  const schemaStatements = [
+    `SELECT name FROM sqlite_master WHERE type = 'table'`,
+    ...TABLES.map((spec) => `PRAGMA table_info(${spec.table})`),
+  ];
+  const [tables, ...columnResults] = runBatch(options, schemaStatements, 'schema');
+  const availableSpecs = TABLES.map((spec, index) => {
+    const available = tableExists(tables, spec.table);
+    const columns = schemaColumns(columnResults[index]);
+    return {
+      ...spec,
+      available,
+      columns,
+      sql: available ? compatibleSql(spec, columns) : spec.sql,
+    };
+  });
   for (const spec of availableSpecs) {
     if (!spec.available && spec.required) throw new Error(`D1_REQUIRED_TABLE_MISSING:${spec.table}`);
   }
@@ -473,6 +519,7 @@ module.exports = {
   SNAPSHOT_CONSISTENCY_MODE,
   TABLES,
   assertPreviewOutputPath,
+  compatibleSql,
   canonicalJson,
   buildPreviewSnapshot,
   createPreviewSnapshot,

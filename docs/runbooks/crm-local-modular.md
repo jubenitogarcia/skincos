@@ -36,6 +36,11 @@ inicialização local falhar depois da troca, o launcher encerra qualquer proces
 parcial e tenta restaurar automaticamente a versão anterior a partir da fonte
 privada que estava pronta.
 
+O exportador também reconhece a versão anterior do schema remoto: campos
+aditivos ausentes recebem `null` e tabelas ainda não criadas entram vazias no
+snapshot. Isso preserva a leitura real do banco sem executar migrações nem
+atribuir valores que não existiam na origem.
+
 Cada snapshot usa um diretório D1 local novo, por identificador do snapshot,
 para que movimentações ou mutações de uma sessão anterior não contaminem os
 dados nem as métricas da próxima. Cliques concorrentes são agrupados e os

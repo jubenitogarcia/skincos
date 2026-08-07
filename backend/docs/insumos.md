@@ -198,6 +198,10 @@ manifesto somente origem, digest e contagens, sem expor registros. Se o
 runtime novo falhar após a troca, o launcher tenta restaurar automaticamente a
 prévia anterior; a falha permanece visível no log privado da ação.
 
+Para bancos remotos ainda anteriores às migrações aditivas, o exportador só
+normaliza os campos novos conhecidos para `null` e representa tabelas ausentes
+como coleções vazias. Ele nunca executa migrações ou altera o D1 remoto.
+
 1) No Worker local, habilite seed (somente dev) via `inventory/.dev.vars`:
 
 ```

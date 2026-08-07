@@ -102,3 +102,24 @@ test('wrangler command is argument-based, configured, read-only, and batches the
     '--command', 'SELECT registro FROM insumos_items;\nSELECT id FROM insumos_movements',
   ]);
 });
+
+test('legacy source schema maps only documented additive Insumos fields to null', () => {
+  const item = exporter.TABLES.find((spec) => spec.key === 'insumosItems');
+  const movement = exporter.TABLES.find((spec) => spec.key === 'insumosMovements');
+  const legacyItemSql = exporter.compatibleSql(item, new Set([
+    'registro', 'codigo_barras', 'produto', 'categoria', 'marca', 'especificacao', 'concentracao', 'volume', 'calibre',
+    'tipo_unidade', 'fonte', 'preco_custo', 'estoque_minimo', 'lote', 'data_validade', 'policy_requires_lot',
+    'policy_requires_expiry', 'policy_fefo', 'data_cadastro', 'data_atualizacao',
+  ]));
+  const legacyMovementSql = exporter.compatibleSql(movement, new Set([
+    'id', 'data_hora', 'tipo', 'codigo_barras', 'registro_insumo', 'lote', 'data_validade', 'produto', 'quantidade',
+    'estoque_anterior', 'estoque_novo', 'unidade', 'unidade_origem', 'unidade_destino', 'id_transferencia', 'usuario',
+    'motivo', 'observacoes',
+  ]));
+
+  assert.match(legacyItemSql, /NULL as archivedAt/);
+  assert.match(legacyMovementSql, /NULL as status/);
+  assert.match(legacyMovementSql, /NULL as estornoDe/);
+  assert.match(legacyMovementSql, /NULL as tipoCompensacao/);
+  assert.match(legacyMovementSql, /registro_insumo as registroInsumo/);
+});
