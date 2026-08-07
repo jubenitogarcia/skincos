@@ -3,43 +3,63 @@ name: Test Coverage & Quality
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/governance/**"
-      - ".github/workflows/codex-autonomy-gate.yml"
-      - ".github/workflows/**"
+    paths:
+      - "crm/console/**"
+      - "website/**"
+      - "booking/**"
+      - "backend/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/test-coverage-quality.yml"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/governance/**"
-      - ".github/workflows/codex-autonomy-gate.yml"
-      - ".github/workflows/**"
+    paths:
+      - "crm/console/**"
+      - "website/**"
+      - "booking/**"
+      - "backend/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/test-coverage-quality.yml"
   workflow_dispatch:
 
 jobs:
+  changes:
+    name: Classify coverage surface
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.scope.outputs.frontend }}
+      python: ${{ steps.scope.outputs.python }}
+      workflow: ${{ steps.scope.outputs.workflow }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          zero_sha='0000000000000000000000000000000000000000'
+          base="${PR_BASE_SHA:-}"
+          if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]]; then base=""; fi
+          if [[ -z "$base" && "${BEFORE_SHA:-}" =~ ^[0-9a-f]{40}$ && "$BEFORE_SHA" != "$zero_sha" ]]; then
+            base="$BEFORE_SHA"
+          fi
+          if [[ -z "$base" ]]; then base="$(git rev-parse HEAD^)"; fi
+          git cat-file -e "$base^{commit}"
+          changed() {
+            if git diff --quiet "$base...$GITHUB_SHA" -- "$@"; then printf false; else printf true; fi
+          }
+          echo "frontend=$(changed crm/console website booking package.json package-lock.json)" >> "$GITHUB_OUTPUT"
+          echo "python=$(changed backend)" >> "$GITHUB_OUTPUT"
+          echo "workflow=$(changed .github/workflows/test-coverage-quality.yml)" >> "$GITHUB_OUTPUT"
+
   frontend-website-quality:
     name: Frontend & Website Coverage
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -90,6 +110,8 @@ jobs:
 
   python-coverage:
     name: Python Coverage
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' || needs.changes.outputs.workflow == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
