@@ -876,9 +876,8 @@ test('does not let a legacy contacted action without a timestamp bypass the roll
     assert.equal(actionUpdated, false)
 })
 
-test('rejects a stale commercial policy version before it can overwrite the canary', async () => {
+test('rejects a manual commercial canary array before it can overwrite policy', async () => {
     let updateIssued = false
-    let lockedPolicyQuery = ''
     const availability = {
         permissions: 'crm_atendimento.commercial_contact_permissions',
         permission_events: 'crm_atendimento.commercial_contact_permission_events',
@@ -900,10 +899,6 @@ test('rejects a stale commercial policy version before it can overwrite the cana
     const pool = createFakePool([
         (sql) => {
             if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
-            if (sql.startsWith('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,')) {
-                lockedPolicyQuery = sql
-                return { rows: [{ commercial_contact_writes_enabled: true, commercial_contact_canary_identity_ids: ['11111111-1111-4111-8111-111111111111'], policy_version: 'b'.repeat(32) }], rowCount: 1 }
-            }
             if (sql.startsWith('update crm_atendimento.commercial_policy_config')) updateIssued = true
             return null
         },
@@ -918,13 +913,12 @@ test('rejects a stale commercial policy version before it can overwrite the cana
             commercialContactCanaryIdentityIds: [],
             expectedPolicyVersion: 'a'.repeat(32),
         }, { id: 'manager-1', role: 'GESTOR' }),
-        /COMMERCIAL_POLICY_CONFLICT/,
+        /COMMERCIAL_CANARY_SELECTOR_REQUIRED/,
     )
     assert.equal(updateIssued, false)
-    assert.match(lockedPolicyQuery, /extract\(epoch from updated_at\)::text/)
 })
 
-test('accepts only existing materialized identities in a commercial canary selection', async () => {
+test('does not permit direct UUID selection through commercial policy', async () => {
     const identityId = '11111111-1111-4111-8111-111111111111'
     const availability = {
         permissions: 'permissions', permission_events: 'permission-events', action_events: 'action-events',
@@ -933,17 +927,10 @@ test('accepts only existing materialized identities in a commercial canary selec
         action_events_immutable: true, action_events_no_truncate: true, action_channel: true, action_contacted_at: true,
         rollout_enabled: true, rollout_canary: true,
     }
-    let validIdentity = false
     let updateIssued = false
     const pool = createFakePool([
         (sql, params) => {
             if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
-            if (sql.startsWith('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,')) {
-                return { rows: [{ commercial_contact_writes_enabled: false, commercial_contact_canary_identity_ids: [], policy_version: 'b'.repeat(32) }], rowCount: 1 }
-            }
-            if (sql.startsWith('select gi.id::text as identity_id')) {
-                return { rows: validIdentity ? [{ identity_id: params[0][0] }] : [], rowCount: validIdentity ? 1 : 0 }
-            }
             if (sql.startsWith('update crm_atendimento.commercial_policy_config')) {
                 updateIssued = true
                 return { rows: [{ active_contact_cooldown_days: 30, return_risk_thresholds: [90, 180, 365], commercial_contact_writes_enabled: false, commercial_contact_canary_identity_ids: [identityId], updated_by: 'manager-1', updated_at: '2026-08-05T12:00:00.000Z', policy_version: 'c'.repeat(32) }], rowCount: 1 }
@@ -961,13 +948,8 @@ test('accepts only existing materialized identities in a commercial canary selec
         expectedPolicyVersion: 'b'.repeat(32),
     }
 
-    await assert.rejects(() => store.updateCommercialPolicy(payload, actor), { message: 'INVALID_COMMERCIAL_CONTACT_CANARY', statusCode: 400 })
+    await assert.rejects(() => store.updateCommercialPolicy(payload, actor), { message: 'COMMERCIAL_CANARY_SELECTOR_REQUIRED', statusCode: 409 })
     assert.equal(updateIssued, false)
-
-    validIdentity = true
-    const result = await store.updateCommercialPolicy(payload, actor)
-    assert.equal(updateIssued, true)
-    assert.deepEqual(result.policy.commercialContactCanaryIdentityIds, [identityId])
 })
 
 test('requires a current version for every commercial policy write', async () => {
@@ -1006,8 +988,11 @@ test('rejects a stale or versionless affirmative contact permission before it ca
             }
             if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
             if (sql === 'select id from crm_atendimento.global_client_identities where id = $1') return { rows: [{ id: params[0] }], rowCount: 1 }
-            if (sql.includes('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids')) {
-                return { rows: [{ commercial_contact_writes_enabled: true, commercial_contact_canary_identity_ids: [params?.[0] || 'identity-1'] }], rowCount: 1 }
+            if (sql.includes('select commercial_contact_writes_enabled') && sql.includes('for share')) {
+                return { rows: [{ commercial_contact_writes_enabled: true }], rowCount: 1 }
+            }
+            if (sql.includes('from crm_atendimento.commercial_canary_cohort_members')) {
+                return { rows: [{ included: true }], rowCount: 1 }
             }
             if (sql.includes('from crm_atendimento.commercial_contact_permissions') && sql.includes('for update')) {
                 return { rows: [{ status: 'denied', revision: 4 }], rowCount: 1 }
@@ -1038,7 +1023,7 @@ test('records auditable commercial permission and gates contacted transitions on
     let harmoniaOptedOut = false
     let recentContact = false
     let rolloutEnabled = true
-    let canaryIdentityIds = ['identity-1']
+    let canaryMemberActive = true
     let actionUpdated = false
     const availability = {
         permissions: 'crm_atendimento.commercial_contact_permissions',
@@ -1076,8 +1061,11 @@ test('records auditable commercial permission and gates contacted transitions on
             if (sql.startsWith('select identity_id::text as identity_id, channel, status, evidence_source')) {
                 return { rows: permission ? [{ identity_id: permission.identityId, channel: 'whatsapp', status: permission.status, evidence_source: permission.source, evidence_reference: permission.evidenceReference, expires_at: permission.expiresAt, recorded_by: permission.recordedBy, updated_at: '2026-08-04T12:00:00.000Z' }] : [], rowCount: permission ? 1 : 0 }
             }
-            if (sql.includes('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids')) {
-                return { rows: [{ commercial_contact_writes_enabled: rolloutEnabled, commercial_contact_canary_identity_ids: canaryIdentityIds }], rowCount: 1 }
+            if (sql.includes('select commercial_contact_writes_enabled') && sql.includes('for share')) {
+                return { rows: [{ commercial_contact_writes_enabled: rolloutEnabled }], rowCount: 1 }
+            }
+            if (sql.includes('from crm_atendimento.commercial_canary_cohort_members')) {
+                return { rows: [{ included: canaryMemberActive }], rowCount: 1 }
             }
             if (sql.includes('join crm_caixa.customers customer')) return { rows: [{ identity_id: 'identity-1', phone_key: '5511999999999' }], rowCount: 1 }
             if (sql.includes('from harmonia.contacts')) return { rows: harmoniaOptedOut ? [{ phone_raw: '5511999999999', opted_out_at: '2026-08-04T12:00:00.000Z' }] : [{ phone_raw: '5511999999999', opted_out_at: null }], rowCount: 1 }
@@ -1148,10 +1136,10 @@ test('records auditable commercial permission and gates contacted transitions on
     assert.equal(actionUpdated, false)
 
     rolloutEnabled = true
-    canaryIdentityIds = []
+    canaryMemberActive = false
     await assert.rejects(() => store.updateCommercialAction('action-1', { status: 'contacted' }, actor), /COMMERCIAL_CONTACT_CANARY_REQUIRED/)
 
-    canaryIdentityIds = ['identity-1']
+    canaryMemberActive = true
     recentContact = true
     actionUpdated = false
     await assert.rejects(() => store.updateCommercialAction('action-1', { status: 'contacted' }, actor), /COMMERCIAL_CONTACT_COOLDOWN_ACTIVE/)
@@ -1217,8 +1205,11 @@ test('serializes concurrent contacted transitions so only one action can consume
         }
         if (sql.includes('join crm_caixa.customers customer')) return { rows: [{ identity_id: 'identity-1', phone_key: '5511999999999' }], rowCount: 1 }
         if (sql.includes('from harmonia.contacts')) return { rows: [{ phone_raw: '5511999999999', opted_out_at: null }], rowCount: 1 }
-        if (sql.includes('select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids')) {
-            return { rows: [{ commercial_contact_writes_enabled: true, commercial_contact_canary_identity_ids: ['identity-1'] }], rowCount: 1 }
+        if (sql.includes('select commercial_contact_writes_enabled') && sql.includes('for share')) {
+            return { rows: [{ commercial_contact_writes_enabled: true }], rowCount: 1 }
+        }
+        if (sql.includes('from crm_atendimento.commercial_canary_cohort_members')) {
+            return { rows: [{ included: true }], rowCount: 1 }
         }
         if (sql.startsWith('select active_contact_cooldown_days from crm_atendimento.commercial_policy_config')) return { rows: [{ active_contact_cooldown_days: 30 }], rowCount: 1 }
         if (sql.includes('contacted_at >= now()')) return { rows: contactRecorded ? [{ id: 'action-first', contacted_at: '2026-08-04T12:00:00.000Z' }] : [], rowCount: contactRecorded ? 1 : 0 }

@@ -23,6 +23,7 @@
     "migrate-client-identity-materialization": "node scripts/migrate-atendimento-client-identity-materialization.mjs",
     "migrate-commercial-contact": "node scripts/migrate-atendimento-commercial-contact.mjs",
     "migrate-commercial-contact-rollout": "node scripts/migrate-atendimento-commercial-contact-rollout.mjs",
+    "migrate-commercial-canary": "node scripts/migrate-atendimento-commercial-canary.mjs",
     "migrate-commercial-action-ledger": "node scripts/migrate-atendimento-commercial-action-ledger.mjs",
     "migrate-commercial-data-quality": "node scripts/migrate-atendimento-commercial-data-quality.mjs",
     "migrate-commercial-operations": "node scripts/migrate-atendimento-commercial-operations.mjs",
