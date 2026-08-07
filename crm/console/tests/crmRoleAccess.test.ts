@@ -31,6 +31,15 @@ describe('CRM role module navigation', () => {
     expect(hasCrmModuleAccess('custom-authenticated-role', ['insumos'], 'users')).toBe(false)
   })
 
+  it('exposes the team module only to the manager hierarchy', () => {
+    expect(hasCrmModuleAccess('ADMIN', [], 'users')).toBe(true)
+    expect(hasCrmModuleAccess('GESTOR', [], 'users')).toBe(true)
+    expect(hasCrmModuleAccess('GERENTE', [], 'users')).toBe(true)
+    expect(hasCrmModuleAccess('SUPERVISOR', [], 'users')).toBe(true)
+    expect(hasCrmModuleAccess('CONSULTOR', [], 'users')).toBe(false)
+    expect(hasCrmModuleAccess('INJETOR', [], 'users')).toBe(false)
+  })
+
   it('reserves commercial customer intelligence for managers', () => {
     expect(hasCrmModuleAccess('GESTOR', [], 'clientes')).toBe(true)
     expect(hasCrmModuleAccess('ADMIN', [], 'clientes')).toBe(true)

@@ -5,13 +5,32 @@ import { resolveCrmTables } from '../d1Store.js';
 import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
 import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
-import { canCreateEmployee, displayJobTitle, publicOnboarding, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
+import { buildEmployeeOnboardingFingerprintPayload, canCreateEmployee, displayJobTitle, publicOnboarding, resolveEmployeeProfile, suggestEmployeeUsername, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
 import { syncIdentityWorkforceOnboarding, syncIdentityWorkforceStatus } from '../../../shared/identity-runtime/workforce-onboarding.js';
 import { isValidAccountTransition, normalizeAccountState, shouldIssueInvite } from '../../../shared/identity-runtime/onboarding-state.js';
+import { recordTeamTelemetry } from '../services/teamTelemetry.js';
+import {
+  SCHEDULE_SYNC_STATES,
+  buildScheduleSyncRecord,
+  fallbackScheduleSync,
+  latestScheduleSyncByMember,
+  normalizeScheduleSyncErrorCode,
+  normalizeScheduleSyncOperationKey,
+  normalizeScheduleSyncResult,
+  normalizeScheduleSyncState,
+  scheduleSyncOperationMatches,
+} from '../services/teamScheduleSync.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'];
-const ROLE_INVITES = ['GESTOR'];
+const ROLE_INVITES = ['ADMIN', 'GESTOR', 'GERENTE'];
+const TEAM_ADMIN_ROLES = ['ADMIN', 'GESTOR', 'GERENTE'];
+const TEAM_READ_ROLES = [...TEAM_ADMIN_ROLES, 'SUPERVISOR'];
 const PASSWORD_MIN_LENGTH = 12;
+
+function unifiedTeamEnabled(env) {
+  const value = String(env?.UNIFIED_TEAM_ENABLED || '').trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(value);
+}
 
 function slugifyCategory(value) {
   const s0 = String(value || '').trim().toLowerCase();
@@ -32,6 +51,18 @@ function toBoolInt(v) {
 
 function normalizeRole(role) {
   return String(role || 'CONSULTOR').trim().toUpperCase();
+}
+
+function normalizePersonalEmail(value) {
+  const email = String(value || '').trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+function normalizePhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  const e164 = digits.startsWith('55') ? digits : `55${digits}`;
+  return e164.length >= 12 && e164.length <= 13 ? `+${e164}` : '';
 }
 
 function normalizeAllowedUnits(value) {
@@ -60,7 +91,7 @@ function normalizeAllowedModules(value) {
 async function tableHasColumn(env, tableName, columnName) {
   if (!env?.DB || !tableName || !columnName) return false;
   const t = String(tableName);
-  if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites', 'crm_employee_onboarding'].includes(t)) return false;
+  if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites', 'crm_employee_onboarding', 'crm_employee_team', 'crm_employee_identity_links'].includes(t)) return false;
   try {
     const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
     const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
@@ -68,6 +99,219 @@ async function tableHasColumn(env, tableName, columnName) {
   } catch {
     return false;
   }
+}
+
+async function tableExists(env, tableName) {
+  const t = String(tableName || '');
+  if (!['crm_employee_onboarding', 'crm_employee_team', 'crm_employee_identity_links', 'crm_team_operations', 'crm_team_telemetry'].includes(t)) return false;
+  try {
+    const row = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1").bind(t).first();
+    return String(row?.name || '') === t;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeTeamData(value, fallbackUnits = []) {
+  const input = value && typeof value === 'object' ? value : {};
+  const clean = (item, max = 160) => String(item ?? '').trim().slice(0, max);
+  const units = normalizeAllowedUnits(input.units ?? fallbackUnits);
+  return {
+    professionalId: clean(input.professionalId ?? input.scheduleProfessionalId, 120),
+    status: clean(input.status, 40),
+    role: clean(input.role, 80),
+    shift: clean(input.shift, 120),
+    nickname: clean(input.nickname, 120),
+    instagram: clean(input.instagram, 160),
+    color: clean(input.color, 20),
+    units,
+  };
+}
+
+function publicTeamMember(row, links = [], scheduleSync = null) {
+  const fallback = fallbackScheduleSync(row.schedule_professional_id || '');
+  const normalizedSync = scheduleSync
+    ? normalizeScheduleSyncResult(scheduleSync, row.schedule_professional_id || '')
+    : fallback;
+  return {
+    ...publicOnboarding(row),
+    workforceEmployeeId: row.workforce_employee_id || null,
+    schedule: {
+      professionalId: row.schedule_professional_id || null,
+      status: row.schedule_status || '',
+      role: row.schedule_role || '',
+      shift: row.schedule_shift || '',
+      nickname: row.schedule_nickname || '',
+      instagram: row.schedule_instagram || '',
+      color: row.schedule_color || '',
+      units: normalizeAllowedUnits(row.schedule_units_json || row.units_json),
+    },
+    scheduleSync: {
+      state: normalizedSync.state,
+      professionalId: normalizedSync.professionalId,
+      errorCode: normalizedSync.errorCode,
+      attempt: normalizedSync.attempt,
+      updatedAt: normalizedSync.updatedAt,
+    },
+    identityLinks: links,
+  };
+}
+
+function publicIdentityLink(row) {
+  return {
+    id: row.id,
+    source: row.source,
+    sourceId: row.source_id,
+    matchMethod: row.match_method,
+    confidence: row.confidence,
+    reviewStatus: row.review_status,
+    metadata: safeJsonParse(row.metadata_json, {}),
+    createdBy: row.created_by || '',
+    createdAt: row.created_at || null,
+  };
+}
+
+function publicTeamAudit(row) {
+  return {
+    id: row.id,
+    timestamp: row.ts || null,
+    actor: row.actor || '',
+    role: String(row.role || '').trim().toUpperCase(),
+    action: row.action || '',
+    entity: row.entity || '',
+    idempotencyKey: row.idempotency_key || null,
+    units: row.unidade || '',
+    before: safeJsonParse(row.before_json, null),
+    after: safeJsonParse(row.after_json, null),
+  };
+}
+
+function teamRoleAllowed(auth) {
+  return TEAM_READ_ROLES.includes(normalizeRole(auth?.user?.role));
+}
+
+function teamWriteRoleAllowed(auth) {
+  return TEAM_ADMIN_ROLES.includes(normalizeRole(auth?.user?.role));
+}
+
+function teamUnitsVisible(auth, units) {
+  if (normalizeRole(auth?.user?.role) === 'ADMIN') return true;
+  const actorUnits = normalizeAllowedUnits(auth?.user?.allowedUnits);
+  const targetUnits = normalizeAllowedUnits(units);
+  return actorUnits.length > 0 && targetUnits.length > 0 && targetUnits.every((unit) => actorUnits.includes(unit));
+}
+
+function teamPendingItems(rows) {
+  const items = [];
+  for (const row of rows || []) {
+    const memberId = String(row?.id || '').trim();
+    if (!memberId) continue;
+    const provisioningState = String(row?.provisioningState || '').trim().toUpperCase();
+    if (['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(provisioningState)) {
+      items.push({ memberId, kind: 'PROVISIONING', status: provisioningState });
+    }
+    const compensationState = String(row?.compensationState || '').trim().toUpperCase();
+    if (compensationState) {
+      items.push({ memberId, kind: 'COMPENSATION', status: compensationState });
+    }
+    for (const link of row?.identityLinks || []) {
+      if (String(link?.reviewStatus || '').toUpperCase() === 'PENDING_REVIEW') {
+        items.push({ memberId, kind: 'IDENTITY_LINK', source: String(link?.source || '').toUpperCase(), status: 'PENDING_REVIEW' });
+      }
+    }
+    const scheduleState = normalizeScheduleSyncState(row?.scheduleSync?.state, row?.schedule?.professionalId ? 'SYNCED' : 'PENDING');
+    if (['PENDING', 'FAILED', 'BLOCKED'].includes(scheduleState) && !['TERMINATED'].includes(String(row?.accountStatus || '').toUpperCase())) {
+      items.push({ memberId, kind: 'ESCALA_SYNC', status: scheduleState });
+    } else if (!row?.schedule?.professionalId && scheduleState !== 'NOT_CONFIGURED' && !['TERMINATED'].includes(String(row?.accountStatus || '').toUpperCase())) {
+      items.push({ memberId, kind: 'ESCALA_LINK', status: 'PENDING' });
+    }
+  }
+  return items.slice(0, 100);
+}
+
+function hasScheduleIntent(teamData) {
+  return [
+    teamData?.professionalId,
+    teamData?.status,
+    teamData?.role,
+    teamData?.shift,
+    teamData?.nickname,
+    teamData?.instagram,
+    teamData?.color,
+  ].some((value) => String(value || '').trim() !== '');
+}
+
+function internalScheduleOperationKey(onboardingId, state) {
+  return normalizeScheduleSyncOperationKey(`escala-sync:${String(onboardingId || '').trim()}:${String(state || 'PENDING').toLowerCase()}:${crypto.randomUUID()}`);
+}
+
+async function persistScheduleSyncOperation({
+  env,
+  onboardingId,
+  state,
+  professionalId = '',
+  errorCode = '',
+  operationKey,
+}) {
+  const normalizedOnboardingId = String(onboardingId || '').trim();
+  const key = normalizeScheduleSyncOperationKey(operationKey);
+  if (!normalizedOnboardingId || !key) throw new Error('ESCALA_SYNC_IDEMPOTENCY_REQUIRED');
+
+  const existing = await env.DB.prepare('SELECT * FROM crm_team_operations WHERE operation_key=? LIMIT 1').bind(key).first();
+  if (existing) {
+    if (!scheduleSyncOperationMatches(existing, {
+      onboardingId: normalizedOnboardingId,
+      state,
+      professionalId,
+      errorCode,
+    })) {
+      throw new Error('ESCALA_SYNC_IDEMPOTENCY_CONFLICT');
+    }
+    return { replayed: true, scheduleSync: normalizeScheduleSyncResult(safeJsonParse(existing.result_json, {})) };
+  }
+
+  const latestRow = await env.DB.prepare(`SELECT operation_key, operation_type, member_ids_json, result_json, created_at
+    FROM crm_team_operations
+    WHERE operation_type='ESCALA_SYNC' AND member_ids_json LIKE ?
+    ORDER BY created_at DESC LIMIT 1`).bind(`%\"${normalizedOnboardingId}\"%`).first();
+  const previous = latestScheduleSyncByMember(latestRow ? [latestRow] : []).get(normalizedOnboardingId);
+  const at = new Date().toISOString();
+  const record = buildScheduleSyncRecord({
+    state,
+    professionalId,
+    errorCode,
+    attempt: (previous?.attempt || 0) + 1,
+    createdAt: at,
+  });
+  try {
+    await env.DB.prepare(`INSERT INTO crm_team_operations
+      (operation_key, operation_type, requested_status, member_ids_json, outcome, result_json, created_at)
+      VALUES (?, 'ESCALA_SYNC', ?, ?, ?, ?, ?)`)
+      .bind(key, record.requestedStatus, JSON.stringify([normalizedOnboardingId]), record.outcome, record.resultJson, record.createdAt)
+      .run();
+  } catch (error) {
+    const raced = await env.DB.prepare('SELECT * FROM crm_team_operations WHERE operation_key=? LIMIT 1').bind(key).first();
+    if (!raced) throw error;
+    if (!scheduleSyncOperationMatches(raced, {
+      onboardingId: normalizedOnboardingId,
+      state,
+      professionalId,
+      errorCode,
+    })) throw new Error('ESCALA_SYNC_IDEMPOTENCY_CONFLICT');
+    return { replayed: true, scheduleSync: normalizeScheduleSyncResult(safeJsonParse(raced.result_json, {})) };
+  }
+  return { replayed: false, scheduleSync: record.result };
+}
+
+function publicScheduleSync(value, fallbackProfessionalId = '') {
+  const normalized = normalizeScheduleSyncResult(value, fallbackProfessionalId);
+  return {
+    state: normalized.state,
+    professionalId: normalized.professionalId,
+    errorCode: normalized.errorCode,
+    attempt: normalized.attempt,
+    updatedAt: normalized.updatedAt,
+  };
 }
 
 function publicUser(user) {
@@ -268,39 +512,119 @@ export async function handleAdminRoutes({
   const auth = await requireRoles(ROLE_ADMIN);
   if (!auth.ok) return auth.response;
 
+  const isTeamRoute = url.pathname === '/admin/team' || url.pathname.startsWith('/admin/team/');
+  const isOnboardingRoute = url.pathname === '/admin/onboarding' || url.pathname.startsWith('/admin/onboarding/');
+  if (isTeamRoute && !teamRoleAllowed(auth)) {
+    return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para administrar a equipe', code: 'TEAM_ROLE_DENIED' }), { status: 403 }, appOrigin);
+  }
+  if ((isTeamRoute || isOnboardingRoute) && request.method !== 'GET' && !teamWriteRoleAllowed(auth)) {
+    return withCORS(JSON.stringify({ success: false, error: 'Apenas gestores podem alterar a equipe', code: 'TEAM_WRITE_ROLE_DENIED' }), { status: 403 }, appOrigin);
+  }
+
   if (!env?.DB) {
     return withCORS(JSON.stringify({ success: false, error: 'DB_NOT_CONFIGURED' }), { status: 500 }, appOrigin);
+  }
+
+  if (isTeamRoute && url.pathname === '/admin/team' && request.method === 'GET' && url.searchParams.get('mode') === 'config') {
+    return withCORS(JSON.stringify({ success: true, data: { enabled: unifiedTeamEnabled(env), legacyEscalaEditor: !unifiedTeamEnabled(env) } }), { status: 200 }, appOrigin);
+  }
+
+  if (isTeamRoute && !unifiedTeamEnabled(env)) {
+    return withCORS(JSON.stringify({ success: false, error: 'Gestão centralizada da equipe ainda não está liberada', code: 'TEAM_UNIFIED_DISABLED' }), { status: 404 }, appOrigin);
   }
 
   const { usersTable, invitesTable } = await resolveCrmTables(env);
   const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
   const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
   const invitesHasInviteeEmail = await tableHasColumn(env, invitesTable, 'invitee_email');
+  const onboardingHasUsername = await tableHasColumn(env, 'crm_employee_onboarding', 'requested_username');
+  const onboardingHasRequestFingerprint = await tableHasColumn(env, 'crm_employee_onboarding', 'request_fingerprint');
+  const invitesHasUsername = await tableHasColumn(env, invitesTable, 'requested_username');
   const onboardingHasSaga = await tableHasColumn(env, 'crm_employee_onboarding', 'provisioning_state') && await tableHasColumn(env, 'crm_employee_onboarding', 'invite_token_encrypted');
+  const teamTablesReady = await tableExists(env, 'crm_employee_team')
+    && await tableExists(env, 'crm_employee_identity_links')
+    && await tableExists(env, 'crm_team_operations')
+    && await tableExists(env, 'crm_team_telemetry');
+
+  if (isTeamRoute && (!onboardingHasUsername || !onboardingHasRequestFingerprint || !invitesHasUsername || !onboardingHasSaga || !teamTablesReady)) {
+    return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+  }
 
   // POST /admin/onboarding
   // The client supplies employment facts only. Profile, scopes and invite state
   // are derived here so no browser can grant modules or a wider unit scope.
-  if (url.pathname === '/admin/onboarding' && request.method === 'POST') {
+  if ((url.pathname === '/admin/onboarding' || url.pathname === '/admin/team') && request.method === 'POST') {
     try {
       const body = await request.json().catch(() => ({}));
-      const input = validateOnboardingInput(body);
+      const input = validateOnboardingInput(body, {
+        unified: url.pathname === '/admin/team',
+        requireCorporateDomain: url.pathname === '/admin/team',
+      });
       if (!input) return withCORS(JSON.stringify({ success: false, error: 'Dados de cadastro inválidos', code: 'ONBOARDING_INVALID' }), { status: 400 }, appOrigin);
+      const requestedUsername = input.requestedUsername || suggestEmployeeUsername(input.fullName, input.corporateEmail);
+      if (url.pathname === '/admin/team' && !teamWriteRoleAllowed(auth)) {
+        return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para cadastrar equipe', code: 'TEAM_ROLE_DENIED' }), { status: 403 }, appOrigin);
+      }
       const denied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: input.profile, units: input.units });
       if (denied) return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para cadastrar este cargo ou unidade', code: denied }), { status: 403 }, appOrigin);
       if (!invitesHasModules || !invitesHasInviteeEmail || !onboardingHasSaga) return withCORS(JSON.stringify({ success: false, error: 'Migração de onboarding pendente', code: 'ONBOARDING_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
 
+      const teamData = normalizeTeamData(body.team, input.units);
+      if (url.pathname === '/admin/team' && teamData.units.some((unit) => !input.units.includes(unit))) {
+        return withCORS(JSON.stringify({ success: false, error: 'As unidades operacionais devem estar dentro do escopo do cadastro', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      }
+      if (url.pathname === '/admin/team' && (!input.requestedUsername || !onboardingHasUsername || !invitesHasUsername)) {
+        return withCORS(JSON.stringify({ success: false, error: 'Migração de usuário da equipe pendente', code: 'TEAM_USERNAME_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      }
+
+      const personalEmailHash = await sha256Hex(input.personalEmail);
+      const mobilePhoneHash = await sha256Hex(input.mobilePhone);
+      const requestFingerprint = onboardingHasRequestFingerprint
+        ? await sha256Hex(JSON.stringify(buildEmployeeOnboardingFingerprintPayload({
+          input,
+          requestedUsername,
+          personalEmailHash,
+          mobilePhoneHash,
+          team: url.pathname === '/admin/team' ? teamData : null,
+        })))
+        : '';
       const idempotency = String(request.headers.get('idempotency-key') || body.idempotencyKey || '').trim().slice(0, 180);
       if (idempotency) {
         const existing = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE idempotency_key=? LIMIT 1').bind(idempotency).first();
+        if (existing && url.pathname === '/admin/team' && (!existing.request_fingerprint || existing.request_fingerprint !== requestFingerprint)) {
+          throw new Error(existing.request_fingerprint ? 'ONBOARDING_IDEMPOTENCY_CONFLICT' : 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+        }
         if (existing?.provisioning_state === 'COMPLETED') return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
       }
       const existingUser = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(input.corporateEmail).first();
       if (existingUser?.username) return withCORS(JSON.stringify({ success: false, error: 'Este e-mail corporativo já está cadastrado', code: 'EMAIL_TAKEN' }), { status: 409 }, appOrigin);
-      const at = new Date().toISOString();
+      const generatedEmailCollision = url.pathname === '/admin/team' && input.generatedCorporateEmail && input.generatedCorporateEmail !== input.corporateEmail
+        ? await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(input.generatedCorporateEmail).first()
+        : null;
+      const generatedOnboardingCollision = url.pathname === '/admin/team' && input.generatedCorporateEmail && input.generatedCorporateEmail !== input.corporateEmail
+        ? await env.DB.prepare('SELECT 1 FROM crm_employee_onboarding WHERE LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(input.generatedCorporateEmail).first()
+        : null;
+      if (url.pathname === '/admin/team' && input.corporateEmailOverridden && !generatedEmailCollision && !generatedOnboardingCollision) {
+        return withCORS(JSON.stringify({ success: false, error: 'O ajuste do e-mail só é aceito após uma colisão confirmada', code: 'CORPORATE_EMAIL_OVERRIDE_REQUIRES_COLLISION' }), { status: 409 }, appOrigin);
+      }
       const id = await sha256Hex(`employee-onboarding:v1:${input.corporateEmail}`);
+      if (onboardingHasUsername) {
+        const usernameTaken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(requestedUsername).first();
+        if (usernameTaken) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está cadastrado', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
+        const pendingUsername = await env.DB.prepare('SELECT 1 FROM crm_employee_onboarding WHERE LOWER(requested_username)=LOWER(?) AND id<>? AND account_status NOT IN (\'TERMINATED\', \'SUSPENDED\') LIMIT 1').bind(requestedUsername, id).first();
+        if (pendingUsername) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está reservado', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
+        if (invitesHasUsername) {
+          const invitedUsername = await env.DB.prepare(`SELECT 1 FROM ${invitesTable} WHERE LOWER(requested_username)=LOWER(?) AND LOWER(invitee_email)<>LOWER(?) AND COALESCE(revoked, 0)=0 LIMIT 1`).bind(requestedUsername, input.corporateEmail).first();
+          if (invitedUsername) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está reservado por um convite', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
+        }
+      }
+      const at = new Date().toISOString();
       const requestId = String(request.headers.get('x-request-id') || `identity-onboarding-${id}`).slice(0, 180);
       const existingOnboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
+      if (existingOnboarding && url.pathname === '/admin/team') {
+        if (!existingOnboarding.request_fingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+        if (existingOnboarding.request_fingerprint !== requestFingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_CONFLICT');
+      }
       if (existingOnboarding?.provisioning_state === 'COMPLETED') {
         return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
       }
@@ -308,12 +632,34 @@ export async function handleAdminRoutes({
       const encryptedPhone = await encryptOnboardingPii(env, input.mobilePhone);
       if (!existingOnboarding) {
         try {
-          await env.DB.prepare(`INSERT INTO crm_employee_onboarding (id, full_name, corporate_email, personal_email_encrypted, personal_email_hash, mobile_phone_encrypted, mobile_phone_hash, profile, job_title, department_name, units_json, account_status, invite_id, workforce_employee_id, idempotency_key, created_by, created_at, updated_at, provisioning_state, invite_token_encrypted, compensation_state, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 'PROVISIONING', NULL, NULL, ?)`).bind(
-            id, input.fullName, input.corporateEmail, encryptedPersonal, await sha256Hex(input.personalEmail), encryptedPhone, await sha256Hex(input.mobilePhone), input.profile, displayJobTitle(input.profile), input.department, JSON.stringify(input.units), input.accountStatus, idempotency || null, String(auth?.user?.username || ''), at, at, requestId,
-          ).run();
+          const columns = [
+            'id', 'full_name', 'corporate_email', 'personal_email_encrypted', 'personal_email_hash',
+            'mobile_phone_encrypted', 'mobile_phone_hash', 'profile', 'job_title', 'department_name',
+            'units_json', 'account_status', 'invite_id', 'workforce_employee_id', 'idempotency_key',
+            'created_by', 'created_at', 'updated_at', 'provisioning_state', 'invite_token_encrypted',
+            'compensation_state', 'correlation_id',
+          ];
+          const values = [
+            id, input.fullName, input.corporateEmail, encryptedPersonal, personalEmailHash,
+            encryptedPhone, mobilePhoneHash, input.profile, displayJobTitle(input.profile),
+            input.department, JSON.stringify(input.units), input.accountStatus, null, null, idempotency || null,
+            String(auth?.user?.username || ''), at, at, 'PROVISIONING', null, null, requestId,
+          ];
+          if (onboardingHasUsername) {
+            columns.push('requested_username');
+            values.push(requestedUsername);
+          }
+          if (onboardingHasRequestFingerprint) {
+            columns.push('request_fingerprint');
+            values.push(requestFingerprint);
+          }
+          await env.DB.prepare(`INSERT INTO crm_employee_onboarding (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).bind(...values).run();
         } catch (insertError) {
           const raced = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
           if (!raced) throw insertError;
+          if (url.pathname === '/admin/team' && (!raced.request_fingerprint || raced.request_fingerprint !== requestFingerprint)) {
+            throw new Error(raced.request_fingerprint ? 'ONBOARDING_IDEMPOTENCY_CONFLICT' : 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+          }
         }
       }
 
@@ -354,9 +700,17 @@ export async function handleAdminRoutes({
           token = randomInviteToken();
           expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
           inviteId = crypto.randomUUID();
-          await env.DB.prepare(`INSERT INTO ${invitesTable} (id, token_hash, token_hint, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, ?)`).bind(
-            inviteId, await sha256Hex(token), `${token.slice(0, 4)}…${token.slice(-4)}`, input.corporateEmail, input.profile, JSON.stringify(input.units), JSON.stringify(input.modules), expiresAt, `Onboarding ${input.department}`, String(auth?.user?.username || ''), at,
-          ).run();
+          const inviteColumns = ['id', 'token_hash', 'token_hint', 'invitee_email', 'role', 'allowed_units_json', 'allowed_modules_json', 'max_uses', 'uses_count', 'expires_at', 'revoked', 'note', 'created_by', 'created_at'];
+          const inviteValues = [
+            inviteId, await sha256Hex(token), `${token.slice(0, 4)}…${token.slice(-4)}`, input.corporateEmail,
+            input.profile, JSON.stringify(input.units), JSON.stringify(input.modules), 1, 0, expiresAt, 0,
+            `Onboarding ${input.department}`, String(auth?.user?.username || ''), at,
+          ];
+          if (invitesHasUsername) {
+            inviteColumns.push('requested_username');
+            inviteValues.push(requestedUsername);
+          }
+          await env.DB.prepare(`INSERT INTO ${invitesTable} (${inviteColumns.join(', ')}) VALUES (${inviteColumns.map(() => '?').join(', ')})`).bind(...inviteValues).run();
           const encryptedToken = await encryptOnboardingPii(env, token);
           await env.DB.prepare('UPDATE crm_employee_onboarding SET invite_id=?, invite_token_encrypted=?, provisioning_state=?, updated_at=? WHERE id=?').bind(inviteId, encryptedToken, 'INVITE_PENDING', new Date().toISOString(), id).run();
         } else if (!token && current?.invite_token_encrypted) {
@@ -374,12 +728,45 @@ export async function handleAdminRoutes({
         }
       }
       await env.DB.prepare('UPDATE crm_employee_onboarding SET invite_id=?, workforce_employee_id=?, provisioning_state=?, updated_at=?, last_error_code=NULL WHERE id=?').bind(inviteId, workforce?.employeeId || null, 'COMPLETED', new Date().toISOString(), id).run();
+      let scheduleSync = null;
+      if (url.pathname === '/admin/team') {
+        const workforceEmployeeId = String(workforce?.employeeId || '').trim();
+        if (!workforceEmployeeId) throw new Error('WORKFORCE_EMPLOYEE_ID_REQUIRED');
+        const teamAt = new Date().toISOString();
+        const existingTeam = await env.DB.prepare('SELECT workforce_employee_id FROM crm_employee_team WHERE onboarding_id=? LIMIT 1').bind(id).first();
+        if (existingTeam?.workforce_employee_id) {
+          await env.DB.prepare(`UPDATE crm_employee_team
+            SET schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=?
+            WHERE onboarding_id=?`).bind(
+            teamData.status || null, teamData.role || null, teamData.shift || null, teamData.nickname || null,
+            teamData.instagram || null, teamData.color || null, JSON.stringify(teamData.units), teamAt, id,
+          ).run();
+        } else {
+          await env.DB.prepare(`INSERT INTO crm_employee_team
+            (workforce_employee_id, onboarding_id, schedule_professional_id, schedule_status, schedule_role, schedule_shift, schedule_nickname, schedule_instagram, schedule_color, units_json, created_by, created_at, updated_at)
+            VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+            workforceEmployeeId, id, teamData.status || null, teamData.role || null, teamData.shift || null,
+            teamData.nickname || null, teamData.instagram || null, teamData.color || null, JSON.stringify(teamData.units),
+            String(auth?.user?.username || ''), teamAt, teamAt,
+          ).run();
+        }
+        const scheduleState = hasScheduleIntent(teamData) ? 'PENDING' : 'NOT_CONFIGURED';
+        scheduleSync = await persistScheduleSyncOperation({
+          env,
+          onboardingId: id,
+          state: scheduleState,
+          operationKey: internalScheduleOperationKey(id, scheduleState),
+        }).catch(() => null);
+      }
       const created = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(id).first();
-      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId, workforceEmployeeId: workforce?.employeeId || null, provisioningState: 'COMPLETED' } });
-      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created) }), { status: existingOnboarding ? 200 : 201 }, appOrigin);
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId, workforceEmployeeId: workforce?.employeeId || null, provisioningState: 'COMPLETED', scheduleSyncState: scheduleSync?.scheduleSync?.state || (url.pathname === '/admin/team' ? 'PENDING' : null) } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_CREATED', actorRole: auth.user.role, itemCount: 1, unitCount: input.units.length });
+      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created), team: url.pathname === '/admin/team' ? { ...normalizeTeamData(teamData, input.units), scheduleSync: publicScheduleSync(scheduleSync?.scheduleSync || { state: hasScheduleIntent(teamData) ? 'PENDING' : 'NOT_CONFIGURED' }, '') } : undefined }), { status: existingOnboarding ? 200 : 201 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_FAILED');
-      const status = message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' || message === 'AUTH_EMAIL_NOT_CONFIGURED' || /^WORKFORCE_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
+      const status = ['ONBOARDING_IDEMPOTENCY_CONFLICT', 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED'].includes(message)
+        ? 409
+        : message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' || message === 'AUTH_EMAIL_NOT_CONFIGURED' || /^WORKFORCE_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Configuração segura de cadastro pendente' : 'Não foi possível concluir o cadastro', code: message }), { status }, appOrigin);
     }
   }
@@ -396,6 +783,13 @@ export async function handleAdminRoutes({
       if (!onboarding?.workforce_employee_id || !['INVITED', 'ACTIVE'].includes(String(onboarding.account_status || '').toUpperCase())) {
         return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_ACTIVATION_NOT_READY' }), { status: 409 }, appOrigin);
       }
+      if (!teamUnitsVisible(auth, onboarding.units_json)) {
+        return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      }
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (hierarchyDenied) {
+        return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite ativar este membro', code: hierarchyDenied }), { status: 403 }, appOrigin);
+      }
       if (String(onboarding.account_status).toUpperCase() === 'ACTIVE') {
         return withCORS(JSON.stringify({ success: true, data: publicOnboarding(onboarding), replayed: true }), { status: 200 }, appOrigin);
       }
@@ -407,7 +801,7 @@ export async function handleAdminRoutes({
         env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='ACTIVE', provisioning_state='COMPLETED', compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?").bind(at, onboardingId),
       ]);
       const activated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(onboardingId).first();
-      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_ACTIVATION_RETRY', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, after: { accountStatus: 'ACTIVE', requestId } });
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_ACTIVATION_RETRY', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: onboarding.account_status }, after: { accountStatus: 'ACTIVE', requestId } });
       return withCORS(JSON.stringify({ success: true, data: publicOnboarding(activated) }), { status: 200 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_ACTIVATION_FAILED');
@@ -418,20 +812,24 @@ export async function handleAdminRoutes({
   // Account-state changes are a second Identity -> Workforce saga boundary.
   // Do not use the legacy user editor for onboarding accounts: it only knows
   // `ativo`, while Workforce must keep the authoritative access_state aligned.
-  const statusMatch = url.pathname.match(/^\/admin\/onboarding\/([^/]+)\/status$/);
+  const statusMatch = url.pathname.match(/^\/admin\/(onboarding|team)\/([^/]+)\/status$/);
   if (statusMatch && request.method === 'POST') {
     try {
       if (!onboardingHasSaga) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
-      const onboardingId = decodeURIComponent(statusMatch[1] || '').trim();
+      const onboardingId = decodeURIComponent(statusMatch[2] || '').trim();
       const body = await request.json().catch(() => ({}));
       const nextStatus = normalizeAccountState(body.accountStatus);
       // Activation is deliberately handled only by the invite/registration
-      // boundary above. This endpoint is deprovisioning-only, so a transient
-      // Workforce failure never re-enables a user as "compensation".
-      if (!onboardingId || !['SUSPENDED', 'TERMINATED'].includes(nextStatus)) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_STATUS_INVALID' }), { status: 400 }, appOrigin);
+      // boundary above. The only manager-driven reactivation is a return from
+      // SUSPENDED; an INVITED employee must still create their own password.
+      if (!onboardingId || !['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(nextStatus)) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_STATUS_INVALID' }), { status: 400 }, appOrigin);
       const onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
       if (!onboarding?.workforce_employee_id) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_STATUS_NOT_READY' }), { status: 409 }, appOrigin);
       const currentStatus = normalizeAccountState(onboarding.account_status);
+      if (nextStatus === 'ACTIVE' && !['ACTIVE', 'SUSPENDED'].includes(currentStatus)) return withCORS(JSON.stringify({ success: false, error: 'A ativação depende da criação da senha pelo funcionário', code: 'INVITE_ACTIVATION_REQUIRED' }), { status: 409 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      const terminationReason = String(body.reason ?? body.terminationReason ?? '').trim().replace(/\s+/g, ' ').slice(0, 500);
+      if (nextStatus === 'TERMINATED' && terminationReason.length < 5) return withCORS(JSON.stringify({ success: false, error: 'O desligamento exige um motivo', code: 'TEAM_TERMINATION_REASON_REQUIRED' }), { status: 400 }, appOrigin);
       const denied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
       if (denied) return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para alterar este vínculo', code: denied }), { status: 403 }, appOrigin);
       if (!isValidAccountTransition(currentStatus, nextStatus)) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_STATUS_TRANSITION_DENIED' }), { status: 409 }, appOrigin);
@@ -443,7 +841,7 @@ export async function handleAdminRoutes({
         try {
           await env.DB.batch([
             env.DB.prepare("UPDATE crm_employee_onboarding SET account_status=?, provisioning_state='COMPLETED', compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=NULL, updated_at=? WHERE id=? AND account_status=?").bind(nextStatus, at, onboardingId, currentStatus),
-            env.DB.prepare(`UPDATE ${usersTable} SET ativo=0, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(at, onboarding.corporate_email),
+            env.DB.prepare(`UPDATE ${usersTable} SET ativo=?, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(nextStatus === 'ACTIVE' ? 1 : 0, at, onboarding.corporate_email),
             ...(revokeInvite && onboarding.invite_id ? [env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(onboarding.invite_id)] : []),
           ]);
         } catch {
@@ -463,17 +861,485 @@ export async function handleAdminRoutes({
 
       await env.DB.prepare('UPDATE crm_employee_onboarding SET compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?').bind(new Date().toISOString(), onboardingId).run();
       const updated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
-      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_CHANGED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { accountStatus: nextStatus, inviteRevoked: Boolean(revokeInvite && onboarding.invite_id), sessionVersionIncremented: currentStatus !== nextStatus, requestId } });
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_CHANGED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { accountStatus: nextStatus, inviteRevoked: Boolean(revokeInvite && onboarding.invite_id), sessionVersionIncremented: currentStatus !== nextStatus, terminationReasonProvided: nextStatus === 'TERMINATED', terminationReason: nextStatus === 'TERMINATED' ? terminationReason : null, requestId } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_STATUS_CHANGED', actorRole: auth.user.role, itemCount: 1, unitCount: normalizeAllowedUnits(onboarding.units_json).length });
       return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated), replayed: currentStatus === nextStatus }), { status: 200 }, appOrigin);
     } catch (error) {
       return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: String(error?.message || 'ONBOARDING_STATUS_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
     }
   }
 
+  if (url.pathname === '/admin/team/bulk-status' && request.method === 'POST') {
+    try {
+      if (!onboardingHasSaga || !teamTablesReady) return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const body = await request.json().catch(() => ({}));
+      const ids = Array.from(new Set((Array.isArray(body?.ids) ? body.ids : []).map((value) => String(value || '').trim()).filter(Boolean))).sort();
+      const nextStatus = normalizeAccountState(body?.accountStatus);
+      const operationKey = String(request.headers.get('idempotency-key') || body?.idempotencyKey || '').trim().slice(0, 180);
+      if (!operationKey) return withCORS(JSON.stringify({ success: false, error: 'Ação em lote exige uma chave de idempotência', code: 'BULK_IDEMPOTENCY_REQUIRED' }), { status: 400 }, appOrigin);
+      if (!ids.length || ids.length > 50 || !['ACTIVE', 'SUSPENDED'].includes(nextStatus)) return withCORS(JSON.stringify({ success: false, error: 'Ação em lote inválida', code: 'BULK_STATUS_INVALID' }), { status: 400 }, appOrigin);
+
+      const previous = await env.DB.prepare('SELECT * FROM crm_team_operations WHERE operation_key=? LIMIT 1').bind(operationKey).first();
+      if (previous) {
+        const previousIds = safeJsonParse(previous.member_ids_json, []);
+        if (String(previous.requested_status || '') !== nextStatus || JSON.stringify(previousIds) !== JSON.stringify(ids)) {
+          return withCORS(JSON.stringify({ success: false, error: 'A chave de idempotência já foi usada para outra ação', code: 'BULK_IDEMPOTENCY_CONFLICT' }), { status: 409 }, appOrigin);
+        }
+        return withCORS(JSON.stringify({ success: previous.outcome === 'COMPLETED', replayed: true, data: safeJsonParse(previous.result_json, { ids, accountStatus: nextStatus, count: ids.length, pendingIds: ids }), code: previous.outcome === 'COMPLETED' ? undefined : 'BULK_STATUS_SYNC_PENDING' }), { status: previous.outcome === 'COMPLETED' ? 200 : 503 }, appOrigin);
+      }
+
+      const placeholders = ids.map(() => '?').join(',');
+      const selected = await env.DB.prepare(`SELECT * FROM crm_employee_onboarding WHERE id IN (${placeholders})`).bind(...ids).all();
+      const byId = new Map((selected?.results || []).map((row) => [String(row.id || ''), row]));
+      if (byId.size !== ids.length) return withCORS(JSON.stringify({ success: false, error: 'Um ou mais membros não foram encontrados', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      const rows = ids.map((id) => byId.get(id));
+      for (const row of rows) {
+        const units = normalizeAllowedUnits(row.units_json);
+        if (!teamUnitsVisible(auth, units)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+        const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: row.profile, units });
+        if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite alterar este membro', code: hierarchyDenied }), { status: 403 }, appOrigin);
+        if (!['ACTIVE', 'SUSPENDED'].includes(normalizeAccountState(row.account_status))) return withCORS(JSON.stringify({ success: false, error: 'Ação em lote aceita somente membros ativos ou suspensos', code: 'BULK_STATUS_TRANSITION_DENIED' }), { status: 409 }, appOrigin);
+        if (!row.workforce_employee_id) return withCORS(JSON.stringify({ success: false, error: 'Membro ainda não possui identidade Workforce', code: 'ONBOARDING_STATUS_NOT_READY' }), { status: 409 }, appOrigin);
+      }
+
+      const at = new Date().toISOString();
+      const statements = [];
+      for (const row of rows) {
+        const currentStatus = normalizeAccountState(row.account_status);
+        if (currentStatus === nextStatus) continue;
+        statements.push(env.DB.prepare("UPDATE crm_employee_onboarding SET account_status=?, provisioning_state='COMPLETED', compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=NULL, updated_at=? WHERE id=? AND account_status=?").bind(nextStatus, at, row.id, currentStatus));
+        statements.push(env.DB.prepare(`UPDATE ${usersTable} SET ativo=?, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(nextStatus === 'ACTIVE' ? 1 : 0, at, row.corporate_email));
+        if (nextStatus === 'SUSPENDED' && row.invite_id) statements.push(env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(row.invite_id));
+      }
+      if (statements.length) await env.DB.batch(statements);
+
+      const pendingIds = [];
+      for (const row of rows) {
+        if (normalizeAccountState(row.account_status) === nextStatus) continue;
+        try {
+          await syncIdentityWorkforceStatus(env, { onboardingId: row.id, employeeId: row.workforce_employee_id, accountStatus: nextStatus }, `${String(request.headers.get('x-request-id') || operationKey)}:${row.id}`);
+          await env.DB.prepare('UPDATE crm_employee_onboarding SET compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?').bind(new Date().toISOString(), row.id).run();
+        } catch (error) {
+          pendingIds.push(row.id);
+          await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120), new Date().toISOString(), row.id).run().catch(() => {});
+        }
+      }
+
+      for (const row of rows) {
+        const currentStatus = normalizeAccountState(row.account_status);
+        if (currentStatus === nextStatus) continue;
+        await appendAuditLog?.({
+          env,
+          actor: auth.user.username,
+          role: auth.user.role,
+          ip,
+          userAgent,
+          idempotencyKey: operationKey,
+          action: 'EMPLOYEE_TEAM_BULK_STATUS_CHANGED',
+          entity: 'EMPLOYEE_TEAM',
+          entityId: row.id,
+          unidade: normalizeAllowedUnits(row.units_json).join(','),
+          before: { accountStatus: currentStatus },
+          after: { accountStatus: nextStatus, bulk: true, pendingSync: pendingIds.includes(row.id) },
+        });
+      }
+
+      const result = { ids, accountStatus: nextStatus, count: ids.length, pendingIds };
+      const outcome = pendingIds.length ? 'PARTIAL' : 'COMPLETED';
+      await env.DB.prepare(`INSERT INTO crm_team_operations (operation_key, operation_type, requested_status, member_ids_json, outcome, result_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(operationKey, 'BULK_STATUS', nextStatus, JSON.stringify(ids), outcome, JSON.stringify(result), at).run();
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: operationKey, action: 'EMPLOYEE_TEAM_BULK_STATUS_CHANGED', entity: 'CRM_TEAM_OPERATION', entityId: operationKey, unidade: Array.from(new Set(rows.flatMap((row) => normalizeAllowedUnits(row.units_json)))).join(','), after: { accountStatus: nextStatus, count: ids.length, pendingCount: pendingIds.length, failClosed: pendingIds.length > 0 } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_BULK_STATUS_CHANGED', actorRole: auth.user.role, outcome, itemCount: ids.length, unitCount: new Set(rows.flatMap((row) => normalizeAllowedUnits(row.units_json))).size });
+      if (pendingIds.length) return withCORS(JSON.stringify({ success: false, error: 'Alguns vínculos de acesso ficaram pendentes de sincronização', code: 'BULK_STATUS_SYNC_PENDING', data: result }), { status: 503 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: result }), { status: 200 }, appOrigin);
+    } catch (error) {
+      return withCORS(JSON.stringify({ success: false, error: 'Não foi possível concluir a ação em lote', code: String(error?.message || 'BULK_STATUS_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
+    }
+  }
+
+  const resendInviteMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/invite\/resend$/);
+  if (resendInviteMatch && request.method === 'POST') {
+    try {
+      if (!onboardingHasSaga || !invitesHasInviteeEmail || !invitesHasUsername) return withCORS(JSON.stringify({ success: false, error: 'Migração de convites pendente', code: 'INVITE_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const onboardingId = decodeURIComponent(resendInviteMatch[1] || '').trim();
+      const onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite reenviar este convite', code: hierarchyDenied }), { status: 403 }, appOrigin);
+      if (!['INVITED', 'PENDING_ACCESS'].includes(normalizeAccountState(onboarding.account_status))) return withCORS(JSON.stringify({ success: false, error: 'Somente convites pendentes podem ser reenviados', code: 'TEAM_INVITE_NOT_PENDING' }), { status: 409 }, appOrigin);
+
+      const personalEmail = await decryptOnboardingToken(env, onboarding.personal_email_encrypted);
+      if (!personalEmail) return withCORS(JSON.stringify({ success: false, error: 'E-mail pessoal indisponível para o convite', code: 'INVITEE_EMAIL_UNAVAILABLE' }), { status: 503 }, appOrigin);
+      const now = new Date().toISOString();
+      const requestId = String(request.headers.get('x-request-id') || `identity-invite-resend-${onboardingId}`).slice(0, 180);
+      if (onboarding.invite_id) await env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(onboarding.invite_id).run();
+
+      const token = randomInviteToken();
+      const tokenHash = await sha256Hex(token);
+      const inviteId = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const units = normalizeAllowedUnits(onboarding.units_json);
+      const modules = resolveEmployeeProfile(onboarding.profile, { unified: true })?.modules || ['ponto'];
+      const columns = ['id', 'token_hash', 'token_hint', 'invitee_email', 'role', 'allowed_units_json', 'allowed_modules_json', 'max_uses', 'uses_count', 'expires_at', 'revoked', 'note', 'created_by', 'created_at', 'requested_username'];
+      const values = [inviteId, tokenHash, `${token.slice(0, 4)}…${token.slice(-4)}`, personalEmail, onboarding.profile, JSON.stringify(units), JSON.stringify(modules), 1, 0, expiresAt, 0, `Reenvio de onboarding ${onboarding.department_name || ''}`.trim(), String(auth?.user?.username || ''), now, onboarding.requested_username];
+      await env.DB.prepare(`INSERT INTO ${invitesTable} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).bind(...values).run();
+      const encryptedToken = await encryptOnboardingPii(env, token);
+      await env.DB.prepare("UPDATE crm_employee_onboarding SET invite_id=?, invite_token_encrypted=?, account_status='INVITED', provisioning_state='INVITE_PENDING', compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?").bind(inviteId, encryptedToken, now, onboardingId).run();
+      try {
+        await sendAccountInviteEmail({ env, to: personalEmail, token, expiresAt, appUrl: String(env?.AUTH_INVITE_APP_URL || appOrigin) });
+      } catch (error) {
+        await env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(inviteId).run().catch(() => {});
+        await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='PENDING_ACCESS', provisioning_state='FAILED', compensation_state='INVITE_DELIVERY_FAILED', last_error_code='EMAIL_DELIVERY_FAILED', updated_at=? WHERE id=?").bind(new Date().toISOString(), onboardingId).run().catch(() => {});
+      await Promise.resolve(appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_INVITE_RESEND_FAILED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: units.join(','), before: { accountStatus: onboarding.account_status }, after: { inviteRevoked: true, accountStatus: 'PENDING_ACCESS', requestId, failClosed: true } })).catch(() => {});
+        return withCORS(JSON.stringify({ success: false, error: 'EMAIL_DELIVERY_FAILED', code: String(error?.message || 'EMAIL_DELIVERY_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
+      }
+      const updated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_INVITE_RESENT', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: units.join(','), before: { accountStatus: onboarding.account_status }, after: { inviteIssued: true, inviteId, accountStatus: 'INVITED', requestId } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_INVITE_RESENT', actorRole: auth.user.role, itemCount: 1, unitCount: units.length });
+      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated) }), { status: 200 }, appOrigin);
+    } catch (error) {
+      return withCORS(JSON.stringify({ success: false, error: 'Não foi possível reenviar o convite', code: String(error?.message || 'TEAM_INVITE_RESEND_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
+    }
+  }
+
+  const revokeInviteMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/invite\/revoke$/);
+  if (revokeInviteMatch && request.method === 'POST') {
+    try {
+      if (!onboardingHasSaga) return withCORS(JSON.stringify({ success: false, error: 'Migração de convites pendente', code: 'INVITE_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const onboardingId = decodeURIComponent(revokeInviteMatch[1] || '').trim();
+      const onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite revogar este convite', code: hierarchyDenied }), { status: 403 }, appOrigin);
+      if (!['INVITED', 'PENDING_ACCESS'].includes(normalizeAccountState(onboarding.account_status)) || !onboarding.invite_id) return withCORS(JSON.stringify({ success: false, error: 'Convite pendente não encontrado', code: 'TEAM_INVITE_NOT_PENDING' }), { status: 409 }, appOrigin);
+
+      const now = new Date().toISOString();
+      const requestId = String(request.headers.get('x-request-id') || `identity-invite-revoke-${onboardingId}`).slice(0, 180);
+      await env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(onboarding.invite_id).run();
+      await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='PENDING_ACCESS', provisioning_state='COMPLETED', compensation_state='WORKFORCE_STATUS_PENDING', updated_at=? WHERE id=?").bind(now, onboardingId).run();
+      await env.DB.prepare(`UPDATE ${usersTable} SET ativo=0, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(now, onboarding.corporate_email).run().catch(() => {});
+      try {
+        await syncIdentityWorkforceStatus(env, { onboardingId, employeeId: onboarding.workforce_employee_id, accountStatus: 'PENDING_ACCESS' }, requestId);
+      } catch (error) {
+        await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120), new Date().toISOString(), onboardingId).run().catch(() => {});
+        return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
+      }
+      await env.DB.prepare('UPDATE crm_employee_onboarding SET compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?').bind(new Date().toISOString(), onboardingId).run();
+      const updated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_INVITE_REVOKED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: onboarding.account_status }, after: { inviteRevoked: true, accountStatus: 'PENDING_ACCESS', requestId } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_INVITE_REVOKED', actorRole: auth.user.role, itemCount: 1, unitCount: normalizeAllowedUnits(onboarding.units_json).length });
+      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated) }), { status: 200 }, appOrigin);
+    } catch (error) {
+      return withCORS(JSON.stringify({ success: false, error: 'Não foi possível revogar o convite', code: String(error?.message || 'TEAM_INVITE_REVOKE_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
+    }
+  }
+
+  const teamLinksMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/links$/);
+  if (teamLinksMatch && (request.method === 'GET' || request.method === 'POST')) {
+    try {
+      const onboardingId = decodeURIComponent(teamLinksMatch[1] || '').trim();
+      const onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      if (request.method === 'GET') {
+        const links = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE workforce_employee_id=? ORDER BY created_at DESC').bind(onboarding.workforce_employee_id).all();
+        return withCORS(JSON.stringify({ success: true, data: (links?.results || []).map(publicIdentityLink) }), { status: 200 }, appOrigin);
+      }
+
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite alterar este vínculo', code: hierarchyDenied }), { status: 403 }, appOrigin);
+
+      const body = await request.json().catch(() => ({}));
+      const source = String(body.source || '').trim().toUpperCase();
+      const sourceId = String(body.sourceId || body.source_id || '').trim().slice(0, 160);
+      const matchMethod = String(body.matchMethod || body.match_method || 'EXPLICIT_WORKFORCE_ID').trim().toUpperCase();
+      const confidence = String(body.confidence || 'HIGH').trim().toUpperCase();
+      const reviewStatus = String(body.reviewStatus || 'CONFIRMED').trim().toUpperCase();
+      if (!['ESCALA', 'ATENDIMENTO'].includes(source) || !sourceId || ['NAME', 'NAME_ONLY', 'SIMILAR_NAME'].includes(matchMethod)) {
+        return withCORS(JSON.stringify({ success: false, error: 'Vínculo exige identificador explícito; nome não é suficiente', code: 'TEAM_LINK_EXPLICIT_ID_REQUIRED' }), { status: 400 }, appOrigin);
+      }
+      if (!['PENDING_REVIEW', 'CONFIRMED', 'REJECTED'].includes(reviewStatus) || !['HIGH', 'MEDIUM', 'LOW'].includes(confidence)) {
+        return withCORS(JSON.stringify({ success: false, error: 'Estado de revisão do vínculo inválido', code: 'TEAM_LINK_REVIEW_INVALID' }), { status: 400 }, appOrigin);
+      }
+      const bySource = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE source=? AND source_id=? LIMIT 1').bind(source, sourceId).first();
+      if (bySource && bySource.workforce_employee_id !== onboarding.workforce_employee_id) {
+        return withCORS(JSON.stringify({ success: false, error: 'Este identificador já está vinculado a outro funcionário', code: 'TEAM_LINK_CONFLICT' }), { status: 409 }, appOrigin);
+      }
+      const byEmployee = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE workforce_employee_id=? AND source=? LIMIT 1').bind(onboarding.workforce_employee_id, source).first();
+      if (byEmployee) {
+        return withCORS(JSON.stringify({ success: true, data: publicIdentityLink(byEmployee), replayed: true }), { status: 200 }, appOrigin);
+      }
+      const at = new Date().toISOString();
+      const linkId = crypto.randomUUID();
+      await env.DB.prepare(`INSERT INTO crm_employee_identity_links
+        (id, workforce_employee_id, source, source_id, match_method, confidence, review_status, metadata_json, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        linkId, onboarding.workforce_employee_id, source, sourceId, matchMethod, confidence, reviewStatus,
+        JSON.stringify({ explicit: true, onboardingId }), String(auth?.user?.username || ''), at,
+      ).run();
+      if (source === 'ESCALA' && reviewStatus === 'CONFIRMED') {
+        await env.DB.prepare('UPDATE crm_employee_team SET schedule_professional_id=?, updated_at=? WHERE onboarding_id=?').bind(sourceId, at, onboardingId).run();
+      }
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_IDENTITY_LINK_CREATED', entity: 'EMPLOYEE_IDENTITY_LINK', entityId: linkId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), after: { onboardingId, source, sourceId, workforceEmployeeId: onboarding.workforce_employee_id, matchMethod, confidence, reviewStatus } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_IDENTITY_LINK_CREATED', actorRole: auth.user.role, itemCount: 1, unitCount: normalizeAllowedUnits(onboarding.units_json).length });
+      const createdLink = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE id=?').bind(linkId).first();
+      return withCORS(JSON.stringify({ success: true, data: publicIdentityLink(createdLink) }), { status: 201 }, appOrigin);
+    } catch (error) {
+      return withCORS(JSON.stringify({ success: false, error: 'Não foi possível registrar o vínculo', code: String(error?.message || 'TEAM_LINK_FAILED').slice(0, 120) }), { status: 500 }, appOrigin);
+    }
+  }
+
+  const teamScheduleSyncMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/schedule-sync$/);
+  if (teamScheduleSyncMatch && request.method === 'POST') {
+    try {
+      if (!teamTablesReady) return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const onboardingId = decodeURIComponent(teamScheduleSyncMatch[1] || '').trim();
+      const onboarding = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id
+        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id
+        WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite sincronizar este membro', code: hierarchyDenied }), { status: 403 }, appOrigin);
+
+      const body = await request.json().catch(() => ({}));
+      const rawState = String(body?.state ?? body?.status ?? '').trim().toUpperCase();
+      if (!SCHEDULE_SYNC_STATES.includes(rawState)) {
+        return withCORS(JSON.stringify({ success: false, error: 'Estado de sincronização inválido', code: 'ESCALA_SYNC_STATE_INVALID' }), { status: 400 }, appOrigin);
+      }
+      const professionalId = String(body?.professionalId ?? body?.professional_id ?? '').trim().slice(0, 160);
+      if (rawState === 'SYNCED' && !professionalId) {
+        return withCORS(JSON.stringify({ success: false, error: 'A sincronização concluída precisa do identificador da Escala', code: 'ESCALA_PROFESSIONAL_ID_REQUIRED' }), { status: 400 }, appOrigin);
+      }
+      if (rawState === 'NOT_CONFIGURED' && (professionalId || String(onboarding.schedule_professional_id || '').trim())) {
+        return withCORS(JSON.stringify({ success: false, error: 'Um vínculo configurado não pode ser marcado como não configurado', code: 'ESCALA_SYNC_STATE_CONFLICT' }), { status: 409 }, appOrigin);
+      }
+      const errorCode = normalizeScheduleSyncErrorCode(body?.errorCode ?? body?.error_code, rawState === 'BLOCKED' ? 'ESCALA_SYNC_BLOCKED' : rawState === 'FAILED' ? 'ESCALA_SYNC_FAILED' : '');
+      if (['FAILED', 'BLOCKED'].includes(rawState) && !errorCode) {
+        return withCORS(JSON.stringify({ success: false, error: 'A falha precisa de um código operacional', code: 'ESCALA_SYNC_ERROR_CODE_REQUIRED' }), { status: 400 }, appOrigin);
+      }
+
+      if (rawState === 'SYNCED') {
+        const link = await env.DB.prepare(`SELECT id FROM crm_employee_identity_links
+          WHERE workforce_employee_id=? AND source='ESCALA' AND source_id=? AND review_status='CONFIRMED' LIMIT 1`)
+          .bind(onboarding.workforce_employee_id, professionalId).first();
+        if (!link) return withCORS(JSON.stringify({ success: false, error: 'Confirme primeiro o vínculo explícito com a Escala', code: 'TEAM_ESCALA_LINK_REQUIRED' }), { status: 409 }, appOrigin);
+      }
+
+      const rawOperationKey = request.headers.get('idempotency-key') || body?.operationKey || body?.requestId || '';
+      const operationKey = normalizeScheduleSyncOperationKey(rawOperationKey);
+      if (!operationKey) return withCORS(JSON.stringify({ success: false, error: 'A sincronização exige uma chave de idempotência', code: 'ESCALA_SYNC_IDEMPOTENCY_REQUIRED' }), { status: 400 }, appOrigin);
+      const persisted = await persistScheduleSyncOperation({ env, onboardingId, state: rawState, professionalId, errorCode, operationKey });
+      if (rawState === 'SYNCED' && professionalId) {
+        await env.DB.prepare('UPDATE crm_employee_team SET schedule_professional_id=?, updated_at=? WHERE onboarding_id=?').bind(professionalId, new Date().toISOString(), onboardingId).run();
+      }
+      if (persisted.replayed) {
+        return withCORS(JSON.stringify({ success: true, replayed: true, data: { scheduleSync: publicScheduleSync(persisted.scheduleSync, professionalId) } }), { status: 200 }, appOrigin);
+      }
+      const units = normalizeAllowedUnits(onboarding.units_json);
+      await appendAuditLog?.({
+        env,
+        actor: auth.user.username,
+        role: auth.user.role,
+        ip,
+        userAgent,
+        idempotencyKey: operationKey,
+        action: 'EMPLOYEE_ESCALA_SYNC_RECORDED',
+        entity: 'EMPLOYEE_TEAM',
+        entityId: onboardingId,
+        unidade: units.join(','),
+        after: { scheduleSyncState: rawState, professionalId: professionalId || null, errorCode: errorCode || null, attempt: persisted.scheduleSync?.attempt || 0 },
+      });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_ESCALA_SYNC_RECORDED', actorRole: auth.user.role, outcome: rawState, itemCount: 1, unitCount: units.length });
+      return withCORS(JSON.stringify({ success: true, replayed: persisted.replayed, data: { scheduleSync: publicScheduleSync(persisted.scheduleSync, professionalId) } }), { status: 200 }, appOrigin);
+    } catch (error) {
+      const rawCode = String(error?.message || '').trim();
+      const conflict = ['ESCALA_SYNC_IDEMPOTENCY_CONFLICT', 'ESCALA_SYNC_STATE_CONFLICT', 'TEAM_ESCALA_LINK_REQUIRED'].includes(rawCode);
+      const status = conflict ? 409 : 503;
+      return withCORS(JSON.stringify({ success: false, error: conflict ? 'A sincronização não pôde ser registrada para este estado' : 'Não foi possível registrar o estado da Escala', code: conflict ? rawCode : 'ESCALA_SYNC_PERSIST_FAILED' }), { status }, appOrigin);
+    }
+  }
+
+  const teamHistoryMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/history$/);
+  if (teamHistoryMatch && request.method === 'GET') {
+    try {
+      const onboardingId = decodeURIComponent(teamHistoryMatch[1] || '').trim();
+      const onboarding = await env.DB.prepare('SELECT id, units_json FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+
+      const limit = Math.max(1, Math.min(100, parseInt(url.searchParams.get('limit') || '50', 10) || 50));
+      const rows = await env.DB.prepare(`
+        SELECT id, ts, actor, role, action, entity, entity_id, unidade, idempotency_key, before_json, after_json
+        FROM audit_log
+        WHERE (entity_id=? AND entity IN ('EMPLOYEE_ONBOARDING', 'EMPLOYEE_TEAM'))
+           OR (entity='EMPLOYEE_IDENTITY_LINK' AND after_json LIKE ?)
+        ORDER BY ts DESC, id DESC
+        LIMIT ?
+      `).bind(onboardingId, `%\"onboardingId\":\"${onboardingId}\"%`, limit).all();
+      const data = (rows?.results || []).map(publicTeamAudit);
+      return withCORS(JSON.stringify({ success: true, data, summary: { count: data.length, limit } }), { status: 200 }, appOrigin);
+    } catch {
+      return withCORS(JSON.stringify({ success: false, error: 'TEAM_HISTORY_UNAVAILABLE', code: 'TEAM_HISTORY_UNAVAILABLE' }), { status: 503 }, appOrigin);
+    }
+  }
+
+  const teamMemberMatch = url.pathname.match(/^\/admin\/team\/([^/]+)$/);
+  if (teamMemberMatch && request.method === 'PUT') {
+    try {
+      const onboardingId = decodeURIComponent(teamMemberMatch[1] || '').trim();
+      const current = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
+        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
+      if (!current) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, current.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+
+      const body = await request.json().catch(() => ({}));
+      const immutableUsername = body.username ?? body.requestedUsername;
+      if (immutableUsername !== undefined && String(immutableUsername).trim().toLowerCase() !== String(current.requested_username || '').trim().toLowerCase()) {
+        return withCORS(JSON.stringify({ success: false, error: 'O nome de usuário não pode ser trocado depois do convite', code: 'TEAM_USERNAME_IMMUTABLE' }), { status: 409 }, appOrigin);
+      }
+      if (body.corporateEmail !== undefined && String(body.corporateEmail).trim().toLowerCase() !== String(current.corporate_email || '').trim().toLowerCase()) {
+        return withCORS(JSON.stringify({ success: false, error: 'O e-mail corporativo é a identidade de login e não pode ser trocado neste fluxo', code: 'TEAM_EMAIL_IMMUTABLE' }), { status: 409 }, appOrigin);
+      }
+
+      const nextName = String(body.fullName ?? current.full_name).trim().replace(/\s+/g, ' ');
+      const nextDepartment = String(body.department ?? current.department_name).trim().replace(/\s+/g, ' ').slice(0, 120);
+      const nextTitle = String(body.jobTitle ?? current.job_title).trim();
+      const nextProfile = body.jobTitle === undefined ? current.profile : resolveEmployeeProfile(nextTitle);
+      if (!nextName || !nextDepartment || !nextProfile) return withCORS(JSON.stringify({ success: false, error: 'Dados de edição inválidos', code: 'TEAM_UPDATE_INVALID' }), { status: 400 }, appOrigin);
+      const nextUnits = normalizeAllowedUnits(body.units ?? current.units_json);
+      if (!nextUnits.length || unknownUnitScopes(body.units ?? current.units_json).length) return withCORS(JSON.stringify({ success: false, error: 'Unidades inválidas', code: 'TEAM_UNITS_INVALID' }), { status: 400 }, appOrigin);
+      const denied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: nextProfile.profile || nextProfile, units: nextUnits });
+      if (denied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia ou unidade não autorizada', code: denied }), { status: 403 }, appOrigin);
+
+      const nextPersonalEmail = body.personalEmail !== undefined ? normalizePersonalEmail(body.personalEmail) : '';
+      if (body.personalEmail !== undefined && !nextPersonalEmail) return withCORS(JSON.stringify({ success: false, error: 'E-mail pessoal inválido', code: 'TEAM_PERSONAL_EMAIL_INVALID' }), { status: 400 }, appOrigin);
+      const nextPhone = body.mobilePhone !== undefined || body.phone !== undefined ? normalizePhone(body.mobilePhone ?? body.phone) : '';
+      if ((body.mobilePhone !== undefined || body.phone !== undefined) && !nextPhone) return withCORS(JSON.stringify({ success: false, error: 'Telefone inválido', code: 'TEAM_PHONE_INVALID' }), { status: 400 }, appOrigin);
+      const nextPersonalEmailEncrypted = nextPersonalEmail ? await encryptOnboardingPii(env, nextPersonalEmail) : '';
+      const nextPersonalEmailHash = nextPersonalEmail ? await sha256Hex(nextPersonalEmail) : '';
+      const nextPhoneEncrypted = nextPhone ? await encryptOnboardingPii(env, nextPhone) : '';
+      const nextPhoneHash = nextPhone ? await sha256Hex(nextPhone) : '';
+
+      const requestId = String(request.headers.get('x-request-id') || `identity-team-update-${onboardingId}`).slice(0, 180);
+      await syncIdentityWorkforceOnboarding(env, {
+        onboardingId,
+        fullName: nextName,
+        corporateEmail: current.corporate_email,
+        mobilePhoneHash: current.mobile_phone_hash,
+        units: nextUnits,
+        profile: nextProfile.profile || nextProfile,
+        accountStatus: current.account_status,
+        jobTitle: displayJobTitle(nextProfile.profile || nextProfile),
+        department: nextDepartment,
+        createdBy: String(auth?.user?.username || ''),
+      }, requestId);
+
+      const sets = ['full_name=?', 'profile=?', 'job_title=?', 'department_name=?', 'units_json=?', 'updated_at=?'];
+      const values = [nextName, nextProfile.profile || nextProfile, displayJobTitle(nextProfile.profile || nextProfile), nextDepartment, JSON.stringify(nextUnits), new Date().toISOString()];
+      if (nextPersonalEmail) {
+        sets.push('personal_email_encrypted=?', 'personal_email_hash=?');
+        values.push(nextPersonalEmailEncrypted, nextPersonalEmailHash);
+      }
+      if (nextPhone) {
+        sets.push('mobile_phone_encrypted=?', 'mobile_phone_hash=?');
+        values.push(nextPhoneEncrypted, nextPhoneHash);
+      }
+      values.push(onboardingId);
+      await env.DB.prepare(`UPDATE crm_employee_onboarding SET ${sets.join(', ')} WHERE id=?`).bind(...values).run();
+
+      const teamData = normalizeTeamData(body.team, nextUnits);
+      const nextScheduleProfessionalId = teamData.professionalId || current.schedule_professional_id || null;
+      await env.DB.prepare(`UPDATE crm_employee_team SET schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
+        nextScheduleProfessionalId, teamData.status || null, teamData.role || null, teamData.shift || null,
+        teamData.nickname || null, teamData.instagram || null, teamData.color || null, JSON.stringify(teamData.units), new Date().toISOString(), onboardingId,
+      ).run();
+      const scheduleState = hasScheduleIntent(teamData) || nextScheduleProfessionalId ? 'PENDING' : 'NOT_CONFIGURED';
+      const scheduleSync = await persistScheduleSyncOperation({
+        env,
+        onboardingId,
+        state: scheduleState,
+        professionalId: nextScheduleProfessionalId || '',
+        operationKey: internalScheduleOperationKey(onboardingId, scheduleState),
+      }).catch(() => null);
+      const updated = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
+        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
+      const links = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE workforce_employee_id=? ORDER BY created_at DESC').bind(updated.workforce_employee_id).all();
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_UPDATED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: nextUnits.join(','), before: { profile: current.profile, units: normalizeAllowedUnits(current.units_json), scheduleProfessionalId: current.schedule_professional_id || null }, after: { profile: nextProfile.profile || nextProfile, units: nextUnits, scheduleProfessionalId: nextScheduleProfessionalId, scheduleSyncState: scheduleSync?.scheduleSync?.state || scheduleState } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_UPDATED', actorRole: auth.user.role, itemCount: 1, unitCount: nextUnits.length });
+      return withCORS(JSON.stringify({ success: true, data: publicTeamMember(updated, (links?.results || []).map(publicIdentityLink), scheduleSync?.scheduleSync || { state: scheduleState, professionalId: nextScheduleProfessionalId }) }), { status: 200 }, appOrigin);
+    } catch (error) {
+      const message = String(error?.message || 'TEAM_UPDATE_FAILED');
+      const status = /^WORKFORCE_|^IDENTITY_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
+      return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Atualização da identidade pendente' : 'Não foi possível atualizar a equipe', code: message.slice(0, 120) }), { status }, appOrigin);
+    }
+  }
+
+  if (url.pathname === '/admin/team' && request.method === 'GET') {
+    try {
+      const requestedStatus = String(url.searchParams.get('status') || 'active').trim().toUpperCase();
+      const query = String(url.searchParams.get('q') || '').trim().toLowerCase();
+      const statusClause = requestedStatus === 'ALL'
+        ? ''
+        : requestedStatus === 'ACTIVE'
+          ? `AND o.account_status IN ('INVITED', 'ACTIVE')`
+          : `AND o.account_status = ?`;
+      const params = requestedStatus === 'ALL' || requestedStatus === 'ACTIVE' ? [] : [requestedStatus];
+      const rows = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
+        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id
+        WHERE 1=1 ${statusClause} ORDER BY o.created_at DESC LIMIT 500`).bind(...params).all();
+      const visible = (rows?.results || [])
+        .filter((row) => teamUnitsVisible(auth, row.units_json))
+        .filter((row) => !query || [row.full_name, row.requested_username, row.corporate_email, row.department_name, row.job_title, ...normalizeAllowedUnits(row.units_json)]
+          .some((value) => String(value || '').toLowerCase().includes(query)));
+      const employeeIds = visible.map((row) => String(row.workforce_employee_id || '').trim()).filter(Boolean);
+      const linkRows = employeeIds.length
+        ? await env.DB.prepare(`SELECT * FROM crm_employee_identity_links WHERE workforce_employee_id IN (${employeeIds.map(() => '?').join(', ')}) ORDER BY created_at DESC`).bind(...employeeIds).all()
+        : { results: [] };
+      const linksByEmployee = new Map();
+      for (const link of linkRows?.results || []) {
+        const key = String(link.workforce_employee_id || '');
+        const list = linksByEmployee.get(key) || [];
+        list.push(publicIdentityLink(link));
+        linksByEmployee.set(key, list);
+      }
+      const operations = await env.DB.prepare(`SELECT operation_key, operation_type, member_ids_json, result_json, created_at
+        FROM crm_team_operations
+        WHERE operation_type='ESCALA_SYNC'
+        ORDER BY created_at DESC LIMIT 2000`).all();
+      const latestScheduleSync = latestScheduleSyncByMember(operations?.results || []);
+      const data = visible.map((row) => publicTeamMember(
+        row,
+        linksByEmployee.get(String(row.workforce_employee_id || '')) || [],
+        latestScheduleSync.get(String(row.id || '')) || null,
+      ));
+      const pendingLinks = data.reduce((sum, row) => sum + (row.identityLinks || []).filter((link) => link.reviewStatus === 'PENDING_REVIEW').length, 0);
+      const pendingProvisioning = data.filter((row) => ['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(String(row.provisioningState || '').toUpperCase())).length;
+      const pendingInvites = data.filter((row) => String(row.accountStatus || '').toUpperCase() === 'INVITED').length;
+      return withCORS(JSON.stringify({
+        success: true,
+        data,
+        activeOnly: requestedStatus !== 'ALL',
+        status: requestedStatus,
+        summary: { members: data.length, pendingLinks, pendingProvisioning, pendingInvites },
+        pendingItems: teamPendingItems(data),
+      }), { status: 200 }, appOrigin);
+    } catch {
+      return withCORS(JSON.stringify({ success: false, error: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+    }
+  }
+
   if (url.pathname === '/admin/onboarding' && request.method === 'GET') {
     try {
-      const rows = await env.DB.prepare('SELECT * FROM crm_employee_onboarding ORDER BY created_at DESC LIMIT 100').all();
-      return withCORS(JSON.stringify({ success: true, data: (rows?.results || []).map(publicOnboarding) }), { status: 200 }, appOrigin);
+      const requestedStatus = String(url.searchParams.get('status') || 'ALL').trim().toUpperCase();
+      const query = String(url.searchParams.get('q') || '').trim().toLowerCase();
+      const rows = await env.DB.prepare('SELECT * FROM crm_employee_onboarding ORDER BY created_at DESC LIMIT 500').all();
+      const visible = (rows?.results || [])
+        .filter((row) => requestedStatus === 'ALL' || requestedStatus === 'ACTIVE' && ['INVITED', 'ACTIVE'].includes(String(row.account_status || '').toUpperCase()) || String(row.account_status || '').toUpperCase() === requestedStatus)
+        .filter((row) => teamUnitsVisible(auth, row.units_json))
+        .filter((row) => !query || [row.full_name, row.requested_username, row.corporate_email, row.department_name, row.job_title, ...normalizeAllowedUnits(row.units_json)].some((value) => String(value || '').toLowerCase().includes(query)));
+      return withCORS(JSON.stringify({ success: true, data: visible.map(publicOnboarding), activeOnly: requestedStatus !== 'ALL', status: requestedStatus, summary: { members: visible.length, pendingInvites: visible.filter((row) => String(row.account_status || '').toUpperCase() === 'INVITED').length } }), { status: 200 }, appOrigin);
     } catch {
       return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
     }
