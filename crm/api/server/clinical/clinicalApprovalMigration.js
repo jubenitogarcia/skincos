@@ -23,6 +23,26 @@ function migrationError(code) {
     return error
 }
 
+/**
+ * PostgreSQL has no `create trigger if not exists`.  Keep the migration
+ * additive by checking the catalog and creating a missing trigger inside a
+ * narrow DO block; never drop or replace an installed control in place.
+ */
+function createTriggerIfMissing(relation, name, definition) {
+    return `do $migration$
+        begin
+            if not exists (
+                select 1 from pg_trigger
+                 where tgrelid = '${relation}'::regclass
+                   and tgname = '${name}'
+                   and not tgisinternal
+            ) then
+                execute $trigger$${definition}$trigger$;
+            end if;
+        end
+    $migration$`
+}
+
 export function parseClinicalApprovalMigrationAction(args = []) {
     const values = Array.isArray(args) ? args.map(String) : []
     if (values.length !== 1 || !CLINICAL_APPROVAL_MIGRATION_ACTIONS.includes(values[0])) {
@@ -166,30 +186,24 @@ const STATEMENTS = Object.freeze([
         begin
             raise exception 'clinical approval evidence is append-only';
         end $$`,
-    `drop trigger if exists clinical_approval_rule_revisions_immutable on clinical_approval.rule_revisions`,
-    `create trigger clinical_approval_rule_revisions_immutable
+    createTriggerIfMissing('clinical_approval.rule_revisions', 'clinical_approval_rule_revisions_immutable', `create trigger clinical_approval_rule_revisions_immutable
         before update or delete on clinical_approval.rule_revisions
-        for each row execute function clinical_approval.prevent_append_only_mutation()`,
-    `drop trigger if exists clinical_approval_rule_revisions_no_truncate on clinical_approval.rule_revisions`,
-    `create trigger clinical_approval_rule_revisions_no_truncate
+        for each row execute function clinical_approval.prevent_append_only_mutation()`),
+    createTriggerIfMissing('clinical_approval.rule_revisions', 'clinical_approval_rule_revisions_no_truncate', `create trigger clinical_approval_rule_revisions_no_truncate
         before truncate on clinical_approval.rule_revisions
-        for each statement execute function clinical_approval.prevent_append_only_mutation()`,
-    `drop trigger if exists clinical_approval_rule_events_immutable on clinical_approval.rule_events`,
-    `create trigger clinical_approval_rule_events_immutable
+        for each statement execute function clinical_approval.prevent_append_only_mutation()`),
+    createTriggerIfMissing('clinical_approval.rule_events', 'clinical_approval_rule_events_immutable', `create trigger clinical_approval_rule_events_immutable
         before update or delete on clinical_approval.rule_events
-        for each row execute function clinical_approval.prevent_append_only_mutation()`,
-    `drop trigger if exists clinical_approval_rule_events_no_truncate on clinical_approval.rule_events`,
-    `create trigger clinical_approval_rule_events_no_truncate
+        for each row execute function clinical_approval.prevent_append_only_mutation()`),
+    createTriggerIfMissing('clinical_approval.rule_events', 'clinical_approval_rule_events_no_truncate', `create trigger clinical_approval_rule_events_no_truncate
         before truncate on clinical_approval.rule_events
-        for each statement execute function clinical_approval.prevent_append_only_mutation()`,
-    `drop trigger if exists clinical_approval_command_dedup_immutable on clinical_approval.command_dedup`,
-    `create trigger clinical_approval_command_dedup_immutable
+        for each statement execute function clinical_approval.prevent_append_only_mutation()`),
+    createTriggerIfMissing('clinical_approval.command_dedup', 'clinical_approval_command_dedup_immutable', `create trigger clinical_approval_command_dedup_immutable
         before update or delete on clinical_approval.command_dedup
-        for each row execute function clinical_approval.prevent_append_only_mutation()`,
-    `drop trigger if exists clinical_approval_command_dedup_no_truncate on clinical_approval.command_dedup`,
-    `create trigger clinical_approval_command_dedup_no_truncate
+        for each row execute function clinical_approval.prevent_append_only_mutation()`),
+    createTriggerIfMissing('clinical_approval.command_dedup', 'clinical_approval_command_dedup_no_truncate', `create trigger clinical_approval_command_dedup_no_truncate
         before truncate on clinical_approval.command_dedup
-        for each statement execute function clinical_approval.prevent_append_only_mutation()`,
+        for each statement execute function clinical_approval.prevent_append_only_mutation()`),
     `create or replace function clinical_approval.guard_rule_revision()
         returns trigger language plpgsql as $$
         begin
@@ -243,10 +257,9 @@ const STATEMENTS = Object.freeze([
             end if;
             return new;
         end $$`,
-    `drop trigger if exists clinical_approval_rules_transition_guard on clinical_approval.rules`,
-    `create trigger clinical_approval_rules_transition_guard
+    createTriggerIfMissing('clinical_approval.rules', 'clinical_approval_rules_transition_guard', `create trigger clinical_approval_rules_transition_guard
         before update on clinical_approval.rules
-        for each row execute function clinical_approval.guard_rule_transition()`,
+        for each row execute function clinical_approval.guard_rule_transition()`),
     `create or replace function clinical_approval.require_rule_event_evidence()
         returns trigger language plpgsql as $$
         begin
@@ -267,28 +280,24 @@ const STATEMENTS = Object.freeze([
             end if;
             return new;
         end $$`,
-    `drop trigger if exists clinical_approval_rules_event_evidence on clinical_approval.rules`,
-    `create constraint trigger clinical_approval_rules_event_evidence
+    createTriggerIfMissing('clinical_approval.rules', 'clinical_approval_rules_event_evidence', `create constraint trigger clinical_approval_rules_event_evidence
         after insert or update on clinical_approval.rules
         deferrable initially deferred
-        for each row execute function clinical_approval.require_rule_event_evidence()`,
+        for each row execute function clinical_approval.require_rule_event_evidence()`),
     `create or replace function clinical_approval.prevent_rule_removal()
         returns trigger language plpgsql as $$
         begin
             raise exception 'clinical approval rules are retained; disable or expire instead';
         end $$`,
-    `drop trigger if exists clinical_approval_rules_no_delete on clinical_approval.rules`,
-    `create trigger clinical_approval_rules_no_delete
+    createTriggerIfMissing('clinical_approval.rules', 'clinical_approval_rules_no_delete', `create trigger clinical_approval_rules_no_delete
         before delete on clinical_approval.rules
-        for each row execute function clinical_approval.prevent_rule_removal()`,
-    `drop trigger if exists clinical_approval_rules_no_truncate on clinical_approval.rules`,
-    `create trigger clinical_approval_rules_no_truncate
+        for each row execute function clinical_approval.prevent_rule_removal()`),
+    createTriggerIfMissing('clinical_approval.rules', 'clinical_approval_rules_no_truncate', `create trigger clinical_approval_rules_no_truncate
         before truncate on clinical_approval.rules
-        for each statement execute function clinical_approval.prevent_rule_removal()`,
-    `drop trigger if exists clinical_approval_rules_revision_guard on clinical_approval.rules`,
-    `create trigger clinical_approval_rules_revision_guard
+        for each statement execute function clinical_approval.prevent_rule_removal()`),
+    createTriggerIfMissing('clinical_approval.rules', 'clinical_approval_rules_revision_guard', `create trigger clinical_approval_rules_revision_guard
         before update on clinical_approval.rules
-        for each row execute function clinical_approval.guard_rule_revision()`,
+        for each row execute function clinical_approval.guard_rule_revision()`),
     `create or replace function clinical_approval.block_legacy_approved_cadence()
         returns trigger language plpgsql as $$
         begin
@@ -297,10 +306,9 @@ const STATEMENTS = Object.freeze([
             end if;
             return new;
         end $$`,
-    `drop trigger if exists commercial_procedure_cadences_clinical_gate on crm_atendimento.commercial_procedure_cadences`,
-    `create trigger commercial_procedure_cadences_clinical_gate
+    createTriggerIfMissing('crm_atendimento.commercial_procedure_cadences', 'commercial_procedure_cadences_clinical_gate', `create trigger commercial_procedure_cadences_clinical_gate
         before insert or update on crm_atendimento.commercial_procedure_cadences
-        for each row execute function clinical_approval.block_legacy_approved_cadence()`,
+        for each row execute function clinical_approval.block_legacy_approved_cadence()`),
 ])
 
 async function query(client, sql, params = []) {

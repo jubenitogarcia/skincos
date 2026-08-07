@@ -19,6 +19,8 @@ test('clinical approval contract is independent and fail-closed', () => {
     assert.equal(clinicalApprovalMigrationStatements.some((sql) => sql.includes('CLINICAL_CADENCE_APPROVAL_REQUIRED')), true)
     assert.equal(clinicalApprovalMigrationStatements.some((sql) => sql.includes('clinical_approval_rules_approver_not_author')), true)
     assert.equal(clinicalApprovalMigrationStatements.some((sql) => sql.includes('requires append-only revision evidence')), true)
+    assert.equal(clinicalApprovalMigrationStatements.some((sql) => /drop\s+trigger/i.test(sql)), false)
+    assert.equal(clinicalApprovalMigrationStatements.some((sql) => sql.includes('create constraint trigger clinical_approval_rules_event_evidence')), true)
     assert.equal(clinicalApprovalRuntimeGrantStatements('staging').some((sql) => sql.includes('grant select on table clinical_approval.schema_migrations')), true)
     assert.equal(clinicalApprovalRouteContract.basePath, '/api/clinical')
     assert.equal(clinicalApprovalRouteContract.messaging, false)

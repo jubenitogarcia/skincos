@@ -5,6 +5,8 @@
 Flags efetivas nesta tranche:
 
 - `CLINICAL_APPROVAL_ENABLED=false` (catálogo online);
+- `CLINICAL_APPROVAL_EXPIRY_JOB_ENABLED=false`;
+- `CLINICAL_APPROVAL_EXPIRY_TARGET=staging` (só aceito em `local` ou `staging`);
 - `CRM_ATENDIMENTO_READ_ONLY=true` quando o runtime isolado for promovido;
 - `commercialContactWritesEnabled=false`;
 - canário comercial vazio;
@@ -39,6 +41,15 @@ ledgers e triggers.
    revisão; uma aprovação expirada não é elegível.
 5. Em caso de conflito, não repetir sem recarregar a versão. O domínio usa
    lock transacional e deduplicação por ator/operação/chave.
+
+Quando o domínio já tiver sido validado em ambiente gravável autorizado, a
+expiração pode ser materializada pelo processo independente `crm-jobs.service`.
+Ela continua desligada por padrão, exige as três flags acima mais
+`CRM_CONTINUOUS_JOBS_ENABLED=1`, e só transforma regras já vencidas de
+`approved` para `expired`, com evento append-only e chave idempotente do
+checkpoint. Não há aprovação automática, recomendação, contato ou envio. Em
+runtime somente leitura ou alvo `production`, o job falha fechado antes de
+tocar no banco; erro de configuração vai para dead-letter sem retry.
 
 ## Smoke autorizado
 
