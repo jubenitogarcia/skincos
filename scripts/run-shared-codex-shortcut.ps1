@@ -2772,6 +2772,21 @@ function Restore-CrmThreadPreviewPriorRuntime {
         -RollbackInsumosState
 }
 
+function Test-CrmThreadPreviewPriorRuntimeStillReady {
+    param(
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][object]$PriorManifest
+    )
+
+    $current = Get-CrmInstanceManifest -Spec $Spec
+    if ($null -eq $current -or [string]$current.state -ne 'ready') { return $false }
+    if ([string]$current.targetCommit -ne [string]$PriorManifest.targetCommit -or
+        [string]$current.sourceFingerprint -ne [string]$PriorManifest.sourceFingerprint) {
+        return $false
+    }
+    return Test-CrmManifestLauncherIdentity -Manifest $current
+}
+
 function Wait-CrmInstanceCurrent {
     param(
         [Parameter(Mandatory = $true)][object]$Spec,
@@ -3033,17 +3048,17 @@ function Invoke-CrmThreadPreviewAction {
             # accepted for automatic recovery.
             $priorManifest = Get-CrmThreadPreviewPriorReadyManifest -Spec $spec
         }
-        if ($refreshInsumosSnapshot) {
-            # Export and integrity failure are intentionally before
-            # Stop-CrmInstanceRuntime so a healthy prior preview remains the
-            # rollback path.
-            $insumosSnapshot = Export-CrmThreadPreviewInsumosSnapshot -Spec $spec -SourceRoot $materializedSource
-        }
-        if ($decision.Action -eq 'restart') {
-            Write-Host "[crm-thread-preview] Atualizando $([string]$spec.runtimeId): $($decision.Reason)."
-            Stop-CrmInstanceRuntime -Spec $spec
-        }
         try {
+            if ($refreshInsumosSnapshot) {
+                # Export and integrity failure normally happen before the
+                # prior preview is stopped. A handoff may already be stopped,
+                # in which case the saved ready manifest below restores it.
+                $insumosSnapshot = Export-CrmThreadPreviewInsumosSnapshot -Spec $spec -SourceRoot $materializedSource
+            }
+            if ($decision.Action -eq 'restart') {
+                Write-Host "[crm-thread-preview] Atualizando $([string]$spec.runtimeId): $($decision.Reason)."
+                Stop-CrmInstanceRuntime -Spec $spec
+            }
             Start-CrmInstanceRuntime `
                 -Spec $spec `
                 -SourceRoot $materializedSource `
@@ -3056,6 +3071,9 @@ function Invoke-CrmThreadPreviewAction {
             $replacementError = $_
             if ($null -eq $priorManifest -or [string]$priorManifest.state -ne 'ready') {
                 throw
+            }
+            if (Test-CrmThreadPreviewPriorRuntimeStillReady -Spec $spec -PriorManifest $priorManifest) {
+                throw "A nova prévia falhou antes da troca; a versão anterior permanece pronta: $($replacementError.Exception.Message)"
             }
             try {
                 # A partially started replacement must be stopped before the

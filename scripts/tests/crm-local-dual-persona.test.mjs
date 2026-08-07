@@ -252,6 +252,7 @@ test('dedicated Insumos preview refreshes a private read-only D1 snapshot instea
   assert.match(launcher, /A nova prévia falhou, mas a versão anterior foi restaurada/)
   assert.match(launcher, /function Save-CrmThreadPreviewPriorReadyManifest/)
   assert.match(launcher, /function Get-CrmThreadPreviewPriorReadyManifest/)
+  assert.match(launcher, /function Test-CrmThreadPreviewPriorRuntimeStillReady/)
   assert.match(launcher, /previous-ready\.json/)
   assert.match(crmRunner, /"\$INSUMOS_HELPER" snapshot-export "\$resolved_output"/)
   assert.match(crmRunner, /INSUMOS_PREVIEW_SNAPSHOT_MODE=1/)

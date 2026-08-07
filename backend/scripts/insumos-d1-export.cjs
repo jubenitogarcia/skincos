@@ -281,20 +281,28 @@ function parseWranglerResults(raw, expectedCount) {
 function runBatch(options, statements, label) {
   const safeStatements = Array.isArray(statements) ? statements.filter(Boolean) : [statements].filter(Boolean);
   if (!safeStatements.length) return [];
-  const result = spawnSync(options.executable, wranglerArguments(options, safeStatements), {
-    cwd: path.dirname(options.configPath),
-    encoding: 'utf8',
-    maxBuffer: Number.isFinite(options.maxBuffer) && options.maxBuffer > 0 ? options.maxBuffer : 64 * 1024 * 1024,
-  });
-  if (result.error || result.status !== 0) {
-    const detail = String(result.stderr || result.error?.message || 'wrangler failed').replace(/\s+/g, ' ').trim().slice(0, 400);
-    throw new Error(`D1_QUERY_FAILED:${label}${detail ? `:${detail}` : ''}`);
+  const attempts = Number.isInteger(options.queryAttempts) && options.queryAttempts > 0 ? options.queryAttempts : 2;
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = spawnSync(options.executable, wranglerArguments(options, safeStatements), {
+      cwd: path.dirname(options.configPath),
+      encoding: 'utf8',
+      maxBuffer: Number.isFinite(options.maxBuffer) && options.maxBuffer > 0 ? options.maxBuffer : 64 * 1024 * 1024,
+    });
+    if (!result.error && result.status === 0) {
+      try {
+        return parseWranglerResults(result.stdout, safeStatements.length);
+      } catch (error) {
+        lastError = error;
+      }
+    } else {
+      const detail = String(result.stderr || result.error?.message || (Number.isInteger(result.status) ? `exit_${result.status}` : 'wrangler_failed'))
+        .replace(/\s+/g, ' ').trim().slice(0, 400);
+      lastError = new Error(detail || 'wrangler_failed');
+    }
+    if (attempt < attempts) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
   }
-  try {
-    return parseWranglerResults(result.stdout, safeStatements.length);
-  } catch (error) {
-    throw new Error(`D1_QUERY_FAILED:${label}:${error.message || error}`);
-  }
+  throw new Error(`D1_QUERY_FAILED:${label}:${lastError?.message || 'wrangler_failed'}`);
 }
 
 function tableExists(tables, tableName) {
