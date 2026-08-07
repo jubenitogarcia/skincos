@@ -137,7 +137,8 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /\.deckPromptArrow[\s\S]*top: calc\(100% \+ 4px\)/);
     assert.match(styles, /\.deckPromptArrow[\s\S]*transform: translateX\(-50%\)/);
     assert.match(styles, /\.deckStage[\s\S]*bottom: 18px/);
-    assert.match(styles, /\.deckStage:enabled \.deckCard,[\s\S]*\.deckStage:enabled \.deckBrandLogo[\s\S]*cursor: pointer/);
+    assert.match(styles, /\.deckStage \.(?:deckCard|deckBrandLogo)[\s\S]*cursor: pointer/);
+    assert.match(styles, /\.deckStage:disabled,[\s\S]*\.deckStage:disabled \.deckBrandLogo[\s\S]*cursor: default/);
     assert.match(styles, /--deal-y: 122px/);
     assert.match(styles, /\.progressItemCurrent \.progressButton[\s\S]*background: var\(--bm-yellow\)/);
     assert.match(styles, /\.progressButton \{[\s\S]*min-height: 44px/);

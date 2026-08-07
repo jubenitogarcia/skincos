@@ -256,17 +256,19 @@
   border: 0;
   background: transparent;
   color: inherit;
-  cursor: default;
+  cursor: pointer;
   transform: translateX(-50%);
 }
 
-.deckStage:enabled {
+.deckStage .deckCard,
+.deckStage .deckBrandLogo {
   cursor: pointer;
 }
 
-.deckStage:enabled .deckCard,
-.deckStage:enabled .deckBrandLogo {
-  cursor: pointer;
+.deckStage:disabled,
+.deckStage:disabled .deckCard,
+.deckStage:disabled .deckBrandLogo {
+  cursor: default;
 }
 
 .deckStage:focus-visible {
