@@ -97,6 +97,7 @@ function runtimeGrantStatements(target) {
     if (!role) throw migrationError('COMMERCIAL_ACTION_LEDGER_MIGRATION_RUNTIME_ROLE_UNKNOWN')
     return [
         `grant usage on schema crm_atendimento to ${role}`,
+        `grant select on table crm_atendimento.schema_migrations to ${role}`,
         `grant select, insert on table crm_atendimento.commercial_action_events to ${role}`,
         `grant usage, select on sequence crm_atendimento.commercial_action_events_event_order_seq to ${role}`,
     ]
