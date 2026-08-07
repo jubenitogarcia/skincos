@@ -380,6 +380,13 @@ export default function AppFunctionalNeatlab() {
 	            return false
 	        }
 	    })
+	    const [sidebarCompactViewport, setSidebarCompactViewport] = useState(() => {
+	        try {
+	            return window.matchMedia('(max-width: 1279px)').matches
+	        } catch {
+	            return false
+	        }
+	    })
 	    const [sidebarPinned, setSidebarPinned] = useState<boolean>(() => {
 	        try {
 	            return localStorage.getItem('ui.sidebarPinned') === 'true'
@@ -398,11 +405,24 @@ export default function AppFunctionalNeatlab() {
 
     React.useEffect(() => {
         try {
+            const media = window.matchMedia('(max-width: 1279px)')
+            const sync = () => setSidebarCompactViewport(media.matches)
+            sync()
+            media.addEventListener('change', sync)
+            return () => media.removeEventListener('change', sync)
+        } catch {
+            setSidebarCompactViewport(false)
+            return undefined
+        }
+    }, [])
+
+    React.useEffect(() => {
+        try {
             localStorage.setItem('ui.sidebarPinned', sidebarPinned ? 'true' : 'false')
         } catch { /* ignore */ }
     }, [sidebarPinned])
 
-    const sidebarExpanded = sidebarPinned || !sidebarCanHover || sidebarHover
+    const sidebarExpanded = !sidebarCompactViewport && (sidebarPinned || !sidebarCanHover || sidebarHover)
 
 	    // Persist active module to survive remounts/reloads and avoid accidental resets
 	    const [active, setActive] = useState<string>(() => {
@@ -838,7 +858,7 @@ export default function AppFunctionalNeatlab() {
 				                        data-testid={`insumos-header-action-${operation.value.toLowerCase()}`}
 				                    >
 				                        <img src={operation.icon} alt="" aria-hidden className={compact ? 'size-6' : 'size-4'} />
-				                        {!compact ? <span className="hidden xl:inline">{operation.label}</span> : null}
+                        {!compact ? <span className="hidden min-[1360px]:inline">{operation.label}</span> : null}
 				                    </Button>
 				                </TooltipButton>
 				            ))}
@@ -1473,7 +1493,7 @@ export default function AppFunctionalNeatlab() {
 					                                                    value={selectedUnit}
 			                                                    onValueChange={(v) => setSelectedUnit(v)}
 			                                                >
-				                                                    <SelectTrigger className="h-8 w-56 bg-white/[0.06] border-white/20 text-white">
+                                                    <SelectTrigger className="h-8 w-44 bg-white/[0.06] border-white/20 text-white">
 				                                                        <SelectValue placeholder="Unidade" />
 				                                                    </SelectTrigger>
 				                                                    <SelectContent>
@@ -1792,7 +1812,7 @@ export default function AppFunctionalNeatlab() {
 			                                    </div>
 		                                </div>
 
-			                                <div className="ml-auto flex min-w-0 items-center justify-end gap-4" data-testid="crm-header-actions">
+		                                <div className={`ml-auto flex min-w-0 items-center justify-end ${active === 'insumos' ? 'gap-2' : 'gap-4'}`} data-testid="crm-header-actions">
 	                                    {active === 'escala-profissionais' ? (
 		                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-escala-preserve-filter="true">
                                                     {[
