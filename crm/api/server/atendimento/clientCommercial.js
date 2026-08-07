@@ -79,6 +79,16 @@ export function buildCommercialProfile(row = {}, { asOf = new Date().toISOString
     }
 }
 
+/**
+ * The overview is a paginated discovery surface, not a profile disclosure
+ * endpoint. Keep direct identifiers available only to the explicit profile
+ * route, after its existing RBAC and unit checks.
+ */
+export function minimizeCommercialOverviewProfile(profile) {
+    const { name, phone, email, ...safeProfile } = profile || {}
+    return safeProfile
+}
+
 function segment(key, label, priority, nextAction, evidence) {
     return { key, label, priority, nextAction, evidence }
 }

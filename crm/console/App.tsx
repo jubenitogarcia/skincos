@@ -49,6 +49,7 @@ import { dispatchAtendimentoHeaderAction, subscribeAtendimentoHeaderState } from
 import type { AtendimentoHeaderState } from '@/atendimentoHeaderBridge'
 import { hasCrmModuleAccess } from '@/crmRoleAccess'
 import { canManagePonto } from '@/pontoAccess'
+import { clientesWorkspaceQueryKeys, clientesWorkspaceUrl, parseClientesWorkspaceRoute, readClientesWalletUrlState } from '@/clientesRoutes'
 import { ArrowDownUp, CalendarX2, CheckCircle2, ChevronDown, ChevronsUpDown, Download, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Upload, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
@@ -427,6 +428,7 @@ export default function AppFunctionalNeatlab() {
 	    // Persist active module to survive remounts/reloads and avoid accidental resets
 	    const [active, setActive] = useState<string>(() => {
 		        try {
+		            if (parseClientesWorkspaceRoute(window.location)) return 'clientes'
 		            const requested = new URLSearchParams(window.location.search).get('module') || new URLSearchParams(window.location.search).get('tab')
             if (requested && crmModuleByKey.has(requested)) {
                 return requested
@@ -436,10 +438,24 @@ export default function AppFunctionalNeatlab() {
 		            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : DEFAULT_MODULE_KEY
 		        } catch { return DEFAULT_MODULE_KEY }
 		    })
-		    const selectModule = React.useCallback((moduleKey: string) => {
+	    const selectModule = React.useCallback((moduleKey: string) => {
 		        setActive(moduleKey)
 		        try {
 		            const url = new URL(window.location.href)
+		            if (moduleKey === 'clientes') {
+		                const currentRoute = parseClientesWorkspaceRoute(url)
+		                const href = clientesWorkspaceUrl(
+		                    currentRoute || { view: 'overview' },
+		                    currentRoute ? readClientesWalletUrlState(url) : undefined,
+		                    url,
+		                )
+		                if (href !== `${url.pathname}${url.search}${url.hash}`) window.history.pushState(window.history.state, '', href)
+		                return
+		            }
+		            if (parseClientesWorkspaceRoute(url)?.source === 'path') {
+		                url.pathname = '/'
+		                for (const key of clientesWorkspaceQueryKeys) url.searchParams.delete(key)
+		            }
 		            url.searchParams.set('module', moduleKey)
 		            url.searchParams.delete('tab')
 		            window.history.replaceState(window.history.state, '', url)
@@ -450,7 +466,26 @@ export default function AppFunctionalNeatlab() {
 	    React.useEffect(() => {
         if (crmModuleByKey.has(active)) return
         setActive(DEFAULT_MODULE_KEY)
-    }, [DEFAULT_MODULE_KEY, active])
+	    }, [DEFAULT_MODULE_KEY, active])
+
+        // Canonical Clientes paths are intentionally resolved before generic
+        // query-string modules. The route selects a shell only; ModuleHost and
+        // the API still enforce RBAC and fail closed for an unauthorized actor.
+        React.useEffect(() => {
+            const onPopState = () => {
+                try {
+                    if (parseClientesWorkspaceRoute(window.location)) {
+                        setActive('clientes')
+                        return
+                    }
+                    const params = new URLSearchParams(window.location.search)
+                    const requested = params.get('module') || params.get('tab')
+                    if (requested && crmModuleByKey.has(requested)) setActive(requested)
+                } catch { /* ignore malformed browser state */ }
+            }
+            window.addEventListener('popstate', onPopState)
+            return () => window.removeEventListener('popstate', onPopState)
+        }, [])
         const [search, setSearch] = useState('')
         const [conversaHeaderState, setConversaHeaderState] = useState<ConversaHeaderState | null>(null)
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
@@ -934,6 +969,10 @@ export default function AppFunctionalNeatlab() {
 	        // `?module=ponto` never falls back to the previously saved module.
 	        if (initializing) return
 	        try {
+		    if (parseClientesWorkspaceRoute(window.location)) {
+		        setActive('clientes')
+		        return
+		    }
             const params = new URLSearchParams(window.location.search)
             const requested = params.get('module') || params.get('tab')
             const wantsInsumosShortcut =

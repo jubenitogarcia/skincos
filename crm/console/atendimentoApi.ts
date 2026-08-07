@@ -829,6 +829,10 @@ export type CommercialProfile = {
   contactEligibility: CommercialContactEligibility
 }
 
+// The paginated discovery surface deliberately excludes direct identifiers.
+// A name is returned only from the explicitly addressed profile endpoint.
+export type CommercialProfileListItem = Omit<CommercialProfile, 'name'>
+
 export type CommercialAction = {
   id: string
   identityId: string
@@ -959,7 +963,7 @@ export type CommercialOverview = {
   limit: number
   offset: number
   pagination?: { mode: 'sql' | 'legacy'; sort: string; direction: 'asc' | 'desc'; hasPrevious: boolean; hasNext: boolean }
-  profiles: CommercialProfile[]
+  profiles: CommercialProfileListItem[]
 }
 
 export type CommercialTimelineEntry = {
