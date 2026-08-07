@@ -850,13 +850,20 @@ async function fetchCrmUserFromAuth(req) {
             const data = await res.json().catch(() => null)
             const raw = data?.user || data?.usuario || data || null
             if (!raw) return null
+            // Audit-ledger actors must be stable opaque subjects.  Falling
+            // back to an e-mail would copy PII into append-only clinical
+            // evidence, so fail closed when the identity service omits one.
+            const actorId = String(raw.subject || raw.subjectId || raw.id || raw.username || '').trim()
+            if (!actorId || /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/i.test(actorId)) return null
+            const rawRole = String(raw.role || '').trim().toUpperCase()
             return {
-                id: raw.id || raw.username || raw.email,
+                id: actorId.slice(0, 200),
                 username: raw.username,
                 displayName: raw.displayName || raw.name || raw.username || raw.email,
                 name: raw.name,
                 email: raw.email,
                 role: normalizeRole(raw.role),
+                isGlobalAdmin: rawRole === 'ADMIN',
                 allowedUnits: raw.allowedUnits,
                 allowedModules: raw.allowedModules,
             }
