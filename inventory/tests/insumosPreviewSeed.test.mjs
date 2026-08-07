@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import test, { after, before } from 'node:test';
@@ -75,6 +76,34 @@ const previewKeys = [
   'insumosCountReads',
 ];
 
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
+async function postSeed(payload) {
+  const url = new URL('http://local.test/admin/seed');
+  return handleAdminRoutes({
+    request: new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-seed-token': 'preview-token' },
+      body: JSON.stringify(payload),
+    }),
+    url,
+    env,
+    appOrigin: 'http://local.test',
+    withCORS: (body, init) => new Response(body, init),
+    requireRoles: async () => ({ ok: false }),
+    appendAuditLog: async () => {},
+    ip: '',
+    userAgent: '',
+    idempotencyKey: '',
+    bcrypt: null,
+    validateUsername: () => true,
+  });
+}
+
 function previewPayload() {
   const d1 = Object.fromEntries(previewKeys.map((key) => [key, []]));
   d1.insumosItems.push({
@@ -99,12 +128,17 @@ function previewPayload() {
     count: d1[key].length,
     watermark: null,
   }]));
+  const canonicalD1 = canonicalJson(d1);
   return {
     version: 2,
     kind: 'insumos-local-preview-snapshot',
     snapshotId: '11111111-1111-4111-a111-111111111111',
-    sources: { d1: { readOnly: true, tables } },
-    integrity: { d1Sha256: 'a'.repeat(64) },
+    sources: { d1: { readOnly: true, consistency: { mode: 'd1-batch', statementCount: previewKeys.length }, tables } },
+    integrity: {
+      algorithm: 'sha256',
+      d1Sha256: createHash('sha256').update(canonicalD1).digest('hex'),
+      d1Bytes: Buffer.byteLength(canonicalD1, 'utf8'),
+    },
     d1,
   };
 }
@@ -126,27 +160,25 @@ after(async () => {
   await proxy?.dispose?.();
 });
 
+test('local preview rejects altered or non-inventory data before it writes any row', async () => {
+  const altered = previewPayload();
+  altered.d1.insumosStocks[0].quantidade = 8;
+  let response = await postSeed(altered);
+  assert.equal(response.status, 500);
+  assert.equal((await response.json()).error, 'INSUMOS_PREVIEW_SNAPSHOT_DIGEST_INVALID');
+  assert.equal(Number((await env.DB.prepare('SELECT COUNT(*) AS count FROM insumos_stocks').first()).count), 0);
+
+  const expanded = previewPayload();
+  expanded.d1.crmUsers = [{ username: 'must-not-restore' }];
+  response = await postSeed(expanded);
+  assert.equal(response.status, 500);
+  assert.equal((await response.json()).error, 'INSUMOS_PREVIEW_SNAPSHOT_D1_KEYS_INVALID');
+  assert.equal(Number((await env.DB.prepare('SELECT COUNT(*) AS count FROM insumos_stocks').first()).count), 0);
+});
+
 test('local preview seed restores and proves the exact snapshot counts without returning records', async () => {
   const payload = previewPayload();
-  const url = new URL('http://local.test/admin/seed');
-  const response = await handleAdminRoutes({
-    request: new Request(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-seed-token': 'preview-token' },
-      body: JSON.stringify(payload),
-    }),
-    url,
-    env,
-    appOrigin: 'http://local.test',
-    withCORS: (body, init) => new Response(body, init),
-    requireRoles: async () => ({ ok: false }),
-    appendAuditLog: async () => {},
-    ip: '',
-    userAgent: '',
-    idempotencyKey: '',
-    bcrypt: null,
-    validateUsername: () => true,
-  });
+  const response = await postSeed(payload);
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.success, true);

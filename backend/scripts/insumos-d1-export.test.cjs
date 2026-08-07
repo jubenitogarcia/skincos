@@ -37,6 +37,7 @@ test('preview snapshot is a complete, redacted inventory-only contract', () => {
   assert.equal(snapshot.version, exporter.PREVIEW_VERSION);
   assert.equal(snapshot.kind, exporter.PREVIEW_KIND);
   assert.equal(snapshot.sources.d1.readOnly, true);
+  assert.equal(snapshot.sources.d1.consistency.mode, exporter.SNAPSHOT_CONSISTENCY_MODE);
   assert.equal(snapshot.sources.d1.databaseName, 'skincos-db');
   assert.ok(snapshot.sources.d1.migrationDigest.match(/^[a-f0-9]{64}$/));
   assert.deepEqual(Object.keys(snapshot.d1), exporter.TABLES.map(({ key }) => key));
@@ -45,6 +46,9 @@ test('preview snapshot is a complete, redacted inventory-only contract', () => {
   assert.equal('crmUsers' in snapshot.d1, false);
   assert.equal('auditLog' in snapshot.d1, false);
   assert.equal(exporter.verifyPreviewSnapshot(snapshot), snapshot);
+
+  snapshot.d1.unexpectedSensitivePayload = [];
+  assert.throws(() => exporter.verifyPreviewSnapshot(snapshot), /D1_KEYS_INVALID/);
 });
 
 test('preview snapshot integrity and private output boundary fail closed', () => {
@@ -76,7 +80,7 @@ test('preview snapshot integrity and private output boundary fail closed', () =>
   }
 });
 
-test('wrangler command is argument-based, configured, and read-only', () => {
+test('wrangler command is argument-based, configured, read-only, and batches the inventory reads', () => {
   const args = exporter.wranglerArguments({
     executable: 'npx',
     dbName: 'skincos-db',
@@ -86,5 +90,15 @@ test('wrangler command is argument-based, configured, and read-only', () => {
     '--no-install', 'wrangler', 'd1', 'execute', 'skincos-db', '--remote', '--json',
     '--config', '/private/source/inventory/wrangler.toml', '--command', 'SELECT * FROM insumos_items',
   ]);
-  assert.equal(args.some((value) => String(value).includes('&&') || String(value).includes(';')), false);
+  const batchArgs = exporter.wranglerArguments({
+    executable: 'npx',
+    dbName: 'skincos-db-staging',
+    configPath: '/private/source/inventory/wrangler.toml',
+    environment: 'staging',
+  }, ['SELECT registro FROM insumos_items', 'SELECT id FROM insumos_movements']);
+  assert.deepEqual(batchArgs, [
+    '--no-install', 'wrangler', 'd1', 'execute', 'skincos-db-staging', '--remote', '--json',
+    '--config', '/private/source/inventory/wrangler.toml', '--env', 'staging',
+    '--command', 'SELECT registro FROM insumos_items;\nSELECT id FROM insumos_movements',
+  ]);
 });

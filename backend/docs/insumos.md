@@ -190,9 +190,13 @@ Objetivo: popular o D1 local sem tocar o banco online.
 O snapshot de prévia é destinado exclusivamente ao runtime local privado. Ele
 inclui os dados de negócio de Insumos necessários para métricas e jornadas
 operacionais, mas exclui credenciais, usuários, auditoria, IPs, notificações e
-histórico de compartilhamento. A ação `CRM – Prévia Insumos Thread` executa
-esse passo automaticamente antes de iniciar a prévia e registra no manifesto
-somente origem, digest e contagens, sem expor registros.
+histórico de compartilhamento. As coleções permitidas são lidas em um único
+lote remoto; o Worker local recalcula o digest canônico, exige a allowlist
+exata e só então restaura as tabelas. A ação `CRM – Prévia Insumos Thread`
+executa esse passo automaticamente antes de iniciar a prévia e registra no
+manifesto somente origem, digest e contagens, sem expor registros. Se o
+runtime novo falhar após a troca, o launcher tenta restaurar automaticamente a
+prévia anterior; a falha permanece visível no log privado da ação.
 
 1) No Worker local, habilite seed (somente dev) via `inventory/.dev.vars`:
 

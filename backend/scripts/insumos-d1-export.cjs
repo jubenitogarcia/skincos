@@ -13,6 +13,7 @@ const PREVIEW_KIND = 'insumos-local-preview-snapshot';
 const PREVIEW_VERSION = 2;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const SNAPSHOT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SNAPSHOT_CONSISTENCY_MODE = 'd1-batch';
 
 const TABLES = [
   {
@@ -141,6 +142,15 @@ function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
+// The payload crosses the Node-to-Worker boundary before the local seed.  A
+// stable representation keeps the digest independent of whitespace or JSON
+// property insertion order while preserving the exact ordered ledger rows.
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
 function normalizeSql(sql) {
   return String(sql || '').replace(/\s+/g, ' ').trim();
 }
@@ -203,28 +213,42 @@ function resolveOptions(env = process.env) {
 function wranglerArguments(options, sql) {
   const executableName = path.basename(options.executable).toLowerCase();
   const prefix = executableName === 'npx' || executableName === 'npx.cmd' ? ['--no-install', 'wrangler'] : [];
+  const command = Array.isArray(sql)
+    ? sql.map((statement) => normalizeSql(statement)).filter(Boolean).join(';\n')
+    : normalizeSql(sql);
+  const environmentArgs = options.environment && options.environment !== 'production'
+    ? ['--env', options.environment]
+    : [];
   return [
     ...prefix,
     'd1', 'execute', options.dbName,
     '--remote',
     '--json',
     '--config', options.configPath,
-    '--command', normalizeSql(sql),
+    ...environmentArgs,
+    '--command', command,
   ];
 }
 
-function parseWranglerResult(raw) {
+function parseWranglerResults(raw, expectedCount) {
   const parsed = JSON.parse(String(raw || '').trim() || '[]');
-  const first = Array.isArray(parsed) ? parsed[0] : parsed?.result?.[0];
-  if (!first || first.success === false) {
-    throw new Error(first?.error || 'D1_QUERY_FAILED');
+  const results = Array.isArray(parsed)
+    ? parsed
+    : (Array.isArray(parsed?.result) ? parsed.result : []);
+  if (results.length !== expectedCount) {
+    throw new Error(`D1_BATCH_RESULT_COUNT_INVALID:${results.length}`);
   }
-  if (!Array.isArray(first.results)) throw new Error('D1_QUERY_RESULT_INVALID');
-  return first.results;
+  return results.map((result) => {
+    if (!result || result.success === false) throw new Error(result?.error || 'D1_QUERY_FAILED');
+    if (!Array.isArray(result.results)) throw new Error('D1_QUERY_RESULT_INVALID');
+    return result.results;
+  });
 }
 
-function runQuery(options, sql, label) {
-  const result = spawnSync(options.executable, wranglerArguments(options, sql), {
+function runBatch(options, statements, label) {
+  const safeStatements = Array.isArray(statements) ? statements.filter(Boolean) : [statements].filter(Boolean);
+  if (!safeStatements.length) return [];
+  const result = spawnSync(options.executable, wranglerArguments(options, safeStatements), {
     cwd: path.dirname(options.configPath),
     encoding: 'utf8',
     maxBuffer: Number.isFinite(options.maxBuffer) && options.maxBuffer > 0 ? options.maxBuffer : 64 * 1024 * 1024,
@@ -234,7 +258,7 @@ function runQuery(options, sql, label) {
     throw new Error(`D1_QUERY_FAILED:${label}${detail ? `:${detail}` : ''}`);
   }
   try {
-    return parseWranglerResult(result.stdout);
+    return parseWranglerResults(result.stdout, safeStatements.length);
   } catch (error) {
     throw new Error(`D1_QUERY_FAILED:${label}:${error.message || error}`);
   }
@@ -249,11 +273,12 @@ function lastWatermark(rows, field) {
   return values.length ? values[values.length - 1] : null;
 }
 
-function createPreviewSnapshot({ options, d1, tableMetadata, startedAt, finishedAt }) {
+function createPreviewSnapshot({ options, d1, tableMetadata, startedAt, finishedAt, consistency = null }) {
   const snapshotId = typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${crypto.randomBytes(4).toString('hex')}-${crypto.randomBytes(2).toString('hex')}-4${crypto.randomBytes(1).toString('hex').slice(1)}-a${crypto.randomBytes(1).toString('hex').slice(1)}-${crypto.randomBytes(6).toString('hex')}`;
-  const d1Sha256 = sha256(JSON.stringify(d1));
+  const canonicalD1 = canonicalJson(d1);
+  const d1Sha256 = sha256(canonicalD1);
   const snapshot = {
     version: PREVIEW_VERSION,
     kind: PREVIEW_KIND,
@@ -270,6 +295,10 @@ function createPreviewSnapshot({ options, d1, tableMetadata, startedAt, finished
         startedAt,
         finishedAt,
         migrationDigest: migrationDigest(options.migrationsDir),
+        consistency: consistency || {
+          mode: SNAPSHOT_CONSISTENCY_MODE,
+          statementCount: TABLES.length,
+        },
         tables: tableMetadata,
       },
     },
@@ -284,7 +313,7 @@ function createPreviewSnapshot({ options, d1, tableMetadata, startedAt, finished
     integrity: {
       algorithm: 'sha256',
       d1Sha256,
-      d1Bytes: Buffer.byteLength(JSON.stringify(d1), 'utf8'),
+      d1Bytes: Buffer.byteLength(canonicalD1, 'utf8'),
     },
     d1,
   };
@@ -293,17 +322,24 @@ function createPreviewSnapshot({ options, d1, tableMetadata, startedAt, finished
 
 function buildPreviewSnapshot(options) {
   const startedAt = new Date().toISOString();
-  const tables = runQuery(options, `SELECT name FROM sqlite_master WHERE type = 'table'`, 'schema');
+  // Schema discovery is separate only to omit genuinely unavailable optional
+  // tables. All business reads below are one remote D1 batch, so normal stock
+  // writes cannot interleave and create a cross-table mixed snapshot.
+  const [tables] = runBatch(options, [`SELECT name FROM sqlite_master WHERE type = 'table'`], 'schema');
+  const availableSpecs = TABLES.map((spec) => ({ ...spec, available: tableExists(tables, spec.table) }));
+  for (const spec of availableSpecs) {
+    if (!spec.available && spec.required) throw new Error(`D1_REQUIRED_TABLE_MISSING:${spec.table}`);
+  }
+  const resultSets = runBatch(options, availableSpecs.filter((spec) => spec.available).map((spec) => spec.sql), 'snapshot');
   const d1 = {};
   const tableMetadata = {};
-  for (const spec of TABLES) {
-    const available = tableExists(tables, spec.table);
-    if (!available && spec.required) throw new Error(`D1_REQUIRED_TABLE_MISSING:${spec.table}`);
-    const rows = available ? runQuery(options, spec.sql, spec.table) : [];
+  let resultIndex = 0;
+  for (const spec of availableSpecs) {
+    const rows = spec.available ? resultSets[resultIndex++] : [];
     d1[spec.key] = rows;
     tableMetadata[spec.key] = {
       table: spec.table,
-      available,
+      available: spec.available,
       count: rows.length,
       watermark: spec.watermark ? lastWatermark(rows, spec.watermark) : null,
     };
@@ -314,6 +350,11 @@ function buildPreviewSnapshot(options) {
     tableMetadata,
     startedAt,
     finishedAt: new Date().toISOString(),
+    consistency: {
+      mode: SNAPSHOT_CONSISTENCY_MODE,
+      schemaCheckedAt: startedAt,
+      statementCount: resultSets.length,
+    },
   });
 }
 
@@ -324,6 +365,14 @@ function verifyPreviewSnapshot(snapshot) {
   if (!SNAPSHOT_ID_RE.test(String(snapshot.snapshotId || ''))) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_ID_INVALID');
   if (snapshot?.sources?.d1?.readOnly !== true) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_NOT_READ_ONLY');
   if (!snapshot.d1 || typeof snapshot.d1 !== 'object') throw new Error('INSUMOS_PREVIEW_SNAPSHOT_D1_MISSING');
+  const expectedKeys = TABLES.map((spec) => spec.key).sort();
+  const actualKeys = Object.keys(snapshot.d1).sort();
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
+    throw new Error('INSUMOS_PREVIEW_SNAPSHOT_D1_KEYS_INVALID');
+  }
+  if (snapshot?.sources?.d1?.consistency?.mode !== SNAPSHOT_CONSISTENCY_MODE) {
+    throw new Error('INSUMOS_PREVIEW_SNAPSHOT_CONSISTENCY_INVALID');
+  }
   for (const spec of TABLES) {
     if (!Array.isArray(snapshot.d1[spec.key])) throw new Error(`INSUMOS_PREVIEW_SNAPSHOT_TABLE_INVALID:${spec.key}`);
     const metadata = snapshot?.sources?.d1?.tables?.[spec.key];
@@ -332,7 +381,7 @@ function verifyPreviewSnapshot(snapshot) {
     }
   }
   const expectedDigest = String(snapshot?.integrity?.d1Sha256 || '');
-  if (!SHA256_RE.test(expectedDigest) || sha256(JSON.stringify(snapshot.d1)) !== expectedDigest) {
+  if (!SHA256_RE.test(expectedDigest) || sha256(canonicalJson(snapshot.d1)) !== expectedDigest) {
     throw new Error('INSUMOS_PREVIEW_SNAPSHOT_DIGEST_INVALID');
   }
   return snapshot;
@@ -421,8 +470,11 @@ if (require.main === module) {
 module.exports = {
   PREVIEW_KIND,
   PREVIEW_VERSION,
+  SNAPSHOT_CONSISTENCY_MODE,
   TABLES,
   assertPreviewOutputPath,
+  canonicalJson,
+  buildPreviewSnapshot,
   createPreviewSnapshot,
   previewMetadata,
   readPreviewSnapshot,

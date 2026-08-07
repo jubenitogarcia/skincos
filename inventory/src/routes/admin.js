@@ -3,6 +3,7 @@
 import {
   getInsumosPreviewSnapshotMetadata,
   restoreBackupPayload,
+  verifyInsumosPreviewSnapshotIntegrity,
   verifyInsumosPreviewRestore,
 } from '../services/backup.js';
 import { resolveCrmTables } from '../d1Store.js';
@@ -506,6 +507,10 @@ export async function handleAdminRoutes({
         return withCORS(JSON.stringify({ success: false, error: 'Payload inválido' }), { status: 400 }, appOrigin);
       }
       const previewSnapshot = getInsumosPreviewSnapshotMetadata(payload);
+      // Verify the exact inventory-only payload before any local row is
+      // touched. A syntactically valid digest field is not evidence that the
+      // snapshot itself was not changed after export.
+      if (previewSnapshot) await verifyInsumosPreviewSnapshotIntegrity(payload);
       await restoreBackupPayload({ env, payload, strict: !!previewSnapshot });
       const verification = previewSnapshot
         ? await verifyInsumosPreviewRestore({ env, payload })

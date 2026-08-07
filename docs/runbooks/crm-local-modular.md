@@ -23,16 +23,24 @@ abre diretamente o módulo Insumos como Gestor:
 
 Cada execução direta dessa prévia primeiro produz e valida um snapshot D1
 somente leitura, pelo `inventory/wrangler.toml`, antes de parar uma prévia já
-saudável. O payload contém apenas o domínio de Insumos necessário para telas e
-métricas (itens/lotes, saldos, ledger, transferências, contagens, compras e
-reposição); ele não copia credenciais, usuários, auditoria, IPs, payloads de
-notificação ou histórico de compartilhamento. A restauração local exige que as
-contagens de todas essas tabelas coincidam com o snapshot. Qualquer falha no
-export ou na validação preserva a prévia anterior como rollback.
+saudável. As tabelas de negócio são lidas juntas em um único lote remoto para
+evitar um recorte inconsistente entre itens, saldo e movimentações. O payload
+contém apenas o domínio de Insumos necessário para telas e métricas
+(itens/lotes, saldos, ledger, transferências, contagens, compras e reposição);
+ele não copia credenciais, usuários, auditoria, IPs, payloads de notificação
+ou histórico de compartilhamento. Antes de qualquer escrita local, o Worker
+recalcula o digest canônico, rejeita chaves fora desse contrato e exige que as
+contagens restauradas coincidam com o snapshot. Uma falha de exportação ou
+integridade anterior à troca preserva a prévia anterior como rollback. Se a
+inicialização local falhar depois da troca, o launcher encerra qualquer processo
+parcial e tenta restaurar automaticamente a versão anterior a partir da fonte
+privada que estava pronta.
 
 Cada snapshot usa um diretório D1 local novo, por identificador do snapshot,
 para que movimentações ou mutações de uma sessão anterior não contaminem os
-dados nem as métricas da próxima. O manifesto `current.json` expõe somente os
+dados nem as métricas da próxima. Cliques concorrentes são agrupados e os
+artefatos recebem nomes únicos; após uma prévia pronta, o runtime mantém no
+máximo duas gerações privadas. O manifesto `current.json` expõe somente os
 metadados verificáveis do snapshot em `insumosSnapshot` (origem, instante,
 digest e contagens), nunca os registros exportados.
 

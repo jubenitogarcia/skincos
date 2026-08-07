@@ -1989,6 +1989,9 @@ function Write-CrmThreadPreviewDescriptor {
         [Parameter(Mandatory = $true)][string]$TargetCommit,
         [Parameter(Mandatory = $true)][string]$SourceFingerprint,
         [string]$PublicHost = 'localhost',
+        [string]$OperationId = '',
+        [Nullable[int]]$OperationPid = $null,
+        [string]$OperationStartedAt = '',
         # The lifecycle state lives in the runtime's current.json. This
         # descriptor is provenance/ownership metadata written before the
         # detached launcher can finish, so "requested" remains truthful even
@@ -2019,6 +2022,9 @@ function Write-CrmThreadPreviewDescriptor {
         requestedHost = $PublicHost
         url = $null
         runtimeManifest = 'current.json'
+        operationId = $OperationId
+        operationPid = $OperationPid
+        operationStartedAt = $OperationStartedAt
         updatedAt = (Get-Date).ToString('o')
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Get-CrmThreadPreviewDescriptorPath -Spec $Spec) -Encoding utf8
 }
@@ -2057,6 +2063,77 @@ function Assert-CrmThreadPreviewOwnership {
         }
     }
     return $descriptor
+}
+
+function Test-CrmThreadPreviewOperationInFlight {
+    param(
+        [object]$Descriptor,
+        [object]$Manifest,
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint
+    )
+
+    if ($null -eq $Descriptor -or [string]$Descriptor.state -ne 'requested' -or
+        [string]::IsNullOrWhiteSpace([string]$Descriptor.operationId)) {
+        return $false
+    }
+    $readyForRequestedSnapshot = $null -ne $Manifest -and
+        [string]$Manifest.state -eq 'ready' -and
+        [string]$Manifest.targetCommit -eq $TargetCommit -and
+        [string]$Manifest.sourceFingerprint -eq $SourceFingerprint
+    if ($readyForRequestedSnapshot) { return $false }
+
+    $pidValue = 0
+    if ($null -ne $Descriptor.operationPid) {
+        [void][int]::TryParse([string]$Descriptor.operationPid, [ref]$pidValue)
+    }
+    if ($pidValue -gt 0) {
+        try {
+            $process = Get-Process -Id $pidValue -ErrorAction Stop
+            $expectedStart = [string]$Descriptor.operationStartedAt
+            if ([string]::IsNullOrWhiteSpace($expectedStart) -or
+                $process.StartTime.ToUniversalTime().ToString('o') -eq $expectedStart) {
+                return $true
+            }
+        } catch {
+            # A stale process id must never block a recovery action.
+        }
+    }
+
+    try {
+        $requestedAt = [DateTimeOffset]::Parse([string]$Descriptor.updatedAt)
+        return (([DateTimeOffset]::UtcNow - $requestedAt.ToUniversalTime()).TotalSeconds -lt 30)
+    } catch {
+        return $false
+    }
+}
+
+function Invoke-CrmThreadPreviewStartLock {
+    param(
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][scriptblock]$Operation
+    )
+
+    $mutexName = 'Local\SkincosCrmThreadPreview-{0}-{1}' -f `
+        ([string]$Spec.roleKey).ToLowerInvariant(), ([string]$Spec.module).ToLowerInvariant()
+    $mutex = [Threading.Mutex]::new($false, $mutexName)
+    $lockHeld = $false
+    try {
+        try {
+            $lockHeld = $mutex.WaitOne([TimeSpan]::FromSeconds(30))
+        } catch [Threading.AbandonedMutexException] {
+            $lockHeld = $true
+            Write-Host "[crm-thread-preview] Recuperando gate abandonado de $([string]$Spec.runtimeId)."
+        }
+        if (-not $lockHeld) {
+            throw "Tempo limite no gate da prévia '$([string]$Spec.runtimeId)'."
+        }
+        $result = & $Operation
+        return $result
+    } finally {
+        if ($lockHeld) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
 }
 
 function Assert-CrmThreadPreviewMaterializedSource {
@@ -2396,7 +2473,10 @@ function Export-CrmThreadPreviewInsumosSnapshot {
     )
     $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
     $snapshotRoot = Join-Path $runtimeRoot "snapshots"
-    $snapshotPath = Join-Path $snapshotRoot "insumos-d1-preview.json"
+    # A click may overlap the previous action for a few milliseconds before its
+    # local runner publishes the runtime lock. Each export therefore owns an
+    # immutable request path; only the selected path is handed to that runner.
+    $snapshotPath = Join-Path $snapshotRoot ("insumos-d1-preview-{0}.json" -f ([guid]::NewGuid().ToString('N')))
     $dependencyRoot = Join-Path $runtimeRoot "dependencies\insumos"
     New-Item -ItemType Directory -Path $snapshotRoot -Force | Out-Null
     $snapshotRootWsl = Convert-WindowsPathToWsl -Path $snapshotRoot
@@ -2439,7 +2519,11 @@ function Start-CrmInstanceRuntime {
         [Parameter(Mandatory = $true)][string]$SourceFingerprint,
         [Parameter(Mandatory = $true)][string]$SourceOrigin,
         [Parameter(Mandatory = $true)][object]$BuildPaths,
-        [string]$InsumosSnapshotPath = ''
+        [string]$InsumosSnapshotPath = '',
+        # Used only to restore a previously healthy local preview after the
+        # replacement has already failed. Normal Insumos starts always require
+        # a newly exported, verified snapshot.
+        [switch]$RollbackInsumosState
     )
     $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
     $runtimeRootWsl = Convert-WindowsPathToWsl -Path $runtimeRoot
@@ -2472,7 +2556,7 @@ function Start-CrmInstanceRuntime {
     $withTimekeeping = if ([bool]$Spec.dependencies.timekeeping) { 1 } else { 0 }
     $withWhatsapp = if ([bool]$Spec.dependencies.whatsapp) { 1 } else { 0 }
     $dynamicPortBundle = if (Test-CrmThreadPreviewSpec -Spec $Spec) { 1 } else { 0 }
-    $refreshInsumosSnapshot = $dynamicPortBundle -eq 1 -and $module -eq 'insumos'
+    $refreshInsumosSnapshot = $dynamicPortBundle -eq 1 -and $module -eq 'insumos' -and -not $RollbackInsumosState
     $openBrowser = if ($CrmRuntimeSuppressBrowser) { 0 } else { 1 }
     $username = "$roleLower-$module-local"
     $email = "$roleLower.$module@local.test"
@@ -2589,6 +2673,51 @@ function Start-CrmInstanceRuntime {
         -EnvVar $runtimeEnv `
         -SkipBootstrapCheck `
         -AcceptedExitCode @(0, 130, 143)
+}
+
+function Restore-CrmThreadPreviewPriorRuntime {
+    param(
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][object]$PriorManifest,
+        [Parameter(Mandatory = $true)][string]$SourceCheckout
+    )
+
+    if ([string]$PriorManifest.state -ne 'ready') {
+        throw 'A prévia anterior não estava pronta; não há rollback automático seguro.'
+    }
+    $priorSource = Convert-WslPathToWindows -Path ([string]$PriorManifest.worktree)
+    $allowedSourceRoot = Join-Path $operatorRuntimeRoot 'source\crm-local\immutable'
+    $resolvedPriorSource = if (Test-Path -LiteralPath $priorSource) { (Resolve-Path -LiteralPath $priorSource).Path } else { $null }
+    if ($null -eq $resolvedPriorSource -or -not (Test-WindowsPathWithinRoot -Path $resolvedPriorSource -Root $allowedSourceRoot)) {
+        throw 'A fonte da prévia anterior não está mais disponível no runtime privado.'
+    }
+    $priorTargetCommit = [string]$PriorManifest.targetCommit
+    $priorFingerprint = [string]$PriorManifest.sourceFingerprint
+    if ($priorTargetCommit -notmatch '^[0-9a-f]{40}$' -or [string]::IsNullOrWhiteSpace($priorFingerprint)) {
+        throw 'A proveniência da prévia anterior está incompleta; rollback automático recusado.'
+    }
+
+    Assert-CrmLocalLauncherContract -SourceRoot $resolvedPriorSource
+    $priorBaseSpec = Resolve-CrmLocalModuleSpec -Role ([string]$Spec.role) -Module ([string]$Spec.module) -SourceRoot $resolvedPriorSource
+    $priorSpec = Get-CrmThreadPreviewSpec -BaseSpec $priorBaseSpec -SourceRoot $resolvedPriorSource -SourceCheckout $SourceCheckout
+    if ([string]$priorSpec.runtimeId -ne [string]$Spec.runtimeId) {
+        throw 'A combinação da prévia anterior não corresponde ao runtime que precisa ser restaurado.'
+    }
+    $priorBuildPaths = Get-CrmInstanceBuildPaths -SourceFingerprint $priorFingerprint -SourceRoot $resolvedPriorSource
+    $priorSourceOrigin = [string]$PriorManifest.sourceOrigin
+    if ([string]::IsNullOrWhiteSpace($priorSourceOrigin)) {
+        $priorSourceOrigin = '{0}__{1}' -f (Convert-WindowsPathToWsl -Path $resolvedPriorSource), ([string]$priorSpec.runtimeId)
+    }
+
+    Write-Warning "[crm-thread-preview] A nova prévia falhou; restaurando a versão anterior de $([string]$Spec.runtimeId)."
+    Start-CrmInstanceRuntime `
+        -Spec $priorSpec `
+        -SourceRoot $resolvedPriorSource `
+        -TargetCommit $priorTargetCommit `
+        -SourceFingerprint $priorFingerprint `
+        -SourceOrigin $priorSourceOrigin `
+        -BuildPaths $priorBuildPaths `
+        -RollbackInsumosState
 }
 
 function Wait-CrmInstanceCurrent {
@@ -2730,7 +2859,9 @@ function Start-CrmThreadPreviewBackgroundUpdate {
         [Parameter(Mandatory = $true)][string]$SourceCheckout,
         [Parameter(Mandatory = $true)][string]$MaterializedSourceRoot,
         [Parameter(Mandatory = $true)][string]$TargetCommit,
-        [Parameter(Mandatory = $true)][string]$SourceFingerprint
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint,
+        [Parameter(Mandatory = $true)][string]$OperationId,
+        [string]$PublicHost = 'localhost'
     )
 
     $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
@@ -2750,8 +2881,19 @@ function Start-CrmThreadPreviewBackgroundUpdate {
     if ($CrmRuntimeSuppressBrowser) {
         $arguments += '-CrmRuntimeSuppressBrowser'
     }
-    Start-Process powershell.exe -ArgumentList $arguments -WindowStyle Hidden `
-        -RedirectStandardOutput $outLog -RedirectStandardError $errLog | Out-Null
+    $process = Start-Process powershell.exe -ArgumentList $arguments -WindowStyle Hidden `
+        -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru
+    $operationStartedAt = $process.StartTime.ToUniversalTime().ToString('o')
+    Write-CrmThreadPreviewDescriptor `
+        -Spec $Spec `
+        -SourceCheckout $SourceCheckout `
+        -MaterializedSourceRoot $MaterializedSourceRoot `
+        -TargetCommit $TargetCommit `
+        -SourceFingerprint $SourceFingerprint `
+        -PublicHost $PublicHost `
+        -OperationId $OperationId `
+        -OperationPid $process.Id `
+        -OperationStartedAt $operationStartedAt
     Write-Host "[crm-thread-preview] $([string]$Spec.role) / $([string]$Spec.label) está preparando a prévia em segundo plano; a URL só será publicada após o gate de prontidão."
 }
 
@@ -2831,23 +2973,44 @@ function Invoke-CrmThreadPreviewAction {
             $decision = $ready
         }
         $insumosSnapshot = $null
+        $priorManifest = if ($decision.Action -eq 'restart') { Get-CrmInstanceManifest -Spec $spec } else { $null }
         if ($refreshInsumosSnapshot) {
-            # Export failure is intentionally before Stop-CrmInstanceRuntime so
-            # a healthy prior preview remains the rollback path.
+            # Export and integrity failure are intentionally before
+            # Stop-CrmInstanceRuntime so a healthy prior preview remains the
+            # rollback path.
             $insumosSnapshot = Export-CrmThreadPreviewInsumosSnapshot -Spec $spec -SourceRoot $materializedSource
         }
         if ($decision.Action -eq 'restart') {
             Write-Host "[crm-thread-preview] Atualizando $([string]$spec.runtimeId): $($decision.Reason)."
             Stop-CrmInstanceRuntime -Spec $spec
         }
-        Start-CrmInstanceRuntime `
-            -Spec $spec `
-            -SourceRoot $materializedSource `
-            -TargetCommit $CrmThreadPreviewTargetCommit `
-            -SourceFingerprint $CrmThreadPreviewSourceFingerprint `
-            -SourceOrigin $sourceOrigin `
-            -BuildPaths $buildPaths `
-            -InsumosSnapshotPath ([string]$insumosSnapshot.Path)
+        try {
+            Start-CrmInstanceRuntime `
+                -Spec $spec `
+                -SourceRoot $materializedSource `
+                -TargetCommit $CrmThreadPreviewTargetCommit `
+                -SourceFingerprint $CrmThreadPreviewSourceFingerprint `
+                -SourceOrigin $sourceOrigin `
+                -BuildPaths $buildPaths `
+                -InsumosSnapshotPath ([string]$insumosSnapshot.Path)
+        } catch {
+            $replacementError = $_
+            if ($null -eq $priorManifest -or [string]$priorManifest.state -ne 'ready') {
+                throw
+            }
+            try {
+                # A partially started replacement must be stopped before the
+                # known-good runtime reclaims its dynamic port bundle.
+                Stop-CrmInstanceRuntime -Spec $spec
+                Restore-CrmThreadPreviewPriorRuntime `
+                    -Spec $spec `
+                    -PriorManifest $priorManifest `
+                    -SourceCheckout $sourceCheckout
+            } catch {
+                throw "A nova prévia falhou: $($replacementError.Exception.Message). O rollback automático também falhou: $($_.Exception.Message)"
+            }
+            throw "A nova prévia falhou, mas a versão anterior foi restaurada: $($replacementError.Exception.Message)"
+        }
         return
     }
 
@@ -2861,21 +3024,38 @@ function Invoke-CrmThreadPreviewAction {
         Assert-CrmLocalLauncherContract -SourceRoot $materializedSource
         $baseSpec = Resolve-CrmLocalModuleSpec -Role $Role -Module $Module -SourceRoot $materializedSource
         $spec = Get-CrmThreadPreviewSpec -BaseSpec $baseSpec -SourceRoot $materializedSource -SourceCheckout $sourceCheckout
-        $null = Assert-CrmThreadPreviewOwnership -Spec $spec -SourceCheckout $sourceCheckout
         $publicHost = Resolve-CrmRuntimePublicHost -WorkingProjectRoot $sourceCheckout
-        Write-CrmThreadPreviewDescriptor `
-            -Spec $spec `
-            -SourceCheckout $sourceCheckout `
-            -MaterializedSourceRoot $materializedSource `
-            -TargetCommit $targetCommit `
-            -SourceFingerprint ([string]$snapshot.Fingerprint) `
-            -PublicHost $publicHost
-        Start-CrmThreadPreviewBackgroundUpdate `
-            -Spec $spec `
-            -SourceCheckout $sourceCheckout `
-            -MaterializedSourceRoot $materializedSource `
-            -TargetCommit $targetCommit `
-            -SourceFingerprint ([string]$snapshot.Fingerprint)
+        $started = Invoke-CrmThreadPreviewStartLock -Spec $spec -Operation {
+            $ownedDescriptor = Assert-CrmThreadPreviewOwnership -Spec $spec -SourceCheckout $sourceCheckout
+            $currentManifest = Get-CrmInstanceManifest -Spec $spec
+            if (Test-CrmThreadPreviewOperationInFlight `
+                -Descriptor $ownedDescriptor `
+                -Manifest $currentManifest `
+                -TargetCommit $targetCommit `
+                -SourceFingerprint ([string]$snapshot.Fingerprint)) {
+                Write-Host "[crm-thread-preview] $([string]$spec.runtimeId) já possui uma atualização em andamento; a solicitação foi agrupada."
+                return $false
+            }
+            $operationId = [guid]::NewGuid().ToString()
+            Write-CrmThreadPreviewDescriptor `
+                -Spec $spec `
+                -SourceCheckout $sourceCheckout `
+                -MaterializedSourceRoot $materializedSource `
+                -TargetCommit $targetCommit `
+                -SourceFingerprint ([string]$snapshot.Fingerprint) `
+                -PublicHost $publicHost `
+                -OperationId $operationId
+            Start-CrmThreadPreviewBackgroundUpdate `
+                -Spec $spec `
+                -SourceCheckout $sourceCheckout `
+                -MaterializedSourceRoot $materializedSource `
+                -TargetCommit $targetCommit `
+                -SourceFingerprint ([string]$snapshot.Fingerprint) `
+                -OperationId $operationId `
+                -PublicHost $publicHost
+            return $true
+        }
+        if (-not $started) { return }
         Write-Host "[crm-thread-preview] Fonte: $sourceCheckout"
         Write-Host "[crm-thread-preview] Commit: $targetCommit | Snapshot: $([string]$snapshot.Fingerprint)"
         Write-Host "[crm-thread-preview] Acompanhe o manifesto em $(Join-Path (Get-CrmInstanceRuntimeRoot -Spec $spec) 'current.json'); use somente a URL registrada quando state=ready."

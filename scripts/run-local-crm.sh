@@ -101,6 +101,7 @@ CRM_TIMEKEEPING_RELEASE_SHA="${CRM_TIMEKEEPING_RELEASE_SHA:-}"
 CRM_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}"
 CRM_REFRESH_INSUMOS_SNAPSHOT="${CRM_REFRESH_INSUMOS_SNAPSHOT:-0}"
 CRM_INSUMOS_PREVIEW_SNAPSHOT="${CRM_INSUMOS_PREVIEW_SNAPSHOT:-0}"
+CRM_INSUMOS_PREVIEW_RETAIN_COUNT="${CRM_INSUMOS_PREVIEW_RETAIN_COUNT:-2}"
 CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
 readonly CRM_LOCAL_IDENTITY_VERSION_ID="00000000-0000-4000-8000-000000000001"
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
@@ -1072,6 +1073,59 @@ configure_insumos_preview_snapshot_state() {
   export CRM_INSUMOS_PERSIST_DIR CRM_INSUMOS_SNAPSHOT_ID
 }
 
+cleanup_insumos_preview_artifacts() {
+  if [[ "$CRM_INSUMOS_PREVIEW_SNAPSHOT" != "1" ]]; then
+    return 0
+  fi
+  local retain_count="$CRM_INSUMOS_PREVIEW_RETAIN_COUNT"
+  if [[ ! "$retain_count" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[crm-local] Retenção de snapshots de Insumos inválida; a limpeza privada foi ignorada." >&2
+    return 0
+  fi
+
+  local runtime_root state_root snapshot_root active_state active_snapshot
+  runtime_root="$(realpath -m "$CRM_RUNTIME_ROOT")"
+  state_root="$(realpath -m "$CRM_RUNTIME_ROOT/state/insumos-snapshots")"
+  snapshot_root="$(realpath -m "$CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT")"
+  active_state="$(realpath -m "$CRM_INSUMOS_PERSIST_DIR")"
+  active_snapshot="$(realpath -m "$CRM_INSUMOS_SNAPSHOT")"
+  if [[ "$state_root" != "$runtime_root/state/insumos-snapshots" ||
+        "$snapshot_root" != "$runtime_root/snapshots" ||
+        "$active_state" != "$state_root"/* ||
+        "$active_snapshot" != "$snapshot_root"/* ]]; then
+    echo "[crm-local] A limpeza recusou um caminho fora do runtime privado." >&2
+    return 0
+  fi
+
+  local preserved=0 entry stamp candidate name
+  while IFS='|' read -r stamp candidate; do
+    name="$(basename "$candidate")"
+    [[ "$name" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || continue
+    if [[ "$candidate" == "$active_state" ]]; then
+      continue
+    fi
+    if (( preserved < retain_count - 1 )); then
+      preserved=$((preserved + 1))
+      continue
+    fi
+    rm -rf -- "$candidate"
+  done < <(find "$state_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@|%p\n' 2>/dev/null | sort -rn)
+
+  preserved=0
+  while IFS='|' read -r stamp candidate; do
+    name="$(basename "$candidate")"
+    [[ "$name" =~ ^insumos-d1-preview-[0-9a-f]{32}\.json$ ]] || continue
+    if [[ "$candidate" == "$active_snapshot" ]]; then
+      continue
+    fi
+    if (( preserved < retain_count - 1 )); then
+      preserved=$((preserved + 1))
+      continue
+    fi
+    rm -f -- "$candidate"
+  done < <(find "$snapshot_root" -mindepth 1 -maxdepth 1 -type f -printf '%T@|%p\n' 2>/dev/null | sort -rn)
+}
+
 ensure_insumos_local_schema() {
   mkdir -p "$CRM_INSUMOS_PERSIST_DIR"
   echo "[crm-local] Aplicando migrations locais do Insumos..."
@@ -1645,6 +1699,9 @@ if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
   open_browser
 fi
 
+if ! cleanup_insumos_preview_artifacts; then
+  echo '[crm-local] A prévia ficou pronta, mas a limpeza privada de snapshots falhou.' >&2
+fi
 crm_persona_runtime_write_manifest ready
 
 echo "Notas:"
