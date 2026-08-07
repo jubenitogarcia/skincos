@@ -47,6 +47,8 @@ jobs:
       - run: node .github/scripts/validate-progressive-release.mjs
       - name: Test private Ponto Core baseline publisher
         run: node --test .github/scripts/ponto-core-baseline-publisher.test.mjs
+      - name: Test Ponto Core staging predecessor attestation
+        run: node --test .github/scripts/ponto-core-staging-precondition.test.mjs
       - name: Validate module catalog, maturity and dependency graph
         run: node .github/scripts/validate-module-catalog.mjs && node .github/scripts/validate-module-maturity.mjs
       - name: Validate domain import boundaries
