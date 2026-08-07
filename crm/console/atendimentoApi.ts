@@ -1006,6 +1006,95 @@ export type ClientIdentityReviewQueue = {
   workflow?: { writesReady: boolean }
 }
 
+export type IdentityClusterMember = {
+  source: 'attendance_client' | 'caixa_customer' | 'app_registration' | 'lead_profile' | string
+  sourceLabel: string
+  name: string
+  aliases: string[]
+  units: string[]
+  matchingFields: Array<{ field: 'name' | 'phone' | 'email' | 'cpf' | 'unit' | string; label: string; status: string; values?: string[] }>
+  freshness: 'current' | 'stale' | 'unknown' | string
+  stale: boolean
+  contact: { phone: string[]; email: string[]; masked: true }
+}
+
+export type IdentityReviewCluster = {
+  schemaVersion: 'crm-identity-cluster/v2' | string
+  clusterKey: string
+  version: string
+  summary: { memberCount: number; identityCount: number; sourceCount: number; unitCount: number }
+  members: IdentityClusterMember[]
+  membersBySource: Array<{ source: string; sourceLabel: string; count: number }>
+  units: string[]
+  matchingFields: string[]
+  conflicts: Array<{ field: string; label: string; severity: 'strong' | 'weak' | string; summary: string }>
+  evidence: { strong: IdentityClusterEvidence[]; weak: IdentityClusterEvidence[] }
+  confidence: number
+  decision: { state: 'pending' | 'confirmed' | 'rejected' | 'stale'; count: number; lastAt: string | null }
+  decisionHistory: Array<{ reviewType: string; decision: string; resultingStatus: string; recordedAt: string | null; stale: boolean }>
+  materializations: Array<{ mode: string; status: string; recordedAt: string | null; membersMoved: number }>
+  automaticLinks: Array<{ source: string; target: string; status: string; method: string; confidence: number; history: Array<{ transition: string; resultingStatus: string; origin: string; recordedAt: string | null }> }>
+  sourceChanges: Array<{ source: string; name: string; changedAt: string | null }>
+  staleState: 'current' | 'stale'
+  lineage: Array<{ relation: string; recordedAt: string | null }>
+  impact: {
+    membersToMove: Array<{ sourceLabel: string; name: string }>
+    survivorIdentity: { name: string; sourceCount: number; sourceLabels: string[] } | null
+    retiredIdentities: Array<{ name: string; sourceCount: number; sourceLabels: string[] }>
+    commercialHistoryPresent: boolean
+    consentHistoryPresent: boolean
+    predictedAction: string
+  }
+  undo: { blocked: boolean; reasons: string[]; blockingHistory: { commercialActions: number; consentPermissions: number; consentEvents: number; identityAuditEvents: number } }
+  bulkReview: { eligible: boolean; mode: 'bulk_safe' | 'individual_only' | string; sharedContactField: 'phone' | 'email' | null; reasons: string[] }
+  privacy: { contactsMasked: true; technicalIdsHidden: true; revealRequired: true }
+}
+
+export type IdentityClusterEvidence = {
+  kind: 'source_link' | string
+  label: string
+  strength: 'strong' | 'weak' | string
+  confidence: number
+  source: string
+  target: string
+  summary: string
+}
+
+export type IdentityClusterQueue = {
+  schemaVersion: string
+  total: number
+  limit: number
+  offset: number
+  clusters: IdentityReviewCluster[]
+  workflow: { writesReady: boolean }
+  workspace: { ready: boolean; migrationId: string }
+  graph: { members: number; edges: number }
+  pagination: { hasPrevious: boolean; hasNext: boolean }
+}
+
+export type IdentityClusterBulkPreview = {
+  schemaVersion: string
+  clusterCount: number
+  eligibleCount: number
+  blockedCount: number
+  memberCount: number
+  eligibleMembers: number
+  blockedReasons: string[]
+  clusters: Array<{ clusterKey: string; version: string; eligible: boolean; reasons: string[] }>
+  workspace: { ready: boolean; migrationId: string }
+  workflow: { writesReady: boolean }
+}
+
+export type IdentityClusterReveal = {
+  clusterKey: string
+  version: string
+  auditId: string | null
+  revealedAt: string | null
+  expiresAt: string
+  contacts: Array<{ sourceLabel: string; name: string; phone: string[]; email: string[] }>
+  privacy: { explicitAction: true; reasonRecorded: true; metricsAndLogsRedacted: true }
+}
+
 export type ClientIdentityReviewDecision = {
   id: string
   state: 'confirmed' | 'rejected' | 'reversed'
@@ -1070,6 +1159,40 @@ export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityR
   Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)) })
   const qs = params.toString()
   return api<ClientIdentityReviewQueue>(`/commercial/review${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchIdentityClusterWorkspace(filters: { q?: string; unit?: string; status?: string; stale?: boolean; limit?: number; offset?: number; includeResolved?: boolean } = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === true) params.set(key, 'true')
+    else if (value !== undefined && value !== '') params.set(key, String(value))
+  })
+  const qs = params.toString()
+  return api<IdentityClusterQueue>(`/commercial/identity-clusters${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchIdentityClusterDetail(clusterKey: string, filters: { unit?: string } = {}) {
+  const params = new URLSearchParams()
+  if (filters.unit && filters.unit !== 'all') params.set('unit', filters.unit)
+  const qs = params.toString()
+  return api<{ cluster: IdentityReviewCluster; workflow: { writesReady: boolean }; workspace: { ready: boolean; migrationId: string } }>(
+    `/commercial/identity-clusters/${encodeURIComponent(clusterKey)}${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export function previewIdentityClusterBulk(payload: { clusterKeys?: string[]; unit?: string }) {
+  return api<IdentityClusterBulkPreview>('/commercial/identity-clusters/bulk/preview', { method: 'POST', body: payload })
+}
+
+export function applyIdentityClusterBulk(payload: { clusterKeys: string[]; expectedVersions: Record<string, string>; reason: string; confirmation: 'REVIEW_CLUSTER'; unit?: string }, idempotencyKey: string) {
+  return api<{ schemaVersion: string; idempotent: boolean; appliedClusters: number; membersMoved: number; results: Array<{ clusterKey: string; idempotent: boolean; membersMoved?: number; decisionState?: string }> }>(
+    '/commercial/identity-clusters/bulk/apply',
+    { method: 'POST', body: payload, headers: { 'idempotency-key': idempotencyKey } },
+  )
+}
+
+export function revealIdentityCluster(clusterKey: string, payload: { expectedVersion: string; fields: Array<'phone' | 'email'>; reason: string; confirmation: 'REVIEW_CLUSTER'; unit?: string }) {
+  return api<IdentityClusterReveal>(`/commercial/identity-clusters/${encodeURIComponent(clusterKey)}/reveal`, { method: 'POST', body: payload })
 }
 
 export function decideClientIdentityReview(type: ClientIdentityReviewItem['type'], payload: {
