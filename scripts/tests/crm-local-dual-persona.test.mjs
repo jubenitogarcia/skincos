@@ -248,6 +248,7 @@ test('dedicated Insumos preview refreshes a private read-only D1 snapshot instea
   assert.match(launcher, /"CRM_INSUMOS_DEPENDENCY_STATE_FILE=\$insumosDependencyRootWsl\/dependency-key\.sha256"/)
   assert.match(launcher, /"CRM_INSUMOS_DEPENDENCY_CACHE_ROOT=\$insumosDependencyRootWsl\/cache"/)
   assert.match(launcher, /function Restore-CrmThreadPreviewPriorRuntime/)
+  assert.match(launcher, /function Assert-CrmThreadPreviewRollbackSource/)
   assert.match(launcher, /-RollbackInsumosState/)
   assert.match(launcher, /A nova prévia falhou, mas a versão anterior foi restaurada/)
   assert.match(launcher, /function Save-CrmThreadPreviewPriorReadyManifest/)
@@ -265,6 +266,13 @@ test('dedicated Insumos preview refreshes a private read-only D1 snapshot instea
   assert.match(runtime, /CRM_RUNTIME_INSUMOS_SNAPSHOT_ID/)
   assert.match(insumosSeed, /INSUMOS_SEED_EXPECT_SNAPSHOT_ID/)
   assert.match(insumosSeed, /INSUMOS_SEED_SNAPSHOT_MISMATCH/)
+
+  const restoreStart = launcher.indexOf('function Restore-CrmThreadPreviewPriorRuntime')
+  const restoreEnd = launcher.indexOf('function Test-CrmThreadPreviewPriorRuntimeStillReady', restoreStart)
+  const restore = launcher.slice(restoreStart, restoreEnd)
+  assert.match(restore, /Assert-CrmThreadPreviewRollbackSource[\s\S]*?-SourceFingerprint \$priorFingerprint/)
+  assert.match(restore, /\[string\]\$priorSpec\.configFingerprint -ne \[string\]\$PriorManifest\.configFingerprint/)
+  assert.doesNotMatch(restore, /Assert-CrmLocalLauncherContract/)
 })
 
 test('static launchers reject an occupied Pages port before invoking the frontend build', async (t) => {

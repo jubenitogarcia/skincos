@@ -7,6 +7,7 @@ import wrangler from 'wrangler';
 
 import { handleAdminRoutes } from '../src/routes/admin.js';
 import { verifyInsumosPreviewRestore } from '../src/services/backup.js';
+import { isAuthorizedDevSeedRequest } from '../src/lib/devSeed.js';
 
 const { getPlatformProxy } = wrangler;
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -194,4 +195,25 @@ test('local preview seed restores and proves the exact snapshot counts without r
     () => verifyInsumosPreviewRestore({ env, payload }),
     /INSUMOS_PREVIEW_SEED_COUNT_MISMATCH:insumosStocks/,
   );
+});
+
+test('local preview accepts only a valid raw token or private digest before bypassing CSRF', async () => {
+  const token = 'preview-token-which-is-long-enough';
+  const digest = createHash('sha256').update(token).digest('hex');
+  const url = new URL('http://local.test/admin/seed');
+  const request = new Request(url, {
+    method: 'POST',
+    headers: { 'x-seed-token': token },
+  });
+  assert.equal(await isAuthorizedDevSeedRequest({
+    env: { ALLOW_DEV_SEED: 'true', INSUMOS_SEED_TOKEN_SHA256: digest }, request, url,
+  }), true);
+  assert.equal(await isAuthorizedDevSeedRequest({
+    env: { ALLOW_DEV_SEED: 'true', INSUMOS_SEED_TOKEN_SHA256: digest },
+    request: new Request(url, { method: 'POST', headers: { 'x-seed-token': 'different-token' } }),
+    url,
+  }), false);
+  assert.equal(await isAuthorizedDevSeedRequest({
+    env: { ALLOW_DEV_SEED: 'false', INSUMOS_SEED_TOKEN_SHA256: digest }, request, url,
+  }), false);
 });

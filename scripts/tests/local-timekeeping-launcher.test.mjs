@@ -184,6 +184,7 @@ test('local launcher uses private env files, explicit KV control and exact relea
   assert.match(runner, /--env-file "\$CRM_TIMEKEEPING_ENV_FILE"/)
   assert.match(runner, /--env-file "\$CRM_INVENTORY_IDENTITY_ENV_FILE"/)
   assert.match(runner, /--var "ALLOW_DEV_SEED:true"/)
+  assert.match(runner, /INSUMOS_SEED_TOKEN_SHA256/)
   assert.match(runner, /--var "ALLOW_DEV_AUTH_BYPASS:\$auth_bypass"/)
   assert.match(runner, /module-control:timekeeping/)
   assert.match(runner, /module-control:timekeeping:emergency-latch/)
@@ -200,8 +201,9 @@ test('local launcher uses private env files, explicit KV control and exact relea
   assert.match(pagesRunner, /--env-file "\$PONTO_PAGES_ENV_FILE"/)
   assert.match(inventoryWrangler, /required = \["IDENTITY_WORKFORCE_HMAC_KEY", "SESSION_SECRET"\]/)
   const localConsoleWrangler = consoleWrangler.split('[[env.production.')[0]
-  assert.match(localConsoleWrangler, /\[secrets\]/)
-  for (const binding of pagesBindings) assert.match(localConsoleWrangler, new RegExp(`"${binding}"`))
+  // Pages-compatible bindings live in the private env file validated above;
+  // the generated Pages config must not reintroduce secret declarations.
+  assert.doesNotMatch(localConsoleWrangler, /\[secrets\]/)
   assert.equal(consolePackage.devDependencies.wrangler, '4.107.1')
   assert.match(pagesRunner, /validate-local-timekeeping-env\.mjs/)
   assert.match(pagesRunner, /"\$CRM_TIMEKEEPING_ENV_FILE" "\$PONTO_PAGES_ENV_FILE" "\$WORKSPACE_ROOT"/)

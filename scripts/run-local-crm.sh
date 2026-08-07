@@ -1145,6 +1145,33 @@ start_insumos_local() {
   if [[ "$CRM_PROFILE" == "realistic" ]]; then
     auth_bypass=true
   fi
+  # Wrangler 4 filters values from --env-file to [secrets].required. The
+  # production config intentionally does not declare the local-only seed
+  # token, so hand the Worker only a non-reversible digest through --var.
+  # The raw token remains solely in the private env file and seed request.
+  local seed_token=""
+  local seed_token_sha256=""
+  if [[ -n "$CRM_INSUMOS_SNAPSHOT" ]]; then
+    if [[ ! -f "$CRM_INSUMOS_SNAPSHOT" ]]; then
+      echo "[crm-local] Snapshot do Insumos não encontrado: $CRM_INSUMOS_SNAPSHOT" >&2
+      exit 1
+    fi
+    seed_token="$(sed -nE 's/^[[:space:]]*INSUMOS_SEED_TOKEN[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$/\1/p' "$CRM_INVENTORY_IDENTITY_ENV_FILE" | head -n 1)"
+    if [[ "$seed_token" == \"*\" && "$seed_token" == *\" ]]; then
+      seed_token="${seed_token:1:${#seed_token}-2}"
+    elif [[ "$seed_token" == \'*\' && "$seed_token" == *\' ]]; then
+      seed_token="${seed_token:1:${#seed_token}-2}"
+    fi
+    if [[ -z "$seed_token" ]]; then
+      echo "[crm-local] INSUMOS_SEED_TOKEN ausente no env-file privado validado." >&2
+      exit 1
+    fi
+    seed_token_sha256="$(printf '%s' "$seed_token" | sha256sum | awk '{print $1}')"
+    if [[ ! "$seed_token_sha256" =~ ^[a-f0-9]{64}$ ]]; then
+      echo "[crm-local] Não foi possível derivar o digest privado do seed de Insumos." >&2
+      exit 1
+    fi
+  fi
   local insumos_args=(
     --log-level "$CRM_LOCAL_LOG_LEVEL"
     --show-interactive-dev-session false
@@ -1154,6 +1181,9 @@ start_insumos_local() {
     --var "ALLOW_DEV_SEED:true"
     --var "ALLOW_DEV_AUTH_BYPASS:$auth_bypass"
   )
+  if [[ -n "$seed_token_sha256" ]]; then
+    insumos_args+=(--var "INSUMOS_SEED_TOKEN_SHA256:$seed_token_sha256")
+  fi
   if local_timekeeping_requested; then
     insumos_args+=(
       --var "APP_VERSION:$CRM_TIMEKEEPING_RELEASE_SHA"
@@ -1176,22 +1206,7 @@ start_insumos_local() {
   fi
 
   if [[ -n "$CRM_INSUMOS_SNAPSHOT" ]]; then
-    if [[ ! -f "$CRM_INSUMOS_SNAPSHOT" ]]; then
-      echo "[crm-local] Snapshot do Insumos não encontrado: $CRM_INSUMOS_SNAPSHOT" >&2
-      exit 1
-    fi
     echo "[crm-local] Aplicando seed de Insumos com $CRM_INSUMOS_SNAPSHOT"
-    local seed_token
-    seed_token="$(sed -nE 's/^[[:space:]]*INSUMOS_SEED_TOKEN[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$/\1/p' "$CRM_INVENTORY_IDENTITY_ENV_FILE" | head -n 1)"
-    if [[ "$seed_token" == \"*\" && "$seed_token" == *\" ]]; then
-      seed_token="${seed_token:1:${#seed_token}-2}"
-    elif [[ "$seed_token" == \'*\' && "$seed_token" == *\' ]]; then
-      seed_token="${seed_token:1:${#seed_token}-2}"
-    fi
-    if [[ -z "$seed_token" ]]; then
-      echo "[crm-local] INSUMOS_SEED_TOKEN ausente no env-file privado validado." >&2
-      exit 1
-    fi
     INSUMOS_SEED_TOKEN="$seed_token" \
       INSUMOS_SEED_EXPECT_SNAPSHOT_ID="${CRM_INSUMOS_SNAPSHOT_ID:-}" \
       INSUMOS_API_URL="http://127.0.0.1:${CRM_INSUMOS_PORT}/insumos" \

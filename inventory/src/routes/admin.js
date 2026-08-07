@@ -6,6 +6,7 @@ import {
   verifyInsumosPreviewSnapshotIntegrity,
   verifyInsumosPreviewRestore,
 } from '../services/backup.js';
+import { isAuthorizedDevSeedRequest } from '../lib/devSeed.js';
 import { resolveCrmTables } from '../d1Store.js';
 import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
@@ -493,10 +494,7 @@ export async function handleAdminRoutes({
   if (!url.pathname.startsWith('/admin/')) return null;
 
   if (url.pathname === '/admin/seed' && request.method === 'POST') {
-    const allowSeed = String(env?.ALLOW_DEV_SEED || '').trim().toLowerCase() === 'true';
-    const seedToken = String(env?.INSUMOS_SEED_TOKEN || '').trim();
-    const headerToken = String(request.headers.get('x-seed-token') || request.headers.get('x-insumos-seed-token') || '').trim();
-    if (!allowSeed || !seedToken || headerToken !== seedToken) {
+    if (!await isAuthorizedDevSeedRequest({ env, request, url })) {
       return withCORS(JSON.stringify({ success: false, error: 'Not found' }), { status: 404 }, appOrigin);
     }
 

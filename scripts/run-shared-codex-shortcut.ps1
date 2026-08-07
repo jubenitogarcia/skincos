@@ -1829,6 +1829,45 @@ function Assert-CrmLocalLauncherContract {
     }
 }
 
+function Assert-CrmThreadPreviewRollbackSource {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRoot,
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint
+    )
+
+    $immutableRoot = Join-Path $operatorRuntimeRoot 'source\crm-local\immutable'
+    $resolvedSource = (Resolve-Path -LiteralPath $SourceRoot).Path
+    if (-not (Test-WindowsPathWithinRoot -Path $resolvedSource -Root $immutableRoot)) {
+        throw "A fonte de rollback não pertence à raiz privada imutável: '$resolvedSource'."
+    }
+    $actualCommit = (& git -C $resolvedSource rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $TargetCommit) {
+        throw "A fonte de rollback não corresponde ao commit previamente pronto: '$resolvedSource'."
+    }
+    $sourceKey = (Get-CrmLocalSnapshotHash -Value $SourceFingerprint).Substring(0, 24)
+    $metadataPath = Join-Path $operatorRuntimeRoot ("source\crm-local\metadata\{0}.json" -f $sourceKey)
+    if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+        throw "A fonte de rollback não possui metadados privados de proveniência: '$resolvedSource'."
+    }
+    $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+    if ([string]$metadata.targetCommit -ne $TargetCommit -or
+        [string]$metadata.fingerprint -ne $SourceFingerprint -or
+        [string]::IsNullOrWhiteSpace([string]$metadata.sourceCheckout)) {
+        throw "Os metadados privados da fonte de rollback divergem da prévia anterior: '$resolvedSource'."
+    }
+
+    # Revision fingerprints naturally change over time. A rollback is safe if
+    # both launchers speak the same contract version and every source-specific
+    # identity above still matches the ready manifest.
+    $callerCatalog = Get-CrmLocalModuleCatalog
+    $sourceCatalog = Get-CrmLocalModuleCatalog -SourceRoot $resolvedSource
+    if ([int]$callerCatalog.launcherContractVersion -ne [int]$sourceCatalog.launcherContractVersion) {
+        throw "A versão de contrato da fonte de rollback diverge da ação atual: '$resolvedSource'."
+    }
+    return $sourceCatalog
+}
+
 function Resolve-CrmLocalModuleSpec {
     param(
         [Parameter(Mandatory = $true)]
@@ -2749,11 +2788,17 @@ function Restore-CrmThreadPreviewPriorRuntime {
         throw 'A proveniência da prévia anterior está incompleta; rollback automático recusado.'
     }
 
-    Assert-CrmLocalLauncherContract -SourceRoot $resolvedPriorSource
+    $null = Assert-CrmThreadPreviewRollbackSource `
+        -SourceRoot $resolvedPriorSource `
+        -TargetCommit $priorTargetCommit `
+        -SourceFingerprint $priorFingerprint
     $priorBaseSpec = Resolve-CrmLocalModuleSpec -Role ([string]$Spec.role) -Module ([string]$Spec.module) -SourceRoot $resolvedPriorSource
     $priorSpec = Get-CrmThreadPreviewSpec -BaseSpec $priorBaseSpec -SourceRoot $resolvedPriorSource -SourceCheckout $SourceCheckout
     if ([string]$priorSpec.runtimeId -ne [string]$Spec.runtimeId) {
         throw 'A combinação da prévia anterior não corresponde ao runtime que precisa ser restaurado.'
+    }
+    if ([string]$priorSpec.configFingerprint -ne [string]$PriorManifest.configFingerprint) {
+        throw 'A configuração da fonte de rollback diverge do manifesto previamente pronto.'
     }
     $priorBuildPaths = Get-CrmInstanceBuildPaths -SourceFingerprint $priorFingerprint -SourceRoot $resolvedPriorSource
     $priorSourceOrigin = [string]$PriorManifest.sourceOrigin
