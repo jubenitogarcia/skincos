@@ -37,7 +37,7 @@ function runtimeGrantStatements(target) {
     const appendOnly = [
         'commercial_attribution_windows', 'commercial_segment_versions',
         'commercial_segment_membership_snapshots', 'commercial_segment_memberships',
-        'commercial_analytics_metric_snapshots', 'commercial_analytics_events',
+        'commercial_analytics_metric_snapshots', 'commercial_analytics_events', 'commercial_analytics_mutations',
         'commercial_experiment_assignments',
     ]
     const mutable = ['commercial_segment_definitions', 'commercial_experiments']
@@ -123,6 +123,7 @@ const STATEMENTS = Object.freeze([
     )`,
     `create table if not exists crm_atendimento.commercial_analytics_events (
         id uuid primary key default gen_random_uuid(),
+        event_key text not null unique check (event_key ~ '^[a-f0-9]{64}$'),
         identity_id uuid not null references crm_atendimento.global_client_identities(id) on delete restrict,
         unit_id uuid references crm_atendimento.units(id) on delete restrict,
         campaign_id uuid references crm_atendimento.commercial_campaigns(id) on delete restrict,
@@ -135,6 +136,16 @@ const STATEMENTS = Object.freeze([
         correlation_id uuid,
         created_at timestamptz not null default now(),
         unique(identity_id, event_type, occurred_at, correlation_id)
+    )`,
+    `create table if not exists crm_atendimento.commercial_analytics_mutations (
+        id uuid primary key default gen_random_uuid(),
+        actor_id text not null check (char_length(actor_id) between 1 and 160 and actor_id !~ '[@]'),
+        operation text not null check (operation in ('attribution_window_create', 'segment_version_create', 'segment_snapshot_create', 'metric_snapshot_record', 'analytics_event_record', 'experiment_create', 'experiment_assign')),
+        mutation_key text not null check (mutation_key ~ '^[a-f0-9]{64}$'),
+        request_fingerprint text not null check (request_fingerprint ~ '^[a-f0-9]{64}$'),
+        response jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null default now(),
+        unique(actor_id, operation, mutation_key)
     )`,
     `create table if not exists crm_atendimento.commercial_experiments (
         id uuid primary key default gen_random_uuid(),
@@ -176,7 +187,7 @@ const STATEMENTS = Object.freeze([
     ...[
         'commercial_attribution_windows', 'commercial_segment_versions',
         'commercial_segment_membership_snapshots', 'commercial_segment_memberships',
-        'commercial_analytics_metric_snapshots', 'commercial_analytics_events',
+        'commercial_analytics_metric_snapshots', 'commercial_analytics_events', 'commercial_analytics_mutations',
         'commercial_experiment_assignments',
     ].flatMap((table) => [
         createTriggerIfMissing(`crm_atendimento.${table}`, `${table}_v2_immutable`, `create trigger ${table}_v2_immutable before update or delete on crm_atendimento.${table} for each row execute function crm_atendimento.prevent_commercial_analytics_evidence_mutation_v2()`),
@@ -187,7 +198,7 @@ const STATEMENTS = Object.freeze([
 const EVIDENCE_TABLES = Object.freeze([
     'commercial_attribution_windows', 'commercial_segment_versions',
     'commercial_segment_membership_snapshots', 'commercial_segment_memberships',
-    'commercial_analytics_metric_snapshots', 'commercial_analytics_events',
+    'commercial_analytics_metric_snapshots', 'commercial_analytics_events', 'commercial_analytics_mutations',
     'commercial_experiment_assignments',
 ])
 
@@ -218,7 +229,7 @@ async function assertDestination(client, databaseUrl, target) {
 export function commercialAnalyticsMigrationPlan() {
     return {
         id: COMMERCIAL_ANALYTICS_MIGRATION_ID,
-        adds: ['commercial_attribution_windows', 'commercial_segment_definitions', 'commercial_segment_versions', 'commercial_segment_membership_snapshots', 'commercial_segment_memberships', 'commercial_analytics_metric_snapshots', 'commercial_analytics_events', 'commercial_experiments', 'commercial_experiment_assignments'],
+        adds: ['commercial_attribution_windows', 'commercial_segment_definitions', 'commercial_segment_versions', 'commercial_segment_membership_snapshots', 'commercial_segment_memberships', 'commercial_analytics_metric_snapshots', 'commercial_analytics_events', 'commercial_analytics_mutations', 'commercial_experiments', 'commercial_experiment_assignments'],
         appendOnlyTables: EVIDENCE_TABLES,
         piiPolicy: 'Analytics stores only identity UUIDs for internal joins plus bounded aggregate metrics, hashes, dates, allowlisted codes and opaque actor identifiers. It stores no name, phone, email, message body, raw evidence or provider payload.',
         messagingPolicy: 'Analytics and experiments do not schedule, dispatch or retry messages. Control assignments only block crossover during the configured window.',

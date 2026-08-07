@@ -21,11 +21,14 @@ test('analytics migration is additive, PII-minimizing and cannot authorize messa
     assert.match(sql, /commercial_attribution_windows/)
     assert.match(sql, /commercial_segment_membership_snapshots/)
     assert.match(sql, /commercial_analytics_metric_snapshots/)
+    assert.match(sql, /event_key text not null unique/)
+    assert.match(sql, /commercial_analytics_mutations/)
     assert.match(sql, /commercial_experiment_assignments/)
     assert.match(sql, /before update or delete/)
     assert.match(sql, /before truncate/)
     assert.doesNotMatch(grants, /grant\s+(?:all privileges|delete|truncate)/)
     assert.match(grants, /grant select, insert on table crm_atendimento\.commercial_analytics_events/)
+    assert.match(grants, /grant select, insert on table crm_atendimento\.commercial_analytics_mutations/)
 })
 
 test('analytics migration readiness checks every immutable evidence relation', () => {
