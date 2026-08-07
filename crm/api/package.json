@@ -9,7 +9,7 @@
     "start": "node server.js",
     "start:continuous-workers": "node continuous-worker.js",
     "test:continuous-workers": "node --test server/__tests__/continuousJobRunner.test.js server/__tests__/continuousWorkerHealth.test.js server/__tests__/continuousWorkerService.test.js server/__tests__/clientesJobs.test.js scripts/clientesContinuousWorkerArchitecture.test.mjs",
-    "test": "node --test --test-concurrency=1 server/__tests__/*.test.js server/harmonia/__tests__/*.test.js server/atendimento/__tests__/*.test.js server/caixa/__tests__/*.test.js services/__tests__/*.test.js scripts/*.test.mjs",
+    "test": "node --test --test-concurrency=1 server/__tests__/*.test.js server/harmonia/__tests__/*.test.js server/atendimento/__tests__/*.test.js server/clinical/__tests__/*.test.js server/caixa/__tests__/*.test.js services/__tests__/*.test.js scripts/*.test.mjs",
     "import-atendimento-sheet": "node scripts/import-atendimento-sheet.mjs",
     "refresh-atendimento-source": "node scripts/refresh-atendimento-source.mjs",
     "import-gerencia-sheet": "node scripts/import-gerencia-sheet.mjs",
@@ -23,6 +23,7 @@
     "migrate-commercial-contact-rollout": "node scripts/migrate-atendimento-commercial-contact-rollout.mjs",
     "migrate-commercial-action-ledger": "node scripts/migrate-atendimento-commercial-action-ledger.mjs",
     "migrate-commercial-data-quality": "node scripts/migrate-atendimento-commercial-data-quality.mjs",
+    "migrate-clinical-approval": "node scripts/migrate-clinical-approval.mjs",
     "migrate-atendimento-staging": "node scripts/migrate-atendimento-staging.mjs",
     "refresh-commercial-data-quality": "node scripts/refresh-commercial-data-quality.mjs",
     "refresh-commercial-data-quality-staging": "node scripts/refresh-commercial-data-quality-staging.mjs",
@@ -45,6 +46,15 @@
   "overrides": {
     "glob": "^13.0.6",
     "rimraf": "^6.0.1",
-    "uuid": "11.1.1"
+    "uuid": "11.1.1",
+    "readdir-glob": {
+      "brace-expansion": "^2.1.4"
+    },
+    "minimatch@5.1.9": {
+      "brace-expansion": "^2.1.4"
+    },
+    "minimatch@10.2.5": {
+      "brace-expansion": "^5.0.9"
+    }
   }
 }
