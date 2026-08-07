@@ -21,6 +21,21 @@ abre diretamente o módulo Insumos como Gestor:
 .\scripts\run-shared-codex-shortcut.ps1 -Action CrmThreadPreview -CrmRole Gestor -CrmModule insumos
 ```
 
+Cada execução direta dessa prévia primeiro produz e valida um snapshot D1
+somente leitura, pelo `inventory/wrangler.toml`, antes de parar uma prévia já
+saudável. O payload contém apenas o domínio de Insumos necessário para telas e
+métricas (itens/lotes, saldos, ledger, transferências, contagens, compras e
+reposição); ele não copia credenciais, usuários, auditoria, IPs, payloads de
+notificação ou histórico de compartilhamento. A restauração local exige que as
+contagens de todas essas tabelas coincidam com o snapshot. Qualquer falha no
+export ou na validação preserva a prévia anterior como rollback.
+
+Cada snapshot usa um diretório D1 local novo, por identificador do snapshot,
+para que movimentações ou mutações de uma sessão anterior não contaminem os
+dados nem as métricas da próxima. O manifesto `current.json` expõe somente os
+metadados verificáveis do snapshot em `insumosSnapshot` (origem, instante,
+digest e contagens), nunca os registros exportados.
+
 O endereço publicado é gravado em
 `C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\thread-previews\gestor\insumos\current.json` somente quando `state` é `ready`; durante a
 inicialização, `url` permanece `null` e não deve ser usado. A prévia começa
@@ -78,6 +93,8 @@ C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\instances\<papel>\<mód
   logs\
   state\pages\
   state\insumos\
+  state\insumos-snapshots\
+  snapshots\
   state\timekeeping\
   state\whatsapp\
   state\wrangler-registry\
@@ -93,6 +110,11 @@ Na repetição de uma ação:
 3. auth, shell e dependências declaradas precisam responder saudáveis;
 4. somente então o navegador é reaberto no perfil daquela combinação;
 5. qualquer divergência encerra graciosamente apenas a combinação e reconstrói o necessário.
+
+A prévia direta de Insumos é a exceção deliberada ao reuso: uma ação concluída
+inicia um novo snapshot D1 privado. Cliques concorrentes esperam a mesma
+execução em andamento para não duplicar exportações ou trocar a prévia duas
+vezes.
 
 Locks publicam um owner atômico com token. Um owner vivo nunca é removido; locks incompletos recentes são tratados como contenção e owners mortos são movidos para quarentena antes da recuperação. A parada usa as identidades registradas e não varre processos ou portas por aproximação.
 

@@ -17,6 +17,7 @@ Commands:
   dev               Run local wrangler dev (foreground)
   deploy            Deploy worker via wrangler
   migrate           Apply D1 migrations (default DB: skincos-db)
+  snapshot-export   Export a read-only Insumos preview snapshot from D1
   import            Import Sheets -> D1 via API (requires MIGRATION_TOKEN)
 
 Env:
@@ -27,6 +28,7 @@ Env:
 Examples:
   ./backend/scripts/dev.sh insumos dev
   INSUMOS_D1_DB=skincos-db ./backend/scripts/dev.sh insumos migrate
+  ./backend/scripts/insumos.sh snapshot-export /private/runtime/insumos.json
   ./backend/scripts/dev.sh insumos deploy
   INSUMOS_MIGRATION_TOKEN=... ./backend/scripts/dev.sh insumos import upsert
 EOF
@@ -191,6 +193,12 @@ case "$cmd" in
       cd "$INSUMOS_DIR"
       run_pnpm exec wrangler d1 migrations apply "$db_name" --config wrangler.toml "$@"
     )
+    ;;
+  snapshot-export)
+    INSUMOS_D1_WRANGLER_BIN="$INSUMOS_DIR/node_modules/.bin/wrangler" \
+      INSUMOS_D1_CONFIG="$INSUMOS_DIR/wrangler.toml" \
+      INSUMOS_D1_MIGRATIONS_DIR="$INSUMOS_DIR/migrations" \
+      node "$ROOT_DIR/backend/scripts/insumos-d1-export.cjs" "$@"
     ;;
   import)
     mode="${1:-upsert}"

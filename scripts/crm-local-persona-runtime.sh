@@ -339,6 +339,8 @@ crm_persona_runtime_write_manifest() {
   CRM_RUNTIME_BROWSER_PROFILE="${CRM_BROWSER_PROFILE_DIR:-}" \
   CRM_RUNTIME_PAGES_STATE="${R2_PERSIST_DIR:-}" \
   CRM_RUNTIME_INSUMOS_STATE="${CRM_INSUMOS_PERSIST_DIR:-}" \
+  CRM_RUNTIME_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}" \
+  CRM_RUNTIME_INSUMOS_SNAPSHOT_ID="${CRM_INSUMOS_SNAPSHOT_ID:-}" \
   CRM_RUNTIME_TIMEKEEPING_STATE="${CRM_TIMEKEEPING_PERSIST_DIR:-}" \
   CRM_RUNTIME_WHATSAPP_STATE="${CRM_LOCAL_WA_RUNTIME_HOME:-}" \
   ROOT_DIR="$ROOT_DIR" \
@@ -357,6 +359,42 @@ const fs = require('fs')
 const output = process.argv[2]
 const number = (value) => /^\d+$/.test(value || '') ? Number(value) : null
 const enabled = (value) => value === '1'
+const insumosSnapshot = (() => {
+  const snapshotPath = process.env.CRM_RUNTIME_INSUMOS_SNAPSHOT
+  if (!snapshotPath) return null
+  try {
+    const value = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'))
+    const valid = value?.version === 2 &&
+      value?.kind === 'insumos-local-preview-snapshot' &&
+      typeof value?.snapshotId === 'string' &&
+      value.snapshotId === process.env.CRM_RUNTIME_INSUMOS_SNAPSHOT_ID &&
+      value?.sources?.d1?.readOnly === true &&
+      typeof value?.integrity?.d1Sha256 === 'string' &&
+      value?.sources?.d1?.tables && typeof value.sources.d1.tables === 'object'
+    if (!valid) return null
+    const tables = Object.fromEntries(Object.entries(value.sources.d1.tables).map(([key, table]) => [key, {
+      available: Boolean(table?.available),
+      count: Number(table?.count || 0),
+      watermark: table?.watermark || null,
+    }]))
+    return {
+      snapshotId: value.snapshotId,
+      createdAt: value.createdAt || null,
+      source: {
+        provider: value.sources.d1.provider || null,
+        readOnly: true,
+        environment: value.sources.d1.environment || null,
+        databaseName: value.sources.d1.databaseName || null,
+        databaseId: value.sources.d1.databaseId || null,
+        migrationDigest: value.sources.d1.migrationDigest || null,
+      },
+      integrity: { d1Sha256: value.integrity.d1Sha256, d1Bytes: Number(value.integrity.d1Bytes || 0) },
+      tables,
+    }
+  } catch {
+    return null
+  }
+})()
 const payload = {
   version: 3,
   state: process.env.CRM_RUNTIME_STATE,
@@ -406,6 +444,7 @@ const payload = {
     timekeeping: process.env.CRM_RUNTIME_TIMEKEEPING_STATE || null,
     whatsapp: process.env.CRM_RUNTIME_WHATSAPP_STATE || null,
   },
+  insumosSnapshot,
   browserProfile: process.env.CRM_RUNTIME_BROWSER_PROFILE || null,
   log: process.env.LOG_FILE,
 }

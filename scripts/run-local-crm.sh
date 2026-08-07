@@ -100,6 +100,7 @@ CRM_INVENTORY_IDENTITY_ENV_FILE="${CRM_INVENTORY_IDENTITY_ENV_FILE:-}"
 CRM_TIMEKEEPING_RELEASE_SHA="${CRM_TIMEKEEPING_RELEASE_SHA:-}"
 CRM_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}"
 CRM_REFRESH_INSUMOS_SNAPSHOT="${CRM_REFRESH_INSUMOS_SNAPSHOT:-0}"
+CRM_INSUMOS_PREVIEW_SNAPSHOT="${CRM_INSUMOS_PREVIEW_SNAPSHOT:-0}"
 CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
 readonly CRM_LOCAL_IDENTITY_VERSION_ID="00000000-0000-4000-8000-000000000001"
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
@@ -109,6 +110,7 @@ if [[ -z "${CRM_TARGET_COMMIT:-}" ]]; then
   CRM_TARGET_COMMIT="$(crm_source_git rev-parse HEAD 2>/dev/null || true)"
 fi
 crm_persona_runtime_init
+CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT="${CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT:-$CRM_RUNTIME_ROOT/snapshots}"
 CRM_BUILD_LOCK_DIR="${CRM_BUILD_LOCK_DIR:-$CRM_RUNTIME_ROOT/build.lock}"
 CRM_DEPENDENCY_STATE_ROOT="${CRM_DEPENDENCY_STATE_ROOT:-$(dirname "$CRM_BUILD_LOCK_DIR")/dependencies}"
 CRM_FRONTEND_DEPENDENCY_CACHE_ROOT="${CRM_FRONTEND_DEPENDENCY_CACHE_ROOT:-/home/$(id -un)/.cache/skincos/crm-local/frontend-dependencies}"
@@ -1009,11 +1011,65 @@ refresh_insumos_snapshot_if_needed() {
   if [[ "$CRM_REFRESH_INSUMOS_SNAPSHOT" != "1" ]]; then
     return 0
   fi
-  mkdir -p "$(dirname "$SNAPSHOT_DEFAULT_PATH")"
+  if [[ "$CRM_INSUMOS_PREVIEW_SNAPSHOT" == "1" && -z "$CRM_INSUMOS_SNAPSHOT" ]]; then
+    echo "[crm-local] A prévia de Insumos exige um caminho de snapshot privado." >&2
+    exit 1
+  fi
   local out_path="${CRM_INSUMOS_SNAPSHOT:-$SNAPSHOT_DEFAULT_PATH}"
-  echo "[crm-local] Exportando snapshot remoto de Insumos para $out_path"
-  node "$INSUMOS_EXPORTER" "$out_path"
-  CRM_INSUMOS_SNAPSHOT="$out_path"
+  local expected_snapshot_root
+  expected_snapshot_root="$(realpath -m "$CRM_RUNTIME_ROOT/snapshots")"
+  local snapshot_root
+  snapshot_root="$(realpath -m "$CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT")"
+  local resolved_output
+  resolved_output="$(realpath -m "$out_path")"
+  if [[ "$CRM_INSUMOS_PREVIEW_SNAPSHOT" == "1" &&
+        ( "$snapshot_root" != "$expected_snapshot_root" || "$resolved_output" != "$expected_snapshot_root"/* ) ]]; then
+    echo "[crm-local] O snapshot de prévia recusado está fora do runtime privado." >&2
+    exit 1
+  fi
+  mkdir -p "$snapshot_root"
+  echo "[crm-local] Atualizando snapshot remoto de Insumos (somente leitura)..."
+  INSUMOS_PREVIEW_SNAPSHOT_MODE=1 \
+    INSUMOS_PREVIEW_SNAPSHOT_ROOT="$snapshot_root" \
+    "$INSUMOS_HELPER" snapshot-export "$resolved_output"
+  CRM_INSUMOS_SNAPSHOT="$resolved_output"
+}
+
+configure_insumos_preview_snapshot_state() {
+  CRM_INSUMOS_SNAPSHOT_ID=""
+  if [[ "$CRM_INSUMOS_PREVIEW_SNAPSHOT" != "1" ]]; then
+    return 0
+  fi
+  if [[ -z "$CRM_INSUMOS_SNAPSHOT" || ! -f "$CRM_INSUMOS_SNAPSHOT" ]]; then
+    echo "[crm-local] O snapshot privado de Insumos não foi produzido." >&2
+    exit 1
+  fi
+  local expected_snapshot_root
+  expected_snapshot_root="$(realpath -m "$CRM_RUNTIME_ROOT/snapshots")"
+  local resolved_snapshot
+  resolved_snapshot="$(realpath -m "$CRM_INSUMOS_SNAPSHOT")"
+  if [[ "$resolved_snapshot" != "$expected_snapshot_root"/* ]]; then
+    echo "[crm-local] O snapshot de Insumos não pertence a este runtime privado." >&2
+    exit 1
+  fi
+  CRM_INSUMOS_SNAPSHOT_ID="$(node "$INSUMOS_EXPORTER" --inspect "$resolved_snapshot" --field snapshotId)"
+  if [[ ! "$CRM_INSUMOS_SNAPSHOT_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    echo "[crm-local] O snapshot de Insumos não passou na verificação de integridade." >&2
+    exit 1
+  fi
+  local runtime_root
+  runtime_root="$(realpath -m "$CRM_RUNTIME_ROOT")"
+  local snapshot_state_root
+  snapshot_state_root="$(realpath -m "$CRM_RUNTIME_ROOT/state/insumos-snapshots")"
+  if [[ "$snapshot_state_root" != "$runtime_root/state/insumos-snapshots" ]]; then
+    echo "[crm-local] O estado isolado de Insumos não pertence ao runtime privado." >&2
+    exit 1
+  fi
+  # A fresh private D1 directory prevents old local movements or mutations
+  # from being mixed into metrics restored from the remote snapshot.
+  CRM_INSUMOS_PERSIST_DIR="$snapshot_state_root/$CRM_INSUMOS_SNAPSHOT_ID"
+  CRM_INSUMOS_SNAPSHOT="$resolved_snapshot"
+  export CRM_INSUMOS_PERSIST_DIR CRM_INSUMOS_SNAPSHOT_ID
 }
 
 ensure_insumos_local_schema() {
@@ -1083,6 +1139,7 @@ start_insumos_local() {
       exit 1
     fi
     INSUMOS_SEED_TOKEN="$seed_token" \
+      INSUMOS_SEED_EXPECT_SNAPSHOT_ID="${CRM_INSUMOS_SNAPSHOT_ID:-}" \
       INSUMOS_API_URL="http://127.0.0.1:${CRM_INSUMOS_PORT}/insumos" \
       "$INSUMOS_SEEDER" "$CRM_INSUMOS_SNAPSHOT" >>"$LOG_FILE" 2>&1
   fi
@@ -1298,6 +1355,7 @@ BROWSER_DIAGNOSTICS_LOG="${CRM_BROWSER_DIAGNOSTICS_LOG:-$(dirname "$LOG_FILE")/c
 mkdir -p "$GATE_ARTIFACT_DIR"
 
 refresh_insumos_snapshot_if_needed
+configure_insumos_preview_snapshot_state
 
 stop_existing
 rotate_current_log
@@ -1338,7 +1396,7 @@ echo "  Rede   : $NETWORK_URL"
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   echo "Insumos local: http://127.0.0.1:${CRM_INSUMOS_PORT}/insumos"
   if [[ -n "$CRM_INSUMOS_SNAPSHOT" ]]; then
-    echo "Snapshot Insumos: $CRM_INSUMOS_SNAPSHOT"
+    echo "Snapshot Insumos: ${CRM_INSUMOS_SNAPSHOT_ID:-manual}"
   fi
 fi
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then

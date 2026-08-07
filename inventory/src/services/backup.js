@@ -36,6 +36,52 @@ function hasBackupPayloadInsumos(payload) {
     );
 }
 
+const INSUMOS_PREVIEW_TABLES = [
+    ['insumosItems', 'insumos_items'],
+    ['insumosStocks', 'insumos_stocks'],
+    ['insumosMovements', 'insumos_movements'],
+    ['insumosTransfers', 'insumos_transfers'],
+    ['insumosSuppliers', 'insumos_suppliers'],
+    ['insumosPurchaseOrders', 'insumos_purchase_orders'],
+    ['insumosPurchaseOrderLines', 'insumos_purchase_order_lines'],
+    ['insumosPurchaseReceipts', 'insumos_purchase_receipts'],
+    ['insumosReplenishmentPolicies', 'insumos_replenishment_policies'],
+    ['insumosReplenishmentSuggestions', 'insumos_replenishment_suggestions'],
+    ['insumosCountSessions', 'insumos_count_sessions'],
+    ['insumosCountLines', 'insumos_count_lines'],
+    ['insumosCountReads', 'insumos_count_reads'],
+];
+
+export function getInsumosPreviewSnapshotMetadata(payload) {
+    if (payload?.version !== 2 || payload?.kind !== 'insumos-local-preview-snapshot') return null;
+    const snapshotId = String(payload?.snapshotId || '');
+    const d1Sha256 = String(payload?.integrity?.d1Sha256 || '');
+    if (!/^[0-9a-f-]{36}$/i.test(snapshotId) || !/^[a-f0-9]{64}$/i.test(d1Sha256)) {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_INVALID');
+    }
+    if (payload?.sources?.d1?.readOnly !== true) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_NOT_READ_ONLY');
+    for (const [key] of INSUMOS_PREVIEW_TABLES) {
+        if (!Array.isArray(payload?.d1?.[key])) throw new Error(`INSUMOS_PREVIEW_SNAPSHOT_TABLE_INVALID:${key}`);
+    }
+    return { snapshotId, d1Sha256 };
+}
+
+export async function verifyInsumosPreviewRestore({ env, payload }) {
+    const snapshot = getInsumosPreviewSnapshotMetadata(payload);
+    if (!snapshot) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_INVALID');
+    const counts = {};
+    for (const [key, table] of INSUMOS_PREVIEW_TABLES) {
+        const expected = payload.d1[key].length;
+        const row = await env.DB.prepare(`SELECT COUNT(*) AS count FROM ${table}`).first();
+        const actual = Number(row?.count ?? -1);
+        if (!Number.isInteger(actual) || actual !== expected) {
+            throw new Error(`INSUMOS_PREVIEW_SEED_COUNT_MISMATCH:${key}`);
+        }
+        counts[key] = actual;
+    }
+    return { ...snapshot, counts };
+}
+
 // -------------------------------------------------------------
 // Backups (Cloudflare-only)
 // - Prefer storing large payloads in R2 when BACKUP_BUCKET exists.
@@ -305,7 +351,7 @@ export async function buildBackupPayload({ env }) {
     };
 }
 
-export async function restoreBackupPayload({ env, payload }) {
+export async function restoreBackupPayload({ env, payload, strict = false }) {
     if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
     const p = payload;
     if (!hasBackupPayloadInsumos(p)) throw new Error('PAYLOAD_INVALID');
@@ -677,12 +723,15 @@ export async function restoreBackupPayload({ env, payload }) {
                     )
                     .run();
             }
-        } catch {
-            // ignore
+        } catch (error) {
+            if (strict) throw error;
+            // Legacy restore is intentionally best-effort for historical backup
+            // files. The private preview sets strict and fails closed instead.
         }
-        try {
-            await env.DB.prepare('DELETE FROM audit_log').run();
-            for (const row of (p.d1.auditLog || []).reverse()) {
+        if (Array.isArray(p.d1.auditLog)) {
+            try {
+                await env.DB.prepare('DELETE FROM audit_log').run();
+                for (const row of p.d1.auditLog.slice().reverse()) {
                 await env.DB.prepare(
                     `INSERT INTO audit_log (ts, actor, role, action, entity, entity_id, unidade, ip, user_agent, idempotency_key, before_json, after_json)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -701,14 +750,18 @@ export async function restoreBackupPayload({ env, payload }) {
                         row.beforeJson || null,
                         row.afterJson || null
                     )
-                    .run();
+                        .run();
+                }
+            } catch (error) {
+                if (strict) throw error;
+                // Historical audit restoration remains best-effort outside the
+                // read-only local preview contract.
             }
-        } catch {
-            // ignore
         }
-        try {
-            await env.DB.prepare('DELETE FROM notification_snapshot').run();
-            for (const row of (p.d1.notificationSnapshots || []).reverse()) {
+        if (Array.isArray(p.d1.notificationSnapshots)) {
+            try {
+                await env.DB.prepare('DELETE FROM notification_snapshot').run();
+                for (const row of p.d1.notificationSnapshots.slice().reverse()) {
                 await env.DB.prepare(
                     `INSERT INTO notification_snapshot (ts, unidade, low_stock, expiring_soon, expired_with_stock, payload_json)
                      VALUES (?, ?, ?, ?, ?, ?)`
@@ -721,10 +774,13 @@ export async function restoreBackupPayload({ env, payload }) {
                         Number(row.expiredWithStock || 0),
                         row.payloadJson || null
                     )
-                    .run();
+                        .run();
+                }
+            } catch (error) {
+                if (strict) throw error;
+                // Historical notification restoration remains best-effort
+                // outside the read-only local preview contract.
             }
-        } catch {
-            // ignore
         }
     }
 

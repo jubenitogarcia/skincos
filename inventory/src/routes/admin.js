@@ -1,6 +1,10 @@
 // @ts-nocheck
 
-import { restoreBackupPayload } from '../services/backup.js';
+import {
+  getInsumosPreviewSnapshotMetadata,
+  restoreBackupPayload,
+  verifyInsumosPreviewRestore,
+} from '../services/backup.js';
 import { resolveCrmTables } from '../d1Store.js';
 import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
@@ -501,8 +505,15 @@ export async function handleAdminRoutes({
       if (!payload || typeof payload !== 'object') {
         return withCORS(JSON.stringify({ success: false, error: 'Payload inválido' }), { status: 400 }, appOrigin);
       }
-      await restoreBackupPayload({ env, payload });
-      return withCORS(JSON.stringify({ success: true, data: { restored: true } }), { status: 200 }, appOrigin);
+      const previewSnapshot = getInsumosPreviewSnapshotMetadata(payload);
+      await restoreBackupPayload({ env, payload, strict: !!previewSnapshot });
+      const verification = previewSnapshot
+        ? await verifyInsumosPreviewRestore({ env, payload })
+        : null;
+      return withCORS(JSON.stringify({
+        success: true,
+        data: { restored: true, snapshot: verification },
+      }), { status: 200 }, appOrigin);
     } catch (err) {
       const msg = String(err?.message || err || 'Erro ao restaurar');
       const status = msg === 'PAYLOAD_INVALID' ? 400 : 500;

@@ -2389,6 +2389,48 @@ function Stop-CrmInstanceRuntime {
         -SkipBootstrapCheck
 }
 
+function Export-CrmThreadPreviewInsumosSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][string]$SourceRoot
+    )
+    $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
+    $snapshotRoot = Join-Path $runtimeRoot "snapshots"
+    $snapshotPath = Join-Path $snapshotRoot "insumos-d1-preview.json"
+    $dependencyRoot = Join-Path $runtimeRoot "dependencies\insumos"
+    New-Item -ItemType Directory -Path $snapshotRoot -Force | Out-Null
+    $snapshotRootWsl = Convert-WindowsPathToWsl -Path $snapshotRoot
+    $snapshotPathWsl = Convert-WindowsPathToWsl -Path $snapshotPath
+    $dependencyRootWsl = Convert-WindowsPathToWsl -Path $dependencyRoot
+    $snapshotEnv = @(
+        "INSUMOS_PREVIEW_SNAPSHOT_MODE=1",
+        "INSUMOS_PREVIEW_SNAPSHOT_ROOT=$snapshotRootWsl",
+        "CRM_INSUMOS_DEPENDENCY_STATE_FILE=$dependencyRootWsl/dependency-key.sha256",
+        "CRM_INSUMOS_DEPENDENCY_LOCK_FILE=$dependencyRootWsl/install.lock",
+        "CRM_INSUMOS_DEPENDENCY_CACHE_ROOT=$dependencyRootWsl/cache"
+    )
+    Write-Host "[crm-thread-preview] Atualizando snapshot D1 de Insumos antes da troca da prévia."
+    Invoke-ShortcutWsl `
+        -WorkingProjectRoot $SourceRoot `
+        -ScriptPath "./backend/scripts/insumos.sh" `
+        -ArgumentList @("snapshot-export", $snapshotPathWsl) `
+        -EnvVar $snapshotEnv `
+        -SkipBootstrapCheck
+    if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
+        throw 'O exportador de Insumos terminou sem publicar o snapshot privado.'
+    }
+    $snapshotId = [string](Invoke-ShortcutWsl `
+        -WorkingProjectRoot $SourceRoot `
+        -Executable "node" `
+        -ArgumentList @("./backend/scripts/insumos-d1-export.cjs", "--inspect", $snapshotPathWsl, "--field", "snapshotId") `
+        -SkipBootstrapCheck)
+    $snapshotId = $snapshotId.Trim()
+    if ($snapshotId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+        throw 'O snapshot de Insumos publicado não passou na verificação de integridade.'
+    }
+    return [pscustomobject]@{ Path = $snapshotPath; SnapshotId = $snapshotId }
+}
+
 function Start-CrmInstanceRuntime {
     param(
         [Parameter(Mandatory = $true)][object]$Spec,
@@ -2396,7 +2438,8 @@ function Start-CrmInstanceRuntime {
         [Parameter(Mandatory = $true)][string]$TargetCommit,
         [Parameter(Mandatory = $true)][string]$SourceFingerprint,
         [Parameter(Mandatory = $true)][string]$SourceOrigin,
-        [Parameter(Mandatory = $true)][object]$BuildPaths
+        [Parameter(Mandatory = $true)][object]$BuildPaths,
+        [string]$InsumosSnapshotPath = ''
     )
     $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
     $runtimeRootWsl = Convert-WindowsPathToWsl -Path $runtimeRoot
@@ -2429,6 +2472,7 @@ function Start-CrmInstanceRuntime {
     $withTimekeeping = if ([bool]$Spec.dependencies.timekeeping) { 1 } else { 0 }
     $withWhatsapp = if ([bool]$Spec.dependencies.whatsapp) { 1 } else { 0 }
     $dynamicPortBundle = if (Test-CrmThreadPreviewSpec -Spec $Spec) { 1 } else { 0 }
+    $refreshInsumosSnapshot = $dynamicPortBundle -eq 1 -and $module -eq 'insumos'
     $openBrowser = if ($CrmRuntimeSuppressBrowser) { 0 } else { 1 }
     $username = "$roleLower-$module-local"
     $email = "$roleLower.$module@local.test"
@@ -2505,6 +2549,23 @@ function Start-CrmInstanceRuntime {
     )
     if (-not [string]::IsNullOrWhiteSpace($localScenario)) {
         $runtimeEnv += "CRM_META_ADS_SCENARIO=$localScenario"
+    }
+    if ($refreshInsumosSnapshot) {
+        if ([string]::IsNullOrWhiteSpace($InsumosSnapshotPath) -or
+            -not (Test-Path -LiteralPath $InsumosSnapshotPath -PathType Leaf)) {
+            throw 'A prévia de Insumos exige um snapshot D1 privado e validado antes de iniciar.'
+        }
+        # The snapshot is exported before the previous preview is stopped. The
+        # runner verifies it again and always uses a fresh private D1 state.
+        $snapshotRoot = Join-Path $runtimeRoot "snapshots"
+        $snapshotRootWsl = Convert-WindowsPathToWsl -Path $snapshotRoot
+        $snapshotPathWsl = Convert-WindowsPathToWsl -Path $InsumosSnapshotPath
+        $runtimeEnv += @(
+            "CRM_REFRESH_INSUMOS_SNAPSHOT=0",
+            "CRM_INSUMOS_SNAPSHOT=$snapshotPathWsl",
+            "CRM_INSUMOS_PREVIEW_SNAPSHOT=1",
+            "CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT=$snapshotRootWsl"
+        )
     }
     if ($module -eq 'users') {
         # The Users preview is the local integration sandbox for the unified
@@ -2733,6 +2794,17 @@ function Invoke-CrmThreadPreviewAction {
             -BuildDescriptor $descriptor `
             -BuildStatePath $buildPaths.State `
             -SourceRoot $materializedSource
+        $refreshInsumosSnapshot = (Test-CrmThreadPreviewSpec -Spec $spec) -and ([string]$spec.module -eq 'insumos')
+        if ($refreshInsumosSnapshot -and $decision.Action -eq 'reuse') {
+            # A ready process proves its code and health, not that its D1 data
+            # is current. A direct Insumos action therefore starts a new
+            # private snapshot; concurrent actions still coalesce in wait.
+            $decision = [pscustomobject]@{
+                Action = 'restart'
+                Reason = 'insumos_snapshot_refresh_required'
+                Manifest = $decision.Manifest
+            }
+        }
         if ($decision.Action -eq 'reuse') {
             if ($CrmRuntimeSuppressBrowser) {
                 Write-Host "[crm-thread-preview] $([string]$spec.runtimeId) já está pronto para este snapshot."
@@ -2758,6 +2830,12 @@ function Invoke-CrmThreadPreviewAction {
             }
             $decision = $ready
         }
+        $insumosSnapshot = $null
+        if ($refreshInsumosSnapshot) {
+            # Export failure is intentionally before Stop-CrmInstanceRuntime so
+            # a healthy prior preview remains the rollback path.
+            $insumosSnapshot = Export-CrmThreadPreviewInsumosSnapshot -Spec $spec -SourceRoot $materializedSource
+        }
         if ($decision.Action -eq 'restart') {
             Write-Host "[crm-thread-preview] Atualizando $([string]$spec.runtimeId): $($decision.Reason)."
             Stop-CrmInstanceRuntime -Spec $spec
@@ -2768,7 +2846,8 @@ function Invoke-CrmThreadPreviewAction {
             -TargetCommit $CrmThreadPreviewTargetCommit `
             -SourceFingerprint $CrmThreadPreviewSourceFingerprint `
             -SourceOrigin $sourceOrigin `
-            -BuildPaths $buildPaths
+            -BuildPaths $buildPaths `
+            -InsumosSnapshotPath ([string]$insumosSnapshot.Path)
         return
     }
 
