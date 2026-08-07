@@ -43,6 +43,10 @@ import {
     rollbackCommercialDataQualityMigration,
 } from '../server/atendimento/commercialDataQualityMigration.js'
 import {
+    applyClientesSourceOperationsMigration,
+    rollbackClientesSourceOperationsMigration,
+} from '../server/clientes/sourceOperationsMigration.js'
+import {
     applyIdentityReviewWorkflowMigration,
     rollbackIdentityReviewWorkflowMigration,
 } from '../server/atendimento/identityReviewMigration.js'
@@ -71,6 +75,7 @@ const migrations = [
     { id: '20260805_client_identity_materialization_schema_v1', apply: applyClientIdentityMaterializationMigration, rollback: rollbackClientIdentityMaterializationMigration },
     { id: '20260805_commercial_action_ledger_v1', apply: applyCommercialActionLedgerMigration, rollback: rollbackCommercialActionLedgerMigration },
     { id: '20260805_commercial_data_quality_queue_v1', apply: applyCommercialDataQualityMigration, rollback: rollbackCommercialDataQualityMigration },
+    { id: '20260807_clientes_source_operations_v2', apply: applyClientesSourceOperationsMigration, rollback: rollbackClientesSourceOperationsMigration },
     { id: '20260805_identity_review_workflow_v1', apply: applyIdentityReviewWorkflowMigration, rollback: rollbackIdentityReviewWorkflowMigration },
     { id: '20260806_clinical_cadence_approval_v1', apply: applyClinicalApprovalMigration, rollback: rollbackClinicalApprovalMigration },
 ]

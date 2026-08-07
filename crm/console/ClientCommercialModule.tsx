@@ -8,9 +8,11 @@ import {
   fetchCommercialReferences,
   fetchClientIdentityReviewQueue,
   fetchCommercialDataQuality,
+  fetchCommercialSourceOperations,
   fetchCommercialOverview,
   fetchCommercialProfile,
   isCommercialDataQualityScopeDenied,
+  isCommercialSourceOperationsScopeDenied,
   recordCommercialContactPermission,
   undoClientIdentityReview,
   updateCommercialAction,
@@ -22,6 +24,7 @@ import {
   type CommercialDataQualityFinding,
   type CommercialDataQualityQueue,
   type CommercialDataQualityStatus,
+  type CommercialSourceOperations,
   type CommercialOverview,
   type CommercialProfile,
   type CommercialProfileDetail,
@@ -30,6 +33,7 @@ import {
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
 const date = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo' })
+const dateTime = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })
 const priorityStyles: Record<string, string> = {
   high: 'border-rose-300/30 bg-rose-500/10 text-rose-100',
   medium: 'border-amber-300/30 bg-amber-500/10 text-amber-100',
@@ -87,6 +91,12 @@ function formatDate(value: string | null | undefined) {
   if (!value) return 'Sem registro'
   const parsed = new Date(`${String(value).slice(0, 10)}T12:00:00`)
   return Number.isNaN(parsed.getTime()) ? String(value) : date.format(parsed)
+}
+
+function formatDateTime(value: string | null | undefined, empty = 'Sem registro') {
+  if (!value) return empty
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? empty : dateTime.format(parsed)
 }
 
 function dateTimeLocalValue(value: string | null | undefined) {
@@ -369,6 +379,28 @@ function CommercialDataQualityPanel({ queue, loading, onRefresh }: {
   </section>
 }
 
+function sourceFreshnessStyle(value: string) {
+  if (value === 'healthy') return 'text-emerald-300'
+  if (value === 'preventive') return 'text-amber-200'
+  return 'text-rose-300'
+}
+
+function sourceFreshnessLabel(value: string) {
+  return ({ healthy: 'Em dia', preventive: 'Atenção', high: 'Defasada', missing: 'Sem leitura' } as Record<string, string>)[value] || 'Indisponível'
+}
+
+function SourceOperationsPanel({ operations, loading, onRefresh }: {
+  operations: CommercialSourceOperations
+  loading: boolean
+  onRefresh: () => Promise<void>
+}) {
+  return <section aria-labelledby="commercial-source-operations-heading" className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 shadow-[0_20px_60px_rgba(2,6,23,0.28)]">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 id="commercial-source-operations-heading" className="text-lg font-semibold text-white">Fontes operacionais</h2><p className="mt-1 text-sm text-slate-500">Freshness e execução por fonte, sem dados de clientes, chaves técnicas, fingerprints ou backups.</p></div><Button size="sm" variant="outline" onClick={() => void onRefresh()} disabled={loading}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />Atualizar fontes</Button></div>
+    <div className="mt-4 overflow-x-auto"><table aria-label="Estado operacional das fontes" className="w-full min-w-225 text-left text-xs"><thead className="border-y border-slate-800/80 text-slate-400"><tr><th className="px-2 py-3 font-medium">Fonte</th><th className="px-2 py-3 font-medium">Freshness</th><th className="px-2 py-3 font-medium">Execução</th><th className="px-2 py-3 font-medium">Sucesso / aplicação</th><th className="px-2 py-3 text-right font-medium">Lidos / aplicados</th><th className="px-2 py-3 text-right font-medium">Divergências</th><th className="px-2 py-3 font-medium">Snapshot</th><th className="px-2 py-3 font-medium">Retries / erro</th></tr></thead><tbody>{operations.sources.map((source) => <tr key={source.sourceId} className="border-b border-slate-800/65 align-top text-slate-300"><td className="px-2 py-3"><div className="font-medium text-slate-100">{source.label}</div><div className="mt-0.5 text-[11px] text-slate-500">{source.domain}{source.required ? ' · obrigatória' : ' · complementar'}</div></td><td className={`px-2 py-3 font-medium ${sourceFreshnessStyle(source.freshness)}`}>{sourceFreshnessLabel(source.freshness)}</td><td className="px-2 py-3"><div>{formatDateTime(source.lastExecution)}</div><div className="mt-1 text-[11px] text-slate-500">Próxima: {formatDateTime(source.nextExecution, 'aguardando')}</div></td><td className="px-2 py-3"><div>Sucesso: {formatDateTime(source.lastSuccess)}</div><div className="mt-1 text-[11px] text-slate-500">Aplicação: {formatDateTime(source.lastApplied, 'não aplicado')}</div></td><td className="px-2 py-3 text-right tabular-nums">{source.recordsRead} / {source.recordsApplied}</td><td className="px-2 py-3 text-right tabular-nums">{source.divergences}</td><td className="px-2 py-3">{source.snapshotComplete ? <span className="text-emerald-300">Completo</span> : <span className="text-amber-200">Pendente</span>}{source.reconciliationRequired ? <div className="mt-1 text-[11px] text-amber-200">Reconciliação necessária</div> : null}</td><td className="px-2 py-3"><div className="tabular-nums">{source.retries} retry(s) · {source.errors} erro(s)</div>{source.error ? <div className="mt-1 text-[11px] text-rose-300">{source.error.code}{source.error.retryable ? ' · retryável' : ''}</div> : null}</td></tr>)}</tbody></table></div>
+    {!operations.sources.length ? <p className="py-6 text-center text-sm text-slate-500">Nenhuma fonte operacional foi registrada neste ambiente.</p> : null}
+  </section>
+}
+
 const reviewTypeLabel: Record<ClientIdentityReviewItem['type'], string> = { attendance_name_merge: 'Grafia no Atendimento', attendance_caixa: 'Atendimento ↔ Caixa', app_attendance: 'Cadastro app ↔ Atendimento', app_caixa: 'Cadastro app ↔ Caixa', lead_app: 'Planilha ↔ Cadastro app', lead_caixa: 'Planilha ↔ Caixa' }
 function reviewValue(value: unknown) { return Array.isArray(value) ? value.filter(Boolean).join(', ') : typeof value === 'string' || typeof value === 'number' ? String(value) : '' }
 const reviewPresentationFields: Record<'context' | 'evidence', Record<ClientIdentityReviewItem['type'], Array<[string, string]>>> = {
@@ -546,6 +578,9 @@ export function ClientCommercialModule() {
   const [commercialDataQuality, setCommercialDataQuality] = useState<CommercialDataQualityQueue | null>(null)
   const [commercialDataQualityBusy, setCommercialDataQualityBusy] = useState(false)
   const [commercialDataQualityError, setCommercialDataQualityError] = useState('')
+  const [commercialSourceOperations, setCommercialSourceOperations] = useState<CommercialSourceOperations | null>(null)
+  const [commercialSourceOperationsBusy, setCommercialSourceOperationsBusy] = useState(false)
+  const [commercialSourceOperationsError, setCommercialSourceOperationsError] = useState('')
   const contactSummary = overview?.dataQuality?.contactEligibility || { eligible: 0, blocked: 0, reviewRequired: 0, controlsReady: false, contactWriteControlsReady: false }
   const policyWriteControlsReady = overview?.policy.commercialContactWriteControlsReady === true
 
@@ -565,6 +600,25 @@ export function ClientCommercialModule() {
       }
     } finally {
       setCommercialDataQualityBusy(false)
+    }
+  }, [])
+
+  const loadCommercialSourceOperations = useCallback(async () => {
+    try {
+      setCommercialSourceOperationsBusy(true); setCommercialSourceOperationsError('')
+      const result = await fetchCommercialSourceOperations()
+      if (result.ok) {
+        setCommercialSourceOperations(result)
+        return
+      }
+      setCommercialSourceOperations(null)
+      if (isCommercialSourceOperationsScopeDenied(result.error)) {
+        setCommercialSourceOperationsError('As fontes agregadas não podem ser exibidas no escopo de unidade atual.')
+      } else {
+        setCommercialSourceOperationsError('O painel operacional de fontes não está disponível neste ambiente.')
+      }
+    } finally {
+      setCommercialSourceOperationsBusy(false)
     }
   }, [])
 
@@ -633,6 +687,10 @@ export function ClientCommercialModule() {
     url.searchParams.set('clientesView', workspaceView)
     window.history.replaceState(window.history.state, document.title, `${url.pathname}${url.search}${url.hash}`)
   }, [workspaceView])
+
+  useEffect(() => {
+    if (workspaceView === 'quality') void loadCommercialSourceOperations()
+  }, [workspaceView, loadCommercialSourceOperations])
 
   const persistSavedViews = (next: typeof savedViews) => {
     setSavedViews(next)
@@ -732,6 +790,9 @@ export function ClientCommercialModule() {
     {workspaceView === 'governance' ? <section className="grid gap-4 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 xl:grid-cols-2"><div><h2 className="font-semibold text-white">Política de reativação</h2><p className="mt-1 text-sm text-slate-500">Define o intervalo entre contatos assistidos e as faixas de ausência, sem alterar o histórico clínico.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs text-slate-400">Intervalo mínimo de contato (dias)<input type="number" value={cooldown} onChange={(event) => setCooldown(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label><label className="text-xs text-slate-400">Faixas de ausência<input value={thresholds} onChange={(event) => setThresholds(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /></label></div>{!policyWriteControlsReady ? <p className="mt-4 text-xs text-amber-200">A migration de rollout ainda não está presente neste ambiente. As faixas podem ser salvas, mas o canário permanece indisponível.</p> : null}<label className="mt-4 flex items-start gap-2 text-xs text-amber-100"><input type="checkbox" checked={commercialContactWritesEnabled} disabled={!policyWriteControlsReady} onChange={(event) => setCommercialContactWritesEnabled(event.target.checked)} className="mt-0.5" />Abrir somente o canário de registros de contato. Isto não envia mensagens.</label><CanarySelection profiles={overview?.profiles || []} selectedIds={selectedCanaryIdentityIds} disabled={!policyWriteControlsReady} onToggle={toggleCanaryIdentity} onClear={() => setSelectedCanaryIdentityIds([])} /><Button size="sm" onClick={() => void savePolicy()} disabled={busy} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar política</Button></div><div className="border-t border-slate-800 pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"><h2 className="font-semibold text-white">Rascunho de regra clínica</h2><p className="mt-1 text-sm text-slate-500">Gestores comerciais apenas registram um rascunho. A aprovação exige o domínio clínico, segregação de funções e evidência; nenhuma prescrição ou recomendação automática é criada.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><select aria-label="Procedimento da regra clínica" value={cadenceProcedure} onChange={(event) => setCadenceProcedure(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"><option value="">Procedimento</option>{procedureOptions.map((procedure) => <option key={procedure.id} value={procedure.id}>{procedure.name}</option>)}</select><input aria-label="Intervalo em dias" type="number" min="1" placeholder="Dias" value={cadenceDays} onChange={(event) => setCadenceDays(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><select aria-label="Estado do rascunho" value={cadenceStatus} onChange={(event) => setCadenceStatus(event.target.value as CommercialCadenceManagerStatus)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white">{commercialCadenceManagerStatuses.map((item) => <option key={item} value={item}>{commercialCadenceStatusLabels[item]}</option>)}</select><input aria-label="Início da vigência" type="date" value={cadenceEffectiveFrom} onChange={(event) => setCadenceEffectiveFrom(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><input aria-label="Expiração opcional" type="date" value={cadenceExpiresAt} onChange={(event) => setCadenceExpiresAt(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white" /><input aria-label="Referência da evidência" placeholder="Referência/evidência" value={cadenceEvidence} onChange={(event) => setCadenceEvidence(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white sm:col-span-2" /><textarea aria-label="Justificativa clínica" placeholder="Justificativa (mínimo 10 caracteres)" value={cadenceJustification} onChange={(event) => setCadenceJustification(event.target.value)} className="min-h-20 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white sm:col-span-2" /></div><Button size="sm" variant="outline" onClick={() => void saveCadence()} disabled={busy || !cadenceProcedure || !cadenceDays || cadenceJustification.trim().length < 10 || cadenceEvidence.trim().length < 3} className="mt-3"><Save className="mr-2 h-4 w-4" />Salvar rascunho</Button>{cadenceNotice ? <div role="status" className="mt-2 text-xs text-slate-400">{cadenceNotice}</div> : null}</div></section> : null}
     {workspaceView === 'overview' ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Metric label="Retorno em risco" value={overview?.summary.returnAtRisk ?? '—'} detail="Sem presença registrada na faixa configurada" icon={CalendarClock} /><Metric label="Alto valor inativo" value={overview?.summary.highValueInactive ?? '—'} detail="Valor e ausência combinados" icon={CircleDollarSign} /><Metric label="Potencial de reativação" value={overview?.summary.reactivationPotential ?? '—'} detail="Prioridade para a equipe" icon={UserRoundCheck} /><Metric label="Aptos para WhatsApp" value={overview ? contactSummary.eligible : '—'} detail="Permissão explícita e bloqueios verificados" icon={UsersRound} /></div> : null}
     {workspaceView === 'quality' && commercialDataQualityError ? <div className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100">{commercialDataQualityError}</div> : null}
+    {workspaceView === 'quality' && commercialSourceOperationsError ? <div role="status" className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-4 text-sm text-amber-100">{commercialSourceOperationsError}</div> : null}
+    {workspaceView === 'quality' && commercialSourceOperationsBusy && !commercialSourceOperations ? <div role="status" className="rounded-xl border border-slate-800/80 bg-slate-950/55 p-4 text-sm text-slate-400">Carregando estado das fontes…</div> : null}
+    {workspaceView === 'quality' && commercialSourceOperations ? <SourceOperationsPanel operations={commercialSourceOperations} loading={commercialSourceOperationsBusy} onRefresh={loadCommercialSourceOperations} /> : null}
     {workspaceView === 'quality' && commercialDataQuality ? <CommercialDataQualityPanel queue={commercialDataQuality} loading={commercialDataQualityBusy} onRefresh={loadCommercialDataQuality} /> : null}
     {showProfileWorkspace ? <>
     <div className="flex flex-wrap gap-2 rounded-xl border border-slate-800/80 bg-slate-950/45 p-3"><select aria-label="Unidade" value={unit} onChange={(event) => setUnit(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="all">Todas as unidades</option>{units.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select><select aria-label="Segmento" value={segment} onChange={(event) => setSegment(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100">{segmentOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select><select aria-label="Prioridade" value={priority} onChange={(event) => setPriority(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Todas as prioridades</option><option value="high">Alta</option><option value="medium">Média</option><option value="normal">Normal</option></select><input aria-label="Buscar cliente" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente" className="min-w-48 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><select aria-label="Ordenar clientes" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="priority">Prioridade</option><option value="recency">Recência</option><option value="lifetime_sales">Faturamento</option><option value="visits">Visitas</option><option value="sales">Compras</option><option value="last_attendance">Último atendimento</option><option value="name">Nome</option></select><select aria-label="Direção da ordenação" value={direction} onChange={(event) => setDirection(event.target.value as 'asc' | 'desc')} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="desc">Maior primeiro</option><option value="asc">Menor primeiro</option></select><Button size="sm" onClick={() => void load({ offset: 0 })} disabled={busy}>Aplicar</Button><div className="flex w-full flex-wrap gap-2 border-t border-slate-800/80 pt-3"><input aria-label="Nome da visão salva" value={savedViewName} onChange={(event) => setSavedViewName(event.target.value)} placeholder="Nome da visão" className="min-w-48 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><Button size="sm" variant="outline" onClick={saveCurrentView} disabled={busy}>Salvar visão</Button>{savedViews.length ? <select aria-label="Visões salvas" defaultValue="" onChange={(event) => { const view = savedViews.find((item) => item.name === event.target.value); if (view) applySavedView(view); event.currentTarget.value = '' }} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Abrir visão salva</option>{savedViews.map((view) => <option key={view.name} value={view.name}>{view.name}</option>)}</select> : null}</div></div>

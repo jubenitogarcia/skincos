@@ -18,6 +18,10 @@ describe('Clientes workspace navigation', () => {
     expect(moduleSource).toContain("set('clientesView', workspaceView)")
     expect(moduleSource).toContain("workspaceView === 'identities' ? <IdentityReviewQueue /> : null")
     expect(moduleSource).toContain("workspaceView === 'quality' && commercialDataQuality")
+    expect(moduleSource).toContain("workspaceView === 'quality' && commercialSourceOperations")
+    expect(moduleSource).toContain("workspaceView === 'quality') void loadCommercialSourceOperations()")
+    expect(moduleSource).toContain('aria-label="Estado operacional das fontes"')
+    expect(moduleSource).toContain("'não aplicado'")
     expect(moduleSource).toContain("workspaceView === 'governance' ? <section")
   })
 

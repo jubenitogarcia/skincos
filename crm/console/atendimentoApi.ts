@@ -913,6 +913,34 @@ export type CommercialDataQualityFindingMutation = {
   status?: CommercialDataQualityStatus
 }
 
+export type CommercialSourceOperation = {
+  sourceId: string
+  domain: string
+  label: string
+  required: boolean
+  requiredFor: string[]
+  status: string
+  freshness: 'healthy' | 'preventive' | 'high' | 'missing' | string
+  lastExecution: string | null
+  lastRead: string | null
+  lastSuccess: string | null
+  lastApplied: string | null
+  nextExecution: string | null
+  recordsRead: number
+  recordsApplied: number
+  divergences: number
+  snapshotComplete: boolean
+  retries: number
+  errors: number
+  error: { code: string; retryable: boolean } | null
+  durationMs: number
+  reconciliationRequired: boolean
+}
+
+export type CommercialSourceOperations = {
+  sources: CommercialSourceOperation[]
+}
+
 export type CommercialOverview = {
   asOf: string
   policy: CommercialPolicy
@@ -1021,12 +1049,20 @@ export function fetchCommercialDataQuality(filters: {
   return api<CommercialDataQualityQueue>(`/commercial/data-quality${qs ? `?${qs}` : ''}`)
 }
 
+export function fetchCommercialSourceOperations() {
+  return api<CommercialSourceOperations>('/commercial/source-operations')
+}
+
 export function updateCommercialDataQualityFinding(id: string, payload: CommercialDataQualityFindingMutation) {
   return api<{ finding: CommercialDataQualityFinding }>(`/commercial/data-quality/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
 }
 
 export function isCommercialDataQualityScopeDenied(error: string | undefined) {
   return error === 'COMMERCIAL_DATA_QUALITY_UNIT_SCOPE_UNSUPPORTED' || error === 'FORBIDDEN'
+}
+
+export function isCommercialSourceOperationsScopeDenied(error: string | undefined) {
+  return error === 'COMMERCIAL_SOURCE_OPERATIONS_UNIT_SCOPE_UNSUPPORTED' || error === 'FORBIDDEN'
 }
 
 export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityReviewItem['type']; q?: string; limit?: number; offset?: number; includeResolved?: boolean } = {}) {
