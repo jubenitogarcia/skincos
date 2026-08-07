@@ -72,6 +72,7 @@ function runtimeGrants(target) {
     if (!role) throw migrationError('COMMERCIAL_CANARY_MIGRATION_RUNTIME_ROLE_UNKNOWN')
     return [
         `grant usage on schema crm_atendimento to ${role}`,
+        `grant select on table crm_atendimento.schema_migrations to ${role}`,
         `grant select, insert, update on table crm_atendimento.commercial_canary_cohorts to ${role}`,
         `grant select, insert on table crm_atendimento.commercial_canary_cohort_members to ${role}`,
         `grant select, insert, update on table crm_atendimento.commercial_canary_identity_validations to ${role}`,

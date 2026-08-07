@@ -28,7 +28,7 @@ test('defines an additive, fail-closed canary migration with immutable evidence'
     assert.throws(() => parseCommercialCanaryMigrationAction(['--apply', '--rollback']), (error) => error?.code === 'COMMERCIAL_CANARY_MIGRATION_ACTION_INVALID')
 })
 
-test('applies only the guarded local schema contract and grants no destructive runtime access', async () => {
+test('applies only the guarded local schema contract, grants the readiness registry, and grants no destructive runtime access', async () => {
     const calls = []
     const client = {
         async query(sql, params = []) {
@@ -58,6 +58,7 @@ test('applies only the guarded local schema contract and grants no destructive r
     assert.equal(/\bdrop\b/i.test(schema), false)
     assert.equal(calls.some(({ params }) => params.includes(COMMERCIAL_CANARY_LOCK_KEY)), true)
     const grants = calls.filter(({ sql }) => /^grant /i.test(sql)).map(({ sql }) => sql)
+    assert.equal(grants.some((sql) => /grant select on table crm_atendimento\.schema_migrations to skincos/i.test(sql)), true)
     assert.equal(grants.some((sql) => /\bdelete\b|\btruncate\b|\bddl\b/i.test(sql)), false)
 })
 
