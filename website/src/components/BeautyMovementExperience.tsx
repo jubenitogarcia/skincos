@@ -1301,7 +1301,10 @@ export default function BeautyMovementExperience({
                                 id="beauty-movement-deck-prompt"
                                 role="note"
                             >
-                                Clique no baralho <span aria-hidden="true">↗</span>
+                                Clique no baralho
+                                <span className={styles.deckPromptArrow} aria-hidden="true">
+                                    ↓
+                                </span>
                             </span>
                         ) : null}
                         {finaleStage === "collecting" ? (

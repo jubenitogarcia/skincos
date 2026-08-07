@@ -278,8 +278,8 @@
 .deckPrompt {
   position: absolute;
   z-index: 3;
-  bottom: 50px;
-  left: calc(50% + 68px);
+  bottom: 148px;
+  left: 50%;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -297,6 +297,7 @@
   white-space: nowrap;
   box-shadow: 0 8px 18px rgba(48, 48, 48, 0.1);
   pointer-events: none;
+  transform: translateX(-50%);
 }
 
 .deckPrompt::before {
@@ -305,6 +306,18 @@
   border-radius: 999px;
   background: var(--bm-yellow);
   content: "";
+}
+
+.deckPromptArrow {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  color: var(--bm-yellow-ink);
+  font-family: var(--font-brand-ui);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  transform: translateX(-50%);
 }
 
 .deckCard {

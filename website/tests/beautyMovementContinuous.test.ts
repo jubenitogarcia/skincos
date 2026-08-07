@@ -74,6 +74,8 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /event\.key !== "Enter" && event\.key !== " " && event\.key !== "Spacebar"/);
     assert.match(experience, /onKeyDown=\{handleDeckKeyDown\}/);
     assert.match(experience, /className=\{styles\.deckPrompt\}/);
+    assert.match(experience, /className=\{styles\.deckPromptArrow\}/);
+    assert.doesNotMatch(experience, /Clique no baralho <span aria-hidden="true">↗<\/span>/);
     assert.match(experience, /role="note"/);
     assert.doesNotMatch(experience, /<button\s+className=\{styles\.deckPrompt\}/);
     assert.match(experience, /data-deck-state=\{/);
@@ -129,6 +131,10 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /\.finaleCardGridSettled/);
     assert.match(styles, /\.inlineFinale/);
     assert.match(styles, /\.deckPrompt/);
+    assert.match(styles, /\.deckPrompt[\s\S]*bottom: 148px/);
+    assert.match(styles, /\.deckPrompt[\s\S]*left: 50%/);
+    assert.match(styles, /\.deckPromptArrow[\s\S]*top: calc\(100% \+ 4px\)/);
+    assert.match(styles, /\.deckPromptArrow[\s\S]*transform: translateX\(-50%\)/);
     assert.match(styles, /\.deckStage[\s\S]*bottom: 18px/);
     assert.match(styles, /\.deckStage:enabled \.deckCard,[\s\S]*\.deckStage:enabled \.deckBrandLogo[\s\S]*cursor: pointer/);
     assert.match(styles, /--deal-y: 122px/);
