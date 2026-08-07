@@ -165,6 +165,8 @@ const localAuthUser = {
 }
 
 type LocalProfessional = {
+  id?: string
+  workforceEmployeeId?: string | null
   name: string
   status: string
   units: string[]
@@ -792,7 +794,11 @@ async function maybeHandleLocalEscala(req: any, res: any): Promise<boolean> {
         toJson(res, 409, { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' }, { 'x-request-id': requestId })
         return true
       }
+      const professionalId = randomUUID()
+      const workforceEmployeeId = String(payload?.workforceEmployeeId || '').trim() || null
       localEscalaStore.professionals.push({
+        id: professionalId,
+        workforceEmployeeId,
         name: nextName,
         status: String(payload?.status || '').trim(),
         units: nextUnits,
@@ -804,7 +810,7 @@ async function maybeHandleLocalEscala(req: any, res: any): Promise<boolean> {
         instagram: String(payload?.instagram || '').trim(),
         color: String(payload?.color || '').trim(),
       })
-      toJson(res, 200, { ok: true, source: 'local-mock' }, { 'x-request-id': requestId })
+      toJson(res, 200, { ok: true, data: { professionalId, workforceEmployeeId }, source: 'local-mock' }, { 'x-request-id': requestId })
       return true
     }
 
@@ -826,15 +832,19 @@ async function maybeHandleLocalEscala(req: any, res: any): Promise<boolean> {
         toJson(res, 409, { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' }, { 'x-request-id': requestId })
         return true
       }
+      const current = localEscalaStore.professionals[index]
+      const professionalId = current.id || randomUUID()
       localEscalaStore.professionals[index] = {
-        ...localEscalaStore.professionals[index],
+        ...current,
+        id: professionalId,
+        workforceEmployeeId: current.workforceEmployeeId || String(payload?.workforceEmployeeId || '').trim() || null,
         name: nextName,
         status: String(payload?.status || '').trim(),
         units: nextUnits,
         role: String(payload?.role || '').trim(),
         shift: String(payload?.shift || '').trim(),
         nickname: String(payload?.nickname || '').trim(),
-        phone: String(payload?.phone || '').trim(),
+        phone: Object.prototype.hasOwnProperty.call(payload || {}, 'phone') ? String(payload?.phone || '').trim() : current.phone,
         email: String(payload?.email || '').trim(),
         instagram: String(payload?.instagram || '').trim(),
         color: String(payload?.color || '').trim(),
@@ -844,7 +854,7 @@ async function maybeHandleLocalEscala(req: any, res: any): Promise<boolean> {
           row.professional === currentName ? { ...row, professional: nextName } : row
         ))
       }
-      toJson(res, 200, { ok: true, source: 'local-mock' }, { 'x-request-id': requestId })
+      toJson(res, 200, { ok: true, data: { professionalId, workforceEmployeeId: localEscalaStore.professionals[index].workforceEmployeeId || null }, source: 'local-mock' }, { 'x-request-id': requestId })
       return true
     }
 

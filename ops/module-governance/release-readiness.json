@@ -10,6 +10,7 @@
     { "id": "crm", "currentUse": "CRM console returned 200 on 2026-07-23", "decision": "hold", "reason": "Console health returned HTML, so API readiness and independent monitoring are not evidenced." },
     { "id": "finance", "currentUse": "The explicitly selected main SHA 1a8eeec5a188301635603a3ecbd2eb4c8b18368c passed the canonical candidate, Worker/UI preview and staging, synthetic canary and controlled abort/kill-switch drill (runs 30673147811, 30673438315, 30673439481, 30673466768, 30673467862, 30673602091 and 30673708958). The isolated production foundation was promoted with the same SHA (Worker 30673820551, UI 30673971801) but remains disabled with zero real grants. origin/main later advanced to 3682518e69840c34904fae5f1432917ffd04217a in security-only PR #974.", "decision": "blocked-named-pilot-approval", "reason": "Staging rollback, kill switch, Finance scratch restore, fresh PostgreSQL offsite restore and continuous external monitor evidence are current. Only the nominal pilot package approval (owners, unit/cohort, window, support, training and abort criteria) remains before any activation; no production pilot is authorized by this record." },
     { "id": "identity", "currentUse": "Compatibility authentication path remains in use", "decision": "hold", "reason": "Identity is not independently deployed and must not be released as a new service until its cutover gate is complete." },
+    { "id": "team", "currentUse": "Unified Users/Equipe implementation is integrated in PR #1128 but not yet published", "decision": "hold", "reason": "The required main-branch autonomy check has not reported for the current head; staging migration, synthetic invitation journey, explicit source-link reconciliation and rollback evidence are therefore not yet eligible." },
     { "id": "integration", "currentUse": "Operator-managed connector executors", "decision": "hold", "reason": "Provider-specific release controls and recovery evidence are incomplete." },
     { "id": "inventory", "currentUse": "Production health returned 200 on 2026-07-23", "decision": "candidate-after-finance", "reason": "No disabled-by-default Inventory module flag, independent restore drill or external monitor evidence." },
     { "id": "messaging", "currentUse": "WhatsApp runtime is service-managed", "decision": "hold", "reason": "Channel recovery and provider delivery reconciliation need evidence before a user-facing release." },
@@ -58,6 +59,18 @@
       "successCriteria": "Two complete count cycles with zero unexplained variance, authorization checks passing, no lost mutation on retry and staged rollback proven.",
       "rollback": "Disable the new module flag, suspend writes, retain additive migrations, restore only through the Inventory runbook, and reconcile the delta from signed count sheets.",
       "requiredEvidence": ["implemented and tested disabled-by-default module flag", "staging count/reconciliation smoke", "isolated D1 restore drill", "external monitor and alert route", "pilot approval", "rollback rehearsal"]
+    },
+    {
+      "id": "team", "order": 4, "targetState": "staging", "status": "blocked-pending-main-and-staging",
+      "featureFlag": "UNIFIED_TEAM_ENABLED=false; enable only after the exact main-derived staging release passes the migration, RBAC, invitation and rollback gates.",
+      "pilotGroup": "Synthetic staging identities only; no production employee or real recipient is included in the first journey.",
+      "initialData": "Migrate active records only. Require explicit workforce/source IDs; route every ambiguous or missing link to human review and keep historical names read-only.",
+      "training": "Operator walkthrough of unit scope, hierarchy, invite/revoke, lifecycle status, Escala contingency and exception queue.",
+      "fallback": "Keep the Escala editor as controlled contingency until staging evidence is complete; disable the unified flag and stop invitations on rollback.",
+      "support": "Primary: clinic operations channel; escalation: identity/workforce owner @jubenitogarcia; evidence stays in the private operator runtime.",
+      "successCriteria": "One immutable staging SHA with additive migrations applied idempotently, synthetic invite/password/login journey, role/unit matrix, explicit Escala/Atendimento/Ponto links, audit/telemetry evidence and verified rollback checkpoint.",
+      "rollback": "Set UNIFIED_TEAM_ENABLED=false, stop invitations, preserve history and agendas, restore only the identified additive records from the encrypted checkpoint, and leave ambiguous links pending review.",
+      "requiredEvidence": ["main-branch required checks green", "staging release and binding fingerprint", "D1 pre-migration checkpoint and 0024/0025 noop rerun", "read-only active inventory fingerprint", "synthetic invitation/password/login evidence", "RBAC/unit/hierarchy matrix", "explicit source-link report", "Escala contingency and rollback rehearsal"]
     }
   ],
   "releasedModules": []
