@@ -87,7 +87,10 @@ function mergeNotifications(values: Array<NotificationsSummary | null | undefine
     expiredWithStock: valid.reduce((sum, value) => sum + numberOrZero(value.counts?.expiredWithStock), 0),
   }
   return {
-    generatedAt: valid.map((value) => value.generatedAt || '').sort().at(-1) || undefined,
+    generatedAt: (() => {
+      const timestamps = valid.map((value) => value.generatedAt || '').sort()
+      return timestamps[timestamps.length - 1] || undefined
+    })(),
     unidade: 'all',
     counts,
     lowStock: valid.flatMap((value) => value.lowStock || []),
@@ -137,7 +140,10 @@ function mergeQuality(values: Array<QualityReport | null | undefined>): QualityR
     }
   }
   return {
-    generatedAt: valid.map((value) => value.generatedAt || '').sort().at(-1) || undefined,
+    generatedAt: (() => {
+      const timestamps = valid.map((value) => value.generatedAt || '').sort()
+      return timestamps[timestamps.length - 1] || undefined
+    })(),
     unidade: 'all',
     summary: {
       total: valid.reduce((sum, value) => sum + numberOrZero(value.summary?.total), 0),
@@ -245,8 +251,8 @@ export function mergeInsightsData(values: Array<InsightsBundleData | null | unde
   const alerts = new Map<string, EstoqueAlerta>()
   for (const value of valid) {
     for (const alert of value.alertas || []) {
-      const key = [alert.codigoBarras, alert.registro, alert.tipoAlerta, alert.statusAlerta].map((part) => String(part || '')).join('|')
-      if (key) alerts.set(key, alert)
+      const keyParts = [alert.codigoBarras, alert.tipoAlerta, alert.statusAlerta].map((part) => String(part || ''))
+      if (keyParts.some(Boolean)) alerts.set(keyParts.join('|'), alert)
     }
   }
   return {
