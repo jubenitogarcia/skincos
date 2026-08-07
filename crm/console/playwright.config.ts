@@ -2,12 +2,19 @@ import { defineConfig, devices } from '@playwright/test'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const baseURL = process.env.E2E_BASE_URL || 'http://localhost:5173'
+const e2ePort = Number.parseInt(process.env.E2E_PORT || '5173', 10)
+if (!Number.isInteger(e2ePort) || e2ePort < 1024 || e2ePort > 65535) {
+  throw new Error('E2E_PORT must be an integer between 1024 and 65535')
+}
+const baseURL = process.env.E2E_BASE_URL || `http://localhost:${e2ePort}`
 const allowedLoopbackHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
 const parsedBaseURL = new URL(baseURL)
 
 if (parsedBaseURL.protocol !== 'http:' || !allowedLoopbackHosts.has(parsedBaseURL.hostname)) {
   throw new Error('E2E_BASE_URL must be an HTTP loopback URL for synthetic CRM tests')
+}
+if (parsedBaseURL.port && Number.parseInt(parsedBaseURL.port, 10) !== e2ePort) {
+  throw new Error('E2E_BASE_URL port must match E2E_PORT')
 }
 const headed = process.env.HEADED === '1' || process.env.HEADED === 'true' || process.env.PWDEBUG === '1'
 const isCodex =
@@ -75,7 +82,7 @@ export default defineConfig({
   ],
   webServer: startLocalServer
     ? {
-        command: 'npm run dev -- --host 127.0.0.1 --port 5173',
+        command: `npm run dev -- --host 127.0.0.1 --port ${e2ePort}`,
         url: baseURL,
         cwd: configDir,
         reuseExistingServer: !process.env.CI,
