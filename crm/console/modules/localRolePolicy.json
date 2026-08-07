@@ -44,6 +44,11 @@
     "escala-profissionais": [
       "GESTOR",
       "GERENTE"
+    ],
+    "users": [
+      "GESTOR",
+      "GERENTE",
+      "SUPERVISOR"
     ]
   },
   "impliedModuleGrants": {
