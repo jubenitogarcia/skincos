@@ -36,8 +36,63 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  changes:
+    name: Classify CI smoke surface
+    runs-on: ubuntu-latest
+    outputs:
+      website: ${{ steps.scope.outputs.website }}
+      crm_api: ${{ steps.scope.outputs.crm_api }}
+      whatsapp: ${{ steps.scope.outputs.whatsapp }}
+      codex: ${{ steps.scope.outputs.codex }}
+      observability: ${{ steps.scope.outputs.observability }}
+      orb_runtime: ${{ steps.scope.outputs.orb_runtime }}
+      ccg: ${{ steps.scope.outputs.ccg }}
+      all: ${{ steps.scope.outputs.all }}
+      node: ${{ steps.scope.outputs.node }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          zero_sha='0000000000000000000000000000000000000000'
+          base="${PR_BASE_SHA:-}"
+          if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]]; then base=""; fi
+          if [[ -z "$base" && "${BEFORE_SHA:-}" =~ ^[0-9a-f]{40}$ && "$BEFORE_SHA" != "$zero_sha" ]]; then
+            base="$BEFORE_SHA"
+          fi
+          if [[ -z "$base" ]]; then base="$(git rev-parse HEAD^)"; fi
+          git cat-file -e "$base^{commit}"
+          changed() {
+            if git diff --quiet "$base...$GITHUB_SHA" -- "$@"; then printf false; else printf true; fi
+          }
+          website="$(changed website booking package.json package-lock.json)"
+          crm_api="$(changed crm/api)"
+          whatsapp="$(changed messaging/channels/whatsapp/engine)"
+          codex="$(changed .codex skills ops/codex scripts/codex-*.mjs scripts/codex-*.sh scripts/*codex*.ps1)"
+          observability="$(changed scripts/observability)"
+          orb_runtime="$(changed orb ops/runtime platform service)"
+          ccg="$(changed orb/engine)"
+          all="$(changed .github/workflows/ci-smoke.yml)"
+          node=false
+          if [[ "$website" == true || "$crm_api" == true || "$whatsapp" == true || "$observability" == true || "$ccg" == true || "$all" == true ]]; then node=true; fi
+          echo "website=$website" >> "$GITHUB_OUTPUT"
+          echo "crm_api=$crm_api" >> "$GITHUB_OUTPUT"
+          echo "whatsapp=$whatsapp" >> "$GITHUB_OUTPUT"
+          echo "codex=$codex" >> "$GITHUB_OUTPUT"
+          echo "observability=$observability" >> "$GITHUB_OUTPUT"
+          echo "orb_runtime=$orb_runtime" >> "$GITHUB_OUTPUT"
+          echo "ccg=$ccg" >> "$GITHUB_OUTPUT"
+          echo "all=$all" >> "$GITHUB_OUTPUT"
+          echo "node=$node" >> "$GITHUB_OUTPUT"
+
   smoke:
     name: CI Smoke (Assert)
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (no submodules)
@@ -75,6 +130,7 @@ jobs:
           fi
 
       - name: Validate supervised Codex continuity
+        if: ${{ needs.changes.outputs.codex == 'true' || needs.changes.outputs.all == 'true' }}
         run: |
           set -euo pipefail
           python3 -m json.tool .codex/hooks.json >/dev/null
@@ -84,6 +140,7 @@ jobs:
           bash .codex/hooks/tests/test-host-wrappers.sh
 
       - name: Setup Node
+        if: ${{ needs.changes.outputs.node == 'true' }}
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.12.0"
@@ -91,55 +148,67 @@ jobs:
           cache-dependency-path: website/package-lock.json
 
       - name: Validate observability catalog
+        if: ${{ needs.changes.outputs.observability == 'true' || needs.changes.outputs.all == 'true' }}
         run: node scripts/observability/validate-catalog.mjs
 
       - name: Install website dependencies
+        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.all == 'true' }}
         working-directory: website
         run: npm ci
 
       - name: Website lint
+        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.all == 'true' }}
         working-directory: website
         run: npm run lint
 
       - name: Website tests
+        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.all == 'true' }}
         working-directory: website
         run: npm run test
 
       - name: Website build
+        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.all == 'true' }}
         working-directory: website
         run: npm run build
 
       - name: Install CRM API dependencies
+        if: ${{ needs.changes.outputs.crm_api == 'true' || needs.changes.outputs.all == 'true' }}
         working-directory: crm/api
         run: npm ci
 
       - name: Install WhatsApp engine dependencies
+        if: ${{ needs.changes.outputs.whatsapp == 'true' || needs.changes.outputs.all == 'true' }}
         working-directory: messaging/channels/whatsapp/engine
         run: npm ci --ignore-scripts
 
-      - name: Install backend workspace deps (pnpm)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
-        run: |
-          set -euxo pipefail
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-          pnpm -C backend install --frozen-lockfile
-
-      - name: Ensure jq
+      - name: Run CRM API regression smoke
+        if: ${{ needs.changes.outputs.crm_api == 'true' || needs.changes.outputs.all == 'true' }}
         run: |
           set -euo pipefail
-          command -v jq >/dev/null 2>&1 && exit 0
-          sudo apt-get update -y
-          sudo apt-get install -y jq
+          npm --prefix crm/api test
 
-      - name: Run assertive smoke in mock mode
+      - name: Run WhatsApp engine regression smoke
+        if: ${{ needs.changes.outputs.whatsapp == 'true' || needs.changes.outputs.all == 'true' }}
         run: |
           set -euo pipefail
-          bash backend/scripts/e2e.sh ci-smoke
+          npm --prefix messaging/channels/whatsapp/engine test
+
+      - name: Run Campaign Creative runtime tests
+        if: ${{ needs.changes.outputs.ccg == 'true' || needs.changes.outputs.all == 'true' }}
+        run: |
+          set -euo pipefail
+          node --test orb/engine/tests/campaign-creative-creator*.test.js
+
+      - name: Verify native Orb backup path
+        if: ${{ needs.changes.outputs.orb_runtime == 'true' || needs.changes.outputs.all == 'true' }}
+        run: |
+          set -euo pipefail
           bash orb/engine/scripts/test-backup-n8n-storage-copy.sh
 
   supervised-continuity-windows:
     name: Supervised continuity (Windows)
+    needs: changes
+    if: ${{ needs.changes.outputs.codex == 'true' || needs.changes.outputs.all == 'true' }}
     runs-on: windows-latest
     steps:
       - name: Checkout
