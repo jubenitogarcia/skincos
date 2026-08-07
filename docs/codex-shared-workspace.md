@@ -90,13 +90,14 @@ Os atalhos ficam no Menu Iniciar compartilhado:
 
 - `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Skincos Codex`
 
-O layout principal expõe seis atalhos de topo:
+O layout principal expõe sete atalhos de topo:
 
 - `Workspace`
 - `Contexto`
 - `CRM – Local`
 - `CRM – Módulos`
 - `CRM – Prévia da Thread`
+- `CRM – Prévia Usuários Equipe Thread`
 - `EF App`
 - `Orb`
 
@@ -142,6 +143,13 @@ recusa a partir do clone compartilhado, mantém uma proveniência com branch, SH
 e impressão do snapshot e abre o módulo em uma faixa de portas própria (`25000+`),
 sem substituir `CRM – Módulos`. Pelo mesmo menu é possível encerrar somente a
 prévia pertencente àquele worktree.
+
+### CRM – Prévia Usuários Equipe Thread
+
+Atalho direto para a prévia isolada do módulo `Usuários`, já com a persona
+Gestor e a flag local de equipe unificada habilitadas. Ele reutiliza a mesma
+proveniência e a mesma faixa privada da prévia da thread, mas não envia
+convites reais nem altera o banco remoto.
 
 ### EF App
 

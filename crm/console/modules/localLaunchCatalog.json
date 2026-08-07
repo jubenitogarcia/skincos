@@ -62,6 +62,15 @@
       ]
     },
     {
+      "key": "users",
+      "label": "Usuários",
+      "route": "/?module=users",
+      "onlineEnabled": true,
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
       "key": "caixa",
       "label": "Caixa",
       "route": "/?module=caixa",
