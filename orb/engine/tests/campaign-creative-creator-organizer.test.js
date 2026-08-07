@@ -19,8 +19,11 @@ test('Organizer builder produces a safe inactive subworkflow route to the operat
   assert.equal(workflow.id, ORGANIZER_ID);
   assert.equal(workflow.name, 'Campaign Creative Creator Organizer');
   assert.equal(workflow.active, false);
-  assert.equal(workflow.nodes.length, 5);
+  assert.equal(workflow.nodes.length, 6);
   assert.equal(workflow.nodes.some((node) => node.credentials), false);
+  const operationalTrigger = workflow.nodes.find((node) => node.name === 'Operational Campaign Request');
+  assert.equal(operationalTrigger.type, 'n8n-nodes-base.executeWorkflowTrigger');
+  assert.equal(operationalTrigger.parameters.inputSource, 'passthrough');
   const execute = workflow.nodes.find((node) => node.name === 'Execute Campaign Creative Creator');
   assert.equal(execute.parameters.workflowId.value, CREATOR_WORKFLOW_ID);
   assert.equal(execute.parameters.options.waitForSubWorkflow, true);
@@ -31,7 +34,10 @@ test('Organizer builder produces a safe inactive subworkflow route to the operat
   assert.match(request.parameters.jsCode, /max_jobs: defaultMaxJobs/);
   assert.equal(workflow.nodes.find((node) => node.name === 'Organizer Safe Defaults').parameters.assignments.assignments.find((assignment) => assignment.name === 'max_jobs').value, 4);
   assert.equal(workflow.connections['Build CCG Operational Request'].main[0][0].node, 'Execute Campaign Creative Creator');
+  assert.equal(workflow.connections['Operational Campaign Request'].main[0][0].node, 'Organizer Safe Defaults');
+  assert.equal(workflow.connections["When clicking 'Execute workflow'"].main[0][0].node, 'Organizer Safe Defaults');
   assert.equal(workflow.meta.publish_allowed, false);
+  assert.equal(workflow.meta.operational_entry, 'executeWorkflowTrigger');
   assert.equal(workflow.meta.no_public_webhook, true);
 });
 
