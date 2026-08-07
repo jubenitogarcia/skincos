@@ -52,6 +52,11 @@ export default function SiteBehaviorTracker() {
             if (!(target instanceof Element)) return;
             const anchor = target.closest("a[href]");
             if (!(anchor instanceof HTMLAnchorElement)) return;
+            // Some authenticated campaign links carry an operational message in
+            // their destination. Their dedicated component sends a redacted
+            // aggregate event instead of letting the generic tracker persist
+            // the full href/query envelope.
+            if (anchor.dataset.trackingSkip === "true") return;
             if (!canTrack(getCookieConsent())) return;
 
             const href = anchor.getAttribute("href") ?? "";

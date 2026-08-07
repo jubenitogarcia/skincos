@@ -1,5 +1,5 @@
 name: Deploy Core Worker
-run-name: Core ${{ inputs.unit }} ${{ inputs.target }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }} nonce=${{ inputs.orchestrator_nonce }}
+run-name: Core ${{ inputs.unit }} ${{ inputs.target }} team=${{ inputs.unified_team_enabled }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }} nonce=${{ inputs.orchestrator_nonce }}
 
 on:
   workflow_dispatch:
@@ -18,6 +18,11 @@ on:
         options: [api, inventory, all]
       bootstrap_finance_context:
         description: "Set the Finance service secret in the selected staging API once"
+        required: true
+        default: false
+        type: boolean
+      unified_team_enabled:
+        description: "Enable unified team routes for isolated staging validation only"
         required: true
         default: false
         type: boolean
@@ -798,6 +803,7 @@ jobs:
           AUTH_RESET_CODE_PEPPER: ${{ secrets.AUTH_RESET_CODE_PEPPER }}
           TARGET: ${{ inputs.target }}
           UNIT: ${{ inputs.unit }}
+          UNIFIED_TEAM_ENABLED: ${{ inputs.unified_team_enabled }}
           BOOTSTRAP_FINANCE_CONTEXT: ${{ inputs.bootstrap_finance_context }}
           RELEASE_SCOPE: ${{ inputs.release_scope }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -812,6 +818,10 @@ jobs:
             env_args=()
             environment_var=(--var "ENVIRONMENT:production")
             inventory_d1_name=skincos-db
+          fi
+          if [[ "$UNIFIED_TEAM_ENABLED" == "true" ]]; then
+            [[ "$TARGET" == "staging" ]] || { echo 'Unified team routes can only be enabled in staging.'; exit 1; }
+            [[ "$UNIT" == "inventory" || "$UNIT" == "all" ]] || { echo 'Unified team routes require the inventory unit.'; exit 1; }
           fi
           if [[ "$UNIT" == "inventory" || "$UNIT" == "all" ]]; then
             # D1 migrations must precede the Worker that requires them. They
@@ -841,7 +851,11 @@ jobs:
                 done
               fi
             fi
-            npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars "${env_args[@]}"
+            unified_team_var=false
+            [[ "$UNIFIED_TEAM_ENABLED" == "true" ]] && unified_team_var=true
+            npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars "${env_args[@]}" \
+              --var "APP_VERSION:$RELEASE_SHA" \
+              --var "UNIFIED_TEAM_ENABLED:$unified_team_var"
           fi
           if [[ "$UNIT" == "api" || "$UNIT" == "all" ]]; then
             [[ "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Core API deploy requires an explicit Timekeeping version UUID'; exit 1; }

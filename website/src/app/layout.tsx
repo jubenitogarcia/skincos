@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { headers } from "next/headers";
 import { Oxanium, Urbanist } from "next/font/google";
+import Script from "next/script";
 import CookieBanner from "@/components/CookieBanner";
 import Analytics from "@/components/Analytics";
 import MarketingPixels from "@/components/MarketingPixels";
@@ -129,6 +130,38 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {buildTime ? <meta name="x-app-build-time" content={buildTime} /> : null}
       </head>
       <body>
+        <Script id="beauty-movement-invite-fragment" strategy="beforeInteractive">
+          {`(function () {
+  var shouldScrub = false;
+  try {
+    var pathname = window.location.pathname.replace(/\\/+$/, "") || "/";
+    if (pathname !== "/beleza-em-movimento") return;
+    var fragment = window.location.hash.slice(1);
+    if (!fragment) return;
+    var params = new URLSearchParams(fragment);
+    if (!params.has("c")) return;
+    shouldScrub = true;
+    var token = params.get("c") || "";
+    // The invite itself must never reach analytics, attribution, referrers or
+    // the server through a URL. Keep it only long enough for the client to
+    // exchange it for an HttpOnly session, then remove it synchronously.
+    if (/^[A-Za-z0-9_-]{40,180}$/.test(token)) {
+      try {
+        window.sessionStorage.setItem("ef:beauty-movement:invite", token);
+      } catch (_) {
+        // Still scrub the URL; storage is only a hand-off optimization.
+      }
+    }
+  } catch (_) {
+    // A malformed fragment is treated exactly like an invalid invitation.
+  }
+  if (shouldScrub) {
+    try {
+      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+    } catch (_) {}
+  }
+})();`}
+        </Script>
         {site.key === "espacofacial" ? (
           <Suspense fallback={null}>
             <CampaignAttribution />

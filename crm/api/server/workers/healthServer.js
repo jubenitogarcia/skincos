@@ -1,5 +1,17 @@
 import http from 'node:http'
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1'])
+
+export function assertWorkerHealthHost(host) {
+    const value = String(host || '').trim().toLowerCase()
+    if (!LOOPBACK_HOSTS.has(value)) {
+        const error = new Error('CRM_CONTINUOUS_WORKER_HOST must be loopback-only')
+        error.code = 'WORKER_HEALTH_HOST_NOT_ALLOWED'
+        throw error
+    }
+    return value
+}
+
 function json(res, statusCode, body) {
     const payload = JSON.stringify(body)
     res.statusCode = statusCode
@@ -25,6 +37,8 @@ export function createWorkerHealthServer({
     host = process.env.CRM_CONTINUOUS_WORKER_HOST || '127.0.0.1',
     port = Number.parseInt(process.env.CRM_CONTINUOUS_WORKER_PORT || '8102', 10),
 } = {}) {
+    const boundHost = assertWorkerHealthHost(host)
+    const boundPort = Number.isInteger(port) && port >= 0 && port <= 65535 ? port : 8102
     const server = http.createServer((req, res) => {
         const pathname = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).pathname
         if (req.method !== 'GET') {
@@ -60,7 +74,7 @@ export function createWorkerHealthServer({
                 }
                 server.once('error', onError)
                 server.once('listening', onListening)
-                server.listen(Number.isFinite(port) ? port : 8102, host)
+                server.listen(boundPort, boundHost)
             })
         },
         close() {

@@ -151,6 +151,9 @@ function initialStatus(config) {
         lastError: null,
         loopCount: 0,
         errorCount: 0,
+        retryCount: 0,
+        lastRetryAt: null,
+        lastDurationMs: null,
         database: {
             configured: Boolean(config.databaseUrl),
             reachable: false,
@@ -191,6 +194,7 @@ export function startHarmoniaWorker({
     const provider = config.workerMode === 'assisted' ? providerFactory(config) : null
     let running = true
     let loopActive = false
+    let activeLoopPromise = null
     let interval = null
 
     status.running = config.workerMode !== 'disabled'
@@ -208,6 +212,7 @@ export function startHarmoniaWorker({
     async function loop() {
         if (!running || loopActive || config.workerMode === 'disabled') return
         loopActive = true
+        const startedAt = Date.now()
         status.lastLoopAt = new Date().toISOString()
         status.loopCount += 1
         try {
@@ -244,6 +249,8 @@ export function startHarmoniaWorker({
                         if (Number.isFinite(maxAttempts) && attempts < maxAttempts) {
                             const delaySeconds = computeBackoffSeconds(attempts, config)
                             const retryAt = new Date(Date.now() + delaySeconds * 1000).toISOString()
+                            status.retryCount += 1
+                            status.lastRetryAt = new Date().toISOString()
                             await store.withTransaction(async (tx) => store.rescheduleTask(tx, {
                                 taskId: task.id,
                                 runAt: retryAt,
@@ -287,12 +294,23 @@ export function startHarmoniaWorker({
             recordError(error)
         } finally {
             loopActive = false
+            status.lastDurationMs = Math.max(0, Date.now() - startedAt)
         }
     }
 
+    function triggerLoop() {
+        if (!running || activeLoopPromise) return
+        const promise = loop()
+        activeLoopPromise = promise
+        promise.then(
+            () => { if (activeLoopPromise === promise) activeLoopPromise = null },
+            () => { if (activeLoopPromise === promise) activeLoopPromise = null },
+        )
+    }
+
     if (config.workerMode !== 'disabled') {
-        interval = setInterval(() => { void loop() }, Math.max(250, Number(intervalMs) || 1500))
-        void loop()
+        interval = setInterval(triggerLoop, Math.max(250, Number(intervalMs) || 1500))
+        triggerLoop()
     }
 
     return {
@@ -300,6 +318,7 @@ export function startHarmoniaWorker({
             if (!running) return
             running = false
             if (interval) clearInterval(interval)
+            if (activeLoopPromise) await activeLoopPromise
             status.running = false
             status.ready = false
             status.stoppedAt = new Date().toISOString()
