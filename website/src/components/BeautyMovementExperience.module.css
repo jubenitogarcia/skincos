@@ -264,6 +264,11 @@
   cursor: pointer;
 }
 
+.deckStage:enabled .deckCard,
+.deckStage:enabled .deckBrandLogo {
+  cursor: pointer;
+}
+
 .deckStage:focus-visible {
   outline: 3px solid var(--bm-yellow);
   outline-offset: 7px;

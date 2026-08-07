@@ -130,6 +130,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /\.inlineFinale/);
     assert.match(styles, /\.deckPrompt/);
     assert.match(styles, /\.deckStage[\s\S]*bottom: 18px/);
+    assert.match(styles, /\.deckStage:enabled \.deckCard,[\s\S]*\.deckStage:enabled \.deckBrandLogo[\s\S]*cursor: pointer/);
     assert.match(styles, /--deal-y: 122px/);
     assert.match(styles, /\.progressItemCurrent \.progressButton[\s\S]*background: var\(--bm-yellow\)/);
     assert.match(styles, /\.progressButton \{[\s\S]*min-height: 44px/);
