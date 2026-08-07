@@ -649,7 +649,7 @@ jobs:
           (cd ../api && npm install --no-package-lock --no-audit --no-fund)
         working-directory: inventory
 
-      - name: Verify exact cataloged Ponto Core staging bootstrap predecessor
+      - name: Verify cataloged Ponto Core staging predecessor
         id: core_bootstrap
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.release_scope == 'ponto' && inputs.target == 'staging' && inputs.unit == 'api' }}
         env:
@@ -658,101 +658,38 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          mapfile -t expected < <(node --input-type=module - <<'NODE'
-          import fs from "node:fs";
-          const catalog = JSON.parse(fs.readFileSync("platform/deploy/operational-units.json", "utf8"));
-          const bootstrap = catalog.units.find(unit => unit.id === "ponto-core-baseline")?.promotion?.bootstrapEvidence;
-          const artifact = bootstrap?.artifacts?.staging;
-          for (const value of [
-            bootstrap?.workflowRunId,
-            artifact?.id,
-            bootstrap?.sourceSha,
-            artifact?.deploymentId,
-            artifact?.versionId,
-            artifact?.digest,
-            artifact?.worker,
+          proof_file="$RUNNER_TEMP/ponto-core-bootstrap-staging/precondition.json"
+          node .github/scripts/ponto-core-staging-precondition.mjs assert "$proof_file"
+          mapfile -t proof < <(node - "$proof_file" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          for (const field of [
+            "workflowRunId",
+            "artifactId",
+            "artifactDigest",
+            "sourceSha",
+            "deploymentId",
+            "versionId",
+            "worker",
+            "predecessorMode",
           ]) {
-            if (!value || /[\r\n]/.test(String(value))) throw new Error("staging bootstrap catalog entry is invalid");
-            process.stdout.write(`${value}\n`);
+            if (!value[field] || /[\r\n]/.test(String(value[field]))) throw new Error(`Invalid precondition field: ${field}`);
+            process.stdout.write(`${value[field]}\n`);
           }
           NODE
           )
-          [[ "${#expected[@]}" == 7 ]] || { echo 'Incomplete staging bootstrap catalog entry'; exit 1; }
-          run_id="${expected[0]}"
-          artifact_id="${expected[1]}"
-          source_sha="${expected[2]}"
-          deployment_id="${expected[3]}"
-          version_id="${expected[4]}"
-          artifact_digest="${expected[5]}"
-          worker="${expected[6]}"
-          evidence_dir="$RUNNER_TEMP/ponto-core-bootstrap-staging"
-          mkdir -p "$evidence_dir/unpacked"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$evidence_dir/run.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" > "$evidence_dir/artifact.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$evidence_dir/artifact.zip"
-          unzip -q "$evidence_dir/artifact.zip" -d "$evidence_dir/unpacked"
-          mapfile -t evidence_files < <(find "$evidence_dir/unpacked" -type f -name evidence.json -print)
-          [[ "${#evidence_files[@]}" == 1 ]] || { echo 'Bootstrap artifact must contain exactly one evidence.json'; exit 1; }
-          node .github/scripts/ponto-core-bootstrap-evidence.mjs verify staging \
-            "${evidence_files[0]}" "$evidence_dir/run.json" "$evidence_dir/artifact.json" \
-            platform/deploy/operational-units.json
-          PONTO_BOOTSTRAP_TARGET=staging \
-          PONTO_BOOTSTRAP_SOURCE_SHA="$source_sha" \
-          PONTO_BOOTSTRAP_LIVE_FILE="$evidence_dir/live.json" \
-            node --input-type=module <<'NODE'
-          import fs from "node:fs";
-          import { remoteSnapshot } from "./.github/scripts/ponto-core-baseline-publisher.mjs";
-          const snapshot = await remoteSnapshot({
-            accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
-            apiToken: process.env.CLOUDFLARE_API_TOKEN,
-            baselineSha: process.env.PONTO_BOOTSTRAP_SOURCE_SHA,
-            target: process.env.PONTO_BOOTSTRAP_TARGET,
-          });
-          fs.writeFileSync(process.env.PONTO_BOOTSTRAP_LIVE_FILE, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
-          NODE
-          node --input-type=module - "$evidence_dir/live.json" "$deployment_id" "$version_id" "$evidence_dir/precondition.json" "$run_id" "$artifact_id" "$artifact_digest" <<'NODE'
-          import fs from "node:fs";
-          import { validatePontoCoreBootstrapLive } from "./.github/scripts/ponto-core-bootstrap-precondition.mjs";
-          const [liveFile, expectedDeployment, expectedVersion, outputFile, runId, artifactId, artifactDigest] = process.argv.slice(2);
-          const live = JSON.parse(fs.readFileSync(liveFile, "utf8"));
-          const precondition = validatePontoCoreBootstrapLive({
-            live,
-            expectedDeployment,
-            expectedVersion,
-            target: "staging",
-          });
-          fs.writeFileSync(outputFile, `${JSON.stringify({
-            schemaVersion: 1,
-            target: "staging",
-            workflowRunId: runId,
-            artifactId,
-            artifactDigest,
-            deploymentId: precondition.deploymentId,
-            catalogDeploymentId: precondition.catalogDeploymentId,
-            deploymentDrifted: precondition.deploymentDrifted,
-            versionId: precondition.versionId,
-            liveAttestation: live.attestation,
-            credentialsIncluded: false,
-            piiIncluded: false,
-          }, null, 2)}\n`, { mode: 0o600 });
-          NODE
-          deployment_id="$(node --input-type=module - "$evidence_dir/precondition.json" <<'NODE'
-          import fs from "node:fs";
-          const precondition = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          process.stdout.write(precondition.deploymentId);
-          NODE
-          )"
+          [[ "${#proof[@]}" == 8 ]] || { echo 'Incomplete staging Core predecessor proof'; exit 1; }
           {
-            echo "CORE_STAGING_BOOTSTRAP_WORKFLOW_RUN_ID=$run_id"
-            echo "CORE_STAGING_BOOTSTRAP_ARTIFACT_ID=$artifact_id"
-            echo "CORE_STAGING_BOOTSTRAP_ARTIFACT_DIGEST=$artifact_digest"
-            echo "CORE_STAGING_BOOTSTRAP_SOURCE_SHA=$source_sha"
-            echo "CORE_STAGING_BOOTSTRAP_DEPLOYMENT_ID=$deployment_id"
-            echo "CORE_STAGING_BOOTSTRAP_VERSION_ID=$version_id"
-            echo "CORE_STAGING_BOOTSTRAP_WORKER=$worker"
-            echo "CORE_STAGING_INCUMBENT_VERSION_ID=$version_id"
+            echo "CORE_STAGING_BOOTSTRAP_WORKFLOW_RUN_ID=${proof[0]}"
+            echo "CORE_STAGING_BOOTSTRAP_ARTIFACT_ID=${proof[1]}"
+            echo "CORE_STAGING_BOOTSTRAP_ARTIFACT_DIGEST=${proof[2]}"
+            echo "CORE_STAGING_BOOTSTRAP_SOURCE_SHA=${proof[3]}"
+            echo "CORE_STAGING_BOOTSTRAP_DEPLOYMENT_ID=${proof[4]}"
+            echo "CORE_STAGING_BOOTSTRAP_VERSION_ID=${proof[5]}"
+            echo "CORE_STAGING_BOOTSTRAP_WORKER=${proof[6]}"
+            echo "CORE_STAGING_PREDECESSOR_MODE=${proof[7]}"
+            echo "CORE_STAGING_INCUMBENT_VERSION_ID=${proof[5]}"
           } >> "$GITHUB_ENV"
-          rm -f "$evidence_dir/artifact.zip"
 
       # The Identity/Inventory D1 contains account records.  A production
       # migration must have a recoverable, encrypted checkpoint before any
@@ -866,23 +803,30 @@ jobs:
             fi
             if [[ "$RELEASE_SCOPE" == ponto ]]; then
               [[ "$TARGET" == staging && "$UNIT" == api ]] || { echo 'Ponto preview/live Core releases use their dedicated canonical stages'; exit 1; }
-              [[ "$CORE_STAGING_BOOTSTRAP_WORKER" == skincos-ponto-core-staging ]] || { echo 'Staging bootstrap predecessor was not attested'; exit 1; }
+              [[ "$CORE_STAGING_BOOTSTRAP_WORKER" == skincos-ponto-core-staging ]] || { echo 'Staging Core predecessor was not attested'; exit 1; }
               PONTO_BOOTSTRAP_TARGET=staging \
               PONTO_BOOTSTRAP_SOURCE_SHA="$CORE_STAGING_BOOTSTRAP_SOURCE_SHA" \
+              PONTO_BOOTSTRAP_PREDECESSOR_MODE="$CORE_STAGING_PREDECESSOR_MODE" \
+              PONTO_BOOTSTRAP_EXPECTED_VERSION_ID="$CORE_STAGING_BOOTSTRAP_VERSION_ID" \
               PONTO_BOOTSTRAP_LIVE_FILE="$RUNNER_TEMP/core-staging-bootstrap-live-jit.json" \
                 node --input-type=module <<'NODE'
           import fs from "node:fs";
           import { remoteSnapshot } from "./.github/scripts/ponto-core-baseline-publisher.mjs";
+          const predecessorMode = process.env.PONTO_BOOTSTRAP_PREDECESSOR_MODE;
+          const expectedVersionMessage = predecessorMode === "staging-incumbent"
+            ? `ponto:coreApi:${process.env.PONTO_BOOTSTRAP_SOURCE_SHA}`
+            : `ponto-core-baseline:${process.env.PONTO_BOOTSTRAP_SOURCE_SHA}`;
           const snapshot = await remoteSnapshot({
             accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
             apiToken: process.env.CLOUDFLARE_API_TOKEN,
             baselineSha: process.env.PONTO_BOOTSTRAP_SOURCE_SHA,
+            expectedVersionMessage,
+            expectedAppVersion: process.env.PONTO_BOOTSTRAP_SOURCE_SHA,
             target: process.env.PONTO_BOOTSTRAP_TARGET,
           });
-          if (
-            snapshot?.attestation?.activeDeploymentId !== process.env.CORE_STAGING_BOOTSTRAP_DEPLOYMENT_ID
-            || snapshot?.attestation?.activeVersionId !== process.env.CORE_STAGING_BOOTSTRAP_VERSION_ID
-          ) throw new Error("staging Ponto Core bootstrap drifted immediately before candidate upload");
+          if (snapshot?.attestation?.activeVersionId !== process.env.PONTO_BOOTSTRAP_EXPECTED_VERSION_ID) {
+            throw new Error("staging Ponto Core predecessor drifted immediately before candidate upload");
+          }
           fs.writeFileSync(process.env.PONTO_BOOTSTRAP_LIVE_FILE, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
           NODE
               incumbent_id="$CORE_STAGING_BOOTSTRAP_VERSION_ID"

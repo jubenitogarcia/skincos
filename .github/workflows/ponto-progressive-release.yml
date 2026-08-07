@@ -681,8 +681,19 @@ jobs:
             "$ruleset" \
             "$PONTO_ARTIFACT_DIR/edge-guard/ponto-edge-override-guard.json"
           rm -f "$ruleset"
+      - name: Attest cataloged Ponto Core staging predecessor before any candidate mutation
+        if: ${{ inputs.stage == 'staging' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-core-staging-precondition.mjs assert \
+            "$PONTO_ARTIFACT_DIR/bootstrap-core/precondition.json"
+
       - name: Attest exact Ponto Core bootstrap before any candidate mutation
-        if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
+        if: ${{ inputs.stage == 'pilot' }}
         env:
           GH_TOKEN: ${{ github.token }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
