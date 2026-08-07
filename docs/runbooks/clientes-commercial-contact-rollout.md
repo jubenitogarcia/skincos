@@ -41,16 +41,12 @@ reavaliar a elegibilidade imediatamente antes do envio.
   consumir a janela de cadência. Estados legados como resposta, agendamento,
   venda ou retorno não contam como contato sem um `contacted_at` explícito.
 - O registro de contato e a concessão de uma nova permissão começam desligados.
-  Para abrir um canário, um GESTOR precisa habilitar explicitamente o rollout e
-  selecionar na própria fila apenas identidades materializadas e visíveis que
-  estejam elegíveis. O backend continua validando a allowlist persistida por
-  UUID, mas a UI não aceita uma lista manual de identificadores. Negar uma
-  permissão continua disponível mesmo fora do canário. O rollout libera
-  somente registros no CRM; ele não envia mensagens.
-- A política expõe uma versão opaca. A UI só envia campos de canário quando eles
-  foram realmente alterados e acompanha a versão lida; uma atualização
-  concorrente responde conflito em vez de reabrir, fechar ou esvaziar um
-  canário com valores desatualizados.
+  A abertura manual por UUID e a flag de escrita pela política foram retiradas.
+  O seletor v2 usa um fluxo próprio com resultado mascarado, escopo por
+  unidade, versão otimista, validação sintética ou explicitamente aprovada,
+  simulação e ledger append-only. Mesmo uma coorte salva não habilita registro
+  de contato ou envio de mensagens nesta tranche. Veja
+  [seletor de canário v2](clientes-commercial-canary-selector-v2.md).
 
 ## Migration
 
