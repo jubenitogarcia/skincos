@@ -31,6 +31,10 @@ import {
     rollbackCommercialContactRolloutMigration,
 } from '../server/atendimento/commercialContactRolloutMigration.js'
 import {
+    applyCommercialCanaryMigration,
+    rollbackCommercialCanaryMigration,
+} from '../server/atendimento/commercialCanaryMigration.js'
+import {
     applyClientIdentityMaterializationMigration,
     rollbackClientIdentityMaterializationMigration,
 } from '../server/atendimento/clientIdentityMaterializationMigration.js'
@@ -78,6 +82,10 @@ const migrations = [
     { id: '20260807_clientes_source_operations_v2', apply: applyClientesSourceOperationsMigration, rollback: rollbackClientesSourceOperationsMigration },
     { id: '20260805_identity_review_workflow_v1', apply: applyIdentityReviewWorkflowMigration, rollback: rollbackIdentityReviewWorkflowMigration },
     { id: '20260806_clinical_cadence_approval_v1', apply: applyClinicalApprovalMigration, rollback: rollbackClinicalApprovalMigration },
+    // The selector references materialized global identities and the current
+    // source-quality controls. Keep it last so a clean staging bootstrap
+    // cannot create a partially usable canary schema.
+    { id: '20260807_commercial_canary_selector_v2', apply: applyCommercialCanaryMigration, rollback: rollbackCommercialCanaryMigration },
 ]
 
 const pool = createPgPool(databaseUrl)

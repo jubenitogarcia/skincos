@@ -864,6 +864,50 @@ export type CommercialPolicy = {
   updatedAt: string | null
 }
 
+export type CommercialCanaryCandidate = {
+  candidateRef: string
+  displayNameMasked: string
+  unit: string
+  identityQuality: 'confirmed_multi_source' | 'review_required'
+  permissionStatus: string
+  phoneStatus: 'correlated' | 'uncorrelated'
+  optOut: 'opted_out' | 'not_recorded'
+  freshness: 'healthy' | 'stale' | 'unknown'
+  inclusionReason: 'validated_synthetic' | 'validated_explicit_approved' | 'validation_required'
+  validationStatus: 'valid' | 'required'
+  validationRevision: number
+  eligibility: 'eligible' | 'blocked' | 'review_required'
+}
+
+export type CommercialCanarySummary = {
+  totalCohort: number
+  eligible: number
+  blocked: number
+  inReview: number
+  permissionsExpiring: number
+  phonesUncorrelated: number
+  staleSources: number
+  pendingIdentityDecisions: number
+  duplicateSelections: number
+  outOfScope: number
+  notValidated: number
+  impact: { messagesSent: 0; commercialWritesEnabled: false; contactsRecorded: 0; actionsCreated: 0 }
+}
+
+export type CommercialCanaryState = {
+  canary: {
+    ready: boolean
+    selectorConfigured: boolean
+    sourceFreshness: 'healthy' | 'stale' | 'unknown'
+    commercialWritesEnabled: false
+    messagesSent: 0
+    activeCohorts: Array<{ unit: string; version: number; status: string; memberCount: number; createdAt: string | null; removedAt: string | null }>
+    latestCohorts: Array<{ unit: string; version: number; status: string; memberCount: number; createdAt: string | null; removedAt: string | null }>
+    emergencyOffAvailable: boolean
+  }
+  policy: Pick<CommercialPolicy, 'policyVersion' | 'commercialContactWritesEnabled' | 'commercialContactCanaryIdentityIds'>
+}
+
 export type CommercialDataQualitySeverity = 'critical' | 'high' | 'medium' | 'low'
 export type CommercialDataQualityStatus = 'open' | 'acknowledged' | 'in_progress' | 'resolved' | 'suppressed'
 
@@ -1254,9 +1298,41 @@ export function fetchCommercialPolicy() {
 }
 
 export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'> &
-  Partial<Pick<CommercialPolicy, 'commercialContactWritesEnabled' | 'commercialContactCanaryIdentityIds'>> &
   { expectedPolicyVersion: string }) {
   return api<{ policy: CommercialPolicy }>('/commercial/policy', { method: 'PUT', body: payload })
+}
+
+export function fetchCommercialCanaryState(unit?: string) {
+  const query = unit ? `?unit=${encodeURIComponent(unit)}` : ''
+  return api<CommercialCanaryState>(`/commercial/canary/state${query}`)
+}
+
+export function fetchCommercialCanaryCandidates(query: { unit: string; q?: string; limit?: number; offset?: number }) {
+  const params = new URLSearchParams({ unit: query.unit })
+  if (query.q) params.set('q', query.q)
+  if (query.limit) params.set('limit', String(query.limit))
+  if (query.offset) params.set('offset', String(query.offset))
+  return api<{ unit: string; candidates: CommercialCanaryCandidate[]; pagination: { hasNext: boolean; hasPrevious: boolean }; total: number; sourceFreshness: CommercialCanaryCandidate['freshness'] }>(`/commercial/canary/candidates?${params.toString()}`)
+}
+
+export function previewCommercialCanary(payload: { unit: string; candidateRefs: string[] }) {
+  return api<{ unit: string; candidates: CommercialCanaryCandidate[]; summary: CommercialCanarySummary; canApply: boolean; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary/preview', { method: 'POST', body: payload })
+}
+
+export function validateCommercialCanaryIdentity(payload: { unit: string; candidateRef: string; validationType: 'synthetic' | 'explicit_approved'; approvalReference?: string; justification: string; confirmed: true; expectedPolicyVersion: string; expectedValidationRevision: number; idempotencyKey: string }) {
+  return api<{ validation: { unit: string; validationStatus: 'valid'; validationType: 'synthetic' | 'explicit_approved'; revision: number; expiresAt: string | null }; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary/identities/validate', { method: 'POST', body: payload })
+}
+
+export function saveCommercialCanary(payload: { unit: string; candidateRefs: string[]; justification: string; confirmed: true; expectedPolicyVersion: string; expectedCohortVersion: number; idempotencyKey: string }) {
+  return api<{ cohort: { unit: string; version: number; status: 'active'; memberCount: number; createdAt: string | null }; summary: CommercialCanarySummary; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary', { method: 'POST', body: payload })
+}
+
+export function removeCommercialCanary(payload: { unit: string; justification: string; confirmed: true; expectedPolicyVersion: string; expectedCohortVersion: number; idempotencyKey: string }) {
+  return api<{ removed: boolean; unit: string; cohortVersion: number; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary/remove', { method: 'POST', body: payload })
+}
+
+export function emergencyOffCommercialCanary(payload: { justification: string; confirmed: true; expectedPolicyVersion: string; idempotencyKey: string }) {
+  return api<{ emergencyOff: true; disabledCohorts: number; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary/emergency-off', { method: 'POST', body: payload })
 }
 
 export function fetchCommercialCadences() {
