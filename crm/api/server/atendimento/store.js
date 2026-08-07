@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto'
 import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
 import { lockContactPhone } from '../contactPhoneLock.js'
+import { actorSubject } from './actorSubject.js'
 import {
     buildConversionReportFromRawRows,
     buildScheduleDropdowns,
@@ -581,14 +582,17 @@ function requirePool(pool) {
 }
 
 function actorLabel(actor) {
-    return String(actor?.username || actor?.email || actor?.id || actor?.role || 'system').trim() || 'system'
+    if (actor === null || actor === undefined) return 'system'
+    const identity = actorSubject(actor)
+    if (!identity) throw mutationError('ACTOR_IDENTITY_REQUIRED', 401)
+    return identity
 }
 
 // Mutation idempotency and audit attribution must never fall back to a role.
 // Two distinct operators with the same role would otherwise share an
 // idempotency namespace and could receive each other's persisted response.
 export function actorIdentityForMutation(actor) {
-    const identity = String(actor?.id || actor?.username || actor?.email || '').trim()
+    const identity = actorSubject(actor)
     if (!identity) throw mutationError('ACTOR_IDENTITY_REQUIRED', 401)
     return identity
 }

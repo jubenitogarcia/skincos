@@ -6,6 +6,7 @@ import { createClientesSourceOperationsStore } from '../clientes/sourceOperation
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
 import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
 import { createClinicalApprovalStore } from '../clinical/clinicalApprovalStore.js'
+import { actorSubject } from './actorSubject.js'
 
 const json = (res, status, body, headers = {}) => {
     res.status(status)
@@ -59,8 +60,10 @@ function parseActorHeader(req) {
         const actor = JSON.parse(b64UrlDecode(encoded))
         if (!actor || typeof actor !== 'object') return null
         const rawRole = actor.role
+        const id = actorSubject(actor)
+        if (!id) return null
         return {
-            id: String(actor.id || actor.username || actor.email || '').trim(),
+            id,
             username: actor.username ? String(actor.username) : undefined,
             email: actor.email ? String(actor.email) : undefined,
             name: actor.name ? String(actor.name) : undefined,
@@ -102,8 +105,10 @@ function devSessionActor(req, getDevSession) {
     const user = session?.user || null
     if (!user) return null
     const rawRole = user.role
+    const id = actorSubject(user)
+    if (!id) return null
     return {
-        id: String(user.username || user.email || '').trim(),
+        id,
         username: user.username ? String(user.username) : undefined,
         email: user.email ? String(user.email) : undefined,
         name: user.displayName ? String(user.displayName) : undefined,
@@ -852,6 +857,7 @@ export const __testables = {
     projectCommercialSourceOperation,
     requestsClinicalCadenceApproval,
     parseActorHeader,
+    devSessionActor,
     isLocalRequest,
     atendimentoReadOnlyRuntime,
     atendimentoClientesOnlyRuntime,
