@@ -17,6 +17,7 @@ const PREREQUISITES = Object.freeze([
     'crm_atendimento.commercial_actions',
     'crm_atendimento.commercial_campaigns',
     'crm_atendimento.commercial_campaign_members',
+    'crm_atendimento.commercial_offers',
     'crm_atendimento.commercial_data_quality_findings',
     'crm_atendimento.commercial_data_quality_finding_events',
 ])
@@ -48,6 +49,10 @@ function runtimeGrantStatements(target) {
         `grant usage on schema crm_atendimento to ${role}`,
         ...appendOnly.map((table) => `grant select, insert on table crm_atendimento.${table} to ${role}`),
         ...mutable.map((table) => `grant select, insert, update on table crm_atendimento.${table} to ${role}`),
+        // Runtime readiness reads the migration ledger before exposing any
+        // analytics result.  Without this narrow grant a correctly migrated
+        // staging database would appear permanently unavailable to the app.
+        `grant select on table crm_atendimento.schema_migrations to ${role}`,
     ]
 }
 
@@ -82,13 +87,15 @@ const STATEMENTS = Object.freeze([
         id uuid primary key default gen_random_uuid(),
         segment_id uuid not null references crm_atendimento.commercial_segment_definitions(id) on delete restrict,
         revision integer not null check (revision >= 1),
+        version_key text not null check (version_key ~ '^[A-Za-z0-9._-]{1,120}$'),
         criteria jsonb not null default '{}'::jsonb,
         thresholds jsonb not null default '{}'::jsonb,
         percentiles jsonb not null default '{}'::jsonb,
         effective_from timestamptz,
         author_id text not null check (char_length(author_id) between 1 and 160 and author_id !~ '[@]'),
         created_at timestamptz not null default now(),
-        unique(segment_id, revision)
+        unique(segment_id, revision),
+        unique(segment_id, version_key)
     )`,
     `create table if not exists crm_atendimento.commercial_segment_membership_snapshots (
         id uuid primary key default gen_random_uuid(),
@@ -100,7 +107,7 @@ const STATEMENTS = Object.freeze([
         distribution jsonb not null default '{}'::jsonb,
         metrics jsonb not null default '{}'::jsonb,
         created_at timestamptz not null default now(),
-        unique(segment_version_id, unit_id, snapshot_date, membership_hash)
+        unique nulls not distinct(segment_version_id, unit_id, snapshot_date, membership_hash)
     )`,
     `create table if not exists crm_atendimento.commercial_segment_memberships (
         snapshot_id uuid not null references crm_atendimento.commercial_segment_membership_snapshots(id) on delete restrict,
@@ -119,7 +126,7 @@ const STATEMENTS = Object.freeze([
         metrics jsonb not null default '{}'::jsonb,
         metrics_hash text not null check (metrics_hash ~ '^[a-f0-9]{64}$'),
         created_at timestamptz not null default now(),
-        unique(source_key, finding_key, unit_id, bucket_date, metrics_hash)
+        unique nulls not distinct(source_key, finding_key, unit_id, bucket_date, metrics_hash)
     )`,
     `create table if not exists crm_atendimento.commercial_analytics_events (
         id uuid primary key default gen_random_uuid(),
@@ -132,6 +139,7 @@ const STATEMENTS = Object.freeze([
         channel text check (channel is null or channel ~ '^[A-Za-z0-9._-]{1,80}$'),
         owner_id text check (owner_id is null or (char_length(owner_id) between 1 and 160 and owner_id !~ '[@]')),
         policy_version text check (policy_version is null or policy_version ~ '^[A-Za-z0-9._-]{1,120}$'),
+        revenue_cents bigint check (revenue_cents is null or revenue_cents >= 0),
         occurred_at timestamptz not null,
         correlation_id uuid,
         created_at timestamptz not null default now(),

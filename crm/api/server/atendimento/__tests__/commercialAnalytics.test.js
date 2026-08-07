@@ -93,5 +93,8 @@ test('segment definitions are explicit and membership snapshots expose only aggr
     const drift = buildSegmentDrift([first, second])
     assert.equal(drift.available, true)
     assert.equal(drift.population.current, 1)
+    const corrected = { ...second, memberCount: 2, createdAt: '2026-08-08T12:00:00.000Z' }
+    const earlier = { ...second, memberCount: 1, createdAt: '2026-08-08T08:00:00.000Z' }
+    assert.equal(buildSegmentDrift([first, corrected, earlier]).population.current, 2)
     assert.throws(() => normalizeSegmentDefinition({ key: 'return-risk', version: 'v1', criteria: { email: 'customer@example.com' } }), commercialAnalyticsError('COMMERCIAL_SEGMENT_DEFINITION_INVALID'))
 })

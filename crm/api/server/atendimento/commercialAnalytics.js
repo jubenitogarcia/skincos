@@ -370,7 +370,10 @@ export function buildSegmentMembershipSnapshot(definition, members = [], { snaps
 }
 
 export function buildSegmentDrift(snapshots = []) {
-    const ordered = [...snapshots].sort((left, right) => String(left.snapshotDate || left.snapshot_date).localeCompare(String(right.snapshotDate || right.snapshot_date)))
+    const ordered = [...snapshots].sort((left, right) => {
+        const dateOrder = String(left.snapshotDate || left.snapshot_date).localeCompare(String(right.snapshotDate || right.snapshot_date))
+        return dateOrder || String(left.createdAt || left.created_at || '').localeCompare(String(right.createdAt || right.created_at || ''))
+    })
     const current = ordered.at(-1); const previous = ordered.at(-2)
     if (!current || !previous) return { available: false, reason: 'INSUFFICIENT_SNAPSHOTS', dimensions: [] }
     const currentDistribution = current.distribution || {}; const previousDistribution = previous.distribution || {}
