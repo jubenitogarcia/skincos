@@ -90,12 +90,15 @@ class FakeBeautyMovementD1 implements BeautyMovementD1 {
 
     run(query: string, values: unknown[]): number {
         if (query.includes("INSERT INTO bm_rate_limit_windows")) {
+            assert.equal(values.length, 13, "rate limiter must keep its D1 binding contract compact");
+            const maxAttemptsMatch = query.match(/END\) > (\d+) THEN \?\s+ELSE NULL/);
+            assert.ok(maxAttemptsMatch, "rate limiter must inline its validated policy threshold");
             const key = `${values[0]}:${values[1]}`;
             const existing = this.rateLimits.get(key);
             const nowMs = Number(values[2]);
-            const windowMs = Number(values[6]);
-            const maxAttempts = Number(values[14]);
-            const blockedUntil = Number(values[15]);
+            const windowMs = nowMs - Number(values[5]);
+            const maxAttempts = Number(maxAttemptsMatch[1]);
+            const blockedUntil = Number(values[11]);
             const oldWindow = Number(existing?.window_started_at_ms ?? nowMs);
             const oldCount = Number(existing?.attempt_count ?? 0);
             const oldBlockedUntil = existing?.blocked_until_ms === null || existing?.blocked_until_ms === undefined
