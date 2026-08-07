@@ -245,6 +245,8 @@ test('dedicated Insumos preview refreshes a private read-only D1 snapshot instea
   assert.match(launcher, /"CRM_REFRESH_INSUMOS_SNAPSHOT=0"/)
   assert.match(launcher, /"CRM_INSUMOS_PREVIEW_SNAPSHOT=1"/)
   assert.match(launcher, /"CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT=\$snapshotRootWsl"/)
+  assert.match(launcher, /"CRM_INSUMOS_DEPENDENCY_STATE_FILE=\$insumosDependencyRootWsl\/dependency-key\.sha256"/)
+  assert.match(launcher, /"CRM_INSUMOS_DEPENDENCY_CACHE_ROOT=\$insumosDependencyRootWsl\/cache"/)
   assert.match(launcher, /function Restore-CrmThreadPreviewPriorRuntime/)
   assert.match(launcher, /-RollbackInsumosState/)
   assert.match(launcher, /A nova prévia falhou, mas a versão anterior foi restaurada/)

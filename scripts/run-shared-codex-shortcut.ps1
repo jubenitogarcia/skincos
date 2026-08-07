@@ -2537,6 +2537,11 @@ function Start-CrmInstanceRuntime {
     $logWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "logs\runtime.log")
     $pagesStateWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "state\pages")
     $insumosStateWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "state\insumos")
+    # Snapshot export, local migrations and seed must share one private,
+    # source-specific dependency cache. Otherwise the immutable source link
+    # can point at the already verified cache while the runner calculates a
+    # different default below its build directory.
+    $insumosDependencyRootWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "dependencies\insumos")
     $timekeepingStateWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "state\timekeeping")
     $whatsappStateWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "state\whatsapp")
     $gateModules = [string]$Spec.module
@@ -2607,6 +2612,9 @@ function Start-CrmInstanceRuntime {
         "CRM_WITH_INSUMOS=$withInsumos",
         "CRM_INSUMOS_PORT=$([int]$Spec.ports.insumos)",
         "CRM_INSUMOS_PERSIST_DIR=$insumosStateWsl",
+        "CRM_INSUMOS_DEPENDENCY_STATE_FILE=$insumosDependencyRootWsl/dependency-key.sha256",
+        "CRM_INSUMOS_DEPENDENCY_LOCK_FILE=$insumosDependencyRootWsl/install.lock",
+        "CRM_INSUMOS_DEPENDENCY_CACHE_ROOT=$insumosDependencyRootWsl/cache",
         "CRM_WITH_TIMEKEEPING=$withTimekeeping",
         "CRM_TIMEKEEPING_PRIVATE_ROOT=$crmTimekeepingPrivateRootWsl",
         "CRM_TIMEKEEPING_PORT=$([int]$Spec.ports.timekeeping)",
