@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { clinicalApprovalMigrationPlan, clinicalApprovalMigrationStatements, parseClinicalApprovalMigrationAction } from '../clinicalApprovalMigration.js'
+import { clinicalApprovalMigrationPlan, clinicalApprovalMigrationStatements, clinicalApprovalRuntimeGrantStatements, parseClinicalApprovalMigrationAction } from '../clinicalApprovalMigration.js'
 import { clinicalApprovalRouteContract, createClinicalApprovalRouter } from '../routes.js'
-import { clinicalApprovalTestHelpers } from '../clinicalApprovalStore.js'
+import { clinicalApprovalTestHelpers, createClinicalApprovalStore } from '../clinicalApprovalStore.js'
 
 const validProcedure = '4bcf7ee4-0b5a-4277-a7d8-a93bfcb80b51'
 
@@ -17,6 +17,9 @@ test('clinical approval contract is independent and fail-closed', () => {
     assert.equal(clinicalApprovalMigrationStatements.some((sql) => sql.includes('clinical_approval_rules_event_evidence')), true)
     assert.equal(clinicalApprovalMigrationStatements.some((sql) => sql.includes('clinical_approval_rules_no_delete')), true)
     assert.equal(clinicalApprovalMigrationStatements.some((sql) => sql.includes('CLINICAL_CADENCE_APPROVAL_REQUIRED')), true)
+    assert.equal(clinicalApprovalMigrationStatements.some((sql) => sql.includes('clinical_approval_rules_approver_not_author')), true)
+    assert.equal(clinicalApprovalMigrationStatements.some((sql) => sql.includes('requires append-only revision evidence')), true)
+    assert.equal(clinicalApprovalRuntimeGrantStatements('staging').some((sql) => sql.includes('grant select on table clinical_approval.schema_migrations')), true)
     assert.equal(clinicalApprovalRouteContract.basePath, '/api/clinical')
     assert.equal(clinicalApprovalRouteContract.messaging, false)
     assert.equal(clinicalApprovalRouteContract.recommendationAutomation, false)
@@ -61,6 +64,113 @@ test('idempotency hashes are stable and keys are bounded', () => {
     assert.equal(clinicalApprovalTestHelpers.normalizeIdempotencyKey('clinical:approve:1'), 'clinical:approve:1')
     assert.throws(() => clinicalApprovalTestHelpers.normalizeIdempotencyKey(''), /CLINICAL_APPROVAL_IDEMPOTENCY_KEY_REQUIRED/)
     assert.throws(() => clinicalApprovalTestHelpers.normalizeIdempotencyKey('a'.repeat(161)), /CLINICAL_APPROVAL_IDEMPOTENCY_KEY_REQUIRED/)
+})
+
+test('clinical domain keeps PII out of append-only evidence and accepts only opaque actor subjects', () => {
+    assert.throws(() => clinicalApprovalTestHelpers.normalizeRuleInput({
+        procedureId: validProcedure,
+        unit: 'Novo Hamburgo',
+        intervalMinDays: 30,
+        intervalMaxDays: 60,
+        justification: 'Solicitação enviada para teste@exemplo.com.',
+        evidenceReference: 'protocol://clinical/v1',
+        effectiveFrom: '2026-08-06',
+    }), /CLINICAL_APPROVAL_PII_NOT_ALLOWED/)
+    assert.throws(() => clinicalApprovalTestHelpers.actorIdOf({ id: 'teste@exemplo.com', role: 'GESTOR' }), /CLINICAL_APPROVAL_ACTOR_REQUIRED/)
+    assert.equal(clinicalApprovalTestHelpers.allowedUnitSlugs({ id: 'admin-1', role: 'GESTOR', isGlobalAdmin: true }), null)
+})
+
+test('clinical mutation gate is enforced inside the domain, not only by HTTP routes', async () => {
+    const beforeEnabled = process.env.CLINICAL_APPROVAL_ENABLED
+    const beforeReadOnly = process.env.CRM_ATENDIMENTO_READ_ONLY
+    try {
+        delete process.env.CLINICAL_APPROVAL_ENABLED
+        delete process.env.CRM_ATENDIMENTO_READ_ONLY
+        const store = createClinicalApprovalStore()
+        await assert.rejects(
+            () => store.createDraft({}, { id: 'gestor-1', role: 'GESTOR' }, 'gate-fixture'),
+            { message: 'CLINICAL_APPROVAL_DISABLED', statusCode: 503 },
+        )
+        process.env.CLINICAL_APPROVAL_ENABLED = 'true'
+        process.env.CRM_ATENDIMENTO_READ_ONLY = 'true'
+        await assert.rejects(
+            () => store.createDraft({}, { id: 'gestor-1', role: 'GESTOR' }, 'gate-fixture'),
+            { message: 'CLINICAL_APPROVAL_READ_ONLY', statusCode: 405 },
+        )
+    } finally {
+        if (beforeEnabled === undefined) delete process.env.CLINICAL_APPROVAL_ENABLED
+        else process.env.CLINICAL_APPROVAL_ENABLED = beforeEnabled
+        if (beforeReadOnly === undefined) delete process.env.CRM_ATENDIMENTO_READ_ONLY
+        else process.env.CRM_ATENDIMENTO_READ_ONLY = beforeReadOnly
+    }
+})
+
+test('database liveness is bounded while health stays available', async () => {
+    const store = createClinicalApprovalStore({
+        pool: { query() { return new Promise(() => {}) } },
+        readinessTimeoutMs: 10,
+    })
+    const startedAt = Date.now()
+    const health = await store.health()
+    assert.equal(health.ok, true)
+    assert.equal(health.ready, false)
+    assert.ok(Date.now() - startedAt < 250)
+    const readiness = await store.readiness()
+    assert.deepEqual(readiness.dependencies, { database: false, schema: false })
+})
+
+test('idempotency acquires the command lock before checking prior results', async () => {
+    const beforeEnabled = process.env.CLINICAL_APPROVAL_ENABLED
+    const beforeReadOnly = process.env.CRM_ATENDIMENTO_READ_ONLY
+    process.env.CLINICAL_APPROVAL_ENABLED = 'true'
+    delete process.env.CRM_ATENDIMENTO_READ_ONLY
+    const calls = []
+    const input = clinicalApprovalTestHelpers.normalizeRuleInput({
+        procedureId: validProcedure,
+        unit: 'Novo Hamburgo',
+        intervalMinDays: 30,
+        intervalMaxDays: 60,
+        justification: 'Janela baseada em revisão clínica publicada.',
+        evidenceReference: 'protocol://clinical/v1',
+        effectiveFrom: '2026-08-06',
+    })
+    const previousResult = { rule: { id: 'rule-1', status: 'draft' }, idempotent: false }
+    const client = {
+        async query(sql, params = []) {
+            calls.push({ scope: 'transaction', sql, params })
+            if (['begin', 'commit', 'rollback'].includes(sql)) return { rows: [] }
+            if (sql.includes('pg_advisory_xact_lock')) return { rows: [] }
+            if (sql.includes('from clinical_approval.command_dedup')) {
+                return { rows: [{ request_hash: clinicalApprovalTestHelpers.requestHash('create_draft', input), result: previousResult }] }
+            }
+            throw new Error(`unexpected transaction query: ${sql}`)
+        },
+        release() {},
+    }
+    const pool = {
+        async query(sql, params = []) {
+            calls.push({ scope: 'probe', sql, params })
+            if (sql.includes('to_regclass')) return { rows: [{ registry: 'clinical_approval.schema_migrations', rules: 'clinical_approval.rules', revisions: 'clinical_approval.rule_revisions', events: 'clinical_approval.rule_events', dedup: 'clinical_approval.command_dedup' }] }
+            if (sql.includes('from clinical_approval.schema_migrations')) return { rows: [{ ok: 1 }] }
+            throw new Error(`unexpected readiness query: ${sql}`)
+        },
+        async connect() { return client },
+    }
+    try {
+        const store = createClinicalApprovalStore({ pool })
+        const result = await store.createDraft(input, { id: 'gestor-1', role: 'GESTOR' }, 'replay-fixture')
+        assert.deepEqual(result, previousResult)
+        const transactionCalls = calls.filter((call) => call.scope === 'transaction')
+        const lockIndex = transactionCalls.findIndex((call) => call.sql.includes('pg_advisory_xact_lock'))
+        const dedupIndex = transactionCalls.findIndex((call) => call.sql.includes('from clinical_approval.command_dedup'))
+        assert.ok(lockIndex >= 0)
+        assert.ok(dedupIndex > lockIndex)
+    } finally {
+        if (beforeEnabled === undefined) delete process.env.CLINICAL_APPROVAL_ENABLED
+        else process.env.CLINICAL_APPROVAL_ENABLED = beforeEnabled
+        if (beforeReadOnly === undefined) delete process.env.CRM_ATENDIMENTO_READ_ONLY
+        else process.env.CRM_ATENDIMENTO_READ_ONLY = beforeReadOnly
+    }
 })
 
 test('clinical reviewers require an explicit unit scope', () => {

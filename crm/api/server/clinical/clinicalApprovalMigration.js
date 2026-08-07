@@ -33,11 +33,12 @@ export function parseClinicalApprovalMigrationAction(args = []) {
     return values[0] === '--apply' ? 'apply' : 'rollback'
 }
 
-function runtimeGrantStatements(target) {
+export function clinicalApprovalRuntimeGrantStatements(target) {
     const role = RUNTIME_ROLES[target]
     if (!role) throw migrationError('CLINICAL_APPROVAL_RUNTIME_ROLE_UNKNOWN')
     return [
         `grant usage on schema clinical_approval to ${role}`,
+        `grant select on table clinical_approval.schema_migrations to ${role}`,
         `grant select, insert, update on table clinical_approval.rules to ${role}`,
         `grant select, insert on table clinical_approval.rule_revisions to ${role}`,
         `grant select, insert on table clinical_approval.rule_events to ${role}`,
@@ -80,6 +81,8 @@ const STATEMENTS = Object.freeze([
         check (expires_at is null or expires_at > effective_from),
         check ((current_status = 'approved' and approver_id is not null and approved_at is not null)
             or current_status <> 'approved'),
+        constraint clinical_approval_rules_approver_not_author
+            check (current_status <> 'approved' or approver_id is distinct from author_id),
         unique nulls not distinct(procedure_id, unit_id)
     )`,
     `create table if not exists clinical_approval.rule_revisions (
@@ -99,7 +102,11 @@ const STATEMENTS = Object.freeze([
         recorded_by text not null,
         recorded_at timestamptz not null default now(),
         unique(rule_id, revision),
-        check (expires_at is null or expires_at > effective_from)
+        check (expires_at is null or expires_at > effective_from),
+        check ((status = 'approved' and approver_id is not null and approved_at is not null)
+            or status <> 'approved'),
+        constraint clinical_approval_revisions_approver_not_author
+            check (status <> 'approved' or approver_id is distinct from author_id)
     )`,
     `create table if not exists clinical_approval.rule_events (
         id uuid primary key default gen_random_uuid(),
@@ -134,6 +141,26 @@ const STATEMENTS = Object.freeze([
         on clinical_approval.rule_events(rule_id, event_order desc)`,
     `create index if not exists clinical_approval_rule_events_actor_idx
         on clinical_approval.rule_events(actor_id, recorded_at desc)`,
+    `do $$ begin
+        if not exists (
+            select 1 from pg_constraint
+             where conrelid = 'clinical_approval.rules'::regclass
+               and conname = 'clinical_approval_rules_approver_not_author'
+        ) then
+            alter table clinical_approval.rules add constraint clinical_approval_rules_approver_not_author
+                check (current_status <> 'approved' or approver_id is distinct from author_id);
+        end if;
+    end $$`,
+    `do $$ begin
+        if not exists (
+            select 1 from pg_constraint
+             where conrelid = 'clinical_approval.rule_revisions'::regclass
+               and conname = 'clinical_approval_revisions_approver_not_author'
+        ) then
+            alter table clinical_approval.rule_revisions add constraint clinical_approval_revisions_approver_not_author
+                check (status <> 'approved' or approver_id is distinct from author_id);
+        end if;
+    end $$`,
     `create or replace function clinical_approval.prevent_append_only_mutation()
         returns trigger language plpgsql as $$
         begin
@@ -224,6 +251,13 @@ const STATEMENTS = Object.freeze([
         returns trigger language plpgsql as $$
         begin
             if not exists (
+                select 1 from clinical_approval.rule_revisions revision
+                 where revision.rule_id = new.id
+                   and revision.revision = new.current_revision
+            ) then
+                raise exception 'clinical approval state requires append-only revision evidence';
+            end if;
+            if not exists (
                 select 1 from clinical_approval.rule_events event
                  where event.rule_id = new.id
                    and event.revision = new.current_revision
@@ -313,7 +347,7 @@ export async function applyClinicalApprovalMigration({ pool, databaseUrl, target
         await assertDestination(client, databaseUrl, target)
         await assertPrerequisites(client)
         for (const sql of STATEMENTS) await query(client, sql)
-        const grants = runtimeGrantStatements(target)
+        const grants = clinicalApprovalRuntimeGrantStatements(target)
         for (const sql of grants) await query(client, sql)
         report.runtimeRole = RUNTIME_ROLES[target]
         report.runtimeGrants = grants

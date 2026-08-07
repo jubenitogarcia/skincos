@@ -5,6 +5,9 @@ import { normalizeUnit } from '../atendimento/domain.js'
 const RULE_STATUSES = new Set(['draft', 'submitted', 'approved', 'rejected', 'expired', 'disabled'])
 const EVENT_TYPES = new Set(['created', 'revision_created', 'submitted', 'approved', 'rejected', 'expired', 'disabled'])
 const MUTATING_ROLES = new Set(['GESTOR', 'ADMIN'])
+const DEFAULT_READINESS_TIMEOUT_MS = 1500
+const EMAIL_LIKE = /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/i
+const PHONE_LIKE = /(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,3}\)?[\s.-]?)?\d{4,5}[\s.-]\d{4}\b/
 
 function domainError(code, statusCode = 409) {
     const error = new Error(code)
@@ -18,8 +21,8 @@ function roleOf(actor) {
 }
 
 function actorIdOf(actor) {
-    const id = String(actor?.id || actor?.username || '').trim()
-    if (!id) throw domainError('CLINICAL_APPROVAL_ACTOR_REQUIRED', 401)
+    const id = String(actor?.subject || actor?.subjectId || actor?.id || actor?.username || '').trim()
+    if (!id || EMAIL_LIKE.test(id)) throw domainError('CLINICAL_APPROVAL_ACTOR_REQUIRED', 401)
     return id.slice(0, 200)
 }
 
@@ -53,9 +56,32 @@ function assertUnitScope(actor, unitSlug, { required = false } = {}) {
     if (!allowed.length || (required && !unitSlug) || (unitSlug && !allowed.includes(unitSlug))) throw domainError('CLINICAL_APPROVAL_UNIT_FORBIDDEN', 403)
 }
 
+function environmentEnabled(name) {
+    return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase())
+}
+
+function clinicalApprovalEnabled() {
+    return environmentEnabled('CLINICAL_APPROVAL_ENABLED')
+}
+
+function clinicalReadOnlyRuntime() {
+    return environmentEnabled('CRM_ATENDIMENTO_READ_ONLY')
+}
+
+function assertClinicalMutationAllowed() {
+    if (clinicalReadOnlyRuntime()) throw domainError('CLINICAL_APPROVAL_READ_ONLY', 405)
+    if (!clinicalApprovalEnabled()) throw domainError('CLINICAL_APPROVAL_DISABLED', 503)
+}
+
+function containsPiiLike(value) {
+    const text = String(value || '')
+    return EMAIL_LIKE.test(text) || PHONE_LIKE.test(text)
+}
+
 function cleanText(value, min, max, code) {
     const text = String(value ?? '').trim()
     if (text.length < min || text.length > max) throw domainError(code, 400)
+    if (containsPiiLike(text)) throw domainError('CLINICAL_APPROVAL_PII_NOT_ALLOWED', 400)
     return text
 }
 
@@ -112,10 +138,15 @@ function requestHash(operation, payload) {
     return createHash('sha256').update(JSON.stringify(stableValue({ operation, payload }))).digest('hex')
 }
 
+function commandLockKey(actorId, operation, key) {
+    const fingerprint = createHash('sha256').update(`${actorId}\u0000${operation}\u0000${key}`).digest('hex')
+    return `clinical-approval:command:${fingerprint}`
+}
+
 function mapRule(row) {
     if (!row) return null
     const status = RULE_STATUSES.has(row.current_status) ? row.current_status : 'disabled'
-    const expired = status === 'approved' && row.expires_at && String(row.expires_at).slice(0, 10) < new Date().toISOString().slice(0, 10)
+    const expired = status === 'approved' && row.expires_at && String(row.expires_at).slice(0, 10) <= new Date().toISOString().slice(0, 10)
     return {
         id: row.id,
         procedureId: row.procedure_id,
@@ -155,18 +186,41 @@ function mapEvent(row) {
     }
 }
 
-async function tableReady(pool) {
+function readinessTimeout(value) {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) return DEFAULT_READINESS_TIMEOUT_MS
+    return Math.max(10, Math.min(5000, Math.trunc(parsed)))
+}
+
+function boundedQuery(pool, sql, params, timeoutMs) {
+    return new Promise((resolve, reject) => {
+        let settled = false
+        const finish = (callback, value) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            callback(value)
+        }
+        const timer = setTimeout(() => finish(reject, new Error('CLINICAL_APPROVAL_DATABASE_TIMEOUT')), timeoutMs)
+        Promise.resolve().then(() => pool.query(sql, params)).then(
+            (result) => finish(resolve, result),
+            (error) => finish(reject, error),
+        )
+    })
+}
+
+async function tableReady(pool, timeoutMs = DEFAULT_READINESS_TIMEOUT_MS) {
     if (!pool) return false
     try {
-        const result = await pool.query(`select
+        const result = await boundedQuery(pool, `select
             to_regclass('clinical_approval.schema_migrations') as registry,
             to_regclass('clinical_approval.rules') as rules,
             to_regclass('clinical_approval.rule_revisions') as revisions,
             to_regclass('clinical_approval.rule_events') as events,
-            to_regclass('clinical_approval.command_dedup') as dedup`)
+            to_regclass('clinical_approval.command_dedup') as dedup`, [], timeoutMs)
         const row = result.rows[0] || {}
         if (!row.registry || !row.rules || !row.revisions || !row.events || !row.dedup) return false
-        const applied = await pool.query(`select 1 from clinical_approval.schema_migrations where id = $1 and rolled_back_at is null`, ['20260806_clinical_cadence_approval_v1'])
+        const applied = await boundedQuery(pool, `select 1 from clinical_approval.schema_migrations where id = $1 and rolled_back_at is null`, ['20260806_clinical_cadence_approval_v1'], timeoutMs)
         return Boolean(applied.rows[0])
     } catch {
         return false
@@ -175,12 +229,13 @@ async function tableReady(pool) {
 
 export function createClinicalApprovalStore(options = {}) {
     const pgPool = options.pool || createPgPool(options.databaseUrl)
+    const readinessTimeoutMs = readinessTimeout(options.readinessTimeoutMs ?? process.env.CLINICAL_APPROVAL_READINESS_TIMEOUT_MS)
     let readinessPromise = null
 
     async function ensureReady() {
         if (!pgPool) throw domainError('CLINICAL_APPROVAL_DATABASE_NOT_CONFIGURED', 503)
         if (!readinessPromise) {
-            readinessPromise = tableReady(pgPool).then((ready) => {
+            readinessPromise = tableReady(pgPool, readinessTimeoutMs).then((ready) => {
                 if (!ready) throw domainError('CLINICAL_APPROVAL_DOMAIN_NOT_READY', 503)
                 return true
             }).catch((error) => {
@@ -196,6 +251,7 @@ export function createClinicalApprovalStore(options = {}) {
         const key = normalizeIdempotencyKey(idempotencyKey || payload?.idempotencyKey)
         const hash = requestHash(operation, payload)
         return withPgTransaction(pgPool, async (client) => {
+            await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [commandLockKey(actorId, operation, key)])
             const previous = await client.query(`select request_hash, result from clinical_approval.command_dedup
                 where actor_id = $1 and idempotency_key = $2 and operation = $3`, [actorId, key, operation])
             if (previous.rows[0]) {
@@ -253,12 +309,12 @@ export function createClinicalApprovalStore(options = {}) {
 
     return {
         async health() {
-            const ready = await tableReady(pgPool)
+            const ready = await tableReady(pgPool, readinessTimeoutMs)
             return { ok: true, ready, domain: 'clinical-approval', writesEnabled: false, pii: false }
         },
 
         async readiness() {
-            const ready = await tableReady(pgPool)
+            const ready = await tableReady(pgPool, readinessTimeoutMs)
             return { ok: ready, ready, domain: 'clinical-approval', dependencies: { database: ready, schema: ready } }
         },
 
@@ -315,6 +371,7 @@ export function createClinicalApprovalStore(options = {}) {
         },
 
         async createDraft(payload, actor, idempotencyKey) {
+            assertClinicalMutationAllowed()
             await ensureReady()
             assertRole(actor, MUTATING_ROLES)
             const input = normalizeRuleInput(payload)
@@ -357,11 +414,15 @@ export function createClinicalApprovalStore(options = {}) {
         },
 
         async submit(id, payload = {}, actor, idempotencyKey) {
+            assertClinicalMutationAllowed()
             await ensureReady()
             assertRole(actor, MUTATING_ROLES)
             const expectedRevision = Number(payload.expectedRevision)
             if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw domainError('CLINICAL_APPROVAL_EXPECTED_REVISION_REQUIRED', 400)
-            return withCommand('submit', { id, expectedRevision }, actor, idempotencyKey, async (client, command) => {
+            const reason = payload.reason === undefined || payload.reason === null || String(payload.reason).trim() === ''
+                ? null
+                : cleanText(payload.reason, 3, 1000, 'CLINICAL_APPROVAL_REASON_REQUIRED')
+            return withCommand('submit', { id, expectedRevision, reason }, actor, idempotencyKey, async (client, command) => {
                 const rule = await readRule(client, id, true)
                 if (!rule) throw domainError('CLINICAL_APPROVAL_NOT_FOUND', 404)
                 assertUnitScope(actor, rule.unit_slug, { required: allowedUnitSlugs(actor) !== null })
@@ -370,17 +431,21 @@ export function createClinicalApprovalStore(options = {}) {
                 const updated = await client.query(`update clinical_approval.rules set current_status = 'submitted', updated_at = now()
                     where id = $1 and current_revision = $2 returning *`, [id, expectedRevision])
                 const next = updated.rows[0]
-                await event(client, next, 'submitted', actor, rule.current_status, payload.reason, command.key)
+                await event(client, next, 'submitted', actor, rule.current_status, reason, command.key)
                 return { rule: mapRule(next), idempotent: false }
             })
         },
 
         async approve(id, payload = {}, actor, idempotencyKey) {
+            assertClinicalMutationAllowed()
             await ensureReady()
             assertRole(actor, new Set(['CLINICAL_APPROVER']))
             const expectedRevision = Number(payload.expectedRevision)
             if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw domainError('CLINICAL_APPROVAL_EXPECTED_REVISION_REQUIRED', 400)
-            return withCommand('approve', { id, expectedRevision }, actor, idempotencyKey, async (client, command) => {
+            const reason = payload.reason === undefined || payload.reason === null || String(payload.reason).trim() === ''
+                ? 'approved'
+                : cleanText(payload.reason, 3, 1000, 'CLINICAL_APPROVAL_REASON_REQUIRED')
+            return withCommand('approve', { id, expectedRevision, reason }, actor, idempotencyKey, async (client, command) => {
                 const rule = await readRule(client, id, true)
                 if (!rule) throw domainError('CLINICAL_APPROVAL_NOT_FOUND', 404)
                 assertUnitScope(actor, rule.unit_slug, { required: allowedUnitSlugs(actor) !== null })
@@ -392,12 +457,13 @@ export function createClinicalApprovalStore(options = {}) {
                 const updated = await client.query(`update clinical_approval.rules set current_status = 'approved', approver_id = $2,
                     approved_at = now(), updated_at = now() where id = $1 and current_revision = $3 returning *`, [id, actorIdOf(actor), expectedRevision])
                 const next = updated.rows[0]
-                await event(client, next, 'approved', actor, rule.current_status, payload.reason || 'approved', command.key, { recommendationAutomation: false })
+                await event(client, next, 'approved', actor, rule.current_status, reason, command.key, { recommendationAutomation: false })
                 return { rule: mapRule(next), idempotent: false }
             })
         },
 
         async reject(id, payload = {}, actor, idempotencyKey) {
+            assertClinicalMutationAllowed()
             await ensureReady()
             assertRole(actor, new Set(['CLINICAL_APPROVER']))
             const reason = cleanText(payload.reason, 3, 1000, 'CLINICAL_APPROVAL_REASON_REQUIRED')
@@ -417,6 +483,7 @@ export function createClinicalApprovalStore(options = {}) {
         },
 
         async disable(id, payload = {}, actor, idempotencyKey) {
+            assertClinicalMutationAllowed()
             await ensureReady()
             assertRole(actor, new Set(['CLINICAL_APPROVER', 'GESTOR', 'ADMIN']))
             const reason = cleanText(payload.reason || 'disabled by authorized operator', 3, 1000, 'CLINICAL_APPROVAL_REASON_REQUIRED')
@@ -437,6 +504,7 @@ export function createClinicalApprovalStore(options = {}) {
         },
 
         async expireDue(actor, idempotencyKey = `expiry-${new Date().toISOString().slice(0, 10)}`) {
+            assertClinicalMutationAllowed()
             await ensureReady()
             assertRole(actor, new Set(['CLINICAL_APPROVER', 'SYSTEM']))
             return withCommand('expire_due', {}, actor, idempotencyKey, async (client, command) => {
@@ -458,7 +526,7 @@ export function createClinicalApprovalStore(options = {}) {
         },
 
         async listApprovedForCommercial({ procedureNames = [], unitSlugs = null } = {}) {
-            if (!(await tableReady(pgPool))) return { ready: false, cadences: [] }
+            if (!clinicalApprovalEnabled() || !(await tableReady(pgPool, readinessTimeoutMs))) return { ready: false, cadences: [] }
             const names = Array.isArray(procedureNames) ? procedureNames.map(String).filter(Boolean) : []
             if (!names.length) return { ready: true, cadences: [] }
             const params = [names]
@@ -490,4 +558,13 @@ export function createClinicalApprovalStore(options = {}) {
 }
 
 export const clinicalApprovalRuleStatuses = Object.freeze([...RULE_STATUSES])
-export const clinicalApprovalTestHelpers = Object.freeze({ normalizeRuleInput, normalizeIdempotencyKey, requestHash, mapRule, allowedUnitSlugs })
+export const clinicalApprovalTestHelpers = Object.freeze({
+    normalizeRuleInput,
+    normalizeIdempotencyKey,
+    requestHash,
+    commandLockKey,
+    mapRule,
+    allowedUnitSlugs,
+    actorIdOf,
+    tableReady,
+})
