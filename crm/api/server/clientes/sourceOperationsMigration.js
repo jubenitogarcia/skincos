@@ -41,6 +41,10 @@ function runtimeGrantStatements(target) {
         `revoke update, delete, truncate, references, trigger on table crm_atendimento.clientes_source_operation_dead_letters from ${role}`,
         `revoke update, delete, truncate, references, trigger on table crm_atendimento.clientes_source_operation_rollbacks from ${role}`,
         `grant usage on schema crm_atendimento to ${role}`,
+        // The operational readiness probe records and verifies the applied
+        // migration. Without this read grant, a least-privilege runtime role
+        // would fail closed forever after an otherwise valid migration.
+        `grant select on table crm_atendimento.schema_migrations to ${role}`,
         `grant select, insert, update on table crm_atendimento.clientes_source_operation_runs to ${role}`,
         `grant select, insert, update on table crm_atendimento.clientes_source_operation_checkpoints to ${role}`,
         `grant select, insert on table crm_atendimento.clientes_source_operation_backups to ${role}`,
