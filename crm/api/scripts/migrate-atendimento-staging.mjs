@@ -46,6 +46,10 @@ import {
     applyIdentityReviewWorkflowMigration,
     rollbackIdentityReviewWorkflowMigration,
 } from '../server/atendimento/identityReviewMigration.js'
+import {
+    applyClinicalApprovalMigration,
+    rollbackClinicalApprovalMigration,
+} from '../server/clinical/clinicalApprovalMigration.js'
 
 const target = ATENDIMENTO_MIGRATION_TARGETS.STAGING
 const databaseUrl = String(process.env.DATABASE_URL || '').trim()
@@ -68,6 +72,7 @@ const migrations = [
     { id: '20260805_commercial_action_ledger_v1', apply: applyCommercialActionLedgerMigration, rollback: rollbackCommercialActionLedgerMigration },
     { id: '20260805_commercial_data_quality_queue_v1', apply: applyCommercialDataQualityMigration, rollback: rollbackCommercialDataQualityMigration },
     { id: '20260805_identity_review_workflow_v1', apply: applyIdentityReviewWorkflowMigration, rollback: rollbackIdentityReviewWorkflowMigration },
+    { id: '20260806_clinical_cadence_approval_v1', apply: applyClinicalApprovalMigration, rollback: rollbackClinicalApprovalMigration },
 ]
 
 const pool = createPgPool(databaseUrl)

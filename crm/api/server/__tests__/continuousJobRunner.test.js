@@ -97,6 +97,33 @@ test('permanent failure is retained as a dead-letter state', async () => {
     await runner.stop()
 })
 
+test('an explicitly non-retryable job failure is dead-lettered without backoff retries', async () => {
+    let runs = 0
+    const runner = createContinuousJobRunner({
+        retryBaseMs: 1,
+        retryMaxMs: 2,
+        maxAttempts: 5,
+        jobs: [{
+            id: 'clientes.non-retryable',
+            intervalMs: 60_000,
+            run: async () => {
+                runs += 1
+                const error = new Error('configuration rejected')
+                error.code = 'CONFIGURATION_REJECTED'
+                error.retryable = false
+                throw error
+            },
+        }],
+    })
+    await runner.start()
+    await waitFor(() => runner.getStatus().jobs['clientes.non-retryable'].status === 'dead')
+    const status = runner.getStatus()
+    assert.equal(runs, 1)
+    assert.equal(status.metrics.retries, 0)
+    assert.equal(status.deadLetters[0].error, 'CONFIGURATION_REJECTED')
+    await runner.stop()
+})
+
 test('stop waits for an in-flight job before returning', async () => {
     let release
     let started
