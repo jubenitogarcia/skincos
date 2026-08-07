@@ -31,6 +31,7 @@ import { registerPontoRoutes } from './server/pontoRoutes.js'
 import { createHarmoniaRouter } from './server/harmonia/routes.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
+import { createClinicalApprovalRouter } from './server/clinical/routes.js'
 import { createCaixaRouter } from './server/caixa/routes.js'
 import { configuredCorsOrigins, isAllowedCrmCorsOrigin } from './server/corsPolicy.js'
 import { effectiveAllowedModules, normalizeCrmRole as normalizeRole } from './server/crmRolePolicy.js'
@@ -849,13 +850,20 @@ async function fetchCrmUserFromAuth(req) {
             const data = await res.json().catch(() => null)
             const raw = data?.user || data?.usuario || data || null
             if (!raw) return null
+            // Audit-ledger actors must be stable opaque subjects.  Falling
+            // back to an e-mail would copy PII into append-only clinical
+            // evidence, so fail closed when the identity service omits one.
+            const actorId = String(raw.subject || raw.subjectId || raw.id || raw.username || '').trim()
+            if (!actorId || /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/i.test(actorId)) return null
+            const rawRole = String(raw.role || '').trim().toUpperCase()
             return {
-                id: raw.id || raw.username || raw.email,
+                id: actorId.slice(0, 200),
                 username: raw.username,
                 displayName: raw.displayName || raw.name || raw.username || raw.email,
                 name: raw.name,
                 email: raw.email,
                 role: normalizeRole(raw.role),
+                isGlobalAdmin: rawRole === 'ADMIN',
                 allowedUnits: raw.allowedUnits,
                 allowedModules: raw.allowedModules,
             }
@@ -873,6 +881,20 @@ async function resolveCrmUser(req) {
     }
     const user = await fetchCrmUserFromAuth(req)
     return normalizeCrmUser(user)
+}
+
+// Clinical cadence approval is a separate bounded context. It is mounted
+// after the authenticated CRM resolver is declared and never shares the
+// commercial router's mutation surface. The domain stays schema-managed and
+// fail-closed until its additive migration is explicitly applied.
+try {
+    app.use('/api/clinical', createClinicalApprovalRouter({
+        databaseUrl: process.env.DATABASE_URL,
+        getActor: resolveCrmUser,
+    }))
+    console.log('✅ Clinical approval routes registered')
+} catch (e) {
+    console.warn('⚠️  Clinical approval routes failed to register:', e?.message || String(e))
 }
 
 app.use('/api/meta-ads', async (req, res, next) => {

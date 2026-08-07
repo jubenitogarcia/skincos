@@ -1,0 +1,7 @@
+-- Canonical SQL is assembled by clinicalApprovalMigration.js so the guarded
+-- local/staging destination checks and runtime grants cannot be bypassed.
+-- This file is the reviewed, additive migration artifact for operators.
+-- It creates clinical_approval.rules, rule_revisions, rule_events and
+-- command_dedup, immutable evidence triggers, optimistic revision guards and
+-- state-transition/event-evidence/removal guards and a legacy commercial
+-- cadence trigger that rejects approved rows.

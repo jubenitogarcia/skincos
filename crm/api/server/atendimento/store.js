@@ -5019,6 +5019,7 @@ async function materializeIdentityReviewReversal(client, { candidate, reversesDe
 
 export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
+    const clinicalApprovalStore = options.clinicalApprovalStore || null
     const schemaManaged = options.schemaManaged === true || String(process.env.CRM_ATENDIMENTO_SCHEMA_MANAGED || '').trim().toLowerCase() === 'true'
     let readinessPromise = null
 
@@ -5647,18 +5648,20 @@ export function createAtendimentoStore(options = {}) {
                      order by action.created_at desc limit 100`,
                     [id, unitSlugs],
                 ),
-                pgPool.query(
-                    `select procedure.id, procedure.name, cadence.cadence_days, cadence.status, cadence.notes,
-                            unit.slug as unit_slug, unit.name as unit_name, cadence.approved_at, cadence.approved_by
-                     from crm_atendimento.procedures procedure
-                     left join crm_atendimento.commercial_procedure_cadences cadence
-                        on cadence.procedure_id = procedure.id and cadence.status = 'approved'
-                     left join crm_atendimento.units unit on unit.id = cadence.unit_id
-                     where procedure.name = any($1::text[])
-                       and ($2::text[] is null or unit.slug is null or unit.slug = any($2::text[]))
-                     order by procedure.name`,
-                    [profile.completedProcedures, unitSlugs],
-                ),
+                clinicalApprovalStore
+                    ? clinicalApprovalStore.listApprovedForCommercial({ procedureNames: profile.completedProcedures, unitSlugs })
+                    : pgPool.query(
+                        `select procedure.id, procedure.name, cadence.cadence_days, cadence.status, cadence.notes,
+                                unit.slug as unit_slug, unit.name as unit_name, cadence.approved_at, cadence.approved_by
+                         from crm_atendimento.procedures procedure
+                         left join crm_atendimento.commercial_procedure_cadences cadence
+                            on cadence.procedure_id = procedure.id and cadence.status = 'approved'
+                         left join crm_atendimento.units unit on unit.id = cadence.unit_id
+                         where procedure.name = any($1::text[])
+                           and ($2::text[] is null or unit.slug is null or unit.slug = any($2::text[]))
+                         order by procedure.name`,
+                        [profile.completedProcedures, unitSlugs],
+                    ),
                 queryCommercialTimeline(pgPool, {
                     identityId: id,
                     asOf,
@@ -5672,7 +5675,22 @@ export function createAtendimentoStore(options = {}) {
                 profile: minimizeCommercialProfile(profile),
                 actions: actions.rows.map(mapCommercialAction),
                 timeline,
-                clinicalCadences: cadences.rows.map((row) => ({
+                clinicalCadences: (clinicalApprovalStore ? cadences.cadences : cadences.rows).map((row) => clinicalApprovalStore ? ({
+                    procedureId: row.procedureId,
+                    procedureName: row.procedureName,
+                    cadenceDays: row.cadenceDays,
+                    status: row.status || 'not_configured',
+                    notes: row.justification || '',
+                    unitSlug: row.unitSlug || '',
+                    unitName: row.unitName || '',
+                    approvedAt: row.approvedAt || null,
+                    approvedBy: row.approverId || '',
+                    revision: row.revision,
+                    intervalMinDays: row.intervalMinDays,
+                    intervalMaxDays: row.intervalMaxDays,
+                    effectiveFrom: row.effectiveFrom,
+                    expiresAt: row.expiresAt,
+                }) : ({
                     procedureId: row.id,
                     procedureName: row.name,
                     cadenceDays: row.cadence_days == null ? null : Number(row.cadence_days),
@@ -5910,6 +5928,29 @@ export function createAtendimentoStore(options = {}) {
             await ensureReady()
             assertCommercialManager(actor)
             const unitSlugs = commercialUnitSlugsForQuery(actor)
+            if (clinicalApprovalStore) {
+                const data = await clinicalApprovalStore.listRules({}, actor)
+                return { cadences: data.rules.map((row) => ({
+                    id: row.id,
+                    procedureId: row.procedureId,
+                    procedureName: row.procedureName,
+                    cadenceDays: row.cadenceDays,
+                    intervalMinDays: row.intervalMinDays,
+                    intervalMaxDays: row.intervalMaxDays,
+                    status: row.status,
+                    notes: row.justification,
+                    approvedBy: row.approverId || '',
+                    approvedAt: row.approvedAt || null,
+                    updatedBy: row.authorId,
+                    updatedAt: row.updatedAt,
+                    unitSlug: row.unitSlug,
+                    unitName: row.unitName,
+                    revision: row.revision,
+                    effectiveFrom: row.effectiveFrom,
+                    expiresAt: row.expiresAt,
+                    evidenceReference: row.evidenceReference,
+                })) }
+            }
             const result = await pgPool.query(
                 `select cadence.id, cadence.procedure_id, procedure.name as procedure_name, cadence.cadence_days, cadence.status,
                         cadence.notes, cadence.approved_by, cadence.approved_at, cadence.updated_by, cadence.updated_at,
@@ -5933,6 +5974,30 @@ export function createAtendimentoStore(options = {}) {
         async upsertCommercialCadence(payload, actor) {
             await ensureReady()
             assertCommercialManager(actor)
+            if (clinicalApprovalStore) {
+                const status = String(payload?.status || 'draft').trim()
+                if (status === 'approved') throw clinicalCadenceApprovalRequired()
+                if (!['draft', 'disabled'].includes(status)) {
+                    const error = new Error('INVALID_CLINICAL_CADENCE')
+                    error.statusCode = 400
+                    throw error
+                }
+                const result = await clinicalApprovalStore.createDraft({
+                    ...payload,
+                    intervalMinDays: payload.intervalMinDays ?? payload.cadenceDays,
+                    intervalMaxDays: payload.intervalMaxDays ?? payload.cadenceDays,
+                    justification: payload.justification || payload.notes,
+                    evidenceReference: payload.evidenceReference || 'commercial-draft',
+                }, actor, payload.idempotencyKey || `commercial-draft-${String(payload.procedureId || '')}-${String(payload.unit || 'global')}`)
+                if (status === 'disabled') {
+                    return clinicalApprovalStore.disable(result.rule.id, {
+                        expectedRevision: result.rule.revision,
+                        reason: 'commercial draft explicitly disabled',
+                        idempotencyKey: `${payload.idempotencyKey || 'commercial-draft'}-disable`,
+                    }, actor, `${payload.idempotencyKey || 'commercial-draft'}-disable`)
+                }
+                return { id: result.rule.id, revision: result.rule.revision, status: result.rule.status }
+            }
             const procedureId = String(payload?.procedureId || '').trim()
             const status = String(payload?.status || 'draft').trim()
             const cadenceDays = Number(payload?.cadenceDays)

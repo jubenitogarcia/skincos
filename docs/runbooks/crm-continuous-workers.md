@@ -23,13 +23,14 @@ mutation, campaign action or external message is authorized by this worker
 foundation.
 
 The independent job runner is controlled separately by
-`CRM_CONTINUOUS_JOBS_ENABLED`. It registers three jobs with independent timers:
+`CRM_CONTINUOUS_JOBS_ENABLED`. It registers four jobs with independent timers:
 
 | Job | Responsibility | Default interval | Failure handling |
 | --- | --- | ---: | --- |
 | `clientes.opt_out_ingestion` | Aggregate opt-out snapshot from `harmonia.contacts`; no phone payload is copied | 60 s | retry/backoff, then checkpoint dead-letter |
 | `clientes.source_update` | Target-bound Google Sheets source refresh; unit defaults to `dry-run` | 15 min | advisory lock, retry/backoff, then dead-letter |
 | `clientes.quality_refresh` | Refresh the Atendimento commercial data-quality queue | 30 min | target/identity gate, retry/backoff, then dead-letter |
+| `clientes.clinical_approval_expiry` | Materialize only already-due clinical-rule expirations | 15 min | disabled by default; local/staging target only; permanent configuration rejection goes straight to dead-letter |
 
 Each execution has a deterministic `job-id:scheduled-at` idempotency key. The
 checkpoint at `CRM_CONTINUOUS_JOBS_STATE_PATH` (default
@@ -62,8 +63,13 @@ state, log and backup paths are fixed by the installer.
 
 Activation is deliberately two-keyed in the private environment:
 `CRM_CONTINUOUS_WORKERS_ENABLED=1` starts the process and
-`CRM_CONTINUOUS_JOBS_ENABLED=1` enables the three Clientes jobs. The checked-in
-unit keeps both disabled by default and keeps source refresh at `dry-run`.
+`CRM_CONTINUOUS_JOBS_ENABLED=1` enables the Clientes jobs. The checked-in unit
+keeps both disabled by default and keeps source refresh at `dry-run`. Clinical
+expiry needs the additional `CLINICAL_APPROVAL_EXPIRY_JOB_ENABLED=1`, a
+`CLINICAL_APPROVAL_EXPIRY_TARGET` of `local` or `staging`, and the clinical
+domain's own explicit enablement. It refuses `production` and a read-only
+runtime before opening the clinical store; it never approves, recommends or
+sends anything.
 
 The health server binds to loopback by default (`CRM_CONTINUOUS_WORKER_PORT`,
 default `8102`) and exposes:

@@ -9,11 +9,13 @@ import {
     summarizeClientesSourceRefresh,
 } from '../atendimento/sourceRefresh.js'
 import { createCommercialDataQualityStore } from '../atendimento/commercialDataQualityStore.js'
+import { createClinicalApprovalExpiryJob } from '../clinical/clinicalApprovalExpiryJob.js'
 
 export const CLIENTES_CONTINUOUS_JOB_IDS = Object.freeze({
     OPT_OUT_INGESTION: 'clientes.opt_out_ingestion',
     SOURCE_UPDATE: 'clientes.source_update',
     QUALITY_REFRESH: 'clientes.quality_refresh',
+    CLINICAL_APPROVAL_EXPIRY: 'clientes.clinical_approval_expiry',
 })
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
@@ -146,6 +148,7 @@ export function createClientesContinuousJobs({
     optOutRunner = runOptOutIngestion,
     sourceRunner = runClientesSourceRefresh,
     qualityRunner = runQualityRefresh,
+    clinicalExpiryJobFactory = createClinicalApprovalExpiryJob,
 } = {}) {
     const interval = (key, fallback) => positiveSeconds(env[key], fallback) * 1000
     return [
@@ -164,6 +167,7 @@ export function createClientesContinuousJobs({
             intervalMs: interval('CRM_CONTINUOUS_JOB_QUALITY_INTERVAL_SECONDS', 1800),
             run: (context) => qualityRunner({ pool, databaseUrl, env, executionKey: context?.executionKey }),
         },
+        clinicalExpiryJobFactory({ pool, databaseUrl, env }),
     ]
 }
 
