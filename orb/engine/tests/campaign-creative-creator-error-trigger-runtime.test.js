@@ -105,3 +105,27 @@ test('bootstrap resolves WorkflowRunner metadata before the runner is loaded', {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), 'function:true');
 });
+
+test('bootstrap repairs WorkflowExecutionService metadata immediately before container resolution', () => {
+  const bootstrap = require(preloadPath);
+  function FakeWorkflowExecutionService() {}
+  function FakeWorkflowRunner() {}
+  const dependencies = [function A() {}, function B() {}, function C() {}, function D() {}, function E() {}, function F() {}, undefined];
+  Reflect.defineMetadata('design:paramtypes', dependencies, FakeWorkflowExecutionService);
+  const fakeContainer = {
+    get(token) {
+      return (Reflect.getMetadata('design:paramtypes', token) || [])[6];
+    },
+  };
+
+  assert.equal(
+    bootstrap.patchContainerGet(fakeContainer, FakeWorkflowExecutionService, () => FakeWorkflowRunner),
+    true,
+  );
+  assert.equal(fakeContainer.get(FakeWorkflowExecutionService), FakeWorkflowRunner);
+  assert.equal(fakeContainer.__skincosCcgWorkflowExecutionRepair, true);
+  assert.equal(
+    bootstrap.patchContainerGet(fakeContainer, FakeWorkflowExecutionService, () => FakeWorkflowRunner),
+    false,
+  );
+});

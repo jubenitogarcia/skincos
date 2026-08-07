@@ -96,10 +96,11 @@ function resolveN8nRoot() {
   const servicePath = path.join(root, 'dist', 'workflows', 'workflow-execution.service.js');
   const runnerPath = path.join(root, 'dist', 'workflow-runner.js');
   const errorWorkflowPath = path.join(root, 'dist', 'execution-lifecycle', 'execute-error-workflow.js');
-  if (!fs.existsSync(servicePath) || !fs.existsSync(runnerPath) || !fs.existsSync(errorWorkflowPath)) {
+  const diPath = path.join(root, 'node_modules', '@n8n', 'di');
+  if (!fs.existsSync(servicePath) || !fs.existsSync(runnerPath) || !fs.existsSync(errorWorkflowPath) || !fs.existsSync(diPath)) {
     throw new Error('n8n error-workflow bootstrap could not resolve the installed runtime modules');
   }
-  return { servicePath, runnerPath, errorWorkflowPath };
+  return { servicePath, runnerPath, errorWorkflowPath, diPath };
 }
 
 function repairWorkflowExecutionMetadata(WorkflowExecutionService, WorkflowRunner) {
@@ -120,8 +121,36 @@ function repairWorkflowExecutionMetadata(WorkflowExecutionService, WorkflowRunne
   return true;
 }
 
+function patchContainerGet(Container, WorkflowExecutionService, loadWorkflowRunner) {
+  if (!Container || typeof Container.get !== 'function') {
+    throw new Error('n8n error-workflow bootstrap could not inspect the dependency container');
+  }
+  if (typeof loadWorkflowRunner !== 'function') {
+    throw new Error('n8n error-workflow bootstrap requires a WorkflowRunner loader');
+  }
+  if (Container.__skincosCcgWorkflowExecutionRepair === true) return false;
+
+  // n8n's CLI lifecycle may load a second set of decorators after this preload
+  // returns. Repair again at the only resolution point that matters rather than
+  // relying on an earlier metadata snapshot to remain intact.
+  const originalGet = Container.get;
+  Object.defineProperty(Container, '__skincosCcgWorkflowExecutionRepair', {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  Container.get = function getWithCcgWorkflowExecutionRepair(token, ...args) {
+    if (token === WorkflowExecutionService) {
+      repairWorkflowExecutionMetadata(WorkflowExecutionService, loadWorkflowRunner());
+    }
+    return originalGet.call(this, token, ...args);
+  };
+  return true;
+}
+
 function bootstrap() {
-  const { servicePath, runnerPath, errorWorkflowPath } = resolveN8nRoot();
+  const { servicePath, runnerPath, errorWorkflowPath, diPath } = resolveN8nRoot();
   // This runs before WorkflowRunner. n8n 2.8.3 otherwise records an undefined
   // constructor parameter during its CommonJS cycle through error workflows.
   const { WorkflowExecutionService } = require(servicePath);
@@ -130,6 +159,8 @@ function bootstrap() {
   }
   const { WorkflowRunner } = require(runnerPath);
   repairWorkflowExecutionMetadata(WorkflowExecutionService, WorkflowRunner);
+  const { Container } = require(diPath);
+  patchContainerGet(Container, WorkflowExecutionService, () => require(runnerPath).WorkflowRunner);
   const errorWorkflowModule = require(errorWorkflowPath);
   const original = errorWorkflowModule.executeErrorWorkflow;
   if (typeof original !== 'function') {
@@ -153,6 +184,7 @@ bootstrap();
 module.exports = {
   attachCcgRecoveryContext,
   captureContextFromRunData,
+  patchContainerGet,
   repairWorkflowExecutionMetadata,
   sanitizeRecoveryContext,
 };
