@@ -25,6 +25,7 @@
     "migrate-commercial-contact-rollout": "node scripts/migrate-atendimento-commercial-contact-rollout.mjs",
     "migrate-commercial-action-ledger": "node scripts/migrate-atendimento-commercial-action-ledger.mjs",
     "migrate-commercial-data-quality": "node scripts/migrate-atendimento-commercial-data-quality.mjs",
+    "migrate-commercial-operations": "node scripts/migrate-atendimento-commercial-operations.mjs",
     "migrate-clinical-approval": "node scripts/migrate-clinical-approval.mjs",
     "migrate-identity-clusters": "node scripts/migrate-atendimento-identity-clusters.mjs",
     "migrate-atendimento-staging": "node scripts/migrate-atendimento-staging.mjs",
