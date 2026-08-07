@@ -348,8 +348,17 @@ async function enforceRateLimit(params: {
     blockMs: number;
     nowMs: number;
 }): Promise<boolean> {
+    const maxAttempts = Math.floor(params.maxAttempts);
+    const windowStartedResetThreshold = params.nowMs - params.windowMs;
+    const blockUntilMs = params.nowMs + params.blockMs;
+    if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || !Number.isSafeInteger(windowStartedResetThreshold) || !Number.isSafeInteger(blockUntilMs)) {
+        return false;
+    }
+
     // Keep the state transition in one SQLite statement. A read-then-write
     // counter permits parallel requests to all observe the same attempt count.
+    // Policy numbers are emitted as validated SQL literals so the statement
+    // stays within the small, stable D1 binding set used by the Worker runtime.
     await params.db
         .prepare(
             `INSERT INTO bm_rate_limit_windows (
@@ -358,20 +367,20 @@ async function enforceRateLimit(params: {
              ON CONFLICT(scope, subject_hmac) DO UPDATE SET
                 window_started_at_ms = CASE
                     WHEN bm_rate_limit_windows.blocked_until_ms > ? THEN bm_rate_limit_windows.window_started_at_ms
-                    WHEN ? - bm_rate_limit_windows.window_started_at_ms >= ? THEN ?
+                    WHEN bm_rate_limit_windows.window_started_at_ms <= ? THEN ?
                     ELSE bm_rate_limit_windows.window_started_at_ms
                 END,
                 attempt_count = CASE
                     WHEN bm_rate_limit_windows.blocked_until_ms > ? THEN bm_rate_limit_windows.attempt_count
-                    WHEN ? - bm_rate_limit_windows.window_started_at_ms >= ? THEN 1
+                    WHEN bm_rate_limit_windows.window_started_at_ms <= ? THEN 1
                     ELSE bm_rate_limit_windows.attempt_count + 1
                 END,
                 blocked_until_ms = CASE
                     WHEN bm_rate_limit_windows.blocked_until_ms > ? THEN bm_rate_limit_windows.blocked_until_ms
                     WHEN (CASE
-                        WHEN ? - bm_rate_limit_windows.window_started_at_ms >= ? THEN 1
+                        WHEN bm_rate_limit_windows.window_started_at_ms <= ? THEN 1
                         ELSE bm_rate_limit_windows.attempt_count + 1
-                    END) > ? THEN ?
+                    END) > ${maxAttempts} THEN ?
                     ELSE NULL
                 END,
                 updated_at_ms = ?`,
@@ -382,17 +391,13 @@ async function enforceRateLimit(params: {
             params.nowMs,
             params.nowMs,
             params.nowMs,
-            params.windowMs,
+            windowStartedResetThreshold,
             params.nowMs,
             params.nowMs,
+            windowStartedResetThreshold,
             params.nowMs,
-            params.windowMs,
-            params.nowMs,
-            params.nowMs,
-            params.nowMs,
-            params.windowMs,
-            params.maxAttempts,
-            params.nowMs + params.blockMs,
+            windowStartedResetThreshold,
+            blockUntilMs,
             params.nowMs,
         )
         .run();
