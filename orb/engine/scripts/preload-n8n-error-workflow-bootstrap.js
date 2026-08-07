@@ -94,21 +94,42 @@ function resolveN8nRoot() {
   const configured = text(process.env.N8N_GLOBAL_DIR, 1024);
   const root = configured || '/usr/local/lib/node_modules/n8n';
   const servicePath = path.join(root, 'dist', 'workflows', 'workflow-execution.service.js');
+  const runnerPath = path.join(root, 'dist', 'workflow-runner.js');
   const errorWorkflowPath = path.join(root, 'dist', 'execution-lifecycle', 'execute-error-workflow.js');
-  if (!fs.existsSync(servicePath) || !fs.existsSync(errorWorkflowPath)) {
+  if (!fs.existsSync(servicePath) || !fs.existsSync(runnerPath) || !fs.existsSync(errorWorkflowPath)) {
     throw new Error('n8n error-workflow bootstrap could not resolve the installed runtime modules');
   }
-  return { servicePath, errorWorkflowPath };
+  return { servicePath, runnerPath, errorWorkflowPath };
+}
+
+function repairWorkflowExecutionMetadata(WorkflowExecutionService, WorkflowRunner) {
+  const dependencies = Reflect.getMetadata('design:paramtypes', WorkflowExecutionService);
+  if (!Array.isArray(dependencies) || dependencies.length < 7) {
+    throw new Error('n8n error-workflow bootstrap could not inspect WorkflowExecutionService dependencies');
+  }
+  if (typeof WorkflowRunner !== 'function') {
+    throw new Error('n8n error-workflow bootstrap could not load WorkflowRunner');
+  }
+  if (dependencies[6] === WorkflowRunner) return false;
+  // n8n 2.8.3 evaluates this constructor metadata while workflow-runner is
+  // still inside the error-workflow cycle. The sixth dependency is therefore
+  // permanently recorded as undefined, even once the module cache settles.
+  const repaired = [...dependencies];
+  repaired[6] = WorkflowRunner;
+  Reflect.defineMetadata('design:paramtypes', repaired, WorkflowExecutionService);
+  return true;
 }
 
 function bootstrap() {
-  const { servicePath, errorWorkflowPath } = resolveN8nRoot();
+  const { servicePath, runnerPath, errorWorkflowPath } = resolveN8nRoot();
   // This runs before WorkflowRunner. n8n 2.8.3 otherwise records an undefined
   // constructor parameter during its CommonJS cycle through error workflows.
   const { WorkflowExecutionService } = require(servicePath);
   if (typeof WorkflowExecutionService !== 'function') {
     throw new Error('n8n error-workflow bootstrap could not load WorkflowExecutionService');
   }
+  const { WorkflowRunner } = require(runnerPath);
+  repairWorkflowExecutionMetadata(WorkflowExecutionService, WorkflowRunner);
   const errorWorkflowModule = require(errorWorkflowPath);
   const original = errorWorkflowModule.executeErrorWorkflow;
   if (typeof original !== 'function') {
@@ -132,5 +153,6 @@ bootstrap();
 module.exports = {
   attachCcgRecoveryContext,
   captureContextFromRunData,
+  repairWorkflowExecutionMetadata,
   sanitizeRecoveryContext,
 };

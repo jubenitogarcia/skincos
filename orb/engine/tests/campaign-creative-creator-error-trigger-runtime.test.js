@@ -93,15 +93,15 @@ test('bootstrap preserves only the CCG recovery lineage in the native error payl
 
 test('bootstrap resolves WorkflowRunner metadata before the runner is loaded', { skip: !fs.existsSync(runnerPath) }, () => {
   const probe = [
-    `require(${JSON.stringify(runnerPath)});`,
     `const { WorkflowExecutionService } = require(${JSON.stringify(servicePath)});`,
+    `const { WorkflowRunner } = require(${JSON.stringify(runnerPath)});`,
     "const dependencies = Reflect.getMetadata('design:paramtypes', WorkflowExecutionService) || [];",
-    'process.stdout.write(String(typeof dependencies[6]));',
+    "process.stdout.write(String(typeof dependencies[6]) + ':' + String(dependencies[6] === WorkflowRunner));",
   ].join('\n');
   const result = spawnSync(process.execPath, ['--require', preloadPath, '-e', probe], {
     encoding: 'utf8',
     env: { ...process.env, N8N_GLOBAL_DIR: n8nRoot },
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), 'function');
+  assert.equal(result.stdout.trim(), 'function:true');
 });
