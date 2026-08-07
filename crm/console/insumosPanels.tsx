@@ -29,6 +29,7 @@ import {
   severityLabel,
 } from '@/insumosShared'
 import { isMovementReversed } from '@/insumosDerivations'
+import { INSUMOS_ALL_UNITS } from '@/insumosUnitAccess'
 import type { MovementRowView } from '@/insumosDerivations'
 import type { AlertaStatusTag } from '@/insumosShared'
 import type {
@@ -120,6 +121,7 @@ type InsumosInventoryDialogProps = {
   open: boolean
   dialogClassName: string
   isAuthed: boolean
+  readOnly?: boolean
   unit: string
   unitLabel: (unit: string) => string
   query: string
@@ -186,6 +188,7 @@ export function InsumosInventoryDialog({
   open,
   dialogClassName,
   isAuthed,
+  readOnly = false,
   unit,
   unitLabel,
   query,
@@ -259,16 +262,18 @@ export function InsumosInventoryDialog({
               placeholder="Buscar por código, produto, categoria…"
               className="ml-auto h-8 min-w-[160px] flex-1 md:min-w-0"
             />
-            <TooltipButton label="Exportar CSV">
-              <Button variant="outline" className="h-8 px-3" onClick={onExport} disabled={!isAuthed}>
+            <TooltipButton label={readOnly ? 'Exportação consolidada indisponível nesta visão' : 'Exportar CSV'}>
+              <Button variant="outline" className="h-8 px-3" onClick={onExport} disabled={!isAuthed || readOnly}>
                 Exportar
               </Button>
             </TooltipButton>
-            <Button variant="outline" className="h-8 px-3" onClick={onToggleCreate} disabled={!isAuthed}>
+            <Button variant="outline" className="h-8 px-3" onClick={onToggleCreate} disabled={!isAuthed || readOnly}>
               {createOpen ? 'Fechar' : 'Adicionar'}
             </Button>
           </div>
-          <DialogDescription>Lista e cadastro de insumos da unidade selecionada.</DialogDescription>
+          <DialogDescription>
+            {readOnly ? 'Visão consolidada e somente leitura das unidades autorizadas.' : 'Lista e cadastro de insumos da unidade selecionada.'}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -423,7 +428,7 @@ export function InsumosInventoryDialog({
                 <Button variant="secondary" onClick={onCancelCreate}>
                   Cancelar
                 </Button>
-                <Button onClick={onSaveCreate} disabled={!isAuthed || createLoading}>
+                <Button onClick={onSaveCreate} disabled={readOnly || !isAuthed || createLoading}>
                   {createLoading ? 'Salvando…' : 'Salvar'}
                 </Button>
               </div>
@@ -446,7 +451,11 @@ export function InsumosInventoryDialog({
               </thead>
               <tbody className="divide-y divide-white/5">
                 {filteredInsumos.map((item, idx) => {
-                  const estoque = unit && item?.estoques ? Number(item.estoques?.[unit] ?? 0) : Number(item.estoqueAtual ?? 0)
+                  const estoque = unit === INSUMOS_ALL_UNITS && item?.estoques
+                    ? Object.values(item.estoques).reduce((sum, value) => sum + (Number(value) || 0), 0)
+                    : unit && item?.estoques
+                      ? Number(item.estoques?.[unit] ?? 0)
+                      : Number(item.estoqueAtual ?? 0)
                   const min = Number(item.estoqueMinimo) || 0
                   const valor = (Number(item.precoCusto) || 0) * (Number.isFinite(estoque) ? estoque : 0)
                   const codigoBarras = String(item.codigoBarras || getInsumoBarcodes(item)[0] || '').trim()
@@ -479,7 +488,7 @@ export function InsumosInventoryDialog({
                             size="sm"
                             className="h-8 px-2 text-xs text-emerald-100"
                             onClick={() => onOpenQuickOperation('ENTRADA', context)}
-                            disabled={!isAuthed || !codigoBarras}
+                            disabled={readOnly || !isAuthed || !codigoBarras}
                             aria-label={`Entrada de ${item.produto || 'insumo'}`}
                           >
                             Entrada
@@ -489,7 +498,7 @@ export function InsumosInventoryDialog({
                             size="sm"
                             className="h-8 px-2 text-xs text-rose-100"
                             onClick={() => onOpenQuickOperation('BAIXA', context)}
-                            disabled={!isAuthed || !codigoBarras}
+                            disabled={readOnly || !isAuthed || !codigoBarras}
                             aria-label={`Saída de ${item.produto || 'insumo'}`}
                           >
                             Saída
@@ -499,7 +508,7 @@ export function InsumosInventoryDialog({
                             size="sm"
                             className="h-8 px-2 text-xs text-amber-100"
                             onClick={() => onOpenQuickOperation('AJUSTE', context)}
-                            disabled={!isAuthed || !codigoBarras}
+                            disabled={readOnly || !isAuthed || !codigoBarras}
                             aria-label={`Ajuste de ${item.produto || 'insumo'}`}
                           >
                             Ajuste
@@ -509,7 +518,7 @@ export function InsumosInventoryDialog({
                             size="sm"
                             className="h-8 px-2 text-xs text-blue-100"
                             onClick={() => onOpenQuickOperation('TRANSFERENCIA', context)}
-                            disabled={!isAuthed || !codigoBarras}
+                            disabled={readOnly || !isAuthed || !codigoBarras}
                             aria-label={`Transferência de ${item.produto || 'insumo'}`}
                           >
                             Transferência

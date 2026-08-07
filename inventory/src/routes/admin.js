@@ -1,6 +1,12 @@
 // @ts-nocheck
 
-import { restoreBackupPayload } from '../services/backup.js';
+import {
+  getInsumosPreviewSnapshotMetadata,
+  restoreBackupPayload,
+  verifyInsumosPreviewSnapshotIntegrity,
+  verifyInsumosPreviewRestore,
+} from '../services/backup.js';
+import { isAuthorizedDevSeedRequest } from '../lib/devSeed.js';
 import { resolveCrmTables } from '../d1Store.js';
 import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
@@ -488,10 +494,7 @@ export async function handleAdminRoutes({
   if (!url.pathname.startsWith('/admin/')) return null;
 
   if (url.pathname === '/admin/seed' && request.method === 'POST') {
-    const allowSeed = String(env?.ALLOW_DEV_SEED || '').trim().toLowerCase() === 'true';
-    const seedToken = String(env?.INSUMOS_SEED_TOKEN || '').trim();
-    const headerToken = String(request.headers.get('x-seed-token') || request.headers.get('x-insumos-seed-token') || '').trim();
-    if (!allowSeed || !seedToken || headerToken !== seedToken) {
+    if (!await isAuthorizedDevSeedRequest({ env, request, url })) {
       return withCORS(JSON.stringify({ success: false, error: 'Not found' }), { status: 404 }, appOrigin);
     }
 
@@ -501,8 +504,19 @@ export async function handleAdminRoutes({
       if (!payload || typeof payload !== 'object') {
         return withCORS(JSON.stringify({ success: false, error: 'Payload inválido' }), { status: 400 }, appOrigin);
       }
-      await restoreBackupPayload({ env, payload });
-      return withCORS(JSON.stringify({ success: true, data: { restored: true } }), { status: 200 }, appOrigin);
+      const previewSnapshot = getInsumosPreviewSnapshotMetadata(payload);
+      // Verify the exact inventory-only payload before any local row is
+      // touched. A syntactically valid digest field is not evidence that the
+      // snapshot itself was not changed after export.
+      if (previewSnapshot) await verifyInsumosPreviewSnapshotIntegrity(payload);
+      await restoreBackupPayload({ env, payload, strict: !!previewSnapshot });
+      const verification = previewSnapshot
+        ? await verifyInsumosPreviewRestore({ env, payload })
+        : null;
+      return withCORS(JSON.stringify({
+        success: true,
+        data: { restored: true, snapshot: verification },
+      }), { status: 200 }, appOrigin);
     } catch (err) {
       const msg = String(err?.message || err || 'Erro ao restaurar');
       const status = msg === 'PAYLOAD_INVALID' ? 400 : 500;

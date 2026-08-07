@@ -1,5 +1,6 @@
 import React from 'react'
 import { dispatchInsumosHeaderAction, emitInsumosHeaderState, subscribeInsumosHeaderAction } from '@/insumosBridge'
+import { INSUMOS_ALL_UNITS } from '@/insumosUnitAccess'
 import type {
   InsumosHeaderState,
   InsumosLayoutAction,
@@ -10,9 +11,11 @@ import type {
 type UseInsumosHeaderBridgeArgs = {
   allUnidades: string[]
   allowedUnits: string[]
+  canAggregateUnits: boolean
   loadInsights: (opts?: { force?: boolean }) => Promise<void>
   loadOverview: (opts?: { force?: boolean }) => Promise<void>
   loadingPercent: number
+  layoutExpanded: boolean
   openQuickOperation: (op: InsumosQuickOperation) => void
   overviewCustomFrom: string
   overviewCustomTo: string
@@ -35,9 +38,11 @@ type UseInsumosHeaderBridgeArgs = {
 export function useInsumosHeaderBridge({
   allUnidades,
   allowedUnits,
+  canAggregateUnits,
   loadInsights,
   loadOverview,
   loadingPercent,
+  layoutExpanded,
   openQuickOperation,
   overviewCustomFrom,
   overviewCustomTo,
@@ -66,20 +71,22 @@ export function useInsumosHeaderBridge({
 
   React.useEffect(() => {
     if (!allowedUnits.length) return
+    if (selectedUnit === INSUMOS_ALL_UNITS && canAggregateUnits) return
     if (allowedUnits.includes(selectedUnit)) return
     const next = allowedUnits[0]
     setSelectedUnit(next)
     dispatchInsumosHeaderAction({ type: 'set-unit', value: next })
-  }, [allowedUnits, selectedUnit, setSelectedUnit])
+  }, [allowedUnits, canAggregateUnits, selectedUnit, setSelectedUnit])
 
   React.useEffect(() => {
     if (!allUnidades.length) return
+    if (selectedUnit === INSUMOS_ALL_UNITS && canAggregateUnits) return
     if (allUnidades.includes(selectedUnit)) return
     const next = allUnidades[0]
     if (!next) return
     setSelectedUnit(next)
     dispatchInsumosHeaderAction({ type: 'set-unit', value: next })
-  }, [allUnidades, selectedUnit, setSelectedUnit])
+  }, [allUnidades, canAggregateUnits, selectedUnit, setSelectedUnit])
 
   React.useEffect(() => {
     emitInsumosHeaderState({
@@ -92,6 +99,7 @@ export function useInsumosHeaderBridge({
         saidaValor: Number.isFinite(Number(overviewMovResumo?.saidaValor)) ? Number(overviewMovResumo?.saidaValor) : null,
       },
       selectedUnit,
+      layoutExpanded,
       overview: {
         period: overviewPeriod,
         from: overviewCustomFrom,
@@ -99,6 +107,7 @@ export function useInsumosHeaderBridge({
       },
     })
   }, [
+    layoutExpanded,
     loadingPercent,
     overviewCustomFrom,
     overviewCustomTo,

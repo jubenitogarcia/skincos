@@ -181,11 +181,28 @@ Smoke test (sem segredos / sem Google):
 
 Objetivo: popular o D1 local sem tocar o banco online.
 
-0) (Opcional) Exportar snapshot da produção via D1 remoto (somente leitura):
+0) Exportar um snapshot de prévia via D1 remoto (somente leitura):
 
 ```
-./backend/scripts/insumos-d1-export.cjs /caminho/para/backup.json
+./backend/scripts/insumos.sh snapshot-export /caminho/privado/para/preview.json
 ```
+
+O snapshot de prévia é destinado exclusivamente ao runtime local privado. Ele
+inclui os dados de negócio de Insumos necessários para métricas e jornadas
+operacionais, mas exclui credenciais, usuários, auditoria, IPs, notificações e
+histórico de compartilhamento. As coleções permitidas são lidas em um único
+lote remoto; o Worker local recalcula o digest canônico, exige a allowlist
+exata e só então restaura as tabelas. A ação `CRM – Prévia Insumos Thread`
+executa esse passo automaticamente antes de iniciar a prévia e registra no
+manifesto somente origem, digest e contagens, sem expor registros. Se o
+runtime novo falhar após a troca, o launcher tenta restaurar automaticamente a
+prévia anterior; a falha permanece visível no log privado da ação.
+O checkpoint de rollback guarda somente o manifesto saudável em runtime
+privado, nunca o conteúdo do snapshot.
+
+Para bancos remotos ainda anteriores às migrações aditivas, o exportador só
+normaliza os campos novos conhecidos para `null` e representa tabelas ausentes
+como coleções vazias. Ele nunca executa migrações ou altera o D1 remoto.
 
 1) No Worker local, habilite seed (somente dev) via `inventory/.dev.vars`:
 

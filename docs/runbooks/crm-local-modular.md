@@ -13,10 +13,57 @@
 .\scripts\run-shared-codex-shortcut.ps1 -Action CrmModule -CrmRole Gestor -CrmModule insumos
 ```
 
+O Codex App também expõe a ação `CRM – Prévia Insumos Thread`. Ela usa o
+mesmo launcher, materializa o snapshot atual do checkout em runtime isolado e
+abre diretamente o módulo Insumos como Gestor:
+
+```powershell
+.\scripts\run-shared-codex-shortcut.ps1 -Action CrmThreadPreview -CrmRole Gestor -CrmModule insumos
+```
+
+Cada execução direta dessa prévia primeiro produz e valida um snapshot D1
+somente leitura, pelo `inventory/wrangler.toml`, antes de parar uma prévia já
+saudável. As tabelas de negócio são lidas juntas em um único lote remoto para
+evitar um recorte inconsistente entre itens, saldo e movimentações. O payload
+contém apenas o domínio de Insumos necessário para telas e métricas
+(itens/lotes, saldos, ledger, transferências, contagens, compras e reposição);
+ele não copia credenciais, usuários, auditoria, IPs, payloads de notificação
+ou histórico de compartilhamento. Antes de qualquer escrita local, o Worker
+recalcula o digest canônico, rejeita chaves fora desse contrato e exige que as
+contagens restauradas coincidam com o snapshot. Uma falha de exportação ou
+integridade anterior à troca preserva a prévia anterior como rollback. Se a
+inicialização local falhar depois da troca, o launcher encerra qualquer processo
+parcial e tenta restaurar automaticamente a versão anterior a partir da fonte
+privada que estava pronta. O último manifesto saudável é mantido no runtime
+privado para que essa recuperação também funcione após a entrega limpa entre
+worktrees.
+
+O exportador também reconhece a versão anterior do schema remoto: campos
+aditivos ausentes recebem `null` e tabelas ainda não criadas entram vazias no
+snapshot. Isso preserva a leitura real do banco sem executar migrações nem
+atribuir valores que não existiam na origem.
+
+Cada snapshot usa um diretório D1 local novo, por identificador do snapshot,
+para que movimentações ou mutações de uma sessão anterior não contaminem os
+dados nem as métricas da próxima. Cliques concorrentes são agrupados e os
+artefatos recebem nomes únicos; após uma prévia pronta, o runtime mantém no
+máximo duas gerações privadas. O manifesto `current.json` expõe somente os
+metadados verificáveis do snapshot em `insumosSnapshot` (origem, instante,
+digest e contagens), nunca os registros exportados.
+
+O endereço publicado é gravado em
+`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\thread-previews\gestor\insumos\current.json` somente quando `state` é `ready`; durante a
+inicialização, `url` permanece `null` e não deve ser usado. A prévia começa
+com a faixa preferencial `25000+`, mas reserva um bundle completo de portas
+livres sob lease compartilhado e registra as portas realmente alocadas no
+mesmo manifesto. Em hosts Windows sem encaminhamento de `localhost` para o
+WSL, o launcher seleciona automaticamente o IPv4 privado do WSL e valida esse
+host pelo Windows antes de abrir o navegador.
+
 Para encerrar somente essa combinação:
 
 ```powershell
-.\scripts\run-shared-codex-shortcut.ps1 -Action CrmModuleStop -CrmRole Gestor -CrmModule insumos
+.\scripts\run-shared-codex-shortcut.ps1 -Action CrmThreadPreview -CrmRole Gestor -CrmModule insumos -CrmThreadPreviewStop
 ```
 
 Use WSL/Ubuntu-24.04 como runtime do agente e terminal integrado. PowerShell permanece como a ponte para atalhos, navegador e estado nativo do Windows.
@@ -52,7 +99,7 @@ wsl.exe -d Ubuntu-24.04 -- bash -lc "node --test scripts/crm-local-module-catalo
 
 ## Isolamento e atualização
 
-Cada combinação usa um `runtimeId` determinístico e uma faixa exclusiva de portas. O estado privado fica em:
+Cada combinação usa um `runtimeId` determinístico e uma faixa exclusiva de portas. Prévia de thread preserva apenas uma faixa preferencial: ela seleciona dinamicamente um bundle completo que não colide com listeners existentes e o serializa por lease privado. O estado privado fica em:
 
 ```text
 C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\instances\<papel>\<módulo>\
@@ -61,6 +108,8 @@ C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\instances\<papel>\<mód
   logs\
   state\pages\
   state\insumos\
+  state\insumos-snapshots\
+  snapshots\
   state\timekeeping\
   state\whatsapp\
   state\wrangler-registry\
@@ -76,6 +125,11 @@ Na repetição de uma ação:
 3. auth, shell e dependências declaradas precisam responder saudáveis;
 4. somente então o navegador é reaberto no perfil daquela combinação;
 5. qualquer divergência encerra graciosamente apenas a combinação e reconstrói o necessário.
+
+A prévia direta de Insumos é a exceção deliberada ao reuso: uma ação concluída
+inicia um novo snapshot D1 privado. Cliques concorrentes esperam a mesma
+execução em andamento para não duplicar exportações ou trocar a prévia duas
+vezes.
 
 Locks publicam um owner atômico com token. Um owner vivo nunca é removido; locks incompletos recentes são tratados como contenção e owners mortos são movidos para quarentena antes da recuperação. A parada usa as identidades registradas e não varre processos ou portas por aproximação.
 

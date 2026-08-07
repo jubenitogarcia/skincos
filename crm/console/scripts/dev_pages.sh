@@ -11,6 +11,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 VITE_PORT="${VITE_PORT:-5173}"
 PAGES_PORT="${PAGES_PORT:-8788}"
+CRM_BIND_HOST="${CRM_BIND_HOST:-127.0.0.1}"
 R2_PERSIST_DIR_EXPLICIT="${R2_PERSIST_DIR+x}"
 R2_PERSIST_DIR="${R2_PERSIST_DIR:-.wrangler}"
 CRM_DIST_DIR="${CRM_DIST_DIR:-$ROOT_DIR/dist}"
@@ -50,6 +51,7 @@ local_auth_email="${LOCAL_AUTH_EMAIL:-dev@local.test}"
 local_auth_name="${LOCAL_AUTH_NAME:-Dev Local}"
 local_auth_allowed_modules="${LOCAL_AUTH_ALLOWED_MODULES:-}"
 local_auth_allowed_units="${LOCAL_AUTH_ALLOWED_UNITS:-}"
+local_auth_allowed_hosts="${LOCAL_AUTH_ALLOWED_HOSTS:-}"
 finance_api_target="${LOCAL_FINANCE_API_TARGET:-${FINANCE_API_TARGET:-}}"
 auth_path_prefix="${AUTH_PATH_PREFIX:-/insumos/auth}"
 escala_api_target="${ESCALA_API_TARGET:-https://escala-api.skincos.com.br}"
@@ -94,6 +96,7 @@ add_binding "LOCAL_AUTH_EMAIL" "$local_auth_email"
 add_binding "LOCAL_AUTH_NAME" "$local_auth_name"
 add_binding "LOCAL_AUTH_ALLOWED_MODULES" "$local_auth_allowed_modules"
 add_binding "LOCAL_AUTH_ALLOWED_UNITS" "$local_auth_allowed_units"
+add_optional_binding "LOCAL_AUTH_ALLOWED_HOSTS" "$local_auth_allowed_hosts"
 add_optional_binding "AUTH_API_TARGET" "${AUTH_API_TARGET:-}"
 add_binding "AUTH_PATH_PREFIX" "$auth_path_prefix"
 add_optional_binding "CRM_API_TARGET" "${CRM_API_TARGET:-}"
@@ -169,8 +172,8 @@ if [[ "$CRM_LOCAL_ISOLATED" != "1" && -f "$ROOT_DIR/public/_routes.json" ]]; the
   cp "$ROOT_DIR/public/_routes.json" "$CRM_DIST_DIR/_routes.json"
 fi
 
-echo "[dev_pages] Iniciando Vite em :$VITE_PORT"
-npm run dev -- --host 127.0.0.1 --port "$VITE_PORT" --strictPort &
+echo "[dev_pages] Iniciando Vite em $CRM_BIND_HOST:$VITE_PORT"
+npm run dev -- --host "$CRM_BIND_HOST" --port "$VITE_PORT" --strictPort &
 VITE_PID=$!
 
 cleanup() {
@@ -180,5 +183,5 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[dev_pages] Iniciando Pages Functions (proxy :$VITE_PORT) em :$PAGES_PORT"
-npx --no-install wrangler pages dev "$CRM_DIST_DIR" "${PAGES_ENV_ARGS[@]}" "${PAGES_RESOURCE_ARGS[@]}" --proxy "$VITE_PORT" --port "$PAGES_PORT" --compatibility-date "$COMPAT_DATE" --persist-to "$R2_PERSIST_DIR" --log-level "$CRM_LOCAL_LOG_LEVEL" --show-interactive-dev-session false "${PAGES_BINDING_ARGS[@]}"
+echo "[dev_pages] Iniciando Pages Functions (proxy $CRM_BIND_HOST:$VITE_PORT) em $CRM_BIND_HOST:$PAGES_PORT"
+npx --no-install wrangler pages dev "$CRM_DIST_DIR" "${PAGES_ENV_ARGS[@]}" "${PAGES_RESOURCE_ARGS[@]}" --proxy "$VITE_PORT" --ip "$CRM_BIND_HOST" --port "$PAGES_PORT" --compatibility-date "$COMPAT_DATE" --persist-to "$R2_PERSIST_DIR" --log-level "$CRM_LOCAL_LOG_LEVEL" --show-interactive-dev-session false "${PAGES_BINDING_ARGS[@]}"
