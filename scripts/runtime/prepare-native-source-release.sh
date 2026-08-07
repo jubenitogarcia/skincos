@@ -166,6 +166,7 @@ sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/patch-livia-token-vault-preflight.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-accessibility-contract.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-facebook-carousel-contract.js" \
+  "$DESTINATION/orb/engine/scripts/patch-livia-today-first-selection.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-job-graph-payload-file.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-runtime-isolation.js"
 # The workflow-version writer runs as postgres.  It hashes the exact Livia
