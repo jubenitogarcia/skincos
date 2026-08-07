@@ -460,7 +460,9 @@ function validateContracts() {
     assert(String(httpParameters.jsonBody || '').includes('JSON.stringify'), 'Managed social publish gateway must preserve its JSON payload expression');
     assert(!Object.prototype.hasOwnProperty.call(httpParameters, 'body'), 'Managed social publish gateway must not retain a raw body, which turns the response into a stream');
   }
-  assert(commandOf('Cleanup Temp Files').includes('isAllowedCleanupDir'), 'Cleanup Temp Files must delete per-execution asset directories safely');
+  const cleanupCommand = commandOf('Cleanup Temp Files');
+  assert(cleanupCommand.includes('isAllowedCleanupDir'), 'Cleanup Temp Files must delete per-execution asset directories safely');
+  assert(cleanupCommand.includes('env -u NODE_OPTIONS node <<'), 'Cleanup Temp Files must isolate its child Node process from the Orb preload');
   assert(tokenHealthCommand.includes('validate-publish-token-health.js'), 'Validate Publish Token Health must invoke the versioned credential preflight');
   assert(tokenHealthCommand.includes('. /etc/skincos/orb-business.env'), 'Token preflight must load the same protected bearer used by the verifier');
   const tokenHealthScript = fs.readFileSync(path.join(__dirname, 'livia', 'validate-publish-token-health.js'), 'utf8');
