@@ -184,6 +184,7 @@ test('scopes Clientes commercial reads, queues, actions, cadences and offers to 
 
     const overview = await store.commercialOverview({}, scopedGestor)
     assert.deepEqual(captured.find((entry) => entry.kind === 'profiles')?.params[1], ['novo-hamburgo'])
+    assert.equal(Object.hasOwn(overview.profiles[0], 'name'), false)
     assert.equal(Object.hasOwn(overview.profiles[0], 'phone'), false)
     assert.equal(Object.hasOwn(overview.profiles[0], 'email'), false)
 

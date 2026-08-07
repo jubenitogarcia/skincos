@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildCommercialProfile, elapsedDays, segmentCommercialProfiles } from '../clientCommercial.js'
+import { buildCommercialProfile, elapsedDays, minimizeCommercialOverviewProfile, segmentCommercialProfiles } from '../clientCommercial.js'
 
 test('commercial recency is based only on completed attendance, never on a later advance sale', () => {
     const profile = buildCommercialProfile({
@@ -23,6 +23,17 @@ test('keeps a single-source profile visible without presenting it as a confirmed
     }, { asOf: '2026-08-04' })
 
     assert.equal(profile.identityQuality, 'unresolved_single_source')
+})
+
+test('keeps direct identifiers out of the paginated commercial overview projection', () => {
+    const overviewProfile = minimizeCommercialOverviewProfile({
+        identityId: 'identity-1',
+        name: 'Cliente de teste',
+        phone: '5551999990000',
+        email: 'cliente@example.test',
+        priority: 'high',
+    })
+    assert.deepEqual(overviewProfile, { identityId: 'identity-1', priority: 'high' })
 })
 
 test('future attendance dates do not produce a negative recency value', () => {
