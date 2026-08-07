@@ -97,30 +97,39 @@ test('permanent failure is retained as a dead-letter state', async () => {
     await runner.stop()
 })
 
-test('an explicitly non-retryable job failure is dead-lettered without backoff retries', async () => {
-    let runs = 0
+test('does not retry a non-retryable failure and retains only a safe readiness bit', async () => {
+    let permanentAttempts = 0
     const runner = createContinuousJobRunner({
         retryBaseMs: 1,
-        retryMaxMs: 2,
         maxAttempts: 5,
-        jobs: [{
-            id: 'clientes.non-retryable',
-            intervalMs: 60_000,
-            run: async () => {
-                runs += 1
-                const error = new Error('configuration rejected')
-                error.code = 'CONFIGURATION_REJECTED'
-                error.retryable = false
-                throw error
+        jobs: [
+            {
+                id: 'clientes.non-retryable',
+                intervalMs: 60_000,
+                run: async () => {
+                    permanentAttempts += 1
+                    const error = new Error('configuration invalid')
+                    error.code = 'SOURCE_CONFIGURATION_INVALID'
+                    error.retryable = false
+                    throw error
+                },
             },
-        }],
+            {
+                id: 'clientes.not-ready',
+                intervalMs: 60_000,
+                run: async () => ({ ready: false, privatePayload: 'must-not-persist' }),
+            },
+        ],
     })
     await runner.start()
     await waitFor(() => runner.getStatus().jobs['clientes.non-retryable'].status === 'dead')
+    await waitFor(() => runner.getStatus().jobs['clientes.not-ready'].status === 'succeeded')
     const status = runner.getStatus()
-    assert.equal(runs, 1)
+    assert.equal(permanentAttempts, 1)
     assert.equal(status.metrics.retries, 0)
-    assert.equal(status.deadLetters[0].error, 'CONFIGURATION_REJECTED')
+    assert.equal(status.jobs['clientes.not-ready'].readiness, false)
+    assert.equal(status.ready, false)
+    assert.doesNotMatch(JSON.stringify(status), /must-not-persist/)
     await runner.stop()
 })
 
