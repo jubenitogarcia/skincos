@@ -129,3 +129,35 @@ test('bootstrap repairs WorkflowExecutionService metadata immediately before con
     false,
   );
 });
+
+test('smoke-only drain waits for the native error execution before the CLI exits', async () => {
+  const bootstrap = require(preloadPath);
+  const exits = [];
+  const fakeProcess = {
+    env: { SKINCOS_AWAIT_ERROR_WORKFLOW: '1', SKINCOS_AWAIT_ERROR_WORKFLOW_TIMEOUT_MS: '1000' },
+    exit(code) { exits.push(code); },
+  };
+  const drain = bootstrap.createCliErrorWorkflowDrain(fakeProcess, { timeoutMs: 1000 });
+  fakeProcess.exit(1);
+  drain.track(Promise.resolve());
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(exits, [1]);
+});
+
+test('smoke-only drain tracks the post-execution promise for native error workflows only', async () => {
+  const bootstrap = require(preloadPath);
+  const tracked = [];
+  const drain = { track(value) { tracked.push(value); } };
+  class FakeWorkflowRunner {
+    constructor() {
+      this.activeExecutions = { getPostExecutePromise: (id) => Promise.resolve(`finished:${id}`) };
+    }
+    async run() { return 'error-execution-1'; }
+  }
+  assert.equal(bootstrap.patchWorkflowRunnerForCliDrain(FakeWorkflowRunner, drain), true);
+  const runner = new FakeWorkflowRunner();
+  await runner.run({ executionMode: 'regular' });
+  await runner.run({ executionMode: 'error' });
+  assert.equal(tracked.length, 1);
+  assert.equal(await tracked[0], 'finished:error-execution-1');
+});

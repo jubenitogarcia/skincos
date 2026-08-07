@@ -99,6 +99,21 @@ test('rejects a SHA that includes any file outside the #912 baseline', () => {
   );
 });
 
+test('accepts an immutable published predecessor with a source-bound release annotation', () => {
+  const candidateSha = '6daa6eaee7c4c49f047e97944e70ea1aa320ca61';
+  const value = exactRemote();
+  value.baselineSha = candidateSha;
+  value.version.annotations['workers/message'] = `ponto:coreApi:${candidateSha}`;
+  value.version.resources.bindings.find(binding => binding.name === 'APP_VERSION').text = candidateSha;
+  const result = validateRemoteBaseline({
+    ...value,
+    expectedVersionMessage: `ponto:coreApi:${candidateSha}`,
+    expectedAppVersion: candidateSha,
+  });
+  assert.equal(result.versionMessage, `ponto:coreApi:${candidateSha}`);
+  assert.equal(result.appVersion, candidateSha);
+});
+
 test('rejects every ancestor except the exact merged PR 912 squash SHA', () => {
   assert.throws(
     () =>

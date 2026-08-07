@@ -62,6 +62,15 @@
       ]
     },
     {
+      "key": "clinical-approvals",
+      "label": "Aprovações clínicas",
+      "route": "/?module=clinical-approvals",
+      "onlineEnabled": false,
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
       "key": "caixa",
       "label": "Caixa",
       "route": "/?module=caixa",

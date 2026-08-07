@@ -499,7 +499,8 @@ function normalizeApiError(res: Response, json: ApiErrorPayload | null, text: st
 async function api<T>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<ApiResponse<T>> {
   const method = opts.method || 'GET'
   try {
-    const response = await fetch(`${API_BASE}${path}`, {
+    const base = path.startsWith('/clinical') ? '/api' : API_BASE
+    const response = await fetch(`${base}${path}`, {
       method,
       credentials: 'include',
       headers: {
@@ -912,6 +913,34 @@ export type CommercialDataQualityFindingMutation = {
   status?: CommercialDataQualityStatus
 }
 
+export type CommercialSourceOperation = {
+  sourceId: string
+  domain: string
+  label: string
+  required: boolean
+  requiredFor: string[]
+  status: string
+  freshness: 'healthy' | 'preventive' | 'high' | 'missing' | string
+  lastExecution: string | null
+  lastRead: string | null
+  lastSuccess: string | null
+  lastApplied: string | null
+  nextExecution: string | null
+  recordsRead: number
+  recordsApplied: number
+  divergences: number
+  snapshotComplete: boolean
+  retries: number
+  errors: number
+  error: { code: string; retryable: boolean } | null
+  durationMs: number
+  reconciliationRequired: boolean
+}
+
+export type CommercialSourceOperations = {
+  sources: CommercialSourceOperation[]
+}
+
 export type CommercialOverview = {
   asOf: string
   policy: CommercialPolicy
@@ -951,7 +980,7 @@ export type CommercialProfileDetail = {
   profile: CommercialProfile
   actions: CommercialAction[]
   timeline: CommercialTimelineEntry[]
-  clinicalCadences: Array<{ procedureId: string; procedureName: string; cadenceDays: number | null; status: 'approved' | 'not_configured'; notes: string; unitSlug: string; unitName: string; approvedAt: string | null; approvedBy: string }>
+  clinicalCadences: Array<{ procedureId: string; procedureName: string; cadenceDays: number | null; status: 'approved' | 'not_configured' | 'expired' | 'disabled'; notes: string; unitSlug: string; unitName: string; approvedAt: string | null; approvedBy: string; revision?: number; intervalMinDays?: number; intervalMaxDays?: number; effectiveFrom?: string | null; expiresAt?: string | null }>
 }
 
 export type ClientIdentityReviewItem = {
@@ -1020,12 +1049,20 @@ export function fetchCommercialDataQuality(filters: {
   return api<CommercialDataQualityQueue>(`/commercial/data-quality${qs ? `?${qs}` : ''}`)
 }
 
+export function fetchCommercialSourceOperations() {
+  return api<CommercialSourceOperations>('/commercial/source-operations')
+}
+
 export function updateCommercialDataQualityFinding(id: string, payload: CommercialDataQualityFindingMutation) {
   return api<{ finding: CommercialDataQualityFinding }>(`/commercial/data-quality/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
 }
 
 export function isCommercialDataQualityScopeDenied(error: string | undefined) {
   return error === 'COMMERCIAL_DATA_QUALITY_UNIT_SCOPE_UNSUPPORTED' || error === 'FORBIDDEN'
+}
+
+export function isCommercialSourceOperationsScopeDenied(error: string | undefined) {
+  return error === 'COMMERCIAL_SOURCE_OPERATIONS_UNIT_SCOPE_UNSUPPORTED' || error === 'FORBIDDEN'
 }
 
 export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityReviewItem['type']; q?: string; limit?: number; offset?: number; includeResolved?: boolean } = {}) {
@@ -1096,14 +1133,74 @@ export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeCo
 }
 
 export function fetchCommercialCadences() {
-  return api<{ cadences: Array<{ id: string; procedureId: string; procedureName: string; cadenceDays: number; status: string; notes: string; approvedBy: string; approvedAt: string | null; updatedBy: string; updatedAt: string | null; unitSlug: string; unitName: string }> }>('/commercial/cadences')
+  return api<{ cadences: Array<{ id: string; procedureId: string; procedureName: string; cadenceDays: number | null; intervalMinDays?: number; intervalMaxDays?: number; status: string; notes: string; evidenceReference?: string; approvedBy: string; approvedAt: string | null; updatedBy: string; updatedAt: string | null; unitSlug: string; unitName: string; revision?: number; effectiveFrom?: string | null; expiresAt?: string | null }> }>('/commercial/cadences')
 }
 
 export const commercialCadenceManagerStatuses = ['draft', 'disabled'] as const
 export type CommercialCadenceManagerStatus = (typeof commercialCadenceManagerStatuses)[number]
 
-export function upsertCommercialCadence(payload: { procedureId: string; unit?: string; cadenceDays: number; status: CommercialCadenceManagerStatus; notes?: string }) {
-  return api<{ id: string }>('/commercial/cadences', { method: 'PUT', body: payload })
+export function upsertCommercialCadence(payload: { procedureId: string; unit?: string; cadenceDays: number; status: CommercialCadenceManagerStatus; notes?: string; justification?: string; evidenceReference?: string; effectiveFrom?: string; expiresAt?: string; idempotencyKey?: string }) {
+  return api<{ id: string; revision?: number; status?: string }>('/commercial/cadences', { method: 'PUT', body: payload })
+}
+
+export type ClinicalApprovalStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'expired' | 'disabled'
+export type ClinicalApprovalRule = {
+  id: string
+  procedureId: string
+  procedureName: string
+  unitId: string | null
+  unitSlug: string
+  unitName: string
+  revision: number
+  intervalMinDays: number
+  intervalMaxDays: number
+  cadenceDays: number | null
+  justification: string
+  evidenceReference: string
+  effectiveFrom: string | null
+  expiresAt: string | null
+  status: ClinicalApprovalStatus
+  authorId: string
+  approverId: string | null
+  approvedAt: string | null
+  createdAt: string | null
+  updatedAt: string | null
+}
+export type ClinicalApprovalEvent = {
+  id: string
+  ruleId: string
+  revision: number
+  eventType: string
+  previousStatus: ClinicalApprovalStatus | null
+  status: ClinicalApprovalStatus
+  actorId: string
+  actorRole: string
+  reason: string | null
+  recordedAt: string | null
+}
+
+export function fetchClinicalApprovals(filters: { status?: ClinicalApprovalStatus; unit?: string } = {}) {
+  const params = new URLSearchParams()
+  if (filters.status) params.set('status', filters.status)
+  if (filters.unit && filters.unit !== 'all') params.set('unit', filters.unit)
+  const qs = params.toString()
+  return api<{ rules: ClinicalApprovalRule[]; total: number }>(`/clinical/approvals${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchClinicalApproval(id: string) {
+  return api<{ rule: ClinicalApprovalRule; events: ClinicalApprovalEvent[] }>(`/clinical/approvals/${encodeURIComponent(id)}`)
+}
+
+export function submitClinicalApproval(id: string, payload: { expectedRevision: number; reason?: string; idempotencyKey: string }) {
+  return api<{ rule: ClinicalApprovalRule }>(`/clinical/approvals/${encodeURIComponent(id)}/submit`, { method: 'POST', body: payload, headers: { 'Idempotency-Key': payload.idempotencyKey } })
+}
+
+export function approveClinicalApproval(id: string, payload: { expectedRevision: number; reason?: string; idempotencyKey: string }) {
+  return api<{ rule: ClinicalApprovalRule }>(`/clinical/approvals/${encodeURIComponent(id)}/approve`, { method: 'POST', body: payload, headers: { 'Idempotency-Key': payload.idempotencyKey } })
+}
+
+export function rejectClinicalApproval(id: string, payload: { expectedRevision: number; reason: string; idempotencyKey: string }) {
+  return api<{ rule: ClinicalApprovalRule }>(`/clinical/approvals/${encodeURIComponent(id)}/reject`, { method: 'POST', body: payload, headers: { 'Idempotency-Key': payload.idempotencyKey } })
 }
 
 export const __testables = {

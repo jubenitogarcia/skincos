@@ -44,6 +44,7 @@
     },
     "securityAudit": {
       "workflow": ".github/workflows/security-secrets-audit.yml",
+      "alwaysOn": true,
       "triggerPaths": [
         ".github/governance/progressive-release-policy.json",
         ".github/workflows/ponto-",
@@ -60,7 +61,7 @@
     "automaticInterruption": "a stage may not advance when error, latency, journey, cohort, route-isolation or sibling-module evidence exceeds policy; after the kill switch is externally observed, the coordinator may execute only exact compensating rollback to journaled incumbents, may not upload new code, and must attest every dispatched surface",
     "stagingRollbackDrill": "staging evidence is invalid until all four exact incumbents are exercised, compatible health is observed, all exact candidates are restored, and module-control remains maintenance",
     "directVersionOverrideIngress": "before every pilot, canary or production mutation, the first two enabled rules in the zone-scoped custom WAF entrypoint must unconditionally block both public API hosts when either cloudflare-workers-version-overrides or cloudflare-workers-version-key is present or Cloudflare reports truncated request headers, and must unconditionally block recursively URL-decoded /insumos/health/workforce-contract path variants. The external matrix must prove plain, single-encoded, double-encoded and case-folded paths on both hosts, plus both forbidden headers and a negative control per host. No preceding skip rule and no cf.worker.upstream_zone exemption is allowed because an attacker-controlled Worker is still untrusted. Worker JavaScript and late transforms are defense-in-depth only; exact candidate proof is allowed only through protected Pages service bindings.",
-    "privateCoreBootstrap": "The first governed application release must consume the exact immutable run, artifact digest, deployment, version, bindings and zero-exposure evidence cataloged for skincos-ponto-core and skincos-ponto-core-staging before any candidate mutation. The bootstrap source remains historical rollback evidence after that release; replacing this one-time predecessor requires an explicit reviewed policy decision. Mixed candidate config plus ancestral source, self-baselining, drifted incumbents and unreviewed service deletion are forbidden."
+    "privateCoreBootstrap": "The first governed application release must consume the exact immutable run, artifact digest, deployment, version, bindings and zero-exposure evidence cataloged for skincos-ponto-core and skincos-ponto-core-staging before any candidate mutation. After a successful staging release, later staging runs may consume only a separately cataloged, source-bound, successful staging incumbent with its release artifact re-verified live; the historical bootstrap remains immutable rollback evidence. Mixed candidate config plus ancestral source, self-baselining, drifted incumbents and unreviewed service deletion are forbidden."
   },
   "emergencyBrokers": {
     "staging": {

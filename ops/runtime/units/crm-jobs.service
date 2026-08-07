@@ -1,5 +1,5 @@
 [Unit]
-Description=Skincos CRM continuous worker (fail-closed observer)
+Description=Skincos CRM Clientes/Harmonia continuous jobs (fail-closed)
 After=network-online.target
 Wants=network-online.target
 
@@ -11,7 +11,16 @@ WorkingDirectory=__REPO_ROOT__
 Environment=CRM_CONTINUOUS_WORKERS_ENABLED=0
 Environment=CRM_CONTINUOUS_WORKERS_MODE=observe
 Environment=CRM_CONTINUOUS_WORKERS_ASSISTED_CONFIRMED=0
+Environment=CRM_CONTINUOUS_JOBS_ENABLED=0
+Environment=CRM_CONTINUOUS_WORKER_HOST=127.0.0.1
 Environment=CRM_CONTINUOUS_WORKER_PORT=8102
+Environment=CRM_CONTINUOUS_JOBS_STATE_PATH=__STATE_ROOT__/crm/continuous-jobs-state.json
+Environment=CLINICAL_APPROVAL_EXPIRY_JOB_ENABLED=0
+Environment=CLINICAL_APPROVAL_EXPIRY_TARGET=staging
+Environment=CRM_CLIENTES_SOURCE_OPERATIONS_TARGET=staging
+Environment=CRM_CLIENTES_SOURCE_OPERATIONS_MODE=dry-run
+Environment=CRM_CLIENTES_SOURCE_OPERATIONS_APPLY_ENABLED=0
+Environment=CRM_CLIENTES_SOURCE_OPERATIONS_APPLY_CONFIRMED=0
 Environment=VAR_DIR=__STATE_ROOT__/crm/var
 Environment=CONFIG_ROOT=__CONFIG_ROOT__
 EnvironmentFile=-__CONFIG_ROOT__/crm.env
