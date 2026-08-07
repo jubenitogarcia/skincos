@@ -2131,7 +2131,10 @@ function Write-CrmThreadPreviewDescriptor {
 
     $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
     New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
-    $branch = (& git -C $SourceCheckout branch --show-current 2>$null | Select-Object -First 1).Trim()
+    # `git branch --show-current` intentionally writes no value for a detached
+    # worktree. Coerce that pipeline result before trimming so a detached,
+    # registered source can still receive a provenance descriptor.
+    $branch = ([string](& git -C $SourceCheckout branch --show-current 2>$null | Select-Object -First 1)).Trim()
     if ([string]::IsNullOrWhiteSpace($branch)) { $branch = '(detached)' }
     [ordered]@{
         version = 1
