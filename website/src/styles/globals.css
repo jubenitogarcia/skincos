@@ -382,6 +382,13 @@ button:focus-visible {
   transform: translateY(var(--interactive-lift-y));
 }
 
+.unitChooserBtnStatic {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  cursor: default;
+}
+
 .unitChooserMenu {
   position: absolute;
   right: 0;

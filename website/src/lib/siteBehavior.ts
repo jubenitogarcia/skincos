@@ -12,6 +12,14 @@ export const SITE_BEHAVIOR_EVENT_NAMES = [
     "booking_submit_attempt",
     "booking_confirmed",
     "whatsapp_redirect_click",
+    "beauty_movement_open",
+    "beauty_movement_act_view",
+    "beauty_movement_card_revealed",
+    "beauty_movement_confirmed",
+    "beauty_movement_result_view",
+    "beauty_movement_conditions_open",
+    "beauty_movement_whatsapp",
+    "beauty_movement_share",
 ] as const;
 
 export type SiteBehaviorEventName = (typeof SITE_BEHAVIOR_EVENT_NAMES)[number];
