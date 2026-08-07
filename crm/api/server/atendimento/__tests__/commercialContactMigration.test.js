@@ -35,8 +35,9 @@ test('reconciles least-privilege consent runtime grants after the tables exist',
     })
 
     assert.equal(report.runtimeRole, 'skincos')
-    assert.equal(report.runtimeGrants.length, 3)
+    assert.equal(report.runtimeGrants.length, 4)
     assert.ok(calls.some(({ sql }) => /grant select, insert, update on table crm_atendimento\.commercial_contact_permissions to skincos/i.test(sql)))
+    assert.ok(calls.some(({ sql }) => /grant select on table crm_atendimento\.schema_migrations to skincos/i.test(sql)))
     assert.ok(calls.some(({ sql }) => /grant select, insert on table crm_atendimento\.commercial_contact_permission_events to skincos/i.test(sql)))
 })
 

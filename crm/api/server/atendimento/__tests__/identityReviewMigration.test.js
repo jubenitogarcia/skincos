@@ -62,7 +62,7 @@ test('applies compatibility DDL atomically before recording workflow readiness',
 
     assert.equal(report.applied, true)
     assert.equal(report.runtimeRole, 'skincos')
-    assert.equal(report.runtimeGrants.length, 9)
+    assert.equal(report.runtimeGrants.length, 10)
     assert.equal(released, true)
     const indexOf = (pattern) => calls.findIndex(({ sql }) => pattern.test(String(sql).replace(/\s+/g, ' ')))
     const begin = indexOf(/^begin$/i)
@@ -97,7 +97,8 @@ test('applies compatibility DDL atomically before recording workflow readiness',
     assert.ok(lineageNoTruncate > memberHistoryNoTruncate)
     assert.ok(sourceLinkHistoryNoTruncate > lineageNoTruncate)
     const grants = calls.filter(({ sql }) => /^grant /i.test(String(sql).trim()))
-    assert.equal(grants.length, 9)
+    assert.equal(grants.length, 10)
+    assert.ok(grants.some(({ sql }) => /grant select on table crm_atendimento\.schema_migrations to skincos/i.test(sql)))
     assert.ok(grants.some(({ sql }) => /grant select, insert, update on table crm_atendimento\.identity_materialization_runs to skincos/i.test(sql)))
     assert.ok(grants.some(({ sql }) => /grant usage, select on sequence crm_atendimento\.identity_member_history_event_order_seq to skincos/i.test(sql)))
     assert.ok(registry > addEventOrder)
