@@ -11,16 +11,16 @@ background worker as a side effect of serving HTTP traffic.
 - `disabled`: no polling; readiness is not available.
 - `observe`: read-only queue statistics. It never claims, completes, retries,
   cleans up or sends a message. This is the default runtime mode.
-- `assisted`: processes queued tasks, but every outbound task must contain a
-  structured `humanConfirmation` object with `status=confirmed`, a non-empty
-  `approvedBy`, a valid `approvedAt` timestamp and a stable `idempotencyKey`.
-  The provider receives that key as `x-idempotency-key`.
+- `assisted`: deliberately unavailable in this process. The native launcher
+  exits before startup and an in-process request is pinned to `observe`.
+  Human click-to-send remains a separately revalidated CRM transaction; a
+  continuous worker can never turn it into autonomous delivery.
 
 The legacy `HARMONIA_WORKER=1` flag maps only to `observe`. Unknown values and
-missing enablement fail closed. `CRM_CONTINUOUS_WORKERS_ASSISTED_CONFIRMED=1`
-is a second, explicit gate for assisted mode and is never enabled by the unit
-template. No production commercial write, consent mutation, campaign action or
-external message is authorized by this worker foundation.
+missing enablement fail closed. An unrecognized mode disables both Harmonia
+polling and the scheduled jobs. No production commercial write, consent
+mutation, campaign action or external message is authorized by this worker
+foundation.
 
 The independent job runner is controlled separately by
 `CRM_CONTINUOUS_JOBS_ENABLED`. It registers three jobs with independent timers:
@@ -38,6 +38,14 @@ lag, error/retry counts, next run and up to 100 dead-letter entries. A
 permanent failure keeps readiness at `503` until an operator reconciles or
 resets that job; it is never retried forever.
 
+The checkpoint is a mandatory precondition, rather than best-effort telemetry:
+before a job invokes an adapter it persists `pendingExecutionKey` atomically.
+The service holds an exclusive sibling lock (`.lock`) for its whole lifetime.
+If either state load, write or lock acquisition fails, it schedules no job and
+returns readiness `503` while retaining liveness. A controlled SIGTERM keeps a
+retryable failed execution pending for the next verified start; it never turns
+that shutdown race into a dead-letter.
+
 ## Runtime and health
 
 The dedicated entrypoint is `crm/api/continuous-worker.js`; the native launcher
@@ -48,7 +56,9 @@ start the service. Private `crm-jobs.env` is the only place to enable a runtime.
 The launcher does not source either environment file and never runs `npm
 install`; systemd supplies `EnvironmentFile` values and dependencies must be
 provisioned by the release. No variable or GitHub Environment is interpreted as
-shell.
+shell. Applying a unit also requires an explicit immutable
+`/opt/skincos/releases/<40-hex-sha>/source` path; systemd destination, config,
+state, log and backup paths are fixed by the installer.
 
 Activation is deliberately two-keyed in the private environment:
 `CRM_CONTINUOUS_WORKERS_ENABLED=1` starts the process and
@@ -84,7 +94,8 @@ release/source path. Roll back by restoring that unit, running `systemctl
 daemon-reload`, and leaving `CRM_CONTINUOUS_WORKERS_ENABLED=0` until health and
 readiness evidence is reviewed. A runtime promotion must use an isolated,
 verified release and a synthetic/read-only observation window first. Do not
-switch to `assisted` or send a real message from a diagnosis or health check.
+attempt `assisted` in this service or send a real message from a diagnosis or
+health check.
 
 Suggested checks:
 

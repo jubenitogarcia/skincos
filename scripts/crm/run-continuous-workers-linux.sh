@@ -14,10 +14,8 @@ mode="${CRM_CONTINUOUS_WORKERS_MODE:-observe}"
 case "${mode,,}" in
   disabled|observe) ;;
   assisted)
-    if [[ "${CRM_CONTINUOUS_WORKERS_ASSISTED_CONFIRMED:-0}" != "1" ]]; then
-      echo "[crm-continuous-workers] assisted mode requires CRM_CONTINUOUS_WORKERS_ASSISTED_CONFIRMED=1" >&2
-      exit 78
-    fi
+    echo "[crm-continuous-workers] assisted mode is unavailable in the continuous worker; use the separately revalidated click-to-send flow" >&2
+    exit 78
     ;;
   *)
     echo "[crm-continuous-workers] invalid mode: $mode (expected disabled, observe or assisted)" >&2

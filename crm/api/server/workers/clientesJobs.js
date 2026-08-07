@@ -33,6 +33,11 @@ function positiveSeconds(value, fallback) {
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
 }
 
+function normalizedExecutionKey(value) {
+    const key = String(value || '').trim()
+    return key && /^[A-Za-z0-9._:-]{1,200}$/.test(key) ? key : null
+}
+
 function requiredPool(pool) {
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
         throw jobError('DATABASE_NOT_CONFIGURED')
@@ -50,7 +55,7 @@ async function readDatabaseIdentity(pool) {
  * numbers into its checkpoint and never turns a missing source row into
  * consent. Harmonia remains the consent source of truth.
  */
-export async function runOptOutIngestion({ pool } = {}) {
+export async function runOptOutIngestion({ pool, executionKey } = {}) {
     requiredPool(pool)
     const result = await pool.query(`select
         count(*)::int as opted_out_contacts,
@@ -61,6 +66,7 @@ export async function runOptOutIngestion({ pool } = {}) {
         imported: Number(result.rows[0]?.opted_out_contacts || 0),
         latestOptOutAt: result.rows[0]?.latest_opt_out_at || null,
         source: 'harmonia.contacts',
+        executionKey: normalizedExecutionKey(executionKey),
     }
 }
 
@@ -68,6 +74,7 @@ export async function runClientesSourceRefresh({
     pool,
     databaseUrl,
     env = process.env,
+    executionKey,
     importer = importAtendimentoFromGoogleSheet,
     storeFactory = createAtendimentoStore,
 } = {}) {
@@ -92,8 +99,9 @@ export async function runClientesSourceRefresh({
         const result = await importer(store, {
             actor: sourceRefreshActor(target),
             dryRun: action === 'dry-run',
+            executionKey: normalizedExecutionKey(executionKey),
         })
-        return summarizeClientesSourceRefresh({ target, action, identity, result })
+        return { ...summarizeClientesSourceRefresh({ target, action, identity, result }), executionKey: normalizedExecutionKey(executionKey) }
     } finally {
         if (lockAcquired) {
             try { await lockClient.query(`select pg_advisory_unlock(hashtext('skincos:clientes:source-refresh'))`) } catch { /* release is best effort */ }
@@ -106,6 +114,7 @@ export async function runQualityRefresh({
     pool,
     databaseUrl,
     env = process.env,
+    executionKey,
     qualityStoreFactory = createCommercialDataQualityStore,
 } = {}) {
     requiredPool(pool)
@@ -126,6 +135,7 @@ export async function runQualityRefresh({
         refreshed: Number(result?.refreshed || 0),
         findings: Array.isArray(result?.findings) ? result.findings.length : 0,
         sourceFreshness: result?.sourceFreshness || {},
+        executionKey: normalizedExecutionKey(executionKey),
     }
 }
 
@@ -142,17 +152,17 @@ export function createClientesContinuousJobs({
         {
             id: CLIENTES_CONTINUOUS_JOB_IDS.OPT_OUT_INGESTION,
             intervalMs: interval('CRM_CONTINUOUS_JOB_OPTOUT_INTERVAL_SECONDS', 60),
-            run: () => optOutRunner({ pool, databaseUrl, env }),
+            run: (context) => optOutRunner({ pool, databaseUrl, env, executionKey: context?.executionKey }),
         },
         {
             id: CLIENTES_CONTINUOUS_JOB_IDS.SOURCE_UPDATE,
             intervalMs: interval('CRM_CONTINUOUS_JOB_SOURCE_INTERVAL_SECONDS', 900),
-            run: () => sourceRunner({ pool, databaseUrl, env }),
+            run: (context) => sourceRunner({ pool, databaseUrl, env, executionKey: context?.executionKey }),
         },
         {
             id: CLIENTES_CONTINUOUS_JOB_IDS.QUALITY_REFRESH,
             intervalMs: interval('CRM_CONTINUOUS_JOB_QUALITY_INTERVAL_SECONDS', 1800),
-            run: () => qualityRunner({ pool, databaseUrl, env }),
+            run: (context) => qualityRunner({ pool, databaseUrl, env, executionKey: context?.executionKey }),
         },
     ]
 }
@@ -160,5 +170,6 @@ export function createClientesContinuousJobs({
 export const __testables = {
     isTruthy,
     positiveSeconds,
+    normalizedExecutionKey,
     jobError,
 }

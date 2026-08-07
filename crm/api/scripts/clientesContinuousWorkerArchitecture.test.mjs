@@ -24,11 +24,13 @@ test('dedicated runner and launcher cannot execute arbitrary shell or install de
     assert.doesNotMatch(jobs, /node:child_process|\bspawn\b|\beval\s*\(/)
     assert.doesNotMatch(launcher, /(^|\n)\s*(source|\.)\s+.*crm(?:-jobs)?\.env/)
     assert.doesNotMatch(launcher, /npm\s+install/)
+    assert.match(launcher, /assisted mode is unavailable in the continuous worker/)
 })
 
 test('runtime template is loopback-only and has a durable job checkpoint', async () => {
     const unit = await read('ops/runtime/units/crm-jobs.service')
     assert.match(unit, /^Environment=CRM_CONTINUOUS_WORKER_HOST=127\.0\.0\.1$/m)
     assert.match(unit, /^Environment=CRM_CONTINUOUS_JOBS_STATE_PATH=__STATE_ROOT__\/crm\/continuous-jobs-state\.json$/m)
+    assert.match(unit, /^Environment=CRM_CLIENTES_SOURCE_REFRESH_TARGET=staging$/m)
     assert.match(unit, /^ReadWritePaths=.*__STATE_ROOT__\/crm/m)
 })

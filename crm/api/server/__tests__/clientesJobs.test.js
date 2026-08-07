@@ -44,7 +44,27 @@ test('opt-out ingestion stores aggregate consent state without contact payloads'
         imported: 4,
         latestOptOutAt: '2026-08-06T10:00:00.000Z',
         source: 'harmonia.contacts',
+        executionKey: null,
     })
+})
+
+test('continuous job catalog propagates the persisted execution key to each job', async () => {
+    const received = []
+    const jobs = createClientesContinuousJobs({
+        pool: fakePool(),
+        databaseUrl: LOCAL_DATABASE_URL,
+        env: { CRM_CLIENTES_SOURCE_REFRESH_TARGET: 'production' },
+        optOutRunner: async (context) => { received.push(['opt-out', context.executionKey]) },
+        sourceRunner: async (context) => { received.push(['source', context.executionKey]) },
+        qualityRunner: async (context) => { received.push(['quality', context.executionKey]) },
+    })
+
+    await Promise.all(jobs.map((job) => job.run({ executionKey: 'clientes.test:2026-08-07T00:00:00.000Z' })))
+    assert.deepEqual(received, [
+        ['opt-out', 'clientes.test:2026-08-07T00:00:00.000Z'],
+        ['source', 'clientes.test:2026-08-07T00:00:00.000Z'],
+        ['quality', 'clientes.test:2026-08-07T00:00:00.000Z'],
+    ])
 })
 
 test('source refresh is target-bound, locked and idempotent at the adapter boundary', async () => {

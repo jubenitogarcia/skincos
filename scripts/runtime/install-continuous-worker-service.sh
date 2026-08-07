@@ -3,18 +3,18 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 UNIT_SRC="$ROOT_DIR/ops/runtime/units/crm-jobs.service"
-UNIT_DEST="${UNIT_DEST:-/etc/systemd/system}"
-SOURCE_ROOT="${SOURCE_ROOT:-$ROOT_DIR}"
-STATE_ROOT="${STATE_ROOT:-/var/lib/skincos-runtime}"
-CONFIG_ROOT="${CONFIG_ROOT:-/etc/skincos}"
-LOG_ROOT="${LOG_ROOT:-/var/log/skincos}"
-BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/skincos}"
+UNIT_DEST="/etc/systemd/system"
+SOURCE_ROOT="$ROOT_DIR"
+STATE_ROOT="/var/lib/skincos-runtime"
+CONFIG_ROOT="/etc/skincos"
+LOG_ROOT="/var/log/skincos"
+BACKUP_ROOT="/var/backups/skincos"
 APPLY=0
 ENABLE=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/runtime/install-continuous-worker-service.sh [--apply] [--enable]
+Usage: scripts/runtime/install-continuous-worker-service.sh [--apply] [--enable] [--source-root <immutable-release>]
 
 Without --apply, renders the CRM continuous-worker unit in a temporary
 directory and verifies it with systemd-analyze. --apply installs only the
@@ -22,6 +22,10 @@ unit and reloads systemd. --enable additionally enables it; it never starts
 the service. Runtime execution remains disabled until the private
 crm-jobs.env explicitly sets CRM_CONTINUOUS_WORKERS_ENABLED=1 and, for the
 Clientes job set, CRM_CONTINUOUS_JOBS_ENABLED=1.
+
+`--apply` accepts only /opt/skincos/releases/<40-hex-sha>/source. Runtime
+paths and unit destination are fixed; environment variables cannot render
+arbitrary systemd directives or choose a command path.
 EOF
 }
 
@@ -29,6 +33,12 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=1 ;;
     --enable) ENABLE=1 ;;
+    --source-root)
+      [[ "$#" -ge 2 ]] || { echo "--source-root requires a value" >&2; exit 64; }
+      SOURCE_ROOT="$2"
+      shift 2
+      continue
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 64 ;;
   esac
@@ -37,6 +47,20 @@ done
 
 if [[ "$ENABLE" == "1" && "$APPLY" != "1" ]]; then
   echo "--enable requires --apply" >&2
+  exit 64
+fi
+
+if [[ "$APPLY" == "1" ]]; then
+  [[ "$SOURCE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || {
+    echo "--apply requires an immutable /opt/skincos/releases/<40-hex-sha>/source path" >&2
+    exit 64
+  }
+  [[ -d "$SOURCE_ROOT" && -x "$SOURCE_ROOT/scripts/crm/run-continuous-workers-linux.sh" ]] || {
+    echo "Immutable source release is unavailable: $SOURCE_ROOT" >&2
+    exit 1
+  }
+elif [[ "$SOURCE_ROOT" != "$ROOT_DIR" && ! "$SOURCE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]]; then
+  echo "--source-root must be an immutable release path" >&2
   exit 64
 fi
 

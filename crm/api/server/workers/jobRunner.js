@@ -133,6 +133,76 @@ export function createContinuousJobRunner({
     let persistenceReady = !statePath
     let persistenceError = null
     let persistChain = Promise.resolve()
+    const stateLockPath = statePath ? `${statePath}.lock` : null
+    let stateLockHandle = null
+    let stateLockAcquired = false
+
+    function markPersistenceUnavailable(code = 'STATE_PERSISTENCE_UNAVAILABLE') {
+        persistenceReady = false
+        persistenceError = code
+    }
+
+    function ownerProcessIsAlive(pid) {
+        if (!Number.isInteger(pid) || pid <= 0) return true
+        if (pid === process.pid) return true
+        try {
+            process.kill(pid, 0)
+            return true
+        } catch (error) {
+            return error?.code !== 'ESRCH'
+        }
+    }
+
+    async function acquireStateLock() {
+        if (!stateLockPath) return true
+        try {
+            await fsImpl.mkdir(path.dirname(stateLockPath), { recursive: true })
+        } catch (error) {
+            markPersistenceUnavailable(safeErrorCode(error))
+            return false
+        }
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+                const handle = await fsImpl.open(stateLockPath, 'wx', 0o640)
+                await handle.writeFile(JSON.stringify({ version: 1, pid: process.pid, startedAt: iso(nowMs(clock)) }), 'utf8')
+                stateLockHandle = handle
+                stateLockAcquired = true
+                return true
+            } catch (error) {
+                if (error?.code !== 'EEXIST') {
+                    markPersistenceUnavailable(safeErrorCode(error))
+                    return false
+                }
+                let existing = null
+                try { existing = JSON.parse(await fsImpl.readFile(stateLockPath, 'utf8')) } catch { /* malformed locks fail closed */ }
+                if (existing && ownerProcessIsAlive(Number(existing.pid))) {
+                    markPersistenceUnavailable('STATE_LOCK_UNAVAILABLE')
+                    return false
+                }
+                if (!existing || attempt > 0) {
+                    markPersistenceUnavailable('STATE_LOCK_UNAVAILABLE')
+                    return false
+                }
+                try { await fsImpl.unlink(stateLockPath) } catch {
+                    markPersistenceUnavailable('STATE_LOCK_UNAVAILABLE')
+                    return false
+                }
+            }
+        }
+        markPersistenceUnavailable('STATE_LOCK_UNAVAILABLE')
+        return false
+    }
+
+    async function releaseStateLock() {
+        const handle = stateLockHandle
+        const acquired = stateLockAcquired
+        stateLockHandle = null
+        stateLockAcquired = false
+        try { if (handle) await handle.close() } catch { /* preserve shutdown progress */ }
+        if (acquired && stateLockPath) {
+            try { await fsImpl.unlink(stateLockPath) } catch { /* a stopped worker must not fail solely on cleanup */ }
+        }
+    }
 
     async function loadState() {
         if (loaded) return
@@ -154,8 +224,7 @@ export function createContinuousJobRunner({
                 persistenceError = null
                 return
             }
-            persistenceReady = false
-            persistenceError = safeErrorCode(error)
+            markPersistenceUnavailable(safeErrorCode(error))
         }
     }
 
@@ -175,8 +244,7 @@ export function createContinuousJobRunner({
             persistenceReady = true
             persistenceError = null
         } catch (error) {
-            persistenceReady = false
-            persistenceError = safeErrorCode(error)
+            markPersistenceUnavailable(safeErrorCode(error))
         }
     }
 
@@ -226,6 +294,13 @@ export function createContinuousJobRunner({
         entry.lastStartedAt = iso(started)
         entry.totalRuns += 1
         await queuePersist()
+        if (!persistenceReady) {
+            entry.status = 'idle'
+            entry.lastErrorAt = iso(nowMs(clock))
+            entry.lastError = 'STATE_PERSISTENCE_UNAVAILABLE'
+            entry.nextRunAt = null
+            return { ok: false, blocked: true, executionKey: key, error: 'STATE_PERSISTENCE_UNAVAILABLE' }
+        }
 
         const promise = (async () => {
             try {
@@ -251,9 +326,11 @@ export function createContinuousJobRunner({
                 entry.lastLagMs = Math.max(0, finished - scheduledAt)
                 entry.nextRunAt = null
                 await queuePersist()
+                if (!persistenceReady) return { ok: false, blocked: true, executionKey: key, error: 'STATE_PERSISTENCE_UNAVAILABLE' }
                 const next = Math.max(finished + job.intervalMs, scheduledAt + job.intervalMs)
                 entry.nextRunAt = iso(next)
                 await queuePersist()
+                if (!persistenceReady) return { ok: false, blocked: true, executionKey: key, error: 'STATE_PERSISTENCE_UNAVAILABLE' }
                 schedule(jobId, next - finished, next)
                 return { ok: true, executionKey: key, result }
             } catch (error) {
@@ -267,12 +344,23 @@ export function createContinuousJobRunner({
                 entry.lastError = code
                 entry.lastDurationMs = Math.max(0, finished - started)
                 entry.lastLagMs = Math.max(0, finished - scheduledAt)
+                if (stopping) {
+                    // Preserve the execution key and attempt count for a
+                    // controlled restart instead of dead-lettering a job
+                    // merely because SIGTERM arrived during a retryable
+                    // failure.
+                    entry.status = 'idle'
+                    entry.nextRunAt = null
+                    await queuePersist()
+                    return { ok: false, deferred: true, executionKey: key, error: code }
+                }
                 if (attempt < attemptsLimit && !stopping) {
                     entry.status = 'retrying'
                     entry.retries += 1
                     entry.totalRetries += 1
                     entry.nextRunAt = iso(finished + backoffMs(attempt))
                     await queuePersist()
+                    if (!persistenceReady) return { ok: false, blocked: true, executionKey: key, error: 'STATE_PERSISTENCE_UNAVAILABLE' }
                     schedule(jobId, backoffMs(attempt), scheduledAt)
                     return { ok: false, retrying: true, executionKey: key, error: code }
                 }
@@ -347,15 +435,22 @@ export function createContinuousJobRunner({
 
     async function start() {
         if (running) return getStatus()
+        if (!(await acquireStateLock())) return getStatus()
         await loadState()
+        if (!persistenceReady) {
+            await releaseStateLock()
+            return getStatus()
+        }
         stopping = false
         startedAt = iso(nowMs(clock))
         stoppedAt = null
         if (!enabled) {
             running = false
+            await releaseStateLock()
             return getStatus()
         }
         running = true
+        const scheduledJobs = []
         for (const job of normalizedJobs) {
             const entry = state.jobs[job.id]
             if (entry.status === 'dead') continue
@@ -365,9 +460,15 @@ export function createContinuousJobRunner({
             const scheduledAt = resumingPending ? pendingScheduledAt : nowMs(clock) + delay
             entry.status = 'idle'
             entry.nextRunAt = null
-            schedule(job.id, delay, scheduledAt)
+            scheduledJobs.push({ id: job.id, delay, scheduledAt })
         }
         await queuePersist()
+        if (!persistenceReady) {
+            running = false
+            await releaseStateLock()
+            return getStatus()
+        }
+        for (const job of scheduledJobs) schedule(job.id, job.delay, job.scheduledAt)
         return getStatus()
     }
 
@@ -381,13 +482,13 @@ export function createContinuousJobRunner({
         await persistChain
         stoppedAt = iso(nowMs(clock))
         await queuePersist()
+        await releaseStateLock()
     }
 
     async function runOnce(jobId, options = {}) {
-        await loadState()
         if (!running) {
-            running = true
-            stopping = false
+            await start()
+            if (!running) return { skipped: 'runner_not_ready' }
         }
         return execute(jobId, options.scheduledAt === undefined ? nowMs(clock) : options.scheduledAt)
     }

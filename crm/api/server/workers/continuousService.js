@@ -7,6 +7,7 @@ import { createContinuousJobRunner } from './jobRunner.js'
 import { createWorkerHealthServer } from './healthServer.js'
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
+const WORKER_MODES = new Set(['disabled', 'observe', 'assisted'])
 
 function isTruthy(value) {
     return TRUE_VALUES.has(String(value || '').trim().toLowerCase())
@@ -52,11 +53,15 @@ export function createContinuousWorkerService({
     healthFactory = createWorkerHealthServer,
 } = {}) {
     const enabled = isTruthy(env.CRM_CONTINUOUS_WORKERS_ENABLED)
-    const requestedMode = String(env.CRM_CONTINUOUS_WORKERS_MODE || env.HARMONIA_WORKER_MODE || '').trim()
-    const assistedConfirmed = isTruthy(env.CRM_CONTINUOUS_WORKERS_ASSISTED_CONFIRMED)
-    const mode = !enabled ? 'disabled' : requestedMode || 'observe'
-    const effectiveMode = mode.toLowerCase() === 'assisted' && !assistedConfirmed ? 'observe' : mode
-    const jobsEnabled = enabled && isTruthy(env.CRM_CONTINUOUS_JOBS_ENABLED)
+    const requestedMode = String(env.CRM_CONTINUOUS_WORKERS_MODE || env.HARMONIA_WORKER_MODE || '').trim().toLowerCase()
+    const invalidMode = Boolean(requestedMode) && !WORKER_MODES.has(requestedMode)
+    const mode = !enabled || invalidMode ? 'disabled' : requestedMode || 'observe'
+    // This process owns continuous work, never an outbound message channel.
+    // Click-to-send will remain a separately revalidated request flow; even a
+    // configured assisted mode must not turn a scheduler into automation.
+    const assistedBlocked = mode.toLowerCase() === 'assisted'
+    const effectiveMode = assistedBlocked ? 'observe' : mode
+    const jobsEnabled = mode !== 'disabled' && isTruthy(env.CRM_CONTINUOUS_JOBS_ENABLED)
     const databaseUrl = String(env.DATABASE_URL || '').trim() || null
     const runtimeVarDir = varDir || env.VAR_DIR || path.join(process.cwd(), 'var')
     const statePath = String(env.CRM_CONTINUOUS_JOBS_STATE_PATH || path.join(runtimeVarDir, 'continuous-jobs-state.json')).trim()
@@ -90,6 +95,8 @@ export function createContinuousWorkerService({
         return {
             service: 'crm-continuous-workers',
             mode: effectiveMode,
+            assistedBlocked,
+            invalidMode,
             running,
             ready,
             startedAt,
@@ -144,10 +151,17 @@ export function createContinuousWorkerService({
         if (stopping) return
         stopping = true
         try {
-            if (typeof runner?.stop === 'function') await runner.stop()
-            if (typeof harmonia?.stop === 'function') await harmonia.stop()
-            if (jobsPool && typeof jobsPool.end === 'function') await jobsPool.end()
-            await health.close()
+            // Stop accepting probes before waiting for an in-flight job.  A
+            // graceful drain may take the configured timeout, but SIGTERM
+            // must still release the worker health port immediately.
+            const results = await Promise.allSettled([
+                health.close(),
+                typeof runner?.stop === 'function' ? runner.stop() : Promise.resolve(),
+                typeof harmonia?.stop === 'function' ? harmonia.stop() : Promise.resolve(),
+                jobsPool && typeof jobsPool.end === 'function' ? jobsPool.end() : Promise.resolve(),
+            ])
+            const failed = results.find((result) => result.status === 'rejected')
+            if (failed) throw failed.reason
         } finally {
             running = false
             stoppedAt = isoNow()

@@ -123,3 +123,93 @@ test('stop waits for an in-flight job before returning', async () => {
     assert.equal(stopped, true)
     assert.equal(runner.getStatus().running, false)
 })
+
+test('refuses to execute jobs when the durable checkpoint cannot be persisted', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'skincos-jobs-checkpoint-'))
+    const statePath = path.join(directory, 'jobs.json')
+    let runs = 0
+    const fsImpl = {
+        ...fs,
+        async writeFile() {
+            const error = new Error('checkpoint unavailable')
+            error.code = 'EACCES'
+            throw error
+        },
+    }
+    const runner = createContinuousJobRunner({
+        statePath,
+        fsImpl,
+        jobs: [{ id: 'clientes.checkpoint', intervalMs: 60_000, run: async () => { runs += 1 } }],
+    })
+    await runner.start()
+    const status = runner.getStatus()
+    assert.equal(runs, 0)
+    assert.equal(status.running, false)
+    assert.equal(status.ready, false)
+    assert.equal(status.statePersistence.ready, false)
+    await runner.stop()
+})
+
+test('holds one durable checkpoint lock across concurrent worker processes', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'skincos-jobs-lock-'))
+    const statePath = path.join(directory, 'jobs.json')
+    let runs = 0
+    const job = { id: 'clientes.locked', intervalMs: 60_000, run: async () => { runs += 1 } }
+    const first = createContinuousJobRunner({ statePath, startImmediately: false, jobs: [job] })
+    const second = createContinuousJobRunner({ statePath, startImmediately: false, jobs: [job] })
+    await first.start()
+    await second.start()
+    assert.equal(first.getStatus().running, true)
+    assert.equal(second.getStatus().running, false)
+    assert.equal(second.getStatus().statePersistence.error, 'STATE_LOCK_UNAVAILABLE')
+    assert.equal(runs, 0)
+    await first.stop()
+    await second.stop()
+})
+
+test('a transient job failure during shutdown resumes instead of becoming a dead letter', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'skincos-jobs-shutdown-'))
+    const statePath = path.join(directory, 'jobs.json')
+    let release
+    let started
+    const startedPromise = new Promise((resolve) => { started = resolve })
+    const gate = new Promise((resolve) => { release = resolve })
+    const runner = createContinuousJobRunner({
+        statePath,
+        retryBaseMs: 1,
+        jobs: [{
+            id: 'clientes.shutdown-retry',
+            intervalMs: 60_000,
+            run: async () => {
+                started()
+                await gate
+                const error = new Error('transient dependency')
+                error.code = 'DEPENDENCY_TEMPORARY'
+                throw error
+            },
+        }],
+    })
+    await runner.start()
+    await startedPromise
+    const stopping = runner.stop()
+    release()
+    await stopping
+    const deferred = runner.getStatus()
+    assert.equal(deferred.jobs['clientes.shutdown-retry'].status, 'idle')
+    assert.ok(deferred.jobs['clientes.shutdown-retry'].pendingExecutionKey)
+    assert.equal(deferred.deadLetters.length, 0)
+
+    let recoveredAttempt = 0
+    const recovery = createContinuousJobRunner({
+        statePath,
+        jobs: [{
+            id: 'clientes.shutdown-retry',
+            intervalMs: 60_000,
+            run: async ({ attempt }) => { recoveredAttempt = attempt },
+        }],
+    })
+    await recovery.start()
+    await waitFor(() => recovery.getStatus().jobs['clientes.shutdown-retry'].status === 'succeeded')
+    assert.equal(recoveredAttempt, 2)
+    await recovery.stop()
+})
