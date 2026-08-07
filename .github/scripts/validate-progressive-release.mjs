@@ -36,8 +36,21 @@ if (securityAudit?.workflow !== ".github/workflows/security-secrets-audit.yml" |
   fail("Ponto governance must declare security audit coverage for its release surfaces");
 }
 const securityWorkflow = read(".github/workflows/security-secrets-audit.yml");
-for (const triggerPath of securityAudit?.triggerPaths ?? []) {
-  if (!securityWorkflow.includes(triggerPath)) fail(`security audit workflow is missing Ponto trigger path: ${triggerPath}`);
+const securityTriggerBlock = securityWorkflow.split("permissions:", 1)[0];
+if (securityAudit?.alwaysOn === true) {
+  if (!/\n\s*push:\s*\r?\n\s*branches:\s*\[main\]/.test(securityTriggerBlock)) {
+    fail("always-on security audit must run for pushes to main");
+  }
+  if (!/\n\s*pull_request:\s*\r?\n\s*branches:\s*\[main\]/.test(securityTriggerBlock)) {
+    fail("always-on security audit must run for pull requests targeting main");
+  }
+  if (/\n\s*paths(?:-ignore)?:/.test(securityTriggerBlock)) {
+    fail("always-on security audit must not be narrowed by trigger path filters");
+  }
+} else {
+  for (const triggerPath of securityAudit?.triggerPaths ?? []) {
+    if (!securityWorkflow.includes(triggerPath)) fail(`security audit workflow is missing Ponto trigger path: ${triggerPath}`);
+  }
 }
 if (JSON.stringify(policy.stages) !== JSON.stringify(["preview", "staging", "pilot", "canary", "production"])) fail("policy stages must be preview, staging, pilot, canary, production in order");
 for (const [stage, predecessor] of Object.entries({ staging: "preview", pilot: "staging", canary: "pilot", production: "canary" })) {

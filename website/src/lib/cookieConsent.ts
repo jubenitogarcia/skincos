@@ -14,7 +14,8 @@ function isBrowser(): boolean {
     return typeof document !== "undefined";
 }
 
-function parseConsentValue(value: string): CookieConsent | null {
+/** Safe on both the client and the server; it never reads browser globals. */
+export function parseCookieConsentValue(value: string | null | undefined): CookieConsent | null {
     if (!value) return null;
 
     // Expected format: v=2&a=1&m=0
@@ -62,7 +63,7 @@ function deleteCookie(name: string): void {
 
 export function getCookieConsent(): CookieConsent | null {
     const value = readCookie(COOKIE_CONSENT_NAME);
-    const parsed = value ? parseConsentValue(value) : null;
+    const parsed = parseCookieConsentValue(value);
     if (parsed) return parsed;
 
     // Legacy fallback: map old single-consent to analytics only.

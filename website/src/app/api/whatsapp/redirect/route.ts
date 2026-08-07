@@ -30,6 +30,14 @@ export async function GET(request: Request) {
         return NextResponse.json({ ok: false, error: "invalid_destination" }, { status: 400 });
     }
 
+    const source = sanitizeOneLine(url.searchParams.get("source") ?? "") || "site";
+    // This is an individual invitation journey. The aggregate, consent-gated
+    // campaign event is emitted in the client; the generic redirect must not
+    // persist IP, user-agent, URL or conversion context for it.
+    if (source === "beauty-movement") {
+        return NextResponse.redirect(parsedDestination.destinationUrl, { status: 302 });
+    }
+
     const rawContextParam = url.searchParams.get("ctx");
     const rawContext = rawContextParam
         ? decodeWhatsappRedirectQueryValue(rawContextParam)
@@ -58,7 +66,6 @@ export async function GET(request: Request) {
     const waClickId = uuid().replace(/-/g, "");
     const token = buildWhatsappClickToken(waClickId);
     const placement = sanitizeOneLine(url.searchParams.get("placement") ?? "") || null;
-    const source = sanitizeOneLine(url.searchParams.get("source") ?? "") || "site";
     const unitSlug = sanitizeOneLine(url.searchParams.get("unit_slug") ?? "") || null;
     const doctorName = sanitizeOneLine(url.searchParams.get("doctor_name") ?? "") || null;
     const bookingId = sanitizeOneLine(url.searchParams.get("booking_id") ?? "") || null;

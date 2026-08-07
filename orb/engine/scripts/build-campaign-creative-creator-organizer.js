@@ -6,7 +6,8 @@ const path = require('node:path');
 const ORGANIZER_ID = 'ccg-orchestrator-001';
 const ORGANIZER_NAME = 'Campaign Creative Creator Organizer';
 const CREATOR_WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
-const BUILDER_VERSION = '1.0.2';
+const CCG_ERROR_WORKFLOW_ID = '9j7WMFTNVNYmNZHC';
+const BUILDER_VERSION = '1.0.5';
 
 function parseArgs(argv) {
   const result = {};
@@ -207,8 +208,19 @@ function buildOrganizer(source, options = {}) {
   if (!source || source.id !== ORGANIZER_ID) throw new Error(`Unexpected Organizer workflow id: ${source?.id || 'missing'}`);
   const creatorWorkflowId = options.creatorWorkflowId || CREATOR_WORKFLOW_ID;
   assertSafeId(creatorWorkflowId, 'creator workflow id');
+  const settings = { ...(source.settings || {}), availableInMCP: false };
+  // The Creator owns CCG-99. Assigning the same native Error Trigger to the
+  // Organizer causes n8n to create a second incident after it propagates the
+  // Creator's failure, so deliberately remove any inherited setting here.
+  delete settings.errorWorkflow;
   const nodes = [
     workflowNode('ccg-organizer-manual', "When clicking 'Execute workflow'", 'n8n-nodes-base.manualTrigger', 1, [-720, 0], {}),
+    // Prefer the native subworkflow trigger for operational calls. This keeps
+    // the Organizer private (no webhook) while allowing n8n to retain
+    // integrated execution semantics and route real failures to CCG-99.
+    workflowNode('ccg-organizer-operational', 'Operational Campaign Request', 'n8n-nodes-base.executeWorkflowTrigger', 1.1, [-720, 180], {
+      inputSource: 'passthrough',
+    }),
     workflowNode('ccg-organizer-config', 'Organizer Safe Defaults', 'n8n-nodes-base.set', 3.4, [-480, 0], {
       assignments: {
         assignments: [
@@ -234,12 +246,13 @@ function buildOrganizer(source, options = {}) {
     active: false,
     nodes,
     connections: {
-      [nodes[0].name]: { main: [[{ node: nodes[1].name, type: 'main', index: 0 }]] },
+      [nodes[0].name]: { main: [[{ node: nodes[2].name, type: 'main', index: 0 }]] },
       [nodes[1].name]: { main: [[{ node: nodes[2].name, type: 'main', index: 0 }]] },
       [nodes[2].name]: { main: [[{ node: nodes[3].name, type: 'main', index: 0 }]] },
       [nodes[3].name]: { main: [[{ node: nodes[4].name, type: 'main', index: 0 }]] },
+      [nodes[4].name]: { main: [[{ node: nodes[5].name, type: 'main', index: 0 }]] },
     },
-    settings: { ...(source.settings || {}), availableInMCP: false },
+    settings,
     staticData: null,
     pinData: {},
     meta: {
@@ -248,7 +261,11 @@ function buildOrganizer(source, options = {}) {
       codex_builder_version: BUILDER_VERSION,
       source_workflow_id: ORGANIZER_ID,
       creator_workflow_id: creatorWorkflowId,
+      error_workflow_id: CCG_ERROR_WORKFLOW_ID,
+      error_workflow_owner: 'creator_only',
+      incident_deduplication: 'creator_native_error_only',
       architecture: 'n8n-organizer-to-campaign-creative-creator-operational-entry',
+      operational_entry: 'executeWorkflowTrigger',
       no_publication: true,
       publish_allowed: false,
       publish_requested: false,
@@ -265,7 +282,9 @@ function main() {
   if (!args.input || !args.output) throw new Error('Usage: build-campaign-creative-creator-organizer.js --input <workflow-export.json> --output <candidate.json> [--creator-workflow-id <id>]');
   const parsed = JSON.parse(fs.readFileSync(path.resolve(args.input), 'utf8').replace(/^\uFEFF/, ''));
   const source = Array.isArray(parsed) ? parsed.find((candidate) => candidate?.id === ORGANIZER_ID) : parsed;
-  const output = buildOrganizer(source, { creatorWorkflowId: args.creatorWorkflowId });
+  const output = buildOrganizer(source, {
+    creatorWorkflowId: args.creatorWorkflowId,
+  });
   fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
   fs.writeFileSync(path.resolve(args.output), `${JSON.stringify(output, null, 2)}\n`);
   process.stdout.write(`Built inactive Campaign Creative Creator Organizer: ${args.output} (${output.nodes.length} nodes)\n`);
@@ -276,6 +295,7 @@ if (require.main === module) main();
 module.exports = {
   BUILDER_VERSION,
   CREATOR_WORKFLOW_ID,
+  CCG_ERROR_WORKFLOW_ID,
   ORGANIZER_ID,
   ORGANIZER_NAME,
   buildOrganizer,
