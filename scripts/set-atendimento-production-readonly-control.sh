@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONTROL_FILE="${CONTROL_FILE:-/etc/skincos/atendimento-production/module-control.json}"
-BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/skincos/clientes/production-readonly}"
+readonly CONTROL_FILE='/etc/skincos/atendimento-production/module-control.json'
+readonly BACKUP_ROOT='/var/backups/skincos/clientes/production-readonly'
 STATE=""
 RELEASE_SHA=""
 REASON="clientes-production-readonly"
@@ -10,7 +10,7 @@ APPLY=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/set-atendimento-production-readonly-control.sh --state <disabled|maintenance|active> [--release-sha <full-sha>] [--reason <text>] [--apply]
+Usage: scripts/set-atendimento-production-readonly-control.sh --state <disabled|maintenance|active|canary> [--release-sha <full-sha>] [--reason <text>] [--apply]
 
 Active production Clientes requires a full immutable release SHA. The default
 is a dry-run; --apply creates a private backup before replacing the control
@@ -30,9 +30,9 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-[[ "$STATE" =~ ^(disabled|maintenance|active)$ ]] || { echo '--state must be disabled, maintenance or active.' >&2; exit 64; }
-if [[ "$STATE" == "active" ]]; then
-  [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--release-sha must be a full lowercase SHA for active state.' >&2; exit 64; }
+[[ "$STATE" =~ ^(disabled|maintenance|active|canary)$ ]] || { echo '--state must be disabled, maintenance, active or canary.' >&2; exit 64; }
+if [[ "$STATE" == "active" || "$STATE" == "canary" ]]; then
+  [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--release-sha must be a full lowercase SHA for active or canary state.' >&2; exit 64; }
 elif [[ -n "$RELEASE_SHA" && ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo '--release-sha must be a full lowercase SHA when supplied.' >&2
   exit 64
@@ -45,7 +45,7 @@ sudo -n true
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 if [[ "$APPLY" == "1" ]]; then
   sudo -n test -f "$CONTROL_FILE" || { echo "Control file is missing: $CONTROL_FILE" >&2; exit 1; }
-  sudo -n install -d -m 0750 -o root -g skincos "$BACKUP_ROOT"
+  sudo -n install -d -m 0750 -o root -g postgres "$BACKUP_ROOT"
   sudo -n cp -p "$CONTROL_FILE" "$BACKUP_ROOT/${stamp}-module-control.json"
 fi
 
@@ -56,7 +56,7 @@ if [[ -n "$RELEASE_SHA" ]]; then
   release_json="\"$RELEASE_SHA\""
 fi
 cat >"$tmp_control" <<EOF
-{"schemaVersion":1,"module":"atendimento","state":"$STATE","releaseSha":$release_json,"syntheticOnly":false,"reason":"$REASON","updatedAt":"$stamp"}
+{"schemaVersion":1,"module":"atendimento","state":"$STATE","releaseSha":$release_json,"readOnly":true,"commercialContactWritesEnabled":false,"syntheticOnly":true,"reason":"$REASON","updatedAt":"$stamp"}
 EOF
 if [[ "$APPLY" == "1" ]]; then
   sudo -n install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"

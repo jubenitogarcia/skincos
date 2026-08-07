@@ -58,20 +58,11 @@ import {
     applyClinicalApprovalMigration,
     rollbackClinicalApprovalMigration,
 } from '../server/clinical/clinicalApprovalMigration.js'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const target = ATENDIMENTO_MIGRATION_TARGETS.STAGING
-const databaseUrl = String(process.env.DATABASE_URL || '').trim()
-const args = new Set(process.argv.slice(2))
-const action = args.has('--apply') ? 'apply' : args.has('--rollback') ? 'rollback' : args.has('--dry-run') ? 'dry-run' : null
-
-if (!action || [...args].some((arg) => !['--apply', '--rollback', '--dry-run'].includes(arg))) {
-    throw new Error('Use exatamente uma ação: --dry-run, --apply ou --rollback.')
-}
-if (!databaseUrl || !isStrictAtendimentoMigrationDestination(databaseUrl, target)) {
-    throw new Error('DATABASE_URL deve apontar exclusivamente para skincos_staging via loopback TLS e o login migrator.')
-}
-
-const migrations = [
+export const ATENDIMENTO_STAGING_MIGRATION_TARGET = ATENDIMENTO_MIGRATION_TARGETS.STAGING
+export const ATENDIMENTO_STAGING_MIGRATIONS = Object.freeze([
     { id: '20260718_atendimento_professional_identity_v1', apply: applyProfessionalIdentityMigration, rollback: rollbackProfessionalIdentityMigration },
     { id: '20260718_atendimento_write_safety_v1', apply: applyAtendimentoWriteSafetyMigration, rollback: rollbackAtendimentoWriteSafetyMigration },
     { id: '20260804_commercial_contact_controls_v1', apply: applyCommercialContactMigration, rollback: rollbackCommercialContactMigration },
@@ -86,19 +77,41 @@ const migrations = [
     // source-quality controls. Keep it last so a clean staging bootstrap
     // cannot create a partially usable canary schema.
     { id: '20260807_commercial_canary_selector_v2', apply: applyCommercialCanaryMigration, rollback: rollbackCommercialCanaryMigration },
-]
+])
 
-const pool = createPgPool(databaseUrl)
-if (!pool) throw new Error('Não foi possível criar o pool staging.')
-const runId = randomUUID()
-try {
+export function parseAtendimentoStagingMigrationAction(args = []) {
+    const values = Array.isArray(args) ? args.map(String) : []
+    if (values.length !== 1 || !['--apply', '--rollback', '--dry-run'].includes(values[0])) {
+        throw new Error('Use exatamente uma ação: --dry-run, --apply ou --rollback.')
+    }
+    return values[0].slice(2)
+}
+
+export async function runAtendimentoStagingMigration({
+    databaseUrl,
+    action,
+    createPool = createPgPool,
+    createRunId = randomUUID,
+} = {}) {
+    const target = ATENDIMENTO_STAGING_MIGRATION_TARGET
+    const normalizedUrl = String(databaseUrl || '').trim()
+    if (!['apply', 'rollback', 'dry-run'].includes(String(action || ''))) {
+        throw new Error('ATENDIMENTO_STAGING_MIGRATION_ACTION_INVALID')
+    }
+    if (!normalizedUrl || !isStrictAtendimentoMigrationDestination(normalizedUrl, target)) {
+        throw new Error('DATABASE_URL deve apontar exclusivamente para skincos_staging via loopback TLS e o login migrator.')
+    }
+    const pool = createPool(normalizedUrl)
+    if (!pool) throw new Error('Não foi possível criar o pool staging.')
+    const runId = createRunId()
+    try {
     const client = await pool.connect()
     try {
         // The destination guard intentionally rejects a read-only session for
         // an apply-capable connection. Dry-run performs no writes, but keeps
         // the same identity mode so it proves the exact migrator can apply.
         await client.query('begin')
-        const identity = await assertAtendimentoMigrationDestination(client, databaseUrl, target)
+        const identity = await assertAtendimentoMigrationDestination(client, normalizedUrl, target)
         const registryExists = await client.query(`select to_regclass('crm_atendimento.schema_migrations') as registry`)
         const registry = registryExists.rows[0]?.registry
             ? await client.query(`select id, applied_at, rolled_back_at
@@ -106,7 +119,9 @@ try {
                 order by id`)
             : { rows: [] }
         await client.query('commit')
-        if (action === 'dry-run') console.log(JSON.stringify({ runId, action, target, identity, registryPresent: Boolean(registryExists.rows[0]?.registry), migrations: registry.rows }, null, 2))
+        if (action === 'dry-run') {
+            return { runId, action, target, identity, registryPresent: Boolean(registryExists.rows[0]?.registry), migrations: registry.rows }
+        }
     } catch (error) {
         try { await client.query('rollback') } catch { /* preserve original error */ }
         throw error
@@ -115,14 +130,22 @@ try {
     }
 
     if (action !== 'dry-run') {
-        const ordered = action === 'rollback' ? [...migrations].reverse() : migrations
+        const ordered = action === 'rollback' ? [...ATENDIMENTO_STAGING_MIGRATIONS].reverse() : ATENDIMENTO_STAGING_MIGRATIONS
         const reports = []
         for (const migration of ordered) {
-            const report = await migration[action]({ pool, databaseUrl, target })
+            const report = await migration[action]({ pool, databaseUrl: normalizedUrl, target })
             reports.push({ id: migration.id, report })
         }
-        console.log(JSON.stringify({ runId, action, target, migrations: reports, commercialWritesEnabled: false, contactCanary: [] }, null, 2))
+        return { runId, action, target, migrations: reports, commercialWritesEnabled: false, contactCanary: [] }
     }
 } finally {
     await pool.end()
+}
+}
+
+const thisFile = fileURLToPath(import.meta.url)
+if (process.argv[1] && path.resolve(process.argv[1]) === thisFile) {
+    const action = parseAtendimentoStagingMigrationAction(process.argv.slice(2))
+    const report = await runAtendimentoStagingMigration({ databaseUrl: process.env.DATABASE_URL, action })
+    console.log(JSON.stringify(report, null, 2))
 }
