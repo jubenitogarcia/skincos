@@ -1,0 +1,28 @@
+import type { Metadata } from "next";
+import Footer from "@/components/Footer";
+import Header from "@/components/Header";
+import BeautyMovementCampaign from "@/components/BeautyMovementCampaign";
+
+const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://espacofacial.com").replace(/\/$/, "");
+
+export const metadata: Metadata = {
+  title: "Cartas da Beleza em Movimento | Espaço Facial",
+  description: "Uma experiência editorial exclusiva da Espaço Facial Novo Hamburgo em parceria com a Velocity.",
+  alternates: {
+    canonical: `${siteUrl}/beleza-em-movimento`,
+  },
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
+
+export default function BeautyMovementPage() {
+  return (
+    <>
+      <Header preferredUnitSlug="novo-hamburgo" fixedUnitSlug="novo-hamburgo" />
+      <BeautyMovementCampaign />
+      <Footer />
+    </>
+  );
+}

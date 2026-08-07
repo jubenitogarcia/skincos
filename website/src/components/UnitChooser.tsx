@@ -11,18 +11,29 @@ import { getUnitHref } from "@/lib/unitRoutes";
 type UnitChooserProps = {
     placement?: string;
     redirectOnSelect?: boolean;
+    preferredUnitSlug?: string | null;
+    /** A campaign can be intentionally scoped to one unit and must not inherit a stored unit. */
+    fixedUnitSlug?: string | null;
 };
 
 function getAllowedUnits() {
     return getDigitalJourneyUnits();
 }
 
-export default function UnitChooser({ placement = "header", redirectOnSelect = false }: UnitChooserProps) {
+export default function UnitChooser({
+    placement = "header",
+    redirectOnSelect = false,
+    preferredUnitSlug = null,
+    fixedUnitSlug = null,
+}: UnitChooserProps) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
     const unit = useCurrentUnit();
     const allowed = getAllowedUnits();
+    const preferredUnit = preferredUnitSlug ? allowed.find((candidate) => candidate.slug === preferredUnitSlug) ?? null : null;
+    const fixedUnit = fixedUnitSlug ? allowed.find((candidate) => candidate.slug === fixedUnitSlug) ?? null : null;
+    const displayUnit = fixedUnit ?? unit ?? preferredUnit;
 
     const [open, setOpen] = useState(false);
     const [activeIndex, setActiveIndex] = useState(0);
@@ -44,7 +55,7 @@ export default function UnitChooser({ placement = "header", redirectOnSelect = f
 
     useEffect(() => {
         if (!open) return;
-        const selectedIdx = unit?.slug ? allowed.findIndex((u) => u.slug === unit.slug) : -1;
+        const selectedIdx = displayUnit?.slug ? allowed.findIndex((u) => u.slug === displayUnit.slug) : -1;
         const nextIdx = selectedIdx >= 0 ? selectedIdx : 0;
         setActiveIndex(nextIdx);
         // Focus after paint.
@@ -52,12 +63,17 @@ export default function UnitChooser({ placement = "header", redirectOnSelect = f
             itemRefs.current[nextIdx]?.focus();
         }, 0);
         return () => window.clearTimeout(t);
-    }, [open, allowed, unit?.slug]);
+    }, [open, allowed, displayUnit?.slug]);
 
-    const label = unit?.name ? unit.name : "Selecione a unidade";
+    const label = displayUnit?.name ? displayUnit.name : "Selecione a unidade";
 
     return (
         <div className="unitChooser" ref={wrapRef}>
+            {fixedUnit ? (
+                <span className="unitChooserBtn unitChooserBtnStatic" aria-label={`Unidade da ação: ${label}`}>
+                    {label}
+                </span>
+            ) : (
             <button
                 className="unitChooserBtn"
                 type="button"
@@ -82,8 +98,9 @@ export default function UnitChooser({ placement = "header", redirectOnSelect = f
             >
                 {label}
             </button>
+            )}
 
-            {open ? (
+            {!fixedUnit && open ? (
                 <div
                     className="unitChooserMenu"
                     role="menu"

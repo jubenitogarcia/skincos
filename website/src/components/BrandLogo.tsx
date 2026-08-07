@@ -31,8 +31,8 @@ export default function BrandLogo({ className, title = "Espaço Facial", tone = 
             src={src}
             alt={title}
             className={className}
-            width={420}
-            height={44}
+            width={700}
+            height={124}
             sizes="(max-width: 768px) 260px, 420px"
             draggable={false}
             style={shouldInvert ? { filter: "invert(1)" } : undefined}

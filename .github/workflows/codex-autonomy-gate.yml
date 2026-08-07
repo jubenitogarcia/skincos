@@ -51,6 +51,14 @@ jobs:
           else
             base="${PR_BASE_SHA:-$BEFORE_SHA}"
             if [[ -z "$base" || "$base" =~ ^0+$ ]]; then base="$(git rev-parse HEAD^)"; fi
+            if ! git cat-file -e "$base^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$base" "$GITHUB_SHA"; then
+              # A force-push after rebasing can make github.event.before
+              # unreachable in the fresh checkout. Classify the full branch
+              # delta from its current mainline instead of failing the
+              # required gate on a stale event reference.
+              git fetch --no-tags origin main
+              base="$(git merge-base "$GITHUB_SHA" origin/main)"
+            fi
           fi
           echo "sha=$base" >> "$GITHUB_OUTPUT"
       - id: risk

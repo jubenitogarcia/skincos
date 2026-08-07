@@ -21,3 +21,9 @@ test("manual autonomy recovery requires an exact ancestor base", () => {
   assert.match(source, /Manual governance base_sha must be a full commit SHA/);
   assert.match(source, /git merge-base --is-ancestor \"\$base\" \"\$GITHUB_SHA\"/);
 });
+
+test("push recovery classifies rebased branches from their mainline", () => {
+  assert.match(source, /git cat-file -e \"\$base\^\{commit\}\" 2>\/dev\/null/);
+  assert.match(source, /git fetch --no-tags origin main/);
+  assert.match(source, /base=\"\$\(git merge-base \"\$GITHUB_SHA\" origin\/main\)\"/);
+});
