@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, CircleDollarSign, RefreshCw, Save, ShieldCheck, UserRoundCheck, UsersRound } from 'lucide-react'
 import { Button } from '@/button'
+import { IdentityClusterWorkspace } from './IdentityClusterWorkspace'
 import {
   createCommercialAction,
   commercialCadenceManagerStatuses,
@@ -806,6 +807,6 @@ export function ClientCommercialModule() {
     </div>
     <footer className="flex items-center gap-2 text-xs text-slate-500"><CheckCircle2 className="h-4 w-4 text-emerald-400" />Recência = último procedimento realizado. Vendas e procedimentos continuam separados no perfil comercial.</footer>
     </> : null}
-    {workspaceView === 'identities' ? <IdentityReviewQueue /> : null}
+    {workspaceView === 'identities' ? <div className="space-y-6"><IdentityClusterWorkspace /><IdentityReviewQueue /></div> : null}
   </section>
 }

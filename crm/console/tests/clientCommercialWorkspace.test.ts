@@ -16,7 +16,9 @@ describe('Clientes workspace navigation', () => {
   it('keeps the selected subarea addressable without creating a new backend route', () => {
     expect(moduleSource).toContain("get('clientesView')")
     expect(moduleSource).toContain("set('clientesView', workspaceView)")
-    expect(moduleSource).toContain("workspaceView === 'identities' ? <IdentityReviewQueue /> : null")
+    expect(moduleSource).toContain("workspaceView === 'identities' ? <div className=\"space-y-6\"><IdentityClusterWorkspace /><IdentityReviewQueue /></div> : null")
+    expect(moduleSource).not.toContain('Object.entries(item.context)')
+    expect(moduleSource).not.toContain('Object.entries(item.evidence)')
     expect(moduleSource).toContain("workspaceView === 'quality' && commercialDataQuality")
     expect(moduleSource).toContain("workspaceView === 'quality' && commercialSourceOperations")
     expect(moduleSource).toContain("workspaceView === 'quality') void loadCommercialSourceOperations()")
