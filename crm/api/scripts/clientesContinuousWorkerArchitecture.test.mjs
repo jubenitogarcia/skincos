@@ -13,7 +13,7 @@ async function read(relativePath) {
 
 test('HTTP API has no continuous worker import or startup boundary', async () => {
     const source = await read('crm/api/server.js')
-    assert.doesNotMatch(source, /continuous-worker|startHarmoniaWorker|createContinuousWorkerService|createWorkerHealthServer/)
+    assert.doesNotMatch(source, /continuous-worker|startHarmoniaWorker|createContinuousWorkerService|createWorkerHealthServer|clinicalApprovalExpiryJob/)
 })
 
 test('dedicated runner and launcher cannot execute arbitrary shell or install dependencies', async () => {

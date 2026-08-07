@@ -25,7 +25,7 @@ function fakePool() {
     }
 }
 
-test('Clientes continuous job catalog keeps opt-outs, source and quality separate', () => {
+test('Clientes continuous job catalog keeps opt-outs, source, quality and clinical expiry separate', async () => {
     const jobs = createClientesContinuousJobs({
         pool: fakePool(),
         databaseUrl: LOCAL_DATABASE_URL,
@@ -36,6 +36,16 @@ test('Clientes continuous job catalog keeps opt-outs, source and quality separat
     })
     assert.deepEqual(jobs.map((job) => job.id), Object.values(CLIENTES_CONTINUOUS_JOB_IDS))
     assert.ok(jobs.every((job) => job.intervalMs > 0))
+    const expiry = jobs.find((job) => job.id === CLIENTES_CONTINUOUS_JOB_IDS.CLINICAL_APPROVAL_EXPIRY)
+    assert.equal(expiry.required, false)
+    assert.deepEqual(await expiry.run({ executionKey: 'clientes.test:2026-08-07T00:00:00.000Z' }), {
+        ok: true,
+        ready: true,
+        enabled: false,
+        target: null,
+        skipped: 'job_disabled',
+        expired: 0,
+    })
 })
 
 test('opt-out ingestion stores aggregate consent state without contact payloads', async () => {
@@ -57,6 +67,17 @@ test('continuous job catalog propagates the persisted execution key to each job'
         optOutRunner: async (context) => { received.push(['opt-out', context.executionKey]) },
         sourceRunner: async (context) => { received.push(['source', context.executionKey]) },
         qualityRunner: async (context) => { received.push(['quality', context.executionKey]) },
+        clinicalExpiryJobFactory: ({ pool, databaseUrl, env }) => ({
+            id: CLIENTES_CONTINUOUS_JOB_IDS.CLINICAL_APPROVAL_EXPIRY,
+            intervalMs: 60_000,
+            required: false,
+            run: async (context) => {
+                assert.equal(pool != null, true)
+                assert.equal(databaseUrl, LOCAL_DATABASE_URL)
+                assert.equal(env.CRM_CLIENTES_SOURCE_REFRESH_TARGET, 'production')
+                received.push(['clinical-expiry', context.executionKey])
+            },
+        }),
     })
 
     await Promise.all(jobs.map((job) => job.run({ executionKey: 'clientes.test:2026-08-07T00:00:00.000Z' })))
@@ -64,6 +85,7 @@ test('continuous job catalog propagates the persisted execution key to each job'
         ['opt-out', 'clientes.test:2026-08-07T00:00:00.000Z'],
         ['source', 'clientes.test:2026-08-07T00:00:00.000Z'],
         ['quality', 'clientes.test:2026-08-07T00:00:00.000Z'],
+        ['clinical-expiry', 'clientes.test:2026-08-07T00:00:00.000Z'],
     ])
 })
 
