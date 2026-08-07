@@ -63,6 +63,25 @@
               "versionId": "487f3c03-0159-4914-8d79-470fd1ef209d"
             }
           }
+        },
+        "stagingIncumbent": {
+          "state": "published-and-attested",
+          "repository": "jubenitogarcia/skincos",
+          "sourceSha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+          "workflowRunId": "30966781527",
+          "workflowPath": ".github/workflows/ponto-progressive-release.yml",
+          "runAttempt": 1,
+          "decision": "pass",
+          "releaseEvidenceArtifact": {
+            "id": "8915472652",
+            "name": "ponto-release-evidence-staging-6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
+            "digest": "sha256:5709bcaa26af8a42a1eb321aa8e0ac15a18207b35e46e475a0b70ccd21103ebb"
+          },
+          "surface": {
+            "worker": "skincos-ponto-core-staging",
+            "deploymentId": "2688c47a-efbb-4b97-98f7-6a1734eac354",
+            "versionId": "e71704e3-0d6d-4327-83cf-3121010995b1"
+          }
         }
       }
     },

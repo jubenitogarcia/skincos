@@ -149,6 +149,8 @@ export function validateBaselineSourceFacts({
 
 export function validateRemoteBaseline({
   baselineSha,
+  expectedVersionMessage = `ponto-core-baseline:${baselineSha}`,
+  expectedAppVersion = baselineSha,
   target,
   script,
   routeInventory,
@@ -187,14 +189,13 @@ export function validateRemoteBaseline({
   const activeVersionId = active.versions[0]?.version_id;
   requireValue(UUID_PATTERN.test(activeVersionId || ''), `${expected.worker} active version id is malformed`);
   requireValue(version?.id === activeVersionId, `${expected.worker} active version detail does not match deployment`);
-  const expectedMessage = `ponto-core-baseline:${baselineSha}`;
   requireValue(
-    version.annotations?.['workers/message'] === expectedMessage,
-    `${expected.worker} version is not the requested immutable baseline`,
+    version.annotations?.['workers/message'] === expectedVersionMessage,
+    `${expected.worker} version is not the requested immutable baseline or predecessor`,
   );
 
   const bindings = normalizeBindings(version?.resources?.bindings);
-  requireValue(plainText(bindings, 'APP_VERSION') === baselineSha, `${expected.worker} APP_VERSION does not match`);
+  requireValue(plainText(bindings, 'APP_VERSION') === expectedAppVersion, `${expected.worker} APP_VERSION does not match`);
   requireValue(plainText(bindings, 'ENVIRONMENT') === target, `${expected.worker} ENVIRONMENT does not match`);
   requireValue(plainText(bindings, 'PONTO_ROUTE_ONLY') === 'true', `${expected.worker} is not route-only`);
   requireValue(
@@ -212,8 +213,8 @@ export function validateRemoteBaseline({
     activeDeploymentId: active.id,
     activeVersionId,
     activeVersions: [{ versionId: activeVersionId, percentage: 100 }],
-    versionMessage: expectedMessage,
-    appVersion: baselineSha,
+    versionMessage: expectedVersionMessage,
+    appVersion: expectedAppVersion,
     environment: target,
     timekeepingService: expected.timekeeping,
     routeOnly: true,
@@ -349,7 +350,15 @@ async function publicExposureSnapshot({ get, accountId, worker }) {
   };
 }
 
-export async function remoteSnapshot({ accountId, apiToken, baselineSha, target, fetchImpl = fetch }) {
+export async function remoteSnapshot({
+  accountId,
+  apiToken,
+  baselineSha,
+  expectedVersionMessage,
+  expectedAppVersion,
+  target,
+  fetchImpl = fetch,
+}) {
   const expected = TARGETS[target];
   const get = cloudflareClient({ accountId, apiToken, fetchImpl });
   const scriptsResponse = await get(`/accounts/${encodeURIComponent(accountId)}/workers/scripts`, 'Worker inventory');
@@ -394,6 +403,8 @@ export async function remoteSnapshot({ accountId, apiToken, baselineSha, target,
   const version = versionResponse.result;
   const attestation = validateRemoteBaseline({
     baselineSha,
+    expectedVersionMessage,
+    expectedAppVersion,
     target,
     script,
     routeInventory: exposure,
