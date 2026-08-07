@@ -25,6 +25,7 @@ param(
         "CrmLocal",
         "CrmModules",
         "CrmThreadPreview",
+        "CrmUsersThreadPreview",
         "CrmModule",
         "CrmModuleStop",
         "CrmConsultor",
@@ -2270,6 +2271,9 @@ function Start-CrmInstanceRuntime {
     $module = [string]$Spec.module
     $localAuthAdmin = if ([bool]$Spec.auth.testUserAdmin) { "true" } else { "false" }
     $allowedModules = @($Spec.auth.allowedModules) -join ","
+    # Give the synthetic Gestor enough unit scope to exercise the team form.
+    # This is loopback-only preview data and does not grant production access.
+    $allowedUnits = if ($roleKey -eq 'GESTOR') { "novo-hamburgo,barra-shopping-sul" } else { "" }
     $withInsumos = if ([bool]$Spec.dependencies.insumos) { 1 } else { 0 }
     $withTimekeeping = if ([bool]$Spec.dependencies.timekeeping) { 1 } else { 0 }
     $withWhatsapp = if ([bool]$Spec.dependencies.whatsapp) { 1 } else { 0 }
@@ -2306,6 +2310,9 @@ function Start-CrmInstanceRuntime {
         "LOCAL_AUTH_EMAIL=$email",
         "LOCAL_AUTH_NAME=$displayName",
         "LOCAL_AUTH_ALLOWED_MODULES=$allowedModules",
+        "LOCAL_AUTH_ALLOWED_UNITS=$allowedUnits",
+        "DEV_AUTH_ALLOWED_MODULES=$allowedModules",
+        "DEV_AUTH_ALLOWED_UNITS=$allowedUnits",
         "CRM_VITE_PORT=$([int]$Spec.ports.vite)",
         "CRM_PAGES_PORT=$([int]$Spec.ports.pages)",
         "CRM_WITH_INSUMOS=$withInsumos",
@@ -2338,7 +2345,19 @@ function Start-CrmInstanceRuntime {
     if (-not [string]::IsNullOrWhiteSpace($localScenario)) {
         $runtimeEnv += "CRM_META_ADS_SCENARIO=$localScenario"
     }
+    if ($module -eq 'users') {
+        # The Users preview is the local integration sandbox for the unified
+        # team flow. Keep the flag and seed scoped to this loopback module.
+        $runtimeEnv += "UNIFIED_TEAM_ENABLED=1"
+        $runtimeEnv += "LOCAL_CRM_TEAM_SEED=1"
+    }
     if ($withWhatsapp -eq 1) {
+        # The local CRM adapter also owns the isolated /api/crm admin stubs.
+        # Point Pages at this loopback target so a preview never falls through
+        # to the hosted API while exercising a worktree-only module.
+        $localCrmApiTarget = "http://127.0.0.1:$([int]$Spec.ports.whatsapp)"
+        $runtimeEnv += "CRM_API_TARGET=$localCrmApiTarget"
+        $runtimeEnv += "INSUMOS_API_TARGET=$localCrmApiTarget"
         $runtimeEnv += "UNIT_MONITOR_API_TARGET=http://127.0.0.1:$([int]$Spec.ports.whatsapp)"
     }
     Invoke-ShortcutWsl `
@@ -2987,7 +3006,7 @@ function Invoke-EfAppPythonMode {
 function Invoke-ShortcutActionInternal {
     param([string]$SelectedAction)
 
-    if ($SelectedAction -like 'Crm*' -and $SelectedAction -ne 'CrmThreadPreview') {
+    if ($SelectedAction -like 'Crm*' -and $SelectedAction -notin @('CrmThreadPreview', 'CrmUsersThreadPreview')) {
         Use-CrmLaunchSource
     }
 
@@ -3104,6 +3123,14 @@ function Invoke-ShortcutActionInternal {
                 throw 'CRM – Prévia da Thread exige -CrmRole e -CrmModule juntos, ou nenhum para abrir o menu.'
             }
             Invoke-CrmThreadPreviewAction -Role $CrmRole -Module $CrmModule -SourceRoot $threadPreviewSource
+        }
+        "CrmUsersThreadPreview" {
+            $threadPreviewSource = if ([string]::IsNullOrWhiteSpace($CrmThreadPreviewSourceRoot)) {
+                $ProjectRoot
+            } else {
+                $CrmThreadPreviewSourceRoot
+            }
+            Invoke-CrmThreadPreviewAction -Role Gestor -Module "users" -SourceRoot $threadPreviewSource
         }
         "CrmModule" {
             if ([string]::IsNullOrWhiteSpace($CrmRole) -or [string]::IsNullOrWhiteSpace($CrmModule)) {
