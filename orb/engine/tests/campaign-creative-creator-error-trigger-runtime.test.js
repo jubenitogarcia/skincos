@@ -8,6 +8,7 @@ const test = require('node:test');
 
 const engineRoot = path.resolve(__dirname, '..');
 const preloadPath = path.join(engineRoot, 'scripts', 'preload-n8n-error-workflow-bootstrap.js');
+const bootstrapCorePath = path.join(engineRoot, 'scripts', 'n8n-error-workflow-bootstrap-core.js');
 const starterPath = path.join(engineRoot, 'scripts', 'start-n8n-runtime.sh');
 const unitPath = path.resolve(engineRoot, '..', '..', 'ops', 'runtime', 'units', 'orb.service');
 const n8nRoot = process.env.N8N_GLOBAL_DIR || '/usr/local/lib/node_modules/n8n';
@@ -107,7 +108,7 @@ test('bootstrap resolves WorkflowRunner metadata before the runner is loaded', {
 });
 
 test('bootstrap repairs WorkflowExecutionService metadata immediately before container resolution', () => {
-  const bootstrap = require(preloadPath);
+  const bootstrap = require(bootstrapCorePath);
   function FakeWorkflowExecutionService() {}
   function FakeWorkflowRunner() {}
   const dependencies = [function A() {}, function B() {}, function C() {}, function D() {}, function E() {}, function F() {}, undefined];
@@ -131,7 +132,7 @@ test('bootstrap repairs WorkflowExecutionService metadata immediately before con
 });
 
 test('smoke-only drain waits for the native error execution before the CLI exits', async () => {
-  const bootstrap = require(preloadPath);
+  const bootstrap = require(bootstrapCorePath);
   const exits = [];
   const fakeProcess = {
     env: { SKINCOS_AWAIT_ERROR_WORKFLOW: '1', SKINCOS_AWAIT_ERROR_WORKFLOW_TIMEOUT_MS: '1000' },
@@ -145,7 +146,7 @@ test('smoke-only drain waits for the native error execution before the CLI exits
 });
 
 test('smoke-only drain tracks the post-execution promise for native error workflows only', async () => {
-  const bootstrap = require(preloadPath);
+  const bootstrap = require(bootstrapCorePath);
   const tracked = [];
   const drain = { track(value) { tracked.push(value); } };
   class FakeWorkflowRunner {

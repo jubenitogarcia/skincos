@@ -196,7 +196,7 @@ jobs:
         if: ${{ needs.changes.outputs.ccg == 'true' || needs.changes.outputs.all == 'true' }}
         run: |
           set -euo pipefail
-          node --test orb/engine/tests/campaign-creative-creator*.test.js
+          npm --prefix orb/engine run workflow:campaign-creative:runtime:test
 
       - name: Verify native Orb backup path
         if: ${{ needs.changes.outputs.orb_runtime == 'true' || needs.changes.outputs.all == 'true' }}
