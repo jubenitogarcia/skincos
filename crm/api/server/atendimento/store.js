@@ -127,7 +127,28 @@ export function atendimentoMigrationStatements() {
         `alter table crm_atendimento.professionals add column if not exists email text;`,
         `alter table crm_atendimento.professionals add column if not exists instagram text;`,
         `alter table crm_atendimento.professionals add column if not exists canonical_id uuid;`,
+        `alter table crm_atendimento.professionals add column if not exists workforce_employee_id text;`,
         `alter table crm_atendimento.professionals add column if not exists identity_version text not null default 'professional-identity/v1';`,
+        `create unique index if not exists crm_atendimento_professionals_workforce_employee_idx
+            on crm_atendimento.professionals(workforce_employee_id)
+            where workforce_employee_id is not null;`,
+        `create table if not exists crm_atendimento.professional_workforce_links (
+            id uuid primary key default gen_random_uuid(),
+            professional_id uuid not null references crm_atendimento.professionals(id) on delete restrict,
+            workforce_employee_id text not null,
+            source text not null default 'CRM_ATENDIMENTO',
+            match_method text not null,
+            confidence text not null,
+            review_status text not null default 'PENDING_REVIEW',
+            metadata jsonb not null default '{}'::jsonb,
+            created_by jsonb,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique(professional_id),
+            unique(workforce_employee_id)
+        );`,
+        `create index if not exists crm_atendimento_professional_workforce_links_review_idx
+            on crm_atendimento.professional_workforce_links(review_status, updated_at desc);`,
         `create table if not exists crm_atendimento.professional_aliases (
             id uuid primary key default gen_random_uuid(),
             professional_id uuid not null references crm_atendimento.professionals(id) on delete restrict,
@@ -1835,11 +1856,45 @@ async function resolveAttendanceProcedure(client, name) {
 export async function upsertProfessional(client, input) {
     const name = getCanonicalProfessionalName(input?.name)
     if (!isMeaningfulProfessionalName(name)) return null
+    const workforceEmployeeId = String(input?.workforceEmployeeId || input?.workforce_employee_id || '').trim() || null
+    if (workforceEmployeeId) {
+        const existingByName = await client.query(
+            `select id, workforce_employee_id
+             from crm_atendimento.professionals
+             where name = $1
+             limit 1`,
+            [name],
+        )
+        const existingProfessional = existingByName.rows[0]
+        if (existingProfessional?.workforce_employee_id && String(existingProfessional.workforce_employee_id) !== workforceEmployeeId) {
+            throw mutationError('PROFESSIONAL_WORKFORCE_CONFLICT', 409)
+        }
+        const existingByWorkforce = await client.query(
+            `select id, name
+             from crm_atendimento.professionals
+             where workforce_employee_id = $1
+             limit 1`,
+            [workforceEmployeeId],
+        )
+        if (existingByWorkforce.rows[0] && String(existingByWorkforce.rows[0].name) !== name) {
+            throw mutationError('WORKFORCE_LINK_CONFLICT', 409)
+        }
+        const existingLink = await client.query(
+            `select professional_id
+             from crm_atendimento.professional_workforce_links
+             where workforce_employee_id = $1
+             limit 1`,
+            [workforceEmployeeId],
+        )
+        if (existingLink.rows[0] && (!existingProfessional || String(existingLink.rows[0].professional_id) !== String(existingProfessional.id))) {
+            throw mutationError('WORKFORCE_LINK_CONFLICT', 409)
+        }
+    }
     const roles = Array.isArray(input?.roles) && input.roles.length ? input.roles.map(String).filter(Boolean) : splitList(input?.role)
     const turnos = Array.isArray(input?.turnos) && input.turnos.length ? input.turnos.map(String).filter(Boolean) : splitList(input?.shift)
     const row = await client.query(
-        `insert into crm_atendimento.professionals(name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias, phone, email, instagram)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        `insert into crm_atendimento.professionals(name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias, phone, email, instagram, workforce_employee_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
          on conflict(name) do update set
             role = coalesce(excluded.role, crm_atendimento.professionals.role),
             status = coalesce(excluded.status, crm_atendimento.professionals.status),
@@ -1857,8 +1912,9 @@ export async function upsertProfessional(client, input) {
             phone = coalesce(excluded.phone, crm_atendimento.professionals.phone),
             email = coalesce(excluded.email, crm_atendimento.professionals.email),
             instagram = coalesce(excluded.instagram, crm_atendimento.professionals.instagram),
+            workforce_employee_id = coalesce(excluded.workforce_employee_id, crm_atendimento.professionals.workforce_employee_id),
             updated_at = now()
-         returning id, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias, phone, email, instagram`,
+         returning id, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias, phone, email, instagram, workforce_employee_id`,
         [
             name,
             roles.join(', ') || String(input?.role || '').trim() || null,
@@ -1877,6 +1933,7 @@ export async function upsertProfessional(client, input) {
             String(input?.phone || '').trim() || null,
             String(input?.email || '').trim() || null,
             String(input?.instagram || '').trim() || null,
+            workforceEmployeeId,
         ],
     )
     const professional = row.rows[0]
@@ -1899,12 +1956,25 @@ export async function upsertProfessional(client, input) {
             [professional.id, alias, normalizeProfessionalAliasKey(alias)],
         )
     }
+    if (workforceEmployeeId) {
+        await client.query(
+            `insert into crm_atendimento.professional_workforce_links(workforce_employee_id, professional_id, source, match_method, confidence, review_status, metadata, created_by)
+             values ($1, $2, 'UPSERT_PROFESSIONAL', 'EXPLICIT_WORKFORCE_ID', 'HIGH', 'CONFIRMED', $3::jsonb, $4::jsonb)
+             on conflict(workforce_employee_id) do update set
+                professional_id = excluded.professional_id,
+                review_status = 'CONFIRMED',
+                metadata = excluded.metadata,
+                created_by = excluded.created_by,
+                updated_at = now()`,
+            [workforceEmployeeId, professional.id, JSON.stringify({ explicit: true, source: 'upsertProfessional' }), JSON.stringify({ actor: String(input?.createdBy || input?.created_by || '').trim() || 'system' })],
+        )
+    }
     return { ...professional, canonical_id: professional.canonical_id || professional.id, identity_version: PROFESSIONAL_IDENTITY_VERSION }
 }
 
 async function readProfessionalIdentityRows(client) {
     const result = await client.query(
-        `select p.id, p.canonical_id, p.name, p.role, p.status, p.units, p.roles, p.identity_version, p.email, p.alias,
+        `select p.id, p.canonical_id, p.workforce_employee_id, p.name, p.role, p.status, p.units, p.roles, p.identity_version, p.email, p.alias,
                 canonical.name as canonical_name,
                 coalesce(array_agg(distinct pa.alias) filter (where pa.active), '{}') as aliases
          from crm_atendimento.professionals p
@@ -2247,6 +2317,7 @@ function mapProfessional(row, includeSensitive = false) {
     const base = {
         id: row.id,
         canonicalId: row.canonical_id || row.id,
+        workforceEmployeeId: row.workforce_employee_id || null,
         name: row.name,
         role: row.role,
         status: row.status,
@@ -2269,6 +2340,75 @@ function mapProfessional(row, includeSensitive = false) {
         email: row.email || '',
         instagram: row.instagram || '',
     }
+}
+
+async function linkProfessionalWorkforce(pgPool, professionalId, input, actor) {
+    const normalizedProfessionalId = String(professionalId || '').trim()
+    const workforceEmployeeId = String(input?.workforceEmployeeId || input?.workforce_employee_id || '').trim()
+    const matchMethod = String(input?.matchMethod || input?.match_method || 'EXPLICIT_WORKFORCE_ID').trim().toUpperCase()
+    const confidence = String(input?.confidence || 'HIGH').trim().toUpperCase()
+    const reviewStatus = String(input?.reviewStatus || input?.review_status || 'CONFIRMED').trim().toUpperCase()
+    if (!normalizedProfessionalId || !workforceEmployeeId || matchMethod !== 'EXPLICIT_WORKFORCE_ID') throw mutationError('EXPLICIT_WORKFORCE_ID_REQUIRED')
+    if (!['HIGH', 'MEDIUM', 'LOW'].includes(confidence) || !['PENDING_REVIEW', 'CONFIRMED', 'REJECTED'].includes(reviewStatus)) throw mutationError('INVALID_WORKFORCE_LINK_REVIEW')
+
+    return withPgTransaction(pgPool, async (client) => {
+        const professionalResult = await client.query(
+            `select id, canonical_id, workforce_employee_id, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias, phone, email, instagram
+             from crm_atendimento.professionals where id = $1 limit 1`,
+            [normalizedProfessionalId],
+        )
+        const professional = professionalResult.rows[0]
+        if (!professional) throw mutationError('PROFESSIONAL_NOT_FOUND', 404)
+
+        const byWorkforce = await client.query(
+            `select professional_id, workforce_employee_id, review_status from crm_atendimento.professional_workforce_links where workforce_employee_id = $1 limit 1`,
+            [workforceEmployeeId],
+        )
+        if (byWorkforce.rows[0] && String(byWorkforce.rows[0].professional_id) !== normalizedProfessionalId) throw mutationError('WORKFORCE_LINK_CONFLICT', 409)
+        const byProfessional = await client.query(
+            `select professional_id, workforce_employee_id, review_status from crm_atendimento.professional_workforce_links where professional_id = $1 limit 1`,
+            [normalizedProfessionalId],
+        )
+        if (byProfessional.rows[0] && String(byProfessional.rows[0].workforce_employee_id) !== workforceEmployeeId) throw mutationError('PROFESSIONAL_WORKFORCE_CONFLICT', 409)
+
+        if (reviewStatus === 'CONFIRMED') {
+            const alreadyAssigned = await client.query(
+                `select id from crm_atendimento.professionals where workforce_employee_id = $1 and id <> $2 limit 1`,
+                [workforceEmployeeId, normalizedProfessionalId],
+            )
+            if (alreadyAssigned.rows[0]) throw mutationError('WORKFORCE_LINK_CONFLICT', 409)
+            await client.query(`update crm_atendimento.professionals set workforce_employee_id = $1, updated_at = now() where id = $2`, [workforceEmployeeId, normalizedProfessionalId])
+        }
+
+        const metadata = { explicit: true, source: String(input?.source || 'USERS_TEAM').trim().slice(0, 80) }
+        const actorPayload = { id: actor?.id || null, username: actor?.username || null, role: actor?.role || null }
+        const link = await client.query(
+            `insert into crm_atendimento.professional_workforce_links(professional_id, workforce_employee_id, source, match_method, confidence, review_status, metadata, created_by)
+             values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+             on conflict(professional_id) do update set
+                workforce_employee_id = excluded.workforce_employee_id,
+                source = excluded.source,
+                match_method = excluded.match_method,
+                confidence = excluded.confidence,
+                review_status = excluded.review_status,
+                metadata = excluded.metadata,
+                created_by = excluded.created_by,
+                updated_at = now()
+             returning *`,
+            [normalizedProfessionalId, workforceEmployeeId, metadata.source, matchMethod, confidence, reviewStatus, JSON.stringify(metadata), JSON.stringify(actorPayload)],
+        )
+        await client.query(
+            `insert into crm_atendimento.professional_identity_audit_events(event_type, actor, source_professional_id, canonical_professional_id, payload)
+             values ($1, $2::jsonb, $3, $4, $5::jsonb)`,
+            ['WORKFORCE_LINK_RECORDED', JSON.stringify(actorPayload), normalizedProfessionalId, professional.canonical_id || normalizedProfessionalId, JSON.stringify({ workforceEmployeeId, matchMethod, confidence, reviewStatus, source: metadata.source })],
+        )
+        const refreshed = await client.query(
+            `select id, canonical_id, workforce_employee_id, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias, phone, email, instagram
+             from crm_atendimento.professionals where id = $1 limit 1`,
+            [normalizedProfessionalId],
+        )
+        return { link: link.rows[0], professional: mapProfessional(refreshed.rows[0], true), replayed: Boolean(byProfessional.rows[0]) }
+    })
 }
 
 function mergeDistinctText(...lists) {
@@ -7033,7 +7173,7 @@ export function createAtendimentoStore(options = {}) {
             await ensureReady()
             assertManager(actor)
             const professionals = await pgPool.query(
-                `select id, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias, phone, email, instagram
+                `select id, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias, phone, email, instagram, workforce_employee_id
                  from crm_atendimento.professionals
                  order by name`,
             )
@@ -7048,6 +7188,12 @@ export function createAtendimentoStore(options = {}) {
                 professionals: professionals.rows.map((row) => mapProfessional(row, true)),
                 items: items.rows.map(mapManagementItem),
             }
+        },
+
+        async linkProfessionalWorkforce(professionalId, input, actor) {
+            await ensureReady()
+            assertManager(actor)
+            return linkProfessionalWorkforce(pgPool, professionalId, input, actor)
         },
 
         async managementInsumosFeed(actor) {

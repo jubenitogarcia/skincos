@@ -4,6 +4,7 @@
 import { resolveIdentityTables } from '../store/d1.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notifications/smtpMailer.js';
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
+import { normalizeEmployeeUsername } from '../policy/employeeOnboarding.js';
 import { normalizeAllowedUnits } from '../../shared/identity-contract/index.js';
 import { syncIdentityWorkforceStatus } from '../../shared/identity-runtime/workforce-onboarding.js';
 
@@ -262,7 +263,7 @@ export async function handleAuthRoutes({
 	        const tableHasColumn = async (tableName, columnName) => {
 	            if (!env?.DB || !tableName || !columnName) return false;
 	            const t = String(tableName);
-	            if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(t)) return false;
+            if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(t)) return false;
 	            try {
 	                const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
 	                const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
@@ -276,6 +277,7 @@ export async function handleAuthRoutes({
 	        const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
 	        const invitesHasModules = await tableHasColumn(invitesTable, 'allowed_modules_json');
 	        const invitesHasInviteeEmail = await tableHasColumn(invitesTable, 'invitee_email');
+	        const invitesHasRequestedUsername = await tableHasColumn(invitesTable, 'requested_username');
 
         const sha256Hex = async (input) => {
 	            const data = new TextEncoder().encode(String(input || ''));
@@ -505,12 +507,12 @@ export async function handleAuthRoutes({
                 if (!userDb.ativo) {
                     await recordAuthFailure(identifier, 'USER_INACTIVE');
                     await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'USER_INACTIVE', username: userDb.username } });
-                    return withCORS(JSON.stringify({ error: "User inactive" }), { status: 403 }, appOrigin);
+                    return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
                 }
                 if (!userDb.passwordHash) {
                     await recordAuthFailure(identifier, 'PASSWORD_NOT_SET');
                     await logAuthAudit({ action: 'AUTH_LOGIN_FAILED', actor: identifier, role: userDb.role || '', detail: { reason: 'PASSWORD_NOT_SET', username: userDb.username } });
-                    return withCORS(JSON.stringify({ error: "Password not set" }), { status: 401 }, appOrigin);
+                    return withCORS(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }, appOrigin);
                 }
                 const verified = await verifyPassword(password, userDb.passwordHash);
                 if (!verified.ok) {
@@ -606,8 +608,9 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: "INVITE_MIGRATION_REQUIRED" }), { status: 503 }, appOrigin);
                 }
 
+                const requestedUsernameColumn = invitesHasRequestedUsername ? ', requested_username' : '';
                 const invite = await env.DB.prepare(
-                    `SELECT id, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked
+                    `SELECT id, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked${requestedUsernameColumn}
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                      LIMIT 1`
@@ -642,8 +645,19 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: "EMAIL_TAKEN" }), { status: 409 }, appOrigin);
                 }
 
-                const base = suggestUsername(name, email);
-                const candidate = await ensureUniqueUsername(base);
+                const invitedUsername = invitesHasRequestedUsername ? normalizeEmployeeUsername(invite.requested_username) : '';
+                let candidate = '';
+                if (invitesHasRequestedUsername && invite.requested_username && !invitedUsername) {
+                    return withCORS(JSON.stringify({ success: false, error: "USERNAME_UNAVAILABLE" }), { status: 409 }, appOrigin);
+                }
+                if (invitedUsername) {
+                    const usernameTaken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(invitedUsername).first();
+                    if (usernameTaken) return withCORS(JSON.stringify({ success: false, error: "USERNAME_UNAVAILABLE" }), { status: 409 }, appOrigin);
+                    candidate = invitedUsername;
+                } else {
+                    const base = suggestUsername(name, email);
+                    candidate = await ensureUniqueUsername(base);
+                }
                 if (!candidate || !validateUsername(candidate)) {
                     return withCORS(JSON.stringify({ success: false, error: "USERNAME_UNAVAILABLE" }), { status: 409 }, appOrigin);
                 }
@@ -807,7 +821,10 @@ export async function handleAuthRoutes({
                     env.DB.prepare(`UPDATE ${passwordResetsTable} SET used_at = ? WHERE username = ? AND id <> ? AND used_at IS NULL`).bind(new Date().toISOString(), userDb.username, resetId)
                 ]);
                 await logAuthAudit({ action: 'AUTH_PASSWORD_RESET_REQUEST', actor: userDb.username, role: userDb.role || '', detail: { delivery: 'smtp' } });
-                return withCORS(JSON.stringify({ success: true, expiresAt }), { status: 200 }, appOrigin);
+                // Do not return the expiry before the one-time code is proven;
+                // the generic response must not reveal whether an account is
+                // active or configured for recovery.
+                return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
             }

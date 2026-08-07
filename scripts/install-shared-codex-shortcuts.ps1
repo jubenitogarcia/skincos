@@ -128,6 +128,7 @@ $shortcuts = @(
     @{ Name = "CRM – Local"; Action = "CrmLocal"; Description = "Inicia o CRM completo local com gate de todos os módulos." },
     @{ Name = "CRM – Módulos"; Action = "CrmModules"; Description = "Escolhe um módulo e um papel real em runtime local isolado." },
     @{ Name = "CRM – Prévia da Thread"; Action = "CrmThreadPreview"; Description = "Monta um snapshot privado do worktree atual em runtime local separado." },
+    @{ Name = "CRM – Prévia Usuários Equipe Thread"; Action = "CrmUsersThreadPreview"; Description = "Abre a prévia isolada do módulo Usuários/Equipe como Gestor." },
     @{ Name = "EF App"; Action = "EfAppMenu"; Description = "Menu das automacoes do app.espacofacial.com.br." },
     @{ Name = "Orb"; Action = "OrbMenu"; Description = "Menu do runtime live do orb/n8n e utilitarios de suporte." }
 )
