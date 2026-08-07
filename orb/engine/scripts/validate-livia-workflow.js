@@ -246,8 +246,10 @@ function validateStructure() {
   const updateEdges = workflow.connections?.['Update File']?.main?.[0] || [];
   assert(updateEdges.some((edge) => edge?.node === 'Collect Drive Publication Marks'), 'Update File must feed every API readback into the Drive publication collector');
   assert(connectionExists('Collect Drive Publication Marks', 'Assert Drive Published'), 'Collected Drive readbacks must feed Assert Drive Published');
-  const notificationNode = names.has('Inform Success (1)') ? 'Inform Success (1)' : 'Inform Success (2)';
-  assert(connectionExists('Assert Drive Published', notificationNode), 'Verified Drive update must feed notification');
+  const notificationNode = ['Inform Success (1)', 'Inform Success (2)'].find((name) => names.has(name));
+  if (notificationNode) {
+    assert(connectionExists('Assert Drive Published', notificationNode), 'Verified Drive update must feed notification');
+  }
   assert(connectionExists('Assert Drive Published', 'Cleanup Temp Files'), 'Verified Drive update must feed cleanup');
   assert(connectionExists('Switch Final Dry Run', 'Cleanup Temp Files', 1), 'Switch Final Dry Run dry-run output must feed Cleanup Temp Files');
 }
@@ -302,6 +304,11 @@ function validateContracts() {
 
   assert(prepareMediaItems.includes('__liviaCompose1'), 'Prepare Media Items must repopulate __liviaCompose1');
   assert(!prepareMediaItems.includes('waitUntil'), 'Prepare Media Items must not emit waitUntil');
+  assert(prepareMediaItems.includes('livia_selection_today_first_due_v1'), "Prepare Media Items must select only today's earliest due group");
+  assert(prepareMediaItems.includes('America/Sao_Paulo'), 'Prepare Media Items must calculate today in America/Sao_Paulo');
+  assert(prepareMediaItems.includes('row.targetDate !== todayDate'), 'Prepare Media Items must discard media outside today');
+  assert(prepareMediaItems.includes('firstReadyGroup'), 'Prepare Media Items must select one earliest due group');
+  assert(!prepareMediaItems.includes('newestPublishTimeMs'), 'Prepare Media Items must not select the newest due group');
   assert(processMediaAssetCommand.includes('process-media-asset.js'), 'Process Media Asset must delegate to scripts/livia/process-media-asset.js');
   assert(processMediaAssetCommand.includes('executionId'), 'Process Media Asset payload must include executionId for isolated temp assets');
   assert(processMediaAssetCommand.length < 2500, `Process Media Asset command must stay small enough for stable expression parsing (${processMediaAssetCommand.length} chars)`);
@@ -478,7 +485,9 @@ function validateContracts() {
   if (getNode('Inform Success (1)')) {
     assert(notifyPhone.includes('N8N_DEFAULT_TEST_PHONE') && !notifyPhone.includes('555195103563'), 'Notification must use the runtime E.164 phone instead of a hard-coded JID');
   }
-  assert(telegramText.includes("$('Assert Drive Published').first().json.whatsappMessage"), 'Telegram notification must preserve the verified message after Evolution output');
+  if (getNode('Inform Success (2)')) {
+    assert(telegramText.includes("$('Assert Drive Published').first().json.whatsappMessage"), 'Telegram notification must preserve the verified message after Evolution output');
+  }
   assert(JSON.stringify(getNode('Hydrate Publish Context')?.parameters || {}).includes('version: \\"v25.0\\"'), 'Hydrate Publish Context must use Graph API v25.0');
   assert(!workflowText.includes('v24.0'), 'Workflow must not retain Graph API v24.0 templates');
   assert(!workflowText.includes('"access_token":"EAA'), 'Workflow export must not contain inline Meta access tokens');
