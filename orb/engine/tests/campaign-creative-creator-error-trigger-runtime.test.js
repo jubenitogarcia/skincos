@@ -22,6 +22,8 @@ test('Orb starts n8n through the error-workflow bootstrap', () => {
   assert.match(unit, /^ExecStart=__REPO_ROOT__\/orb\/engine\/scripts\/start-n8n-runtime\.sh$/m);
   assert.match(starter, /--require=\$preload/);
   assert.match(starter, /exec \/usr\/local\/bin\/n8n start/);
+  const bootstrapCore = fs.readFileSync(bootstrapCorePath, 'utf8');
+  assert.doesNotMatch(bootstrapCore, /\nbootstrap\(\);\n/);
 });
 
 test('bootstrap preserves only the CCG recovery lineage in the native error payload', { skip: !fs.existsSync(servicePath) }, () => {

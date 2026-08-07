@@ -350,8 +350,6 @@ function bootstrap() {
   patchExecuteErrorWorkflow(errorWorkflowModule, cliDrain);
 }
 
-bootstrap();
-
 module.exports = {
   attachCcgRecoveryContext,
   bootstrap,
