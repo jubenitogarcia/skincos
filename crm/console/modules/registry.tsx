@@ -16,6 +16,7 @@ export const crmModuleRegistry: readonly CrmModuleManifest[] = [
   manifest({ key: 'dashboard', label: 'Analítica', icon: <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />, loader: () => import('@/ReportsDashboard').then((m) => ({ default: m.ReportsDashboard })) }),
   manifest({ key: 'leads', label: 'Leads', icon: '💎', loader: () => import('@/LeadsManager').then((m) => ({ default: m.LeadsManager })) }),
   manifest({ key: 'clientes', label: 'Clientes', icon: '👥', loader: () => import('@/ClientCommercialModule').then((m) => ({ default: m.ClientCommercialModule })) }),
+  manifest({ key: 'clinical-approvals', label: 'Aprovações clínicas', icon: '🩺', loader: () => import('@/ClinicalApprovalModule').then((m) => ({ default: m.ClinicalApprovalModule })) }),
   manifest({ key: 'notifications', label: 'Notificações', icon: '🔔', loader: () => import('@/NotificationCenter').then((m) => ({ default: m.NotificationCenter })) }),
   manifest({ key: 'conversa', label: 'Conversa', icon: '💬', loader: () => import('@/ConversaModule').then((m) => ({ default: m.ConversaModule })) }),
   manifest({ key: 'atendimento', label: 'Atendimento', icon: <span className="relative inline-flex h-5 w-5 items-center justify-center text-sky-100" aria-hidden><Stethoscope className="absolute h-4 w-4 -translate-x-1 translate-y-0.5" /><ClipboardList className="absolute h-3.5 w-3.5 translate-x-1 -translate-y-0.5 text-emerald-200" /></span>, loader: () => import('@/AtendimentoModule').then((m) => ({ default: m.AtendimentoModule })) }),

@@ -49,6 +49,19 @@ accepted by the semantic owner:
   and error envelopes.  A domain owns its data model, migrations and business
   invariants.
 
+## Clinical approval boundary
+
+Clinical cadence approval is an independent bounded context even while the
+clinical service remains experimental. Its implementation is isolated under
+`crm/api/server/clinical`, its additive schema is `clinical_approval`, and its
+authenticated contract is `/api/clinical`. `GESTOR` may create and submit a
+draft; only `CLINICAL_APPROVER` may approve or reject it, with unit scope,
+optimistic revision and an append-only event ledger. The Clientes commercial
+router can only maintain drafts and reads approved rows from this domain; it
+cannot approve, prescribe, or send a message. The context is disabled for
+online launch until the schema, role, independent reviewer and staging
+evidence gates are all present.
+
 ## Migration rules
 
 - `archive/` is not a final code location.  Proven obsolete material is

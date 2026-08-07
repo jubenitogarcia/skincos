@@ -273,16 +273,21 @@ export function createContinuousJobRunner({
         if (!running || stopping) return { skipped: 'stopped' }
         const job = jobById.get(jobId)
         if (!job) throw new Error(`CONTINUOUS_JOB_UNKNOWN:${jobId}`)
-        if (active.has(jobId)) return { skipped: 'in_flight' }
         const entry = state.jobs[jobId]
         const scheduled = Number(scheduledAtMs)
         const scheduledAt = Number.isFinite(scheduled) ? scheduled : nowMs(clock)
         const key = executionKey(jobId, scheduledAt)
+
+        // A completed execution can still be flushing its checkpoint when a
+        // caller repeats the same key.  Preserve idempotency in that narrow
+        // window instead of reporting an in-flight result and inviting a
+        // duplicate retry from a caller.
         if (entry.lastExecutionKey === key && entry.status === 'succeeded') {
             const next = nowMs(clock) + job.intervalMs
             schedule(jobId, job.intervalMs, next)
             return { skipped: 'idempotent', executionKey: key }
         }
+        if (active.has(jobId)) return { skipped: 'in_flight' }
 
         const attempt = entry.pendingExecutionKey === key ? Number(entry.attempts || 0) + 1 : 1
         const started = nowMs(clock)
@@ -354,7 +359,7 @@ export function createContinuousJobRunner({
                     await queuePersist()
                     return { ok: false, deferred: true, executionKey: key, error: code }
                 }
-                if (attempt < attemptsLimit && !stopping) {
+                if (error?.retryable !== false && attempt < attemptsLimit && !stopping) {
                     entry.status = 'retrying'
                     entry.retries += 1
                     entry.totalRetries += 1
