@@ -63,7 +63,7 @@ test('creates immutable commercial ledgers while retaining untraceable pre-cutov
     assert.equal(report.preexistingActions, 9)
     assert.equal(report.permissionTraceConstraintValidated, false)
     assert.equal(report.runtimeRole, 'skincos')
-    assert.equal(report.runtimeGrants.length, 3)
+    assert.equal(report.runtimeGrants.length, 4)
     assert.equal(released, true)
 
     const indexOf = (pattern) => calls.findIndex(({ sql }) => pattern.test(String(sql).replace(/\s+/g, ' ')))
@@ -83,6 +83,7 @@ test('creates immutable commercial ledgers while retaining untraceable pre-cutov
     assert.equal(calls.some(({ sql }) => /validate constraint commercial_permission_events_trace_required/i.test(sql)), false)
     assert.equal(calls.some(({ sql }) => /audit_events/i.test(sql)), false)
     assert.ok(calls.some(({ sql }) => /grant select, insert on table crm_atendimento\.commercial_action_events to skincos/i.test(sql)))
+    assert.ok(calls.some(({ sql }) => /grant select on table crm_atendimento\.schema_migrations to skincos/i.test(sql)))
     assert.ok(calls.some(({ sql }) => /grant usage, select on sequence crm_atendimento\.commercial_action_events_event_order_seq to skincos/i.test(sql)))
 })
 

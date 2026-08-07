@@ -180,6 +180,7 @@ function runtimeGrantStatements(target) {
     if (!role) throw migrationError('IDENTITY_REVIEW_WORKFLOW_MIGRATION_RUNTIME_ROLE_UNKNOWN')
     return [
         `grant usage on schema crm_atendimento to ${role}`,
+        `grant select on table crm_atendimento.schema_migrations to ${role}`,
         `grant select, insert on table crm_atendimento.identity_review_decisions to ${role}`,
         `grant select, insert, update on table crm_atendimento.identity_materialization_runs to ${role}`,
         `grant select, insert on table crm_atendimento.identity_member_history to ${role}`,
