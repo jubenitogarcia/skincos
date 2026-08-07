@@ -7,18 +7,17 @@ const ORGANIZER_ID = 'ccg-orchestrator-001';
 const ORGANIZER_NAME = 'Campaign Creative Creator Organizer';
 const CREATOR_WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const CCG_ERROR_WORKFLOW_ID = '9j7WMFTNVNYmNZHC';
-const BUILDER_VERSION = '1.0.4';
+const BUILDER_VERSION = '1.0.5';
 
 function parseArgs(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (['--input', '--output', '--creator-workflow-id', '--error-workflow-id'].includes(arg)) {
+    if (['--input', '--output', '--creator-workflow-id'].includes(arg)) {
       const key = {
         '--input': 'input',
         '--output': 'output',
         '--creator-workflow-id': 'creatorWorkflowId',
-        '--error-workflow-id': 'errorWorkflowId',
       }[arg];
       result[key] = argv[++index];
     }
@@ -208,10 +207,12 @@ return [{
 function buildOrganizer(source, options = {}) {
   if (!source || source.id !== ORGANIZER_ID) throw new Error(`Unexpected Organizer workflow id: ${source?.id || 'missing'}`);
   const creatorWorkflowId = options.creatorWorkflowId || CREATOR_WORKFLOW_ID;
-  const errorWorkflowId = options.errorWorkflowId || CCG_ERROR_WORKFLOW_ID;
   assertSafeId(creatorWorkflowId, 'creator workflow id');
-  assertSafeId(errorWorkflowId, 'error workflow id');
-  if (errorWorkflowId === ORGANIZER_ID) throw new Error('Organizer must not use itself as its error workflow');
+  const settings = { ...(source.settings || {}), availableInMCP: false };
+  // The Creator owns CCG-99. Assigning the same native Error Trigger to the
+  // Organizer causes n8n to create a second incident after it propagates the
+  // Creator's failure, so deliberately remove any inherited setting here.
+  delete settings.errorWorkflow;
   const nodes = [
     workflowNode('ccg-organizer-manual', "When clicking 'Execute workflow'", 'n8n-nodes-base.manualTrigger', 1, [-720, 0], {}),
     // Prefer the native subworkflow trigger for operational calls. This keeps
@@ -251,10 +252,7 @@ function buildOrganizer(source, options = {}) {
       [nodes[3].name]: { main: [[{ node: nodes[4].name, type: 'main', index: 0 }]] },
       [nodes[4].name]: { main: [[{ node: nodes[5].name, type: 'main', index: 0 }]] },
     },
-    // n8n propagates an integrated child failure to the top-level Organizer.
-    // Attach CCG-99 here as well as on the Creator so a technical failure is
-    // recoverable regardless of which execution n8n persists as the root.
-    settings: { ...(source.settings || {}), availableInMCP: false, errorWorkflow: errorWorkflowId },
+    settings,
     staticData: null,
     pinData: {},
     meta: {
@@ -263,7 +261,9 @@ function buildOrganizer(source, options = {}) {
       codex_builder_version: BUILDER_VERSION,
       source_workflow_id: ORGANIZER_ID,
       creator_workflow_id: creatorWorkflowId,
-      error_workflow_id: errorWorkflowId,
+      error_workflow_id: CCG_ERROR_WORKFLOW_ID,
+      error_workflow_owner: 'creator_only',
+      incident_deduplication: 'creator_native_error_only',
       architecture: 'n8n-organizer-to-campaign-creative-creator-operational-entry',
       operational_entry: 'executeWorkflowTrigger',
       no_publication: true,
@@ -279,12 +279,11 @@ function buildOrganizer(source, options = {}) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!args.input || !args.output) throw new Error('Usage: build-campaign-creative-creator-organizer.js --input <workflow-export.json> --output <candidate.json> [--creator-workflow-id <id>] [--error-workflow-id <id>]');
+  if (!args.input || !args.output) throw new Error('Usage: build-campaign-creative-creator-organizer.js --input <workflow-export.json> --output <candidate.json> [--creator-workflow-id <id>]');
   const parsed = JSON.parse(fs.readFileSync(path.resolve(args.input), 'utf8').replace(/^\uFEFF/, ''));
   const source = Array.isArray(parsed) ? parsed.find((candidate) => candidate?.id === ORGANIZER_ID) : parsed;
   const output = buildOrganizer(source, {
     creatorWorkflowId: args.creatorWorkflowId,
-    errorWorkflowId: args.errorWorkflowId,
   });
   fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
   fs.writeFileSync(path.resolve(args.output), `${JSON.stringify(output, null, 2)}\n`);

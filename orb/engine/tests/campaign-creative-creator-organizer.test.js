@@ -43,8 +43,10 @@ test('Organizer builder produces a safe inactive subworkflow route to the operat
   assert.equal(workflow.connections["When clicking 'Execute workflow'"].main[0][0].node, 'Organizer Safe Defaults');
   assert.equal(workflow.meta.publish_allowed, false);
   assert.equal(workflow.meta.operational_entry, 'executeWorkflowTrigger');
-  assert.equal(workflow.settings.errorWorkflow, CCG_ERROR_WORKFLOW_ID);
+  assert.equal(Object.hasOwn(workflow.settings, 'errorWorkflow'), false);
   assert.equal(workflow.meta.error_workflow_id, CCG_ERROR_WORKFLOW_ID);
+  assert.equal(workflow.meta.error_workflow_owner, 'creator_only');
+  assert.equal(workflow.meta.incident_deduplication, 'creator_native_error_only');
   assert.equal(workflow.meta.no_public_webhook, true);
 });
 
@@ -52,18 +54,24 @@ test('Organizer builder writes a reproducible candidate without legacy provider 
   const source = { id: ORGANIZER_ID, name: 'Other', active: false, nodes: [], connections: {}, settings: {} };
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccg-organizer-test-'));
   const outputPath = path.join(tempDir, 'organizer.json');
-  const workflow = buildOrganizer(source, {
-    creatorWorkflowId: '9j7WMFTNVNYmNZHC',
-    errorWorkflowId: 'error-handler-001',
-  });
+  const workflow = buildOrganizer(source, { creatorWorkflowId: '9j7WMFTNVNYmNZHC' });
   fs.writeFileSync(outputPath, JSON.stringify(workflow));
   const persisted = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
   assert.equal(persisted.nodes.find((node) => node.name === 'Execute Campaign Creative Creator').parameters.workflowId.value, '9j7WMFTNVNYmNZHC');
-  assert.equal(persisted.settings.errorWorkflow, 'error-handler-001');
+  assert.equal(Object.hasOwn(persisted.settings, 'errorWorkflow'), false);
   assert.equal(persisted.nodes.some((node) => /googleDrive|httpRequest|langchain/i.test(node.type)), false);
 });
 
-test('Organizer builder rejects an error workflow that points back to itself', () => {
-  const source = { id: ORGANIZER_ID, name: 'Other', active: false, nodes: [], connections: {}, settings: {} };
-  assert.throws(() => buildOrganizer(source, { errorWorkflowId: ORGANIZER_ID }), /must not use itself/);
+test('Organizer builder removes inherited native error workflow settings to prevent duplicate incidents', () => {
+  const source = {
+    id: ORGANIZER_ID,
+    name: 'Other',
+    active: false,
+    nodes: [],
+    connections: {},
+    settings: { errorWorkflow: CCG_ERROR_WORKFLOW_ID, executionOrder: 'v1' },
+  };
+  const workflow = buildOrganizer(source);
+  assert.equal(Object.hasOwn(workflow.settings, 'errorWorkflow'), false);
+  assert.equal(workflow.settings.executionOrder, 'v1');
 });
