@@ -141,6 +141,20 @@ class GateFixture(unittest.TestCase):
         self.assertIn("$skincos-project-orchestrator supervisor-cycle", result["reason"])
         self.assertIn('"cycle": 1', result["reason"])
 
+    def test_active_mission_rejects_an_unstructured_normal_stop(self) -> None:
+        initial = self.run_gate(self.payload())
+        self.assertEqual(initial["decision"], "block")
+
+        result = self.run_gate(
+            self.payload(
+                message="The checks are still pending; I will stop here for now.",
+                turn_id="turn-2",
+            )
+        )
+
+        self.assertEqual(result["decision"], "block")
+        self.assertIn("active mission is incomplete", result["reason"])
+
     def test_compact_session_snapshot_persists_and_reaches_continuation_prompt(self) -> None:
         contract = self.contract(
             session_snapshot={
