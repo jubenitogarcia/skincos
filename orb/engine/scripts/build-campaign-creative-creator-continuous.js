@@ -8,7 +8,7 @@ const WORKFLOW_ID = 'TxE9eMS1xfE6kq38';
 const WORKFLOW_NAME = 'Campaign Creative Creator';
 const ERROR_WORKFLOW_ID = 'ccg-campaign-creative-error-v3';
 const ERROR_WORKFLOW_NAME = 'Campaign Creative Creator - Error Handler';
-const BUILDER_VERSION = '4.1.4';
+const BUILDER_VERSION = '4.1.5';
 const ALL_FIXTURE_NAMES = [
   'Build CCG-00 dry-run fixture',
   'Build CCG-10 dry-run fixture',
@@ -39,6 +39,7 @@ const ERROR_HANDLER_NODE_NAMES = [
 ];
 const GENERATED_NODE_NAMES = [
   'Operational Production Request',
+  'CCG-00 Capture Recovery Context',
   'CCG-60 Optional Applicability Gate',
   'CCG-60 Optional Skip Result',
   'CCG-70 Optional Applicability Gate',
@@ -1298,6 +1299,32 @@ function patchCcg90FinalizeCode(code) {
 function patchCcg99NormalizeCode(code) {
   let updated = code;
   updated = updated.replace(
+    `const context = obj(
+  envelope.recovery_context ||
+  envelope.context ||
+  raw.recovery_context ||
+  raw.context
+);`,
+    `const executionContext = obj(execution.executionContext);
+const capturedRecoveryContext = obj(
+  error.ccg_recovery_context ||
+  envelope.ccg_recovery_context ||
+  raw.ccg_recovery_context ||
+  executionContext.ccg_recovery_context
+);
+const context = obj(
+  envelope.recovery_context ||
+  envelope.context ||
+  raw.recovery_context ||
+  raw.context ||
+  capturedRecoveryContext
+);`,
+  );
+  updated = updated.replace(
+    '    content_id: text(context.content_id || raw.production_request?.content_id),\n    production_tier: tier,',
+    '    content_id: text(context.content_id || raw.production_request?.content_id),\n    request_hash: text(context.request_hash || raw.ccg_context?.request_hash || raw.production_request?.request_hash),\n    production_tier: tier,',
+  );
+  updated = updated.replace(
     'const failedJobId = text(',
     `const productionExecution = obj(raw.production_execution_results || raw.data?.production_execution_results || envelope.production_execution_results || raw.execution_results);
 const executorHandoff = obj(raw.executor_handoff || raw.data?.executor_handoff || envelope.executor_handoff);
@@ -1372,6 +1399,10 @@ function patchCcg99ResumeHandoffCode(code) {
 
 function patchCcg99FinalizeCode(code) {
   let updated = code;
+  updated = updated.replace(
+    '    content_id: context.content_id,\n    mode: context.mode,',
+    '    content_id: context.content_id,\n    request_hash: context.request_hash,\n    mode: context.mode,',
+  );
   updated = updated.replace(
     '    input_has_binary: event.raw_evidence?.input_has_binary === true\n  }',
     "    input_has_binary: event.raw_evidence?.input_has_binary === true,\n    executor_execution_id: text(event.source?.executor_execution_id || event.recovery_context?.executor_execution_id),\n    checkpoint_id: text(event.source?.checkpoint_id || event.recovery_context?.checkpoint_id),\n    provider_job_id: text(event.source?.provider_job_id || event.recovery_context?.provider_job_id),\n    failed_job_id: text(event.source?.failed_job_id || event.recovery_context?.failed_job_id)\n  }",
@@ -1905,6 +1936,96 @@ function executionNormalizerNode(position) {
   };
 }
 
+function recoveryContextNode(position) {
+  return {
+    parameters: {
+      mode: 'runOnceForAllItems',
+      jsCode: String.raw`
+const item = $input.first();
+const data = item && item.json ? item.json : {};
+const request = data.production_request && typeof data.production_request === 'object'
+  ? data.production_request
+  : data;
+const current = data.ccg_context && typeof data.ccg_context === 'object'
+  ? data.ccg_context
+  : {};
+
+function text(value, fallback = '') {
+  if (value === undefined || value === null) return fallback;
+  return String(value).trim().slice(0, 256);
+}
+
+function hash(value) {
+  const source = String(value);
+  let result = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    result ^= source.charCodeAt(index);
+    result = Math.imul(result, 16777619);
+  }
+  return (result >>> 0).toString(16).padStart(8, '0');
+}
+
+const seed = [
+  text(request.production_id),
+  text(request.content_id),
+  text(request.campaign_id),
+  text(request.run_id),
+  text(request.idempotency_key)
+].join('|');
+const fingerprint = hash(seed || 'ccg-recovery-context');
+const runId = text(current.run_id || request.run_id || request.production_id, 'untracked-' + fingerprint);
+const requestHash = text(current.request_hash || request.request_hash, 'input-' + fingerprint);
+const idempotencyKey = text(
+  current.idempotency_key || request.idempotency_key,
+  'ccg:recovery:' + runId + ':' + requestHash.slice(0, 16)
+);
+const tier = text(current.production_tier || request.production_tier, 'STANDARD').toUpperCase();
+const maxAttempts = tier === 'FAST' ? 2 : tier === 'PREMIUM' ? 4 : 3;
+const mode = request.dry_run === true
+  ? 'DRY_RUN'
+  : request.dry_run === false
+    ? 'LIVE'
+    : 'UNKNOWN';
+
+const recoveryContext = {
+  schema_version: '1.0.0',
+  run_id: runId,
+  production_id: text(current.production_id || request.production_id),
+  content_id: text(current.content_id || request.content_id),
+  campaign_id: text(current.campaign_id || request.campaign_id),
+  request_hash: requestHash,
+  idempotency_key: idempotencyKey,
+  production_tier: tier,
+  mode,
+  module: 'CCG-00',
+  checkpoint_module: 'CCG-00',
+  current_attempt: 1,
+  max_attempts: maxAttempts,
+  recovery_policy: {
+    dispatch_enabled: false,
+    allow_execution_retry: true,
+    allow_checkpoint_resume: true,
+    maximum_backoff_seconds: 900
+  }
+};
+
+return [{
+  json: {
+    ...data,
+    ccg_recovery_context: recoveryContext
+  },
+  binary: item && item.binary
+}];
+`,
+    },
+    id: 'ccg-00-capture-recovery-context',
+    name: 'CCG-00 Capture Recovery Context',
+    type: 'n8n-nodes-base.code',
+    typeVersion: 2,
+    position,
+  };
+}
+
 function addExecutionNodes(workflow) {
   workflow.nodes.push(
     executionPolicyNode([15456, 920]),
@@ -1937,8 +2058,13 @@ function transformWorkflow(source, options = {}) {
   });
   addOptionalNodes(workflow);
   addExecutionNodes(workflow);
+  workflow.nodes.push(recoveryContextNode([-48, 180]));
 
   replaceMainEdge(workflow, 'Operational Production Request', 'CCG-00 Parse & Normalize');
+  replaceMainEdge(workflow, 'CCG-00 Parse & Normalize', 'CCG-00 Capture Recovery Context');
+  workflow.connections['CCG-00 Capture Recovery Context'] = {
+    main: [[{ node: 'CCG-00 Validate Contract', type: 'main', index: 0 }]],
+  };
   replaceMainEdge(workflow, 'CCG-00 Return Module Result', 'CCG-10 Validate CCG-00 Input');
   replaceMainEdge(workflow, 'CCG-10 Return Module Result', 'CCG-20 Validate CCG-10 Input');
   replaceMainEdge(workflow, 'CCG-20 Return Module Result', 'CCG-30 Validate CCG-20 Input');
