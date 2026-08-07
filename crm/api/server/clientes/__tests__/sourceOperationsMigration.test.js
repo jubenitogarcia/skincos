@@ -29,6 +29,7 @@ test('source operations v2 migration is additive, PII-free and grants no destruc
     assert.match(sql, /encrypted boolean not null check \(encrypted\)/)
     assert.doesNotMatch(grants, /grant\s+(?:all privileges|delete|truncate)/)
     assert.match(grants, /revoke update, delete, truncate, references, trigger/)
+    assert.match(grants, /grant select on table crm_atendimento\.schema_migrations to skincos_staging_crm_app/)
     assert.match(grants, /select, insert, update on table crm_atendimento\.clientes_source_operation_runs/)
     assert.match(grants, /select, insert on table crm_atendimento\.clientes_source_operation_events/)
 })
