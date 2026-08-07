@@ -861,8 +861,33 @@ def process(
         if (shared_root / "processed-events" / f"{event_key}.json").exists():
             return safe_allow("SKINCOS supervisor ignored a duplicate Stop event")
 
+        mission_path = runtime_root / "missions" / f"{session_key}.json"
+        mission = read_json(mission_path) if mission_path.exists() else None
+        if mission_path.exists() and mission is None:
+            mark_event(
+                shared_root / "processed-events",
+                event_key,
+                {**event_record, "result": "corrupt_mission_state"},
+            )
+            return safe_allow("SKINCOS supervisor safety stop: mission state is corrupt")
+
         contract, extract_error = extract_contract(message)
         if extract_error or contract is None:
+            if mission and mission.get("status") == "in_progress":
+                mark_event(
+                    shared_root / "processed-events",
+                    event_key,
+                    {
+                        **event_record,
+                        "result": "active_mission_missing_contract",
+                        "mission_id": mission.get("mission_id"),
+                    },
+                )
+                return block(
+                    "SKINCOS supervisor: an active mission is incomplete; emit exactly one "
+                    "supervisor-cycle state contract with a concrete next_item and progress_made=true, "
+                    "or a terminal status, before ending this turn"
+                )
             mark_event(shared_root / "processed-events", event_key, {**event_record, "result": "invalid_contract"})
             recursion = " during a continued turn" if payload.get("stop_hook_active") else ""
             return safe_allow(f"SKINCOS supervisor safety stop{recursion}: {extract_error}")
@@ -877,15 +902,6 @@ def process(
             mark_event(shared_root / "processed-events", event_key, {**event_record, "result": "skill_unavailable"})
             return safe_allow(f"SKINCOS supervisor safety stop: {skill_error}")
 
-        mission_path = runtime_root / "missions" / f"{session_key}.json"
-        mission = read_json(mission_path)
-        if mission_path.exists() and mission is None:
-            mark_event(
-                shared_root / "processed-events",
-                event_key,
-                {**event_record, "result": "corrupt_mission_state"},
-            )
-            return safe_allow("SKINCOS supervisor safety stop: mission state is corrupt")
         stop_hook_active = bool(payload.get("stop_hook_active"))
         requested_mission = contract.get("mission_id")
 
