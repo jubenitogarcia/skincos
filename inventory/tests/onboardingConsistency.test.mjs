@@ -128,3 +128,17 @@ test('team telemetry accepts only aggregate fields and cannot persist identity P
   const implementation = telemetry.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   assert.doesNotMatch(implementation, /email|phone|fullName|entityId|memberId/i);
 });
+
+test('unified team rollout is explicit, staging-only and fail-closed by default', async () => {
+  const workflow = await readFile(
+    new URL('../../.github/workflows/deploy-core-workers.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /unified_team_enabled:/);
+  assert.match(workflow, /default: false/);
+  assert.match(workflow, /UNIFIED_TEAM_ENABLED: \$\{\{ inputs\.unified_team_enabled \}\}/);
+  assert.match(workflow, /Unified team routes can only be enabled in staging/);
+  assert.match(workflow, /Unified team routes require the inventory unit/);
+  assert.match(workflow, /unified_team_var=false/);
+  assert.match(workflow, /--var "UNIFIED_TEAM_ENABLED:\$unified_team_var"/);
+});
