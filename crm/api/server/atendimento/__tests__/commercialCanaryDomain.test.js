@@ -24,6 +24,14 @@ test('candidate references are opaque, unit-bound and expire instead of exposing
     assert.throws(() => codec.decode(reference), /COMMERCIAL_CANARY_CANDIDATE_EXPIRED/)
 })
 
+test('candidate references reject a truncated GCM authentication tag', () => {
+    const codec = createCommercialCanaryCandidateCodec(secret)
+    const reference = codec.encode({ identityId, unit: 'centro' })
+    const bytes = Buffer.from(reference, 'base64url')
+    const truncatedTag = Buffer.concat([bytes.subarray(0, 12), bytes.subarray(12, 27), bytes.subarray(28)])
+    assert.throws(() => codec.decode(truncatedTag.toString('base64url')), /COMMERCIAL_CANARY_CANDIDATE_INVALID/)
+})
+
 test('masking and justification validation avoid PII in the operational surface', () => {
     const masked = maskCanaryDisplayName('Maria da Silva')
     assert.equal(masked.includes('Maria'), false)

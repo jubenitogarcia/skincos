@@ -5,6 +5,7 @@ export const COMMERCIAL_CANARY_MAX_IDENTITIES = 100
 export const COMMERCIAL_CANARY_CANDIDATE_TTL_MS = 10 * 60 * 1000
 export const COMMERCIAL_CANARY_VALIDATION_TYPES = Object.freeze(['synthetic', 'explicit_approved'])
 
+const COMMERCIAL_CANARY_GCM_TAG_LENGTH = 16
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const UNIT = /^[a-z0-9][a-z0-9-]{1,79}$/
 const POLICY_VERSION = /^[a-f0-9]{32}$/
@@ -98,17 +99,17 @@ export function createCommercialCanaryCandidateCodec(secret, { now = () => Date.
             const payload = { v: COMMERCIAL_CANARY_SELECTOR_VERSION, identityId: String(identityId || '').toLowerCase(), unit: normalizeCanaryUnit(unit), issuedAt: now() }
             verifyPayload(payload)
             const iv = randomBytes(12)
-            const cipher = createCipheriv('aes-256-gcm', key, iv)
+            const cipher = createCipheriv('aes-256-gcm', key, iv, { authTagLength: 16 })
             const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()])
             return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64url')
         },
         decode(reference) {
             try {
                 const bytes = Buffer.from(String(reference || ''), 'base64url')
-                if (bytes.length < 29) throw new Error('short')
-                const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12))
-                decipher.setAuthTag(bytes.subarray(12, 28))
-                const raw = Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8')
+                if (bytes.length < 12 + COMMERCIAL_CANARY_GCM_TAG_LENGTH + 1) throw new Error('short')
+                const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12), { authTagLength: 16 })
+                decipher.setAuthTag(bytes.subarray(12, 12 + COMMERCIAL_CANARY_GCM_TAG_LENGTH))
+                const raw = Buffer.concat([decipher.update(bytes.subarray(12 + COMMERCIAL_CANARY_GCM_TAG_LENGTH)), decipher.final()]).toString('utf8')
                 const payload = JSON.parse(raw)
                 verifyPayload(payload)
                 return { identityId: String(payload.identityId).toLowerCase(), unit: normalizeCanaryUnit(payload.unit), issuedAt: Number(payload.issuedAt) }
