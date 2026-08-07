@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
-import { getBookingDb, clampText } from "@/lib/bookingDb";
+import { getBookingDb, clampText, parseCookieHeader } from "@/lib/bookingDb";
+import { COOKIE_CONSENT_NAME, parseCookieConsentValue } from "@/lib/cookieConsent";
+import { isBeautyMovementOriginAllowed, resolveBeautyMovementAllowedOriginsAtRuntime } from "@/lib/beautyMovementSecurity";
+import { parseBeautyMovementTrackingPayload } from "@/lib/beautyMovementTracking";
 import { SITE_BEHAVIOR_EVENT_NAMES } from "@/lib/siteBehavior";
 
 export const dynamic = "force-dynamic";
 
 const ALLOWED_EVENT_NAMES = new Set<string>(SITE_BEHAVIOR_EVENT_NAMES);
+const MAX_EVENT_BODY_CHARS = 8_192;
 type CampaignKey = "utm_source" | "utm_medium" | "utm_campaign" | "utm_content" | "utm_term";
 
 function json(data: unknown, init?: ResponseInit) {
@@ -39,12 +43,69 @@ function safeJson(value: unknown): string | null {
 }
 
 export async function POST(request: Request) {
-    const body = objectOrNull(await request.json().catch(() => null));
+    const rawBody = await request.text().catch(() => "");
+    if (rawBody.length > MAX_EVENT_BODY_CHARS) {
+        return json({ ok: false, error: "payload_too_large" }, { status: 413 });
+    }
+    let parsedBody: unknown = null;
+    try {
+        parsedBody = JSON.parse(rawBody);
+    } catch {
+        parsedBody = null;
+    }
+    const body = objectOrNull(parsedBody);
     if (!body) return json({ ok: false, error: "invalid_payload" }, { status: 400 });
 
     const eventName = stringOrNull(body.eventName, 80);
     if (!eventName || !ALLOWED_EVENT_NAMES.has(eventName)) {
         return json({ ok: false, error: "invalid_event_name" }, { status: 400 });
+    }
+
+    if (eventName.startsWith("beauty_movement_")) {
+        const campaignPayload = parseBeautyMovementTrackingPayload(body);
+        if (!campaignPayload) return json({ ok: false, error: "invalid_campaign_payload" }, { status: 400 });
+        if (!isBeautyMovementOriginAllowed(
+            request.headers.get("origin"),
+            await resolveBeautyMovementAllowedOriginsAtRuntime(),
+        )) {
+            return json({ ok: false, error: "origin_not_allowed" }, { status: 403 });
+        }
+        const consent = parseCookieConsentValue(parseCookieHeader(request.headers.get("cookie"))[COOKIE_CONSENT_NAME]);
+        if (consent?.analytics !== true) {
+            return json({ ok: true, skipped: true, reason: "analytics_consent_denied" });
+        }
+
+        // Intentionally do not accept client session ids, URLs, campaign
+        // parameters, attribution ids, benefit fields or free-form metadata.
+        const id = crypto.randomUUID();
+        const db = await getBookingDb();
+        await db
+            .prepare(
+                `INSERT INTO site_behavior_events (
+                    id, event_name, session_id, created_at_ms, page_url, page_path, page_host, referrer, landing_page,
+                    utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, fbp, fbc,
+                    link_url, link_host, link_path, link_type, placement, source, unit_slug, service_id, booking_id,
+                    consent_analytics, consent_marketing, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+            )
+            .bind(
+                id,
+                campaignPayload.eventName,
+                id,
+                Date.now(),
+                null, null, null, null, null,
+                null, null, null, null, null, null, null, null,
+                null, null, null, null, null,
+                "beauty-movement",
+                "novo-hamburgo",
+                null,
+                null,
+                1,
+                consent.marketing === true ? 1 : 0,
+                safeJson(campaignPayload.params),
+            )
+            .run();
+        return json({ ok: true, id });
     }
 
     const consent = objectOrNull(body.consent);

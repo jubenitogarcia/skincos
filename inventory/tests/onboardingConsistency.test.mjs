@@ -140,5 +140,6 @@ test('unified team rollout is explicit, staging-only and fail-closed by default'
   assert.match(workflow, /Unified team routes can only be enabled in staging/);
   assert.match(workflow, /Unified team routes require the inventory unit/);
   assert.match(workflow, /unified_team_var=false/);
+  assert.match(workflow, /--var "APP_VERSION:\$RELEASE_SHA"/);
   assert.match(workflow, /--var "UNIFIED_TEAM_ENABLED:\$unified_team_var"/);
 });

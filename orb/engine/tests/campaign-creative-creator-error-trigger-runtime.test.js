@@ -93,15 +93,71 @@ test('bootstrap preserves only the CCG recovery lineage in the native error payl
 
 test('bootstrap resolves WorkflowRunner metadata before the runner is loaded', { skip: !fs.existsSync(runnerPath) }, () => {
   const probe = [
-    `require(${JSON.stringify(runnerPath)});`,
     `const { WorkflowExecutionService } = require(${JSON.stringify(servicePath)});`,
+    `const { WorkflowRunner } = require(${JSON.stringify(runnerPath)});`,
     "const dependencies = Reflect.getMetadata('design:paramtypes', WorkflowExecutionService) || [];",
-    'process.stdout.write(String(typeof dependencies[6]));',
+    "process.stdout.write(String(typeof dependencies[6]) + ':' + String(dependencies[6] === WorkflowRunner));",
   ].join('\n');
   const result = spawnSync(process.execPath, ['--require', preloadPath, '-e', probe], {
     encoding: 'utf8',
     env: { ...process.env, N8N_GLOBAL_DIR: n8nRoot },
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), 'function');
+  assert.equal(result.stdout.trim(), 'function:true');
+});
+
+test('bootstrap repairs WorkflowExecutionService metadata immediately before container resolution', () => {
+  const bootstrap = require(preloadPath);
+  function FakeWorkflowExecutionService() {}
+  function FakeWorkflowRunner() {}
+  const dependencies = [function A() {}, function B() {}, function C() {}, function D() {}, function E() {}, function F() {}, undefined];
+  Reflect.defineMetadata('design:paramtypes', dependencies, FakeWorkflowExecutionService);
+  const fakeContainer = {
+    get(token) {
+      return (Reflect.getMetadata('design:paramtypes', token) || [])[6];
+    },
+  };
+
+  assert.equal(
+    bootstrap.patchContainerGet(fakeContainer, FakeWorkflowExecutionService, () => FakeWorkflowRunner),
+    true,
+  );
+  assert.equal(fakeContainer.get(FakeWorkflowExecutionService), FakeWorkflowRunner);
+  assert.equal(fakeContainer.__skincosCcgWorkflowExecutionRepair, true);
+  assert.equal(
+    bootstrap.patchContainerGet(fakeContainer, FakeWorkflowExecutionService, () => FakeWorkflowRunner),
+    false,
+  );
+});
+
+test('smoke-only drain waits for the native error execution before the CLI exits', async () => {
+  const bootstrap = require(preloadPath);
+  const exits = [];
+  const fakeProcess = {
+    env: { SKINCOS_AWAIT_ERROR_WORKFLOW: '1', SKINCOS_AWAIT_ERROR_WORKFLOW_TIMEOUT_MS: '1000' },
+    exit(code) { exits.push(code); },
+  };
+  const drain = bootstrap.createCliErrorWorkflowDrain(fakeProcess, { timeoutMs: 1000 });
+  fakeProcess.exit(1);
+  drain.track(Promise.resolve());
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(exits, [1]);
+});
+
+test('smoke-only drain tracks the post-execution promise for native error workflows only', async () => {
+  const bootstrap = require(preloadPath);
+  const tracked = [];
+  const drain = { track(value) { tracked.push(value); } };
+  class FakeWorkflowRunner {
+    constructor() {
+      this.activeExecutions = { getPostExecutePromise: (id) => Promise.resolve(`finished:${id}`) };
+    }
+    async run() { return 'error-execution-1'; }
+  }
+  assert.equal(bootstrap.patchWorkflowRunnerForCliDrain(FakeWorkflowRunner, drain), true);
+  const runner = new FakeWorkflowRunner();
+  await runner.run({ executionMode: 'regular' });
+  await runner.run({ executionMode: 'error' });
+  assert.equal(tracked.length, 1);
+  assert.equal(await tracked[0], 'finished:error-execution-1');
 });

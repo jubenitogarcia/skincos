@@ -1,0 +1,47 @@
+.statusPage {
+  min-height: 70vh;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 1rem;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  color: #303030;
+  background: #fafafa;
+}
+
+.statusPage h1 {
+  max-width: 32rem;
+  margin: 0;
+  font: 600 clamp(1.75rem, 5vw, 3.2rem) / 1.08 var(--font-brand-ui), sans-serif;
+}
+
+.statusEyebrow {
+  margin: 0;
+  color: #505050;
+  font: 700 0.76rem / 1.2 var(--font-brand-ui), sans-serif;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.statusPage a {
+  color: #303030;
+  font-weight: 700;
+}
+
+.loader {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 3px solid #d0d0d0;
+  border-top-color: #303030;
+  border-radius: 50%;
+  animation: beautyMovementSpin 850ms linear infinite;
+}
+
+@keyframes beautyMovementSpin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loader { animation: none; }
+}

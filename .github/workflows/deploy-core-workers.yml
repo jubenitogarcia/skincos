@@ -854,6 +854,7 @@ jobs:
             unified_team_var=false
             [[ "$UNIFIED_TEAM_ENABLED" == "true" ]] && unified_team_var=true
             npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars "${env_args[@]}" \
+              --var "APP_VERSION:$RELEASE_SHA" \
               --var "UNIFIED_TEAM_ENABLED:$unified_team_var"
           fi
           if [[ "$UNIT" == "api" || "$UNIT" == "all" ]]; then

@@ -15,6 +15,19 @@
       "parameters": {}
     },
     {
+      "id": "ccg-organizer-operational",
+      "name": "Operational Campaign Request",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -720,
+        180
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
       "id": "ccg-organizer-config",
       "name": "Organizer Safe Defaults",
       "type": "n8n-nodes-base.set",
@@ -110,6 +123,17 @@
         ]
       ]
     },
+    "Operational Campaign Request": {
+      "main": [
+        [
+          {
+            "node": "Organizer Safe Defaults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Organizer Safe Defaults": {
       "main": [
         [
@@ -161,10 +185,14 @@
   "meta": {
     "codex_generated": true,
     "codex_builder": "build-campaign-creative-creator-organizer",
-    "codex_builder_version": "1.0.2",
+    "codex_builder_version": "1.0.5",
     "source_workflow_id": "ccg-orchestrator-001",
     "creator_workflow_id": "TxE9eMS1xfE6kq38",
+    "error_workflow_id": "9j7WMFTNVNYmNZHC",
+    "error_workflow_owner": "creator_only",
+    "incident_deduplication": "creator_native_error_only",
     "architecture": "n8n-organizer-to-campaign-creative-creator-operational-entry",
+    "operational_entry": "executeWorkflowTrigger",
     "no_publication": true,
     "publish_allowed": false,
     "publish_requested": false,

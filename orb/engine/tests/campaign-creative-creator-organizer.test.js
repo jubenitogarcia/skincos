@@ -4,7 +4,12 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildOrganizer, CREATOR_WORKFLOW_ID, ORGANIZER_ID } = require('../scripts/build-campaign-creative-creator-organizer');
+const {
+  buildOrganizer,
+  CCG_ERROR_WORKFLOW_ID,
+  CREATOR_WORKFLOW_ID,
+  ORGANIZER_ID,
+} = require('../scripts/build-campaign-creative-creator-organizer');
 
 test('Organizer builder produces a safe inactive subworkflow route to the operational creator entry', () => {
   const source = {
@@ -19,8 +24,11 @@ test('Organizer builder produces a safe inactive subworkflow route to the operat
   assert.equal(workflow.id, ORGANIZER_ID);
   assert.equal(workflow.name, 'Campaign Creative Creator Organizer');
   assert.equal(workflow.active, false);
-  assert.equal(workflow.nodes.length, 5);
+  assert.equal(workflow.nodes.length, 6);
   assert.equal(workflow.nodes.some((node) => node.credentials), false);
+  const operationalTrigger = workflow.nodes.find((node) => node.name === 'Operational Campaign Request');
+  assert.equal(operationalTrigger.type, 'n8n-nodes-base.executeWorkflowTrigger');
+  assert.equal(operationalTrigger.parameters.inputSource, 'passthrough');
   const execute = workflow.nodes.find((node) => node.name === 'Execute Campaign Creative Creator');
   assert.equal(execute.parameters.workflowId.value, CREATOR_WORKFLOW_ID);
   assert.equal(execute.parameters.options.waitForSubWorkflow, true);
@@ -31,7 +39,14 @@ test('Organizer builder produces a safe inactive subworkflow route to the operat
   assert.match(request.parameters.jsCode, /max_jobs: defaultMaxJobs/);
   assert.equal(workflow.nodes.find((node) => node.name === 'Organizer Safe Defaults').parameters.assignments.assignments.find((assignment) => assignment.name === 'max_jobs').value, 4);
   assert.equal(workflow.connections['Build CCG Operational Request'].main[0][0].node, 'Execute Campaign Creative Creator');
+  assert.equal(workflow.connections['Operational Campaign Request'].main[0][0].node, 'Organizer Safe Defaults');
+  assert.equal(workflow.connections["When clicking 'Execute workflow'"].main[0][0].node, 'Organizer Safe Defaults');
   assert.equal(workflow.meta.publish_allowed, false);
+  assert.equal(workflow.meta.operational_entry, 'executeWorkflowTrigger');
+  assert.equal(Object.hasOwn(workflow.settings, 'errorWorkflow'), false);
+  assert.equal(workflow.meta.error_workflow_id, CCG_ERROR_WORKFLOW_ID);
+  assert.equal(workflow.meta.error_workflow_owner, 'creator_only');
+  assert.equal(workflow.meta.incident_deduplication, 'creator_native_error_only');
   assert.equal(workflow.meta.no_public_webhook, true);
 });
 
@@ -43,5 +58,20 @@ test('Organizer builder writes a reproducible candidate without legacy provider 
   fs.writeFileSync(outputPath, JSON.stringify(workflow));
   const persisted = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
   assert.equal(persisted.nodes.find((node) => node.name === 'Execute Campaign Creative Creator').parameters.workflowId.value, '9j7WMFTNVNYmNZHC');
+  assert.equal(Object.hasOwn(persisted.settings, 'errorWorkflow'), false);
   assert.equal(persisted.nodes.some((node) => /googleDrive|httpRequest|langchain/i.test(node.type)), false);
+});
+
+test('Organizer builder removes inherited native error workflow settings to prevent duplicate incidents', () => {
+  const source = {
+    id: ORGANIZER_ID,
+    name: 'Other',
+    active: false,
+    nodes: [],
+    connections: {},
+    settings: { errorWorkflow: CCG_ERROR_WORKFLOW_ID, executionOrder: 'v1' },
+  };
+  const workflow = buildOrganizer(source);
+  assert.equal(Object.hasOwn(workflow.settings, 'errorWorkflow'), false);
+  assert.equal(workflow.settings.executionOrder, 'v1');
 });
