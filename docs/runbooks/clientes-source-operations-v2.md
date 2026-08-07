@@ -10,6 +10,15 @@ desabilitado no template e, mesmo quando instalado, inicia com jobs e apply
 desligados. Um --apply sem todos os controles abaixo deve terminar em erro
 sanitizado, sem modificar fonte ou destino.
 
+O timer legado `crm-clientes-source-refresh.timer` está aposentado: os antigos
+runner e instalador agora falham fechado antes de ler qualquer arquivo privado,
+variável ou comando. Em um host que ainda tenha o timer instalado, use somente
+o script nativo com gramática fixa `retire-clientes-source-refresh-service.sh
+--dry-run` e, após a evidência da janela de mudança, `--apply`. Ele desabilita
+apenas os dois nomes de unidade legados; não aceita path, ambiente, URL ou
+comando fornecido externamente. A aposentadoria deve preceder a ativação de
+`crm-jobs.service` para não haver dois schedulers de fonte.
+
 ## Catálogo estático
 
 O catálogo é metadata-only: identificadores, cadência e capacidades ficam em
