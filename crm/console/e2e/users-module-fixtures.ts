@@ -89,6 +89,15 @@ export async function mockUsersApi(page: Page, role = 'GESTOR') {
       if (body.state === 'SYNCED' && body.professionalId) row.schedule.professionalId = body.professionalId
       return send({ success: true, data: { scheduleSync: row.scheduleSync } })
     }
+    const linkReviewMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)\/links\/([^/]+)\/review$/)
+    if (linkReviewMatch && request.method() === 'POST') {
+      const body = await json(); const row = rows.find((item) => item.id === decodeURIComponent(linkReviewMatch[1]))
+      const link = row?.identityLinks.find((item) => item.id === decodeURIComponent(linkReviewMatch[2]))
+      if (!row || !link) return send({ success: false, error: 'Vínculo não encontrado' }, 404)
+      link.reviewStatus = body.reviewStatus
+      if (body.reviewStatus === 'CONFIRMED' && link.source === 'ESCALA') row.schedule.professionalId = link.sourceId
+      return send({ success: true, data: link })
+    }
     const linksMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)\/links$/)
     if (linksMatch) {
       const row = rows.find((item) => item.id === decodeURIComponent(linksMatch[1]))

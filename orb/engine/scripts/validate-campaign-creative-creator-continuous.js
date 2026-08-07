@@ -193,6 +193,13 @@ function validateWorkflow(workflow, options = {}) {
   if (!names.has('Operational Production Request')) {
     throw new Error('Operational subworkflow trigger is missing');
   }
+  const recoveryNode = names.get('CCG-00 Capture Recovery Context');
+  if (!recoveryNode || recoveryNode.type !== 'n8n-nodes-base.code') {
+    throw new Error('CCG-00 recovery context capture node is missing');
+  }
+  if (!String(recoveryNode.parameters?.jsCode || '').includes('ccg_recovery_context')) {
+    throw new Error('CCG-00 recovery context capture node does not emit the sanitized lineage contract');
+  }
   if (workflow.nodes.filter((node) => node.name === 'Operational Production Request').length !== 1) {
     throw new Error('Expected exactly one operational trigger');
   }
@@ -211,6 +218,8 @@ function validateWorkflow(workflow, options = {}) {
   }
   const requiredEdges = [
     ['Operational Production Request', 'CCG-00 Parse & Normalize'],
+    ['CCG-00 Parse & Normalize', 'CCG-00 Capture Recovery Context'],
+    ['CCG-00 Capture Recovery Context', 'CCG-00 Validate Contract'],
     ['CCG-00 Return Module Result', 'CCG-10 Validate CCG-00 Input'],
     ['CCG-10 Return Module Result', 'CCG-20 Validate CCG-10 Input'],
     ['CCG-20 Return Module Result', 'CCG-30 Validate CCG-20 Input'],
@@ -280,6 +289,10 @@ function validateErrorWorkflow(workflow, options = {}) {
   }
   if (!hasEdge(workflow, 'Error Trigger', 'CCG-99 Normalize & Redact Error Event')) {
     throw new Error('Error Trigger is not connected to CCG-99 normalization');
+  }
+  const normalizerCode = String(names.get('CCG-99 Normalize & Redact Error Event')?.parameters?.jsCode || '');
+  if (normalizerCode && (!normalizerCode.includes('error.ccg_recovery_context') || !normalizerCode.includes('request_hash'))) {
+    throw new Error('Error workflow does not preserve sanitized CCG recovery lineage');
   }
   return { nodeCount: workflow.nodes.length, edgeCount: countEdges(workflow) };
 }

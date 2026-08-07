@@ -1,20 +1,47 @@
 const API = "https://api.cloudflare.com/client/v4";
 const CHECK_MODE = process.argv.includes("--check");
-const RATE_LIMIT_REF = "ef_booking_request_rl_v1";
-const DESIRED_RULE = {
-  ref: RATE_LIMIT_REF,
-  description: "EF: rate limit booking requests (managed by repo)",
-  expression: '(http.request.uri.path eq "/api/booking/request" and http.request.method eq "POST")',
-  action: "block",
-  enabled: true,
-  ratelimit: {
-    // This zone only supports 10s period/timeout values; 2/10s preserves the prior 12/minute rate.
-    characteristics: ["cf.colo.id", "ip.src"],
-    period: 10,
-    requests_per_period: 2,
-    mitigation_timeout: 10,
+const DESIRED_RULES = [
+  {
+    ref: "ef_booking_request_rl_v1",
+    description: "EF: rate limit booking requests (managed by repo)",
+    expression: '(http.request.uri.path eq "/api/booking/request" and http.request.method eq "POST")',
+    action: "block",
+    enabled: true,
+    ratelimit: {
+      // This zone only supports 10s period/timeout values; 2/10s preserves the prior 12/minute rate.
+      characteristics: ["cf.colo.id", "ip.src"],
+      period: 10,
+      requests_per_period: 2,
+      mitigation_timeout: 10,
+    },
   },
-};
+  {
+    ref: "ef_beauty_movement_session_rl_v1",
+    description: "EF: rate limit beauty movement invite exchange (managed by repo)",
+    expression: '(http.request.uri.path eq "/api/beleza-em-movimento/session" and http.request.method eq "POST")',
+    action: "block",
+    enabled: true,
+    ratelimit: {
+      characteristics: ["cf.colo.id", "ip.src"],
+      period: 10,
+      requests_per_period: 4,
+      mitigation_timeout: 10,
+    },
+  },
+  {
+    ref: "ef_beauty_movement_mutation_rl_v1",
+    description: "EF: rate limit beauty movement journey mutations (managed by repo)",
+    expression: '((http.request.uri.path eq "/api/beleza-em-movimento/reveal" or http.request.uri.path eq "/api/beleza-em-movimento/confirm") and http.request.method eq "POST")',
+    action: "block",
+    enabled: true,
+    ratelimit: {
+      characteristics: ["cf.colo.id", "ip.src"],
+      period: 10,
+      requests_per_period: 12,
+      mitigation_timeout: 10,
+    },
+  },
+];
 
 function env(name, fallback = "") {
   return (process.env[name] ?? fallback).toString().trim();
@@ -103,18 +130,18 @@ async function tryEnableBotFightMode(zoneId) {
   log("bot_fight_mode enabled");
 }
 
-function sameRateLimitConfig(rule) {
+function sameRateLimitConfig(rule, expected) {
   if (!rule) return false;
   const rl = rule.ratelimit ?? {};
   return (
-    rule.ref === DESIRED_RULE.ref &&
-    rule.action === DESIRED_RULE.action &&
-    rule.enabled === DESIRED_RULE.enabled &&
-    rule.expression === DESIRED_RULE.expression &&
-    rl.period === DESIRED_RULE.ratelimit.period &&
-    rl.requests_per_period === DESIRED_RULE.ratelimit.requests_per_period &&
-    rl.mitigation_timeout === DESIRED_RULE.ratelimit.mitigation_timeout &&
-    JSON.stringify(rl.characteristics ?? []) === JSON.stringify(DESIRED_RULE.ratelimit.characteristics)
+    rule.ref === expected.ref &&
+    rule.action === expected.action &&
+    rule.enabled === expected.enabled &&
+    rule.expression === expected.expression &&
+    rl.period === expected.ratelimit.period &&
+    rl.requests_per_period === expected.ratelimit.requests_per_period &&
+    rl.mitigation_timeout === expected.ratelimit.mitigation_timeout &&
+    JSON.stringify(rl.characteristics ?? []) === JSON.stringify(expected.ratelimit.characteristics)
   );
 }
 
@@ -129,11 +156,13 @@ async function assertRateLimitRule(zoneId) {
     throw err;
   }
   const existingRules = Array.isArray(entrypoint?.rules) ? entrypoint.rules : [];
-  const matched = existingRules.find((rule) => rule?.ref === RATE_LIMIT_REF);
-  if (!sameRateLimitConfig(matched)) {
-    throw new Error("rate_limit_rule_drift_detected");
+  for (const expected of DESIRED_RULES) {
+    const matched = existingRules.find((rule) => rule?.ref === expected.ref);
+    if (!sameRateLimitConfig(matched, expected)) {
+      throw new Error(`rate_limit_rule_drift_detected:${expected.ref}`);
+    }
   }
-  log("check: rate limit rule matches desired config");
+  log("check: rate limit rules match desired config");
 }
 
 async function upsertRateLimitRule(zoneId) {
@@ -154,7 +183,7 @@ async function upsertRateLimitRule(zoneId) {
         description: "EF: zone-level rate limiting ruleset (managed by repo)",
         kind: "zone",
         phase: "http_ratelimit",
-        rules: [DESIRED_RULE],
+        rules: DESIRED_RULES,
       }),
     });
     log("rate limit entrypoint created (http_ratelimit)");
@@ -162,14 +191,15 @@ async function upsertRateLimitRule(zoneId) {
   }
 
   const existingRules = Array.isArray(entrypoint?.rules) ? entrypoint.rules : [];
-  const preserved = existingRules.filter((r) => r?.ref !== RATE_LIMIT_REF);
+  const desiredRefs = new Set(DESIRED_RULES.map((rule) => rule.ref));
+  const preserved = existingRules.filter((r) => !desiredRefs.has(r?.ref));
 
   await cfFetch(`/zones/${zoneId}/rulesets/phases/http_ratelimit/entrypoint`, {
     method: "PUT",
     body: JSON.stringify({
       name: entrypoint?.name ?? "default",
       description: entrypoint?.description ?? "",
-      rules: [...preserved, DESIRED_RULE],
+      rules: [...preserved, ...DESIRED_RULES],
     }),
   });
 

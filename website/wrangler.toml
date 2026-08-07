@@ -12,6 +12,10 @@ routes = [
 
 [vars]
 NEXT_PUBLIC_SITE_URL = "https://espacofacial.com"
+# Campaign code is shipped fail-closed. A separate D1 binding and a completed
+# synthetic staging validation are required before this can ever be enabled.
+BEAUTY_MOVEMENT_ENABLED = "false"
+BEAUTY_MOVEMENT_ALLOWED_ORIGINS = "https://espacofacial.com,https://www.espacofacial.com"
 
 [assets]
 directory = ".open-next/assets"
@@ -27,6 +31,12 @@ binding = "SKINCOS_ESCALA_DB"
 database_name = "skincos-escala"
 database_id = "594fef1b-5597-476e-86f9-59920f284215"
 
+[[d1_databases]]
+binding = "BEAUTY_MOVEMENT_DB"
+database_name = "espacofacial-beauty-movement"
+database_id = "6f67e1aa-22bf-445e-b541-f568d99fbbe9"
+migrations_dir = "migrations/beauty-movement"
+
 [env.staging]
 name = "espacofacial-site-staging"
 workers_dev = true
@@ -38,6 +48,8 @@ NEXT_PUBLIC_SITE_URL = "https://espacofacial-site-staging.skincos.workers.dev"
 # Staging has no production Turnstile secret and must remain usable for
 # synthetic booking verification without weakening production enforcement.
 BOOKING_REQUIRE_TURNSTILE = "false"
+BEAUTY_MOVEMENT_ENABLED = "false"
+BEAUTY_MOVEMENT_ALLOWED_ORIGINS = "https://espacofacial-site-staging.skincos.workers.dev"
 
 [env.staging.assets]
 directory = ".open-next/assets"
@@ -52,3 +64,9 @@ database_id = "dea29efb-badd-41f3-962b-d991aa4ac321"
 binding = "SKINCOS_ESCALA_DB"
 database_name = "skincos-escala-staging"
 database_id = "3f59f0a3-2c27-4f15-9f84-a9234f86c2e5"
+
+[[env.staging.d1_databases]]
+binding = "BEAUTY_MOVEMENT_DB"
+database_name = "espacofacial-beauty-movement-staging"
+database_id = "7e319fc9-2cd3-4627-817c-adca264cd360"
+migrations_dir = "migrations/beauty-movement"
