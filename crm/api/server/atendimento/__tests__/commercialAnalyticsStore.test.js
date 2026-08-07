@@ -85,3 +85,23 @@ test('analytics store rejects PII-shaped metric and snapshot input before persis
         { code: 'ANALYTICS_ACTOR_ID_REQUIRED' },
     )
 })
+
+test('serializes experiment assignments with the Operations crossover namespace', async () => {
+    const locks = []
+    const client = { async query(sql, params) { locks.push({ sql: compact(sql), key: params?.[0] }); return { rows: [] } } }
+    const unitId = '10000000-0000-4000-8000-000000000001'
+    const firstIdentity = '10000000-0000-4000-8000-000000000010'
+    const secondIdentity = '10000000-0000-4000-8000-000000000020'
+
+    await __testables.lockExperimentCrossoverAssignments(client, unitId, [
+        { identityId: secondIdentity },
+        { identityId: firstIdentity },
+        { identityId: secondIdentity },
+    ])
+
+    assert.deepEqual(locks.map((item) => item.key), [
+        `commercial-experiment-crossover:${unitId}:${firstIdentity}`,
+        `commercial-experiment-crossover:${unitId}:${secondIdentity}`,
+    ])
+    assert.equal(locks.every((item) => item.sql.includes('pg_advisory_xact_lock')), true)
+})

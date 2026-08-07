@@ -117,6 +117,22 @@ function normalizeUuid(value, code = 'ANALYTICS_UUID_INVALID') {
     return id
 }
 
+async function lockExperimentCrossoverAssignments(client, unitId, assignments) {
+    // Operations uses this same lock namespace while it verifies that an
+    // identity is not an active control/excluded member. Take every lock in
+    // deterministic order before persisting assignments so an assignment
+    // cannot race an eligible commercial mutation into a silent crossover.
+    const unit = normalizeUuid(unitId, 'ANALYTICS_EXPERIMENT_UNIT_INVALID')
+    const identityIds = [...new Set((Array.isArray(assignments) ? assignments : [])
+        .map((assignment) => normalizeUuid(assignment?.identityId, 'ANALYTICS_EXPERIMENT_IDENTITY_INVALID')))]
+        .sort()
+    for (const identityId of identityIds) {
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [
+            `commercial-experiment-crossover:${unit}:${identityId}`,
+        ])
+    }
+}
+
 function normalizeCount(value, code = 'ANALYTICS_COUNT_INVALID') {
     const parsed = Number(value)
     if (!Number.isInteger(parsed) || parsed < 0 || parsed > 2_147_483_647) throw analyticsError(code, 400)
@@ -828,6 +844,7 @@ export function createCommercialAnalyticsStore({
                     controlPercent: Number(row.control_group_percent),
                     existingAssignments: existing.rows.map((item) => ({ ...item, unit_slug: row.unit_slug })),
                 })
+                await lockExperimentCrossoverAssignments(client, row.unit_id, assignments)
                 for (const assignment of assignments.filter((item) => !item.preserved)) {
                     await client.query(`insert into crm_atendimento.commercial_experiment_assignments(experiment_id,identity_id,unit_id,variant,eligible,exclusion_reason)
                         values($1,$2::uuid,$3::uuid,$4,$5,$6) on conflict(experiment_id,identity_id) do nothing`, [
@@ -881,6 +898,7 @@ export function createCommercialAnalyticsStore({
 export const __testables = {
     digest,
     isGlobal,
+    lockExperimentCrossoverAssignments,
     mapEvent,
     normalizeReason,
     normalizeSnapshotMembers,
