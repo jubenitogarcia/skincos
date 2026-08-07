@@ -17,7 +17,10 @@ export {
 // through this registered compatibility adapter during the Worker extraction.
 export {
   canCreateEmployee,
+  buildEmployeeOnboardingFingerprintPayload,
   displayJobTitle,
   publicOnboarding,
+  resolveEmployeeProfile,
+  suggestEmployeeUsername,
   validateOnboardingInput,
 } from '../../identity/policy/employeeOnboarding.js';

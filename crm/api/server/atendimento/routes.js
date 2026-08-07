@@ -735,6 +735,15 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    expressRouter.post('/management/people/:professionalId/workforce-link', async (req, res) => {
+        try {
+            if (!isAdmin(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.linkProfessionalWorkforce(String(req.params.professionalId || ''), req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.get('/management/feeds/insumos', async (req, res) => {
         try {
             return json(res, 200, { ok: true, ...(await store.managementInsumosFeed(req.atendimentoActor)) })

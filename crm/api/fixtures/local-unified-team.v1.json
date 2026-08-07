@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "users": [],
+  "invites": [
+    {
+      "id": "local-invite-lucas-mendes",
+      "inviteeEmail": "lucas.mendes@example.test",
+      "corporateEmail": "lucasmendes@espacofacial.com",
+      "tokenHint": "local…seed",
+      "role": "CONSULTOR",
+      "allowedUnits": ["novo-hamburgo", "barra-shopping-sul"],
+      "allowedModules": ["atendimento"],
+      "status": "LOCAL_PREVIEW",
+      "maxUses": 1,
+      "usesCount": 0,
+      "revoked": false,
+      "note": "Convite sintético do preview local",
+      "createdBy": "seed-local",
+      "createdAt": "2026-08-05T00:00:00.000Z"
+    }
+  ],
+  "team": [
+    {
+      "id": "local-team-ana-ribeiro",
+      "fullName": "Ana Ribeiro",
+      "username": "anaribeiro",
+      "corporateEmail": "anaribeiro@espacofacial.com",
+      "personalEmail": "ana.ribeiro@example.test",
+      "mobilePhone": "+5551999990001",
+      "workforceEmployeeId": "local-wf-ana-ribeiro",
+      "profile": "INJETOR",
+      "jobTitle": "Injetor",
+      "department": "Atendimento",
+      "units": ["novo-hamburgo"],
+      "accountStatus": "ACTIVE",
+      "inviteId": null,
+      "provisioningState": "COMPLETED",
+      "schedule": {
+        "professionalId": null,
+        "status": "Ativo",
+        "role": "Injetor",
+        "shift": "Integral",
+        "nickname": "Ana",
+        "instagram": "ana.ribeiro",
+        "color": "#22c55e",
+        "units": ["novo-hamburgo"]
+      },
+      "identityLinks": [
+        {
+          "id": "local-link-ana-atendimento",
+          "source": "ATENDIMENTO",
+          "sourceId": "local-atendimento-ana-ribeiro",
+          "matchMethod": "EXPLICIT_WORKFORCE_ID",
+          "confidence": "HIGH",
+          "reviewStatus": "CONFIRMED",
+          "metadata": { "seed": true },
+          "createdBy": "seed-local",
+          "createdAt": "2026-08-05T00:00:00.000Z"
+        }
+      ],
+      "createdAt": "2026-08-05T00:00:00.000Z",
+      "updatedAt": "2026-08-05T00:00:00.000Z",
+      "createdBy": "seed-local"
+    },
+    {
+      "id": "local-team-lucas-mendes",
+      "fullName": "Lucas Mendes",
+      "username": "lucasmendes",
+      "corporateEmail": "lucasmendes@espacofacial.com",
+      "personalEmail": "lucas.mendes@example.test",
+      "mobilePhone": "+5551999990002",
+      "workforceEmployeeId": "local-wf-lucas-mendes",
+      "profile": "CONSULTOR",
+      "jobTitle": "Consultor",
+      "department": "Comercial",
+      "units": ["novo-hamburgo", "barra-shopping-sul"],
+      "accountStatus": "INVITED",
+      "inviteId": "local-invite-lucas-mendes",
+      "provisioningState": "COMPLETED",
+      "schedule": {
+        "professionalId": null,
+        "status": "Ativo",
+        "role": "Consultor",
+        "shift": "Comercial",
+        "nickname": "Lucas",
+        "instagram": "lucas.mendes",
+        "color": "#6d9eeb",
+        "units": ["novo-hamburgo", "barra-shopping-sul"]
+      },
+      "identityLinks": [],
+      "createdAt": "2026-08-05T00:00:00.000Z",
+      "updatedAt": "2026-08-05T00:00:00.000Z",
+      "createdBy": "seed-local"
+    },
+    {
+      "id": "local-team-carla-souza",
+      "fullName": "Carla Souza",
+      "username": "carlasouza",
+      "corporateEmail": "carlasouza@espacofacial.com",
+      "personalEmail": "carla.souza@example.test",
+      "mobilePhone": "+5551999990003",
+      "workforceEmployeeId": "local-wf-carla-souza",
+      "profile": "SUPERVISOR",
+      "jobTitle": "Coordenador",
+      "department": "Operações",
+      "units": ["barra-shopping-sul"],
+      "accountStatus": "ACTIVE",
+      "inviteId": null,
+      "provisioningState": "COMPLETED",
+      "schedule": {
+        "professionalId": null,
+        "status": "Ativo",
+        "role": "Coordenador",
+        "shift": "Tarde",
+        "nickname": "Carla",
+        "instagram": "carla.souza",
+        "color": "#f97316",
+        "units": ["barra-shopping-sul"]
+      },
+      "identityLinks": [],
+      "createdAt": "2026-08-05T00:00:00.000Z",
+      "updatedAt": "2026-08-05T00:00:00.000Z",
+      "createdBy": "seed-local"
+    }
+  ],
+  "audit": []
+}
