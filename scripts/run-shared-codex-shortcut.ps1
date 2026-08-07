@@ -230,6 +230,48 @@ function Test-WindowsPathWithinRoot {
     return $candidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Assert-CrmWindowsPrivateAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    $item = Get-Item -LiteralPath $resolvedPath -Force -ErrorAction Stop
+    if ($item.PSIsContainer) {
+        throw "$Label deve apontar para um arquivo privado regular."
+    }
+    $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    foreach ($entry in @(
+        [pscustomobject]@{ Path = $resolvedPath; Label = $Label },
+        [pscustomobject]@{ Path = (Split-Path -Parent $resolvedPath); Label = "O diretório de $Label" }
+    )) {
+        $acl = Get-Acl -LiteralPath ([string]$entry.Path) -ErrorAction Stop
+        $ownerSid = ([Security.Principal.NTAccount]::new($acl.Owner)).Translate(
+            [Security.Principal.SecurityIdentifier]
+        ).Value
+        if ($ownerSid -ne $operatorSid -or -not [bool]$acl.AreAccessRulesProtected) {
+            throw "$([string]$entry.Label) deve pertencer ao operador atual e ter herança DACL desativada."
+        }
+        $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if ($rules.Count -eq 0) {
+            throw "$([string]$entry.Label) não possui regra DACL explícita para o operador atual."
+        }
+        foreach ($rule in $rules) {
+            if ([bool]$rule.IsInherited -or
+                [string]$rule.AccessControlType -ne 'Allow' -or
+                [string]$rule.IdentityReference.Value -ne $operatorSid) {
+                throw "$([string]$entry.Label) concede acesso fora do operador atual ou contém regra herdada."
+            }
+        }
+        if (-not ($rules | Where-Object {
+            @([string]$_.FileSystemRights -split ',') -contains 'FullControl'
+        })) {
+            throw "$([string]$entry.Label) deve conceder FullControl explícito somente ao operador atual."
+        }
+    }
+}
+
 function Invoke-ShortcutWsl {
     [CmdletBinding(DefaultParameterSetName = "BashScript")]
     param(
@@ -1841,8 +1883,10 @@ function Assert-CrmThreadPreviewRollbackSource {
     if (-not (Test-WindowsPathWithinRoot -Path $resolvedSource -Root $immutableRoot)) {
         throw "A fonte de rollback não pertence à raiz privada imutável: '$resolvedSource'."
     }
-    $actualCommit = (& git -C $resolvedSource rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
-    if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $TargetCommit) {
+    $actualCommitRaw = @(& git -C $resolvedSource rev-parse --verify 'HEAD^{commit}' 2>$null)
+    $actualCommitExitCode = $LASTEXITCODE
+    $actualCommit = ([string]($actualCommitRaw | Select-Object -First 1)).Trim().ToLowerInvariant()
+    if ($actualCommitExitCode -ne 0 -or $actualCommit -ne $TargetCommit) {
         throw "A fonte de rollback não corresponde ao commit previamente pronto: '$resolvedSource'."
     }
     $sourceKey = (Get-CrmLocalSnapshotHash -Value $SourceFingerprint).Substring(0, 24)
@@ -2657,6 +2701,17 @@ function Start-CrmInstanceRuntime {
     New-Item -ItemType Directory -Path $BuildPaths.Root -Force | Out-Null
     New-Item -ItemType Directory -Path $crmPlaywrightCacheRoot -Force | Out-Null
 
+    $inventoryIdentityEnvPathWsl = ''
+    if ($withInsumos -eq 1) {
+        $inventoryIdentityEnvPath = Join-Path $crmTimekeepingPrivateRoot 'inventory.identity.env'
+        # The runtime itself runs in WSL, where launching powershell.exe for
+        # a second ACL check can fail at the interop boundary. Verify the same
+        # strict owner/DACL contract here, natively, before passing a narrow
+        # file-specific attestation to that runtime.
+        Assert-CrmWindowsPrivateAcl -Path $inventoryIdentityEnvPath -Label 'CRM_INVENTORY_IDENTITY_ENV_FILE'
+        $inventoryIdentityEnvPathWsl = Convert-WindowsPathToWsl -Path $inventoryIdentityEnvPath
+    }
+
     $publicHost = Resolve-CrmRuntimePublicHost -WorkingProjectRoot $SourceRoot
     $runtimeEnv = @(
         "CRM_RUNTIME_ID=$([string]$Spec.runtimeId)",
@@ -2716,6 +2771,13 @@ function Start-CrmInstanceRuntime {
         "CRM_PID_FILE=$pidWsl",
         "CRM_LOG_FILE=$logWsl"
     )
+    if ($withInsumos -eq 1) {
+        $runtimeEnv += @(
+            'CRM_WINDOWS_PRIVATE_ACL_VALIDATED=inventory-v1',
+            "CRM_WINDOWS_PRIVATE_ACL_VALIDATED_PATH=$inventoryIdentityEnvPathWsl",
+            "CRM_INVENTORY_IDENTITY_ENV_FILE=$inventoryIdentityEnvPathWsl"
+        )
+    }
     $runtimeEnv += @(
         "LOCAL_ESCALA_MOCK=true",
         "LOCAL_ESCALA_SHADOW_WRITES=false",
