@@ -107,7 +107,22 @@ test('bootstrap resolves WorkflowRunner metadata before the runner is loaded', {
   assert.equal(result.stdout.trim(), 'function:true');
 });
 
+function installReflectMetadataShim() {
+  if (typeof Reflect.defineMetadata === 'function' && typeof Reflect.getMetadata === 'function') return;
+  const registry = new WeakMap();
+  Reflect.defineMetadata = (key, value, target) => {
+    let metadata = registry.get(target);
+    if (!metadata) {
+      metadata = new Map();
+      registry.set(target, metadata);
+    }
+    metadata.set(key, value);
+  };
+  Reflect.getMetadata = (key, target) => registry.get(target)?.get(key);
+}
+
 test('bootstrap repairs WorkflowExecutionService metadata immediately before container resolution', () => {
+  installReflectMetadataShim();
   const bootstrap = require(bootstrapCorePath);
   function FakeWorkflowExecutionService() {}
   function FakeWorkflowRunner() {}
@@ -162,3 +177,4 @@ test('smoke-only drain tracks the post-execution promise for native error workfl
   assert.equal(tracked.length, 1);
   assert.equal(await tracked[0], 'finished:error-execution-1');
 });
+
