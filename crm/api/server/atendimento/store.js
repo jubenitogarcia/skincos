@@ -33,7 +33,7 @@ import {
     splitList,
     stableConfigHash,
 } from './domain.js'
-import { segmentCommercialProfiles, summarizeCommercialProfiles } from './clientCommercial.js'
+import { minimizeCommercialOverviewProfile, segmentCommercialProfiles, summarizeCommercialProfiles } from './clientCommercial.js'
 import {
     resolveCommercialContactEligibility,
     transitionCommercialAction,
@@ -5992,7 +5992,7 @@ export function createAtendimentoStore(options = {}) {
                     hasPrevious: offset > 0,
                     hasNext: offset + limit < filtered.length,
                 },
-                profiles: (serverPage ? filtered : filtered.slice(offset, offset + limit)).map(minimizeCommercialProfile),
+                profiles: (serverPage ? filtered : filtered.slice(offset, offset + limit)).map(minimizeCommercialOverviewProfile),
             }
         },
 
