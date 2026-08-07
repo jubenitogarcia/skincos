@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -17,7 +17,8 @@ import { createPersistentReplayGuard } from '../replayProtection.js'
 import { parseLiteralEnvironment } from '../runtimeEnv.js'
 
 const RELEASE_SHA = 'a'.repeat(40)
-const ACTOR_KEY = 'isolated-runtime-test-key'
+// Keep the HMAC secret ephemeral so fixtures cannot resemble a reusable key.
+const ACTOR_KEY = randomBytes(32).toString('base64url')
 const READINESS_TOKEN = 'isolated-runtime-readiness-token'
 
 function encode(value) {

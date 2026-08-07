@@ -59,6 +59,7 @@ test('native scripts parse fixed configuration without dynamic shell evaluation'
     'scripts/runtime/route-atendimento-production-dns.sh',
     'scripts/runtime/prepare-atendimento-production-release.sh',
     'scripts/runtime/rollback-atendimento-production.sh',
+    'scripts/validate-atendimento-staging-readonly.sh',
     'scripts/validate-atendimento-production-readonly.sh',
   ]) assertNoDynamicShell(relative)
 
@@ -149,4 +150,16 @@ test('production validation invokes only loopback health plus the fixed signed s
   assert.match(validation, /skincos_clientes_ro/)
   assert.doesNotMatch(validation, /^\s*(?:source|\.)\s+[^\n]+/m)
   assert.doesNotMatch(validation, /curl[^\n]*https?:\/\/(?!127\.0\.0\.1)/)
+})
+
+test('staging validation attests only the fixed loopback runtime and strict staging control', () => {
+  const validation = read('scripts/validate-atendimento-staging-readonly.sh')
+  assert.match(validation, /readonly PORT='8111'/)
+  assert.match(validation, /readonly CONTROL_FILE='\/etc\/skincos\/atendimento-staging\/module-control\.json'/)
+  assert.match(validation, /validate-atendimento-staging-control\.mjs/)
+  assert.match(validation, /http:\/\/127\.0\.0\.1:\$PORT\/health/)
+  assert.match(validation, /loopback_health=true/)
+  assert.doesNotMatch(validation, /crm-atendimento-staging\.skincos\.com\.br|crm\.skincos\.com\.br|cloudflare-runtime\.service\s+(?:restart|stop|start)/)
+  assert.doesNotMatch(validation, /^\s*(?:source|\.)\s+[^\n]+/m)
+  assert.doesNotMatch(validation, /^\s*eval\s+/m)
 })

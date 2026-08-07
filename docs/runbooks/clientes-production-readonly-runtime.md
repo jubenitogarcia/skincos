@@ -85,6 +85,15 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
      --source-root /opt/skincos/releases/<sha-main>/source
    ```
 
+   Não há túnel nem DNS de staging nesta tranche. A prova de liveness de
+   staging é feita somente pelo validador nativo, no listener loopback fixo;
+   Actions hospedadas não devem chamar hostname público de staging:
+
+   ```bash
+   scripts/validate-atendimento-staging-readonly.sh \
+     --expected-release-sha <sha-main>
+   ```
+
 4. Após evidência de staging, registre a release imutável e instale somente a
    unidade dedicada de produção. Os comandos `--apply` são operações nativas de
    produção e exigem o gate técnico correspondente; eles nunca reiniciam

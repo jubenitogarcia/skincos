@@ -153,8 +153,11 @@ jobs:
           path: ${{ runner.temp }}/atendimento-availability-contract/preflight.json
           retention-days: 30
           if-no-files-found: warn
-      - name: Verify staged native Atendimento runtime health
-        if: ${{ inputs.target == 'staging' }}
+      # Staging is deliberately loopback-only until a separately reviewed
+      # dedicated tunnel exists. A hosted runner cannot attest that private
+      # listener, so it must not probe or imply a public staging route.
+      - name: Verify native dedicated production Atendimento runtime health
+        if: ${{ inputs.target == 'production' }}
         env:
           CRM_ATENDIMENTO_HEALTH_URL: ${{ vars.CRM_ATENDIMENTO_HEALTH_URL }}
           ATENDIMENTO_EXPECTED_STATE: ${{ inputs.state }}
@@ -163,7 +166,7 @@ jobs:
           set -euo pipefail
           node control/.github/scripts/verify-atendimento-health.mjs
       - name: Upload sanitized Atendimento runtime health
-        if: ${{ inputs.target == 'staging' && always() }}
+        if: ${{ inputs.target == 'production' && always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: atendimento-runtime-health-${{ inputs.target }}-${{ needs.promotion.outputs.source_sha }}

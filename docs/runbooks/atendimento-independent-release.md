@@ -32,6 +32,18 @@ não recebem nem interpretam comandos de shell, SSH, `eval` ou uma linha de
 comando de GitHub Environments. O executor nativo usa caminhos/argumentos
 allowlisted e arquivos privados de localização fixa.
 
+O contrato de deployment é específico por alvo: staging usa
+`/etc/skincos/atendimento-staging/module-control.json` e liveness nativa em
+`http://127.0.0.1:8111/health`; produção usa
+`/etc/skincos/atendimento-production/module-control.json` e, somente após a
+instalação do túnel dedicado, `https://crm-atendimento.skincos.com.br/health`.
+Staging não possui rota pública nesta tranche. Portanto Actions hospedadas
+atestam apenas o contrato de staging e nunca chamam ou registram como saudável
+um hostname público de staging não provisionado; a verificação de loopback
+ocorre no runtime nativo autorizado. Nenhum fluxo usa
+`/etc/skincos/atendimento/module-control.json` ou `crm.skincos.com.br` como
+fallback.
+
 Enquanto `ENABLE_ATENDIMENTO_DEPLOY=false`, qualquer workflow deve permanecer
 sem alteração de runtime. Uma variável de Environment não pode mudar o
 entrypoint, host/porta, domínio, modo de escrita, worker, SHA ou arquivo de

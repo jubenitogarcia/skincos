@@ -4,8 +4,9 @@ import test from "node:test";
 
 import {
   ATENDIMENTO_COMMAND_IDS,
-  ATENDIMENTO_CONTROL_FILE,
+  ATENDIMENTO_CONTROL_FILES,
   ATENDIMENTO_HEALTH_URLS,
+  ATENDIMENTO_RUNTIME_TARGETS,
   validateAtendimentoDeploymentContract,
 } from "./atendimento-deployment-contract.mjs";
 
@@ -24,13 +25,14 @@ const contractSource = fs.readFileSync(
 );
 
 function configuredEnvironment(overrides = {}) {
+  const target = overrides.CONTRACT_TARGET || "staging";
   return {
     CONTRACT_KIND: "deploy",
-    CONTRACT_TARGET: "staging",
+    CONTRACT_TARGET: target,
     RELEASE_SHA: releaseSha,
     ATENDIMENTO_OPERATION: "deploy",
     ENABLE_ATENDIMENTO_DEPLOY: "true",
-    CRM_MODULE_CONTROL_FILE: ATENDIMENTO_CONTROL_FILE,
+    CRM_MODULE_CONTROL_FILE: ATENDIMENTO_CONTROL_FILES[target],
     CRM_ATENDIMENTO_DEPLOY_COMMAND: ATENDIMENTO_COMMAND_IDS.deploy,
     CRM_ATENDIMENTO_ROLLBACK_COMMAND: ATENDIMENTO_COMMAND_IDS.rollback,
     CRM_ATENDIMENTO_CONTROL_COMMAND: ATENDIMENTO_COMMAND_IDS.control,
@@ -55,6 +57,34 @@ test("native Atendimento deployment contract requires explicit enablement and ex
   }));
   assert.match(shellString.errors.join("\n"), /CRM_ATENDIMENTO_DEPLOY_COMMAND must use the versioned, allowlisted contract identifier/);
   assert.equal(shellString.controls.deployCommand.matchesExpected, false);
+});
+
+test("native runtime targets use dedicated control files and health surfaces", () => {
+  assert.deepEqual(ATENDIMENTO_RUNTIME_TARGETS.staging, {
+    controlFile: "/etc/skincos/atendimento-staging/module-control.json",
+    healthUrl: "http://127.0.0.1:8111/health",
+    healthVerification: "native-loopback-only",
+  });
+  assert.deepEqual(ATENDIMENTO_RUNTIME_TARGETS.production, {
+    controlFile: "/etc/skincos/atendimento-production/module-control.json",
+    healthUrl: "https://crm-atendimento.skincos.com.br/health",
+    healthVerification: "dedicated-production-tunnel",
+  });
+  assert.doesNotMatch(contractSource, /\/etc\/skincos\/atendimento\/module-control\.json/);
+  assert.doesNotMatch(contractSource, /https:\/\/crm\.skincos\.com\.br(?:\/|\")/);
+
+  const sharedProductionControl = validateAtendimentoDeploymentContract(configuredEnvironment({
+    CONTRACT_TARGET: "production",
+    CRM_MODULE_CONTROL_FILE: "/etc/skincos/atendimento/module-control.json",
+  }));
+  assert.equal(sharedProductionControl.result, "blocked");
+  assert.equal(sharedProductionControl.controls.controlFile.matchesExpected, false);
+
+  const publicStagingRoute = validateAtendimentoDeploymentContract(configuredEnvironment({
+    CRM_ATENDIMENTO_HEALTH_URL: "https://crm-atendimento-staging.skincos.com.br/api/atendimento/health",
+  }));
+  assert.equal(publicStagingRoute.result, "blocked");
+  assert.equal(publicStagingRoute.controls.healthUrl.matchesExpected, false);
 });
 
 test("preview availability validates source identity without probing or mutating an external runtime", () => {
@@ -85,9 +115,16 @@ test("Atendimento workflows remain main-custodied, manually dispatched, immutabl
     assert.match(workflow, /emit_preview_evidence: false/);
     assert.match(workflow, /github\.workflow_sha/);
     assert.match(workflow, /ENABLE_ATENDIMENTO_DEPLOY/);
-    assert.match(workflow, /Verify (?:staged )?native Atendimento runtime health/);
+    assert.match(workflow, /Verify (?:staged )?native (?:dedicated production )?Atendimento runtime health/);
     assert.doesNotMatch(workflow, /Stop before remote/);
     assert.doesNotMatch(workflow, /\beval\b|bash\s+-c|sh\s+-c|appleboy\/ssh-action|systemctl\s+(?:restart|stop|start)\s+crm\.service/);
+  }
+
+  for (const workflow of [deployWorkflow, availabilityWorkflow]) {
+    assert.doesNotMatch(workflow, /crm-atendimento-staging\.skincos\.com\.br/);
+    assert.match(workflow, /Verify native dedicated production Atendimento runtime health/);
+    assert.match(workflow, /inputs\.target == 'production'/);
+    assert.doesNotMatch(workflow, /inputs\.target == 'staging'[\s\S]{0,300}verify-atendimento-health\.mjs/);
   }
 });
 
