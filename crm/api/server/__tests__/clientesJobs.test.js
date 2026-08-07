@@ -76,7 +76,7 @@ test('continuous job catalog propagates the persisted execution key to each job'
             run: async (context) => {
                 assert.equal(pool != null, true)
                 assert.equal(databaseUrl, LOCAL_DATABASE_URL)
-                assert.equal(env.CRM_CLIENTES_SOURCE_REFRESH_TARGET, 'production')
+                assert.equal(env.CRM_CLIENTES_SOURCE_OPERATIONS_TARGET, 'local')
                 received.push(['clinical-expiry', context.executionKey])
             },
         }),
