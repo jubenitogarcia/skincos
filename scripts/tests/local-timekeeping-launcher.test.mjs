@@ -204,7 +204,7 @@ test('local launcher uses private env files, explicit KV control and exact relea
   // Pages-compatible bindings live in the private env file validated above;
   // the generated Pages config must not reintroduce secret declarations.
   assert.doesNotMatch(localConsoleWrangler, /\[secrets\]/)
-  assert.equal(consolePackage.devDependencies.wrangler, '4.107.1')
+  assert.equal(consolePackage.devDependencies.wrangler, '4.119.0')
   assert.match(pagesRunner, /validate-local-timekeeping-env\.mjs/)
   assert.match(pagesRunner, /"\$CRM_TIMEKEEPING_ENV_FILE" "\$PONTO_PAGES_ENV_FILE" "\$WORKSPACE_ROOT"/)
   assert.match(pagesRunner, /SKINCOS_DEPLOYMENT_ENV:-\}" != "local"/)

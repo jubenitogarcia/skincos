@@ -86,8 +86,10 @@ export function getInsumosPreviewSnapshotMetadata(payload) {
     const snapshotId = String(payload?.snapshotId || '');
     const d1Sha256 = String(payload?.integrity?.d1Sha256 || '');
     const d1Bytes = Number(payload?.integrity?.d1Bytes);
+    const d1CanonicalJson = payload?.integrity?.d1CanonicalJson;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(snapshotId) ||
-        !/^[a-f0-9]{64}$/i.test(d1Sha256) || !Number.isInteger(d1Bytes) || d1Bytes < 2) {
+        !/^[a-f0-9]{64}$/i.test(d1Sha256) || !Number.isInteger(d1Bytes) || d1Bytes < 2 ||
+        typeof d1CanonicalJson !== 'string' || !d1CanonicalJson.length) {
         throw new Error('INSUMOS_PREVIEW_SNAPSHOT_INVALID');
     }
     if (payload?.sources?.d1?.readOnly !== true) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_NOT_READ_ONLY');
@@ -103,19 +105,39 @@ export function getInsumosPreviewSnapshotMetadata(payload) {
             throw new Error(`INSUMOS_PREVIEW_SNAPSHOT_COUNT_INVALID:${key}`);
         }
     }
-    return { snapshotId, d1Sha256, d1Bytes };
+    return { snapshotId, d1Sha256, d1Bytes, d1CanonicalJson };
 }
 
 export async function verifyInsumosPreviewSnapshotIntegrity(payload) {
     const snapshot = getInsumosPreviewSnapshotMetadata(payload);
     if (!snapshot) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_INVALID');
-    const canonicalD1 = canonicalJson(payload.d1);
-    const actualDigest = await sha256Hex(canonicalD1);
-    const actualBytes = new TextEncoder().encode(canonicalD1).byteLength;
+    const actualDigest = await sha256Hex(snapshot.d1CanonicalJson);
+    const actualBytes = new TextEncoder().encode(snapshot.d1CanonicalJson).byteLength;
     if (actualDigest !== snapshot.d1Sha256 || actualBytes !== snapshot.d1Bytes) {
         throw new Error('INSUMOS_PREVIEW_SNAPSHOT_DIGEST_INVALID');
     }
-    return snapshot;
+    let trustedD1;
+    try {
+        trustedD1 = JSON.parse(snapshot.d1CanonicalJson);
+    } catch {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_D1_CANONICAL_INVALID');
+    }
+    const expectedKeys = INSUMOS_PREVIEW_TABLES.map(([key]) => key);
+    if (!hasExactKeys(trustedD1, expectedKeys)) {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_D1_KEYS_INVALID');
+    }
+    for (const [key] of INSUMOS_PREVIEW_TABLES) {
+        if (!Array.isArray(trustedD1[key]) || Number(payload.sources.d1.tables[key]?.count) !== trustedD1[key].length) {
+            throw new Error(`INSUMOS_PREVIEW_SNAPSHOT_COUNT_INVALID:${key}`);
+        }
+    }
+    // Compare the duplicated transport body within this one Worker runtime.
+    // This catches altered outer JSON while avoiding a cross-engine signature
+    // comparison for Unicode escaping.
+    if (canonicalJson(payload.d1) !== canonicalJson(trustedD1)) {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_DIGEST_INVALID');
+    }
+    return { ...snapshot, d1: trustedD1 };
 }
 
 export async function verifyInsumosPreviewRestore({ env, payload }) {
@@ -123,7 +145,7 @@ export async function verifyInsumosPreviewRestore({ env, payload }) {
     if (!snapshot) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_INVALID');
     const counts = {};
     for (const [key, table] of INSUMOS_PREVIEW_TABLES) {
-        const expected = payload.d1[key].length;
+        const expected = snapshot.d1[key].length;
         const row = await env.DB.prepare(`SELECT COUNT(*) AS count FROM ${table}`).first();
         const actual = Number(row?.count ?? -1);
         if (!Number.isInteger(actual) || actual !== expected) {
@@ -131,7 +153,15 @@ export async function verifyInsumosPreviewRestore({ env, payload }) {
         }
         counts[key] = actual;
     }
-    return { ...snapshot, counts };
+    // This result is returned by the local seed endpoint. Keep its proof
+    // aggregate-only: the canonical payload is an input to verification, not
+    // a record-bearing API response.
+    return {
+        snapshotId: snapshot.snapshotId,
+        d1Sha256: snapshot.d1Sha256,
+        d1Bytes: snapshot.d1Bytes,
+        counts,
+    };
 }
 
 // -------------------------------------------------------------
@@ -406,15 +436,15 @@ export async function buildBackupPayload({ env }) {
 export async function restoreBackupPayload({ env, payload, strict = false }) {
     if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
     const previewSnapshot = getInsumosPreviewSnapshotMetadata(payload);
+    const verifiedPreviewSnapshot = previewSnapshot ? await verifyInsumosPreviewSnapshotIntegrity(payload) : null;
     const p = previewSnapshot
         ? {
             version: payload.version,
             kind: payload.kind,
-            d1: Object.fromEntries(INSUMOS_PREVIEW_TABLES.map(([key]) => [key, payload.d1[key]])),
+            d1: Object.fromEntries(INSUMOS_PREVIEW_TABLES.map(([key]) => [key, verifiedPreviewSnapshot.d1[key]])),
         }
         : payload;
     if (previewSnapshot) {
-        await verifyInsumosPreviewSnapshotIntegrity(payload);
         strict = true;
     }
     if (!hasBackupPayloadInsumos(p)) throw new Error('PAYLOAD_INVALID');

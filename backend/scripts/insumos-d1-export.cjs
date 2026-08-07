@@ -355,6 +355,10 @@ function createPreviewSnapshot({ options, d1, tableMetadata, startedAt, finished
       algorithm: 'sha256',
       d1Sha256,
       d1Bytes: Buffer.byteLength(canonicalD1, 'utf8'),
+      // Preserve the exact Node serialization that was attested. A Worker
+      // validates this byte sequence directly instead of relying on a second
+      // engine to reproduce JSON string escaping for business text.
+      d1CanonicalJson: canonicalD1,
     },
     d1,
   };
@@ -434,8 +438,10 @@ function verifyPreviewSnapshot(snapshot) {
       throw new Error(`INSUMOS_PREVIEW_SNAPSHOT_COUNT_INVALID:${spec.key}`);
     }
   }
+  const canonicalD1 = canonicalJson(snapshot.d1);
   const expectedDigest = String(snapshot?.integrity?.d1Sha256 || '');
-  if (!SHA256_RE.test(expectedDigest) || sha256(canonicalJson(snapshot.d1)) !== expectedDigest) {
+  const attestedD1 = String(snapshot?.integrity?.d1CanonicalJson || '');
+  if (!SHA256_RE.test(expectedDigest) || attestedD1 !== canonicalD1 || sha256(attestedD1) !== expectedDigest) {
     throw new Error('INSUMOS_PREVIEW_SNAPSHOT_DIGEST_INVALID');
   }
   return snapshot;

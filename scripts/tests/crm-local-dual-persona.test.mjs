@@ -112,17 +112,22 @@ test('Codex App and Windows expose stable CRM actions plus the isolated thread p
 test('canonical catalog exposes every catalog and role-policy combination', () => {
   assert.deepEqual(moduleCatalog.modules.map(({ key }) => key), expectedGestorModules)
   assert.deepEqual(rolePolicy.restrictedRoleModules.CONSULTOR, ['atendimento', 'ponto'])
-  assert.deepEqual(catalog.roles, [
-    { role: 'Gestor', roleKey: 'GESTOR' },
-    { role: 'Consultor', roleKey: 'CONSULTOR' },
-  ])
+  assert.deepEqual(
+    catalog.roles,
+    rolePolicy.launchRoles.map(({ label, key }) => ({ role: label, roleKey: key })),
+  )
 
   const gestor = catalog.combinations.filter(({ roleKey }) => roleKey === 'GESTOR')
   const consultor = catalog.combinations.filter(({ roleKey }) => roleKey === 'CONSULTOR')
+  const clinicalApprover = catalog.combinations.filter(({ roleKey }) => roleKey === 'CLINICAL_APPROVER')
   assert.deepEqual(gestor.map(({ module }) => module), expectedGestorModules)
   assert.deepEqual(consultor.map(({ module }) => module), ['atendimento', 'ponto'])
-  const expectedCombinationCount = expectedGestorModules.length +
-    rolePolicy.restrictedRoleModules.CONSULTOR.length
+  assert.deepEqual(clinicalApprover.map(({ module }) => module), ['clinical-approvals'])
+  const expectedCombinationCount = rolePolicy.launchRoles.reduce((count, role) => (
+    count + (role.access === 'all'
+      ? expectedGestorModules.length
+      : rolePolicy.restrictedRoleModules[role.key].length)
+  ), 0)
   assert.equal(catalog.combinations.length, expectedCombinationCount)
   assert.ok(!catalog.combinations.some(({ module }) => module === 'finance'))
 

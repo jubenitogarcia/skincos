@@ -139,6 +139,7 @@ function previewPayload() {
       algorithm: 'sha256',
       d1Sha256: createHash('sha256').update(canonicalD1).digest('hex'),
       d1Bytes: Buffer.byteLength(canonicalD1, 'utf8'),
+      d1CanonicalJson: canonicalD1,
     },
     d1,
   };
@@ -189,6 +190,7 @@ test('local preview seed restores and proves the exact snapshot counts without r
   assert.equal(body.data.snapshot.counts.insumosStocks, 1);
   assert.equal(body.data.snapshot.counts.insumosMovements, 1);
   assert.equal('d1' in body.data.snapshot, false);
+  assert.equal('d1CanonicalJson' in body.data.snapshot, false);
 
   await env.DB.prepare(`INSERT INTO insumos_stocks (registro, unidade, quantidade, updated_at) VALUES ('preview-registro-1', 'barra-shopping-sul', 1, '2026-08-07T12:01:00.000Z')`).run();
   await assert.rejects(
