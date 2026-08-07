@@ -33,12 +33,60 @@ on:
       - "scripts/*codex*.ps1"
       - ".github/governance/**"
       - ".github/workflows/codex-autonomy-gate.yml"
-      - ".github/workflows/**"
   workflow_dispatch:
 
 jobs:
+  changes:
+    name: Classify lint surface
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.scope.outputs.frontend }}
+      website: ${{ steps.scope.outputs.website }}
+      backend: ${{ steps.scope.outputs.backend }}
+      crm_api: ${{ steps.scope.outputs.crm_api }}
+      python: ${{ steps.scope.outputs.python }}
+      node: ${{ steps.scope.outputs.node }}
+      workflow: ${{ steps.scope.outputs.workflow }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          zero_sha='0000000000000000000000000000000000000000'
+          base="${PR_BASE_SHA:-}"
+          if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]]; then base=""; fi
+          if [[ -z "$base" && "${BEFORE_SHA:-}" =~ ^[0-9a-f]{40}$ && "$BEFORE_SHA" != "$zero_sha" ]]; then
+            base="$BEFORE_SHA"
+          fi
+          if [[ -z "$base" ]]; then base="$(git rev-parse HEAD^)"; fi
+          git cat-file -e "$base^{commit}"
+          changed() {
+            if git diff --quiet "$base...$GITHUB_SHA" -- "$@"; then printf false; else printf true; fi
+          }
+          frontend="$(changed crm/console package.json package-lock.json)"
+          website="$(changed website booking package.json package-lock.json)"
+          backend="$(changed backend package.json package-lock.json pnpm-lock.yaml)"
+          crm_api="$(changed crm/api package.json package-lock.json)"
+          python="$(changed backend)"
+          workflow="$(changed .github/workflows/lint-format-static.yml)"
+          node=false
+          if [[ "$frontend" == true || "$website" == true || "$backend" == true || "$crm_api" == true || "$workflow" == true ]]; then node=true; fi
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          echo "website=$website" >> "$GITHUB_OUTPUT"
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          echo "crm_api=$crm_api" >> "$GITHUB_OUTPUT"
+          echo "python=$python" >> "$GITHUB_OUTPUT"
+          echo "node=$node" >> "$GITHUB_OUTPUT"
+          echo "workflow=$workflow" >> "$GITHUB_OUTPUT"
+
   js-ts-lint:
     name: JS/TS Checks (workspace)
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -52,6 +100,7 @@ jobs:
           bash backend/scripts/ci-no-demo-guard.sh
 
       - name: Set up Node.js
+        if: ${{ needs.changes.outputs.node == 'true' }}
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.12.0"
@@ -62,75 +111,75 @@ jobs:
             website/package-lock.json
 
       - name: Frontend install
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           cd crm/console
           npm ci
 
       - name: Frontend lint
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           cd crm/console
           npm run lint
 
       - name: Frontend typecheck
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           cd crm/console
           npm run typecheck
 
       - name: Frontend unit tests
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           cd crm/console
           npm run test
 
       - name: Frontend build
-        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
+        if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           cd crm/console
           npm run build
 
       - name: Website install
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           cd website
           npm ci
 
       - name: Website lint
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           cd website
           npm run lint
 
       - name: Website build
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           cd website
           npm run build
 
       - name: Setup pnpm (for backend workspace)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
+        if: ${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
 
       - name: Backend workspace install (pnpm)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
+        if: ${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           pnpm -C backend install --frozen-lockfile
 
       - name: Backend lint/format/typecheck (workspace advisory)
-        if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
+        if: ${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           pnpm -C backend -r run lint --if-present
@@ -138,7 +187,7 @@ jobs:
           pnpm -C backend -r run typecheck --if-present
 
       - name: CRM API tests
-        if: ${{ hashFiles('crm/api/package.json') != '' }}
+        if: ${{ needs.changes.outputs.crm_api == 'true' || needs.changes.outputs.workflow == 'true' }}
         run: |
           set -euxo pipefail
           npm --prefix crm/api ci
@@ -146,6 +195,8 @@ jobs:
 
   python-lint:
     name: Python Lint & Static Analysis
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' || needs.changes.outputs.workflow == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

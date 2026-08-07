@@ -90,12 +90,15 @@ class FakeBeautyMovementD1 implements BeautyMovementD1 {
 
     run(query: string, values: unknown[]): number {
         if (query.includes("INSERT INTO bm_rate_limit_windows")) {
+            assert.equal(values.length, 13, "rate limiter must keep its D1 binding contract compact");
+            const maxAttemptsMatch = query.match(/END\) > (\d+) THEN \?\s+ELSE NULL/);
+            assert.ok(maxAttemptsMatch, "rate limiter must inline its validated policy threshold");
             const key = `${values[0]}:${values[1]}`;
             const existing = this.rateLimits.get(key);
             const nowMs = Number(values[2]);
-            const windowMs = Number(values[6]);
-            const maxAttempts = Number(values[14]);
-            const blockedUntil = Number(values[15]);
+            const windowMs = nowMs - Number(values[5]);
+            const maxAttempts = Number(maxAttemptsMatch[1]);
+            const blockedUntil = Number(values[11]);
             const oldWindow = Number(existing?.window_started_at_ms ?? nowMs);
             const oldCount = Number(existing?.attempt_count ?? 0);
             const oldBlockedUntil = existing?.blocked_until_ms === null || existing?.blocked_until_ms === undefined
@@ -272,6 +275,52 @@ test("beauty movement applies exchange limits atomically to both the invite toke
     assert.equal(fixture.db.rateLimits.size, 2);
     assert.equal([...fixture.db.rateLimits.keys()].some((key) => key.includes(":invite:")), true);
     assert.equal([...fixture.db.rateLimits.keys()].some((key) => key.includes(":ip:")), true);
+});
+
+test("beauty movement starts a fresh exchange window after sixty seconds", async () => {
+    const fixture = await makeFixture();
+    const ip = "203.0.113.63";
+    const first = await exchangeBeautyMovementInvite(
+        { token: fixture.token, origin: ORIGIN, ip, nowMs: NOW },
+        options(fixture.db),
+    );
+    assert.equal(first.ok, true);
+
+    const nextWindow = await exchangeBeautyMovementInvite(
+        { token: fixture.token, origin: ORIGIN, ip, nowMs: NOW + 60_001 },
+        options(fixture.db),
+    );
+    assert.equal(nextWindow.ok, true);
+
+    const counts = [...fixture.db.rateLimits.values()].map((entry) => Number(entry.attempt_count));
+    assert.deepEqual(counts, [1, 1]);
+});
+
+test("beauty movement leaves seven session mutations below their distinct limit", async () => {
+    const fixture = await makeFixture();
+    const ip = "203.0.113.64";
+    const exchange = await exchangeBeautyMovementInvite(
+        { token: fixture.token, origin: ORIGIN, ip, nowMs: NOW },
+        options(fixture.db),
+    );
+    assert.equal(exchange.ok, true);
+    if (!exchange.ok) return;
+
+    for (let attempt = 0; attempt < 7; attempt += 1) {
+        const reveal = await revealBeautyMovementCard(
+            { sessionToken: exchange.sessionToken, actIndex: 1, cardId: "presenca", origin: ORIGIN, ip },
+            options(fixture.db),
+        );
+        assert.equal(reveal.ok, true);
+    }
+
+    const sessionCounts = [...fixture.db.rateLimits.entries()]
+        .filter(([key]) => key.startsWith("session_mutation:"))
+        .map(([, entry]) => ({ count: Number(entry.attempt_count), blocked: entry.blocked_until_ms }));
+    assert.deepEqual(sessionCounts, [
+        { count: 7, blocked: null },
+        { count: 7, blocked: null },
+    ]);
 });
 
 test("beauty movement does not create token limiter rows after an IP has been blocked", async () => {
