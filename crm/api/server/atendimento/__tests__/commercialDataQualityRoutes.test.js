@@ -125,3 +125,23 @@ test('marks an omitted GESTOR unit claim as absent rather than an empty scope', 
     assert.equal(actor?.allowedUnits, undefined)
     assert.equal(actor?.allowedUnitsDeclared, false)
 })
+
+test('rejects email-only signed and development session actors before audit attribution', () => {
+    const emailOnly = Buffer.from(JSON.stringify({ email: 'gestor@example.com', role: 'GESTOR' })).toString('base64url')
+    assert.equal(__testables.parseActorHeader({ headers: { 'x-crm-user': emailOnly } }), null)
+    const emailAsId = Buffer.from(JSON.stringify({ id: 'gestor@example.com', role: 'GESTOR' })).toString('base64url')
+    assert.equal(__testables.parseActorHeader({ headers: { 'x-crm-user': emailAsId } }), null)
+
+    assert.equal(__testables.devSessionActor({}, () => ({ user: { email: 'gestor@example.com', role: 'GESTOR' } })), null)
+
+    const actor = __testables.devSessionActor({}, () => ({ user: {
+        subject: 'crm:gestor-1',
+        email: 'gestor@example.com',
+        role: 'GESTOR',
+    } }))
+    assert.equal(actor?.id, 'crm:gestor-1')
+    assert.equal(actor?.email, 'gestor@example.com')
+
+    const signedOpaque = Buffer.from(JSON.stringify({ id: 'crm:gestor-2', username: 'gestor@example.com', role: 'GESTOR' })).toString('base64url')
+    assert.equal(__testables.parseActorHeader({ headers: { 'x-crm-user': signedOpaque } })?.id, 'crm:gestor-2')
+})

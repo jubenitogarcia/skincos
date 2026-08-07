@@ -86,6 +86,9 @@ test('enforces unit scope for mutations and includes revision, formula and idemp
     assert.throws(() => assertActorCanMutateUnit(actor, { slug: 'barra-shopping-sul' }), /UNIT_FORBIDDEN/)
     assert.throws(() => assertActorCanMutateUnit({ role: 'INJETOR', allowedUnits: [] }, { slug: 'novo-hamburgo' }), /UNIT_FORBIDDEN/)
     assert.equal(actorIdentityForMutation({ id: 'operator-1', role: 'INJETOR' }), 'operator-1')
+    assert.equal(actorIdentityForMutation({ subject: 'operator:1', email: 'operator@example.com' }), 'operator:1')
+    assert.throws(() => actorIdentityForMutation({ email: 'operator@example.com', role: 'INJETOR' }), /ACTOR_IDENTITY_REQUIRED/)
+    assert.throws(() => actorIdentityForMutation({ id: 'operator@example.com', role: 'INJETOR' }), /ACTOR_IDENTITY_REQUIRED/)
     assert.throws(() => actorIdentityForMutation({ role: 'INJETOR' }), /ACTOR_IDENTITY_REQUIRED/)
     const migration = atendimentoMigrationStatements().join('\n')
     assert.match(migration, /revision integer/i)
@@ -1797,7 +1800,7 @@ test('persists nullable conversion results idempotently and never reuses a non-a
     ]
     const fakePool = createFakePool([...stateHandlers, ...buildConversionPoolHandlers()])
     const store = createAtendimentoStore({ pool: fakePool })
-    const actor = { role: 'GESTOR' }
+    const actor = { id: 'gestor-conversion-fixture', role: 'GESTOR' }
 
     const first = await store.managementConversionReport({ unit: 'novo-hamburgo', date: '2026-06-07', from: '2026-06-01', to: '2026-06-07' }, actor, { persist: true })
     const second = await store.managementConversionReport({ unit: 'novo-hamburgo', date: '2026-06-14', from: '2026-06-08', to: '2026-06-14' }, actor, { persist: true })

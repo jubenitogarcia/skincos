@@ -456,3 +456,10 @@ test('refuses to suppress an actively observed finding', async () => {
     assert.equal(transactionCalls.at(-1), 'rollback')
     assert.equal(released, true)
 })
+
+test('accepts only opaque actor subjects for append-only quality events', () => {
+    assert.equal(__testables.actorIdentity({ id: 'quality-operator-1' }), 'quality-operator-1')
+    assert.equal(__testables.actorIdentity({ subject: 'quality:operator-1', email: 'operator@example.com' }), 'quality:operator-1')
+    assert.throws(() => __testables.actorIdentity({ email: 'operator@example.com' }), /ACTOR_IDENTITY_REQUIRED/)
+    assert.throws(() => __testables.actorIdentity({ id: 'operator@example.com' }), /ACTOR_IDENTITY_REQUIRED/)
+})
