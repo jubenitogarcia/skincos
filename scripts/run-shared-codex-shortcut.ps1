@@ -2068,15 +2068,21 @@ function Save-CrmThreadPreviewPriorReadyManifest {
     $directory = Split-Path -Parent $path
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
     $temporary = Join-Path $directory ('.previous-ready.{0}.tmp' -f ([guid]::NewGuid().ToString('N')))
+    $backup = Join-Path $directory ('.previous-ready.{0}.backup' -f ([guid]::NewGuid().ToString('N')))
     try {
         [IO.File]::WriteAllText($temporary, ($Manifest | ConvertTo-Json -Depth 16), [Text.UTF8Encoding]::new($false))
         if (Test-Path -LiteralPath $path -PathType Leaf) {
-            [IO.File]::Replace($temporary, $path, $null)
+            # Windows File.Replace requires a valid backup path. Keep it in
+            # the private runtime and remove it once the atomic swap has
+            # succeeded so an update cannot leave the launcher without its
+            # saved rollback manifest.
+            [IO.File]::Replace($temporary, $path, $backup)
         } else {
             [IO.File]::Move($temporary, $path)
         }
     } finally {
         if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }
     }
 }
 
