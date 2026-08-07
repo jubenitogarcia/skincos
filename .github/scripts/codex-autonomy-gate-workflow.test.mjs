@@ -7,6 +7,14 @@ const source = fs.readFileSync(
   "utf8",
 );
 
+test("ready-for-review transitions create the required PR check", () => {
+  assert.match(
+    source,
+    /pull_request:\n\s+types:\s+\[opened, synchronize, reopened, ready_for_review\]/,
+  );
+  assert.match(source, /push:\n\s+branches:\s+\[main, 'codex\/\*\*'\]/);
+});
+
 test("manual autonomy recovery requires an exact ancestor base", () => {
   assert.match(source, /workflow_dispatch:\n\s+inputs:\n\s+base_sha:/);
   assert.match(source, /MANUAL_BASE_SHA: \$\{\{ inputs\.base_sha \}\}/);
