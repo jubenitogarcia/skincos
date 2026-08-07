@@ -178,18 +178,19 @@
     "saveManualExecutions": true,
     "saveExecutionProgress": true,
     "saveDataErrorExecution": "all",
-    "saveDataSuccessExecution": "all",
-    "errorWorkflow": "9j7WMFTNVNYmNZHC"
+    "saveDataSuccessExecution": "all"
   },
   "staticData": null,
   "pinData": {},
   "meta": {
     "codex_generated": true,
     "codex_builder": "build-campaign-creative-creator-organizer",
-    "codex_builder_version": "1.0.4",
+    "codex_builder_version": "1.0.5",
     "source_workflow_id": "ccg-orchestrator-001",
     "creator_workflow_id": "TxE9eMS1xfE6kq38",
     "error_workflow_id": "9j7WMFTNVNYmNZHC",
+    "error_workflow_owner": "creator_only",
+    "incident_deduplication": "creator_native_error_only",
     "architecture": "n8n-organizer-to-campaign-creative-creator-operational-entry",
     "operational_entry": "executeWorkflowTrigger",
     "no_publication": true,

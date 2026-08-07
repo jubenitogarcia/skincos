@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const CCG_RECOVERY_NODE = 'CCG-00 Capture Recovery Context';
+const AWAIT_ERROR_WORKFLOW_ENV = 'SKINCOS_AWAIT_ERROR_WORKFLOW';
+const AWAIT_ERROR_WORKFLOW_TIMEOUT_ENV = 'SKINCOS_AWAIT_ERROR_WORKFLOW_TIMEOUT_MS';
 
 function text(value, maxLength = 256) {
   if (value === undefined || value === null) return '';
@@ -121,6 +123,101 @@ function repairWorkflowExecutionMetadata(WorkflowExecutionService, WorkflowRunne
   return true;
 }
 
+function createCliErrorWorkflowDrain(processRef = process, options = {}) {
+  if (text(processRef?.env?.[AWAIT_ERROR_WORKFLOW_ENV], 16) !== '1') return null;
+  const timeoutMs = boundedInteger(
+    options.timeoutMs ?? processRef.env?.[AWAIT_ERROR_WORKFLOW_TIMEOUT_ENV],
+    30000,
+    1000,
+    120000,
+  );
+  const discoveryMs = Math.min(1000, timeoutMs);
+  const originalExit = processRef.exit.bind(processRef);
+  const pending = new Set();
+  let observed = false;
+  let exitRequested = false;
+  let exitCode = 0;
+  let completed = false;
+  const keepAlive = setInterval(() => {}, 250);
+  let discoveryTimer;
+  let timeoutTimer;
+
+  function finish() {
+    if (completed) return;
+    completed = true;
+    clearInterval(keepAlive);
+    clearTimeout(discoveryTimer);
+    clearTimeout(timeoutTimer);
+    originalExit(exitCode);
+  }
+
+  function maybeFinish() {
+    if (exitRequested && observed && pending.size === 0) finish();
+  }
+
+  timeoutTimer = setTimeout(finish, timeoutMs);
+  processRef.exit = function exitAfterCcgErrorWorkflow(code = 0) {
+    exitRequested = true;
+    exitCode = Number.isInteger(code) ? code : 1;
+    if (observed) {
+      maybeFinish();
+      return;
+    }
+    discoveryTimer = setTimeout(() => {
+      if (!observed) finish();
+    }, discoveryMs);
+  };
+
+  return {
+    track(value) {
+      observed = true;
+      clearTimeout(discoveryTimer);
+      const promise = Promise.resolve(value).catch(() => undefined);
+      pending.add(promise);
+      promise.finally(() => {
+        pending.delete(promise);
+        maybeFinish();
+      });
+      return promise;
+    },
+    dispose() {
+      if (completed) return;
+      completed = true;
+      clearInterval(keepAlive);
+      clearTimeout(discoveryTimer);
+      clearTimeout(timeoutTimer);
+      processRef.exit = originalExit;
+    },
+  };
+}
+
+function patchWorkflowRunnerForCliDrain(WorkflowRunner, drain) {
+  if (!drain) return false;
+  if (!WorkflowRunner?.prototype || typeof WorkflowRunner.prototype.run !== 'function') {
+    throw new Error('n8n error-workflow bootstrap could not inspect WorkflowRunner');
+  }
+  if (WorkflowRunner.prototype.__skincosCcgCliDrain === true) return false;
+  const originalRun = WorkflowRunner.prototype.run;
+  Object.defineProperty(WorkflowRunner.prototype, '__skincosCcgCliDrain', {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  WorkflowRunner.prototype.run = async function runWithCcgCliDrain(data, ...args) {
+    const executionId = await originalRun.call(this, data, ...args);
+    if (data?.executionMode === 'error') {
+      try {
+        drain.track(this.activeExecutions.getPostExecutePromise(executionId));
+      } catch {
+        // The drain is a smoke-only CLI aid. It must never change workflow execution.
+      }
+    }
+    return executionId;
+  };
+  return true;
+}
+
 function patchContainerGet(Container, WorkflowExecutionService, loadWorkflowRunner) {
   if (!Container || typeof Container.get !== 'function') {
     throw new Error('n8n error-workflow bootstrap could not inspect the dependency container');
@@ -159,6 +256,7 @@ function bootstrap() {
   }
   const { WorkflowRunner } = require(runnerPath);
   repairWorkflowExecutionMetadata(WorkflowExecutionService, WorkflowRunner);
+  patchWorkflowRunnerForCliDrain(WorkflowRunner, createCliErrorWorkflowDrain());
   const { Container } = require(diPath);
   patchContainerGet(Container, WorkflowExecutionService, () => require(runnerPath).WorkflowRunner);
   const errorWorkflowModule = require(errorWorkflowPath);
@@ -184,7 +282,9 @@ bootstrap();
 module.exports = {
   attachCcgRecoveryContext,
   captureContextFromRunData,
+  createCliErrorWorkflowDrain,
   patchContainerGet,
+  patchWorkflowRunnerForCliDrain,
   repairWorkflowExecutionMetadata,
   sanitizeRecoveryContext,
 };
