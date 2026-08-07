@@ -8,6 +8,7 @@ readonly STATE_ROOT='/var/lib/skincos-runtime'
 readonly CONFIG_ROOT='/etc/skincos'
 readonly LOG_ROOT='/var/log/skincos'
 readonly BACKUP_ROOT='/var/backups/skincos/clientes/staging'
+readonly CONTROL_FILE="$CONFIG_ROOT/atendimento-staging/module-control.json"
 
 SOURCE_ROOT=''
 APPLY=0
@@ -31,6 +32,7 @@ readonly RELEASE_SHA="${BASH_REMATCH[1]}"
 readonly UNIT_SRC="$SOURCE_ROOT/ops/runtime/units/crm-atendimento-staging.service"
 readonly RUNTIME_ENTRYPOINT="$SOURCE_ROOT/crm/api/server/atendimentoRuntime.js"
 readonly RELEASE_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-release.mjs"
+readonly CONTROL_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-staging-control.mjs"
 
 for command_name in sudo sed systemd-analyze mktemp install node; do
   command -v "$command_name" >/dev/null 2>&1 || { echo "Missing $command_name" >&2; exit 1; }
@@ -39,7 +41,10 @@ sudo -n true
 sudo -n test -f "$UNIT_SRC" || { echo 'Isolated unit template is unavailable in immutable release.' >&2; exit 78; }
 sudo -n test -f "$RUNTIME_ENTRYPOINT" || { echo 'Isolated runtime entrypoint is unavailable in immutable release.' >&2; exit 78; }
 sudo -n test -f "$RELEASE_VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
+sudo -n test -f "$CONTROL_VALIDATOR" || { echo 'Strict staging control validator is unavailable in immutable release.' >&2; exit 78; }
+sudo -n test -f "$CONTROL_FILE" || { echo 'Strict staging control file is unavailable.' >&2; exit 78; }
 sudo -n /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
+sudo -n /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
 
 render_dir="$(mktemp -d)"
 rendered="$render_dir/crm-atendimento-staging.service"

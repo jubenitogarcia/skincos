@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly RELEASE_BASE='/opt/skincos/releases'
+readonly NPM_CACHE='/var/lib/skincos-runtime/cache/crm-api'
+
 RELEASE_SHA=""
 APPLY=0
 while [[ $# -gt 0 ]]; do
@@ -15,10 +18,27 @@ done
 
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "--release-sha must be a full lowercase SHA." >&2; exit 1; }
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RELEASE_BASE="${SKINCOS_RELEASE_BASE:-/opt/skincos/releases}"
-DESTINATION="$RELEASE_BASE/$RELEASE_SHA/source"
-STAGING="$RELEASE_BASE/.atendimento-staging-$RELEASE_SHA-$$"
-NPM_CACHE="${CRM_NPM_CACHE:-/var/lib/skincos-runtime/cache/crm-api}"
+readonly DESTINATION="$RELEASE_BASE/$RELEASE_SHA/source"
+readonly STAGING="$RELEASE_BASE/.atendimento-staging-$RELEASE_SHA-$$"
+
+# Both paths are derived only from fixed roots, a validated SHA and the shell
+# PID.  Keep this guard next to the destructive cleanup below: a GitHub
+# Environment or caller cannot redirect a release or the cache via an env var.
+assert_release_targets() {
+  [[ "$DESTINATION" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || {
+    echo 'Immutable release destination is invalid.' >&2
+    exit 64
+  }
+  [[ "$STAGING" =~ ^/opt/skincos/releases/\.atendimento-staging-[0-9a-f]{40}-[0-9]+$ ]] || {
+    echo 'Staging release target is invalid.' >&2
+    exit 64
+  }
+  [[ "$(dirname "$STAGING")" == "$RELEASE_BASE" ]] || {
+    echo 'Staging release target escapes the fixed release root.' >&2
+    exit 64
+  }
+}
+assert_release_targets
 
 actual_sha="$(git -C "$ROOT_DIR" rev-parse "$RELEASE_SHA^{commit}")"
 [[ "$actual_sha" == "$RELEASE_SHA" ]] || { echo "Release SHA is not present in this checkout." >&2; exit 1; }
@@ -36,7 +56,13 @@ sudo -n true
 command -v git >/dev/null 2>&1 || { echo "Missing git" >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo "Missing npm" >&2; exit 1; }
 sudo -n install -d -o root -g skincos -m 0750 "$STAGING" "$RELEASE_BASE" "$RELEASE_BASE/$RELEASE_SHA" "$NPM_CACHE"
-cleanup() { sudo -n rm -rf "$STAGING"; }
+cleanup() {
+  # Do not let a future refactor turn cleanup into a broad or caller-directed
+  # delete.  The validation is deliberately repeated at the sink.
+  [[ "$STAGING" =~ ^/opt/skincos/releases/\.atendimento-staging-[0-9a-f]{40}-[0-9]+$ ]] || return 1
+  [[ "$(dirname "$STAGING")" == "$RELEASE_BASE" ]] || return 1
+  sudo -n /usr/bin/rm -rf -- "$STAGING"
+}
 trap cleanup EXIT INT TERM
 git -C "$ROOT_DIR" archive --format=tar "$RELEASE_SHA" | sudo -n tar -xf - -C "$STAGING"
 sudo -n chown -R root:skincos "$STAGING"

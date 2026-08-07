@@ -23,6 +23,7 @@ HTTP monolítico ou código de worker. O processo HTTP isolado é somente leitur
 | Readiness | loopback + token; verifica arquivo de controle, ledger de replay, banco, database/role esperados, schema, fontes e domínio clínico. |
 | Ator | HMAC `atendimento-actor/v2`, timestamp de cinco minutos e nonce persistido; replay ou falha de ledger negam a requisição. |
 | Escrita | Edge e runtime limitam a `GET`, `HEAD`, `OPTIONS`; controle exige `readOnly:true`, `syntheticOnly:true` e escrita comercial `false`. |
+| Staging | O app usa `skincos_staging_crm_app` com `default_transaction_read_only=on`, apenas `SELECT`/`USAGE`; migration fica no login separado `skincos_staging_migrator_login`. |
 
 ## Workflows e GitHub Environments
 
@@ -55,6 +56,20 @@ unidade systemd. Variáveis capazes de carregar código (`NODE_OPTIONS`,
 
 Enquanto qualquer item faltar, mantenha `maintenance`, canário vazio e todas as
 escritas/automação de mensagem desabilitadas.
+
+O controle de staging está em
+`/etc/skincos/atendimento-staging/module-control.json`, não no controle legado
+compartilhado. O provisionamento cria somente `maintenance`, com
+`readOnly:true`, `commercialContactWritesEnabled:false` e `syntheticOnly:true`.
+Antes de instalar uma unidade de SHA específico, grave o mesmo SHA nesse
+controle pelo escritor nativo; o instalador recusa iniciar se o controle não
+for estrito e correspondente. O token de readiness é gerado no arquivo privado
+`/etc/skincos/crm-atendimento-staging.env` e nunca deve entrar em logs.
+
+`scripts/runtime/add-atendimento-staging-tunnel-route.sh` foi aposentado: ele
+não pode modificar nem reiniciar o `cloudflare-runtime.service` compartilhado.
+Até existir uma unidade de túnel de staging dedicada e revisada, mantenha a
+rota externa do runtime isolado ausente e valide somente por loopback.
 
 ## Operação e rollback
 

@@ -47,6 +47,11 @@ test('native scripts parse fixed configuration without dynamic shell evaluation'
     'scripts/run-atendimento-staging-migration.sh',
     'scripts/refresh-atendimento-staging-quality.sh',
     'scripts/backup-atendimento-staging.sh',
+    'scripts/provision-atendimento-staging.sh',
+    'scripts/set-atendimento-staging-control.sh',
+    'scripts/runtime/prepare-atendimento-staging-release.sh',
+    'scripts/runtime/add-atendimento-staging-tunnel-route.sh',
+    'scripts/runtime/install-atendimento-staging-service.sh',
     'scripts/provision-atendimento-production-readonly.sh',
     'scripts/set-atendimento-production-readonly-control.sh',
     'scripts/runtime/install-atendimento-production-service.sh',
@@ -66,6 +71,48 @@ test('native scripts parse fixed configuration without dynamic shell evaluation'
   assert.match(qualityRefresh, /MIGRATOR_ENV_FILE = '\/etc\/skincos\/crm-atendimento-staging-migrator\.env'/)
   assert.match(qualityRefresh, /readLiteralEnvironment/)
   assert.doesNotMatch(qualityRefresh, /process\.env\.DATABASE_URL\s*\|\|/)
+})
+
+test('staging release, control and application role remain fixed and read-only', () => {
+  const release = read('scripts/runtime/prepare-atendimento-staging-release.sh')
+  const provision = read('scripts/provision-atendimento-staging.sh')
+  const control = read('scripts/set-atendimento-staging-control.sh')
+  const installer = read('scripts/runtime/install-atendimento-staging-service.sh')
+  const unit = read('ops/runtime/units/crm-atendimento-staging.service')
+  const retiredTunnel = read('scripts/runtime/add-atendimento-staging-tunnel-route.sh')
+
+  assert.match(release, /readonly RELEASE_BASE='\/opt\/skincos\/releases'/)
+  assert.match(release, /readonly NPM_CACHE='\/var\/lib\/skincos-runtime\/cache\/crm-api'/)
+  assert.match(release, /assert_release_targets\(\)/)
+  assert.match(release, /sudo -n \/usr\/bin\/rm -rf -- "\$STAGING"/)
+  assert.doesNotMatch(release, /SKINCOS_RELEASE_BASE|CRM_NPM_CACHE/)
+
+  assert.match(provision, /readonly CONTROL_DIR="\$CONFIG_DIR\/atendimento-staging"/)
+  assert.match(provision, /readonly BACKUP_ROOT='\/var\/backups\/skincos\/clientes\/staging-control'/)
+  assert.match(provision, /ATENDIMENTO_READINESS_TOKEN=\$readiness_token/)
+  assert.match(provision, /"state":"maintenance"/)
+  assert.match(provision, /"readOnly":true,"commercialContactWritesEnabled":false,"syntheticOnly":true/)
+  assert.match(provision, /alter role \$APP_ROLE set default_transaction_read_only = on/)
+  assert.match(provision, /revoke all privileges on database \$DB_NAME from \$APP_ROLE/)
+  assert.match(provision, /revoke all privileges on all tables in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from \$APP_ROLE/)
+  assert.match(provision, /revoke all privileges on all sequences in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from \$APP_ROLE/)
+  assert.match(provision, /grant select on all tables in schema crm_atendimento, crm_caixa, crm_sessions, harmonia to \$APP_ROLE/)
+  assert.doesNotMatch(provision, /grant select, insert, update, delete on all tables in schema [^\n]+ to \$APP_ROLE/)
+  assert.doesNotMatch(provision, /grant usage, select, update on all sequences in schema [^\n]+ to \$APP_ROLE/)
+  assert.doesNotMatch(provision, /CRM_API_PORT=8109/)
+
+  assert.match(control, /readonly CONTROL_FILE='\/etc\/skincos\/atendimento-staging\/module-control\.json'/)
+  assert.match(control, /readonly BACKUP_ROOT='\/var\/backups\/skincos\/clientes\/staging-control'/)
+  assert.match(control, /commercialContactWritesEnabled":false/)
+  assert.match(control, /dry_run=true/)
+  assert.match(installer, /CONTROL_VALIDATOR="\$SOURCE_ROOT\/crm\/api\/scripts\/validate-atendimento-staging-control\.mjs"/)
+  assert.match(installer, /CONTROL_FILE="\$CONFIG_ROOT\/atendimento-staging\/module-control\.json"/)
+  assert.match(installer, /\"\$CONTROL_VALIDATOR\" --release-sha "\$RELEASE_SHA"/)
+  assert.match(unit, /Environment=CRM_MODULE_CONTROL_FILE=__CONFIG_ROOT__\/atendimento-staging\/module-control\.json/)
+
+  assert.match(retiredTunnel, /retired=true dedicated_staging_tunnel_required=true shared_restart=false/)
+  assert.doesNotMatch(retiredTunnel, /CLOUDFLARED_CONFIG_PATH|ATENDIMENTO_STAGING_HOSTNAME|ATENDIMENTO_STAGING_SERVICE/)
+  assert.doesNotMatch(retiredTunnel, /cloudflare-runtime\.service|systemctl/)
 })
 
 test('production database contract has a separate read-only app role without raw contact access', () => {

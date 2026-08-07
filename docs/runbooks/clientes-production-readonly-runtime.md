@@ -49,8 +49,13 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
      --release-sha <sha-main> --predecessor-sha <sha-anterior>
    ```
 
-2. Em staging isolado, execute a migration apenas pelo invólucro fixo. Ele faz
-   backup em `/var/backups/skincos/clientes/staging`, lê exclusivamente
+2. Em staging isolado, primeiro provisione o contrato com o app read-only e o
+   migrador separado. O provisionamento cria somente um controle `maintenance`
+   em `/etc/skincos/atendimento-staging/module-control.json`, gera o token de
+   readiness no env privado e concede ao app apenas `SELECT`/`USAGE`; ele não
+   abre uma rota nem inicia uma unidade. Execute a migration apenas pelo
+   invólucro fixo. Ele faz backup em
+   `/var/backups/skincos/clientes/staging`, lê exclusivamente
    `/etc/skincos/crm-atendimento-staging-migrator.env` como texto literal e
    aceita uma só ação:
 
@@ -62,9 +67,28 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    aprovação clínica. Se elas ainda não existirem no staging, readiness deve
    continuar `503`; não contorne isso com grants, schema automático ou flag.
 
-3. Após evidência de staging, registre a release imutável e instale somente a
-   unidade dedicada. Os comandos `--apply` são operações nativas de produção e
-   exigem o gate técnico correspondente; eles nunca reiniciam `crm.service`.
+3. Antes de instalar a unidade isolada de staging, prepare a release imutável e
+   grave explicitamente o SHA no controle ainda em `maintenance`. O instalador
+   valida esse JSON pelo mesmo parser do runtime e se recusa a iniciar caso o
+   SHA, `readOnly:true`, `commercialContactWritesEnabled:false` ou
+   `syntheticOnly:true` não coincidam. Os comandos `--apply` são operações
+   nativas que exigem o gate técnico correspondente; eles nunca reiniciam
+   `crm.service`:
+
+   ```bash
+   scripts/runtime/prepare-atendimento-staging-release.sh \
+     --release-sha <sha-main>
+   scripts/set-atendimento-staging-control.sh \
+     --state maintenance --release-sha <sha-main> \
+     --reason release-preflight --apply
+   scripts/runtime/install-atendimento-staging-service.sh \
+     --source-root /opt/skincos/releases/<sha-main>/source
+   ```
+
+4. Após evidência de staging, registre a release imutável e instale somente a
+   unidade dedicada de produção. Os comandos `--apply` são operações nativas de
+   produção e exigem o gate técnico correspondente; eles nunca reiniciam
+   `crm.service`.
 
    ```bash
    scripts/runtime/prepare-atendimento-production-release.sh \
@@ -73,7 +97,7 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
      --source-root /opt/skincos/releases/<sha-main>/source --apply
    ```
 
-4. Mantenha o controle em `maintenance` até o smoke assinado do mesmo SHA,
+5. Mantenha o controle em `maintenance` até o smoke assinado do mesmo SHA,
    backup, readiness e prova de que serviços protegidos não mudaram. Só então,
    em uma promoção explicitamente aprovada, grave `active` ainda com escrita
    desativada:
@@ -85,7 +109,7 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
      --expected-release-sha <sha-main>
    ```
 
-5. O túnel e o DNS são etapas separadas. O instalador aceita somente um UUID
+6. O túnel e o DNS de produção são etapas separadas. O instalador aceita somente um UUID
    de túnel e calcula o caminho fixo das credenciais; o roteamento DNS só ocorre
    com `--apply`. Nenhum deles reutiliza `cloudflare-runtime.service`.
 
@@ -101,6 +125,11 @@ O Pages proxy exige `ATENDIMENTO_API_TARGET` e
 `ATENDIMENTO_ACTOR_HMAC_KEY` dedicados, assina HMAC v2 e não tem fallback para
 `CRM_API_TARGET`, `ESCALA_ACTOR_HMAC_KEY` ou CRM compartilhado. Somente o
 health PII-free pode ser público; `/internal/*` nunca é encaminhado pelo proxy.
+
+O helper legado de rota de staging foi aposentado e recusa `--apply`: ele não
+deve alterar o `cloudflare-runtime.service` compartilhado. Até um túnel de
+staging dedicado ser aprovado, o runtime isolado de staging é validado apenas
+por loopback.
 
 ## Evidência mínima por etapa
 
