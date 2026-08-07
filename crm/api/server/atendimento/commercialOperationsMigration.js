@@ -58,6 +58,9 @@ function runtimeGrantStatements(target) {
         `revoke update, delete, truncate, references, trigger on table crm_atendimento.commercial_campaign_events from ${role}`,
         `revoke delete, truncate, references, trigger on table crm_atendimento.commercial_owner_absences from ${role}`,
         `grant usage on schema crm_atendimento to ${role}`,
+        // Runtime readiness and the experiment crossover guard read this
+        // registry.  The runtime role remains unable to apply migrations.
+        `grant select on table crm_atendimento.schema_migrations to ${role}`,
         `grant select, insert, update on table crm_atendimento.commercial_actions to ${role}`,
         `grant select, insert on table crm_atendimento.commercial_action_events to ${role}`,
         `grant select, insert on table crm_atendimento.commercial_operation_mutations to ${role}`,

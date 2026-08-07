@@ -28,6 +28,7 @@ test('commercial operations migration is additive, append-only and denies messag
     assert.match(sql, /before truncate/)
     assert.doesNotMatch(grants, /grant\s+(?:all privileges|delete|truncate)/)
     assert.match(grants, /revoke update, delete, truncate, references, trigger on table crm_atendimento\.commercial_campaign_events/)
+    assert.match(grants, /grant select on table crm_atendimento\.schema_migrations to skincos_staging_crm_app/)
     assert.match(grants, /grant select, insert on table crm_atendimento\.commercial_operation_mutations/)
     assert.match(grants, /grant select, insert on table crm_atendimento\.commercial_campaign_events/)
 })

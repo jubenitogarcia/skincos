@@ -2,6 +2,7 @@ import { createHmac, randomUUID } from 'node:crypto'
 
 import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
 import { requiredClientesSources } from '../clientes/sourceCatalog.js'
+import { actorSubject } from './actorSubject.js'
 import {
     COMMERCIAL_CAMPAIGN_STATES,
     COMMERCIAL_OPERATION_FLAGS,
@@ -120,7 +121,7 @@ function projectOwner(value) {
 }
 
 function actorPrincipal(actor) {
-    const value = text(actor?.id || actor?.username || actor?.email)
+    const value = actorSubject(actor)
     if (!value) throw operationalError('ACTOR_IDENTITY_REQUIRED', 401)
     return value
 }
@@ -1698,6 +1699,7 @@ export const __testables = {
     activeExperimentHoldouts,
     activeActionStatuses: ACTIVE_ACTION_STATUSES,
     actionFlagSql,
+    actorPrincipal,
     assertNoActiveExperimentHoldout,
     commercialOperationsUnitScope,
     experimentCrossoverGuardReadiness,

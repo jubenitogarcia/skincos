@@ -56,6 +56,15 @@ test('fails closed for a manager without an explicit unit claim and retains hard
     })
 })
 
+test('requires an opaque actor subject before deriving operational audit or idempotency identity', () => {
+    assert.equal(__testables.actorPrincipal({ subject: 'crm:gestor-1', id: 'legacy-ignored' }), 'crm:gestor-1')
+    assert.equal(__testables.actorPrincipal({ id: 'gestor.crm' }), 'gestor.crm')
+    assert.throws(
+        () => __testables.actorPrincipal({ username: 'operator@example.test', email: 'operator@example.test' }),
+        (error) => error?.code === 'ACTOR_IDENTITY_REQUIRED' && error?.statusCode === 401,
+    )
+})
+
 test('treats every required consent/block and identity source as stale until a complete validated checkpoint exists', async () => {
     assert.equal(__testables.COMMERCIAL_REQUIRED_SOURCE_IDS.includes('consent.harmonia_opt_outs'), true)
     assert.equal(__testables.COMMERCIAL_REQUIRED_SOURCE_IDS.includes('blocks.commercial_permissions'), true)
@@ -122,6 +131,7 @@ test('reports migration readiness only when relations and append-only triggers a
     assert.equal(readiness.appendOnlyReady, true)
     assert.equal(readiness.safety.automationEnabled, false)
     assert.equal(queries.length, 2)
+    assert.equal(queries.some(({ sql }) => sql.includes('from crm_atendimento.schema_migrations')), true)
 
     const incomplete = await commercialOperationsReadiness({
         async query(sql) {
