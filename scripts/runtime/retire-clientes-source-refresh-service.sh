@@ -5,7 +5,12 @@ usage() {
   printf '%s\n' 'Usage: retire-clientes-source-refresh-service.sh --dry-run|--apply' >&2
 }
 
-case "${1:-}" in
+if [[ $# -ne 1 ]]; then
+  usage
+  exit 64
+fi
+
+case "$1" in
   --dry-run)
     systemctl is-enabled crm-clientes-source-refresh.timer 2>/dev/null || true
     systemctl is-active crm-clientes-source-refresh.timer 2>/dev/null || true
