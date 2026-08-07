@@ -131,9 +131,14 @@ function createCliErrorWorkflowDrain(processRef = process, options = {}) {
     1000,
     120000,
   );
-  const discoveryMs = Math.min(1000, timeoutMs);
+  // Error workflows are started on a detached promise in n8n 2.8.3.  A CLI
+  // command can request exit before that promise reaches WorkflowRunner, so
+  // keep the smoke process alive for its bounded timeout until the error path
+  // explicitly registers itself below.
+  const discoveryMs = timeoutMs;
   const originalExit = processRef.exit.bind(processRef);
   const pending = new Set();
+  const expectedErrorWorkflows = [];
   let observed = false;
   let exitRequested = false;
   let exitCode = 0;
@@ -155,6 +160,37 @@ function createCliErrorWorkflowDrain(processRef = process, options = {}) {
     if (exitRequested && observed && pending.size === 0) finish();
   }
 
+  function track(value) {
+    observed = true;
+    clearTimeout(discoveryTimer);
+    const promise = Promise.resolve(value).catch(() => undefined);
+    pending.add(promise);
+    promise.finally(() => {
+      pending.delete(promise);
+      maybeFinish();
+    });
+    return promise;
+  }
+
+  function beginExpectedErrorWorkflow() {
+    let settle;
+    const gate = new Promise((resolve) => {
+      settle = resolve;
+    });
+    expectedErrorWorkflows.push(settle);
+    track(gate);
+    return () => {
+      const index = expectedErrorWorkflows.indexOf(settle);
+      if (index >= 0) expectedErrorWorkflows.splice(index, 1);
+      settle();
+    };
+  }
+
+  function settleExpectedErrorWorkflow() {
+    const settle = expectedErrorWorkflows.shift();
+    if (settle) settle();
+  }
+
   timeoutTimer = setTimeout(finish, timeoutMs);
   processRef.exit = function exitAfterCcgErrorWorkflow(code = 0) {
     exitRequested = true;
@@ -169,17 +205,9 @@ function createCliErrorWorkflowDrain(processRef = process, options = {}) {
   };
 
   return {
-    track(value) {
-      observed = true;
-      clearTimeout(discoveryTimer);
-      const promise = Promise.resolve(value).catch(() => undefined);
-      pending.add(promise);
-      promise.finally(() => {
-        pending.delete(promise);
-        maybeFinish();
-      });
-      return promise;
-    },
+    track,
+    beginExpectedErrorWorkflow,
+    settleExpectedErrorWorkflow,
     dispose() {
       if (completed) return;
       completed = true;
@@ -189,6 +217,36 @@ function createCliErrorWorkflowDrain(processRef = process, options = {}) {
       processRef.exit = originalExit;
     },
   };
+}
+
+function patchWorkflowExecutionServiceForCliDrain(WorkflowExecutionService, drain) {
+  if (!drain) return false;
+  if (!WorkflowExecutionService?.prototype || typeof WorkflowExecutionService.prototype.executeErrorWorkflow !== 'function') {
+    throw new Error('n8n error-workflow bootstrap could not inspect WorkflowExecutionService error execution');
+  }
+  if (WorkflowExecutionService.prototype.__skincosCcgCliErrorExecutionDrain === true) return false;
+  const originalExecuteErrorWorkflow = WorkflowExecutionService.prototype.executeErrorWorkflow;
+  Object.defineProperty(WorkflowExecutionService.prototype, '__skincosCcgCliErrorExecutionDrain', {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  WorkflowExecutionService.prototype.executeErrorWorkflow = function executeErrorWorkflowWithCcgCliDrain(...args) {
+    let execution;
+    try {
+      execution = originalExecuteErrorWorkflow.apply(this, args);
+    } catch (error) {
+      drain.settleExpectedErrorWorkflow();
+      throw error;
+    }
+    // The service promise covers the detached error-workflow setup. The runner
+    // patch below additionally retains the process until post-execution.
+    drain.track(execution);
+    drain.settleExpectedErrorWorkflow();
+    return execution;
+  };
+  return true;
 }
 
 function patchWorkflowRunnerForCliDrain(WorkflowRunner, drain) {
@@ -214,6 +272,33 @@ function patchWorkflowRunnerForCliDrain(WorkflowRunner, drain) {
       }
     }
     return executionId;
+  };
+  return true;
+}
+
+function patchExecuteErrorWorkflow(errorWorkflowModule, drain) {
+  if (!errorWorkflowModule || typeof errorWorkflowModule.executeErrorWorkflow !== 'function') {
+    throw new Error('n8n error-workflow bootstrap could not load executeErrorWorkflow');
+  }
+  if (errorWorkflowModule.__skincosCcgRecoveryBootstrap === true) return false;
+  const original = errorWorkflowModule.executeErrorWorkflow;
+  Object.defineProperty(errorWorkflowModule, '__skincosCcgRecoveryBootstrap', {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  errorWorkflowModule.executeErrorWorkflow = function executeErrorWorkflowWithCcgRecovery(workflowData, fullRunData, ...rest) {
+    attachCcgRecoveryContext(fullRunData);
+    const releaseExpectedErrorWorkflow = drain?.beginExpectedErrorWorkflow();
+    try {
+      return original.call(this, workflowData, fullRunData, ...rest);
+    } catch (error) {
+      // A synchronous error cannot reach WorkflowExecutionService, so release
+      // the smoke-only gate and preserve n8n's original failure behaviour.
+      releaseExpectedErrorWorkflow?.();
+      throw error;
+    }
   };
   return true;
 }
@@ -256,25 +341,13 @@ function bootstrap() {
   }
   const { WorkflowRunner } = require(runnerPath);
   repairWorkflowExecutionMetadata(WorkflowExecutionService, WorkflowRunner);
-  patchWorkflowRunnerForCliDrain(WorkflowRunner, createCliErrorWorkflowDrain());
+  const cliDrain = createCliErrorWorkflowDrain();
+  patchWorkflowRunnerForCliDrain(WorkflowRunner, cliDrain);
+  patchWorkflowExecutionServiceForCliDrain(WorkflowExecutionService, cliDrain);
   const { Container } = require(diPath);
   patchContainerGet(Container, WorkflowExecutionService, () => require(runnerPath).WorkflowRunner);
   const errorWorkflowModule = require(errorWorkflowPath);
-  const original = errorWorkflowModule.executeErrorWorkflow;
-  if (typeof original !== 'function') {
-    throw new Error('n8n error-workflow bootstrap could not load executeErrorWorkflow');
-  }
-  if (errorWorkflowModule.__skincosCcgRecoveryBootstrap === true) return;
-  Object.defineProperty(errorWorkflowModule, '__skincosCcgRecoveryBootstrap', {
-    value: true,
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  });
-  errorWorkflowModule.executeErrorWorkflow = function executeErrorWorkflowWithCcgRecovery(workflowData, fullRunData, ...rest) {
-    attachCcgRecoveryContext(fullRunData);
-    return original.call(this, workflowData, fullRunData, ...rest);
-  };
+  patchExecuteErrorWorkflow(errorWorkflowModule, cliDrain);
 }
 
 bootstrap();
@@ -284,6 +357,8 @@ module.exports = {
   captureContextFromRunData,
   createCliErrorWorkflowDrain,
   patchContainerGet,
+  patchExecuteErrorWorkflow,
+  patchWorkflowExecutionServiceForCliDrain,
   patchWorkflowRunnerForCliDrain,
   repairWorkflowExecutionMetadata,
   sanitizeRecoveryContext,
