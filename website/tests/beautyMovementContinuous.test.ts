@@ -103,6 +103,22 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /@keyframes cardSelectedReturnToDeck/);
     assert.match(styles, /@keyframes cardFlipToDeck/);
     assert.match(styles, /@keyframes cardDealFromDeck/);
+    assert.match(
+        styles,
+        /\.tableStage\[data-hand-stage="reveal"\] \.cardButton:not\(\.cardButtonSelected\)\s*\{\s*pointer-events: none;\s*\}/,
+    );
+    assert.match(
+        styles,
+        /\.tableStage\[data-hand-stage="held"\] \.cardButton:not\(\.cardButtonSelected\)\s*\{\s*pointer-events: none;\s*\}/,
+    );
+    assert.doesNotMatch(
+        styles,
+        /\.tableStage\[data-hand-stage="reveal"\] \.cardButton:not\(\.cardButtonSelected\)[^}]*animation:\s*cardReturnToDeck/,
+    );
+    assert.doesNotMatch(
+        styles,
+        /\.tableStage\[data-hand-stage="held"\] \.cardButton:not\(\.cardButtonSelected\)[^}]*(?:opacity:\s*0|transform:\s*translate3d\(var\(--deal-x\))/,
+    );
     assert.doesNotMatch(styles, /\.tableStage\[data-hand-stage="deal"\] \.cardButton:nth-child\(2\)[^}]*animation-delay/);
     assert.doesNotMatch(styles, /\.tableStage\[data-hand-stage="deal"\] \.cardButton:nth-child\(3\)[^}]*animation-delay/);
     assert.match(styles, /@keyframes finaleReturnToDeck/);
