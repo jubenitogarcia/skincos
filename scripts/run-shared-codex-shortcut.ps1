@@ -1969,6 +1969,47 @@ function Get-CrmInstanceRuntimeRoot {
     return Join-Path $crmInstanceRoot (Join-Path $roleSegment $moduleSegment)
 }
 
+function Get-CrmThreadPreviewPriorReadyPath {
+    param([Parameter(Mandatory = $true)][object]$Spec)
+    return Join-Path (Get-CrmInstanceRuntimeRoot -Spec $Spec) 'previous-ready.json'
+}
+
+function Save-CrmThreadPreviewPriorReadyManifest {
+    param(
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][object]$Manifest
+    )
+
+    if ([string]$Manifest.state -ne 'ready') { return }
+    $path = Get-CrmThreadPreviewPriorReadyPath -Spec $Spec
+    $directory = Split-Path -Parent $path
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $temporary = Join-Path $directory ('.previous-ready.{0}.tmp' -f ([guid]::NewGuid().ToString('N')))
+    try {
+        [IO.File]::WriteAllText($temporary, ($Manifest | ConvertTo-Json -Depth 16), [Text.UTF8Encoding]::new($false))
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            [IO.File]::Replace($temporary, $path, $null)
+        } else {
+            [IO.File]::Move($temporary, $path)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Get-CrmThreadPreviewPriorReadyManifest {
+    param([Parameter(Mandatory = $true)][object]$Spec)
+    $path = Get-CrmThreadPreviewPriorReadyPath -Spec $Spec
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    try {
+        $manifest = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        if ([string]$manifest.state -eq 'ready') { return $manifest }
+    } catch {
+        Write-Warning "[crm-thread-preview] O checkpoint de rollback de $([string]$Spec.runtimeId) não pôde ser lido; ele será ignorado."
+    }
+    return $null
+}
+
 function Get-CrmThreadPreviewDescriptorPath {
     param([Parameter(Mandatory = $true)][object]$Spec)
     return Join-Path (Get-CrmInstanceRuntimeRoot -Spec $Spec) 'thread-preview.json'
@@ -2430,6 +2471,9 @@ function Stop-CrmInstanceRuntime {
     if ($null -eq $manifest) {
         Write-Host "[crm-local] Não há manifesto para $([string]$Spec.role) / $([string]$Spec.label); nenhum processo será encerrado por aproximação."
         return
+    }
+    if (Test-CrmThreadPreviewSpec -Spec $Spec) {
+        Save-CrmThreadPreviewPriorReadyManifest -Spec $Spec -Manifest $manifest
     }
     $sourceRoot = Convert-WslPathToWindows -Path ([string]$manifest.worktree
     )
@@ -2982,6 +3026,13 @@ function Invoke-CrmThreadPreviewAction {
         }
         $insumosSnapshot = $null
         $priorManifest = if ($decision.Action -eq 'restart') { Get-CrmInstanceManifest -Spec $spec } else { $null }
+        if ($decision.Action -eq 'restart' -and ($null -eq $priorManifest -or [string]$priorManifest.state -ne 'ready')) {
+            # A cross-worktree handoff arrives with a stopped current.json.
+            # Its last verified ready manifest is retained privately by the
+            # owner that performed the clean stop and is the only fallback
+            # accepted for automatic recovery.
+            $priorManifest = Get-CrmThreadPreviewPriorReadyManifest -Spec $spec
+        }
         if ($refreshInsumosSnapshot) {
             # Export and integrity failure are intentionally before
             # Stop-CrmInstanceRuntime so a healthy prior preview remains the

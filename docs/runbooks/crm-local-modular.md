@@ -34,7 +34,9 @@ contagens restauradas coincidam com o snapshot. Uma falha de exportação ou
 integridade anterior à troca preserva a prévia anterior como rollback. Se a
 inicialização local falhar depois da troca, o launcher encerra qualquer processo
 parcial e tenta restaurar automaticamente a versão anterior a partir da fonte
-privada que estava pronta.
+privada que estava pronta. O último manifesto saudável é mantido no runtime
+privado para que essa recuperação também funcione após a entrega limpa entre
+worktrees.
 
 O exportador também reconhece a versão anterior do schema remoto: campos
 aditivos ausentes recebem `null` e tabelas ainda não criadas entram vazias no
