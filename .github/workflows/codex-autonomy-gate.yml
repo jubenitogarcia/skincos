@@ -38,29 +38,7 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
           MANUAL_BASE_SHA: ${{ inputs.base_sha }}
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            base="$MANUAL_BASE_SHA"
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]] || { echo 'Manual governance base_sha must be a full commit SHA'; exit 1; }
-            git cat-file -e "$base^{commit}"
-            git merge-base --is-ancestor "$base" "$GITHUB_SHA" || {
-              echo 'Manual governance base_sha must be an ancestor of the checked-out head'
-              exit 1
-            }
-          else
-            base="${PR_BASE_SHA:-$BEFORE_SHA}"
-            if [[ -z "$base" || "$base" =~ ^0+$ ]]; then base="$(git rev-parse HEAD^)"; fi
-            if ! git cat-file -e "$base^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$base" "$GITHUB_SHA"; then
-              # A force-push after rebasing can make github.event.before
-              # unreachable in the fresh checkout. Classify the full branch
-              # delta from its current mainline instead of failing the
-              # required gate on a stale event reference.
-              git fetch --no-tags origin main
-              base="$(git merge-base "$GITHUB_SHA" origin/main)"
-            fi
-          fi
-          echo "sha=$base" >> "$GITHUB_OUTPUT"
+        run: node .github/scripts/resolve-codex-autonomy-base.mjs
       - id: risk
         run: node scripts/codex-risk-classifier.mjs --base "${{ steps.base.outputs.sha }}" --head "$GITHUB_SHA" --output risk-report.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -89,6 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           node .github/scripts/validate-github-governance.mjs
+          node --test .github/scripts/codex-autonomy-gate-workflow.test.mjs
           node --test .github/scripts/ponto-single-operator-governance.test.mjs
           node --test .github/scripts/atendimento-deployment-contract.test.mjs
       - name: Supervisor contract
