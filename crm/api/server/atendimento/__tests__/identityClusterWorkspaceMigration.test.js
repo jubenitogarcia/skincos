@@ -42,6 +42,7 @@ test('applies under migration and graph locks before recording readiness', async
     assert.equal(released, true)
     const locks = calls.filter(({ sql }) => /pg_advisory_xact_lock/i.test(sql)).map(({ params }) => params[0])
     assert.deepEqual(locks, [IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID, 'crm_atendimento.identity_graph_materialization'])
+    assert.equal(calls.some(({ sql }) => /grant select on table crm_atendimento\.schema_migrations to skincos/i.test(sql)), true)
     assert.equal(calls.some(({ sql }) => /grant select, insert on table crm_atendimento\.identity_cluster_review_operations to skincos/i.test(sql)), true)
     assert.equal(calls.some(({ sql }) => /insert into crm_atendimento\.schema_migrations/i.test(sql)), true)
     assert.equal(calls.some(({ sql }) => String(sql).trim().toLowerCase() === 'commit'), true)

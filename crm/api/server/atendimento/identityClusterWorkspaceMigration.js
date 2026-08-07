@@ -96,6 +96,10 @@ function runtimeGrantStatements(target) {
     if (!role) throw migrationError('IDENTITY_CLUSTER_WORKSPACE_MIGRATION_RUNTIME_ROLE_UNKNOWN')
     return [
         `grant usage on schema crm_atendimento to ${role}`,
+        // Runtime readiness reads the append-only migration record.  Grant
+        // only SELECT: the runtime role must never apply or roll back schema
+        // migrations itself.
+        `grant select on table crm_atendimento.schema_migrations to ${role}`,
         `grant select, insert on table crm_atendimento.identity_cluster_review_operations to ${role}`,
         `grant select, insert on table crm_atendimento.identity_cluster_reveal_events to ${role}`,
     ]
