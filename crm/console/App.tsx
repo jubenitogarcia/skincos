@@ -408,8 +408,8 @@ export default function AppFunctionalNeatlab() {
             const media = window.matchMedia('(max-width: 1279px)')
             const sync = () => setSidebarCompactViewport(media.matches)
             sync()
-            media.addEventListener('change', sync)
-            return () => media.removeEventListener('change', sync)
+            media.addListener(sync)
+            return () => media.removeListener(sync)
         } catch {
             setSidebarCompactViewport(false)
             return undefined
@@ -2331,14 +2331,14 @@ export default function AppFunctionalNeatlab() {
                                                             <ChevronsUpDown className="size-3.5" aria-hidden="true" />
                                                         </Button>
                                                     </TooltipButton>
-                                                    <TooltipButton label="Atualizar Insumos" pinOnClick={false}>
+                                                    <TooltipButton label="Atualizar dados de estoque" pinOnClick={false}>
                                                         <Button
                                                             size="icon"
                                                             variant="ghost"
                                                             className="h-9 w-9 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
                                                             onClick={() => dispatchInsumosHeaderAction({ type: 'reload-overview' })}
                                                             disabled={insumosHeaderEstoque?.loading}
-                                                            aria-label="Atualizar Insumos"
+                                                            aria-label="Atualizar dados de estoque"
                                                             data-testid="insumos-header-refresh"
                                                         >
                                                             <RefreshCw className={`size-3.5 ${insumosHeaderEstoque?.loading ? 'animate-spin' : ''}`} aria-hidden="true" />
