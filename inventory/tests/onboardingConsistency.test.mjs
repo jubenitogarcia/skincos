@@ -41,13 +41,17 @@ test('onboarding retries require a payload fingerprint after the unified identit
   assert.match(admin, /buildEmployeeOnboardingFingerprintPayload/);
   assert.match(admin, /ONBOARDING_IDEMPOTENCY_CONFLICT/);
   assert.match(admin, /ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED/);
+  assert.match(admin, /repairMissingTeam/);
+  assert.match(admin, /reuseExistingInvite/);
+  assert.match(admin, /String\(existingOnboarding\.id \|\| ''\)\.trim\(\) !== id/);
   assert.doesNotMatch(migration, /\bDROP\b/i);
 });
 
 test('invite activation has an audited retry boundary and does not mint a second token', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
-  assert.ok(admin.includes("const activationMatch = url.pathname.match(/^\\/admin\\/onboarding\\/([^/]+)\\/activate$/);"));
+  assert.match(admin, /const activationMatch = url\.pathname\.match\(\/\^\\\/admin\\\/\(onboarding\|team\)/);
   assert.match(admin, /EMPLOYEE_ONBOARDING_ACTIVATION_RETRY/);
+  assert.match(admin, /INVITE_REGISTRATION_REQUIRED/);
   assert.match(admin, /invite remains consumed/);
   const activationBlock = admin.slice(
     admin.indexOf('const activationMatch'),
@@ -97,6 +101,7 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(admin, /TEAM_ESCALA_LINK_REQUIRED/);
   assert.match(admin, /EMPLOYEE_ESCALA_SYNC_RECORDED/);
   assert.match(admin, /kind: 'ESCALA_SYNC'/);
+  assert.match(admin, /member_ids_json = \?/);
   assert.match(admin, /after_json LIKE/);
   assert.match(admin, /entity: 'EMPLOYEE_TEAM'/);
   assert.match(admin, /const teamLinkReviewMatch/);
@@ -107,6 +112,7 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(admin, /TEAM_LINK_CONFIRMED_IMMUTABLE/);
   assert.match(admin, /mobilePhoneHash: nextPhoneHash \|\| current\.mobile_phone_hash/);
   assert.match(admin, /normalizeTeamData\(body\.team, nextUnits, \{/);
+  assert.match(admin, /teamData\.units\.some\(\(unit\) => !nextUnits\.includes\(unit\)\)/);
   assert.match(admin, /pendingSync: pendingIds\.includes\(row\.id\)/);
   assert.match(admin, /compensationState/);
   assert.match(admin, /teamUnitsVisible\(auth, onboarding\.units_json\)/);
@@ -119,6 +125,9 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(localApi, /TEAM_LINK_REJECTION_REASON_REQUIRED/);
   assert.match(localApi, /EMPLOYEE_IDENTITY_LINK_REVIEWED/);
   assert.match(localApi, /requestedUsername: input\.requestedUsername/);
+  assert.match(localApi, /localHasUnknownUnits/);
+  assert.match(localApi, /schedule\.units\.some\(\(unit\) => !units\.includes\(unit\)\)/);
+  assert.match(localApi, /team\/:id\/activate/);
 });
 
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {

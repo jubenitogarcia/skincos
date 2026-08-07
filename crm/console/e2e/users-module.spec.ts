@@ -80,6 +80,22 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByRole('tabpanel').getByText('Sincronizada', { exact: true })).toBeVisible()
   })
 
+  test('retries a failed identity activation only after the invite registration boundary', async ({ page }) => {
+    await mockUsersApi(page, 'GESTOR', { failedActivationFor: 'e2e-lucas' })
+    await page.goto('/?module=users')
+    await page.getByRole('button', { name: 'Editar Lucas Mendes' }).click()
+    await expect(page.getByRole('button', { name: 'Concluir ativação' })).toBeVisible()
+    page.once('dialog', (dialog) => dialog.accept())
+    await page.getByRole('button', { name: 'Concluir ativação' }).click()
+    const memberDialog = page.getByRole('dialog')
+    await expect(memberDialog).toBeVisible()
+    await expect(memberDialog.getByRole('button', { name: 'Concluir ativação' })).toHaveCount(0)
+    await expect(memberDialog.getByText('Ativo', { exact: true })).toBeVisible()
+    await memberDialog.getByRole('button', { name: 'Fechar' }).click()
+    const lucasRow = page.getByRole('row').filter({ hasText: 'Lucas Mendes' })
+    await expect(lucasRow.getByText('Ativo', { exact: true })).toBeVisible()
+  })
+
   test('resolves a pending operational link with an explicit review action', async ({ page }) => {
     await mockUsersApi(page)
     await page.goto('/?module=users')

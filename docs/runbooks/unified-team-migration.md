@@ -69,6 +69,18 @@ Edições parciais preservam os dados operacionais já persistidos da Escala. A
 alteração de telefone recalcula o hash enviado ao Workforce e não expõe o
 telefone pessoal nas respostas do cadastro.
 
+Quando a edição da Escala já possui `schedule.professionalId`, a atualização
+usa esse ID canônico; `currentName` permanece apenas como compatibilidade para
+clientes antigos. A renomeação também atualiza o campo histórico da agenda.
+Na edição hospedada e no preview local, as unidades operacionais são rejeitadas
+quando excedem as unidades do cadastro central.
+
+Se a identidade e o convite forem concluídos, mas a projeção
+`crm_employee_team` não for gravada, uma nova tentativa com o mesmo fingerprint
+repara somente a projeção ausente e não reenviará o convite já emitido. A ação
+de concluir ativação só pode ser usada depois que o funcionário criou a senha;
+ela não substitui o cadastro pelo convite.
+
 O preview local mantém o mesmo contrato em armazenamento privado e registra
 tentativas, auditoria e telemetria agregada. O botão de nova tentativa só deve
 ser habilitado depois que o identificador explícito do profissional estiver

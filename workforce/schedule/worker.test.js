@@ -56,6 +56,17 @@ class FakeD1 {
     this.scheduleEntries = []
     this.closedDays = []
     this.holidays = []
+    this.scheduleColumns = new Set([
+      'id',
+      'date',
+      'unit',
+      'professional_name',
+      'professional_id',
+      'created_at',
+      'updated_at',
+      'created_by',
+      'updated_by',
+    ])
     this.professionalColumns = new Set([
       'id',
       'name',
@@ -94,6 +105,13 @@ class FakeD1 {
       return row ? { id: row.id, name: row.name, phone: row.phone, email: row.email, workforce_employee_id: row.workforce_employee_id || null, units_json: row.units_json || '[]' } : null
     }
 
+    if (query.startsWith('select id, name, phone, email, units_json from professionals where id = ?1')
+      || query.startsWith('select id, name, phone, email, workforce_employee_id, units_json from professionals where id = ?1')) {
+      const id = String(params[0] || '')
+      const row = this.professionals.find((prof) => prof.id === id)
+      return row ? { id: row.id, name: row.name, phone: row.phone, email: row.email, workforce_employee_id: row.workforce_employee_id || null, units_json: row.units_json || '[]' } : null
+    }
+
     if (query.startsWith('select id, name from professionals where name = ?1')) {
       const name = String(params[0] || '')
       const row = this.professionals.find((prof) => prof.name === name)
@@ -116,6 +134,10 @@ class FakeD1 {
       return Array.from(this.professionalColumns).map((name, index) => ({ cid: index, name }))
     }
 
+    if (query.startsWith('pragma table_info(schedule_entries)')) {
+      return Array.from(this.scheduleColumns).map((name, index) => ({ cid: index, name }))
+    }
+
     if (
       query.includes('select name, status, role, shift, nickname, phone, email, instagram, color, units_json from professionals')
       || query.includes('select name, status, role, shift, nickname, phone, email, instagram, null as color, units_json from professionals')
@@ -130,7 +152,13 @@ class FakeD1 {
       return this.professionals.filter((prof) => allowed.has(prof.name)).map((prof) => ({ name: prof.name }))
     }
 
-    if (query.includes('select date, unit, professional_name as professional from schedule_entries')) {
+    if (query.startsWith('select id, name from professionals where name in (')) {
+      const allowed = new Set(params.map((value) => String(value || '')))
+      return this.professionals.filter((prof) => allowed.has(prof.name)).map((prof) => ({ id: prof.id, name: prof.name }))
+    }
+
+    if (query.includes('select date, unit, professional_name as professional')) {
+      const includesProfessionalId = query.includes('professional_id')
       let rows = [...this.scheduleEntries]
       if (query.includes('where unit = ? and date like ?')) {
         rows = rows.filter((row) => row.unit === params[0] && row.date.startsWith(String(params[1]).replace(/%$/, '')))
@@ -141,7 +169,9 @@ class FakeD1 {
       }
       return rows
         .sort((a, b) => `${a.date}:${a.professional_name}`.localeCompare(`${b.date}:${b.professional_name}`))
-        .map((row) => ({ date: row.date, unit: row.unit, professional: row.professional_name }))
+        .map((row) => includesProfessionalId
+          ? { date: row.date, unit: row.unit, professional: row.professional_name, professional_id: row.professional_id || null }
+          : { date: row.date, unit: row.unit, professional: row.professional_name })
     }
 
     if (query.includes('select date, unit, reason from closed_days')) {
@@ -200,6 +230,15 @@ class FakeD1 {
       return
     }
 
+    if (query.startsWith('update schedule_entries set professional_name = ?1, professional_id = ?2')) {
+      this.scheduleEntries = this.scheduleEntries.map((entry) => (
+        entry.professional_id === params[4] || (!entry.professional_id && entry.professional_name === params[5])
+          ? { ...entry, professional_name: params[0], professional_id: params[1], updated_at: params[2], updated_by: params[3] }
+          : entry
+      ))
+      return
+    }
+
     if (query.startsWith('update schedule_entries set professional_name = ?1')) {
       this.scheduleEntries = this.scheduleEntries.map((entry) => (
         entry.professional_name === params[3]
@@ -210,7 +249,8 @@ class FakeD1 {
     }
 
     if (query.startsWith('insert or ignore into schedule_entries')) {
-      const [id, date, unit, professionalName, createdAt, updatedAt, createdBy, updatedBy] = params
+      const hasProfessionalId = query.includes('professional_id')
+      const [id, date, unit, professionalName, professionalId, createdAt, updatedAt, createdBy, updatedBy] = params
       const exists = this.scheduleEntries.some(
         (entry) => entry.date === date && entry.unit === unit && entry.professional_name === professionalName,
       )
@@ -220,10 +260,11 @@ class FakeD1 {
           date,
           unit,
           professional_name: professionalName,
-          created_at: createdAt,
-          updated_at: updatedAt,
-          created_by: createdBy,
-          updated_by: updatedBy,
+          professional_id: hasProfessionalId ? professionalId : null,
+          created_at: hasProfessionalId ? createdAt : professionalId,
+          updated_at: hasProfessionalId ? updatedAt : createdAt,
+          created_by: hasProfessionalId ? createdBy : updatedAt,
+          updated_by: hasProfessionalId ? updatedBy : createdBy,
         })
       }
       return
@@ -237,16 +278,18 @@ class FakeD1 {
     }
 
     if (query.startsWith('insert into schedule_entries')) {
-      const [id, date, unit, professionalName, createdAt, updatedAt, createdBy, updatedBy] = params
+      const hasProfessionalId = query.includes('professional_id')
+      const [id, date, unit, professionalName, professionalId, createdAt, updatedAt, createdBy, updatedBy] = params
       this.scheduleEntries.push({
         id,
         date,
         unit,
         professional_name: professionalName,
-        created_at: createdAt,
-        updated_at: updatedAt,
-        created_by: createdBy,
-        updated_by: updatedBy,
+        professional_id: hasProfessionalId ? professionalId : null,
+        created_at: hasProfessionalId ? createdAt : professionalId,
+        updated_at: hasProfessionalId ? updatedAt : createdAt,
+        created_by: hasProfessionalId ? createdBy : updatedAt,
+        updated_by: hasProfessionalId ? updatedBy : createdBy,
       })
       return
     }
@@ -384,6 +427,7 @@ test('Escala professionals POST and PUT persist and sync schedule entries', asyn
   assert.equal(updateResponse.status, 200)
   assert.equal(db.professionals[0].name, 'Dra. Anita')
   assert.equal(db.scheduleEntries[0].professional_name, 'Dra. Anita')
+  assert.equal(db.scheduleEntries[0].professional_id, db.professionals[0].id)
 
   const professionalsResponse = await worker.fetch(
     await signedRequest('https://escala.local/api/escala/professionals?unit=Novo%20Hamburgo', {
@@ -418,6 +462,8 @@ test('Escala professionals POST and PUT persist and sync schedule entries', asyn
       date: '2026-03-20',
       unit: 'Novo Hamburgo',
       professional: 'Dra. Anita',
+      professionalId: db.professionals[0].id,
+      professional_id: db.professionals[0].id,
     },
   ])
 })
@@ -452,6 +498,48 @@ test('Escala blocks scoped managers from editing a professional outside the exis
   assert.equal(response.status, 403)
   assert.deepEqual(await response.json(), { ok: false, error: 'FORBIDDEN_EXISTING_UNIT' })
   assert.equal(db.professionals[0].name, 'Dra. Barra')
+})
+
+test('Escala professionals PUT resolves by canonical professional id when the legacy name is stale', async () => {
+  const db = new FakeD1()
+  db.professionals.push({
+    id: 'professional-canonical',
+    name: 'Dra. Atual',
+    status: 'Ativo',
+    role: 'Injetor',
+    units_json: JSON.stringify(['Novo Hamburgo']),
+  })
+  db.scheduleEntries.push({
+    id: 'schedule-canonical',
+    date: '2026-08-07',
+    unit: 'Novo Hamburgo',
+    professional_name: 'Dra. Atual',
+    professional_id: 'professional-canonical',
+  })
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+  const response = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/professionals', {
+      method: 'PUT',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor: { id: 'gestor-1', role: 'GESTOR', allowedUnits: ['Novo Hamburgo'] },
+      body: {
+        professionalId: 'professional-canonical',
+        currentName: 'Nome antigo no cliente',
+        name: 'Dra. Renomeada',
+        units: ['Novo Hamburgo'],
+      },
+    }),
+    env,
+  )
+  assert.equal(response.status, 200)
+  assert.equal(db.professionals[0].name, 'Dra. Renomeada')
+  assert.equal(db.scheduleEntries[0].professional_name, 'Dra. Renomeada')
+  assert.equal(db.scheduleEntries[0].professional_id, 'professional-canonical')
+  assert.equal((await response.json()).data.professionalId, 'professional-canonical')
 })
 
 test('Escala professionals GET/POST/PUT tolerate legacy schema without color column', async () => {
