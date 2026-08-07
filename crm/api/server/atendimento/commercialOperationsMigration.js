@@ -190,10 +190,29 @@ const STATEMENTS = Object.freeze([
 ])
 
 function triggerReadinessStatement() {
-    const tables = ['commercial_operation_mutations', 'commercial_campaign_events']
-    const fields = tables.flatMap((table, index) => [
-        `exists(select 1 from pg_trigger where tgrelid = to_regclass('crm_atendimento.${table}') and tgname = '${table}_v2_immutable' and tgenabled = 'O' and tgfoid = to_regprocedure('crm_atendimento.prevent_commercial_operations_evidence_mutation_v2()')) as immutable_${index}`,
-        `exists(select 1 from pg_trigger where tgrelid = to_regclass('crm_atendimento.${table}') and tgname = '${table}_v2_no_truncate' and tgenabled = 'O' and tgfoid = to_regprocedure('crm_atendimento.prevent_commercial_operations_evidence_mutation_v2()')) as no_truncate_${index}`,
+    const ledgers = [
+        {
+            table: 'commercial_action_events',
+            immutable: 'commercial_action_events_immutable',
+            noTruncate: 'commercial_action_events_no_truncate',
+            functionName: 'crm_atendimento.prevent_commercial_ledger_mutation()',
+        },
+        {
+            table: 'commercial_operation_mutations',
+            immutable: 'commercial_operation_mutations_v2_immutable',
+            noTruncate: 'commercial_operation_mutations_v2_no_truncate',
+            functionName: 'crm_atendimento.prevent_commercial_operations_evidence_mutation_v2()',
+        },
+        {
+            table: 'commercial_campaign_events',
+            immutable: 'commercial_campaign_events_v2_immutable',
+            noTruncate: 'commercial_campaign_events_v2_no_truncate',
+            functionName: 'crm_atendimento.prevent_commercial_operations_evidence_mutation_v2()',
+        },
+    ]
+    const fields = ledgers.flatMap((ledger, index) => [
+        `exists(select 1 from pg_trigger where tgrelid = to_regclass('crm_atendimento.${ledger.table}') and tgname = '${ledger.immutable}' and tgenabled = 'O' and tgfoid = to_regprocedure('${ledger.functionName}')) as immutable_${index}`,
+        `exists(select 1 from pg_trigger where tgrelid = to_regclass('crm_atendimento.${ledger.table}') and tgname = '${ledger.noTruncate}' and tgenabled = 'O' and tgfoid = to_regprocedure('${ledger.functionName}')) as no_truncate_${index}`,
     ])
     return `select ${fields.join(', ')}`
 }
@@ -239,7 +258,7 @@ export function commercialOperationsMigrationPlan() {
             'commercial_campaign_events',
             'commercial_owner_absences',
         ],
-        appendOnlyTables: ['commercial_operation_mutations', 'commercial_campaign_events'],
+        appendOnlyTables: ['commercial_action_events', 'commercial_operation_mutations', 'commercial_campaign_events'],
         piiPolicy: 'Operational records accept only opaque ids, bounded allowlisted codes, aggregate eligibility snapshots and masked presentation contracts. They store no phone, email, message payload or raw customer evidence.',
         messagePolicy: 'Campaign membership and outcomes never dispatch a message. commercialContactWritesEnabled remains a separate, default-false control.',
         rollback: 'Non-destructive: campaigns, actions and append-only evidence are retained; rollback only records the migration state.',

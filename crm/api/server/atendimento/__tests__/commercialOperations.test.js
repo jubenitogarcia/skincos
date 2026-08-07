@@ -34,6 +34,7 @@ test('freezes a campaign cohort with opaque filters and deterministic control as
     assert.equal(campaign.identityIds.length, 2)
     assert.equal(stableControlGroup({ campaignSeed: 'campaign:opaque', identityId: identityA, percentage: 20 }), stableControlGroup({ campaignSeed: 'campaign:opaque', identityId: identityA, percentage: 20 }))
     assert.equal(campaignMemberState({ eligible: false, sourceStale: true }), 'review')
+    assert.equal(campaignMemberState({ eligible: false, controlGroup: true }), 'blocked')
     assert.throws(() => normalizeCampaignPayload({ ...campaign, filters: { owner: 'customer@example.com' } }), /COMMERCIAL_CAMPAIGN_FILTER_INVALID/)
 })
 

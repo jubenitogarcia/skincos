@@ -312,8 +312,11 @@ export function computeAverageStageDurations(events = []) {
 }
 
 export function campaignMemberState({ eligible, controlGroup, identityInReview, sourceStale } = {}) {
-    if (controlGroup) return 'control'
     if (!eligible) return identityInReview || sourceStale ? 'review' : 'blocked'
+    // A holdout is reproducible only within the same eligible population.  An
+    // ineligible identity is never silently reclassified as control; it must
+    // remain blocked/review until the underlying gate becomes healthy.
+    if (controlGroup) return 'control'
     if (identityInReview || sourceStale) return 'review'
     return 'eligible'
 }
