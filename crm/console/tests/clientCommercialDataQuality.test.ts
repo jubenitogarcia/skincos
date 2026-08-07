@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   fetchCommercialDataQuality,
+  fetchCommercialSourceOperations,
   isCommercialDataQualityScopeDenied,
+  isCommercialSourceOperationsScopeDenied,
   updateCommercialDataQualityFinding,
 } from '../atendimentoApi'
 
@@ -55,5 +57,20 @@ describe('Clientes commercial data quality API', () => {
     expect(isCommercialDataQualityScopeDenied('COMMERCIAL_DATA_QUALITY_UNIT_SCOPE_UNSUPPORTED')).toBe(true)
     expect(isCommercialDataQualityScopeDenied('FORBIDDEN')).toBe(true)
     expect(isCommercialDataQualityScopeDenied('DATABASE_URL_not_configured')).toBe(false)
+  })
+
+  it('loads the operational source view through its read-only endpoint only', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, sources: [] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await fetchCommercialSourceOperations()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/atendimento/commercial/source-operations', expect.objectContaining({
+      method: 'GET', credentials: 'include',
+    }))
+    expect(isCommercialSourceOperationsScopeDenied('COMMERCIAL_SOURCE_OPERATIONS_UNIT_SCOPE_UNSUPPORTED')).toBe(true)
+    expect(isCommercialSourceOperationsScopeDenied('COMMERCIAL_SOURCE_OPERATIONS_UNAVAILABLE')).toBe(false)
   })
 })

@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import express from 'express'
 import { createAtendimentoStore, canAccessAtendimento } from './store.js'
 import { createCommercialDataQualityStore } from './commercialDataQualityStore.js'
+import { createClientesSourceOperationsStore } from '../clientes/sourceOperationsStore.js'
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
 import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
 import { createClinicalApprovalStore } from '../clinical/clinicalApprovalStore.js'
@@ -127,6 +128,61 @@ function isCommercialManager(actor) {
     return role === 'GESTOR'
 }
 
+function sourceOperationsError(code, statusCode = 403) {
+    const error = new Error(code)
+    error.code = code
+    error.statusCode = statusCode
+    return error
+}
+
+function hasDeclaredUnitScope(actor) {
+    return actor?.allowedUnitsDeclared === true || Array.isArray(actor?.allowedUnits) ||
+        (actor?.allowedUnitsDeclared === undefined && Object.prototype.hasOwnProperty.call(actor || {}, 'allowedUnits'))
+}
+
+function assertCommercialSourceOperationsAccess(actor) {
+    if (!isCommercialManager(actor)) throw sourceOperationsError('FORBIDDEN')
+    // These ledger checkpoints are global. Never pretend that their aggregate
+    // counts are safely scoped until source operations are materialized by
+    // unit; a declared scoped GESTOR must receive an explicit denial.
+    if (actor?.isGlobalAdmin === true) return
+    if (hasDeclaredUnitScope(actor)) throw sourceOperationsError('COMMERCIAL_SOURCE_OPERATIONS_UNIT_SCOPE_UNSUPPORTED')
+}
+
+function boundedOperationalNumber(value) {
+    const number = Number(value)
+    return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0
+}
+
+function projectCommercialSourceOperation(value = {}) {
+    const error = value?.error && typeof value.error === 'object' && /^[A-Z][A-Z0-9_]{1,100}$/.test(String(value.error.code || ''))
+        ? { code: String(value.error.code), retryable: value.error.retryable === true }
+        : null
+    return {
+        sourceId: String(value.sourceId || ''),
+        domain: String(value.domain || ''),
+        label: String(value.label || ''),
+        required: value.required === true,
+        requiredFor: Array.isArray(value.requiredFor) ? value.requiredFor.map(String).filter((entry) => /^[a-z_]{1,80}$/.test(entry)) : [],
+        status: String(value.status || 'missing'),
+        freshness: String(value.freshness || 'missing'),
+        lastExecution: value.lastExecution || null,
+        lastRead: value.lastRead || null,
+        lastSuccess: value.lastSuccess || null,
+        lastApplied: value.lastApplied || null,
+        nextExecution: value.nextExecution || null,
+        recordsRead: boundedOperationalNumber(value.recordsRead),
+        recordsApplied: boundedOperationalNumber(value.recordsApplied),
+        divergences: boundedOperationalNumber(value.divergences),
+        snapshotComplete: value.snapshotComplete === true,
+        retries: boundedOperationalNumber(value.retries),
+        errors: boundedOperationalNumber(value.errors),
+        error,
+        durationMs: boundedOperationalNumber(value.durationMs),
+        reconciliationRequired: value.reconciliationRequired === true,
+    }
+}
+
 function requestsClinicalCadenceApproval(payload) {
     return String(payload?.status || '').trim().toLowerCase() === 'approved'
 }
@@ -204,6 +260,16 @@ export function createAtendimentoRouter(options = {}) {
         pool: options.commercialDataQualityPool,
         databaseUrl: options.databaseUrl,
     })
+    let commercialSourceOperationsStore = options.commercialSourceOperationsStore || null
+    const getCommercialSourceOperationsStore = () => {
+        if (!commercialSourceOperationsStore) {
+            commercialSourceOperationsStore = createClientesSourceOperationsStore({
+                pool: options.commercialSourceOperationsPool,
+                databaseUrl: options.databaseUrl,
+            })
+        }
+        return commercialSourceOperationsStore
+    }
     const actorKey = String(
         options.actorHmacKey ||
         process.env.ATENDIMENTO_ACTOR_HMAC_KEY ||
@@ -476,6 +542,19 @@ export function createAtendimentoRouter(options = {}) {
             return json(res, 200, { ok: true, ...(await commercialDataQualityStore.list(req.query || {}, req.atendimentoActor)) })
         } catch (error) {
             return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/source-operations', async (req, res) => {
+        try {
+            assertCommercialSourceOperationsAccess(req.atendimentoActor)
+            const sources = await getCommercialSourceOperationsStore().getOperationalView({ now: new Date() })
+            return json(res, 200, { ok: true, sources: Array.isArray(sources) ? sources.map(projectCommercialSourceOperation) : [] })
+        } catch (error) {
+            if (Number(error?.statusCode) === 403) return errorResponse(res, error)
+            // Missing schema, a pool failure or an unavailable dependency must
+            // not disclose database details to the console.
+            return json(res, 503, { ok: false, error: 'COMMERCIAL_SOURCE_OPERATIONS_UNAVAILABLE' })
         }
     })
 
@@ -769,6 +848,8 @@ export function createAtendimentoRouter(options = {}) {
 export const __testables = {
     errorPayload,
     isCommercialManager,
+    assertCommercialSourceOperationsAccess,
+    projectCommercialSourceOperation,
     requestsClinicalCadenceApproval,
     parseActorHeader,
     isLocalRequest,

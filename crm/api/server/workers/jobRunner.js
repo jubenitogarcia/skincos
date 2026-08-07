@@ -44,6 +44,7 @@ function createJobState() {
         lastError: null,
         lastDurationMs: null,
         lastLagMs: null,
+        readiness: null,
         nextRunAt: null,
         deadLetteredAt: null,
     }
@@ -60,6 +61,13 @@ function normalizeJob(job) {
         run: job.run,
         required: job.required !== false,
     }
+}
+
+// Only a boolean readiness declaration is retained in the durable scheduler
+// state. Job payloads may contain operational data and must never be copied
+// into the checkpoint file.
+function resultReadiness(result) {
+    return typeof result?.ready === 'boolean' ? result.ready : null
 }
 
 function executionKey(jobId, scheduledAt) {
@@ -327,6 +335,7 @@ export function createContinuousJobRunner({
                 entry.lastSuccessAt = iso(finished)
                 entry.lastErrorAt = null
                 entry.lastError = null
+                entry.readiness = resultReadiness(result)
                 entry.lastDurationMs = Math.max(0, finished - started)
                 entry.lastLagMs = Math.max(0, finished - scheduledAt)
                 entry.nextRunAt = null
@@ -418,7 +427,7 @@ export function createContinuousJobRunner({
         }))
         const requiredReady = normalizedJobs.filter((job) => job.required).every((job) => {
             const current = state.jobs[job.id]
-            return current.status === 'succeeded'
+            return current.status === 'succeeded' && current.readiness !== false
         })
         return {
             service: 'crm-continuous-job-runner',
@@ -520,4 +529,5 @@ export const __testables = {
     backoffMs: (attempt, base = 30_000, cap = 900_000) => Math.min(cap, base * Math.pow(2, Math.max(0, Number(attempt || 1) - 1))),
     executionKey,
     safeErrorCode,
+    resultReadiness,
 }
