@@ -8,14 +8,31 @@ Type=simple
 User=skincos
 Group=skincos
 WorkingDirectory=__REPO_ROOT__
-Environment=CRM_RUNTIME_HOME=__STATE_ROOT__/crm-atendimento
-Environment=SKINCOS_CRM_API_ENV_FILE=__CONFIG_ROOT__/crm-atendimento-staging.env
-Environment=VAR_DIR=__STATE_ROOT__/crm-atendimento/var
-Environment=BACKEND_DIR=__REPO_ROOT__/backend
-Environment=FRONTEND_DIR=__REPO_ROOT__/crm/console
-Environment=CONFIG_DIR=__REPO_ROOT__/backend/config
 EnvironmentFile=-__CONFIG_ROOT__/crm-atendimento-staging.env
-ExecStart=__REPO_ROOT__/scripts/crm/run-api-linux.sh
+Environment=CRM_RUNTIME_HOME=__STATE_ROOT__/crm-atendimento
+Environment=VAR_DIR=__STATE_ROOT__/crm-atendimento/var
+# These values are deliberately after EnvironmentFile: a private env file may
+# supply credentials but can never broaden this dedicated service into the
+# shared CRM, enable a worker, or reopen mutation routes.
+UnsetEnvironment=NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_V8_COVERAGE NODE_REDIRECT_WARNINGS LD_PRELOAD LD_LIBRARY_PATH BASH_ENV ENV
+Environment=CRM_DOMAIN=atendimento
+Environment=CRM_API_HOST=127.0.0.1
+Environment=CRM_API_PORT=8111
+Environment=CRM_ATENDIMENTO_READ_ONLY=true
+Environment=CRM_ATENDIMENTO_CLIENTES_ONLY=true
+Environment=CRM_ATENDIMENTO_COMMERCIAL_WRITES_ENABLED=false
+Environment=CRM_ATENDIMENTO_SCHEMA_MANAGED=true
+Environment=CRM_ATENDIMENTO_EXPECTED_DATABASE=skincos_staging
+Environment=CRM_ATENDIMENTO_EXPECTED_DATABASE_USER=skincos_staging_crm_app
+Environment=CRM_ATENDIMENTO_ACTOR_SIGNATURE_VERSION=2
+Environment=ATENDIMENTO_RUNTIME_RELEASE_SHA=__RELEASE_SHA__
+Environment=ATENDIMENTO_REPLAY_STATE_FILE=__STATE_ROOT__/crm-atendimento/var/replay-protection.json
+Environment=CRM_MODULE_CONTROL_FILE=__CONFIG_ROOT__/atendimento-staging/module-control.json
+Environment=HARMONIA_WORKER_ENABLED=false
+Environment=WA_BOOTSTRAP_SYNC_ENABLED=false
+Environment=WA_BOOTSTRAP_SYNC_AUTO_ON_CONNECTED=false
+Environment=CRM_GRACEFUL_SHUTDOWN=true
+ExecStart=/usr/bin/node __REPO_ROOT__/crm/api/server/atendimentoRuntime.js
 Restart=always
 RestartSec=5
 TimeoutStopSec=20

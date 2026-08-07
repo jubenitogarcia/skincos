@@ -35,6 +35,24 @@ Este catálogo define os serviços críticos do repositório, suas dependências
 - Gates mínimos: `npm --prefix crm/api test`.
 - Runbooks: `docs/observability.md`, `docs/auth.md`.
 
+## Clientes / Atendimento isolado (não promovido)
+
+- Caminho: `crm/api/server/atendimentoRuntime.js`, `ops/runtime/units/crm-atendimento-*.service`.
+- Propósito: superfície de Clientes/Atendimento independente, inicialmente só
+  leitura, com HMAC v2, replay persistente, controle local fail-closed e
+  shutdown gracioso. Não inicia Harmonia nem o worker contínuo.
+- Bind: somente loopback (`8111` staging, `8110` produção); health PII-free é
+  independente do banco e readiness é interno/tokenizado.
+- Dependências críticas: banco dedicado/role read-only, controle SHA, ledger de
+  replay, migrations aditivas de fontes e aprovação clínica, antes de qualquer
+  rota pública dedicada.
+- Estado: template e testes versionados; nenhuma instalação, túnel, DNS,
+  migration ou promoção é inferida deste catálogo.
+- Gates mínimos: `npm --prefix crm/api test`, testes do proxy do console,
+  `node scripts/tests/clientes-production-readonly-runtime.test.mjs`, smoke
+  assinado do SHA instalado e rollback comprovado.
+- Runbook: `docs/runbooks/clientes-production-readonly-runtime.md`.
+
 ## Escala API
 
 - Caminho: `workforce/schedule/`

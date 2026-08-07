@@ -5815,6 +5815,8 @@ export function createAtendimentoStore(options = {}) {
     const clinicalApprovalStore = options.clinicalApprovalStore || null
     const schemaManaged = options.schemaManaged === true || String(process.env.CRM_ATENDIMENTO_SCHEMA_MANAGED || '').trim().toLowerCase() === 'true'
     const canarySelectorSecret = commercialCanarySelectorSecret(options)
+    const expectedDatabase = String(options.expectedDatabase || process.env.CRM_ATENDIMENTO_EXPECTED_DATABASE || '').trim()
+    const expectedDatabaseUser = String(options.expectedDatabaseUser || process.env.CRM_ATENDIMENTO_EXPECTED_DATABASE_USER || '').trim()
     let readinessPromise = null
 
     async function ensureReady() {
@@ -5838,6 +5840,48 @@ export function createAtendimentoStore(options = {}) {
                 ok: !!pgPool,
                 databaseConfigured: !!pgPool,
             }
+        },
+
+        // Unlike health(), readiness intentionally performs the minimum
+        // dependency probe necessary to serve the isolated Clientes runtime.
+        // It never runs migrations and only reads PostgreSQL metadata, so an
+        // application role with no DDL remains sufficient.
+        async readiness() {
+            requirePool(pgPool)
+            const result = await pgPool.query(`
+                select
+                    current_database() as database_name,
+                    current_user as database_user,
+                    (current_setting('transaction_read_only', true) = 'on'
+                        or current_setting('default_transaction_read_only', true) = 'on') as transaction_read_only,
+                    to_regclass('crm_atendimento.schema_migrations') is not null as migrations_table,
+                    to_regclass('crm_atendimento.global_client_identities') is not null as identities_table,
+                    to_regclass('crm_atendimento.commercial_policy_config') is not null as commercial_policy_table,
+                    to_regclass('crm_atendimento.clientes_source_operation_runs') is not null as source_operations_table,
+                    to_regclass('clinical_approval.rules') is not null as clinical_approval_table
+            `)
+            const row = result.rows[0] || {}
+            const databaseIdentity = (!expectedDatabase || row.database_name === expectedDatabase)
+                && (!expectedDatabaseUser || row.database_user === expectedDatabaseUser)
+            const schemaReady = row.migrations_table === true
+                && row.identities_table === true
+                && row.commercial_policy_table === true
+                && row.source_operations_table === true
+                && row.clinical_approval_table === true
+            return {
+                ok: databaseIdentity && schemaReady && row.transaction_read_only === true,
+                databaseReachable: true,
+                databaseIdentity,
+                schemaManaged,
+                schemaReady,
+                sourceOperationsReady: row.source_operations_table === true,
+                clinicalApprovalReady: row.clinical_approval_table === true,
+                transactionReadOnly: row.transaction_read_only === true,
+            }
+        },
+
+        async close() {
+            if (typeof pgPool?.end === 'function') await pgPool.end()
         },
 
         async migrate() {

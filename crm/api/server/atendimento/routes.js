@@ -306,6 +306,12 @@ export function createAtendimentoRouter(options = {}) {
     const metaAdsOfferContextToken = String(
         options.metaAdsOfferContextToken || process.env.META_ADS_OFFER_CONTEXT_TOKEN || '',
     ).trim()
+    // The dedicated read-only runtime owns a replay-protected actor verifier.
+    // Keep the shared CRM's long-lived v1 verifier intact until it can migrate
+    // under its own compatibility gate.
+    const customVerifySignedActor = typeof options.verifySignedActor === 'function'
+        ? options.verifySignedActor
+        : null
     const getDevSession = options.getDevSession || null
     const expressRouter = options.routerFactory ? options.routerFactory() : express.Router()
 
@@ -339,10 +345,12 @@ export function createAtendimentoRouter(options = {}) {
                 req.metaAdsOfferContext = true
                 return next()
             }
-            if (!actorKey && String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+            if (!actorKey && !customVerifySignedActor && String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
                 return json(res, 503, { ok: false, error: 'ACTOR_KEY_NOT_CONFIGURED' })
             }
-            let actor = await verifySignedActor(req, actorKey)
+            let actor = customVerifySignedActor
+                ? await customVerifySignedActor(req)
+                : await verifySignedActor(req, actorKey)
             if (!actor) actor = devSessionActor(req, getDevSession)
             if (!actor) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
             if (!canAccessAtendimento(actor, req.path, req.method)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
