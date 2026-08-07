@@ -95,7 +95,7 @@ export function IdentityClusterWorkspace() {
   const [applyReason, setApplyReason] = useState('')
   const [revealOpen, setRevealOpen] = useState(false)
   const [revealReason, setRevealReason] = useState('')
-  const [revealFields, setRevealFields] = useState<Array<'phone' | 'email'>>([])
+  const [revealFields, setRevealFields] = useState<string[]>([])
   const [revealed, setRevealed] = useState<Array<{ sourceLabel: string; name: string; phone: string[]; email: string[] }>>([])
 
   const load = useCallback(async () => {
@@ -154,10 +154,11 @@ export function IdentityClusterWorkspace() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível aplicar a revisão em lote.') } finally { setApplying(false) }
   }
   const reveal = async () => {
-    if (!detail || revealReason.trim().length < 3 || !revealFields.length) return
+    const requestedFields = revealFields.filter((field): field is 'phone' | 'email' => field === 'phone' || field === 'email')
+    if (!detail || revealReason.trim().length < 3 || !requestedFields.length) return
     try {
       setRevealing(true); setDetailError('')
-      const result = await revealIdentityCluster(detail.clusterKey, { expectedVersion: detail.version, fields: revealFields, reason: revealReason.trim(), confirmation: 'REVIEW_CLUSTER', unit: filters.unit })
+      const result = await revealIdentityCluster(detail.clusterKey, { expectedVersion: detail.version, fields: requestedFields, reason: revealReason.trim(), confirmation: 'REVIEW_CLUSTER', unit: filters.unit })
       if (!result.ok) throw new Error(result.error || 'Não foi possível revelar os dados de contato.')
       setRevealed(result.contacts); setRevealOpen(false); setNotice('Reveal registrado em ledger append-only; os dados serão removidos da tela após cinco minutos.')
     } catch (cause) { setDetailError(cause instanceof Error ? cause.message : 'Não foi possível revelar os dados de contato.') } finally { setRevealing(false) }
