@@ -1312,7 +1312,7 @@ export default function BeautyMovementExperience({
                                 {reading.map(renderFinaleCard)}
                             </div>
                         ) : finaleStage === "confirmation" || finaleStage === "result" ? (
-                            <div className={`${styles.finaleCardGrid} ${styles.finaleCardGridSettled}`} role="group" aria-label="Cartas finais">
+                            <div className={styles.finaleCardGrid} role="group" aria-label="Cartas finais">
                                 {reading.map(renderFinaleCard)}
                             </div>
                         ) : finaleStage === "hidden" && !waitingForInitialDeal ? (

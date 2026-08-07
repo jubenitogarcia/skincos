@@ -63,7 +63,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.doesNotMatch(experience, /Ver minha leitura/);
     assert.doesNotMatch(experience, /actsStack|revealedStrip/);
     assert.doesNotMatch(experience, /BeautyMovementModalReading/);
-    assert.match(experience, /finaleCardGridSettled/);
+    assert.doesNotMatch(experience, /finaleCardGridSettled/);
     assert.match(experience, /aria-label="Cartas finais"/);
     assert.match(experience, /className=\{styles\.cardSparkles\}/);
     assert.match(experience, /className=\{styles\.deckStage\}/);
@@ -123,12 +123,13 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     );
     assert.doesNotMatch(styles, /\.tableStage\[data-hand-stage="deal"\] \.cardButton:nth-child\(2\)[^}]*animation-delay/);
     assert.doesNotMatch(styles, /\.tableStage\[data-hand-stage="deal"\] \.cardButton:nth-child\(3\)[^}]*animation-delay/);
-    assert.match(styles, /@keyframes finaleReturnToDeck/);
+    assert.doesNotMatch(styles, /@keyframes finaleReturnToDeck/);
     assert.match(styles, /@keyframes finaleCardsReappear/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCard\s*\{\s*animation: finaleCardsReappear/);
+    assert.doesNotMatch(styles, /\.finaleCardGridSettled/);
     assert.match(styles, /@keyframes finaleIllustrationPulse/);
     assert.match(styles, /@keyframes finaleIllustrationPulse[\s\S]*100%[\s\S]*opacity: 1/);
     assert.match(styles, /\.finaleCardGrid/);
-    assert.match(styles, /\.finaleCardGridSettled/);
     assert.match(styles, /\.inlineFinale/);
     assert.match(styles, /\.deckPrompt/);
     assert.match(styles, /\.deckPrompt[\s\S]*bottom: 148px/);
