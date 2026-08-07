@@ -27,6 +27,12 @@ const ACTIVE_ACTION_STATUSES = Object.freeze(['open', 'contacted', 'responded', 
 const ACTION_STATUSES = Object.freeze([...ACTIVE_ACTION_STATUSES, 'won_sale', 'returned', 'closed', 'cancelled'])
 const ABSENCE_TYPES = new Set(['vacation', 'absence', 'leave'])
 const COMMERCIAL_REQUIRED_SOURCE_IDS = Object.freeze(requiredClientesSources().map((source) => source.id).sort())
+// This is intentionally a literal contract rather than an import from the
+// analytics module: Operations v2 must remain deployable before Analytics,
+// while cohort/owner-assignment mutations fail closed until that additive
+// migration is active.
+const COMMERCIAL_ANALYTICS_EXPERIMENT_MIGRATION_ID = '20260807_commercial_analytics_v2'
+const EXPERIMENT_CROSSOVER_BLOCKING_VARIANTS = Object.freeze(['control', 'excluded'])
 const OUTCOME_STATUSES = Object.freeze({
     no_response: 'contacted',
     wrong_number: 'closed',
@@ -338,6 +344,72 @@ async function sourceStale(db, dependencies) {
         from crm_atendimento.clientes_source_operation_checkpoints checkpoint
         where checkpoint.source_id=any($1::text[])`, [COMMERCIAL_REQUIRED_SOURCE_IDS])
     return count(result.rows[0]?.checkpoint_count) < COMMERCIAL_REQUIRED_SOURCE_IDS.length || bool(result.rows[0]?.stale)
+}
+
+function normalizedExperimentIdentityIds(identityIds) {
+    return [...new Set((Array.isArray(identityIds) ? identityIds : [identityIds])
+        .map((identityId) => assertUuid(identityId, 'INVALID_COMMERCIAL_EXPERIMENT_IDENTITY')))].sort()
+}
+
+async function experimentCrossoverGuardReadiness(db) {
+    // `to_regclass` and explicit SELECT grants let Operations retain a safe
+    // hook before Analytics is promoted.  Absence of either table, privilege
+    // or active migration is an unsafe/unknown experiment state, never an
+    // empty holdout set.
+    const result = await db.query(`select
+        to_regclass('crm_atendimento.commercial_experiment_assignments') is not null as assignments,
+        to_regclass('crm_atendimento.commercial_experiments') is not null as experiments,
+        coalesce(has_table_privilege(current_user, to_regclass('crm_atendimento.commercial_experiment_assignments'), 'SELECT'), false) as assignments_read,
+        coalesce(has_table_privilege(current_user, to_regclass('crm_atendimento.commercial_experiments'), 'SELECT'), false) as experiments_read,
+        exists(select 1 from crm_atendimento.schema_migrations
+            where id=$1 and rolled_back_at is null) as migration_ready`, [COMMERCIAL_ANALYTICS_EXPERIMENT_MIGRATION_ID])
+    const row = result.rows[0] || {}
+    return {
+        ready: bool(row.assignments) && bool(row.experiments) && bool(row.assignments_read) && bool(row.experiments_read) && bool(row.migration_ready),
+        assignments: bool(row.assignments),
+        experiments: bool(row.experiments),
+        assignmentsRead: bool(row.assignments_read),
+        experimentsRead: bool(row.experiments_read),
+        migrationReady: bool(row.migration_ready),
+    }
+}
+
+async function activeExperimentHoldouts(client, { unitId, identityIds }) {
+    const unit = assertUuid(unitId, 'INVALID_COMMERCIAL_EXPERIMENT_UNIT')
+    const identities = normalizedExperimentIdentityIds(identityIds)
+    if (!identities.length) return []
+    const readiness = await experimentCrossoverGuardReadiness(client)
+    if (!readiness.ready) throw operationalError('COMMERCIAL_EXPERIMENT_GUARD_NOT_READY', 409)
+
+    // Analytics must acquire this same deterministic namespace before writing
+    // assignments.  Operations holds it across the check and mutation so a
+    // second Operations request cannot turn a control/excluded identity into
+    // a silent crossover.
+    for (const identityId of identities) {
+        await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [
+            `commercial-experiment-crossover:${unit}:${identityId}`,
+        ])
+    }
+    const result = await client.query(`select assignment.identity_id::text,assignment.variant
+        from crm_atendimento.commercial_experiment_assignments assignment
+        join crm_atendimento.commercial_experiments experiment on experiment.id=assignment.experiment_id
+        where assignment.identity_id=any($1::uuid[])
+          and assignment.unit_id=$2::uuid
+          and assignment.variant=any($3::text[])
+          and experiment.state='active'
+          and experiment.starts_at <= now()
+          and experiment.ends_at > now()
+        order by assignment.identity_id asc,assignment.variant asc
+        for key share of assignment,experiment`, [identities, unit, EXPERIMENT_CROSSOVER_BLOCKING_VARIANTS])
+    return (result.rows || []).map((row) => ({
+        identityId: assertUuid(row.identity_id, 'COMMERCIAL_EXPERIMENT_ASSIGNMENT_INVALID'),
+        variant: EXPERIMENT_CROSSOVER_BLOCKING_VARIANTS.includes(text(row.variant)) ? text(row.variant) : 'excluded',
+    }))
+}
+
+async function assertNoActiveExperimentHoldout(client, context) {
+    const holdouts = await activeExperimentHoldouts(client, context)
+    if (holdouts.length) throw operationalError('COMMERCIAL_EXPERIMENT_HOLDOUT_ACTIVE', 409)
 }
 
 function scopeWhere(scope, params, unitColumn = 'unit.slug') {
@@ -913,6 +985,13 @@ async function createCampaign(client, payload, actor) {
         fingerprintPayload: { campaign: frozenCampaignContext(campaign), contextHash },
         execute: async ({ actorRef }) => {
             const unit = await resolveCampaignUnit(client, unitSlug)
+            // Do this before the campaign/cohort write path.  A missing
+            // Analytics migration is treated as unknown eligibility and is
+            // rejected by the guard rather than allowing a silent crossover.
+            await assertNoActiveExperimentHoldout(client, {
+                unitId: unit.id,
+                identityIds: campaign.identityIds,
+            })
             await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [`commercial-operations:campaign:${unit.id}:${contextHash}`])
             const existing = await client.query(`select id::text from crm_atendimento.commercial_campaigns
                 where unit_id=$1 and context_hash=$2
@@ -1099,7 +1178,7 @@ async function actionProjection(client, actionId, actor) {
 async function actionForMutation(client, actionId, actor) {
     const id = assertUuid(actionId, 'INVALID_COMMERCIAL_ACTION')
     const result = await client.query(`select action.id::text,action.identity_id::text,action.revision,action.status,action.owner,
-            unit.slug as unit_slug
+            action.unit_id::text as unit_id,unit.slug as unit_slug
         from crm_atendimento.commercial_actions action
         join crm_atendimento.units unit on unit.id=action.unit_id
         where action.id=$1 for update of action`, [id])
@@ -1123,6 +1202,10 @@ async function reassignAction(client, actionId, payload, actor) {
                 throw operationalError('COMMERCIAL_ACTION_CONFLICT', 409)
             }
             if (owner === action.owner) throw operationalError('COMMERCIAL_ACTION_REASSIGNMENT_UNCHANGED', 400)
+            await assertNoActiveExperimentHoldout(client, {
+                unitId: action.unit_id,
+                identityIds: [action.identity_id],
+            })
             await client.query(`update crm_atendimento.commercial_actions
                 set owner=$2,revision=revision+1,updated_by=$3,updated_at=now()
                 where id=$1`, [id, owner, actorRef])
@@ -1266,7 +1349,7 @@ async function upsertAbsence(client, payload, actor) {
 async function rebalanceActions(client, scope, { lock = false } = {}) {
     const params = []
     const where = [scopeWhere(scope, params), `action.status=any($${params.push(ACTIVE_ACTION_STATUSES)}::text[])`]
-    const result = await client.query(`select action.id::text,action.identity_id::text,action.owner,action.status,action.revision,
+    const result = await client.query(`select action.id::text,action.identity_id::text,action.unit_id::text as unit_id,action.owner,action.status,action.revision,
             unit.slug as unit_slug,
             exists(select 1 from crm_atendimento.commercial_owner_absences absence
                 where absence.unit_id=action.unit_id and absence.owner=action.owner
@@ -1340,6 +1423,18 @@ async function applyRebalance(client, payload, actor) {
                 throw operationalError('COMMERCIAL_REBALANCE_CONFLICT', 409)
             }
             const byId = new Map(actions.map((action) => [text(action.id).toLowerCase(), action]))
+            const identitiesByUnit = new Map()
+            for (const move of moves) {
+                const action = byId.get(move.actionId)
+                if (!action) continue
+                const unitId = assertUuid(action.unit_id, 'INVALID_COMMERCIAL_EXPERIMENT_UNIT')
+                const identities = identitiesByUnit.get(unitId) || []
+                identities.push(action.identity_id)
+                identitiesByUnit.set(unitId, identities)
+            }
+            for (const [unitId, identityIds] of [...identitiesByUnit.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+                await assertNoActiveExperimentHoldout(client, { unitId, identityIds })
+            }
             const applied = []
             for (const move of moves) {
                 const action = byId.get(move.actionId)
@@ -1520,7 +1615,15 @@ export function createCommercialOperationsStore({ pool, databaseUrl } = {}) {
         async readiness(actor) {
             requirePool(pgPool)
             assertCommercialOperationsManager(actor)
-            return commercialOperationsReadiness(pgPool)
+            const readiness = await commercialOperationsReadiness(pgPool)
+            // Analytics is an explicit write-guard dependency rather than a
+            // prerequisite for the read-only Operations surface.  Report it
+            // separately so an operator can see why cohort/assignment writes
+            // remain fail-closed before the Analytics migration is promoted.
+            const experimentCrossoverGuard = readiness.ready
+                ? await experimentCrossoverGuardReadiness(pgPool)
+                : { ready: false, assignments: false, experiments: false, assignmentsRead: false, experimentsRead: false, migrationReady: false }
+            return { ...readiness, experimentCrossoverGuard }
         },
 
         async wallet(query, actor) {
@@ -1588,11 +1691,16 @@ export function createCommercialOperationsStore({ pool, databaseUrl } = {}) {
 export const __testables = {
     ABSENCE_TYPES,
     ACTION_STATUSES,
+    COMMERCIAL_ANALYTICS_EXPERIMENT_MIGRATION_ID,
     COMMERCIAL_REQUIRED_SOURCE_IDS,
     COMMERCIAL_OPERATIONS_SAFETY_FLAGS,
+    EXPERIMENT_CROSSOVER_BLOCKING_VARIANTS,
+    activeExperimentHoldouts,
     activeActionStatuses: ACTIVE_ACTION_STATUSES,
     actionFlagSql,
+    assertNoActiveExperimentHoldout,
     commercialOperationsUnitScope,
+    experimentCrossoverGuardReadiness,
     mapWalletAction,
     mutationInput,
     normalizeCapacities,

@@ -34,6 +34,16 @@ function readyAvailability() {
     }
 }
 
+function experimentGuardAvailability({ ready = true } = {}) {
+    return {
+        assignments: ready,
+        experiments: ready,
+        assignments_read: ready,
+        experiments_read: ready,
+        migration_ready: ready,
+    }
+}
+
 test('fails closed for a manager without an explicit unit claim and retains hard-disabled flags', () => {
     assert.deepEqual(__testables.commercialOperationsUnitScope({ id: 'gestor.crm', role: 'GESTOR' }), [])
     assert.throws(() => __testables.requestedUnitScope({ id: 'gestor.crm', role: 'GESTOR' }, 'centro'), /COMMERCIAL_UNIT_FORBIDDEN/)
@@ -63,6 +73,38 @@ test('treats every required consent/block and identity source as stale until a c
         async query() { return { rows: [{ checkpoint_count: __testables.COMMERCIAL_REQUIRED_SOURCE_IDS.length - 1, stale: false }] } },
     }, { sourceCheckpoints: true })
     assert.equal(missing, true)
+})
+
+test('fails closed when the analytics experiment guard is absent and permits only an empty active holdout result', async () => {
+    const unitId = '33333333-3333-4333-8333-333333333333'
+    const identityId = '22222222-2222-4222-8222-222222222222'
+    await assert.rejects(() => __testables.assertNoActiveExperimentHoldout({
+        async query(sql) {
+            if (sql.includes("to_regclass('crm_atendimento.commercial_experiment_assignments')")) {
+                return { rows: [experimentGuardAvailability({ ready: false })] }
+            }
+            throw new Error(`unexpected sql: ${sql}`)
+        },
+    }, { unitId, identityIds: [identityId] }), /COMMERCIAL_EXPERIMENT_GUARD_NOT_READY/)
+
+    const calls = []
+    await __testables.assertNoActiveExperimentHoldout({
+        async query(sql, values = []) {
+            calls.push({ sql, values })
+            if (sql.includes("to_regclass('crm_atendimento.commercial_experiment_assignments')")) {
+                return { rows: [experimentGuardAvailability()] }
+            }
+            if (sql.includes('pg_advisory_xact_lock')) return { rows: [] }
+            if (sql.includes('from crm_atendimento.commercial_experiment_assignments assignment')) return { rows: [] }
+            throw new Error(`unexpected sql: ${sql}`)
+        },
+    }, { unitId, identityIds: [identityId] })
+    assert.equal(calls.some((call) => call.sql.includes('from crm_atendimento.commercial_experiment_assignments assignment')), true)
+    const holdoutQuery = calls.find((call) => call.sql.includes('from crm_atendimento.commercial_experiment_assignments assignment'))
+    assert.equal(holdoutQuery.values[2].join(','), 'control,excluded')
+    assert.match(holdoutQuery.sql, /experiment\.state='active'/)
+    assert.match(holdoutQuery.sql, /experiment\.starts_at <= now\(\)/)
+    assert.match(holdoutQuery.sql, /experiment\.ends_at > now\(\)/)
 })
 
 test('reports migration readiness only when relations and append-only triggers are present', async () => {
@@ -162,6 +204,7 @@ test('exposes an injected readiness-only store without opening a mutation path',
     const pool = {
         async query(sql) {
             if (sql.includes("to_regclass('crm_atendimento.commercial_actions')")) return { rows: [readyAvailability()] }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_experiment_assignments')")) return { rows: [experimentGuardAvailability({ ready: false })] }
             if (sql.includes('where id=$1 and rolled_back_at is null')) return { rows: [{ id: '20260807_commercial_operations_v2' }] }
             throw new Error(`unexpected sql: ${sql}`)
         },
@@ -170,6 +213,7 @@ test('exposes an injected readiness-only store without opening a mutation path',
     const readiness = await store.readiness(actor)
     assert.equal(readiness.ready, true)
     assert.equal(readiness.safety.commercialContactWritesEnabled, false)
+    assert.equal(readiness.experimentCrossoverGuard.ready, false)
 })
 
 test('records an opt-out request as an outcome without writing consent or dispatching contact', async () => {
@@ -254,6 +298,90 @@ test('rejects a stale optimistic revision before an action reassignment can writ
         }, actor), /COMMERCIAL_ACTION_CONFLICT/)
         assert.equal(calls.some((call) => call.sql.includes('update crm_atendimento.commercial_actions')), false)
         assert.equal(calls.some((call) => call.sql.includes('insert into crm_atendimento.commercial_action_events')), false)
+        assert.equal(calls.some((call) => call.sql.includes('insert into crm_atendimento.commercial_operation_mutations')), false)
+        assert.equal(calls.at(-1).sql, 'rollback')
+    } finally {
+        if (previous === undefined) delete process.env.ATENDIMENTO_ACTOR_HMAC_KEY
+        else process.env.ATENDIMENTO_ACTOR_HMAC_KEY = previous
+    }
+})
+
+test('rejects campaign creation when an active experiment has the identity in control or excluded', async () => {
+    const previous = process.env.ATENDIMENTO_ACTOR_HMAC_KEY
+    process.env.ATENDIMENTO_ACTOR_HMAC_KEY = 'd'.repeat(32)
+    const identityId = '22222222-2222-4222-8222-222222222222'
+    const unitId = '33333333-3333-4333-8333-333333333333'
+    const calls = []
+    const client = {
+        release() {},
+        async query(sql, values = []) {
+            calls.push({ sql, values })
+            if (['begin', 'commit', 'rollback'].includes(sql)) return { rows: [] }
+            if (sql.includes('pg_advisory_xact_lock')) return { rows: [] }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_actions')")) return { rows: [readyAvailability()] }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_experiment_assignments')")) return { rows: [experimentGuardAvailability()] }
+            if (sql.includes('where id=$1 and rolled_back_at is null')) return { rows: [{ id: '20260807_commercial_operations_v2' }] }
+            if (sql.includes('from crm_atendimento.commercial_operation_mutations')) return { rows: [] }
+            if (sql.includes('select id::text,slug from crm_atendimento.units where slug=$1')) return { rows: [{ id: unitId, slug: 'centro' }] }
+            if (sql.includes('from crm_atendimento.commercial_experiment_assignments assignment')) {
+                return { rows: [{ identity_id: identityId, variant: 'control' }] }
+            }
+            throw new Error(`unexpected sql: ${sql}`)
+        },
+    }
+    try {
+        const store = createCommercialOperationsStore({ pool: { connect: async () => client } })
+        await assert.rejects(() => store.createCampaign({
+            idempotencyKey: 'campaign:synthetic-holdout-1', reason: 'Coorte sintética de experimento',
+            name: 'Retorno sintético', segmentKey: 'return', segmentVersion: 'v1', unit: 'centro', owner: 'gestor.crm',
+            filters: { status: ['open'] }, identityIds: [identityId], cutoffAt: '2026-08-07T12:00:00.000Z',
+            assignmentWindowStart: '2026-08-08T00:00:00.000Z', assignmentWindowEnd: '2026-08-15T00:00:00.000Z', controlGroupPercent: 20,
+        }, actor), /COMMERCIAL_EXPERIMENT_HOLDOUT_ACTIVE/)
+        assert.equal(calls.some((call) => call.sql.includes('insert into crm_atendimento.commercial_campaigns')), false)
+        assert.equal(calls.some((call) => call.sql.includes('insert into crm_atendimento.commercial_campaign_members')), false)
+        assert.equal(calls.some((call) => call.sql.includes('insert into crm_atendimento.commercial_operation_mutations')), false)
+        assert.equal(calls.at(-1).sql, 'rollback')
+    } finally {
+        if (previous === undefined) delete process.env.ATENDIMENTO_ACTOR_HMAC_KEY
+        else process.env.ATENDIMENTO_ACTOR_HMAC_KEY = previous
+    }
+})
+
+test('rejects action reassignment before action, campaign or ledger writes for an active experiment holdout', async () => {
+    const previous = process.env.ATENDIMENTO_ACTOR_HMAC_KEY
+    process.env.ATENDIMENTO_ACTOR_HMAC_KEY = 'e'.repeat(32)
+    const actionId = '11111111-1111-4111-8111-111111111111'
+    const identityId = '22222222-2222-4222-8222-222222222222'
+    const unitId = '33333333-3333-4333-8333-333333333333'
+    const calls = []
+    const client = {
+        release() {},
+        async query(sql, values = []) {
+            calls.push({ sql, values })
+            if (['begin', 'commit', 'rollback'].includes(sql)) return { rows: [] }
+            if (sql.includes('pg_advisory_xact_lock')) return { rows: [] }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_actions')")) return { rows: [readyAvailability()] }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_experiment_assignments')")) return { rows: [experimentGuardAvailability()] }
+            if (sql.includes('where id=$1 and rolled_back_at is null')) return { rows: [{ id: '20260807_commercial_operations_v2' }] }
+            if (sql.includes('from crm_atendimento.commercial_operation_mutations')) return { rows: [] }
+            if (sql.includes('where action.id=$1 for update of action')) {
+                return { rows: [{ id: actionId, identity_id: identityId, unit_id: unitId, revision: 2, status: 'open', owner: 'gestor.crm', unit_slug: 'centro' }] }
+            }
+            if (sql.includes('from crm_atendimento.commercial_experiment_assignments assignment')) {
+                return { rows: [{ identity_id: identityId, variant: 'excluded' }] }
+            }
+            throw new Error(`unexpected sql: ${sql}`)
+        },
+    }
+    try {
+        const store = createCommercialOperationsStore({ pool: { connect: async () => client } })
+        await assert.rejects(() => store.reassignAction(actionId, {
+            idempotencyKey: 'action:synthetic-holdout-1', expectedRevision: 2,
+            reason: 'Redistribuição sintética bloqueada', owner: 'gestor.backup',
+        }, actor), /COMMERCIAL_EXPERIMENT_HOLDOUT_ACTIVE/)
+        assert.equal(calls.some((call) => call.sql.includes('update crm_atendimento.commercial_actions')), false)
+        assert.equal(calls.some((call) => call.sql.includes('insert into crm_atendimento.commercial_action_events')), false)
+        assert.equal(calls.some((call) => call.sql.includes('update crm_atendimento.commercial_campaign_members')), false)
         assert.equal(calls.some((call) => call.sql.includes('insert into crm_atendimento.commercial_operation_mutations')), false)
         assert.equal(calls.at(-1).sql, 'rollback')
     } finally {

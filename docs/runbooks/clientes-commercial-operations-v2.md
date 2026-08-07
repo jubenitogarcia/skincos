@@ -31,7 +31,7 @@ assinatura de ator da API.
 
 | Rota | Uso | Dados retornados |
 | --- | --- | --- |
-| `GET /readiness` | Estado da migration e dos ledgers | Sem PII; flags hard-disabled. |
+| `GET /readiness` | Estado da migration, dos ledgers e do guard de crossover | Sem PII; flags hard-disabled e dependência de Analytics explícita. |
 | `GET /wallet` | Carteira paginada e filtros operacionais | IDs de ação, unidade, status, flags e datas; sem identidade, nome, telefone, e-mail ou notas. |
 | `GET /team` | Carga, SLA, outcomes agregados, ausências e duração média de estágios | Agregados por responsável; sem cliente. |
 | `GET /campaigns` e `/:campaignId` | Coortes congeladas e eventos | Snapshot allowlisted, contagens e referências opacas; sem membros individuais. |
@@ -103,6 +103,33 @@ revisão, stale ou bloqueado é promovido a holdout. Mudanças de contexto são
 recusadas; somente o ciclo de vida da campanha muda com versão otimista. Uma
 coorte semanticamente idêntica é deduplicada sob lock de unidade/contexto.
 
+## Holdout e prevenção de crossover
+
+Antes de criar uma campanha ou reatribuir/rebalancear uma ação, o backend
+consulta o contrato de Analytics
+`20260807_commercial_analytics_v2`. Para a mesma unidade, uma assignment
+`control` ou `excluded` de experimento em estado `active`, com janela contendo
+o instante atual, retorna `409 COMMERCIAL_EXPERIMENT_HOLDOUT_ACTIVE` antes de
+qualquer escrita de ação, campanha, membership, evento ou ledger. A v2 não
+tem rota de criação de ação; qualquer rota futura que a adicione deve chamar o
+mesmo guard antes do `INSERT`.
+
+O guard exige `commercial_experiment_assignments`,
+`commercial_experiments`, permissões `SELECT` e o registro ativo da migration.
+Enquanto Analytics não estiver integrado/aplicado, ou se qualquer um desses
+elementos estiver indisponível, a operação falha fechada com
+`409 COMMERCIAL_EXPERIMENT_GUARD_NOT_READY`; ausência de tabela nunca é
+interpretada como coorte vazia. Operations não cria, altera ou remove
+assignments de experimento.
+
+O namespace de lock compartilhado é
+`commercial-experiment-crossover:<unit-id>:<identity-id>`, em ordem
+determinística. A implementação de Analytics deve adquirir o mesmo lock antes
+de persistir assignments para fechar a corrida entre uma atribuição de
+experimento e uma operação comercial. Essa integração é uma dependência da
+promotion da escrita interna; até lá, o fail-closed impede o uso dessas
+mutações. Nenhum desses fluxos habilita contato, envio ou automação.
+
 ## Fontes e freshness
 
 Elegibilidade e Customer 360 leem somente checkpoints de fonte já validados.
@@ -135,6 +162,8 @@ Também confirme:
   faltar;
 - repetição, conflito de fingerprint, escopo de unidade vazio, revisão
   otimista e rebalanceamento concorrente por fixtures sintéticas;
+- campanha/reassign bloqueados por `control`/`excluded` ativo, e bloqueio
+  fail-closed quando a migration/role/tabela de Analytics não estiver pronta;
 - o retorno de carteira, equipe, campanha e timeline não contém telefone,
   e-mail, nome de cliente, nota, `context` ou `evidence` bruto.
 
