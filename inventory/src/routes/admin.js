@@ -33,6 +33,13 @@ const TEAM_ADMIN_ROLES = ['ADMIN', 'GESTOR', 'GERENTE'];
 const TEAM_READ_ROLES = [...TEAM_ADMIN_ROLES, 'SUPERVISOR'];
 const PASSWORD_MIN_LENGTH = 12;
 
+function isOnboardingDependencyError(value) {
+  const code = String(value || '').trim().toUpperCase();
+  return code === 'IDENTITY_PII_KEY_NOT_CONFIGURED'
+    || code === 'AUTH_EMAIL_NOT_CONFIGURED'
+    || /^(WORKFORCE_|IDENTITY_WORKFORCE_|SMTP_|EMAIL_|MODULE_|TIMEKEEPING_|RELEASE_AFFINITY_|RUNTIME_BINDINGS_|SERVICE_|DATABASE_UNAVAILABLE|ONBOARDING_MIGRATION_REQUIRED)/.test(code);
+}
+
 function unifiedTeamEnabled(env) {
   const value = String(env?.UNIFIED_TEAM_ENABLED || '').trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(value);
@@ -849,7 +856,7 @@ export async function handleAdminRoutes({
       const message = String(error?.message || 'ONBOARDING_FAILED');
       const status = ['ONBOARDING_IDEMPOTENCY_CONFLICT', 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED'].includes(message)
         ? 409
-        : message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' || message === 'AUTH_EMAIL_NOT_CONFIGURED' || /^WORKFORCE_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
+        : isOnboardingDependencyError(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Configuração segura de cadastro pendente' : 'Não foi possível concluir o cadastro', code: message }), { status }, appOrigin);
     }
   }
@@ -1705,7 +1712,7 @@ export async function handleAdminRoutes({
         await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_UPDATED', actorRole: auth.user.role, outcome: 'PENDING', itemCount: 1, unitCount: normalizeAllowedUnits(current?.units_json).length });
         return withCORS(JSON.stringify({ success: false, error: 'Atualização local da equipe pendente de compensação', code: 'TEAM_LOCAL_PERSISTENCE_PENDING' }), { status: 503 }, appOrigin);
       }
-      const status = /^WORKFORCE_|^IDENTITY_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
+      const status = isOnboardingDependencyError(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Atualização da identidade pendente' : 'Não foi possível atualizar a equipe', code: message.slice(0, 120) }), { status }, appOrigin);
     }
   }

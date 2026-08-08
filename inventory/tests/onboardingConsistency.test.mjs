@@ -260,6 +260,14 @@ test('unified team rollout is explicit, staging-only and fail-closed by default'
   assert.match(workflow, /--var "UNIFIED_TEAM_ENABLED:\$unified_team_var"/);
 });
 
+test('unified team maps dependency outages to retryable 503 responses', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  assert.match(admin, /function isOnboardingDependencyError\(value\)/);
+  assert.match(admin, /IDENTITY_WORKFORCE_\|SMTP_\|EMAIL_\|MODULE_\|TIMEKEEPING_\|RELEASE_AFFINITY_\|RUNTIME_BINDINGS_\|SERVICE_\|DATABASE_UNAVAILABLE/);
+  assert.match(admin, /isOnboardingDependencyError\(message\) \? 503 : 500/);
+  assert.doesNotMatch(admin, /message === 'IDENTITY_PII_KEY_NOT_CONFIGURED'.*\^WORKFORCE_\|\^SMTP_\|\^EMAIL_/s);
+});
+
 test('the governed Ponto staging identity publisher preserves the unified-team flag', async () => {
   const workflow = await readFile(
     new URL('../../.github/workflows/ponto-progressive-release.yml', import.meta.url),

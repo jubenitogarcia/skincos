@@ -68,9 +68,13 @@ async function callWorkforce(env, path, payload, requestId) {
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result?.ok) {
-    const error = String(result?.error || `WORKFORCE_SYNC_${response.status}`);
+    // Workforce may expose a stable dependency code alongside a generic
+    // transport error (for example NOT_READY + DATABASE_UNAVAILABLE). Keep
+    // the stable code so Identity can classify the failure as retryable.
+    const error = String(result?.code || result?.error || `WORKFORCE_SYNC_${response.status}`);
     const failure = new Error(error);
     failure.status = response.status;
+    failure.upstreamError = result?.error || null;
     failure.requestId = result?.requestId || requestId || null;
     throw failure;
   }
