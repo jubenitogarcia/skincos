@@ -6,14 +6,14 @@ credenciais ou valores de configuração privada.
 
 ## Release promovido
 
-- Código e workflows gerados a partir de `main`: `34f840ee270bccd4efd1dc93e901450021477d95`.
-- Release nativo promovido: `34f840ee270bccd4efd1dc93e901450021477d95`.
-- Release anterior disponível para rollback: `fcfbc9537257a0ba807366bff840666e3e501516`.
-- Builder contínuo: `4.1.4`.
+- Código e workflows gerados a partir de `main`: `fec6ec3edf89afd9e6bdadeffa1a500998a9b6c6`.
+- Release nativo promovido: `fec6ec3edf89afd9e6bdadeffa1a500998a9b6c6`.
+- Release anterior disponível para rollback: `a60987dc3982e02a5a54b00930859331b7b20f51`.
+- Builder contínuo: `4.1.5`.
 - Builder Organizer: `1.0.2`.
-- Workflow principal gerado: 97 nodes e 117 conexões.
+- Workflow principal gerado: 98 nodes e 118 conexões.
 - Error handler gerado: 10 nodes e 12 conexões.
-- Organizer gerado: 5 nodes e 4 conexões.
+- Organizer gerado: 6 nodes e 5 conexões.
 
 Os exports foram regenerados pelos builders a partir da fonte privada do
 workflow. Não houve edição manual do export final.
@@ -33,9 +33,8 @@ anúncios.
 
 ## Bootstrap nativo do CCG-99
 
-O source candidate posterior a esta promoção mantém o mesmo contrato de
-workflows e adiciona o bootstrap nativo necessário para a rota automática de
-erro técnico:
+Esta promoção mantém o contrato de workflows e inclui o bootstrap nativo
+necessário para a rota automática de erro técnico:
 
 - builder contínuo `4.1.5`, com 98 nodes e 118 conexões no Creator;
 - o `CCG-00 Capture Recovery Context` registra somente lineage sanitizado antes
@@ -55,6 +54,32 @@ de `WorkflowExecutionService`, interrompendo a execução do error workflow
 antes de qualquer CCG-99. O bootstrap falha fechado se os módulos nativos
 esperados não existirem, em vez de iniciar Orb com a rota de recuperação
 incompleta.
+
+## Smoke nativo — erro técnico controlado
+
+Após a promoção, foi injetada uma indisponibilidade reversível do executor
+durante uma única execução integrada do Organizer. O Creator foi ativado apenas
+na janela do teste e o cleanup o retornou ao estado inativo.
+
+- execução Organizer: `424`, encerrada com o erro técnico esperado;
+- execução filha Creator: `425`, encerrada no dispatch do CCG-80;
+- execução CCG-99: `426`, concluída com sucesso;
+- causa injetada: recusa de conexão do executor, sem provider pago, storage
+  externo, publicação ou canary;
+- CCG-99 foi acionado exatamente uma vez; a janela de logs não registrou
+  dependência circular, nova execução do error workflow nem falha de
+  `WorkflowExecutionService`;
+- o recibo normalizado preservou `run_id`, `production_id`, `content_id`,
+  `campaign_id`, `request_hash` e `idempotency_key`, sem request bruto,
+  binários, headers, tokens, cookies ou secrets;
+- a classificação resultou em `HELD_FOR_REVIEW`, com decisão rastreável
+  `HOLD_FOR_REVIEW`, sem retry automático nem dispatch externo;
+- após o teste: Creator inativo, Organizer inativo, CCG-99 ativo e executor
+  com `live_enabled=false`.
+
+O teste confirmou a propagação nativa de erro técnico sem circularidade ou
+recursão. `publish_allowed=false`, `publish_requested=false` e a exigência de
+aprovação humana permaneceram preservados.
 
 A importação usou o mecanismo existente:
 `orb/engine/scripts/prepare-campaign-creative-creator-live-import.js` e
@@ -118,7 +143,7 @@ sem IDs de fixture intermediária.
 
 ## Validação direcionada e CI
 
-- validação estrutural contínua: passou, 97 nodes e 117 conexões;
+- validação estrutural contínua: passou, 98 nodes e 118 conexões;
 - testes dos builders/import/Organizer: 16 testes passaram (12 contínuos, 2 de
   import e 2 do Organizer);
 - testes do executor: 16 testes passaram, cobrindo estático, carrossel, vídeo,
@@ -127,6 +152,7 @@ sem IDs de fixture intermediária.
   consentimento ausente;
 - a suíte completa exigida pelo CI foi executada uma vez no PR de release
   `#1158` e todos os checks obrigatórios passaram;
+- teste focal do bootstrap nativo: 8 de 8 passaram após a promoção;
 - nenhuma dessas validações fez chamada paga.
 
 ## Smoke 2 — HYBRID / DRY_RUN
@@ -175,10 +201,10 @@ requisição mantiver `require_human_approval=true` e `publish_allowed=false`.
 
 A exportação pós-importação foi comparada estruturalmente com os JSONs gerados:
 
-- Creator: mesmo ID, 97 nodes, 117 conexões, zero diferenças de nodes/edges,
+- Creator: mesmo ID, 98 nodes, 118 conexões, zero diferenças de nodes/edges,
   error workflow `9j7WMFTNVNYmNZHC`, inativo;
 - Error handler: mesmo ID, 10 nodes, 12 conexões, zero diferenças, ativo;
-- Organizer: mesmo ID, 5 nodes, 4 conexões, zero diferenças, inativo;
+- Organizer: mesmo ID, 6 nodes, 5 conexões, zero diferenças, inativo;
 - source: zero referências de credencial;
 - runtime: nove referências de credencial esperadas apenas nos modelos OpenAI;
 - nenhum acesso a environment variable no export implantado.
@@ -189,13 +215,11 @@ MIME/dimensões e custo real de um provider permanecem gates do canary.
 
 ## Rollback e recuperação
 
-- Rollback de código/release: `fcfbc9537257a0ba807366bff840666e3e501516`.
-- Backup nativo: `/var/lib/skincos-runtime/orb/backups/daily/20260806T035620Z`.
-- Banco no backup: `n8n_runtime`, 44 workflows e 376 executions.
-- SHA-256 do dump do banco: `baff7ddf67d963a1a8c98cd2d336c42d592eaaa5b2e6e78c8820ad5feeb4b435`.
-- SHA-256 do storage: `0951ef244255f34be12a1aefd1bdd2552911429e08c3706786a20135e180558c`.
-- `restoreVerified=false` neste backup diário; a restauração deve ser
-  validada antes de uma recuperação de desastre.
+- Rollback de código/release: `a60987dc3982e02a5a54b00930859331b7b20f51`.
+- Backup nativo preservado:
+  `/var/backups/skincos/orb/daily/20260807T151635Z/manifest.json`.
+- O manifesto de backup registra `restoreVerified=true`; nenhum restore drill
+  adicional foi necessário porque o mecanismo de recuperação não foi alterado.
 
 O rollback mantém os três IDs de workflow preservados. O workflow principal e o
 Organizer podem continuar inativos durante a reversão; o error workflow deve
@@ -203,13 +227,7 @@ seguir a semântica de ativação exigida pelo `Error Trigger`.
 
 ## Riscos restantes
 
-1. O bootstrap da rota automática de CCG-99 deve receber um smoke nativo
-   controlado após a promoção do source candidate: uma falha técnica sintética
-   precisa produzir exatamente um incidente, lineage sanitizado e nenhuma
-   recursão. Até esse smoke, Creator e Organizer devem permanecer inativos.
-2. Não existe evidência de canary live nesta promoção. Provider pago, storage
+1. Não existe evidência de canary live nesta promoção. Provider pago, storage
    real, URI acessível e custo real continuam não validados.
-3. O backup corrente ainda não tem `restoreVerified`; executar um restore drill
-   controlado é recomendável antes de qualquer ativação live.
-4. Nenhuma publicação ou ativação de anúncio faz parte deste workflow; a
+2. Nenhuma publicação ou ativação de anúncio faz parte deste workflow; a
    aprovação humana continua pendente por desenho.

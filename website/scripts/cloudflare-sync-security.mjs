@@ -15,32 +15,6 @@ const DESIRED_RULES = [
       mitigation_timeout: 10,
     },
   },
-  {
-    ref: "ef_beauty_movement_session_rl_v1",
-    description: "EF: rate limit beauty movement invite exchange (managed by repo)",
-    expression: '(http.request.uri.path eq "/api/beleza-em-movimento/session" and http.request.method eq "POST")',
-    action: "block",
-    enabled: true,
-    ratelimit: {
-      characteristics: ["cf.colo.id", "ip.src"],
-      period: 10,
-      requests_per_period: 4,
-      mitigation_timeout: 10,
-    },
-  },
-  {
-    ref: "ef_beauty_movement_mutation_rl_v1",
-    description: "EF: rate limit beauty movement journey mutations (managed by repo)",
-    expression: '((http.request.uri.path eq "/api/beleza-em-movimento/reveal" or http.request.uri.path eq "/api/beleza-em-movimento/confirm") and http.request.method eq "POST")',
-    action: "block",
-    enabled: true,
-    ratelimit: {
-      characteristics: ["cf.colo.id", "ip.src"],
-      period: 10,
-      requests_per_period: 12,
-      mitigation_timeout: 10,
-    },
-  },
 ];
 
 function env(name, fallback = "") {
