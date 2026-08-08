@@ -5917,6 +5917,24 @@ export function createAtendimentoStore(options = {}) {
                                     or has_sequence_privilege(current_user, c.oid, 'UPDATE')
                                 )
                         ) as persistent_write_privileges_blocked,
+                    not coalesce(has_schema_privilege(current_user, to_regnamespace('harmonia'), 'USAGE'), false)
+                        and not coalesce(has_schema_privilege(current_user, to_regnamespace('crm_caixa'), 'USAGE'), false)
+                        and not exists (
+                            select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                            where n.nspname in ('harmonia', 'crm_caixa')
+                                and c.relkind in ('r', 'p', 'v', 'm', 'f')
+                                and has_table_privilege(current_user, c.oid, 'SELECT')
+                        )
+                        and not exists (
+                            select 1
+                            from pg_attribute a
+                            join pg_class c on c.oid = a.attrelid
+                            join pg_namespace n on n.oid = c.relnamespace
+                            where n.nspname in ('harmonia', 'crm_caixa')
+                                and c.relkind in ('r', 'p', 'v', 'm', 'f')
+                                and a.attnum > 0 and not a.attisdropped
+                                and has_column_privilege(current_user, c.oid, a.attname, 'SELECT')
+                        ) as persistent_pii_read_privileges_blocked,
                     to_regclass('crm_atendimento.schema_migrations') is not null as migrations_table,
                     to_regclass('crm_atendimento.global_client_identities') is not null as identities_table,
                     to_regclass('crm_atendimento.commercial_policy_config') is not null as commercial_policy_table,
@@ -5936,7 +5954,8 @@ export function createAtendimentoStore(options = {}) {
                 && row.clinical_approval_table === true
             return {
                 ok: databaseIdentity && schemaReady && row.migrations_read === true
-                    && row.transaction_read_only === true && row.persistent_write_privileges_blocked === true,
+                    && row.transaction_read_only === true && row.persistent_write_privileges_blocked === true
+                    && row.persistent_pii_read_privileges_blocked === true,
                 databaseReachable: true,
                 databaseIdentity,
                 schemaManaged,
@@ -5946,6 +5965,7 @@ export function createAtendimentoStore(options = {}) {
                 transactionReadOnly: row.transaction_read_only === true,
                 migrationRegistryReadable: row.migrations_read === true,
                 persistentWritePrivilegesBlocked: row.persistent_write_privileges_blocked === true,
+                persistentPiiReadPrivilegesBlocked: row.persistent_pii_read_privileges_blocked === true,
             }
         },
 

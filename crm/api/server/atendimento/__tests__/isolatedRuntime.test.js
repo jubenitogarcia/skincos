@@ -168,6 +168,7 @@ test('readiness returns 200 only after the read-only database contract succeeds'
         transactionReadOnly: true,
         migrationRegistryReadable: true,
         persistentWritePrivilegesBlocked: true,
+        persistentPiiReadPrivilegesBlocked: true,
     }))
     try {
         const readiness = await fetch(`${running.baseUrl}/internal/readiness`, {
@@ -184,6 +185,7 @@ test('readiness returns 200 only after the read-only database contract succeeds'
             transactionReadOnly: true,
             migrationRegistryReadable: true,
             persistentWritePrivilegesBlocked: true,
+            persistentPiiReadPrivilegesBlocked: true,
             replayProtectionReady: true,
         })
     } finally {
@@ -209,6 +211,7 @@ test('store readiness requires the expected database, app role, schema and read-
                         transaction_read_only: true,
                         migrations_read: true,
                         persistent_write_privileges_blocked: true,
+                        persistent_pii_read_privileges_blocked: true,
                         migrations_table: true,
                         identities_table: true,
                         commercial_policy_table: true,
@@ -224,12 +227,14 @@ test('store readiness requires the expected database, app role, schema and read-
     assert.equal(ready.ok, true)
     assert.equal(ready.transactionReadOnly, true)
     assert.equal(ready.persistentWritePrivilegesBlocked, true)
+    assert.equal(ready.persistentPiiReadPrivilegesBlocked, true)
     assert.match(queries[0], /current_database\(\)/)
     assert.match(queries[0], /and current_setting\('default_transaction_read_only', true\) = 'on'/)
     assert.match(queries[0], /has_table_privilege\(current_user, c\.oid, 'INSERT'\)/)
     assert.match(queries[0], /session_user as session_database_user/)
     assert.match(queries[0], /pg_has_role\(current_user, candidate\.oid, 'SET'\)/)
     assert.match(queries[0], /p\.prosecdef/)
+    assert.match(queries[0], /n\.nspname in \('harmonia', 'crm_caixa'\)/)
     assert.match(queries[0], /clientes_source_operation_runs/)
     assert.match(queries[0], /clinical_approval\.rules/)
 
@@ -247,6 +252,7 @@ test('store readiness requires the expected database, app role, schema and read-
                         transaction_read_only: true,
                         migrations_read: true,
                         persistent_write_privileges_blocked: false,
+                        persistent_pii_read_privileges_blocked: true,
                         migrations_table: true,
                         identities_table: true,
                         commercial_policy_table: true,
@@ -276,6 +282,7 @@ test('store readiness requires the expected database, app role, schema and read-
                         transaction_read_only: true,
                         migrations_read: true,
                         persistent_write_privileges_blocked: true,
+                        persistent_pii_read_privileges_blocked: true,
                         migrations_table: true,
                         identities_table: true,
                         commercial_policy_table: true,
@@ -290,6 +297,74 @@ test('store readiness requires the expected database, app role, schema and read-
     const assumedRole = await assumedRoleStore.readiness()
     assert.equal(assumedRole.ok, false)
     assert.equal(assumedRole.databaseIdentity, false)
+})
+
+test('store readiness fails closed when the application role retains source-system PII reads', async () => {
+    const store = createAtendimentoStore({
+        schemaManaged: true,
+        expectedDatabase: 'skincos_clientes_production',
+        expectedDatabaseUser: 'skincos_clientes_ro',
+        pool: {
+            async query() {
+                return {
+                    rows: [{
+                        database_name: 'skincos_clientes_production',
+                        database_user: 'skincos_clientes_ro',
+                        session_database_user: 'skincos_clientes_ro',
+                        transaction_read_only: true,
+                        migrations_read: true,
+                        persistent_write_privileges_blocked: true,
+                        persistent_pii_read_privileges_blocked: false,
+                        migrations_table: true,
+                        identities_table: true,
+                        commercial_policy_table: true,
+                        source_operations_table: true,
+                        clinical_approval_table: true,
+                    }],
+                }
+            },
+            async end() {},
+        },
+    })
+    const readiness = await store.readiness()
+    assert.equal(readiness.ok, false)
+    assert.equal(readiness.persistentPiiReadPrivilegesBlocked, false)
+})
+
+test('isolated runtime rejects commercial reads before source-system PII can be queried', async () => {
+    const fixture = await createFixture()
+    const running = await startRuntime(fixture, async () => ({
+        ok: true,
+        databaseReachable: true,
+        databaseIdentity: true,
+        schemaReady: true,
+        sourceOperationsReady: true,
+        clinicalApprovalReady: true,
+        transactionReadOnly: true,
+        migrationRegistryReadable: true,
+        persistentWritePrivilegesBlocked: true,
+        persistentPiiReadPrivilegesBlocked: true,
+    }))
+    try {
+        const actor = encode({ id: 'synthetic-actor', role: 'GESTOR', allowedUnits: ['synthetic-unit'] })
+        const timestamp = String(Date.now())
+        const nonce = 'C'.repeat(32)
+        const requestPath = '/api/atendimento/commercial/overview?unit=synthetic-unit'
+        const response = await fetch(running.baseUrl + requestPath, {
+            headers: {
+                'x-crm-user': actor,
+                'x-crm-ts': timestamp,
+                'x-crm-nonce': nonce,
+                'x-crm-signature-version': '2',
+                'x-crm-signature': signature({ timestamp, nonce, requestPath, actor }),
+            },
+        })
+        assert.equal(response.status, 503)
+        assert.deepEqual(await response.json(), { ok: false, error: 'COMMERCIAL_READS_DISABLED' })
+    } finally {
+        await running.close()
+        await fixture.cleanup()
+    }
 })
 
 test('v2 actor nonces survive a restart and reject a replay', async () => {

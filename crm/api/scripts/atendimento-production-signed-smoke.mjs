@@ -81,11 +81,6 @@ const firstRead = await signedRequest({
     method: 'GET',
     path: '/api/atendimento/commercial/policy',
 })
-const replay = await fetch(new URL('/api/atendimento/commercial/policy', BASE_URL), {
-    method: 'GET',
-    headers: firstRead.headers,
-    signal: AbortSignal.timeout(10_000),
-})
 const write = await signedRequest({
     secret: actorHmacKey,
     actor,
@@ -95,6 +90,8 @@ const write = await signedRequest({
 })
 let writePayload = {}
 try { writePayload = await write.response.clone().json() } catch { /* stable false below */ }
+let commercialPayload = {}
+try { commercialPayload = await firstRead.response.clone().json() } catch { /* stable false below */ }
 
 const result = {
     healthStatus: health.status,
@@ -102,10 +99,8 @@ const result = {
     releaseShaMatches: healthPayload?.control?.releaseSha === expectedReleaseSha,
     readinessStatus: readiness.status,
     readinessReady: readiness.status === 200,
-    signedReadStatus: firstRead.response.status,
-    signedRead: firstRead.response.status === 200,
-    replayStatus: replay.status,
-    replayRejected: replay.status === 401,
+    commercialReadStatus: firstRead.response.status,
+    commercialReadsDisabled: firstRead.response.status === 503 && commercialPayload?.error === 'COMMERCIAL_READS_DISABLED',
     writeStatus: write.response.status,
     writeRejected: write.response.status === 405 && writePayload?.error === 'READ_ONLY_RUNTIME',
 }
