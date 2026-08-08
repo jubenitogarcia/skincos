@@ -16,14 +16,14 @@ HTTP monolítico ou código de worker. O processo HTTP isolado é somente leitur
 
 | Item | Regra |
 | --- | --- |
-| Origem | Apenas release nativa `/opt/skincos/releases/<sha-40>/source`, com SHA ancestral de `main` e predecessor registrado. |
+| Origem | Apenas release nativa `/opt/skincos/releases/<sha-40>/source`, com SHA exatamente igual ao `origin/main` buscado e predecessor ancestral registrado. |
 | Processo | `crm-atendimento-staging.service` ou `crm-atendimento-production.service`; nenhum instalador toca `crm.service`, `crm-jobs.service`, Orb ou túnel compartilhado. |
 | Shutdown | `SIGTERM` fecha o listener antes do pool e do ledger de replay; o timeout força apenas conexões do processo dedicado. |
 | Health | público, PII-free e independente do banco. |
-| Readiness | loopback + token; verifica arquivo de controle, ledger de replay, banco, database/role esperados, schema, fontes e domínio clínico. |
+| Readiness | loopback + token; verifica arquivo de controle, ledger de replay, banco, database/role esperados, schema, fontes, domínio clínico e ausência efetiva de privilégios persistentes de escrita. |
 | Ator | HMAC `atendimento-actor/v2`, timestamp de cinco minutos e nonce persistido; replay ou falha de ledger negam a requisição. |
 | Escrita | Edge e runtime limitam a `GET`, `HEAD`, `OPTIONS`; controle exige `readOnly:true`, `syntheticOnly:true` e escrita comercial `false`. |
-| Staging | O app usa `skincos_staging_crm_app` com `default_transaction_read_only=on`, apenas `SELECT`/`USAGE`; migration fica no login separado `skincos_staging_migrator_login`. |
+| Staging | O app usa `skincos_staging_crm_app` com `default_transaction_read_only=on`, apenas `SELECT`/`USAGE`; migration fica no login separado `skincos_staging_migrator_login`. Após cada fluxo de migration, um selador fixo operado como `postgres` remove DML, DDL, sequence, grants por coluna, memberships `SET ROLE`, atributos privilegiados e `EXECUTE` efetivo em funções `SECURITY DEFINER` de schemas de aplicação; também bloqueia leitura direta de `harmonia.contacts`. |
 
 ## Workflows e GitHub Environments
 
@@ -50,6 +50,13 @@ entrypoint, host/porta, domínio, modo de escrita, worker, SHA ou arquivo de
 controle porque esses valores são fixados depois do `EnvironmentFile` pela
 unidade systemd. Variáveis capazes de carregar código (`NODE_OPTIONS`,
 `LD_PRELOAD` e equivalentes) são removidas explicitamente.
+
+Os comandos privilegiados do contrato usam caminhos absolutos e ambiente
+limpo; o validador de staging desabilita proxy no health loopback e só atesta
+sucesso quando a unit renderizada, o PID/cwd/linha de comando e o SHA da
+release são os esperados. Antes de qualquer migration aplicável, o controle
+precisa estar em `maintenance` com o SHA exato e a unidade isolada precisa
+estar inativa; o runner obtém lock advisory no banco durante todo o fluxo.
 
 ## Gaps que bloqueiam ativação
 
@@ -90,3 +97,5 @@ para a sequência de dry-run, backup, migração de staging, smoke e rollback. A
 ação emergencial mínima é `maintenance`/`disabled` no arquivo de controle. O
 rollback por SHA requer um manifest de release anterior já preparado; nenhum
 script tenta “adivinhar” checkout, shell ou destino a partir de uma variável.
+O preparador de staging grava a linhagem imutável (`releaseId`, predecessor e
+árvore de origem) antes de a unidade poder ser instalada.

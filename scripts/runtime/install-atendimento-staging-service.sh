@@ -1,5 +1,14 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash -p
 set -euo pipefail
+
+readonly SAFE_PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH="$SAFE_PATH"
+unset BASH_ENV ENV CDPATH GLOBIGNORE \
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
+
+run_sudo_clean() {
+  /usr/bin/sudo -n /usr/bin/env -i "PATH=$SAFE_PATH" 'HOME=/root' 'LANG=C' "$@"
+}
 
 # This installer deliberately shares the production shape but never receives a
 # command, source path or unit destination from an environment variable.
@@ -33,44 +42,47 @@ readonly UNIT_SRC="$SOURCE_ROOT/ops/runtime/units/crm-atendimento-staging.servic
 readonly RUNTIME_ENTRYPOINT="$SOURCE_ROOT/crm/api/server/atendimentoRuntime.js"
 readonly RELEASE_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-release.mjs"
 readonly CONTROL_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-staging-control.mjs"
+readonly RUNTIME_GRANT_LOCKDOWN="$SOURCE_ROOT/scripts/lockdown-atendimento-staging-runtime.sh"
 
-for command_name in sudo sed systemd-analyze mktemp install node; do
-  command -v "$command_name" >/dev/null 2>&1 || { echo "Missing $command_name" >&2; exit 1; }
+for command_path in /usr/bin/sudo /usr/bin/sed /usr/bin/systemd-analyze /usr/bin/mktemp /usr/bin/install /usr/bin/node /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/date /usr/bin/cp /usr/bin/systemctl /usr/bin/test; do
+  [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
 done
-sudo -n true
-sudo -n test -f "$UNIT_SRC" || { echo 'Isolated unit template is unavailable in immutable release.' >&2; exit 78; }
-sudo -n test -f "$RUNTIME_ENTRYPOINT" || { echo 'Isolated runtime entrypoint is unavailable in immutable release.' >&2; exit 78; }
-sudo -n test -f "$RELEASE_VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
-sudo -n test -f "$CONTROL_VALIDATOR" || { echo 'Strict staging control validator is unavailable in immutable release.' >&2; exit 78; }
-sudo -n test -f "$CONTROL_FILE" || { echo 'Strict staging control file is unavailable.' >&2; exit 78; }
-sudo -n /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
-sudo -n /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
+/usr/bin/sudo -n true
+/usr/bin/sudo -n /usr/bin/test -f "$UNIT_SRC" || { echo 'Isolated unit template is unavailable in immutable release.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$RUNTIME_ENTRYPOINT" || { echo 'Isolated runtime entrypoint is unavailable in immutable release.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$RELEASE_VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$CONTROL_VALIDATOR" || { echo 'Strict staging control validator is unavailable in immutable release.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Staging runtime grant lockdown is unavailable in immutable release.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$CONTROL_FILE" || { echo 'Strict staging control file is unavailable.' >&2; exit 78; }
+run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 
-render_dir="$(mktemp -d)"
+render_dir="$(/usr/bin/mktemp -d)"
 rendered="$render_dir/crm-atendimento-staging.service"
-trap 'rm -f "$rendered"; rmdir "$render_dir" 2>/dev/null || true' EXIT
-sed \
+trap '/usr/bin/rm -f "$rendered"; /usr/bin/rmdir "$render_dir" 2>/dev/null || true' EXIT
+/usr/bin/sed \
   -e "s|__REPO_ROOT__|$SOURCE_ROOT|g" \
   -e "s|__STATE_ROOT__|$STATE_ROOT|g" \
   -e "s|__CONFIG_ROOT__|$CONFIG_ROOT|g" \
   -e "s|__LOG_ROOT__|$LOG_ROOT|g" \
   -e "s|__RELEASE_SHA__|$RELEASE_SHA|g" \
   "$UNIT_SRC" >"$rendered"
-chmod 0644 "$rendered"
-systemd-analyze verify "$rendered"
+/usr/bin/chmod 0644 "$rendered"
+/usr/bin/systemd-analyze verify "$rendered"
 
 if [[ "$APPLY" != '1' ]]; then
   printf 'dry_run=true service=crm-atendimento-staging.service release_sha=%s source=%s shared_restart=false\n' "$RELEASE_SHA" "$SOURCE_ROOT"
   exit 0
 fi
 
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-sudo -n install -d -m 0700 -o root -g root "$BACKUP_ROOT"
-if sudo -n test -f "$UNIT_DEST/crm-atendimento-staging.service"; then
-  sudo -n cp -p "$UNIT_DEST/crm-atendimento-staging.service" "$BACKUP_ROOT/${stamp}-crm-atendimento-staging.service"
+stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
+/usr/bin/sudo -n /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
+if /usr/bin/sudo -n /usr/bin/test -f "$UNIT_DEST/crm-atendimento-staging.service"; then
+  /usr/bin/sudo -n /usr/bin/cp -p "$UNIT_DEST/crm-atendimento-staging.service" "$BACKUP_ROOT/${stamp}-crm-atendimento-staging.service"
 fi
-sudo -n install -m 0644 "$rendered" "$UNIT_DEST/crm-atendimento-staging.service"
-sudo -n systemctl daemon-reload
-sudo -n systemctl enable --now crm-atendimento-staging.service >/dev/null
-sudo -n systemctl is-active --quiet crm-atendimento-staging.service
+/usr/bin/sudo -n /usr/bin/install -m 0644 "$rendered" "$UNIT_DEST/crm-atendimento-staging.service"
+/usr/bin/sudo -n /usr/bin/systemctl daemon-reload
+/usr/bin/sudo -n /usr/bin/systemctl enable --now crm-atendimento-staging.service >/dev/null
+/usr/bin/sudo -n /usr/bin/systemctl is-active --quiet crm-atendimento-staging.service
 printf 'installed=true service=crm-atendimento-staging.service release_sha=%s shared_restart=false\n' "$RELEASE_SHA"

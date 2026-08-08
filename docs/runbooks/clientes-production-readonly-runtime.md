@@ -53,19 +53,21 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    migrador separado. O provisionamento cria somente um controle `maintenance`
    em `/etc/skincos/atendimento-staging/module-control.json`, gera o token de
    readiness no env privado e concede ao app apenas `SELECT`/`USAGE`; ele não
-   abre uma rota nem inicia uma unidade. Execute a migration apenas pelo
-   invólucro fixo. Ele faz backup em
+   abre uma rota nem inicia uma unidade. O invólucro da migration só executa
+   a cópia imutável já preparada: isso garante o mesmo conjunto de dependências
+   e a linhagem que a futura unidade consumirá. Ele faz backup em
    `/var/backups/skincos/clientes/staging`, lê exclusivamente
    `/etc/skincos/crm-atendimento-staging-migrator.env` como texto literal e
-   aceita uma só ação:
-
-   ```bash
-   scripts/run-atendimento-staging-migration.sh --dry-run
-   ```
-
-   Antes de qualquer `--apply`, prove as migrations aditivas de fontes e de
-   aprovação clínica. Se elas ainda não existirem no staging, readiness deve
-   continuar `503`; não contorne isso com grants, schema automático ou flag.
+   aceita uma só ação. A migração pode conceder temporariamente grants normais
+   enquanto cria objetos; ao terminar (inclusive após rollback ou erro), o
+   invólucro obrigatório `lockdown-atendimento-staging-runtime.sh` os revoga
+   com o administrador local do PostgreSQL. A migration exige controle
+   `maintenance` com o SHA esperado e a unidade isolada inativa, obtém lock
+   advisory no banco e só então executa. O app fica sem DDL, DML, uso de
+   sequences, `SET ROLE` para qualquer papel pai, atributos privilegiados,
+   execução de funções `SECURITY DEFINER` em schemas de aplicação ou acesso a
+   `harmonia.contacts`; a instalação e a validação recusam prosseguir se a
+   prova efetiva de grants falhar.
 
 3. Antes de instalar a unidade isolada de staging, prepare a release imutável e
    grave explicitamente o SHA no controle ainda em `maintenance`. O instalador
@@ -77,17 +79,29 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
 
    ```bash
    scripts/runtime/prepare-atendimento-staging-release.sh \
-     --release-sha <sha-main>
+     --release-sha <sha-main> --predecessor-sha <sha-staging-anterior>
    scripts/set-atendimento-staging-control.sh \
      --state maintenance --release-sha <sha-main> \
      --reason release-preflight --apply
+   scripts/run-atendimento-staging-migration.sh \
+     --dry-run --release-sha <sha-main>
+   scripts/run-atendimento-staging-migration.sh \
+     --apply --release-sha <sha-main>
    scripts/runtime/install-atendimento-staging-service.sh \
      --source-root /opt/skincos/releases/<sha-main>/source
    ```
 
-   Não há túnel nem DNS de staging nesta tranche. A prova de liveness de
+   Antes de qualquer `--apply` da migration, prove o plano de migrations
+   aditivas de fontes, clusters, operações, analytics e aprovação clínica. Se
+   elas ainda não existirem no staging, readiness deve continuar `503`; não
+   contorne isso com grants, schema automático ou flag. O preparador recusa um
+   SHA que não seja exatamente o `origin/main` buscado e grava a linhagem
+   imutável com o predecessor confirmado. Não há túnel nem DNS de staging nesta tranche. A prova de liveness de
    staging é feita somente pelo validador nativo, no listener loopback fixo;
-   Actions hospedadas não devem chamar hostname público de staging:
+   ele compara a unidade instalada com o template renderizado da release,
+   atesta o PID/cwd/linha de comando do processo e usa `curl --noproxy '*'`;
+   portanto health de processo antigo, proxy ou binário no `PATH` não prova
+   promoção. Actions hospedadas não devem chamar hostname público de staging:
 
    ```bash
    scripts/validate-atendimento-staging-readonly.sh \
