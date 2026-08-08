@@ -18,6 +18,7 @@ readonly CONFIG_ROOT='/etc/skincos'
 readonly LOG_ROOT='/var/log/skincos'
 readonly BACKUP_ROOT='/var/backups/skincos/clientes/staging'
 readonly CONTROL_FILE="$CONFIG_ROOT/atendimento-staging/module-control.json"
+readonly SERVICE='crm-atendimento-staging.service'
 
 SOURCE_ROOT=''
 APPLY=0
@@ -78,11 +79,15 @@ fi
 
 stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
 /usr/bin/sudo -n /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
-if /usr/bin/sudo -n /usr/bin/test -f "$UNIT_DEST/crm-atendimento-staging.service"; then
-  /usr/bin/sudo -n /usr/bin/cp -p "$UNIT_DEST/crm-atendimento-staging.service" "$BACKUP_ROOT/${stamp}-crm-atendimento-staging.service"
+if /usr/bin/sudo -n /usr/bin/test -f "$UNIT_DEST/$SERVICE"; then
+  /usr/bin/sudo -n /usr/bin/cp -p "$UNIT_DEST/$SERVICE" "$BACKUP_ROOT/${stamp}-$SERVICE"
 fi
-/usr/bin/sudo -n /usr/bin/install -m 0644 "$rendered" "$UNIT_DEST/crm-atendimento-staging.service"
+/usr/bin/sudo -n /usr/bin/install -m 0644 "$rendered" "$UNIT_DEST/$SERVICE"
 /usr/bin/sudo -n /usr/bin/systemctl daemon-reload
-/usr/bin/sudo -n /usr/bin/systemctl enable --now crm-atendimento-staging.service >/dev/null
-/usr/bin/sudo -n /usr/bin/systemctl is-active --quiet crm-atendimento-staging.service
-printf 'installed=true service=crm-atendimento-staging.service release_sha=%s shared_restart=false\n' "$RELEASE_SHA"
+# `enable --now` does not replace an already active legacy instance. Restart
+# only this dedicated staging unit after the immutable unit file is installed;
+# no shared CRM, worker, Orb or tunnel unit is touched.
+/usr/bin/sudo -n /usr/bin/systemctl enable "$SERVICE" >/dev/null
+/usr/bin/sudo -n /usr/bin/systemctl restart "$SERVICE"
+/usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE"
+printf 'installed=true service=%s release_sha=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"
