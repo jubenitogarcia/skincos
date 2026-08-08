@@ -287,7 +287,7 @@ export function calculateExperimentLift(rows = []) {
     return {
         treatment: { ...groups.treatment, conversionRate: treatmentRate },
         control: { ...groups.control, conversionRate: controlRate },
-        observedLift: lift,
+        observedLift: lift == null ? null : Math.round(lift * 10_000) / 10_000,
         incrementalConversions: lift == null ? null : Math.round(lift * groups.treatment.population * 10_000) / 10_000,
         incrementalRevenue: groups.control.population && groups.treatment.population
             ? Math.round((groups.treatment.revenue - (groups.control.revenue / groups.control.population) * groups.treatment.population) * 100) / 100
