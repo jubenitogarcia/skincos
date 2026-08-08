@@ -2,9 +2,11 @@
 
 ## Estado desta tranche
 
-Este artefato define apenas o dom?nio, a migration aditiva, o armazenamento e os testes da comunica??o assistida. N?o h? rota HTTP, cliente de console, worker, template de runtime, flag de ambiente, SDK de provedor, URL `wa.me` ou integra??o de envio nesta tranche. Portanto o dom?nio permanece inalcan??vel e fail-closed ap?s o merge.
+O dom?nio, a migration aditiva, o armazenamento e uma superf?cie HTTP m?nima de Clientes est?o versionados. As rotas exigem ator assinado, papel `GESTOR`, escopo de unidade e um sujeito opaco derivado somente de `subject`, `subjectId` ou `id`; e-mail e username n?o s?o aceitos como identidade de auditoria.
 
-Nenhuma mensagem, contato comercial, consentimento ou altera??o de identidade ? enviada ou aplicada por este c?digo. O processo HTTP n?o ganha uma nova rota e nenhum job cont?nuo ? alterado.
+A superf?cie exp?e somente readiness, ofertas compat?veis, templates aprovados, preview mascarado, confirma??o/handoff humanos e controle de emerg?ncia. O runtime de Clientes somente leitura continua bloqueando toda muta??o antes dos handlers. N?o h? UI, cliente de console, worker, SDK de provedor, URL de envio, rota de webhook, rota de reveal de telefone ou dispatch nesta tranche.
+
+Nenhuma mensagem, contato comercial, consentimento ou altera??o de identidade ? enviada ou aplicada por este c?digo. O processo HTTP n?o ganha automa??o nem job cont?nuo.
 
 ## Flags compiladas
 
@@ -32,13 +34,7 @@ node crm/api/scripts/migrate-atendimento-commercial-assisted-whatsapp.mjs --appl
 node crm/api/scripts/migrate-atendimento-commercial-assisted-whatsapp.mjs --rollback --target=local
 ```
 
-Para staging, use somente o target expl?cito e a credencial privada do migrador dedicada:
-
-```text
-node crm/api/scripts/migrate-atendimento-commercial-assisted-whatsapp.mjs --dry-run --target=staging
-```
-
-Esta PR n?o adiciona a migration ao runner de staging e n?o habilita deploy. A aplica??o em staging exige uma tranche posterior com preflight, backup, evid?ncia de destino, smoke sint?tico e rollback aprovado. Produ??o permanece fora de escopo.
+O runner de staging registra a migration apenas depois de source operations e do seletor de can?rio. Esta altera??o n?o executa o runner, n?o aplica migration, n?o habilita deploy e n?o abre escrita comercial. Staging ainda exige preflight, backup, destino/role comprovados, smoke sint?tico e rollback; produ??o permanece fora de escopo t?cnico.
 
 O rollback ? n?o destrutivo: conserva snapshots, attempts, eventos e receipts; fecha os controles de emerg?ncia e registra o rollback no ledger. N?o use `DROP`, `TRUNCATE`, altera??o manual de evid?ncia ou SQL ad hoc para "limpar" o dom?nio.
 
@@ -54,9 +50,9 @@ Snapshots de oferta, templates, attempts, eventos, receipts e muta??es de contro
 
 O dom?nio preparado para webhook aceita somente bytes brutos assinados (raw HMAC), timestamp dentro da janela e payload allowlisted. O receipt ? deduplicado atomicamente por evento e digest do payload; reutiliza??o de um ID de evento com conte?do diferente ? rejeitada. Eventos seguem transi??es monot?nicas.
 
-Um STOP futuro precisa obter o lock compartilhado de telefone antes de gravar o bloqueio de contato e repetir o recebimento n?o pode reabrir ou duplicar a permiss?o. Nesta tranche n?o existe endpoint para invocar esse caminho, logo n?o h? webhook p?blico ou provider configurado.
+N?o h? endpoint de webhook nesta tranche: ele ser? exposto apenas junto de um ingress dedicado, autenticado, rate-limited e compat?vel com o runtime somente leitura. Um STOP futuro precisa obter o lock compartilhado de telefone antes de gravar o bloqueio de contato e repetir o recebimento n?o pode reabrir ou duplicar a permiss?o.
 
-O controle de emerg?ncia global ou por unidade j? ? modelado, versionado e audit?vel, mas n?o h? UI/rota nesta tranche. Em incidente antes da integra??o futura, mantenha todas as flags acima em `false`, n?o exponha o dom?nio e fa?a rollback n?o destrutivo caso uma migration tenha sido aplicada. N?o invente um SQL operacional manual para rearmar contato.
+O controle de emerg?ncia global ou por unidade ? modelado, versionado e audit?vel. A rota autenticada de gestor continua sujeita ao runtime somente leitura; o rearm exige confirma??o expl?cita e vers?o esperada. Em incidente, mantenha todas as flags acima em `false`, n?o exponha transporte externo e fa?a rollback n?o destrutivo caso uma migration tenha sido aplicada. N?o invente SQL operacional manual para rearmar contato.
 
 ## Valida??o e smoke sint?tico
 
@@ -77,4 +73,4 @@ O smoke autorizado nesta tranche ? est?tico/sint?tico: flags false, origem inace
 
 ## Pr?xima tranche necess?ria
 
-Uma PR posterior, pequena e revisada, pode conectar rotas internas/UI a este dom?nio. Antes disso ela precisa incluir RBAC, escopo de unidade, assinatura de ator, revalida??o transacional, can?rio vazio por default, HMAC de webhook em segredo privado, observabilidade sem PII, emergency-off operacional allowlisted, testes de regress?o e evid?ncia de staging sint?tico. Automa??o ou envio em massa continuam proibidos.
+Uma PR posterior, pequena e revisada, pode adicionar a UI de preview mascarado e reveal tempor?rio/auditado. O reveal precisa continuar one-time, justificado e sem URI de provedor. O ingress de webhook tamb?m fica separado: deve manter raw HMAC, replay, rate limit, STOP imediato e bloqueio expl?cito no runtime somente leitura. Automa??o, disparo em massa e envio aut?nomo continuam proibidos.
