@@ -80,6 +80,12 @@ test('onboarding status changes stay hierarchical, synchronized, audited and fai
   assert.match(admin, /IDENTITY_ONBOARDING_MANAGED/);
 });
 
+test('authenticated staging journey exercises the governed termination reason contract', async () => {
+  const journey = await readFile(new URL('../../crm/console/scripts/ponto-staging-journey.cjs', import.meta.url), 'utf8');
+  const deprovisionBlock = journey.slice(journey.indexOf('const deprovision'), journey.indexOf('const list = await api', journey.indexOf('const deprovision')));
+  assert.match(deprovisionBlock, /accountStatus: 'TERMINATED', reason: 'Synthetic staging deprovisioning'/);
+});
+
 test('unified team management is explicit about RBAC, scope, idempotency and aggregate telemetry', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   const localApi = await readFile(new URL('../../crm/api/server.js', import.meta.url), 'utf8');
