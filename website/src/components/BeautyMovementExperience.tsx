@@ -112,13 +112,13 @@ export type BeautyMovementExperienceProps = {
 
 type HandStage = "waiting" | "ready" | "reveal" | "held" | "collect" | "deal" | "finale";
 type FinaleStage = "hidden" | "collecting" | "confirmation" | "result";
+type SpecialCardKind = "velocity" | "discount" | "free_procedure" | "reserved";
 
 type ShareNavigator = Navigator & {
     canShare?: (data?: ShareData) => boolean;
     share?: (data?: ShareData) => Promise<void>;
 };
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STORY_WIDTH = 1080;
 const STORY_HEIGHT = 1920;
 const AUTO_ADVANCE_SECONDS = 5;
@@ -153,15 +153,6 @@ function getSelectionsFromReveals(
 function getCurrentActIndex(selections: BeautyMovementSelections): number {
     const index = BEAUTY_MOVEMENT_ACTS.findIndex((act) => !selections[act]);
     return index === -1 ? BEAUTY_MOVEMENT_ACTS.length : index;
-}
-
-function sanitizeEmail(value: string): string | null {
-    const normalized = value.trim().toLowerCase();
-    return normalized || null;
-}
-
-function isEmailValid(value: string): boolean {
-    return value.length === 0 || EMAIL_PATTERN.test(value);
 }
 
 function formatRewardDiscount(discount: NonNullable<BeautyMovementBenefit["discount"]>): string {
@@ -548,7 +539,6 @@ export default function BeautyMovementExperience({
         initialState.confirmed || initialReadingComplete ? "ready" : "waiting",
     );
     const [confirmed, setConfirmed] = useState(initialState.confirmed);
-    const [email, setEmail] = useState("");
     const [operationalConsent, setOperationalConsent] = useState(false);
     const [confirmationAttempted, setConfirmationAttempted] = useState(false);
     const [revealPendingCardId, setRevealPendingCardId] = useState<string | null>(null);
@@ -649,9 +639,6 @@ export default function BeautyMovementExperience({
         () => getBeautyMovementReading(initialState.palette, selections),
         [initialState.palette, selections],
     );
-    const emailValue = sanitizeEmail(email) ?? "";
-    const emailInvalid = confirmationAttempted && !isEmailValid(emailValue);
-    const emailAlreadyRegistered = initialState.invite.emailRegistered === true;
     const consentInvalid = confirmationAttempted && !operationalConsent;
     const partnerName = initialState.campaign.partnerName?.trim() || "Velocity";
     const primaryWhatsappLabel = initialState.campaign.whatsappLabel?.trim() || "Falar com a equipe";
@@ -887,13 +874,13 @@ export default function BeautyMovementExperience({
         setConfirmationAttempted(true);
         setActionError(null);
 
-        if (!operationalConsent || !isEmailValid(emailValue)) return;
+        if (!operationalConsent) return;
 
         confirmInFlightRef.current = true;
         setIsConfirming(true);
         try {
             await onConfirm?.({
-                email: emailValue || null,
+                email: null,
                 operationalConsent: true,
             });
             if (!mountedRef.current) return;
@@ -1035,6 +1022,85 @@ export default function BeautyMovementExperience({
         );
     }
 
+    function renderSpecialCard(revealed: boolean) {
+        const kind: SpecialCardKind = revealed
+            ? hasCourtesyClass
+                ? "velocity"
+                : initialState.benefit?.type === "discount"
+                  ? "discount"
+                  : initialState.benefit?.type === "free_procedure"
+                    ? "free_procedure"
+                    : "reserved"
+            : "reserved";
+        const benefit = initialState.benefit;
+        const velocity = initialState.velocity;
+        const iconId =
+            kind === "velocity"
+                ? "reward-velocity"
+                : kind === "discount"
+                  ? "reward-discount"
+                  : kind === "free_procedure"
+                    ? "reward-procedure"
+                    : "reward-reserved";
+        const kindLabel =
+            kind === "velocity"
+                ? "AULA-CORTESIA"
+                : kind === "discount"
+                  ? "CONDIÇÃO ESPECIAL"
+                  : kind === "free_procedure"
+                    ? "CORTESIA DE CELEBRAÇÃO"
+                    : "PRESENTE RESERVADO";
+        const title =
+            kind === "velocity"
+                ? velocity?.label?.trim() || "Aula-cortesia Velocity"
+                : kind === "discount" || kind === "free_procedure"
+                  ? benefit?.procedureName || "Cuidado reservado"
+                  : "Seu presente está reservado";
+        const description =
+            kind === "velocity"
+                ? velocity?.text || "Sua aula será confirmada pela equipe da unidade após o contato."
+                : kind === "discount" || kind === "free_procedure"
+                  ? benefit?.displayText || "Um cuidado especial para celebrar o seu momento."
+                  : "Confirme sua entrada para revelar a condição preparada para você.";
+        const meta =
+            kind === "discount" && benefit?.discount
+                ? formatRewardDiscount(benefit.discount)
+                : kind === "free_procedure"
+                  ? "Procedimento gratuito"
+                  : kind === "velocity"
+                    ? "Seu movimento também faz parte da celebração"
+                    : "Carta final da celebração";
+
+        return (
+            <article
+                className={styles.specialCard}
+                data-special-state={revealed ? "revealed" : "locked"}
+                aria-label={revealed ? `Carta especial: ${title}` : "Carta especial reservada"}
+            >
+                <div className={styles.specialCardInner}>
+                    <div className={`${styles.specialCardFace} ${styles.specialCardBack}`} aria-hidden={revealed}>
+                        <BrandMark className={styles.specialCardBrand} tone="light" title="" />
+                        <span className={styles.specialCardBackLabel}>CARTA ESPECIAL</span>
+                        <strong>A soma da sua leitura está pronta.</strong>
+                        <span>Confirme sua entrada para revelar o presente reservado.</span>
+                        <span className={styles.specialCardSeal} aria-hidden="true">
+                            ✦
+                        </span>
+                    </div>
+                    <div className={`${styles.specialCardFace} ${styles.specialCardFront}`} aria-hidden={!revealed}>
+                        <span className={styles.specialCardKind}>{kindLabel}</span>
+                        <span className={styles.specialCardIllustration} aria-hidden="true">
+                            <BeautyMovementCardIllustration cardId={iconId} />
+                        </span>
+                        <strong>{title}</strong>
+                        <span className={styles.specialCardCopy}>{description}</span>
+                        <span className={styles.specialCardMeta}>{meta}</span>
+                    </div>
+                </div>
+            </article>
+        );
+    }
+
     function renderConfirmationStage() {
         return (
             <section className={styles.confirmationStage} aria-labelledby="beauty-movement-inline-confirmation-title">
@@ -1055,37 +1121,10 @@ export default function BeautyMovementExperience({
                 <div className={styles.contactSummary}>
                     <span>Contato vinculado</span>
                     <strong>{initialState.invite.maskedWhatsapp}</strong>
-                    <small>Para corrigir dados, fale diretamente com a unidade.</small>
+                    <small>E-mail e telefone já estão vinculados a este convite. Para corrigir dados, fale diretamente com a unidade.</small>
                 </div>
 
                 <div className={styles.confirmationForm}>
-                    <label className={styles.formField} htmlFor="beauty-movement-inline-email">
-                        <span>
-                            E-mail <em>opcional</em>
-                        </span>
-                        <input
-                            id="beauty-movement-inline-email"
-                            type="email"
-                            autoComplete="email"
-                            value={email}
-                            onChange={(event) => setEmail(event.target.value)}
-                            disabled={emailAlreadyRegistered}
-                            aria-invalid={emailInvalid || undefined}
-                            aria-describedby={emailInvalid ? "beauty-movement-inline-email-error" : undefined}
-                            placeholder="voce@email.com"
-                        />
-                    </label>
-                    {emailAlreadyRegistered ? (
-                        <p className={styles.fieldHint}>
-                            E-mail já cadastrado. Para corrigir dados, fale diretamente com a unidade.
-                        </p>
-                    ) : null}
-                    {emailInvalid ? (
-                        <p className={styles.fieldError} id="beauty-movement-inline-email-error">
-                            Confira o formato do e-mail ou deixe este campo em branco.
-                        </p>
-                    ) : null}
-
                     <label className={`${styles.consentField} ${consentInvalid ? styles.consentFieldInvalid : ""}`.trim()}>
                         <input
                             type="checkbox"
@@ -1308,12 +1347,16 @@ export default function BeautyMovementExperience({
                             </span>
                         ) : null}
                         {finaleStage === "collecting" ? (
-                            <div className={styles.finaleCardGrid} aria-hidden="true">
+                            <div className={`${styles.finaleCardGrid} ${styles.finaleCardGridMerging}`} aria-hidden="true">
                                 {reading.map(renderFinaleCard)}
                             </div>
                         ) : finaleStage === "confirmation" || finaleStage === "result" ? (
-                            <div className={styles.finaleCardGrid} role="group" aria-label="Cartas finais">
-                                {reading.map(renderFinaleCard)}
+                            <div
+                                className={styles.specialCardStage}
+                                role="group"
+                                aria-label={finaleStage === "result" ? "Carta especial do benefício" : "Carta especial da celebração"}
+                            >
+                                {renderSpecialCard(finaleStage === "result")}
                             </div>
                         ) : finaleStage === "hidden" && !waitingForInitialDeal ? (
                             <div className={styles.cardGrid} role="group" aria-label={`Cartas da etapa ${tableDefinition.label}`}>
@@ -1322,10 +1365,18 @@ export default function BeautyMovementExperience({
                         ) : null}
                     </div>
 
-                    {finaleStage === "hidden" && tableIsUnlocked && tableSelected ? (
+                    {finaleStage === "hidden" ? (
                         <div className={styles.actAdvance}>
                             <p className={styles.advanceNote} role="status">
-                                Carta revelada. As outras cartas serão recolhidas antes da próxima mão.
+                                {waitingForInitialDeal
+                                    ? "Clique no baralho para distribuir esta mão."
+                                    : tableSelected
+                                      ? "Carta revelada. As outras cartas serão recolhidas antes da próxima mão."
+                                      : handStage === "ready"
+                                        ? "Escolha uma carta para liberar o avanço."
+                                      : handStage === "held"
+                                        ? "Escolha uma carta para liberar o avanço."
+                                        : "A próxima mão está sendo preparada."}
                             </p>
                             {autoAdvanceActive ? (
                                 <div className={styles.autoAdvance} role="status" aria-live="polite">
@@ -1345,7 +1396,7 @@ export default function BeautyMovementExperience({
                                     className={styles.continueButton}
                                     type="button"
                                     onClick={() => moveToNextHand(displayedActIndex)}
-                                    disabled={handStage !== "held"}
+                                    disabled={!tableSelected || handStage !== "held"}
                                 >
                                     Continuar para {nextDefinition.label}
                                 </button>
@@ -1354,7 +1405,7 @@ export default function BeautyMovementExperience({
                                     className={styles.continueButton}
                                     type="button"
                                     onClick={beginFinale}
-                                    disabled={handStage !== "held"}
+                                    disabled={!tableSelected || handStage !== "held"}
                                 >
                                     Continuar para confirmar
                                 </button>

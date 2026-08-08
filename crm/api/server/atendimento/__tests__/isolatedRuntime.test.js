@@ -52,6 +52,9 @@ async function createFixture({ state = 'active' } = {}) {
             CRM_DOMAIN: 'atendimento',
             CRM_API_HOST: '127.0.0.1',
             CRM_API_PORT: '0',
+            CRM_ATENDIMENTO_READ_ONLY: 'true',
+            CRM_ATENDIMENTO_CLIENTES_ONLY: 'true',
+            CRM_ATENDIMENTO_COMMERCIAL_WRITES_ENABLED: 'false',
             CRM_MODULE_CONTROL_FILE: control,
             ATENDIMENTO_RUNTIME_RELEASE_SHA: RELEASE_SHA,
             ATENDIMENTO_REPLAY_STATE_FILE: replay,
@@ -168,6 +171,7 @@ test('readiness returns 200 only after the read-only database contract succeeds'
         transactionReadOnly: true,
         migrationRegistryReadable: true,
         persistentWritePrivilegesBlocked: true,
+        persistentPiiReadPrivilegesBlocked: true,
     }))
     try {
         const readiness = await fetch(`${running.baseUrl}/internal/readiness`, {
@@ -184,6 +188,7 @@ test('readiness returns 200 only after the read-only database contract succeeds'
             transactionReadOnly: true,
             migrationRegistryReadable: true,
             persistentWritePrivilegesBlocked: true,
+            persistentPiiReadPrivilegesBlocked: true,
             replayProtectionReady: true,
         })
     } finally {
@@ -209,6 +214,7 @@ test('store readiness requires the expected database, app role, schema and read-
                         transaction_read_only: true,
                         migrations_read: true,
                         persistent_write_privileges_blocked: true,
+                        persistent_pii_read_privileges_blocked: true,
                         migrations_table: true,
                         identities_table: true,
                         commercial_policy_table: true,
@@ -224,12 +230,14 @@ test('store readiness requires the expected database, app role, schema and read-
     assert.equal(ready.ok, true)
     assert.equal(ready.transactionReadOnly, true)
     assert.equal(ready.persistentWritePrivilegesBlocked, true)
+    assert.equal(ready.persistentPiiReadPrivilegesBlocked, true)
     assert.match(queries[0], /current_database\(\)/)
     assert.match(queries[0], /and current_setting\('default_transaction_read_only', true\) = 'on'/)
     assert.match(queries[0], /has_table_privilege\(current_user, c\.oid, 'INSERT'\)/)
     assert.match(queries[0], /session_user as session_database_user/)
     assert.match(queries[0], /pg_has_role\(current_user, candidate\.oid, 'SET'\)/)
     assert.match(queries[0], /p\.prosecdef/)
+    assert.match(queries[0], /n\.nspname in \('harmonia', 'crm_caixa'\)/)
     assert.match(queries[0], /clientes_source_operation_runs/)
     assert.match(queries[0], /clinical_approval\.rules/)
 
@@ -247,6 +255,7 @@ test('store readiness requires the expected database, app role, schema and read-
                         transaction_read_only: true,
                         migrations_read: true,
                         persistent_write_privileges_blocked: false,
+                        persistent_pii_read_privileges_blocked: true,
                         migrations_table: true,
                         identities_table: true,
                         commercial_policy_table: true,
@@ -276,6 +285,7 @@ test('store readiness requires the expected database, app role, schema and read-
                         transaction_read_only: true,
                         migrations_read: true,
                         persistent_write_privileges_blocked: true,
+                        persistent_pii_read_privileges_blocked: true,
                         migrations_table: true,
                         identities_table: true,
                         commercial_policy_table: true,
@@ -290,6 +300,74 @@ test('store readiness requires the expected database, app role, schema and read-
     const assumedRole = await assumedRoleStore.readiness()
     assert.equal(assumedRole.ok, false)
     assert.equal(assumedRole.databaseIdentity, false)
+})
+
+test('store readiness fails closed when the application role retains source-system PII reads', async () => {
+    const store = createAtendimentoStore({
+        schemaManaged: true,
+        expectedDatabase: 'skincos_clientes_production',
+        expectedDatabaseUser: 'skincos_clientes_ro',
+        pool: {
+            async query() {
+                return {
+                    rows: [{
+                        database_name: 'skincos_clientes_production',
+                        database_user: 'skincos_clientes_ro',
+                        session_database_user: 'skincos_clientes_ro',
+                        transaction_read_only: true,
+                        migrations_read: true,
+                        persistent_write_privileges_blocked: true,
+                        persistent_pii_read_privileges_blocked: false,
+                        migrations_table: true,
+                        identities_table: true,
+                        commercial_policy_table: true,
+                        source_operations_table: true,
+                        clinical_approval_table: true,
+                    }],
+                }
+            },
+            async end() {},
+        },
+    })
+    const readiness = await store.readiness()
+    assert.equal(readiness.ok, false)
+    assert.equal(readiness.persistentPiiReadPrivilegesBlocked, false)
+})
+
+test('isolated runtime rejects commercial reads before source-system PII can be queried', async () => {
+    const fixture = await createFixture()
+    const running = await startRuntime(fixture, async () => ({
+        ok: true,
+        databaseReachable: true,
+        databaseIdentity: true,
+        schemaReady: true,
+        sourceOperationsReady: true,
+        clinicalApprovalReady: true,
+        transactionReadOnly: true,
+        migrationRegistryReadable: true,
+        persistentWritePrivilegesBlocked: true,
+        persistentPiiReadPrivilegesBlocked: true,
+    }))
+    try {
+        const actor = encode({ id: 'synthetic-actor', role: 'GESTOR', allowedUnits: ['synthetic-unit'] })
+        const timestamp = String(Date.now())
+        const nonce = 'C'.repeat(32)
+        const requestPath = '/api/atendimento/commercial/overview?unit=synthetic-unit'
+        const response = await fetch(running.baseUrl + requestPath, {
+            headers: {
+                'x-crm-user': actor,
+                'x-crm-ts': timestamp,
+                'x-crm-nonce': nonce,
+                'x-crm-signature-version': '2',
+                'x-crm-signature': signature({ timestamp, nonce, requestPath, actor }),
+            },
+        })
+        assert.equal(response.status, 503)
+        assert.deepEqual(await response.json(), { ok: false, error: 'COMMERCIAL_READS_DISABLED' })
+    } finally {
+        await running.close()
+        await fixture.cleanup()
+    }
 })
 
 test('v2 actor nonces survive a restart and reject a replay', async () => {
@@ -398,7 +476,7 @@ test('SIGTERM closes the isolated listener and releases its port', async () => {
     }
 })
 
-test('standalone entrypoint receives SIGTERM and releases its listener', { timeout: 60_000 }, async () => {
+test('standalone entrypoint enforces the signed synthetic probe contract and releases its listener', { timeout: 60_000 }, async () => {
     const fixture = await createFixture()
     const entrypoint = fileURLToPath(new URL('../../atendimentoRuntime.js', import.meta.url))
     const child = spawn(process.execPath, [entrypoint], {
@@ -436,7 +514,43 @@ test('standalone entrypoint receives SIGTERM and releases its listener', { timeo
         })
         const port = Number(listening.port)
         assert.ok(Number.isInteger(port) && port > 0)
-        assert.equal((await fetch(`http://127.0.0.1:${port}/health`)).status, 200)
+        const baseUrl = `http://127.0.0.1:${port}`
+        assert.equal((await fetch(`${baseUrl}/health`)).status, 200)
+
+        const actor = encode({ id: 'staging-smoke-synthetic', role: 'GESTOR', allowedModules: ['atendimento'] })
+        const timestamp = String(Date.now())
+        const nonce = 'S'.repeat(32)
+        const requestPath = '/api/atendimento/__staging-smoke__/signature-replay'
+        const headers = {
+            'x-crm-user': actor,
+            'x-crm-ts': timestamp,
+            'x-crm-nonce': nonce,
+            'x-crm-signature-version': '2',
+            'x-crm-signature': signature({ timestamp, nonce, requestPath, actor }),
+        }
+        const accepted = await fetch(baseUrl + requestPath, { headers })
+        assert.equal(accepted.status, 404)
+        assert.deepEqual(await accepted.json(), { ok: false, error: 'CLIENTES_SURFACE_ONLY' })
+
+        const replay = await fetch(baseUrl + requestPath, { headers })
+        assert.equal(replay.status, 401)
+        assert.deepEqual(await replay.json(), { ok: false, error: 'UNAUTHORIZED' })
+
+        const writePath = '/api/atendimento/__staging-smoke__/write-guard'
+        const writeNonce = 'W'.repeat(32)
+        const write = await fetch(baseUrl + writePath, {
+            method: 'POST',
+            headers: {
+                'x-crm-user': actor,
+                'x-crm-ts': timestamp,
+                'x-crm-nonce': writeNonce,
+                'x-crm-signature-version': '2',
+                'x-crm-signature': signature({ timestamp, nonce: writeNonce, method: 'POST', requestPath: writePath, actor }),
+            },
+        })
+        assert.equal(write.status, 405)
+        assert.deepEqual(await write.json(), { ok: false, error: 'READ_ONLY_RUNTIME' })
+
         child.kill('SIGTERM')
         const [exitCode, signal] = await once(child, 'exit')
         assert.equal(signal, null)

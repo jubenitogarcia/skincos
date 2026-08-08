@@ -4,7 +4,7 @@
 import { resolveIdentityTables } from '../store/d1.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notifications/smtpMailer.js';
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
-import { normalizeEmployeeUsername } from '../policy/employeeOnboarding.js';
+import { normalizeCorporateEmail, normalizeEmployeeUsername } from '../policy/employeeOnboarding.js';
 import { normalizeAllowedUnits } from '../../shared/identity-contract/index.js';
 import { syncIdentityWorkforceStatus } from '../../shared/identity-runtime/workforce-onboarding.js';
 
@@ -263,7 +263,7 @@ export async function handleAuthRoutes({
 	        const tableHasColumn = async (tableName, columnName) => {
 	            if (!env?.DB || !tableName || !columnName) return false;
 	            const t = String(tableName);
-            if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(t)) return false;
+            if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites', 'crm_employee_account_links'].includes(t)) return false;
 	            try {
 	                const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
 	                const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
@@ -277,7 +277,9 @@ export async function handleAuthRoutes({
 	        const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
 	        const invitesHasModules = await tableHasColumn(invitesTable, 'allowed_modules_json');
 	        const invitesHasInviteeEmail = await tableHasColumn(invitesTable, 'invitee_email');
+	        const invitesHasCorporateEmail = await tableHasColumn(invitesTable, 'corporate_email');
 	        const invitesHasRequestedUsername = await tableHasColumn(invitesTable, 'requested_username');
+	        const accountLinksReady = await tableHasColumn('crm_employee_account_links', 'id');
 
         const sha256Hex = async (input) => {
 	            const data = new TextEncoder().encode(String(input || ''));
@@ -608,9 +610,10 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: "INVITE_MIGRATION_REQUIRED" }), { status: 503 }, appOrigin);
                 }
 
+                const corporateEmailColumn = invitesHasCorporateEmail ? ', corporate_email' : '';
                 const requestedUsernameColumn = invitesHasRequestedUsername ? ', requested_username' : '';
                 const invite = await env.DB.prepare(
-                    `SELECT id, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked${requestedUsernameColumn}
+                    `SELECT id, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked${corporateEmailColumn}${requestedUsernameColumn}
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                      LIMIT 1`
@@ -640,8 +643,26 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: "INVITE_EMAIL_MISMATCH" }), { status: 403 }, appOrigin);
                 }
 
+                const rawCorporateEmail = String(invite.corporate_email || '').trim();
+                const normalizedCorporateEmail = normalizeCorporateEmail(rawCorporateEmail);
+                if (rawCorporateEmail && (!normalizedCorporateEmail || !normalizedCorporateEmail.endsWith('@espacofacial.com'))) {
+                    return withCORS(JSON.stringify({ success: false, error: "INVITE_CORPORATE_EMAIL_INVALID" }), { status: 409 }, appOrigin);
+                }
+                const loginEmail = normalizedCorporateEmail || email;
+                const unifiedInvite = Boolean(normalizedCorporateEmail);
+                let onboarding = null;
+                if (unifiedInvite) {
+                    if (!accountLinksReady) {
+                        return withCORS(JSON.stringify({ success: false, error: "Migração de vínculo da conta pendente", code: "INVITE_IDENTITY_MIGRATION_REQUIRED" }), { status: 503 }, appOrigin);
+                    }
+                    onboarding = await env.DB.prepare('SELECT id, workforce_employee_id, account_status FROM crm_employee_onboarding WHERE invite_id=? LIMIT 1').bind(invite.id).first().catch(() => null);
+                    if (!onboarding?.id || !onboarding?.workforce_employee_id) {
+                        return withCORS(JSON.stringify({ success: false, error: "Convite sem identidade Workforce vinculada", code: "INVITE_IDENTITY_LINK_REQUIRED" }), { status: 409 }, appOrigin);
+                    }
+                }
                 const existing = await d1.getUserByIdentifier(email);
-                if (existing) {
+                const existingCorporate = loginEmail !== email ? await d1.getUserByIdentifier(loginEmail) : null;
+                if (existing || existingCorporate) {
                     return withCORS(JSON.stringify({ success: false, error: "EMAIL_TAKEN" }), { status: 409 }, appOrigin);
                 }
 
@@ -673,7 +694,7 @@ export async function handleAuthRoutes({
                 const registration = env.DB.prepare(
                     `INSERT INTO ${usersTable}
                      (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
-                     SELECT ?, invitee_email, ?, ?, role, '', ?, ?, 0, ?, ?
+                     SELECT ?, ?, ?, ?, role, '', ?, ?, 0, ?, ?
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                        AND invitee_email = ?
@@ -681,7 +702,7 @@ export async function handleAuthRoutes({
                        AND max_uses = 1
                        AND uses_count = 0
                        AND expires_at > ?`
-                ).bind(candidate, name, hash, JSON.stringify(allowedUnits), JSON.stringify(allowedModules), now, now, inviteHash, email, currentTime);
+                ).bind(candidate, loginEmail, name, hash, JSON.stringify(allowedUnits), JSON.stringify(allowedModules), now, now, inviteHash, email, currentTime);
                 const consume = env.DB.prepare(
                     `UPDATE ${invitesTable}
                      SET uses_count = 1
@@ -693,16 +714,25 @@ export async function handleAuthRoutes({
                        AND expires_at > ?
                        AND changes() = 1`
                 ).bind(inviteHash, email, currentTime);
-                const changed = await env.DB.batch([registration, consume]);
-                if (!changed?.[0]?.meta?.changes || !changed?.[1]?.meta?.changes) {
+                const accountLink = unifiedInvite
+                    ? env.DB.prepare(
+                        `INSERT INTO crm_employee_account_links
+                         (id, workforce_employee_id, onboarding_id, crm_username, link_method, review_status, created_by, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, 'INVITE_REGISTRATION', 'CONFIRMED', 'identity:invite', ?, ?)`
+                    ).bind(`employee-account-${onboarding.id}`, onboarding.workforce_employee_id, onboarding.id, candidate, currentTime, currentTime)
+                    : null;
+                const changed = await env.DB.batch([registration, consume, ...(accountLink ? [accountLink] : [])]);
+                if (!changed?.[0]?.meta?.changes || !changed?.[1]?.meta?.changes || (accountLink && !changed?.[2]?.meta?.changes)) {
                     return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXHAUSTED" }), { status: 409 }, appOrigin);
                 }
-                let onboarding = null;
-                try {
-                    onboarding = await env.DB.prepare('SELECT id, workforce_employee_id, account_status FROM crm_employee_onboarding WHERE invite_id=? LIMIT 1').bind(invite.id).first();
-                } catch {
-                    onboarding = null;
+                if (!onboarding) {
+                    try {
+                        onboarding = await env.DB.prepare('SELECT id, workforce_employee_id, account_status FROM crm_employee_onboarding WHERE invite_id=? LIMIT 1').bind(invite.id).first();
+                    } catch {
+                        onboarding = null;
+                    }
                 }
+                if (unifiedInvite) await logAuthAudit({ action: 'AUTH_INVITE_ACCOUNT_LINKED', actor: candidate, role, detail: { onboardingId: onboarding.id, workforceEmployeeId: onboarding.workforce_employee_id } }).catch(() => {});
                 if (onboarding?.workforce_employee_id) {
                     try {
                         await syncIdentityWorkforceStatus(env, { onboardingId: onboarding.id, employeeId: onboarding.workforce_employee_id, accountStatus: 'ACTIVE' }, request.headers.get('x-request-id') || `identity-register-${invite.id}`);
@@ -742,7 +772,7 @@ export async function handleAuthRoutes({
                         name,
                         displayName: name,
                         username: candidate,
-                        email,
+                        loginEmail,
                         role,
                         photoUrl: '',
                         allowedUnits,

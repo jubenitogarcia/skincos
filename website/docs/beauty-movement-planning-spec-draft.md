@@ -152,7 +152,8 @@ dados preexistentes após gate de privacidade.
 3. Navegação compacta de progresso, com a etapa atual em amarelo.
 4. Mesa única: baralho clicável, primeira mão e revelação.
 5. Recolhimento e distribuição da segunda e terceira mão.
-6. Confirmação inline com WhatsApp mascarado, e-mail opcional e aceite.
+6. Confirmação inline com WhatsApp mascarado, contatos já vinculados e aceite;
+   a interface não solicita novamente o e-mail.
 7. Resultado inline: três cartas finais ilustradas, síntese, convite, benefício
    reservado, condições, CTA de equipe e Story.
 8. Footer real do site.
@@ -167,7 +168,7 @@ O cadastro ocorre após a terceira carta.
 | Campo/estado | Tratamento planejado |
 | --- | --- |
 | WhatsApp | já vinculado ao convite e exibido mascarado |
-| E-mail | opcional; não substitui e-mail pré-registrado |
+| E-mail | já vinculado ao convite; não é solicitado nem substituído no frontend |
 | Consentimento | um aceite operacional para lista e comunicações do evento |
 | CPF | nunca chega ao D1, frontend, URL, relatório ou analytics |
 | Histórico de procedimentos | somente ambiente privado, se houver gate aprovado |

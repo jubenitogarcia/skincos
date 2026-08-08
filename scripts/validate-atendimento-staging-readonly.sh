@@ -43,6 +43,7 @@ readonly RELEASE_ROOT="$RELEASE_BASE/$RELEASE_SHA/source"
 readonly CONTROL_VALIDATOR="$RELEASE_ROOT/crm/api/scripts/validate-atendimento-staging-control.mjs"
 readonly RELEASE_VALIDATOR="$RELEASE_ROOT/crm/api/scripts/validate-atendimento-release.mjs"
 readonly RUNTIME_GRANT_LOCKDOWN="$RELEASE_ROOT/scripts/lockdown-atendimento-staging-runtime.sh"
+readonly SMOKE="$RELEASE_ROOT/crm/api/scripts/atendimento-staging-signed-smoke.mjs"
 readonly UNIT_TEMPLATE="$RELEASE_ROOT/ops/runtime/units/crm-atendimento-staging.service"
 [[ "$RELEASE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || { echo 'Immutable release root is invalid.' >&2; exit 64; }
 
@@ -54,10 +55,11 @@ done
 /usr/bin/sudo -n /usr/bin/test -f "$CONTROL_VALIDATOR" || { echo 'Strict staging control validator is unavailable.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$RELEASE_VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Staging runtime grant lockdown is unavailable.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$SMOKE" || { echo 'Fixed staging signed smoke is unavailable.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$UNIT_TEMPLATE" || { echo 'Isolated unit template is unavailable in immutable release.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$UNIT_FILE" || { echo 'Installed isolated unit is unavailable.' >&2; exit 1; }
 /usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE" || { echo "Service is not active: $SERVICE" >&2; exit 1; }
-run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$RELEASE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$RELEASE_ROOT" --release-sha "$RELEASE_SHA" --target staging >/dev/null
 
 snapshot_protected_services() {
   local service main_pid started_at
@@ -97,8 +99,12 @@ listen_line="$(/usr/bin/ss -ltn | /usr/bin/awk -v port=":$PORT" '$4 == "127.0.0.
 health_status="$(/usr/bin/curl --noproxy '*' --proto '=http' -sS --connect-timeout 2 --max-time 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/health")"
 [[ "$health_status" == '200' ]] || { echo "Liveness health expected 200, got $health_status." >&2; exit 1; }
 
+# The smoke reads only the fixed private staging env through a literal parser.
+# Its probes are loopback-only synthetic auth/replay and a bodyless blocked
+# write guard; it never reaches a Clientes or commercial data handler.
+run_sudo_clean /usr/bin/node "$SMOKE" --expected-release-sha "$RELEASE_SHA"
 run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 protected_after="$(snapshot_protected_services)"
 [[ "$protected_before" == "$protected_after" ]] || { echo 'A protected shared service changed during isolated staging validation.' >&2; exit 1; }
-printf 'validation_passed=true service=%s release_sha=%s loopback_health=true unit_attested=true process_attested=true shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"
+printf 'validation_passed=true service=%s release_sha=%s loopback_health=true signed_smoke=true unit_attested=true process_attested=true shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"

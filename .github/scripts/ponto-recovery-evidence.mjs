@@ -42,7 +42,13 @@ export function normalizeRecoveryEvidence({
   const watchdogChildrenValid = Array.isArray(reconciliation?.children)
     ? reconciliation.children.every((run) =>
       run?.status === "completed"
-      && ["issued", "consumed", "invalidated", "invalidated-before-cancel"].includes(
+      && [
+        "issued",
+        "consumed",
+        "invalidated",
+        "invalidated-before-cancel",
+        "terminal-pre-mutation-gate-failure",
+      ].includes(
         String(run?.capabilityState || run?.capabilityAuthorization || ""),
       ))
     : Number.isSafeInteger(reconciliation?.discoveredChildren)

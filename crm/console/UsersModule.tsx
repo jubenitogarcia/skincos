@@ -2,7 +2,7 @@ import React from 'react'
 import { Ban, Check, CircleAlert, Link2, ListChecks, Mail, Pencil, Power, RefreshCw, Search, ShieldCheck, UsersRound, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { addEscalaProfessional, updateEscalaProfessional } from '@/escalaApi'
-import { Badge } from '@/badge'
+import { Badge as BaseBadge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
@@ -17,9 +17,27 @@ type Me = { success?: boolean; user?: { username?: string; role?: string; allowe
 type Onboarding = { id: string; fullName: string; username?: string | null; corporateEmail: string; workforceEmployeeId?: string | null; profile: string; jobTitle: string; department: string; units: string[]; accountStatus: string; createdAt?: string; updatedAt?: string }
 type ApiError = { error?: string; message?: string; code?: string }
 type RequestOptions = { method?: string; body?: unknown; csrf?: string | null; headers?: Record<string, string> }
-type TeamPendingItem = { memberId: string; kind: 'PROVISIONING' | 'COMPENSATION' | 'IDENTITY_LINK' | 'ESCALA_LINK' | 'ESCALA_SYNC'; source?: string; status: string }
-type TeamSummary = { members?: number; pendingLinks?: number; pendingProvisioning?: number; pendingInvites?: number; pendingItems?: TeamPendingItem[] }
+type TeamPendingItem = { memberId: string; kind: 'PROVISIONING' | 'COMPENSATION' | 'CRM_ACCOUNT_LINK' | 'IDENTITY_LINK' | 'ESCALA_LINK' | 'ESCALA_SYNC'; source?: string; status: string }
+type TeamSummary = { members?: number; pendingLinks?: number; pendingProvisioning?: number; pendingInvites?: number; pendingAccountLinks?: number; pendingItems?: TeamPendingItem[] }
 type TeamHistoryEntry = { id: string | number; timestamp?: string | null; actor?: string; role?: string; action?: string; entity?: string; before?: Record<string, unknown> | null; after?: Record<string, unknown> | null }
+
+function Badge({ variant, className, style, ...props }: React.ComponentProps<typeof BaseBadge>) {
+  const accessibleColors = variant === 'success'
+    ? 'bg-emerald-300 text-emerald-950 hover:bg-emerald-200'
+    : variant === 'warning'
+      ? 'bg-amber-200 text-amber-950 hover:bg-amber-100'
+      : variant === 'destructive'
+        ? 'bg-rose-300 text-rose-950 hover:bg-rose-200'
+        : ''
+  const accessibleStyle = variant === 'success'
+    ? { backgroundColor: '#a7f3d0', color: '#022c22', ...style }
+    : variant === 'warning'
+      ? { backgroundColor: '#fde68a', color: '#451a03', ...style }
+      : variant === 'destructive'
+        ? { backgroundColor: '#fecdd3', color: '#4c0519', ...style }
+        : style
+  return <BaseBadge variant={variant} className={[accessibleColors, className].filter(Boolean).join(' ')} style={accessibleStyle} {...props} />
+}
 
 class RequestError extends Error {
   code?: string
@@ -132,6 +150,7 @@ function memberInitials(fullName: string) {
 function pendingItemLabel(item: TeamPendingItem) {
   if (item.kind === 'IDENTITY_LINK') return item.source === 'ATENDIMENTO' ? 'Vínculo do Atendimento' : 'Vínculo da Escala'
   if (item.kind === 'COMPENSATION') return 'Sincronização de acesso'
+  if (item.kind === 'CRM_ACCOUNT_LINK') return 'Vínculo da conta CRM'
   if (item.kind === 'PROVISIONING') return 'Provisionamento'
   if (item.kind === 'ESCALA_SYNC') return item.status === 'FAILED' || item.status === 'BLOCKED' ? 'Sincronização da Escala com erro' : 'Sincronização da Escala pendente'
   return 'Vínculo da Escala'
@@ -221,6 +240,9 @@ export function UsersModule() {
   const [linkSourceId, setLinkSourceId] = React.useState('')
   const [linkSaving, setLinkSaving] = React.useState(false)
   const [linkReviewingId, setLinkReviewingId] = React.useState<string | null>(null)
+  const [crmUsernameInput, setCrmUsernameInput] = React.useState('')
+  const [crmLinkSaving, setCrmLinkSaving] = React.useState(false)
+  const [crmLinkReviewing, setCrmLinkReviewing] = React.useState(false)
   const [activationRetryingId, setActivationRetryingId] = React.useState<string | null>(null)
   const usernameWasEdited = React.useRef(false)
   const loadSequence = React.useRef(0)
@@ -324,6 +346,7 @@ export function UsersModule() {
     setFormTab('identity')
     setHistoryRows([])
     setHistoryError('')
+    setCrmUsernameInput('')
     setForm({ ...initialForm, jobTitle: defaultTitle, units: defaultUnits })
     setOpen(true)
   }, [selectableTitles, selectableUnits])
@@ -336,6 +359,7 @@ export function UsersModule() {
     setFormTab('identity')
     setHistoryRows([])
     setHistoryError('')
+    setCrmUsernameInput(row.crmAccountReviewStatus === 'REJECTED' ? (row.crmAccountUsername || '') : '')
     setForm(emptyTeamForm(row))
     setOpen(true)
   }
@@ -430,6 +454,51 @@ export function UsersModule() {
       toast.error(error?.message || 'Não foi possível atualizar a revisão do vínculo.')
     } finally {
       setLinkReviewingId(null)
+    }
+  }
+
+  const proposeCrmAccountLink = async () => {
+    if (!editingRow || !crmUsernameInput.trim() || !canManage) return
+    setCrmLinkSaving(true)
+    try {
+      await api(`/admin/team/${encodeURIComponent(editingRow.id)}/account-link`, {
+        method: 'POST',
+        csrf: me?.csrfToken,
+        body: { crmUsername: crmUsernameInput.trim() },
+      })
+      setCrmUsernameInput('')
+      toast.success('Conta CRM registrada para revisão explícita.')
+      await load()
+    } catch (error: any) {
+      toast.error(error?.message || 'Não foi possível registrar o vínculo da conta CRM.')
+    } finally {
+      setCrmLinkSaving(false)
+    }
+  }
+
+  const reviewCrmAccountLink = async (reviewStatus: 'CONFIRMED' | 'REJECTED') => {
+    if (!editingRow || !editingRow.crmAccountLinkId || !canManage) return
+    const reason = reviewStatus === 'REJECTED'
+      ? window.prompt('Informe o motivo da rejeição (obrigatório):', '')?.trim() || ''
+      : ''
+    if (reviewStatus === 'REJECTED' && reason.length < 5) {
+      toast.error('Informe um motivo com pelo menos 5 caracteres para rejeitar o vínculo da conta.')
+      return
+    }
+    if (reviewStatus === 'CONFIRMED' && !window.confirm(`Confirmar a conta CRM ${editingRow.crmAccountUsername || ''}?`)) return
+    setCrmLinkReviewing(true)
+    try {
+      await api(`/admin/team/${encodeURIComponent(editingRow.id)}/account-link/${encodeURIComponent(editingRow.crmAccountLinkId)}/review`, {
+        method: 'POST',
+        csrf: me?.csrfToken,
+        body: { reviewStatus, ...(reason ? { reason } : {}) },
+      })
+      toast.success(reviewStatus === 'CONFIRMED' ? 'Conta CRM confirmada.' : 'Vínculo da conta CRM rejeitado.')
+      await load()
+    } catch (error: any) {
+      toast.error(error?.message || 'Não foi possível atualizar a revisão da conta CRM.')
+    } finally {
+      setCrmLinkReviewing(false)
     }
   }
 
@@ -684,10 +753,11 @@ export function UsersModule() {
                     {(searchInput || searchQuery || statusFilter !== 'ACTIVE') && <Button type="button" variant="ghost" size="sm" onClick={() => { setSearchInput(''); setSearchQuery(''); setStatusFilter('ACTIVE') }}>Limpar</Button>}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                   <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Exibidos</p><p className="mt-1 text-lg font-semibold text-white">{teamRows.length}</p></div>
                   <div className="rounded-xl border border-amber-300/15 bg-amber-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-amber-100/55">Convites</p><p className="mt-1 text-lg font-semibold text-amber-50">{summary.pendingInvites || 0}</p></div>
                   <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-sky-100/55">Vínculos pendentes</p><p className="mt-1 text-lg font-semibold text-sky-50">{summary.pendingLinks || 0}</p></div>
+                  <div className="rounded-xl border border-rose-300/15 bg-rose-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-rose-100/55">Contas sem vínculo</p><p className="mt-1 text-lg font-semibold text-rose-50">{summary.pendingAccountLinks || 0}</p></div>
                   <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><p className="mt-1 text-lg font-semibold text-white">{unitCount}</p></div>
                 </div>
                 {canManage && bulkEligibleRows.length > 0 && (
@@ -778,7 +848,7 @@ export function UsersModule() {
                           )) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}
                         </div>
                       </td>
-                      <td className="p-3 align-middle"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge></td>
+                      <td className="p-3 align-middle"><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={row.crmAccountLinked ? 'success' : row.crmAccountReviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[11px]" title={row.crmAccountUsername ? `Conta ${row.crmAccountUsername}` : 'Conta ainda sem vínculo explícito'}>{row.crmAccountLinked ? 'CRM vinculado' : row.crmAccountReviewStatus === 'REJECTED' ? 'CRM rejeitado' : 'CRM pendente'}</Badge></div></td>
                       <td className="p-3 align-middle"><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></td>
                       <td className="p-3 text-right align-middle">
                         <TooltipButton label={`Editar ${row.fullName}`}>
@@ -818,7 +888,7 @@ export function UsersModule() {
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Cargo</p><Badge variant={titleBadgeVariant(row.jobTitle)} className="px-2 py-1 text-[11px]">{row.jobTitle}</Badge></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Departamento</p><p className="text-blue-100/80">{row.department || '—'}</p></div>
                     <div className="col-span-2"><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><div className="flex flex-wrap gap-1">{row.units.length ? row.units.map((unit) => <Badge key={unit} variant="outline" className="px-2 py-1 text-[11px]">{unitLabels[unit] || unit}</Badge>) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}</div></div>
-                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Conta</p><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge></div>
+                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Conta</p><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={row.crmAccountLinked ? 'success' : row.crmAccountReviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[11px]">{row.crmAccountLinked ? 'CRM vinculado' : row.crmAccountReviewStatus === 'REJECTED' ? 'CRM rejeitado' : 'CRM pendente'}</Badge></div></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Escala</p><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></div>
                   </div>
                 </article>
@@ -905,7 +975,23 @@ export function UsersModule() {
                     <label className="space-y-1.5 text-sm">Apelido<Input value={form.scheduleNickname} disabled={formReadOnly} onChange={(event) => updateField('scheduleNickname', event.target.value)} /></label>
                     <label className="space-y-1.5 text-sm">Instagram<Input value={form.scheduleInstagram} disabled={formReadOnly} onChange={(event) => updateField('scheduleInstagram', event.target.value)} /></label>
                     <label className="space-y-1.5 text-sm">Cor<Input value={form.scheduleColor} disabled={formReadOnly} onChange={(event) => updateField('scheduleColor', event.target.value)} placeholder="#6d9eeb" /></label>
+                 </div>
+               </section>
+
+                <section className="rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby="team-account-link-title">
+                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-200"><Link2 className="size-4" aria-hidden="true" /></div>
+                      <div><h3 id="team-account-link-title" className="text-sm font-semibold text-white">Conta CRM vinculada</h3><p className="mt-1 text-xs text-blue-100/55">O vínculo usa somente o nome de usuário exato; nunca é resolvido por nome, e-mail ou semelhança.</p></div>
+                    </div>
+                    {editingRow && <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={editingRow.crmAccountLinked ? 'success' : editingRow.crmAccountReviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[10px]">{editingRow.crmAccountLinked ? 'Confirmada' : editingRow.crmAccountReviewStatus === 'REJECTED' ? 'Rejeitada' : editingRow.crmAccountReviewStatus === 'PENDING_REVIEW' ? 'Em revisão' : 'Sem vínculo'}</Badge>
+                      {editingRow.crmAccountUsername && <span className="font-mono text-[11px] text-blue-100/65">{editingRow.crmAccountUsername}</span>}
+                    </div>}
                   </div>
+                  {editingRow?.crmAccountReviewStatus === 'PENDING_REVIEW' && canManage && <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/10 bg-amber-200/[0.04] px-3 py-2 text-xs text-amber-50/80"><span>Esta proposta aguarda confirmação humana antes de qualquer alteração de acesso.</span><div className="flex items-center gap-1"><TooltipButton label="Confirmar conta CRM"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-emerald-100 hover:bg-emerald-200/10" aria-label={`Confirmar conta CRM ${editingRow.crmAccountUsername || ''}`} disabled={crmLinkReviewing} onClick={() => void reviewCrmAccountLink('CONFIRMED')}><Check className="size-3.5" aria-hidden="true" /></Button></TooltipButton><TooltipButton label="Rejeitar conta CRM"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label={`Rejeitar conta CRM ${editingRow.crmAccountUsername || ''}`} disabled={crmLinkReviewing} onClick={() => void reviewCrmAccountLink('REJECTED')}><X className="size-3.5" aria-hidden="true" /></Button></TooltipButton></div></div>}
+                  {canManage && editingId && !editingRow?.crmAccountLinked && <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="space-y-1 text-xs text-blue-100/75">Nome de usuário da conta CRM<Input value={crmUsernameInput} onChange={(event) => setCrmUsernameInput(event.target.value)} placeholder="exato, por exemplo anareibeiro" autoComplete="off" /></label><Button type="button" disabled={crmLinkSaving || !crmUsernameInput.trim() || editingRow?.crmAccountReviewStatus === 'PENDING_REVIEW'} onClick={() => void proposeCrmAccountLink()}><Link2 className="mr-2 size-4" aria-hidden="true" />{crmLinkSaving ? 'Registrando…' : 'Propor vínculo'}</Button></div>}
+                  {!editingRow?.crmAccountUsername && <p className="text-xs text-blue-100/55">Nenhuma conta foi associada a este cadastro. Resolva a pendência antes de reativar ou desligar uma conta já operacional.</p>}
                 </section>
 
                 <section className="rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby="team-links-title">

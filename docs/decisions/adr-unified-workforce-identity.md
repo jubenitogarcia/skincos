@@ -18,7 +18,12 @@ seus próprios IDs e registra um vínculo explícito, auditável e reversível p
 essa identidade. A conta CRM, o onboarding/convite e os profissionais da Escala,
 Atendimento e Ponto não são unidos por semelhança textual.
 
-As mudanças de schema são aditivas. O inventário multi-fonte é somente leitura,
+As mudanças de schema são aditivas. A relação entre a conta CRM e o funcionário
+é registrada em `crm_employee_account_links`, com `onboarding_id`,
+`workforce_employee_id` e `crm_username` únicos; ela nasce no mesmo lote que o
+registro do convite e nunca é inferida por nome, telefone ou e-mail. Contas
+históricas sem essa linha permanecem pendentes para revisão. O inventário
+multi-fonte é somente leitura,
 gera fingerprint e expõe apenas subjects pseudonimizados. Duplicidades,
 órfãos, divergências de unidade, registros sem ID e snapshots ausentes ficam em
 pendência/conflito; nenhum deles gera vínculo confirmado automaticamente.
@@ -31,12 +36,17 @@ pendência/conflito; nenhum deles gera vínculo confirmado automaticamente.
 4. Unidade e hierarquia são verificadas no servidor e sempre em fail-closed.
 5. Nomes históricos da Escala são preservados em escrita dupla.
 6. Convites são idempotentes, revogáveis e não carregam senha de equipe.
-7. Desativação mantém agenda, ponto, auditoria e histórico; bloqueia novos
+7. Uma conta CRM operacional só é considerada vinculada quando existe uma linha
+   `CONFIRMED` em `crm_employee_account_links`.
+8. Conta histórica sem vínculo confirmado só pode ser proposta por `crm_username`
+   exato e exige revisão humana auditada; nome, e-mail e telefone não resolvem
+   identidade.
+9. Desativação mantém agenda, ponto, auditoria e histórico; bloqueia novos
    acessos/alocações conforme o estado governado.
 
 ## Fluxo de dados
 
-    CRM account/onboarding ──explicit workforce_employee_id──> Workforce employee
+    CRM account ──crm_employee_account_links──> onboarding ──explicit workforce_employee_id──> Workforce employee
              │                                                        │
              ├── explicit source link ──> Escala professional          ├── Ponto employee/events
              └── explicit source link ──> Atendimento professional      └── units/hierarchy/audit

@@ -14,6 +14,10 @@ export type UnifiedTeamMember = {
   department: string
   units: string[]
   accountStatus: string
+  crmAccountLinked?: boolean
+  crmAccountUsername?: string | null
+  crmAccountReviewStatus?: 'CONFIRMED' | 'PENDING_REVIEW' | 'REJECTED' | string | null
+  crmAccountLinkId?: string | null
   provisioningState?: string | null
   compensationState?: string | null
   schedule?: {

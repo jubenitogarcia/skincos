@@ -99,3 +99,9 @@ rollback por SHA requer um manifest de release anterior já preparado; nenhum
 script tenta “adivinhar” checkout, shell ou destino a partir de uma variável.
 O preparador de staging grava a linhagem imutável (`releaseId`, predecessor e
 árvore de origem) antes de a unidade poder ser instalada.
+
+O rollback de staging é deliberadamente mais estreito: aceita somente o par de
+backup de unidade isolada e controle `maintenance` que corresponda ao SHA e ao
+manifesto de staging. A primeira troca a partir de uma unidade legada não é um
+rollback elegível; a contenção é manter o controle em `maintenance`/`disabled`,
+nunca restaurar `server.js` ou tocar um serviço compartilhado.

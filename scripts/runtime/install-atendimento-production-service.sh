@@ -1,13 +1,23 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash -p
 set -euo pipefail
 
-# Install only the immutable isolated Atendimento unit.  Every destination is
-# fixed; no Environment or GitHub value is evaluated as a command or path.
+# Install only the immutable isolated Atendimento unit. Every destination is
+# fixed; no environment or GitHub value is evaluated as a command or path.
+readonly SAFE_PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH="$SAFE_PATH"
+unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
+
+run_sudo_clean() {
+  /usr/bin/sudo -n /usr/bin/env -i "PATH=$SAFE_PATH" 'HOME=/root' 'LANG=C' "$@"
+}
+
 readonly UNIT_DEST='/etc/systemd/system'
 readonly STATE_ROOT='/var/lib/skincos-runtime'
 readonly CONFIG_ROOT='/etc/skincos'
 readonly LOG_ROOT='/var/log/skincos'
 readonly BACKUP_ROOT='/var/backups/skincos/clientes/production-readonly'
+readonly SERVICE='crm-atendimento-production.service'
 
 SOURCE_ROOT=''
 APPLY=0
@@ -31,45 +41,63 @@ readonly RELEASE_SHA="${BASH_REMATCH[1]}"
 readonly UNIT_SRC="$SOURCE_ROOT/ops/runtime/units/crm-atendimento-production.service"
 readonly RUNTIME_ENTRYPOINT="$SOURCE_ROOT/crm/api/server/atendimentoRuntime.js"
 readonly RELEASE_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-release.mjs"
+readonly CONTROL_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-production-control.mjs"
+readonly RUNTIME_GRANT_LOCKDOWN="$SOURCE_ROOT/scripts/lockdown-atendimento-production-runtime.sh"
 readonly RELEASE_MANIFEST="$STATE_ROOT/crm-atendimento-production/release-manifests/$RELEASE_SHA.json"
+readonly CONTROL_FILE="$CONFIG_ROOT/atendimento-production/module-control.json"
 
-for command_name in sudo sed systemd-analyze mktemp install grep node; do
-  command -v "$command_name" >/dev/null 2>&1 || { echo "Missing $command_name" >&2; exit 1; }
+for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/sed /usr/bin/systemd-analyze /usr/bin/mktemp /usr/bin/install /usr/bin/node /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/date /usr/bin/cp /usr/bin/systemctl /usr/bin/test /usr/bin/grep /usr/bin/bash; do
+  [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
 done
-sudo -n true
-sudo -n test -f "$UNIT_SRC" || { echo 'Isolated unit template is unavailable in immutable release.' >&2; exit 78; }
-sudo -n test -f "$RUNTIME_ENTRYPOINT" || { echo 'Isolated runtime entrypoint is unavailable in immutable release.' >&2; exit 78; }
-sudo -n test -f "$RELEASE_VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
-sudo -n test -f "$RELEASE_MANIFEST" || { echo 'Release must be registered before the production unit can be installed.' >&2; exit 78; }
-sudo -n /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
-sudo -n grep -Fq "\"releaseSha\":\"$RELEASE_SHA\"" "$RELEASE_MANIFEST" || { echo 'Registered release manifest SHA mismatch.' >&2; exit 78; }
-sudo -n grep -Fq '"readOnly":true' "$RELEASE_MANIFEST" || { echo 'Registered release manifest is not read-only.' >&2; exit 78; }
+/usr/bin/sudo -n true
+/usr/bin/sudo -n /usr/bin/test -f "$UNIT_SRC" || { echo 'Isolated unit template is unavailable in immutable release.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$RUNTIME_ENTRYPOINT" || { echo 'Isolated runtime entrypoint is unavailable in immutable release.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$RELEASE_VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$CONTROL_VALIDATOR" || { echo 'Strict production control validator is unavailable in immutable release.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Production runtime grant lockdown is unavailable in immutable release.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$RELEASE_MANIFEST" || { echo 'Release must be registered before the production unit can be installed.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$CONTROL_FILE" || { echo 'Strict production control file is unavailable.' >&2; exit 78; }
+run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/grep -Fq "\"releaseSha\":\"$RELEASE_SHA\"" "$RELEASE_MANIFEST" || { echo 'Registered release manifest SHA mismatch.' >&2; exit 78; }
+run_sudo_clean /usr/bin/grep -Fq '"readOnly":true' "$RELEASE_MANIFEST" || { echo 'Registered release manifest is not read-only.' >&2; exit 78; }
+run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 
-render_dir="$(mktemp -d)"
-rendered="$render_dir/crm-atendimento-production.service"
-trap 'rm -f "$rendered"; rmdir "$render_dir" 2>/dev/null || true' EXIT
-sed \
+umask 0077
+render_dir="$(/usr/bin/mktemp -d /tmp/atendimento-production-unit.XXXXXX)"
+/usr/bin/test -d "$render_dir" -a -O "$render_dir"
+rendered="$render_dir/$SERVICE"
+trap '/usr/bin/rm -f "$rendered"; /usr/bin/rmdir "$render_dir" 2>/dev/null || true' EXIT
+/usr/bin/sed \
   -e "s|__REPO_ROOT__|$SOURCE_ROOT|g" \
   -e "s|__STATE_ROOT__|$STATE_ROOT|g" \
   -e "s|__CONFIG_ROOT__|$CONFIG_ROOT|g" \
   -e "s|__LOG_ROOT__|$LOG_ROOT|g" \
   -e "s|__RELEASE_SHA__|$RELEASE_SHA|g" \
   "$UNIT_SRC" >"$rendered"
-chmod 0644 "$rendered"
-systemd-analyze verify "$rendered"
+/usr/bin/chmod 0644 "$rendered"
+/usr/bin/systemd-analyze verify "$rendered"
 
 if [[ "$APPLY" != '1' ]]; then
-  printf 'dry_run=true service=crm-atendimento-production.service release_sha=%s source=%s shared_restart=false\n' "$RELEASE_SHA" "$SOURCE_ROOT"
+  printf 'dry_run=true service=%s release_sha=%s source=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$SOURCE_ROOT"
   exit 0
 fi
 
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-sudo -n install -d -m 0700 -o root -g root "$BACKUP_ROOT"
-if sudo -n test -f "$UNIT_DEST/crm-atendimento-production.service"; then
-  sudo -n cp -p "$UNIT_DEST/crm-atendimento-production.service" "$BACKUP_ROOT/${stamp}-crm-atendimento-production.service"
+stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
+run_sudo_clean /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
+if run_sudo_clean /usr/bin/test -f "$UNIT_DEST/$SERVICE"; then
+  run_sudo_clean /usr/bin/cp -p "$UNIT_DEST/$SERVICE" "$BACKUP_ROOT/${stamp}-$SERVICE"
 fi
-sudo -n install -m 0644 "$rendered" "$UNIT_DEST/crm-atendimento-production.service"
-sudo -n systemctl daemon-reload
-sudo -n systemctl enable --now crm-atendimento-production.service >/dev/null
-sudo -n systemctl is-active --quiet crm-atendimento-production.service
-printf 'installed=true service=crm-atendimento-production.service release_sha=%s shared_restart=false\n' "$RELEASE_SHA"
+# Reapply the seal after any privileged release preparation and before the
+# unit is installed or restarted. A failed seal leaves the current runtime
+# untouched.
+run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --apply
+run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
+run_sudo_clean /usr/bin/install -m 0644 "$rendered" "$UNIT_DEST/$SERVICE"
+run_sudo_clean /usr/bin/systemctl daemon-reload
+# `enable --now` does not replace an active legacy instance. Restart only this
+# dedicated service after its immutable unit is installed.
+run_sudo_clean /usr/bin/systemctl enable "$SERVICE" >/dev/null
+run_sudo_clean /usr/bin/systemctl restart "$SERVICE"
+run_sudo_clean /usr/bin/systemctl is-active --quiet "$SERVICE"
+printf 'installed=true service=%s release_sha=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"

@@ -3,8 +3,18 @@ set -euo pipefail
 
 readonly SAFE_PATH='/usr/sbin:/usr/bin:/sbin:/bin'
 export PATH="$SAFE_PATH"
-unset BASH_ENV ENV CDPATH GLOBIGNORE \
-  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
+unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy \
+  OPENSSL_CONF RANDFILE
+
+run_postgres_clean() {
+  /usr/bin/sudo -n -u postgres /usr/bin/env -i \
+    "PATH=$SAFE_PATH" 'HOME=/var/lib/postgresql' 'LANG=C' /usr/bin/psql "$@"
+}
+
+random_hex() {
+  /usr/bin/env -i "PATH=$SAFE_PATH" 'HOME=/nonexistent' 'LANG=C' /usr/bin/openssl rand -hex 32
+}
 
 # Creates the isolated synthetic staging database contract. Secret material is
 # generated in memory and written only to the private native configuration
@@ -27,17 +37,18 @@ readonly CONTROL_DIR="$CONFIG_DIR/atendimento-staging"
 readonly CONTROL_FILE="$CONTROL_DIR/module-control.json"
 readonly STATE_ROOT='/var/lib/skincos-runtime/crm-atendimento'
 readonly LOG_ROOT='/var/log/skincos/crm-atendimento'
+readonly SERVICE='crm-atendimento-staging.service'
 # Keep configuration/control backups root-private and distinct from the
 # PostgreSQL dump directory owned by the postgres group.
 readonly BACKUP_ROOT='/var/backups/skincos/clientes/staging-control'
 
-for command_path in /usr/bin/sudo /usr/bin/openssl /usr/bin/install /usr/bin/psql /usr/bin/date /usr/bin/mktemp /usr/bin/cat /usr/bin/rm /usr/bin/cp /usr/bin/basename /usr/bin/test; do
+for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/openssl /usr/bin/install /usr/bin/psql /usr/bin/date /usr/bin/mktemp /usr/bin/cat /usr/bin/rm /usr/bin/cp /usr/bin/basename /usr/bin/test /usr/bin/systemctl; do
   [[ -x "$command_path" ]] || { echo "Missing required command: $command_path" >&2; exit 1; }
 done
 /usr/bin/sudo -n true
 
 if [[ "$ACTION" == "--dry-run" ]]; then
-  /usr/bin/sudo -n -u postgres /usr/bin/env -i "PATH=$SAFE_PATH" 'HOME=/var/lib/postgresql' 'LANG=C' /usr/bin/psql --dbname=postgres --set=ON_ERROR_STOP=1 --tuples-only --no-align <<SQL
+  run_postgres_clean --dbname=postgres --set=ON_ERROR_STOP=1 --tuples-only --no-align <<SQL
 select 'database=' || datname from pg_database where datname = '$DB_NAME';
 select 'role=' || rolname || ':login=' || rolcanlogin from pg_roles where rolname in ('$APP_ROLE', '$MIGRATOR_ROLE', '$OWNER_ROLE');
 SQL
@@ -45,6 +56,15 @@ SQL
     if /usr/bin/sudo -n /usr/bin/test -f "$path"; then echo "present=$path"; else echo "missing=$path"; fi
   done
   exit 0
+fi
+
+# Rotating the isolated app credentials or grants while the legacy process is
+# running would create a mixed security state. The orchestrator stops only
+# this dedicated service before apply; no shared CRM, jobs, Orb or tunnel unit
+# is changed here.
+if /usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE"; then
+  echo 'Staging provisioning requires the isolated runtime to be inactive.' >&2
+  exit 1
 fi
 
 stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
@@ -58,12 +78,14 @@ for path in "$ATENDIMENTO_CONFIG" "$MIGRATOR_CONFIG" "$CONTROL_FILE"; do
   fi
 done
 
-app_password="$(/usr/bin/openssl rand -hex 32)"
-migrator_password="$(/usr/bin/openssl rand -hex 32)"
-actor_key="$(/usr/bin/openssl rand -hex 32)"
-readiness_token="$(/usr/bin/openssl rand -hex 32)"
+app_password="$(random_hex)"
+migrator_password="$(random_hex)"
+actor_key="$(random_hex)"
+readiness_token="$(random_hex)"
 
-/usr/bin/sudo -n -u postgres /usr/bin/env -i "PATH=$SAFE_PATH" 'HOME=/var/lib/postgresql' 'LANG=C' /usr/bin/psql --dbname=postgres --set=ON_ERROR_STOP=1 --set=app_password="$app_password" --set=migrator_password="$migrator_password" <<SQL
+run_postgres_clean --dbname=postgres --set=ON_ERROR_STOP=1 <<SQL
+\set app_password '$app_password'
+\set migrator_password '$migrator_password'
 alter role $APP_ROLE password :'app_password';
 alter role $MIGRATOR_ROLE password :'migrator_password';
 alter role $MIGRATOR_ROLE inherit;
@@ -85,8 +107,11 @@ grant usage, select, update on all sequences in schema crm_atendimento, crm_caix
 revoke all privileges on schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
 revoke all privileges on all tables in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
 revoke all privileges on all sequences in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
-grant usage on schema crm_atendimento, crm_caixa, crm_sessions to $APP_ROLE;
-grant select on all tables in schema crm_atendimento, crm_caixa, crm_sessions to $APP_ROLE;
+# The isolated application has no safe direct Caixa projection yet. Do not
+# give it source-system reads during provisioning; terminal lockdown removes
+# temporary migration compatibility grants before the runtime can start.
+grant usage on schema crm_atendimento, crm_sessions to $APP_ROLE;
+grant select on all tables in schema crm_atendimento, crm_sessions to $APP_ROLE;
 grant usage, create on schema harmonia to $MIGRATOR_ROLE;
 grant select, insert, update, delete on all tables in schema harmonia to $MIGRATOR_ROLE;
 grant usage, select, update on all sequences in schema harmonia to $MIGRATOR_ROLE;
@@ -104,9 +129,12 @@ app_url="postgresql://${APP_ROLE}:${app_password}@127.0.0.1:5432/${DB_NAME}?sslm
 migrator_url="postgresql://${MIGRATOR_ROLE}:${migrator_password}@127.0.0.1:5432/${DB_NAME}?sslmode=require&uselibpqcompat=true&application_name=atendimento-migration"
 
 umask 0077
-tmp_env="$(/usr/bin/mktemp)"
-tmp_migrator="$(/usr/bin/mktemp)"
-tmp_control="$(/usr/bin/mktemp)"
+tmp_env="$(/usr/bin/mktemp /tmp/atendimento-staging-app-env.XXXXXX)"
+tmp_migrator="$(/usr/bin/mktemp /tmp/atendimento-staging-migrator-env.XXXXXX)"
+tmp_control="$(/usr/bin/mktemp /tmp/atendimento-staging-control.XXXXXX)"
+/usr/bin/test -f "$tmp_env" -a -O "$tmp_env"
+/usr/bin/test -f "$tmp_migrator" -a -O "$tmp_migrator"
+/usr/bin/test -f "$tmp_control" -a -O "$tmp_control"
 trap '/usr/bin/rm -f "$tmp_env" "$tmp_migrator" "$tmp_control"' EXIT
 /usr/bin/cat >"$tmp_env" <<EOF
 NODE_ENV=production

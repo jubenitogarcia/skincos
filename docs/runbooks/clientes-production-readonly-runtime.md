@@ -55,8 +55,12 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    readiness no env privado e concede ao app apenas `SELECT`/`USAGE`; ele não
    abre uma rota nem inicia uma unidade. O invólucro da migration só executa
    a cópia imutável já preparada: isso garante o mesmo conjunto de dependências
-   e a linhagem que a futura unidade consumirá. Ele faz backup em
-   `/var/backups/skincos/clientes/staging`, lê exclusivamente
+   e a linhagem que a futura unidade consumirá. Em todo `--apply` ou
+   `--rollback` de migration, depois dos gates e imediatamente antes do runner,
+   ele cria e verifica exatamente um dump privado e único em
+   `/var/backups/skincos/clientes/staging`; a evidência contém somente SHA-256,
+   `private=true` e `unique=true`, nunca o caminho ou conteúdo do dump. Não
+   chame o helper de backup separadamente nesse fluxo. O runner lê exclusivamente
    `/etc/skincos/crm-atendimento-staging-migrator.env` como texto literal e
    aceita uma só ação. A migração pode conceder temporariamente grants normais
    enquanto cria objetos; ao terminar (inclusive após rollback ou erro), o
@@ -153,6 +157,37 @@ O helper legado de rota de staging foi aposentado e recusa `--apply`: ele não
 deve alterar o `cloudflare-runtime.service` compartilhado. Até um túnel de
 staging dedicado ser aprovado, o runtime isolado de staging é validado apenas
 por loopback.
+
+### Rollback de staging, somente contenção
+
+O rollback de staging não tem caminho para o CRM compartilhado. Ele só aceita
+um par explícito de backups dos diretórios privados versionados: uma unidade
+isolada e um controle `maintenance` do mesmo SHA. Os nomes são emitidos como
+`unit_backup` pelo instalador e `control_backup` pelo escritor de controle;
+registre ambos na evidência da promoção. Cada nome inclui um sufixo único
+pré-criado pelo `mktemp`; nunca reutilize, renomeie ou substitua um backup.
+
+```bash
+scripts/runtime/rollback-atendimento-staging.sh \
+  --to-sha <sha-staging-anterior> \
+  --unit-backup <timestamp>-crm-atendimento-staging.<unico>.service \
+  --control-backup <timestamp>-module-control.<unico>.json
+```
+
+O modo padrão verifica toda a cadeia sem alterar o host. Ele exige source
+imutável, lineage e manifesto de Atendimento para staging, ownership/modo
+privados, controle estrito em `maintenance` e uma unidade exatamente igual ao
+template renderizado para o SHA. Com `--apply`, restaura exclusivamente esses
+dois arquivos, executa `daemon-reload` e reinicia somente
+`crm-atendimento-staging.service`; o controle continua em `maintenance`.
+Qualquer falha mantém o módulo contido, sem chamar `crm.service`, jobs, Orb ou
+túneis compartilhados.
+
+O primeiro corte a partir de uma unidade legada `server.js` não possui par
+compatível e é deliberadamente recusado: isso é contenção fail-closed, não um
+rollback de release comprovado. Até existir um par isolado compatível, mantenha
+staging em `maintenance` e use apenas o dump privado aprovado para recuperação
+de dados; não restaure a unidade legada.
 
 ## Evidência mínima por etapa
 

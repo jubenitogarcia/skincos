@@ -15,6 +15,10 @@ test('team accounts accept both the unique username and corporate email at login
   const store = await readFile(new URL('../store/d1.js', import.meta.url), 'utf8');
   assert.match(auth, /body\.username \|\| body\.user \|\| body\.email/);
   assert.match(auth, /d1\.getUserByIdentifier\(usernameInput\)/);
+  assert.match(auth, /const loginEmail = normalizedCorporateEmail \|\| email/);
+  assert.match(auth, /SELECT \?, \?, \?, \?, role/);
+  assert.match(auth, /INVITE_IDENTITY_MIGRATION_REQUIRED/);
+  assert.match(auth, /AUTH_INVITE_ACCOUNT_LINKED/);
   assert.match(store, /LOWER\(username\) = LOWER\(\?\) OR \(email IS NOT NULL AND email != '' AND LOWER\(email\) = LOWER\(\?\)\)/);
 });
 

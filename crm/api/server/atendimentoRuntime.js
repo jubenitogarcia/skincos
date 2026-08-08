@@ -223,6 +223,7 @@ export function createIsolatedAtendimentoRuntime({
                 transactionReadOnly: readiness.transactionReadOnly === true,
                 migrationRegistryReadable: readiness.migrationRegistryReadable === true,
                 persistentWritePrivilegesBlocked: readiness.persistentWritePrivilegesBlocked === true,
+                persistentPiiReadPrivilegesBlocked: readiness.persistentPiiReadPrivilegesBlocked === true,
                 replayProtectionReady: replay.ready === true,
             })
         } catch {
@@ -250,6 +251,11 @@ export function createIsolatedAtendimentoRuntime({
         }
         return next()
     })
+    // The shared router's commercial reads still depend on source-system
+    // phone/name data. This isolated runtime deliberately holds direct Caixa
+    // and Harmonia reads, so block the whole mounted surface before it can
+    // become a permission error or pressure a broad PII grant.
+    app.use('/api/atendimento/commercial', (_req, res) => publicFailure(res, 503, 'COMMERCIAL_READS_DISABLED'))
     app.use('/api/atendimento', createAtendimentoRouter({
         store: appStore,
         actorHmacKey,

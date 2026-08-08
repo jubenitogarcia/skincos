@@ -33,6 +33,13 @@ const TEAM_ADMIN_ROLES = ['ADMIN', 'GESTOR', 'GERENTE'];
 const TEAM_READ_ROLES = [...TEAM_ADMIN_ROLES, 'SUPERVISOR'];
 const PASSWORD_MIN_LENGTH = 12;
 
+function isOnboardingDependencyError(value) {
+  const code = String(value || '').trim().toUpperCase();
+  return code === 'IDENTITY_PII_KEY_NOT_CONFIGURED'
+    || code === 'AUTH_EMAIL_NOT_CONFIGURED'
+    || /^(WORKFORCE_|IDENTITY_WORKFORCE_|SMTP_|EMAIL_|MODULE_|TIMEKEEPING_|RELEASE_AFFINITY_|RUNTIME_BINDINGS_|SERVICE_|DATABASE_UNAVAILABLE|ONBOARDING_MIGRATION_REQUIRED)/.test(code);
+}
+
 function unifiedTeamEnabled(env) {
   const value = String(env?.UNIFIED_TEAM_ENABLED || '').trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(value);
@@ -61,6 +68,10 @@ function toBoolInt(v) {
 
 function normalizeRole(role) {
   return String(role || 'CONSULTOR').trim().toUpperCase();
+}
+
+function normalizeCrmUsername(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function normalizePersonalEmail(value) {
@@ -101,7 +112,7 @@ function normalizeAllowedModules(value) {
 async function tableHasColumn(env, tableName, columnName) {
   if (!env?.DB || !tableName || !columnName) return false;
   const t = String(tableName);
-  if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites', 'crm_employee_onboarding', 'crm_employee_team', 'crm_employee_identity_links'].includes(t)) return false;
+  if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites', 'crm_employee_onboarding', 'crm_employee_team', 'crm_employee_identity_links', 'crm_employee_account_links'].includes(t)) return false;
   try {
     const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
     const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
@@ -113,7 +124,7 @@ async function tableHasColumn(env, tableName, columnName) {
 
 async function tableExists(env, tableName) {
   const t = String(tableName || '');
-  if (!['crm_employee_onboarding', 'crm_employee_team', 'crm_employee_identity_links', 'crm_team_operations', 'crm_team_telemetry'].includes(t)) return false;
+  if (!['crm_employee_onboarding', 'crm_employee_team', 'crm_employee_identity_links', 'crm_employee_account_links', 'crm_team_operations', 'crm_team_telemetry'].includes(t)) return false;
   try {
     const row = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1").bind(t).first();
     return String(row?.name || '') === t;
@@ -144,9 +155,14 @@ function publicTeamMember(row, links = [], scheduleSync = null) {
   const normalizedSync = scheduleSync
     ? normalizeScheduleSyncResult(scheduleSync, row.schedule_professional_id || '')
     : fallback;
+  const crmAccountReviewStatus = String(row.crm_account_review_status || '').trim().toUpperCase() || null;
   return {
     ...publicOnboarding(row),
     workforceEmployeeId: row.workforce_employee_id || null,
+    crmAccountLinked: crmAccountReviewStatus === 'CONFIRMED' && Boolean(String(row.crm_account_username || '').trim()),
+    crmAccountUsername: row.crm_account_username || null,
+    crmAccountReviewStatus,
+    crmAccountLinkId: row.crm_account_link_id || null,
     schedule: {
       professionalId: row.schedule_professional_id || null,
       status: row.schedule_status || '',
@@ -179,6 +195,22 @@ function publicIdentityLink(row) {
     metadata: safeJsonParse(row.metadata_json, {}),
     createdBy: row.created_by || '',
     createdAt: row.created_at || null,
+  };
+}
+
+function publicAccountLink(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    crmUsername: row.crm_username || '',
+    linkMethod: row.link_method || '',
+    reviewStatus: String(row.review_status || '').trim().toUpperCase(),
+    reviewNote: row.review_note || null,
+    reviewedBy: row.reviewed_by || null,
+    reviewedAt: row.reviewed_at || null,
+    createdBy: row.created_by || '',
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
   };
 }
 
@@ -224,6 +256,9 @@ function teamPendingItems(rows) {
     const compensationState = String(row?.compensationState || '').trim().toUpperCase();
     if (compensationState) {
       items.push({ memberId, kind: 'COMPENSATION', status: compensationState });
+    }
+    if (!row?.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(String(row?.accountStatus || '').toUpperCase())) {
+      items.push({ memberId, kind: 'CRM_ACCOUNT_LINK', status: 'PENDING' });
     }
     for (const link of row?.identityLinks || []) {
       if (String(link?.reviewStatus || '').toUpperCase() === 'PENDING_REVIEW') {
@@ -556,16 +591,18 @@ export async function handleAdminRoutes({
   const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
   const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
   const invitesHasInviteeEmail = await tableHasColumn(env, invitesTable, 'invitee_email');
+  const invitesHasCorporateEmail = await tableHasColumn(env, invitesTable, 'corporate_email');
   const onboardingHasUsername = await tableHasColumn(env, 'crm_employee_onboarding', 'requested_username');
   const onboardingHasRequestFingerprint = await tableHasColumn(env, 'crm_employee_onboarding', 'request_fingerprint');
   const invitesHasUsername = await tableHasColumn(env, invitesTable, 'requested_username');
   const onboardingHasSaga = await tableHasColumn(env, 'crm_employee_onboarding', 'provisioning_state') && await tableHasColumn(env, 'crm_employee_onboarding', 'invite_token_encrypted');
   const teamTablesReady = await tableExists(env, 'crm_employee_team')
     && await tableExists(env, 'crm_employee_identity_links')
+    && await tableExists(env, 'crm_employee_account_links')
     && await tableExists(env, 'crm_team_operations')
     && await tableExists(env, 'crm_team_telemetry');
 
-  if (isTeamRoute && (!onboardingHasUsername || !onboardingHasRequestFingerprint || !invitesHasUsername || !onboardingHasSaga || !teamTablesReady)) {
+  if (isTeamRoute && (!onboardingHasUsername || !onboardingHasRequestFingerprint || !invitesHasUsername || !invitesHasCorporateEmail || !onboardingHasSaga || !teamTablesReady)) {
     return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
   }
 
@@ -618,18 +655,33 @@ export async function handleAdminRoutes({
         }
         if (existing?.provisioning_state === 'COMPLETED') return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
       }
+      const id = await sha256Hex(`employee-onboarding:v1:${input.corporateEmail}`);
+      const existingOnboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
+      if (existingOnboarding && String(existingOnboarding.id || '').trim() !== id) {
+        throw new Error('ONBOARDING_IDEMPOTENCY_CONFLICT');
+      }
+      if (existingOnboarding && url.pathname === '/admin/team') {
+        if (!existingOnboarding.request_fingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
+        if (existingOnboarding.request_fingerprint !== requestFingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_CONFLICT');
+      }
       const existingUser = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(input.corporateEmail).first();
       if (existingUser?.username) return withCORS(JSON.stringify({ success: false, error: 'Este e-mail corporativo já está cadastrado', code: 'EMAIL_TAKEN' }), { status: 409 }, appOrigin);
       const generatedEmailCollision = url.pathname === '/admin/team' && input.generatedCorporateEmail && input.generatedCorporateEmail !== input.corporateEmail
         ? await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(input.generatedCorporateEmail).first()
         : null;
       const generatedOnboardingCollision = url.pathname === '/admin/team' && input.generatedCorporateEmail && input.generatedCorporateEmail !== input.corporateEmail
-        ? await env.DB.prepare('SELECT 1 FROM crm_employee_onboarding WHERE LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(input.generatedCorporateEmail).first()
+        ? await env.DB.prepare('SELECT 1 FROM crm_employee_onboarding WHERE LOWER(corporate_email)=LOWER(?) AND id<>? LIMIT 1').bind(input.generatedCorporateEmail, id).first()
         : null;
-      if (url.pathname === '/admin/team' && input.corporateEmailOverridden && !generatedEmailCollision && !generatedOnboardingCollision) {
+      const generatedInviteCollision = url.pathname === '/admin/team' && invitesHasCorporateEmail && input.generatedCorporateEmail && input.generatedCorporateEmail !== input.corporateEmail
+        ? await env.DB.prepare(`SELECT 1 FROM ${invitesTable} WHERE LOWER(corporate_email)=LOWER(?) AND id<>? AND COALESCE(revoked, 0)=0 AND COALESCE(uses_count, 0)=0 AND expires_at>? LIMIT 1`).bind(input.generatedCorporateEmail, existingOnboarding?.invite_id || '', new Date().toISOString()).first()
+        : null;
+      const corporateInviteCollision = url.pathname === '/admin/team' && invitesHasCorporateEmail
+        ? await env.DB.prepare(`SELECT 1 FROM ${invitesTable} WHERE LOWER(corporate_email)=LOWER(?) AND id<>? AND COALESCE(revoked, 0)=0 AND COALESCE(uses_count, 0)=0 AND expires_at>? LIMIT 1`).bind(input.corporateEmail, existingOnboarding?.invite_id || '', new Date().toISOString()).first()
+        : null;
+      if (corporateInviteCollision) return withCORS(JSON.stringify({ success: false, error: 'Este e-mail corporativo já está reservado por um convite ativo', code: 'EMAIL_TAKEN' }), { status: 409 }, appOrigin);
+      if (url.pathname === '/admin/team' && input.corporateEmailOverridden && !generatedEmailCollision && !generatedOnboardingCollision && !generatedInviteCollision) {
         return withCORS(JSON.stringify({ success: false, error: 'O ajuste do e-mail só é aceito após uma colisão confirmada', code: 'CORPORATE_EMAIL_OVERRIDE_REQUIRES_COLLISION' }), { status: 409 }, appOrigin);
       }
-      const id = await sha256Hex(`employee-onboarding:v1:${input.corporateEmail}`);
       if (onboardingHasUsername) {
         const usernameTaken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(requestedUsername).first();
         if (usernameTaken) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está cadastrado', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
@@ -639,21 +691,13 @@ export async function handleAdminRoutes({
         const pendingUsername = await env.DB.prepare('SELECT 1 FROM crm_employee_onboarding WHERE LOWER(requested_username)=LOWER(?) AND id<>? LIMIT 1').bind(requestedUsername, id).first();
         if (pendingUsername) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está reservado', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
         if (invitesHasUsername) {
-          const invitedUsername = await env.DB.prepare(`SELECT 1 FROM ${invitesTable} WHERE LOWER(requested_username)=LOWER(?) AND LOWER(invitee_email)<>LOWER(?) AND COALESCE(revoked, 0)=0 LIMIT 1`).bind(requestedUsername, input.corporateEmail).first();
+          const invitedUsername = await env.DB.prepare(`SELECT 1 FROM ${invitesTable} WHERE LOWER(requested_username)=LOWER(?) AND id<>? AND COALESCE(revoked, 0)=0 LIMIT 1`).bind(requestedUsername, existingOnboarding?.invite_id || '').first();
           if (invitedUsername) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está reservado por um convite', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
         }
       }
       const at = new Date().toISOString();
       const requestId = String(request.headers.get('x-request-id') || `identity-onboarding-${id}`).slice(0, 180);
-      const existingOnboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
-      if (existingOnboarding && String(existingOnboarding.id || '').trim() !== id) {
-        throw new Error('ONBOARDING_IDEMPOTENCY_CONFLICT');
-      }
       let repairMissingTeam = false;
-      if (existingOnboarding && url.pathname === '/admin/team') {
-        if (!existingOnboarding.request_fingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
-        if (existingOnboarding.request_fingerprint !== requestFingerprint) throw new Error('ONBOARDING_IDEMPOTENCY_CONFLICT');
-      }
       if (existingOnboarding?.provisioning_state === 'COMPLETED') {
         if (url.pathname !== '/admin/team') {
           return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
@@ -741,10 +785,14 @@ export async function handleAdminRoutes({
           inviteId = crypto.randomUUID();
           const inviteColumns = ['id', 'token_hash', 'token_hint', 'invitee_email', 'role', 'allowed_units_json', 'allowed_modules_json', 'max_uses', 'uses_count', 'expires_at', 'revoked', 'note', 'created_by', 'created_at'];
           const inviteValues = [
-            inviteId, await sha256Hex(token), `${token.slice(0, 4)}…${token.slice(-4)}`, input.corporateEmail,
+            inviteId, await sha256Hex(token), `${token.slice(0, 4)}…${token.slice(-4)}`, input.personalEmail,
             input.profile, JSON.stringify(input.units), JSON.stringify(input.modules), 1, 0, expiresAt, 0,
             `Onboarding ${input.department}`, String(auth?.user?.username || ''), at,
           ];
+          if (url.pathname === '/admin/team') {
+            inviteColumns.splice(4, 0, 'corporate_email');
+            inviteValues.splice(4, 0, input.corporateEmail);
+          }
           if (invitesHasUsername) {
             inviteColumns.push('requested_username');
             inviteValues.push(requestedUsername);
@@ -808,7 +856,7 @@ export async function handleAdminRoutes({
       const message = String(error?.message || 'ONBOARDING_FAILED');
       const status = ['ONBOARDING_IDEMPOTENCY_CONFLICT', 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED'].includes(message)
         ? 409
-        : message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' || message === 'AUTH_EMAIL_NOT_CONFIGURED' || /^WORKFORCE_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
+        : isOnboardingDependencyError(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Configuração segura de cadastro pendente' : 'Não foi possível concluir o cadastro', code: message }), { status }, appOrigin);
     }
   }
@@ -835,7 +883,15 @@ export async function handleAdminRoutes({
       if (String(onboarding.account_status).toUpperCase() === 'ACTIVE') {
         return withCORS(JSON.stringify({ success: true, data: publicOnboarding(onboarding), replayed: true }), { status: 200 }, appOrigin);
       }
-      const registeredUser = await env.DB.prepare(`SELECT username, password_hash FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(onboarding.corporate_email).first();
+      if (activationMatch[1] === 'team') {
+        const accountLink = await env.DB.prepare("SELECT id FROM crm_employee_account_links WHERE onboarding_id=? AND review_status='CONFIRMED' LIMIT 1").bind(onboardingId).first();
+        if (!accountLink?.id) {
+          return withCORS(JSON.stringify({ success: false, error: 'Vínculo explícito da conta CRM pendente', code: 'CRM_ACCOUNT_LINK_REQUIRED' }), { status: 409 }, appOrigin);
+        }
+      }
+      const registeredUser = activationMatch[1] === 'team'
+        ? await env.DB.prepare(`SELECT u.username, u.password_hash FROM ${usersTable} u JOIN crm_employee_account_links a ON a.crm_username=u.username AND a.onboarding_id=? AND a.review_status='CONFIRMED' LIMIT 1`).bind(onboardingId).first()
+        : await env.DB.prepare(`SELECT username, password_hash FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(onboarding.corporate_email).first();
       if (!registeredUser?.username || !String(registeredUser?.password_hash || '').trim()) {
         return withCORS(JSON.stringify({ success: false, error: 'O funcionário ainda precisa criar a senha pelo convite', code: 'INVITE_REGISTRATION_REQUIRED' }), { status: 409 }, appOrigin);
       }
@@ -843,7 +899,9 @@ export async function handleAdminRoutes({
       await syncIdentityWorkforceStatus(env, { onboardingId, employeeId: onboarding.workforce_employee_id, accountStatus: 'ACTIVE' }, requestId);
       const at = new Date().toISOString();
       await env.DB.batch([
-        env.DB.prepare(`UPDATE ${usersTable} SET ativo=1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(at, onboarding.corporate_email),
+        activationMatch[1] === 'team'
+          ? env.DB.prepare(`UPDATE ${usersTable} SET ativo=1, updated_at=? WHERE username IN (SELECT crm_username FROM crm_employee_account_links WHERE onboarding_id=? AND review_status='CONFIRMED')`).bind(at, onboardingId)
+          : env.DB.prepare(`UPDATE ${usersTable} SET ativo=1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(at, onboarding.corporate_email),
         env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='ACTIVE', provisioning_state='COMPLETED', compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?").bind(at, onboardingId),
       ]);
       const activated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(onboardingId).first();
@@ -879,33 +937,80 @@ export async function handleAdminRoutes({
       const denied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
       if (denied) return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para alterar este vínculo', code: denied }), { status: 403 }, appOrigin);
       if (!isValidAccountTransition(currentStatus, nextStatus)) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_STATUS_TRANSITION_DENIED' }), { status: 409 }, appOrigin);
+      if (statusMatch[1] === 'team' && currentStatus !== nextStatus && ['ACTIVE', 'SUSPENDED'].includes(currentStatus)) {
+        const accountLink = await env.DB.prepare("SELECT id FROM crm_employee_account_links WHERE onboarding_id=? AND review_status='CONFIRMED' LIMIT 1").bind(onboardingId).first();
+        if (!accountLink?.id) {
+          return withCORS(JSON.stringify({ success: false, error: 'Resolva o vínculo explícito da conta CRM antes de alterar o acesso', code: 'CRM_ACCOUNT_LINK_REQUIRED' }), { status: 409 }, appOrigin);
+        }
+      }
 
       const requestId = String(request.headers.get('x-request-id') || `identity-status-${onboardingId}`).slice(0, 180);
       const at = new Date().toISOString();
       const revokeInvite = ['SUSPENDED', 'TERMINATED'].includes(nextStatus) ? 1 : 0;
+      const crmUserSelector = statusMatch[1] === 'team'
+        ? { where: "username IN (SELECT crm_username FROM crm_employee_account_links WHERE onboarding_id=? AND review_status='CONFIRMED')", value: onboardingId }
+        : { where: 'LOWER(email)=LOWER(?)', value: onboarding.corporate_email };
       if (currentStatus !== nextStatus) {
-        try {
-          await env.DB.batch([
-            env.DB.prepare("UPDATE crm_employee_onboarding SET account_status=?, provisioning_state='COMPLETED', compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=NULL, updated_at=? WHERE id=? AND account_status=?").bind(nextStatus, at, onboardingId, currentStatus),
-            env.DB.prepare(`UPDATE ${usersTable} SET ativo=?, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(nextStatus === 'ACTIVE' ? 1 : 0, at, onboarding.corporate_email),
-            ...(revokeInvite && onboarding.invite_id ? [env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(onboarding.invite_id)] : []),
-          ]);
-        } catch {
-          return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: 'IDENTITY_STATUS_UPDATE_FAILED' }), { status: 503 }, appOrigin);
+        const syncPayload = { onboardingId, employeeId: onboarding.workforce_employee_id, accountStatus: nextStatus };
+        const reactivation = nextStatus === 'ACTIVE' && currentStatus === 'SUSPENDED';
+        if (reactivation) {
+          // Re-enabling access is fail-closed: Workforce must accept the
+          // transition before Identity marks the CRM login active.
+          try {
+            await syncIdentityWorkforceStatus(env, syncPayload, requestId);
+          } catch (error) {
+            const code = String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120);
+            await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(code, new Date().toISOString(), onboardingId).run().catch(() => {});
+            await Promise.resolve(appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_SYNC_FAILED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { requestedStatus: nextStatus, requestId, failClosed: true, localAccessPreserved: false } })).catch(() => {});
+            return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code }), { status: 503 }, appOrigin);
+          }
+          try {
+            await env.DB.batch([
+              env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='ACTIVE', provisioning_state='COMPLETED', compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=? AND account_status='SUSPENDED'").bind(new Date().toISOString(), onboardingId),
+              env.DB.prepare(`UPDATE ${usersTable} SET ativo=1, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE ${crmUserSelector.where}`).bind(new Date().toISOString(), crmUserSelector.value),
+            ]);
+            const activatedUser = await env.DB.prepare(`SELECT ativo FROM ${usersTable} WHERE ${crmUserSelector.where} LIMIT 1`).bind(crmUserSelector.value).first();
+            if (Number(activatedUser?.ativo || 0) !== 1) throw new Error('IDENTITY_LOCAL_ACTIVATION_NOT_APPLIED');
+          } catch (error) {
+            const localCode = String(error?.message || 'IDENTITY_LOCAL_ACTIVATION_FAILED').slice(0, 120);
+            let compensation = 'NOT_CONFIRMED';
+            try {
+              await syncIdentityWorkforceStatus(env, { ...syncPayload, accountStatus: 'SUSPENDED' }, `${requestId}:compensate`);
+              compensation = 'WORKFORCE_REVERTED';
+            } catch {
+              compensation = 'WORKFORCE_REVERT_PENDING';
+            }
+            await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='SUSPENDED', compensation_state=?, last_error_code=?, updated_at=? WHERE id=?").bind(compensation === 'WORKFORCE_REVERTED' ? 'LOCAL_STATUS_UPDATE_PENDING' : 'WORKFORCE_STATUS_COMPENSATION_PENDING', localCode, new Date().toISOString(), onboardingId).run().catch(() => {});
+            await env.DB.prepare(`UPDATE ${usersTable} SET ativo=0, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE ${crmUserSelector.where}`).bind(new Date().toISOString(), crmUserSelector.value).run().catch(() => {});
+            await Promise.resolve(appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_COMPENSATION_PENDING', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { requestedStatus: nextStatus, requestId, compensation, failClosed: true } })).catch(() => {});
+            return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: localCode }), { status: 503 }, appOrigin);
+          }
+        } else {
+          // Deactivation is also fail-closed: local access is revoked before
+          // the remote Workforce transition and remains revoked on failure.
+          try {
+            await env.DB.batch([
+              env.DB.prepare("UPDATE crm_employee_onboarding SET account_status=?, provisioning_state='COMPLETED', compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=NULL, updated_at=? WHERE id=? AND account_status=?").bind(nextStatus, at, onboardingId, currentStatus),
+              env.DB.prepare(`UPDATE ${usersTable} SET ativo=0, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE ${crmUserSelector.where}`).bind(at, crmUserSelector.value),
+              ...(revokeInvite && onboarding.invite_id ? [env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(onboarding.invite_id)] : []),
+            ]);
+          } catch {
+            return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: 'IDENTITY_STATUS_UPDATE_FAILED' }), { status: 503 }, appOrigin);
+          }
+          try {
+            await syncIdentityWorkforceStatus(env, syncPayload, requestId);
+          } catch (error) {
+            const code = String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120);
+            await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(code, new Date().toISOString(), onboardingId).run().catch(() => {});
+            await Promise.resolve(appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_SYNC_FAILED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { requestedStatus: nextStatus, requestId, failClosed: true, localAccessRevoked: true } })).catch(() => {});
+            return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code }), { status: 503 }, appOrigin);
+          }
+          await env.DB.prepare('UPDATE crm_employee_onboarding SET compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?').bind(new Date().toISOString(), onboardingId).run();
         }
       }
 
       const pending = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
       if (normalizeAccountState(pending?.account_status) !== nextStatus) return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: 'IDENTITY_STATUS_CONFLICT' }), { status: 409 }, appOrigin);
-      try {
-        await syncIdentityWorkforceStatus(env, { onboardingId, employeeId: onboarding.workforce_employee_id, accountStatus: nextStatus }, requestId);
-      } catch (error) {
-        await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120), new Date().toISOString(), onboardingId).run().catch(() => {});
-        await Promise.resolve(appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_SYNC_FAILED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { requestedStatus: nextStatus, requestId, failClosed: true } })).catch(() => {});
-        return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
-      }
-
-      await env.DB.prepare('UPDATE crm_employee_onboarding SET compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?').bind(new Date().toISOString(), onboardingId).run();
       const updated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
       await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_CHANGED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { accountStatus: nextStatus, inviteRevoked: Boolean(revokeInvite && onboarding.invite_id), sessionVersionIncremented: currentStatus !== nextStatus, terminationReasonProvided: nextStatus === 'TERMINATED', terminationReason: nextStatus === 'TERMINATED' ? terminationReason : null, requestId } });
       await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_STATUS_CHANGED', actorRole: auth.user.role, itemCount: 1, unitCount: normalizeAllowedUnits(onboarding.units_json).length });
@@ -935,7 +1040,10 @@ export async function handleAdminRoutes({
       }
 
       const placeholders = ids.map(() => '?').join(',');
-      const selected = await env.DB.prepare(`SELECT * FROM crm_employee_onboarding WHERE id IN (${placeholders})`).bind(...ids).all();
+      const selected = await env.DB.prepare(`SELECT o.*, a.crm_username AS crm_account_username, a.review_status AS crm_account_review_status
+        FROM crm_employee_onboarding o
+        LEFT JOIN crm_employee_account_links a ON a.onboarding_id=o.id
+        WHERE o.id IN (${placeholders})`).bind(...ids).all();
       const byId = new Map((selected?.results || []).map((row) => [String(row.id || ''), row]));
       if (byId.size !== ids.length) return withCORS(JSON.stringify({ success: false, error: 'Um ou mais membros não foram encontrados', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
       const rows = ids.map((id) => byId.get(id));
@@ -946,35 +1054,73 @@ export async function handleAdminRoutes({
         if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite alterar este membro', code: hierarchyDenied }), { status: 403 }, appOrigin);
         if (!['ACTIVE', 'SUSPENDED'].includes(normalizeAccountState(row.account_status))) return withCORS(JSON.stringify({ success: false, error: 'Ação em lote aceita somente membros ativos ou suspensos', code: 'BULK_STATUS_TRANSITION_DENIED' }), { status: 409 }, appOrigin);
         if (!row.workforce_employee_id) return withCORS(JSON.stringify({ success: false, error: 'Membro ainda não possui identidade Workforce', code: 'ONBOARDING_STATUS_NOT_READY' }), { status: 409 }, appOrigin);
-      }
-
-      const at = new Date().toISOString();
-      const statements = [];
-      for (const row of rows) {
-        const currentStatus = normalizeAccountState(row.account_status);
-        if (currentStatus === nextStatus) continue;
-        statements.push(env.DB.prepare("UPDATE crm_employee_onboarding SET account_status=?, provisioning_state='COMPLETED', compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=NULL, updated_at=? WHERE id=? AND account_status=?").bind(nextStatus, at, row.id, currentStatus));
-        statements.push(env.DB.prepare(`UPDATE ${usersTable} SET ativo=?, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(nextStatus === 'ACTIVE' ? 1 : 0, at, row.corporate_email));
-        if (nextStatus === 'SUSPENDED' && row.invite_id) statements.push(env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(row.invite_id));
-      }
-      if (statements.length) await env.DB.batch(statements);
-
-      const pendingIds = [];
-      for (const row of rows) {
-        if (normalizeAccountState(row.account_status) === nextStatus) continue;
-        try {
-          await syncIdentityWorkforceStatus(env, { onboardingId: row.id, employeeId: row.workforce_employee_id, accountStatus: nextStatus }, `${String(request.headers.get('x-request-id') || operationKey)}:${row.id}`);
-          await env.DB.prepare('UPDATE crm_employee_onboarding SET compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?').bind(new Date().toISOString(), row.id).run();
-        } catch (error) {
-          pendingIds.push(row.id);
-          await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120), new Date().toISOString(), row.id).run().catch(() => {});
+        if (normalizeAccountState(row.account_status) !== nextStatus && String(row.crm_account_review_status || '').toUpperCase() !== 'CONFIRMED') {
+          return withCORS(JSON.stringify({ success: false, error: 'Resolva o vínculo explícito da conta CRM antes de alterar o acesso', code: 'CRM_ACCOUNT_LINK_REQUIRED' }), { status: 409 }, appOrigin);
         }
       }
 
+      const at = new Date().toISOString();
+      const pendingIds = [];
+      const auditRows = [];
       for (const row of rows) {
         const currentStatus = normalizeAccountState(row.account_status);
         if (currentStatus === nextStatus) continue;
-        await appendAuditLog?.({
+        const requestId = `${String(request.headers.get('x-request-id') || operationKey)}:${row.id}`.slice(0, 180);
+        let pending = false;
+        if (nextStatus === 'ACTIVE') {
+          // Reactivation must be accepted by Workforce before local login
+          // access is enabled. If the local write fails, revert the remote
+          // state and keep the user disabled.
+          try {
+            await syncIdentityWorkforceStatus(env, { onboardingId: row.id, employeeId: row.workforce_employee_id, accountStatus: nextStatus }, requestId);
+            await env.DB.batch([
+              env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='ACTIVE', provisioning_state='COMPLETED', compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=? AND account_status='SUSPENDED'").bind(new Date().toISOString(), row.id),
+              env.DB.prepare(`UPDATE ${usersTable} SET ativo=1, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE username IN (SELECT crm_username FROM crm_employee_account_links WHERE onboarding_id=? AND review_status='CONFIRMED')`).bind(new Date().toISOString(), row.id),
+            ]);
+            const verified = await env.DB.prepare(`SELECT o.account_status, u.ativo FROM crm_employee_onboarding o LEFT JOIN crm_employee_account_links a ON a.onboarding_id=o.id AND a.review_status='CONFIRMED' LEFT JOIN ${usersTable} u ON u.username=a.crm_username WHERE o.id=? LIMIT 1`).bind(row.id).first();
+            if (normalizeAccountState(verified?.account_status) !== 'ACTIVE' || Number(verified?.ativo || 0) !== 1) throw new Error('IDENTITY_LOCAL_ACTIVATION_NOT_APPLIED');
+          } catch (error) {
+            pending = true;
+            const code = String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120);
+            try {
+              await syncIdentityWorkforceStatus(env, { onboardingId: row.id, employeeId: row.workforce_employee_id, accountStatus: 'SUSPENDED' }, `${requestId}:compensate`);
+            } catch {
+              // Local access remains disabled even if remote compensation also
+              // needs a later operator retry.
+            }
+            await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='SUSPENDED', compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(code, new Date().toISOString(), row.id).run().catch(() => {});
+            await env.DB.prepare(`UPDATE ${usersTable} SET ativo=0, updated_at=? WHERE username IN (SELECT crm_username FROM crm_employee_account_links WHERE onboarding_id=? AND review_status='CONFIRMED')`).bind(new Date().toISOString(), row.id).run().catch(() => {});
+          }
+        } else {
+          // Suspension is locally revoked first, so a Workforce outage cannot
+          // leave an account operational after a manager asked to disable it.
+          try {
+            await env.DB.batch([
+              env.DB.prepare("UPDATE crm_employee_onboarding SET account_status=?, provisioning_state='COMPLETED', compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=NULL, updated_at=? WHERE id=? AND account_status=?").bind(nextStatus, at, row.id, currentStatus),
+              env.DB.prepare(`UPDATE ${usersTable} SET ativo=0, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE username IN (SELECT crm_username FROM crm_employee_account_links WHERE onboarding_id=? AND review_status='CONFIRMED')`).bind(at, row.id),
+              ...(nextStatus === 'SUSPENDED' && row.invite_id ? [env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(row.invite_id)] : []),
+            ]);
+          } catch (error) {
+            pending = true;
+            await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='LOCAL_STATUS_UPDATE_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(String(error?.message || 'IDENTITY_STATUS_UPDATE_FAILED').slice(0, 120), new Date().toISOString(), row.id).run().catch(() => {});
+          }
+          if (!pending) {
+            try {
+              await syncIdentityWorkforceStatus(env, { onboardingId: row.id, employeeId: row.workforce_employee_id, accountStatus: nextStatus }, requestId);
+              await env.DB.prepare('UPDATE crm_employee_onboarding SET compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?').bind(new Date().toISOString(), row.id).run();
+            } catch (error) {
+              pending = true;
+              await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120), new Date().toISOString(), row.id).run().catch(() => {});
+            }
+          }
+        }
+        if (pending) pendingIds.push(row.id);
+        auditRows.push({ row, currentStatus, pending });
+      }
+
+      for (const { row, currentStatus, pending } of auditRows) {
+        try {
+          await appendAuditLog?.({
           env,
           actor: auth.user.username,
           role: auth.user.role,
@@ -986,8 +1132,9 @@ export async function handleAdminRoutes({
           entityId: row.id,
           unidade: normalizeAllowedUnits(row.units_json).join(','),
           before: { accountStatus: currentStatus },
-          after: { accountStatus: nextStatus, bulk: true, pendingSync: pendingIds.includes(row.id) },
-        });
+          after: { accountStatus: nextStatus, bulk: true, pendingSync: pending },
+          });
+        } catch { }
       }
 
       const result = { ids, accountStatus: nextStatus, count: ids.length, pendingIds };
@@ -1026,8 +1173,8 @@ export async function handleAdminRoutes({
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       const units = normalizeAllowedUnits(onboarding.units_json);
       const modules = resolveEmployeeProfile(onboarding.profile, { unified: true })?.modules || ['ponto'];
-      const columns = ['id', 'token_hash', 'token_hint', 'invitee_email', 'role', 'allowed_units_json', 'allowed_modules_json', 'max_uses', 'uses_count', 'expires_at', 'revoked', 'note', 'created_by', 'created_at', 'requested_username'];
-      const values = [inviteId, tokenHash, `${token.slice(0, 4)}…${token.slice(-4)}`, personalEmail, onboarding.profile, JSON.stringify(units), JSON.stringify(modules), 1, 0, expiresAt, 0, `Reenvio de onboarding ${onboarding.department_name || ''}`.trim(), String(auth?.user?.username || ''), now, onboarding.requested_username];
+      const columns = ['id', 'token_hash', 'token_hint', 'invitee_email', 'corporate_email', 'role', 'allowed_units_json', 'allowed_modules_json', 'max_uses', 'uses_count', 'expires_at', 'revoked', 'note', 'created_by', 'created_at', 'requested_username'];
+      const values = [inviteId, tokenHash, `${token.slice(0, 4)}…${token.slice(-4)}`, personalEmail, onboarding.corporate_email, onboarding.profile, JSON.stringify(units), JSON.stringify(modules), 1, 0, expiresAt, 0, `Reenvio de onboarding ${onboarding.department_name || ''}`.trim(), String(auth?.user?.username || ''), now, onboarding.requested_username];
       await env.DB.prepare(`INSERT INTO ${invitesTable} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).bind(...values).run();
       const encryptedToken = await encryptOnboardingPii(env, token);
       await env.DB.prepare("UPDATE crm_employee_onboarding SET invite_id=?, invite_token_encrypted=?, account_status='INVITED', provisioning_state='INVITE_PENDING', compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?").bind(inviteId, encryptedToken, now, onboardingId).run();
@@ -1064,7 +1211,7 @@ export async function handleAdminRoutes({
       const requestId = String(request.headers.get('x-request-id') || `identity-invite-revoke-${onboardingId}`).slice(0, 180);
       await env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(onboarding.invite_id).run();
       await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='PENDING_ACCESS', provisioning_state='COMPLETED', compensation_state='WORKFORCE_STATUS_PENDING', updated_at=? WHERE id=?").bind(now, onboardingId).run();
-      await env.DB.prepare(`UPDATE ${usersTable} SET ativo=0, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(now, onboarding.corporate_email).run().catch(() => {});
+      await env.DB.prepare(`UPDATE ${usersTable} SET ativo=0, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE username IN (SELECT crm_username FROM crm_employee_account_links WHERE onboarding_id=? AND review_status='CONFIRMED')`).bind(now, onboardingId).run().catch(() => {});
       try {
         await syncIdentityWorkforceStatus(env, { onboardingId, employeeId: onboarding.workforce_employee_id, accountStatus: 'PENDING_ACCESS' }, requestId);
       } catch (error) {
@@ -1078,6 +1225,130 @@ export async function handleAdminRoutes({
       return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated) }), { status: 200 }, appOrigin);
     } catch (error) {
       return withCORS(JSON.stringify({ success: false, error: 'Não foi possível revogar o convite', code: String(error?.message || 'TEAM_INVITE_REVOKE_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
+    }
+  }
+
+  const teamAccountLinkMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/account-link$/);
+  const teamAccountLinkReviewMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/account-link\/([^/]+)\/review$/);
+  if (teamAccountLinkReviewMatch && request.method === 'POST') {
+    try {
+      if (!teamTablesReady) return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const onboardingId = decodeURIComponent(teamAccountLinkReviewMatch[1] || '').trim();
+      const linkId = decodeURIComponent(teamAccountLinkReviewMatch[2] || '').trim();
+      const onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding?.workforce_employee_id) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe sem identidade Workforce', code: 'ONBOARDING_STATUS_NOT_READY' }), { status: 409 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite revisar o vínculo da conta', code: hierarchyDenied }), { status: 403 }, appOrigin);
+
+      const body = await request.json().catch(() => ({}));
+      const nextStatus = String(body.reviewStatus || body.review_status || '').trim().toUpperCase();
+      const reason = String(body.reason || body.reviewNote || body.review_note || '').trim().replace(/\s+/g, ' ').slice(0, 500);
+      if (!['PENDING_REVIEW', 'CONFIRMED', 'REJECTED'].includes(nextStatus)) {
+        return withCORS(JSON.stringify({ success: false, error: 'Revisão do vínculo da conta inválida', code: 'CRM_ACCOUNT_LINK_REVIEW_INVALID' }), { status: 400 }, appOrigin);
+      }
+      if (nextStatus === 'REJECTED' && reason.length < 5) {
+        return withCORS(JSON.stringify({ success: false, error: 'A rejeição exige um motivo', code: 'CRM_ACCOUNT_LINK_REJECTION_REASON_REQUIRED' }), { status: 400 }, appOrigin);
+      }
+      const link = await env.DB.prepare('SELECT * FROM crm_employee_account_links WHERE id=? AND onboarding_id=? AND workforce_employee_id=? LIMIT 1').bind(linkId, onboardingId, onboarding.workforce_employee_id).first();
+      if (!link) return withCORS(JSON.stringify({ success: false, error: 'Vínculo da conta não encontrado para este membro', code: 'CRM_ACCOUNT_LINK_NOT_FOUND' }), { status: 404 }, appOrigin);
+      const currentStatus = String(link.review_status || 'PENDING_REVIEW').trim().toUpperCase();
+      if (currentStatus === 'CONFIRMED' && nextStatus !== 'CONFIRMED') {
+        return withCORS(JSON.stringify({ success: false, error: 'Um vínculo de conta confirmado não pode ser rebaixado neste fluxo', code: 'CRM_ACCOUNT_LINK_CONFIRMED_IMMUTABLE' }), { status: 409 }, appOrigin);
+      }
+      if (currentStatus === nextStatus) return withCORS(JSON.stringify({ success: true, data: publicAccountLink(link), replayed: true }), { status: 200 }, appOrigin);
+      if (nextStatus === 'CONFIRMED') {
+        const user = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(link.crm_username).first();
+        if (!user?.username) return withCORS(JSON.stringify({ success: false, error: 'A conta CRM informada não existe mais', code: 'CRM_ACCOUNT_NOT_FOUND' }), { status: 404 }, appOrigin);
+        const conflict = await env.DB.prepare('SELECT id FROM crm_employee_account_links WHERE LOWER(crm_username)=LOWER(?) AND id<>? LIMIT 1').bind(link.crm_username, linkId).first();
+        if (conflict?.id) return withCORS(JSON.stringify({ success: false, error: 'A conta CRM já está vinculada a outro funcionário', code: 'CRM_ACCOUNT_LINK_CONFLICT' }), { status: 409 }, appOrigin);
+      }
+      const at = new Date().toISOString();
+      const reviewUpdate = await env.DB.prepare(`UPDATE crm_employee_account_links
+        SET review_status=?, review_note=?, reviewed_by=?, reviewed_at=?, updated_at=?
+        WHERE id=? AND onboarding_id=? AND review_status=?`).bind(
+        nextStatus,
+        reason || null,
+        String(auth?.user?.username || ''),
+        at,
+        at,
+        linkId,
+        onboardingId,
+        currentStatus,
+      ).run();
+      if (!Number(reviewUpdate?.meta?.changes || 0)) {
+        const raced = await env.DB.prepare('SELECT * FROM crm_employee_account_links WHERE id=? AND onboarding_id=? LIMIT 1').bind(linkId, onboardingId).first();
+        if (String(raced?.review_status || '').toUpperCase() === nextStatus) return withCORS(JSON.stringify({ success: true, data: publicAccountLink(raced), replayed: true }), { status: 200 }, appOrigin);
+        return withCORS(JSON.stringify({ success: false, error: 'O vínculo da conta foi alterado por outra revisão', code: 'CRM_ACCOUNT_LINK_REVIEW_CONFLICT' }), { status: 409 }, appOrigin);
+      }
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_CRM_ACCOUNT_LINK_REVIEWED', entity: 'EMPLOYEE_CRM_ACCOUNT_LINK', entityId: linkId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { reviewStatus: currentStatus, crmUsername: link.crm_username }, after: { onboardingId, workforceEmployeeId: onboarding.workforce_employee_id, crmUsername: link.crm_username, reviewStatus: nextStatus, reason: reason || null } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_CRM_ACCOUNT_LINK_REVIEWED', actorRole: auth.user.role, outcome: nextStatus, itemCount: 1, unitCount: normalizeAllowedUnits(onboarding.units_json).length });
+      const reviewed = await env.DB.prepare('SELECT * FROM crm_employee_account_links WHERE id=?').bind(linkId).first();
+      return withCORS(JSON.stringify({ success: true, data: publicAccountLink(reviewed) }), { status: 200 }, appOrigin);
+    } catch (error) {
+      const code = String(error?.message || 'CRM_ACCOUNT_LINK_REVIEW_FAILED').slice(0, 120);
+      const status = /UNIQUE|CONSTRAINT|IMMUTABLE|CONFLICT|REQUIRED|INVALID/.test(code) ? 409 : 503;
+      return withCORS(JSON.stringify({ success: false, error: 'Não foi possível atualizar a revisão do vínculo da conta', code }), { status }, appOrigin);
+    }
+  }
+  if (teamAccountLinkMatch && (request.method === 'GET' || request.method === 'POST')) {
+    try {
+      if (!teamTablesReady) return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const onboardingId = decodeURIComponent(teamAccountLinkMatch[1] || '').trim();
+      const onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      const existing = await env.DB.prepare('SELECT * FROM crm_employee_account_links WHERE onboarding_id=? LIMIT 1').bind(onboardingId).first();
+      if (request.method === 'GET') return withCORS(JSON.stringify({ success: true, data: publicAccountLink(existing) }), { status: 200 }, appOrigin);
+
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite propor o vínculo da conta', code: hierarchyDenied }), { status: 403 }, appOrigin);
+      if (!onboarding.workforce_employee_id) return withCORS(JSON.stringify({ success: false, error: 'Membro ainda não possui identidade Workforce', code: 'ONBOARDING_STATUS_NOT_READY' }), { status: 409 }, appOrigin);
+      const body = await request.json().catch(() => ({}));
+      const crmUsername = normalizeCrmUsername(body.crmUsername || body.crm_username || body.username);
+      if (!crmUsername || !validateUsername(crmUsername)) return withCORS(JSON.stringify({ success: false, error: 'Informe o nome de usuário exato da conta CRM', code: 'CRM_ACCOUNT_USERNAME_INVALID' }), { status: 400 }, appOrigin);
+      const crmUser = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(crmUsername).first();
+      if (!crmUser?.username) return withCORS(JSON.stringify({ success: false, error: 'A conta CRM informada não existe', code: 'CRM_ACCOUNT_NOT_FOUND' }), { status: 404 }, appOrigin);
+      const conflict = await env.DB.prepare('SELECT id FROM crm_employee_account_links WHERE LOWER(crm_username)=LOWER(?) AND onboarding_id<>? LIMIT 1').bind(crmUsername, onboardingId).first();
+      if (conflict?.id) return withCORS(JSON.stringify({ success: false, error: 'A conta CRM já está vinculada a outro funcionário', code: 'CRM_ACCOUNT_LINK_CONFLICT' }), { status: 409 }, appOrigin);
+      if (existing) {
+        const currentStatus = String(existing.review_status || '').trim().toUpperCase();
+        if (currentStatus === 'CONFIRMED') {
+          if (normalizeCrmUsername(existing.crm_username) === crmUsername) return withCORS(JSON.stringify({ success: true, data: publicAccountLink(existing), replayed: true }), { status: 200 }, appOrigin);
+          return withCORS(JSON.stringify({ success: false, error: 'O vínculo confirmado não pode ser substituído neste fluxo', code: 'CRM_ACCOUNT_LINK_CONFIRMED_IMMUTABLE' }), { status: 409 }, appOrigin);
+        }
+        if (currentStatus === 'PENDING_REVIEW') {
+          if (normalizeCrmUsername(existing.crm_username) === crmUsername) return withCORS(JSON.stringify({ success: true, data: publicAccountLink(existing), replayed: true }), { status: 200 }, appOrigin);
+          return withCORS(JSON.stringify({ success: false, error: 'Já existe uma proposta de vínculo pendente para este membro', code: 'CRM_ACCOUNT_LINK_REVIEW_PENDING' }), { status: 409 }, appOrigin);
+        }
+      }
+      const at = new Date().toISOString();
+      const linkId = existing?.id || crypto.randomUUID();
+      if (existing) {
+        await env.DB.prepare(`UPDATE crm_employee_account_links
+          SET crm_username=?, link_method='EXPLICIT_CRM_USERNAME', review_status='PENDING_REVIEW', review_note=NULL, reviewed_by=NULL, reviewed_at=NULL, updated_at=?
+          WHERE id=? AND onboarding_id=? AND review_status='REJECTED'`).bind(crmUsername, at, linkId, onboardingId).run();
+      } else {
+        await env.DB.prepare(`INSERT INTO crm_employee_account_links
+          (id, workforce_employee_id, onboarding_id, crm_username, link_method, review_status, review_note, reviewed_by, reviewed_at, created_by, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'EXPLICIT_CRM_USERNAME', 'PENDING_REVIEW', NULL, NULL, NULL, ?, ?, ?)`).bind(
+          linkId,
+          onboarding.workforce_employee_id,
+          onboardingId,
+          crmUsername,
+          String(auth?.user?.username || ''),
+          at,
+          at,
+        ).run();
+      }
+      const created = await env.DB.prepare('SELECT * FROM crm_employee_account_links WHERE id=?').bind(linkId).first();
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_CRM_ACCOUNT_LINK_PROPOSED', entity: 'EMPLOYEE_CRM_ACCOUNT_LINK', entityId: linkId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), after: { onboardingId, workforceEmployeeId: onboarding.workforce_employee_id, crmUsername, reviewStatus: 'PENDING_REVIEW', linkMethod: 'EXPLICIT_CRM_USERNAME' } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_CRM_ACCOUNT_LINK_PROPOSED', actorRole: auth.user.role, outcome: 'PENDING_REVIEW', itemCount: 1, unitCount: normalizeAllowedUnits(onboarding.units_json).length });
+      return withCORS(JSON.stringify({ success: true, data: publicAccountLink(created) }), { status: existing ? 200 : 201 }, appOrigin);
+    } catch (error) {
+      const code = String(error?.message || 'CRM_ACCOUNT_LINK_FAILED').slice(0, 120);
+      const status = /UNIQUE|CONSTRAINT|CONFLICT|INVALID/.test(code) ? 409 : 503;
+      return withCORS(JSON.stringify({ success: false, error: 'Não foi possível registrar o vínculo da conta CRM', code }), { status }, appOrigin);
     }
   }
 
@@ -1296,9 +1567,10 @@ export async function handleAdminRoutes({
         FROM audit_log
         WHERE (entity_id=? AND entity IN ('EMPLOYEE_ONBOARDING', 'EMPLOYEE_TEAM'))
            OR (entity='EMPLOYEE_IDENTITY_LINK' AND after_json LIKE ?)
+           OR (entity='EMPLOYEE_CRM_ACCOUNT_LINK' AND after_json LIKE ?)
         ORDER BY ts DESC, id DESC
         LIMIT ?
-      `).bind(onboardingId, `%\"onboardingId\":\"${onboardingId}\"%`, limit).all();
+      `).bind(onboardingId, `%\"onboardingId\":\"${onboardingId}\"%`, `%\"onboardingId\":\"${onboardingId}\"%`, limit).all();
       const data = (rows?.results || []).map(publicTeamAudit);
       return withCORS(JSON.stringify({ success: true, data, summary: { count: data.length, limit } }), { status: 200 }, appOrigin);
     } catch {
@@ -1314,8 +1586,9 @@ export async function handleAdminRoutes({
     let localPersistenceStage = 'PREPARATION';
     try {
       onboardingId = decodeURIComponent(teamMemberMatch[1] || '').trim();
-      current = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
-        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
+      current = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json, a.id AS crm_account_link_id, a.crm_username AS crm_account_username, a.review_status AS crm_account_review_status
+        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id
+        LEFT JOIN crm_employee_account_links a ON a.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
       if (!current) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
       if (!teamUnitsVisible(auth, current.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
 
@@ -1408,8 +1681,9 @@ export async function handleAdminRoutes({
         professionalId: nextScheduleProfessionalId || '',
         operationKey: internalScheduleOperationKey(onboardingId, scheduleState),
       }).catch(() => null);
-      const updated = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
-        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
+      const updated = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json, a.id AS crm_account_link_id, a.crm_username AS crm_account_username, a.review_status AS crm_account_review_status
+        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id
+        LEFT JOIN crm_employee_account_links a ON a.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
       const links = await env.DB.prepare('SELECT * FROM crm_employee_identity_links WHERE workforce_employee_id=? ORDER BY created_at DESC').bind(updated.workforce_employee_id).all();
       await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_UPDATED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: nextUnits.join(','), before: { profile: current.profile, units: normalizeAllowedUnits(current.units_json), scheduleProfessionalId: current.schedule_professional_id || null }, after: { profile: nextProfile.profile || nextProfile, units: nextUnits, scheduleProfessionalId: nextScheduleProfessionalId, scheduleSyncState: scheduleSync?.scheduleSync?.state || scheduleState } });
       await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_UPDATED', actorRole: auth.user.role, itemCount: 1, unitCount: nextUnits.length });
@@ -1438,7 +1712,7 @@ export async function handleAdminRoutes({
         await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_UPDATED', actorRole: auth.user.role, outcome: 'PENDING', itemCount: 1, unitCount: normalizeAllowedUnits(current?.units_json).length });
         return withCORS(JSON.stringify({ success: false, error: 'Atualização local da equipe pendente de compensação', code: 'TEAM_LOCAL_PERSISTENCE_PENDING' }), { status: 503 }, appOrigin);
       }
-      const status = /^WORKFORCE_|^IDENTITY_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
+      const status = isOnboardingDependencyError(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Atualização da identidade pendente' : 'Não foi possível atualizar a equipe', code: message.slice(0, 120) }), { status }, appOrigin);
     }
   }
@@ -1453,8 +1727,9 @@ export async function handleAdminRoutes({
           ? `AND o.account_status IN ('INVITED', 'ACTIVE')`
           : `AND o.account_status = ?`;
       const params = requestedStatus === 'ALL' || requestedStatus === 'ACTIVE' ? [] : [requestedStatus];
-      const rows = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
+      const rows = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.units_json AS schedule_units_json, a.id AS crm_account_link_id, a.crm_username AS crm_account_username, a.review_status AS crm_account_review_status
         FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id
+        LEFT JOIN crm_employee_account_links a ON a.onboarding_id=o.id
         WHERE 1=1 ${statusClause} ORDER BY o.created_at DESC LIMIT 500`).bind(...params).all();
       const visible = (rows?.results || [])
         .filter((row) => teamUnitsVisible(auth, row.units_json))
@@ -1484,12 +1759,13 @@ export async function handleAdminRoutes({
       const pendingLinks = data.reduce((sum, row) => sum + (row.identityLinks || []).filter((link) => link.reviewStatus === 'PENDING_REVIEW').length, 0);
       const pendingProvisioning = data.filter((row) => ['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(String(row.provisioningState || '').toUpperCase())).length;
       const pendingInvites = data.filter((row) => String(row.accountStatus || '').toUpperCase() === 'INVITED').length;
+      const pendingAccountLinks = data.filter((row) => !row.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(String(row.accountStatus || '').toUpperCase())).length;
       return withCORS(JSON.stringify({
         success: true,
         data,
         activeOnly: requestedStatus !== 'ALL',
         status: requestedStatus,
-        summary: { members: data.length, pendingLinks, pendingProvisioning, pendingInvites },
+        summary: { members: data.length, pendingLinks, pendingProvisioning, pendingInvites, pendingAccountLinks },
         pendingItems: teamPendingItems(data),
       }), { status: 200 }, appOrigin);
     } catch {
