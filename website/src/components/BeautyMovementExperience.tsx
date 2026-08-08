@@ -111,7 +111,7 @@ export type BeautyMovementExperienceProps = {
 };
 
 type HandStage = "waiting" | "ready" | "reveal" | "held" | "collect" | "deal" | "finale";
-type FinaleStage = "hidden" | "collecting" | "confirmation" | "result";
+type FinaleStage = "hidden" | "collecting" | "merging" | "confirmation" | "result";
 type SpecialCardKind = "velocity" | "discount" | "free_procedure" | "reserved";
 
 type ShareNavigator = Navigator & {
@@ -122,6 +122,7 @@ type ShareNavigator = Navigator & {
 const STORY_WIDTH = 1080;
 const STORY_HEIGHT = 1920;
 const AUTO_ADVANCE_SECONDS = 5;
+const FINALE_HOLD_SECONDS = 5;
 const HAND_REVEAL_MS = 1350;
 const HAND_COLLECT_MS = 720;
 const HAND_DEAL_MS = 880;
@@ -548,6 +549,7 @@ export default function BeautyMovementExperience({
     const [finaleStage, setFinaleStage] = useState<FinaleStage>(() =>
         initialState.confirmed ? "result" : initialReadingComplete ? "confirmation" : "hidden",
     );
+    const [finaleHoldRemaining, setFinaleHoldRemaining] = useState(0);
     const [autoAdvanceActive, setAutoAdvanceActive] = useState(false);
     const openedRef = useRef(false);
     const viewedActsRef = useRef(new Set<number>());
@@ -558,6 +560,7 @@ export default function BeautyMovementExperience({
     const scrollAnimationFrameRef = useRef<number | null>(null);
     const tableRef = useRef<HTMLElement | null>(null);
     const finaleRef = useRef<HTMLElement | null>(null);
+    const confirmationActionRef = useRef<HTMLElement | null>(null);
     const selectionsRef = useRef(selections);
     const displayedActIndexRef = useRef(displayedActIndex);
     const handStageRef = useRef(handStage);
@@ -614,10 +617,27 @@ export default function BeautyMovementExperience({
     }, [finaleStage, onTrack]);
 
     useEffect(() => {
-        if (finaleStage !== "confirmation" && finaleStage !== "result") return;
+        if (finaleStage === "confirmation") {
+            window.requestAnimationFrame(() => {
+                confirmationActionRef.current?.focus({ preventScroll: true });
+            });
+            return;
+        }
+        if (finaleStage !== "result") return;
         window.requestAnimationFrame(() => {
             finaleRef.current?.focus({ preventScroll: true });
         });
+    }, [finaleStage]);
+
+    useEffect(() => {
+        if (finaleStage !== "collecting") return;
+
+        setFinaleHoldRemaining(FINALE_HOLD_SECONDS);
+        const countdownTimer = window.setInterval(() => {
+            setFinaleHoldRemaining((current) => Math.max(0, current - 1));
+        }, 1000);
+
+        return () => window.clearInterval(countdownTimer);
     }, [finaleStage]);
 
     useEffect(() => {
@@ -773,15 +793,26 @@ export default function BeautyMovementExperience({
             setCurrentHandStage("finale");
             setCurrentFinaleStage("collecting");
             handTransitionTimerRef.current = window.setTimeout(() => {
-                handTransitionTimerRef.current = null;
                 if (!mountedRef.current) return;
-                transitionInFlightRef.current = false;
-                setCurrentHandStage("ready");
-                setCurrentFinaleStage(confirmed ? "result" : "confirmation");
-                window.requestAnimationFrame(() => {
-                    window.requestAnimationFrame(scrollToFinale);
-                });
-            }, motionDuration(HAND_FINALE_MS));
+                setFinaleHoldRemaining(0);
+                setCurrentFinaleStage("merging");
+                handTransitionTimerRef.current = window.setTimeout(() => {
+                    handTransitionTimerRef.current = null;
+                    if (!mountedRef.current) return;
+                    transitionInFlightRef.current = false;
+                    setCurrentHandStage("ready");
+                    setCurrentFinaleStage(confirmed ? "result" : "confirmation");
+                    if (confirmed) {
+                        window.requestAnimationFrame(() => {
+                            window.requestAnimationFrame(scrollToFinale);
+                        });
+                    } else {
+                        window.requestAnimationFrame(() => {
+                            confirmationActionRef.current?.focus({ preventScroll: true });
+                        });
+                    }
+                }, motionDuration(HAND_FINALE_MS));
+            }, FINALE_HOLD_SECONDS * 1000);
         }, motionDuration(HAND_COLLECT_MS));
     }
 
@@ -1101,53 +1132,34 @@ export default function BeautyMovementExperience({
         );
     }
 
-    function renderConfirmationStage() {
+    function renderConfirmationAction() {
         return (
-            <section className={styles.confirmationStage} aria-labelledby="beauty-movement-inline-confirmation-title">
-                <div className={styles.confirmationIntro}>
-                    <h2 id="beauty-movement-inline-confirmation-title">Confirme sua entrada na lista exclusiva.</h2>
-                    <p>Seus dados de contato já estão vinculados a este convite.</p>
-                </div>
-
-                <section className={styles.benefitPanel} aria-labelledby="beauty-movement-inline-confirmation-benefit-title">
-                    <p className={styles.sectionLabel}>Seu presente de celebração</p>
-                    <h3 id="beauty-movement-inline-confirmation-benefit-title">Seu presente será revelado após a confirmação.</h3>
-                    <p>A condição desta experiência está vinculada ao seu convite.</p>
-                    <p className={styles.benefitNote}>
-                        As cartas criam a leitura; elas não sorteiam nem alteram o presente reservado.
-                    </p>
-                </section>
-
-                <div className={styles.contactSummary}>
-                    <span>Contato vinculado</span>
-                    <strong>{initialState.invite.maskedWhatsapp}</strong>
-                    <small>E-mail e telefone já estão vinculados a este convite. Para corrigir dados, fale diretamente com a unidade.</small>
-                </div>
-
-                <div className={styles.confirmationForm}>
-                    <label className={`${styles.consentField} ${consentInvalid ? styles.consentFieldInvalid : ""}`.trim()}>
-                        <input
-                            type="checkbox"
-                            checked={operationalConsent}
-                            onChange={(event) => setOperationalConsent(event.target.checked)}
-                        />
-                        <span>
-                            Aceito entrar na lista exclusiva e receber comunicações operacionais sobre este evento.
-                        </span>
-                    </label>
-                    {consentInvalid ? <p className={styles.fieldError}>Confirme o aceite para seguir.</p> : null}
-
-                    {actionError ? <p className={styles.inlineError} role="alert">{actionError}</p> : null}
-
-                    <button
-                        className={styles.primaryButton}
-                        type="button"
-                        onClick={() => void handleConfirm()}
-                        disabled={isConfirming}
-                    >
-                        {isConfirming ? "Confirmando…" : "Confirmar minha entrada"}
-                    </button>
-                </div>
+            <section
+                className={styles.specialCardConfirmation}
+                ref={confirmationActionRef}
+                tabIndex={-1}
+                aria-labelledby="beauty-movement-special-confirmation-title"
+            >
+                <p className={styles.sectionLabel}>Confirmação</p>
+                <h2 id="beauty-movement-special-confirmation-title">Garanta seu presente e confirme presença.</h2>
+                <label className={`${styles.consentField} ${consentInvalid ? styles.consentFieldInvalid : ""}`.trim()}>
+                    <input
+                        type="checkbox"
+                        checked={operationalConsent}
+                        onChange={(event) => setOperationalConsent(event.target.checked)}
+                    />
+                    <span>Aceito entrar na lista exclusiva e receber comunicações operacionais sobre este evento.</span>
+                </label>
+                {consentInvalid ? <p className={styles.fieldError}>Confirme o aceite para seguir.</p> : null}
+                {actionError ? <p className={styles.inlineError} role="alert">{actionError}</p> : null}
+                <button
+                    className={styles.primaryButton}
+                    type="button"
+                    onClick={() => void handleConfirm()}
+                    disabled={isConfirming}
+                >
+                    {isConfirming ? "Confirmando…" : "Garantir presente e confirmar presença"}
+                </button>
             </section>
         );
     }
@@ -1268,34 +1280,6 @@ export default function BeautyMovementExperience({
                     </p>
                 </header>
 
-                <ol className={styles.progress} aria-label="Progresso da experiência">
-                    {BEAUTY_MOVEMENT_ACT_DEFINITIONS.map((act, index) => {
-                        const isDone = Boolean(selections[act.id]);
-                        const isCurrent = index === displayedActIndex;
-                        const isLocked = !isActUnlocked(index);
-                        return (
-                            <li
-                                className={`${styles.progressItem} ${isDone ? styles.progressItemDone : ""} ${isCurrent ? styles.progressItemCurrent : ""}`.trim()}
-                                key={act.id}
-                            >
-                                <button
-                                    className={styles.progressButton}
-                                    type="button"
-                                    onClick={scrollToTable}
-                                    disabled={!isCurrent}
-                                    aria-current={isCurrent ? "step" : undefined}
-                                    aria-label={`Acompanhar a mesa de cartas em ${act.label}${isLocked ? ", ainda bloqueada" : ""}`}
-                                >
-                                    <span className={styles.progressCopy}>
-                                        <strong>{act.label}</strong>
-                                        <small>{isDone ? "Escolha guardada" : act.progressLabel}</small>
-                                    </span>
-                                </button>
-                            </li>
-                        );
-                    })}
-                </ol>
-
                 <section
                     ref={tableRef}
                     className={styles.tableStage}
@@ -1303,7 +1287,36 @@ export default function BeautyMovementExperience({
                     aria-labelledby="table-stage-title"
                     data-hand-stage={handStage}
                     data-act-index={displayedActIndex}
+                    data-finale-stage={finaleStage}
                 >
+                    <ol className={styles.progress} aria-label="Progresso da experiência">
+                        {BEAUTY_MOVEMENT_ACT_DEFINITIONS.map((act, index) => {
+                            const isDone = Boolean(selections[act.id]);
+                            const isCurrent = index === displayedActIndex;
+                            const isLocked = !isActUnlocked(index);
+                            return (
+                                <li
+                                    className={`${styles.progressItem} ${isDone ? styles.progressItemDone : ""} ${isCurrent ? styles.progressItemCurrent : ""}`.trim()}
+                                    key={act.id}
+                                >
+                                    <button
+                                        className={styles.progressButton}
+                                        type="button"
+                                        onClick={scrollToTable}
+                                        disabled={!isCurrent}
+                                        aria-current={isCurrent ? "step" : undefined}
+                                        aria-label={`Acompanhar a mesa de cartas em ${act.label}${isLocked ? ", ainda bloqueada" : ""}`}
+                                    >
+                                        <span className={styles.progressCopy}>
+                                            <strong>{act.label}</strong>
+                                            <small>{isDone ? "Escolha guardada" : act.progressLabel}</small>
+                                        </span>
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ol>
+
                     <div className={styles.actHeading}>
                         <h2 id="table-stage-title">{tableDefinition.label}</h2>
                         <p>{tableDefinition.prompt}</p>
@@ -1346,8 +1359,11 @@ export default function BeautyMovementExperience({
                                 </span>
                             </span>
                         ) : null}
-                        {finaleStage === "collecting" ? (
-                            <div className={`${styles.finaleCardGrid} ${styles.finaleCardGridMerging}`} aria-hidden="true">
+                        {finaleStage === "collecting" || finaleStage === "merging" ? (
+                            <div
+                                className={`${styles.finaleCardGrid} ${finaleStage === "merging" ? styles.finaleCardGridMerging : styles.finaleCardGridHolding}`}
+                                aria-hidden="true"
+                            >
                                 {reading.map(renderFinaleCard)}
                             </div>
                         ) : finaleStage === "confirmation" || finaleStage === "result" ? (
@@ -1356,11 +1372,19 @@ export default function BeautyMovementExperience({
                                 role="group"
                                 aria-label={finaleStage === "result" ? "Carta especial do benefício" : "Carta especial da celebração"}
                             >
+                                {finaleStage === "confirmation" ? renderConfirmationAction() : null}
                                 {renderSpecialCard(finaleStage === "result")}
                             </div>
                         ) : finaleStage === "hidden" && !waitingForInitialDeal ? (
                             <div className={styles.cardGrid} role="group" aria-label={`Cartas da etapa ${tableDefinition.label}`}>
                                 {tableCards.map(renderCard)}
+                            </div>
+                        ) : null}
+                        {finaleStage === "collecting" ? (
+                            <div className={styles.finaleHoldStatus} role="status" aria-live="polite">
+                                <span>Leitura reunida</span>
+                                <strong>{finaleHoldRemaining}s</strong>
+                                <small>A carta especial se forma em seguida.</small>
                             </div>
                         ) : null}
                     </div>
@@ -1420,7 +1444,7 @@ export default function BeautyMovementExperience({
                     </p>
                 ) : null}
 
-                {finaleStage === "confirmation" || finaleStage === "result" ? (
+                {finaleStage === "result" ? (
                     <section
                         ref={finaleRef}
                         className={styles.inlineFinale}
@@ -1434,7 +1458,7 @@ export default function BeautyMovementExperience({
                                 {finaleStage === "result" ? "O seu presente de celebração" : "Um último passo para confirmar"}
                             </h2>
                         </div>
-                        {finaleStage === "confirmation" ? renderConfirmationStage() : renderResultStage()}
+                        {renderResultStage()}
                     </section>
                 ) : null}
 

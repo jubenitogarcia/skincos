@@ -39,9 +39,12 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /transitionInFlightRef/);
     assert.match(experience, /confirmInFlightRef/);
     assert.match(experience, /setCurrentFinaleStage\("collecting"\)/);
+    assert.match(experience, /setCurrentFinaleStage\("merging"\)/);
+    assert.match(experience, /FINALE_HOLD_SECONDS = 5/);
+    assert.match(experience, /finaleHoldRemaining/);
     assert.match(experience, /HAND_FINALE_MS = 1120/);
     assert.match(experience, /className=\{styles\.inlineFinale\}/);
-    assert.match(experience, /renderConfirmationStage/);
+    assert.match(experience, /renderConfirmationAction/);
     assert.match(experience, /renderResultStage/);
     assert.match(experience, /automática em \{AUTO_ADVANCE_SECONDS\} segundos/);
     assert.doesNotMatch(experience, /confirmationTriggerRef/);
@@ -59,10 +62,10 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /finaleStage === "hidden" \? \(/);
     assert.match(experience, /disabled=\{!tableSelected \|\| handStage !== "held"\}/);
     assert.match(experience, /Escolha uma carta para liberar o avanço/);
-    assert.match(experience, /Seu presente de celebração/);
-    assert.match(experience, /Seu presente será revelado após a confirmação/);
+    assert.match(experience, /Garanta seu presente e confirme presença/);
+    assert.doesNotMatch(experience, /Seu presente será revelado após a confirmação/);
     assert.match(experience, /email: null/);
-    assert.match(experience, /E-mail e telefone já estão vinculados/);
+    assert.doesNotMatch(experience, /E-mail e telefone já estão vinculados/);
     assert.doesNotMatch(experience, /beauty-movement-inline-email|E-mail <em>opcional|voce@email\.com/);
     assert.doesNotMatch(experience, /benefitPreview/);
     assert.doesNotMatch(experience, /Ver minha leitura/);
@@ -130,6 +133,8 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.doesNotMatch(styles, /\.tableStage\[data-hand-stage="deal"\] \.cardButton:nth-child\(3\)[^}]*animation-delay/);
     assert.doesNotMatch(styles, /@keyframes finaleReturnToDeck/);
     assert.match(styles, /@keyframes finaleCardsMerge/);
+    assert.match(styles, /@keyframes finaleCardsHold/);
+    assert.match(styles, /finaleCardGridHolding/);
     assert.match(
         styles,
         /\.tableStage\[data-hand-stage="finale"\] \.finaleCardGridMerging \.finaleCard\s*\{\s*animation: finaleCardsMerge/,
@@ -139,6 +144,8 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /@keyframes finaleIllustrationPulse[\s\S]*100%[\s\S]*opacity: 1/);
     assert.match(styles, /\.finaleCardGrid/);
     assert.match(styles, /\.specialCardStage/);
+    assert.match(styles, /\.specialCardConfirmation/);
+    assert.match(styles, /\.finaleHoldStatus/);
     assert.match(styles, /\.specialCard/);
     assert.match(styles, /@keyframes specialCardFlip/);
     assert.match(styles, /@keyframes specialCardIconFloat/);
@@ -153,14 +160,18 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /\.deckStage:disabled,[\s\S]*\.deckStage:disabled \.deckBrandLogo[\s\S]*cursor: default/);
     assert.match(styles, /--deal-y: 122px/);
     assert.match(styles, /\.progressItemCurrent \.progressButton[\s\S]*background: var\(--bm-yellow\)/);
+    assert.match(styles, /\.tableStage > \.progress[\s\S]*margin: -10px auto 0/);
     assert.match(styles, /\.progressButton \{[\s\S]*min-height: 44px/);
     assert.match(styles, /cardIllustration svg > \*/);
     assert.match(styles, /\.cardBrandMark/);
     assert.doesNotMatch(styles, /\.actsStack|\.revealedStrip|\.reopenReading/);
     assert.match(experience, /<BrandMark/);
+    assert.ok(experience.indexOf("className={styles.tableStage}") < experience.indexOf("className={styles.progress}"));
     assert.match(experience, /aria-hidden=\{!isSelected\}/);
     assert.match(experience, /BeautyMovementCardIllustration/);
     assert.match(experience, /function renderSpecialCard/);
+    assert.match(experience, /className=\{styles\.specialCardConfirmation\}/);
+    assert.match(experience, /Garantir presente e confirmar presença/);
     assert.match(experience, /finaleCardGridMerging/);
     assert.match(experience, /Carta especial do benefício/);
     assert.doesNotMatch(experience, /aria-label="Cartas finais"/);
@@ -176,4 +187,6 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(illustrations, /celebracao-encontro/);
     assert.match(campaignStyles, /background: #fafafa/i);
     assert.doesNotMatch(campaignStyles, /Georgia|coral|plum|linear-gradient|#fffaf2/i);
+    assert.doesNotMatch(experience, /confirmationStage|confirmationIntro|contactSummary|confirmationForm/);
+    assert.doesNotMatch(styles, /confirmationStage|confirmationIntro|contactSummary|confirmationForm/);
 });
