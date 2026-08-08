@@ -16,7 +16,7 @@ HTTP monolítico ou código de worker. O processo HTTP isolado é somente leitur
 
 | Item | Regra |
 | --- | --- |
-| Origem | Apenas release nativa `/opt/skincos/releases/<sha-40>/source`, com SHA ancestral de `main` e predecessor registrado. |
+| Origem | Apenas release nativa `/opt/skincos/releases/<sha-40>/source`, com SHA exatamente igual ao `origin/main` buscado e predecessor ancestral registrado. |
 | Processo | `crm-atendimento-staging.service` ou `crm-atendimento-production.service`; nenhum instalador toca `crm.service`, `crm-jobs.service`, Orb ou túnel compartilhado. |
 | Shutdown | `SIGTERM` fecha o listener antes do pool e do ledger de replay; o timeout força apenas conexões do processo dedicado. |
 | Health | público, PII-free e independente do banco. |
@@ -90,3 +90,5 @@ para a sequência de dry-run, backup, migração de staging, smoke e rollback. A
 ação emergencial mínima é `maintenance`/`disabled` no arquivo de controle. O
 rollback por SHA requer um manifest de release anterior já preparado; nenhum
 script tenta “adivinhar” checkout, shell ou destino a partir de uma variável.
+O preparador de staging grava a linhagem imutável (`releaseId`, predecessor e
+árvore de origem) antes de a unidade poder ser instalada.

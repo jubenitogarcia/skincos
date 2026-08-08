@@ -77,7 +77,7 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
 
    ```bash
    scripts/runtime/prepare-atendimento-staging-release.sh \
-     --release-sha <sha-main>
+     --release-sha <sha-main> --predecessor-sha <sha-staging-anterior>
    scripts/set-atendimento-staging-control.sh \
      --state maintenance --release-sha <sha-main> \
      --reason release-preflight --apply
@@ -85,7 +85,8 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
      --source-root /opt/skincos/releases/<sha-main>/source
    ```
 
-   Não há túnel nem DNS de staging nesta tranche. A prova de liveness de
+   O preparador recusa um SHA que não seja exatamente o `origin/main` buscado e
+   grava a linhagem imutável com o predecessor confirmado. Não há túnel nem DNS de staging nesta tranche. A prova de liveness de
    staging é feita somente pelo validador nativo, no listener loopback fixo;
    Actions hospedadas não devem chamar hostname público de staging:
 

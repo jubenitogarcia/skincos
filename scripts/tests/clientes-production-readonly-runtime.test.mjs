@@ -85,6 +85,10 @@ test('staging release, control and application role remain fixed and read-only',
   assert.match(release, /readonly RELEASE_BASE='\/opt\/skincos\/releases'/)
   assert.match(release, /readonly NPM_CACHE='\/var\/lib\/skincos-runtime\/cache\/crm-api'/)
   assert.match(release, /assert_release_targets\(\)/)
+  assert.match(release, /--predecessor-sha/)
+  assert.match(release, /Release SHA must equal the fetched origin\/main commit/)
+  assert.match(release, /merge-base --is-ancestor/)
+  assert.match(release, /\.skincos-release-lineage\.json/)
   assert.match(release, /sudo -n \/usr\/bin\/rm -rf -- "\$STAGING"/)
   assert.doesNotMatch(release, /SKINCOS_RELEASE_BASE|CRM_NPM_CACHE/)
 
