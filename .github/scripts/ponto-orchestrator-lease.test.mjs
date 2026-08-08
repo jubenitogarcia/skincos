@@ -489,6 +489,39 @@ test("typed intent binds every dispatch input and derives the exact nonce run na
   ), /unknown inputs/);
 });
 
+test("core intent binds unified-team rollout and derives the exact team-aware run name", () => {
+  const input = {
+    target: "staging",
+    unit: "inventory",
+    bootstrap_finance_context: false,
+    unified_team_enabled: true,
+    release_sha: releaseSha,
+    release_scope: "ponto",
+    orchestrator_run_id: orchestratorRunId,
+    orchestrator_stage: stage,
+    orchestrator_issuer_run_id: orchestratorRunId,
+    orchestrator_nonce: dispatchNonce,
+  };
+  const enabled = canonicalizeGovernedIntent(
+    ".github/workflows/deploy-core-workers.yml",
+    input,
+  );
+  const disabled = canonicalizeGovernedIntent(
+    ".github/workflows/deploy-core-workers.yml",
+    { ...input, unified_team_enabled: false },
+  );
+  assert.equal(enabled.normalizedInputs.unified_team_enabled, true);
+  assert.notEqual(enabled.digest, disabled.digest);
+  assert.equal(
+    expectedGovernedRunName(".github/workflows/deploy-core-workers.yml", enabled.normalizedInputs),
+    `Core inventory staging team=true ${releaseSha} orchestrator=${orchestratorRunId} nonce=${dispatchNonce}`,
+  );
+  assert.equal(
+    expectedGovernedRunName(".github/workflows/deploy-core-workers.yml", disabled.normalizedInputs),
+    `Core inventory staging team=false ${releaseSha} orchestrator=${orchestratorRunId} nonce=${dispatchNonce}`,
+  );
+});
+
 test("issued capability is Ed25519-bound to target, root, issuer, child, nonce, and typed intent", () => {
   const { canonical, check, document } = issuedCapability();
   assert.equal(check.status, "in_progress");
