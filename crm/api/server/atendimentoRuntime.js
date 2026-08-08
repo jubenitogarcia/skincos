@@ -221,6 +221,8 @@ export function createIsolatedAtendimentoRuntime({
                 sourceOperationsReady: readiness.sourceOperationsReady === true,
                 clinicalApprovalReady: readiness.clinicalApprovalReady === true,
                 transactionReadOnly: readiness.transactionReadOnly === true,
+                migrationRegistryReadable: readiness.migrationRegistryReadable === true,
+                persistentWritePrivilegesBlocked: readiness.persistentWritePrivilegesBlocked === true,
                 replayProtectionReady: replay.ready === true,
             })
         } catch {
