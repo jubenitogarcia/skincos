@@ -53,6 +53,7 @@ const GOVERNED_INTENT_SCHEMAS = {
     target: stringField("staging"),
     unit: stringField("all"),
     bootstrap_finance_context: booleanField(false),
+    unified_team_enabled: booleanField(false),
     release_sha: stringField(),
     preview_run_id: stringField(),
     staging_run_id: stringField(),
@@ -243,7 +244,7 @@ export function expectedGovernedRunName(workflowPath, inputs) {
     ".github/workflows/deploy-timekeeping.yml":
       `Timekeeping ${value("target")} ${value("release_sha")} ${suffix}`,
     ".github/workflows/deploy-core-workers.yml":
-      `Core ${value("unit")} ${value("target")} ${value("release_sha")} ${suffix}`,
+      `Core ${value("unit")} ${value("target")} team=${value("unified_team_enabled")} ${value("release_sha")} ${suffix}`,
     ".github/workflows/deploy-crm-pages.yml":
       `CRM Pages ${value("target")} ${value("release_sha")} ${suffix}`,
     ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml":
