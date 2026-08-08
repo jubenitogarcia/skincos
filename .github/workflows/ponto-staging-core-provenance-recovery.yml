@@ -1,0 +1,483 @@
+name: Ponto staging Core provenance recovery
+run-name: Ponto staging Core provenance recovery ${{ inputs.release_sha }} coordinator=${{ inputs.coordinator_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Immutable SHA of the failed staging coordinator
+        required: true
+        type: string
+      coordinator_run_id:
+        description: Exact failed Ponto staging coordinator whose Core child mutated staging
+        required: true
+        type: string
+      authorization_ref:
+        description: Opaque approved incident or change reference
+        required: true
+        type: string
+
+concurrency:
+  group: ponto-surface-mutation
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  fresh-close:
+    if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ponto-emergency-staging
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify trusted source and exact failed coordinator
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Core provenance recovery must be a fresh main run'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Recovery checkout differs from trusted main'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && "$COORDINATOR_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Recovery identity is invalid'; exit 1; }
+          [[ "$AUTHORIZATION_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/#-]{2,119}$ ]] || { echo 'Authorization reference must be opaque'; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'Failed release is not reachable from current main'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" > "$RUNNER_TEMP/ponto-core-recovery-coordinator.json"
+          node - "$RUNNER_TEMP/ponto-core-recovery-coordinator.json" <<'NODE'
+          const fs = require("fs");
+          const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const sha = process.env.RELEASE_SHA;
+          if (
+            String(run.id) !== process.env.COORDINATOR_RUN_ID
+            || run.path !== ".github/workflows/ponto-progressive-release.yml"
+            || run.event !== "workflow_dispatch"
+            || run.status !== "completed"
+            || !["failure", "cancelled"].includes(run.conclusion)
+            || run.head_branch !== "main"
+            || run.head_sha !== sha
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.display_title !== `Ponto staging ${sha} orchestrator=${process.env.COORDINATOR_RUN_ID}`
+            || run.run_attempt !== 1
+          ) throw new Error("failed staging coordinator provenance is not exact");
+          NODE
+          rm -f "$RUNNER_TEMP/ponto-core-recovery-coordinator.json"
+
+      - name: Download and validate the exact published Core custody
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/ponto-core-recovery"
+          mkdir -p "$root/historical"
+          gh run download "$COORDINATOR_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-recovery-journal-$COORDINATOR_RUN_ID" \
+            --dir "$root/historical"
+          node - "$root/historical" "$root/core-custody.json" <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const root = process.argv[2];
+          const output = process.argv[3];
+          const findBySuffix = (suffix) => {
+            const walk = (directory) => {
+              for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+                const candidate = path.join(directory, entry.name);
+                if (entry.isFile() && candidate.endsWith(suffix)) return candidate;
+                if (entry.isDirectory()) {
+                  const nested = walk(candidate);
+                  if (nested) return nested;
+                }
+              }
+              return null;
+            };
+            return walk(root);
+          };
+          const runPath = findBySuffix(path.join("runs", "core.json"));
+          const surfacePath = findBySuffix(path.join("surfaces", "core", "surface.json"));
+          if (!runPath || !surfacePath) throw new Error("exact Core journal paths are missing");
+          const run = JSON.parse(fs.readFileSync(runPath, "utf8"));
+          const surface = JSON.parse(fs.readFileSync(surfacePath, "utf8"));
+          const uuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+          if (
+            run.schemaVersion !== 1
+            || run.workflow !== "deploy-core-workers.yml"
+            || run.workflowPath !== ".github/workflows/deploy-core-workers.yml"
+            || run.status !== "completed"
+            || run.conclusion !== "success"
+            || run.event !== "workflow_dispatch"
+            || run.headBranch !== "main"
+            || run.headSha !== process.env.RELEASE_SHA
+            || run.repository !== process.env.GITHUB_REPOSITORY
+            || run.runId !== surface.runId
+            || surface.schemaVersion !== 1
+            || surface.surface !== "coreApi"
+            || surface.stage !== "staging"
+            || surface.sourceSha !== process.env.RELEASE_SHA
+            || surface.runId !== run.runId
+            || !uuid(surface.candidateVersionId)
+            || !uuid(surface.incumbentVersionId)
+            || !uuid(surface.deploymentId)
+            || surface.candidatePercent !== 100
+            || surface.incumbentPercent !== 0
+            || surface.candidateTag !== `ponto:coreApi:${process.env.RELEASE_SHA}`
+            || surface.routeIsolated !== true
+          ) throw new Error("historical Core surface custody is not exact");
+          fs.writeFileSync(output, `${JSON.stringify({
+            schemaVersion: 1,
+            coordinatorRunId: process.env.COORDINATOR_RUN_ID,
+            sourceSha: process.env.RELEASE_SHA,
+            childRunId: run.runId,
+            candidateVersionId: surface.candidateVersionId,
+            incumbentVersionId: surface.incumbentVersionId,
+            deploymentId: surface.deploymentId,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Monotonically latch Ponto closed before recovery
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: staging
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_LATCH_REPORT: ${{ runner.temp }}/ponto-core-recovery/latch.json
+        run: node .github/scripts/ponto-emergency-latch-write.mjs
+
+      - name: Write maintenance under the still-closed latch
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: staging
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_MAINTENANCE_REPORT: ${{ runner.temp }}/ponto-core-recovery/maintenance.json
+        run: node .github/scripts/ponto-emergency-maintenance-write.mjs
+
+      - name: Prove externally observable maintenance
+        env:
+          PONTO_MODULE_HEALTH_URL: https://api-staging.skincos.com.br/api/ponto/health
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/ponto-core-recovery"
+          node - "$directory/maintenance.json" "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json" <<'NODE'
+          (async () => {
+          const fs = require("fs");
+          const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const response = await fetch(`${process.env.PONTO_MODULE_HEALTH_URL}?core_recovery_close_probe=${process.env.GITHUB_RUN_ID}`, { headers: { accept: "application/json", "cache-control": "no-cache" } });
+          const body = await response.json().catch(() => null);
+          const availability = body?.availability;
+          if (
+            response.status !== 200
+            || availability?.state !== "maintenance"
+            || !["control", "emergency-latch-active"].includes(availability?.source)
+            || !Number.isFinite(Date.parse(String(availability?.changedAt || "")))
+          ) throw new Error("Core provenance recovery did not observe maintenance");
+          if (availability.source === "emergency-latch-active") {
+            fs.writeFileSync(process.argv[3], `${JSON.stringify({ state: "maintenance", changedAt: availability.changedAt })}\n`, { mode: 0o600 });
+            fs.rmSync(process.argv[4], { force: true });
+          } else {
+            fs.writeFileSync(process.argv[3], `${JSON.stringify({ state: "maintenance", changedAt: maintenance.latchChangedAt })}\n`, { mode: 0o600 });
+            fs.writeFileSync(process.argv[4], `${JSON.stringify({ state: "maintenance", changedAt: availability.changedAt, source: "control" })}\n`, { mode: 0o600 });
+          }
+          })().catch((error) => { console.error(error); process.exitCode = 1; });
+          NODE
+          if [[ -f "$directory/control-fallback-expectation.json" ]]; then
+            PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+            PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+            PONTO_MODULE_ALTERNATE_EXPECTATION_FILE="$directory/control-fallback-expectation.json" \
+            PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+              node .github/scripts/ponto-module-propagation.mjs
+          else
+            PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+            PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+            PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+              node .github/scripts/ponto-module-propagation.mjs
+          fi
+          rm -f "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json"
+
+      - name: Upload immutable fresh recovery close evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-core-provenance-recovery-close-staging-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-core-recovery
+          retention-days: 90
+          if-no-files-found: error
+
+  rollback:
+    needs: fresh-close
+    if: ${{ needs.fresh-close.result == 'success' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download the exact close and historical Core custody
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/ponto-core-recovery"
+          mkdir -p "$root/close" "$root/historical"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-core-provenance-recovery-close-staging-$GITHUB_RUN_ID" \
+            --dir "$root/close"
+          gh run download "$COORDINATOR_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-recovery-journal-$COORDINATOR_RUN_ID" \
+            --dir "$root/historical"
+          custody="$(find "$root/close" -name core-custody.json -print -quit)"
+          [[ -n "$custody" ]] || { echo 'Core custody summary is missing'; exit 1; }
+          node - "$custody" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            value.schemaVersion !== 1
+            || value.coordinatorRunId !== process.env.COORDINATOR_RUN_ID
+            || value.sourceSha !== process.env.RELEASE_SHA
+            || value.credentialsIncluded !== false
+            || value.piiIncluded !== false
+          ) throw new Error("fresh Core custody is not correlated");
+          NODE
+
+      - name: Materialize the exact fresh maintenance under the surface mutex
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_RESOURCE_TARGET: staging
+          PONTO_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+          PONTO_OPPOSITE_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
+          PONTO_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          PONTO_MATERIALIZE_TARGET: staging
+          PONTO_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          PONTO_MAINTENANCE_FILE: ${{ runner.temp }}/ponto-core-recovery/close/maintenance.json
+          PONTO_MATERIALIZE_REPORT: ${{ runner.temp }}/ponto-core-recovery/materialized-readback.json
+          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-core-recovery/resource-identity.json
+        run: |
+          set -euo pipefail
+          maintenance="$(find "$RUNNER_TEMP/ponto-core-recovery/close" -name maintenance.json -print -quit)"
+          [[ -n "$maintenance" ]] || { echo 'Fresh maintenance evidence is missing'; exit 1; }
+          if [[ "$maintenance" != "$PONTO_MAINTENANCE_FILE" ]]; then cp "$maintenance" "$PONTO_MAINTENANCE_FILE"; fi
+          node .github/scripts/ponto-cloudflare-resource-identity.mjs
+          node .github/scripts/ponto-module-control-materialize.mjs
+
+      - name: Download and validate the exact Core mutation journal
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/ponto-core-recovery"
+          custody="$(find "$root/close" -name core-custody.json -print -quit)"
+          child_run_id="$(node -e "process.stdout.write(require(process.argv[1]).childRunId)" "$custody")"
+          mkdir -p "$root/source/surface" "$root/source/mutation" "$root/rollback-root/surfaces/core" "$root/rollback-root/mutations/core" "$root/rollback-root/runs" "$root/rollback-root/automatic-rollback"
+          gh run download "$child_run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-surface-core-api-staging-$RELEASE_SHA" \
+            --dir "$root/source/surface"
+          gh run download "$child_run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-mutation-core-api-staging-$RELEASE_SHA" \
+            --dir "$root/source/mutation"
+          historical_run="$(find "$root/historical" -path '*/runs/core.json' -print -quit)"
+          historical_surface="$(find "$root/historical" -path '*/surfaces/core/surface.json' -print -quit)"
+          mutation="$(find "$root/source/mutation" -name mutation.json -print -quit)"
+          surface="$(find "$root/source/surface" -name surface.json -print -quit)"
+          for file in "$historical_run" "$historical_surface" "$mutation" "$surface"; do [[ -f "$file" ]] || { echo "Missing exact Core artifact: $file"; exit 1; }; done
+          cp "$historical_run" "$root/rollback-root/runs/core.json"
+          cp "$historical_surface" "$root/rollback-root/surfaces/core/surface.json"
+          cp "$mutation" "$root/rollback-root/mutations/core/mutation.json"
+          cp "$surface" "$root/rollback-root/surfaces/core/publisher-surface.json"
+          node - "$root/rollback-root/runs/core.json" "$root/rollback-root/surfaces/core/surface.json" "$root/rollback-root/mutations/core/mutation.json" <<'NODE'
+          const fs = require("fs");
+          const [run, surface, mutation] = process.argv.slice(2).map((file) => JSON.parse(fs.readFileSync(file, "utf8")));
+          const uuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+          if (
+            run.runId !== surface.runId
+            || surface.sourceSha !== process.env.RELEASE_SHA
+            || mutation.surface !== "coreApi"
+            || mutation.stage !== "staging"
+            || mutation.sourceSha !== process.env.RELEASE_SHA
+            || mutation.runId !== surface.runId
+            || mutation.orchestratorRunId !== process.env.COORDINATOR_RUN_ID
+            || mutation.mutationStarted !== true
+            || mutation.mutationCompleted !== true
+            || mutation.rollbackCompleted !== false
+            || mutation.compensationDisposition !== "not-run"
+            || mutation.credentialsIncluded !== false
+            || mutation.piiIncluded !== false
+            || !uuid(surface.candidateVersionId)
+            || !uuid(surface.incumbentVersionId)
+            || !uuid(surface.deploymentId)
+            || mutation.candidateVersionId !== surface.candidateVersionId
+            || mutation.incumbentVersionId !== surface.incumbentVersionId
+            || mutation.deploymentId !== surface.deploymentId
+          ) throw new Error("exact Core mutation custody is invalid");
+          NODE
+
+      - name: Attest the catalog incumbent and live candidate before rollback
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/ponto-core-recovery/rollback-root"
+          node --input-type=module - "$root" <<'NODE'
+          import fs from "node:fs";
+          import { remoteSnapshot } from "./.github/scripts/ponto-core-baseline-publisher.mjs";
+          import { validateStagingIncumbentCatalog } from "./.github/scripts/ponto-core-staging-precondition.mjs";
+          const root = process.argv[2];
+          const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+          const surface = read(`${root}/surfaces/core/surface.json`);
+          const mutation = read(`${root}/mutations/core/mutation.json`);
+          const catalog = read("platform/deploy/operational-units.json");
+          const incumbent = validateStagingIncumbentCatalog({ catalog });
+          if (
+            surface.incumbentVersionId !== incumbent.surface.versionId
+            || mutation.incumbentVersionId !== incumbent.surface.versionId
+            || mutation.incumbentVersionId === mutation.candidateVersionId
+          ) throw new Error("Core recovery incumbent differs from the governed catalog");
+          const live = await remoteSnapshot({
+            accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+            apiToken: process.env.CLOUDFLARE_API_TOKEN,
+            baselineSha: process.env.RELEASE_SHA,
+            expectedVersionMessage: `ponto:coreApi:${process.env.RELEASE_SHA}`,
+            expectedAppVersion: process.env.RELEASE_SHA,
+            target: "staging",
+          });
+          const attestation = live?.attestation;
+          if (
+            live?.exists !== true
+            || attestation?.activeVersionId !== surface.candidateVersionId
+            || attestation?.activeDeploymentId !== surface.deploymentId
+            || attestation?.activeVersions?.length !== 1
+            || attestation.activeVersions[0]?.versionId !== surface.candidateVersionId
+            || attestation.activeVersions[0]?.percentage !== 100
+            || attestation.exposure?.workerRouteCount !== 0
+            || attestation.exposure?.customDomainCount !== 0
+            || attestation.exposure?.workersDevEnabled !== false
+            || attestation.exposure?.previewUrlsEnabled !== false
+          ) throw new Error("live staging Core is not the exact cataloged candidate custody");
+          NODE
+
+      - name: Normalize exact maintenance and recover the cataloged Core incumbent
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_ROLLBACK_CHECK_TOKEN: ${{ github.token }}
+          PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY: ${{ secrets.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY }}
+          PONTO_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          STAGE: staging
+          PONTO_RECOVERY_TARGET: staging
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_MODULE_HEALTH_URL: https://api-staging.skincos.com.br/api/ponto/health
+          CLOUDFLARE_PAGES_PROJECT: skincos-staging
+          MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          PONTO_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+          PONTO_OPPOSITE_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/ponto-core-recovery/rollback-root"
+          close_root="$RUNNER_TEMP/ponto-core-recovery/close"
+          maintenance="$(find "$close_root" -name maintenance.json -print -quit)"
+          propagation="$(find "$close_root" -name final-propagation.json -print -quit)"
+          [[ -n "$maintenance" && -n "$propagation" ]] || { echo 'Fresh close propagation evidence is missing'; exit 1; }
+          cat > "$root/reconciliation.json" <<EOF
+          {"schemaVersion":1,"sourceMode":"ordinary","orchestratorRunId":"$PONTO_COORDINATOR_RUN_ID","orchestratorHeadSha":"$RELEASE_SHA","discoveredChildren":1,"unresolved":[],"passed":true,"credentialsIncluded":false,"piiIncluded":false}
+          EOF
+          PONTO_RECOVERY_SOURCE_MODE=ordinary \
+          PONTO_COORDINATOR_RUN_ID="$PONTO_COORDINATOR_RUN_ID" \
+          PONTO_EMERGENCY_RUN_ID="$PONTO_EMERGENCY_RUN_ID" \
+          RELEASE_SHA="$RELEASE_SHA" \
+          STAGE=staging \
+          PONTO_RECOVERY_TARGET=staging \
+            node .github/scripts/ponto-recovery-evidence.mjs \
+              "$root/reconciliation.json" "$maintenance" "$propagation" "$root"
+          export PONTO_OPPOSITE_MODULE_CONTROL_KV_ID
+          node .github/scripts/ponto-automatic-rollback.mjs \
+            "$root" "$root/automatic-rollback/ponto-automatic-rollback.json"
+
+      - name: Prove the exact catalog incumbent and maintenance after rollback
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from "node:fs";
+          import { remoteSnapshot } from "./.github/scripts/ponto-core-baseline-publisher.mjs";
+          import { validateStagingIncumbentCatalog } from "./.github/scripts/ponto-core-staging-precondition.mjs";
+          const catalog = JSON.parse(fs.readFileSync("platform/deploy/operational-units.json", "utf8"));
+          const incumbent = validateStagingIncumbentCatalog({ catalog });
+          const live = await remoteSnapshot({
+            accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+            apiToken: process.env.CLOUDFLARE_API_TOKEN,
+            baselineSha: incumbent.sourceSha,
+            expectedVersionMessage: `ponto:coreApi:${incumbent.sourceSha}`,
+            expectedAppVersion: incumbent.sourceSha,
+            target: "staging",
+          });
+          if (
+            live?.exists !== true
+            || live.attestation?.activeVersionId !== incumbent.surface.versionId
+            || live.attestation?.activeVersions?.length !== 1
+            || live.attestation.activeVersions[0]?.percentage !== 100
+            || live.attestation.exposure?.workerRouteCount !== 0
+            || live.attestation.exposure?.customDomainCount !== 0
+            || live.attestation.exposure?.workersDevEnabled !== false
+            || live.attestation.exposure?.previewUrlsEnabled !== false
+          ) throw new Error("staging Core did not return to the catalog incumbent");
+          const headers = { accept: "application/json", "cache-control": "no-cache" };
+          if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
+            headers["cf-access-client-id"] = process.env.CF_ACCESS_CLIENT_ID;
+            headers["cf-access-client-secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
+          }
+          const response = await fetch(`https://api-staging.skincos.com.br/api/ponto/health?core_recovery_probe=${Date.now()}`, { headers });
+          const body = await response.json().catch(() => null);
+          if (
+            response.status !== 200
+            || body?.ok !== false
+            || body?.ready !== false
+            || body?.availability?.state !== "maintenance"
+            || body?.versionMetadata?.gatewayEnvironment !== "staging"
+            || String(response.headers.get("x-skincos-gateway-environment") || "").toLowerCase() !== "staging"
+          ) throw new Error("staging Ponto health did not prove maintenance on the restored Core incumbent");
+          NODE
+
+      - name: Upload immutable Core provenance recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-core-provenance-recovery-${{ inputs.release_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-core-recovery
+          retention-days: 90
+          if-no-files-found: warn

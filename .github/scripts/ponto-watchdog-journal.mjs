@@ -10,6 +10,7 @@ import {
   resolveCapabilityVerifier,
   verifyCapabilityDocument,
 } from "./ponto-orchestrator-lease.mjs";
+import { attestTerminalPreMutationGateFailure } from "./ponto-child-mutation-attestation.mjs";
 
 const DISPATCH_NONCE = /^[0-9a-f]{32}$/;
 const hasExactNonceTitle = (title, expectedPrefix) => {
@@ -365,6 +366,7 @@ export async function reconstructWatchdogJournal({
   const downloads = [];
   const unresolved = [];
   const ignoredUnprovenChildren = [];
+  const jobsByRunId = new Map();
   let acceptedChildren = 0;
   let capabilityChecks = null;
   let coordinatorWorkflowId = coordinatorWorkflow.id;
@@ -400,6 +402,19 @@ export async function reconstructWatchdogJournal({
       capabilityVerifier,
     });
   };
+  const jobsFor = async (run) => {
+    const runId = String(run?.id || "");
+    if (!runId) return null;
+    if (!jobsByRunId.has(runId)) {
+      try {
+        const payload = await request(`/repos/${repository}/actions/runs/${runId}/jobs?per_page=100`);
+        jobsByRunId.set(runId, Array.isArray(payload?.jobs) ? payload.jobs : null);
+      } catch {
+        jobsByRunId.set(runId, null);
+      }
+    }
+    return jobsByRunId.get(runId);
+  };
   fs.mkdirSync(path.join(artifactRoot, "runs"), { recursive: true });
   for (const [surface, specification] of applicableSurfaces) {
     const saved = savedBySurface.get(surface);
@@ -426,17 +441,24 @@ export async function reconstructWatchdogJournal({
             trustedIds.add(String(run.id));
             capabilityByRun.set(String(run.id), capability);
           } else {
+            const preMutation = attestTerminalPreMutationGateFailure({
+              run,
+              jobs: await jobsFor(run),
+            });
             const failure = {
               surface,
               runId: String(run.id),
-              reason: "capability-absent",
+              reason: preMutation?.reason || "capability-absent",
+              ...(preMutation ? { mutationStarted: false } : {}),
             };
             ignoredUnprovenChildren.push(failure);
-            unresolved.push({
-              surface,
-              runId: String(run.id),
-              reason: "canonical-correlated-child-untrusted",
-            });
+            if (!preMutation) {
+              unresolved.push({
+                surface,
+                runId: String(run.id),
+                reason: "canonical-correlated-child-untrusted",
+              });
+            }
           }
         } catch (error) {
           const failure = {
@@ -452,16 +474,23 @@ export async function reconstructWatchdogJournal({
           });
         }
       } else {
+        const preMutation = attestTerminalPreMutationGateFailure({
+          run,
+          jobs: await jobsFor(run),
+        });
         ignoredUnprovenChildren.push({
           surface,
           runId: String(run.id),
-          reason: "durable-journal-anchor-absent",
+          reason: preMutation?.reason || "durable-journal-anchor-absent",
+          ...(preMutation ? { mutationStarted: false } : {}),
         });
-        unresolved.push({
-          surface,
-          runId: String(run.id),
-          reason: "canonical-correlated-child-untrusted",
-        });
+        if (!preMutation) {
+          unresolved.push({
+            surface,
+            runId: String(run.id),
+            reason: "canonical-correlated-child-untrusted",
+          });
+        }
       }
     }
     if (matches.length > 1) {

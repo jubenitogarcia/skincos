@@ -8,6 +8,7 @@ import {
   transitionCapabilityDocument,
   verifyCapabilityDocument,
 } from "./ponto-orchestrator-lease.mjs";
+import { attestTerminalPreMutationGateFailure } from "./ponto-child-mutation-attestation.mjs";
 
 const COORDINATOR_TITLE = /^Ponto (staging|pilot|canary|production|rollback) ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/;
 const CAPABILITY_CHECK_NAME =
@@ -27,6 +28,7 @@ export const HIGH_RISK_WORKFLOWS = Object.freeze([
   { path: ".github/workflows/timekeeping-staging-journey.yml", targets: ["staging"] },
   { path: ".github/workflows/ponto-staging-rollback-drill.yml", targets: ["staging"] },
   { path: ".github/workflows/ponto-staging-recovery-rollback.yml", targets: ["staging"] },
+  { path: ".github/workflows/ponto-staging-core-provenance-recovery.yml", targets: ["staging"] },
   { path: ".github/workflows/ponto-production-baseline.yml", targets: ["production"] },
   { path: ".github/workflows/ponto-production-slo.yml", targets: ["production"] },
 ]);
@@ -226,6 +228,7 @@ if (invokedAsScript) {
   const unprovenChildren = new Map();
   const invalidCoordinatorIds = new Set();
   const capabilityInvalidationErrors = [];
+  const jobsByRunId = new Map();
   const completedWindowRuns = new Map();
   const completedWindowScans = new Set();
   let completedCoordinatorDiscoveryDone = false;
@@ -349,6 +352,27 @@ if (invokedAsScript) {
         throw new Error("child capability check is ambiguous");
       }
       if (!candidates.length) {
+        if (record.live?.status === "completed") {
+          let jobs = jobsByRunId.get(record.runId);
+          if (!jobsByRunId.has(record.runId)) {
+            try {
+              const payload = await request(`/repos/${repository}/actions/runs/${record.runId}/jobs?per_page=100`);
+              jobs = Array.isArray(payload?.jobs) ? payload.jobs : null;
+            } catch {
+              jobs = null;
+            }
+            jobsByRunId.set(record.runId, jobs);
+          }
+          const preMutation = attestTerminalPreMutationGateFailure({
+            run: record.live,
+            jobs,
+          });
+          if (preMutation) {
+            record.capabilityAuthorization = preMutation.reason;
+            record.mutationStarted = false;
+            return true;
+          }
+        }
         record.capabilityAuthorization = "absent";
         return false;
       }
