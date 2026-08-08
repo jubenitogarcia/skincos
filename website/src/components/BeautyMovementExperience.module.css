@@ -1418,13 +1418,6 @@
   line-height: 1.45;
 }
 
-.fieldHint {
-  margin: 0;
-  color: var(--bm-muted);
-  font-size: 0.88rem;
-  line-height: 1.45;
-}
-
 .inlineError {
   width: min(100%, 640px);
   margin: 24px auto 0;
@@ -1601,49 +1594,6 @@
   display: grid;
   gap: 16px;
   padding: clamp(20px, 4vw, 32px);
-}
-
-.formField {
-  display: grid;
-  gap: 8px;
-}
-
-.formField > span {
-  color: var(--bm-ink);
-  font-family: var(--font-brand-ui);
-  font-size: 0.79rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.formField em {
-  color: var(--bm-muted);
-  font-family: var(--font-brand-text);
-  font-size: 0.82rem;
-  font-style: normal;
-  font-weight: 500;
-  letter-spacing: 0;
-}
-
-.formField input {
-  width: 100%;
-  min-height: 52px;
-  padding: 0 16px;
-  border: 1px solid var(--bm-line-strong);
-  border-radius: 8px;
-  outline: none;
-  background: var(--bm-surface);
-  color: var(--bm-ink);
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-}
-
-.formField input:focus {
-  border-color: var(--bm-ink);
-  box-shadow: 0 0 0 4px rgba(48, 48, 48, 0.12);
-}
-
-.formField input[aria-invalid="true"] {
-  border-color: var(--bm-ink);
 }
 
 .consentField {
