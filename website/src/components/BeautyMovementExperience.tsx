@@ -112,6 +112,7 @@ export type BeautyMovementExperienceProps = {
 
 type HandStage = "waiting" | "ready" | "reveal" | "held" | "collect" | "deal" | "finale";
 type FinaleStage = "hidden" | "collecting" | "confirmation" | "result";
+type SpecialCardKind = "velocity" | "discount" | "free_procedure" | "reserved";
 
 type ShareNavigator = Navigator & {
     canShare?: (data?: ShareData) => boolean;
@@ -1035,6 +1036,85 @@ export default function BeautyMovementExperience({
         );
     }
 
+    function renderSpecialCard(revealed: boolean) {
+        const kind: SpecialCardKind = revealed
+            ? hasCourtesyClass
+                ? "velocity"
+                : initialState.benefit?.type === "discount"
+                  ? "discount"
+                  : initialState.benefit?.type === "free_procedure"
+                    ? "free_procedure"
+                    : "reserved"
+            : "reserved";
+        const benefit = initialState.benefit;
+        const velocity = initialState.velocity;
+        const iconId =
+            kind === "velocity"
+                ? "reward-velocity"
+                : kind === "discount"
+                  ? "reward-discount"
+                  : kind === "free_procedure"
+                    ? "reward-procedure"
+                    : "reward-reserved";
+        const kindLabel =
+            kind === "velocity"
+                ? "AULA-CORTESIA"
+                : kind === "discount"
+                  ? "CONDIÇÃO ESPECIAL"
+                  : kind === "free_procedure"
+                    ? "CORTESIA DE CELEBRAÇÃO"
+                    : "PRESENTE RESERVADO";
+        const title =
+            kind === "velocity"
+                ? velocity?.label?.trim() || "Aula-cortesia Velocity"
+                : kind === "discount" || kind === "free_procedure"
+                  ? benefit?.procedureName || "Cuidado reservado"
+                  : "Seu presente está reservado";
+        const description =
+            kind === "velocity"
+                ? velocity?.text || "Sua aula será confirmada pela equipe da unidade após o contato."
+                : kind === "discount" || kind === "free_procedure"
+                  ? benefit?.displayText || "Um cuidado especial para celebrar o seu momento."
+                  : "Confirme sua entrada para revelar a condição preparada para você.";
+        const meta =
+            kind === "discount" && benefit?.discount
+                ? formatRewardDiscount(benefit.discount)
+                : kind === "free_procedure"
+                  ? "Procedimento gratuito"
+                  : kind === "velocity"
+                    ? "Seu movimento também faz parte da celebração"
+                    : "Carta final da celebração";
+
+        return (
+            <article
+                className={styles.specialCard}
+                data-special-state={revealed ? "revealed" : "locked"}
+                aria-label={revealed ? `Carta especial: ${title}` : "Carta especial reservada"}
+            >
+                <div className={styles.specialCardInner}>
+                    <div className={`${styles.specialCardFace} ${styles.specialCardBack}`} aria-hidden={revealed}>
+                        <BrandMark className={styles.specialCardBrand} tone="light" title="" />
+                        <span className={styles.specialCardBackLabel}>CARTA ESPECIAL</span>
+                        <strong>A soma da sua leitura está pronta.</strong>
+                        <span>Confirme sua entrada para revelar o presente reservado.</span>
+                        <span className={styles.specialCardSeal} aria-hidden="true">
+                            ✦
+                        </span>
+                    </div>
+                    <div className={`${styles.specialCardFace} ${styles.specialCardFront}`} aria-hidden={!revealed}>
+                        <span className={styles.specialCardKind}>{kindLabel}</span>
+                        <span className={styles.specialCardIllustration} aria-hidden="true">
+                            <BeautyMovementCardIllustration cardId={iconId} />
+                        </span>
+                        <strong>{title}</strong>
+                        <span className={styles.specialCardCopy}>{description}</span>
+                        <span className={styles.specialCardMeta}>{meta}</span>
+                    </div>
+                </div>
+            </article>
+        );
+    }
+
     function renderConfirmationStage() {
         return (
             <section className={styles.confirmationStage} aria-labelledby="beauty-movement-inline-confirmation-title">
@@ -1308,12 +1388,16 @@ export default function BeautyMovementExperience({
                             </span>
                         ) : null}
                         {finaleStage === "collecting" ? (
-                            <div className={styles.finaleCardGrid} aria-hidden="true">
+                            <div className={`${styles.finaleCardGrid} ${styles.finaleCardGridMerging}`} aria-hidden="true">
                                 {reading.map(renderFinaleCard)}
                             </div>
                         ) : finaleStage === "confirmation" || finaleStage === "result" ? (
-                            <div className={styles.finaleCardGrid} role="group" aria-label="Cartas finais">
-                                {reading.map(renderFinaleCard)}
+                            <div
+                                className={styles.specialCardStage}
+                                role="group"
+                                aria-label={finaleStage === "result" ? "Carta especial do benefício" : "Carta especial da celebração"}
+                            >
+                                {renderSpecialCard(finaleStage === "result")}
                             </div>
                         ) : finaleStage === "hidden" && !waitingForInitialDeal ? (
                             <div className={styles.cardGrid} role="group" aria-label={`Cartas da etapa ${tableDefinition.label}`}>
