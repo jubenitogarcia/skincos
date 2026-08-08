@@ -119,7 +119,6 @@ type ShareNavigator = Navigator & {
     share?: (data?: ShareData) => Promise<void>;
 };
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STORY_WIDTH = 1080;
 const STORY_HEIGHT = 1920;
 const AUTO_ADVANCE_SECONDS = 5;
@@ -154,15 +153,6 @@ function getSelectionsFromReveals(
 function getCurrentActIndex(selections: BeautyMovementSelections): number {
     const index = BEAUTY_MOVEMENT_ACTS.findIndex((act) => !selections[act]);
     return index === -1 ? BEAUTY_MOVEMENT_ACTS.length : index;
-}
-
-function sanitizeEmail(value: string): string | null {
-    const normalized = value.trim().toLowerCase();
-    return normalized || null;
-}
-
-function isEmailValid(value: string): boolean {
-    return value.length === 0 || EMAIL_PATTERN.test(value);
 }
 
 function formatRewardDiscount(discount: NonNullable<BeautyMovementBenefit["discount"]>): string {
@@ -549,7 +539,6 @@ export default function BeautyMovementExperience({
         initialState.confirmed || initialReadingComplete ? "ready" : "waiting",
     );
     const [confirmed, setConfirmed] = useState(initialState.confirmed);
-    const [email, setEmail] = useState("");
     const [operationalConsent, setOperationalConsent] = useState(false);
     const [confirmationAttempted, setConfirmationAttempted] = useState(false);
     const [revealPendingCardId, setRevealPendingCardId] = useState<string | null>(null);
@@ -650,9 +639,6 @@ export default function BeautyMovementExperience({
         () => getBeautyMovementReading(initialState.palette, selections),
         [initialState.palette, selections],
     );
-    const emailValue = sanitizeEmail(email) ?? "";
-    const emailInvalid = confirmationAttempted && !isEmailValid(emailValue);
-    const emailAlreadyRegistered = initialState.invite.emailRegistered === true;
     const consentInvalid = confirmationAttempted && !operationalConsent;
     const partnerName = initialState.campaign.partnerName?.trim() || "Velocity";
     const primaryWhatsappLabel = initialState.campaign.whatsappLabel?.trim() || "Falar com a equipe";
@@ -888,13 +874,13 @@ export default function BeautyMovementExperience({
         setConfirmationAttempted(true);
         setActionError(null);
 
-        if (!operationalConsent || !isEmailValid(emailValue)) return;
+        if (!operationalConsent) return;
 
         confirmInFlightRef.current = true;
         setIsConfirming(true);
         try {
             await onConfirm?.({
-                email: emailValue || null,
+                email: null,
                 operationalConsent: true,
             });
             if (!mountedRef.current) return;
@@ -1135,37 +1121,10 @@ export default function BeautyMovementExperience({
                 <div className={styles.contactSummary}>
                     <span>Contato vinculado</span>
                     <strong>{initialState.invite.maskedWhatsapp}</strong>
-                    <small>Para corrigir dados, fale diretamente com a unidade.</small>
+                    <small>E-mail e telefone já estão vinculados a este convite. Para corrigir dados, fale diretamente com a unidade.</small>
                 </div>
 
                 <div className={styles.confirmationForm}>
-                    <label className={styles.formField} htmlFor="beauty-movement-inline-email">
-                        <span>
-                            E-mail <em>opcional</em>
-                        </span>
-                        <input
-                            id="beauty-movement-inline-email"
-                            type="email"
-                            autoComplete="email"
-                            value={email}
-                            onChange={(event) => setEmail(event.target.value)}
-                            disabled={emailAlreadyRegistered}
-                            aria-invalid={emailInvalid || undefined}
-                            aria-describedby={emailInvalid ? "beauty-movement-inline-email-error" : undefined}
-                            placeholder="voce@email.com"
-                        />
-                    </label>
-                    {emailAlreadyRegistered ? (
-                        <p className={styles.fieldHint}>
-                            E-mail já cadastrado. Para corrigir dados, fale diretamente com a unidade.
-                        </p>
-                    ) : null}
-                    {emailInvalid ? (
-                        <p className={styles.fieldError} id="beauty-movement-inline-email-error">
-                            Confira o formato do e-mail ou deixe este campo em branco.
-                        </p>
-                    ) : null}
-
                     <label className={`${styles.consentField} ${consentInvalid ? styles.consentFieldInvalid : ""}`.trim()}>
                         <input
                             type="checkbox"

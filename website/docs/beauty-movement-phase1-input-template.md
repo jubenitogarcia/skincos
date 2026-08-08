@@ -88,8 +88,9 @@ jurídica e operacional específica.
   de privacidade: `[PENDENTE]`.
 - CPF e histórico de procedimentos: fora do D1, frontend, URL, relatório e
   analytics; nenhum dado bruto deve ser carregado (**consolidado no plano**).
-- Campos do convite: `invite_ref`, nome, WhatsApp, e-mail opcional, paleta,
-  `reward_id`, `velocity_benefit`, expiração e status do convite. O procedimento,
+- Campos do convite: `invite_ref`, nome, WhatsApp, e-mail já vinculado na lista,
+  paleta, `reward_id`, `velocity_benefit`, expiração e status do convite. O
+  procedimento,
   desconto e condições ficam no catálogo privado de recompensas.
 - Consentimento: aceite operacional separado de qualquer marketing futuro;
   redação jurídica final: `[PENDENTE]`.
