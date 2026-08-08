@@ -1788,7 +1788,7 @@ if (DEV_AUTH_ENABLED) {
         if (accountStatus === 'ACTIVE') return res.status(200).json({ success: true, data: localPublicTeamMember(member), replayed: true })
         if (accountStatus !== 'INVITED') return res.status(409).json({ success: false, error: 'Ativação não está pronta para este estado', code: 'ONBOARDING_ACTIVATION_NOT_READY' })
         const registeredUser = store.users.find((user) => String(user.email || '').trim().toLowerCase() === String(member.corporateEmail || '').trim().toLowerCase())
-        if (!registeredUser?.username) return res.status(409).json({ success: false, error: 'O funcionário ainda precisa criar a senha pelo convite', code: 'INVITE_REGISTRATION_REQUIRED' })
+        if (!registeredUser?.username || !String(registeredUser?.password || registeredUser?.passwordHash || '').trim()) return res.status(409).json({ success: false, error: 'O funcionário ainda precisa criar a senha pelo convite', code: 'INVITE_REGISTRATION_REQUIRED' })
         const before = { accountStatus: member.accountStatus, provisioningState: member.provisioningState }
         const at = new Date().toISOString()
         member.accountStatus = 'ACTIVE'
