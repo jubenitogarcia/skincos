@@ -62,7 +62,15 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    ele cria e verifica exatamente um dump privado e único em
    `/var/backups/skincos/clientes/staging`; a evidência contém somente SHA-256,
    `private=true` e `unique=true`, nunca o caminho ou conteúdo do dump. Não
-   chame o helper de backup separadamente nesse fluxo. O runner lê exclusivamente
+   chame o helper de backup separadamente nesse fluxo. O `postgres` nunca recebe
+   esse caminho: o helper captura o archive custom por stdout em um spool
+   `.partial` `root:root:0600` dentro do diretório final `root:root:0700`, atesta
+   hash, dono e modo e só então publica o nome único por hard-link sem
+   sobrescrita. Isso substitui qualquer arquivo temporário cedido a `postgres`:
+   o processo só recebe stdout, nunca posse ou travessia de um artefato de
+   rollback. Ele não altera as permissões de `/var/backups/skincos` nem de
+   `/var/backups/skincos/clientes`, que podem permanecer intraversáveis para
+   `postgres`. O runner lê exclusivamente
    `/etc/skincos/crm-atendimento-staging-migrator.env` como texto literal e
    aceita uma só ação. A migração pode conceder temporariamente grants normais
    enquanto cria objetos; ao terminar (inclusive após rollback ou erro), o
