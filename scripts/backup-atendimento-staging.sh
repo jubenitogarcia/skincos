@@ -24,7 +24,7 @@ readonly STAMP="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
 OUTPUT=''
 
 [[ $# -eq 0 ]] || { echo "Usage: $0" >&2; exit 64; }
-for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/pg_dump /usr/bin/sha256sum /usr/bin/install /usr/bin/mktemp /usr/bin/chmod /usr/bin/chown /usr/bin/rm /usr/bin/awk; do
+for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/pg_dump /usr/bin/sha256sum /usr/bin/install /usr/bin/mktemp /usr/bin/chmod /usr/bin/chown /usr/bin/rm /usr/bin/awk /usr/bin/test /usr/bin/stat; do
   [[ -x "$command_path" ]] || { echo "Missing required command: $command_path" >&2; exit 1; }
 done
 /usr/bin/sudo -n /usr/bin/true
@@ -48,13 +48,20 @@ if [[ ! "$OUTPUT" =~ ^/var/backups/skincos/clientes/staging/[0-9]{8}T[0-9]{6}Z-c
   echo 'Backup output path was not generated from the fixed contract.' >&2
   exit 1
 fi
+run_sudo_clean /usr/bin/test -f "$OUTPUT"
+run_sudo_clean /usr/bin/test -O "$OUTPUT"
 readonly OUTPUT
 output_created=1
 run_sudo_clean /usr/bin/chown postgres:postgres "$OUTPUT"
 run_postgres_dump_clean --format=custom --no-owner --no-privileges --dbname="$DATABASE" --file="$OUTPUT"
 run_sudo_clean /usr/bin/chown root:root "$OUTPUT"
 run_sudo_clean /usr/bin/chmod 0600 "$OUTPUT"
+backup_metadata="$(run_sudo_clean /usr/bin/stat -c '%U:%G:%a' "$OUTPUT")"
+[[ "$backup_metadata" == 'root:root:600' ]] || {
+  echo 'Backup ownership or mode does not satisfy the private rollback contract.' >&2
+  exit 1
+}
 HASH="$(run_sudo_clean /usr/bin/sha256sum "$OUTPUT" | /usr/bin/awk '{print $1}')"
 output_created=0
 trap - EXIT HUP INT TERM
-printf 'backup_created=true database=%s sha256=%s\n' "$DATABASE" "$HASH"
+printf 'backup_created=true database=%s sha256=%s private=true unique=true\n' "$DATABASE" "$HASH"

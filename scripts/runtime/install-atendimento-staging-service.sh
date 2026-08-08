@@ -45,7 +45,7 @@ readonly RELEASE_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-re
 readonly CONTROL_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-staging-control.mjs"
 readonly RUNTIME_GRANT_LOCKDOWN="$SOURCE_ROOT/scripts/lockdown-atendimento-staging-runtime.sh"
 
-for command_path in /usr/bin/sudo /usr/bin/sed /usr/bin/systemd-analyze /usr/bin/mktemp /usr/bin/install /usr/bin/node /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/date /usr/bin/cp /usr/bin/systemctl /usr/bin/test; do
+for command_path in /usr/bin/sudo /usr/bin/sed /usr/bin/systemd-analyze /usr/bin/mktemp /usr/bin/install /usr/bin/node /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/date /usr/bin/cp /usr/bin/cmp /usr/bin/stat /usr/bin/systemctl /usr/bin/test; do
   [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
 done
 /usr/bin/sudo -n true
@@ -55,7 +55,7 @@ done
 /usr/bin/sudo -n /usr/bin/test -f "$CONTROL_VALIDATOR" || { echo 'Strict staging control validator is unavailable in immutable release.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Staging runtime grant lockdown is unavailable in immutable release.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$CONTROL_FILE" || { echo 'Strict staging control file is unavailable.' >&2; exit 78; }
-run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" --target staging >/dev/null
 run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 
@@ -63,7 +63,16 @@ umask 0077
 render_dir="$(/usr/bin/mktemp -d /tmp/atendimento-staging-unit.XXXXXX)"
 /usr/bin/test -d "$render_dir" -a -O "$render_dir"
 rendered="$render_dir/crm-atendimento-staging.service"
-trap '/usr/bin/rm -f "$rendered"; /usr/bin/rmdir "$render_dir" 2>/dev/null || true' EXIT
+unit_backup_path=''
+unit_backup_committed=0
+cleanup_artifacts() {
+  /usr/bin/rm -f "$rendered"
+  /usr/bin/rmdir "$render_dir" 2>/dev/null || true
+  if [[ "$unit_backup_committed" != '1' && "$unit_backup_path" =~ ^/var/backups/skincos/clientes/staging/[0-9]{8}T[0-9]{6}Z-crm-atendimento-staging\.[A-Za-z0-9]{6}\.service$ ]]; then
+    run_sudo_clean /usr/bin/rm -f -- "$unit_backup_path" || true
+  fi
+}
+trap cleanup_artifacts EXIT
 /usr/bin/sed \
   -e "s|__REPO_ROOT__|$SOURCE_ROOT|g" \
   -e "s|__STATE_ROOT__|$STATE_ROOT|g" \
@@ -81,8 +90,30 @@ fi
 
 stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
 /usr/bin/sudo -n /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
+unit_backup='none'
 if /usr/bin/sudo -n /usr/bin/test -f "$UNIT_DEST/$SERVICE"; then
-  /usr/bin/sudo -n /usr/bin/cp -p "$UNIT_DEST/$SERVICE" "$BACKUP_ROOT/${stamp}-$SERVICE"
+  # Pre-create a root-private, unique destination. A second installer in the
+  # same timestamp cannot overwrite the rollback evidence captured by the
+  # first one.
+  unit_backup_path="$(run_sudo_clean /usr/bin/mktemp "$BACKUP_ROOT/${stamp}-crm-atendimento-staging.XXXXXX.service")"
+  [[ "$unit_backup_path" =~ ^/var/backups/skincos/clientes/staging/[0-9]{8}T[0-9]{6}Z-crm-atendimento-staging\.[A-Za-z0-9]{6}\.service$ ]] || {
+    echo 'Unit backup path was not generated from the fixed unique contract.' >&2
+    exit 78
+  }
+  run_sudo_clean /usr/bin/test -f "$unit_backup_path"
+  run_sudo_clean /usr/bin/test -O "$unit_backup_path"
+  unit_backup="${unit_backup_path##*/}"
+  run_sudo_clean /usr/bin/cp -p "$UNIT_DEST/$SERVICE" "$unit_backup_path"
+  unit_backup_metadata="$(run_sudo_clean /usr/bin/stat -c '%U:%G:%a' "$unit_backup_path")"
+  [[ "$unit_backup_metadata" == 'root:root:644' ]] || {
+    echo 'Unit backup ownership or mode does not satisfy the rollback contract.' >&2
+    exit 78
+  }
+  run_sudo_clean /usr/bin/cmp -s "$UNIT_DEST/$SERVICE" "$unit_backup_path" || {
+    echo 'Unit backup did not preserve the current isolated service definition.' >&2
+    exit 78
+  }
+  unit_backup_committed=1
 fi
 /usr/bin/sudo -n /usr/bin/install -m 0644 "$rendered" "$UNIT_DEST/$SERVICE"
 /usr/bin/sudo -n /usr/bin/systemctl daemon-reload
@@ -92,4 +123,4 @@ fi
 /usr/bin/sudo -n /usr/bin/systemctl enable "$SERVICE" >/dev/null
 /usr/bin/sudo -n /usr/bin/systemctl restart "$SERVICE"
 /usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE"
-printf 'installed=true service=%s release_sha=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"
+printf 'installed=true service=%s release_sha=%s unit_backup=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$unit_backup"
