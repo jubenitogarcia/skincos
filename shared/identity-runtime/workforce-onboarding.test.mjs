@@ -45,6 +45,24 @@ test('Identity signs Workforce onboarding with the v2 nonce, method, path and bo
   assert.notEqual(changedNonce, expected);
 });
 
+test('Identity preserves a stable Workforce dependency code over a generic transport error', async () => {
+  const env = {
+    IDENTITY_WORKFORCE_HMAC_KEY: testHmacKey,
+    APP_VERSION: 'a'.repeat(40),
+    CF_VERSION_METADATA: { id: '33333333-3333-4333-8333-333333333333' },
+    WORKFORCE: {
+      async fetch() {
+        return new Response(JSON.stringify({ ok: false, error: 'NOT_READY', code: 'DATABASE_UNAVAILABLE' }), { status: 503 });
+      },
+    },
+  };
+
+  await assert.rejects(
+    syncIdentityWorkforceOnboarding(env, { onboardingId: 'synthetic-dependency-code' }, 'synthetic-dependency-code-request'),
+    (error) => error?.message === 'DATABASE_UNAVAILABLE' && error?.status === 503 && error?.upstreamError === 'NOT_READY',
+  );
+});
+
 test('Identity uses a deliberate local-only version identity when Cloudflare metadata is unavailable', async () => {
   const releaseSha = 'a'.repeat(40);
   const localIdentityVersionId = '00000000-0000-4000-8000-000000000001';
