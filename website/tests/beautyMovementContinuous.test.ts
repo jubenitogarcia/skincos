@@ -61,6 +61,9 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /Escolha uma carta para liberar o avanço/);
     assert.match(experience, /Seu presente de celebração/);
     assert.match(experience, /Seu presente será revelado após a confirmação/);
+    assert.match(experience, /email: null/);
+    assert.match(experience, /E-mail e telefone já estão vinculados/);
+    assert.doesNotMatch(experience, /beauty-movement-inline-email|E-mail <em>opcional|voce@email\.com/);
     assert.doesNotMatch(experience, /benefitPreview/);
     assert.doesNotMatch(experience, /Ver minha leitura/);
     assert.doesNotMatch(experience, /actsStack|revealedStrip/);
