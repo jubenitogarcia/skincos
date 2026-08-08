@@ -9,7 +9,7 @@ import {
 } from './validate-atendimento-staging-rollback-control.mjs'
 
 const RELEASE_SHA = 'a'.repeat(40)
-const BACKUP_NAME = '20260808T200000Z-module-control.json'
+const BACKUP_NAME = '20260808T200000Z-module-control.Ab3D9e.json'
 
 function strictMaintenanceControl(overrides = {}) {
     return {
@@ -59,6 +59,7 @@ test('rollback control CLI rejects traversal, aliases and incomplete arguments',
     ]), { releaseSha: RELEASE_SHA, backupName: BACKUP_NAME })
     for (const args of [
         ['--release-sha', RELEASE_SHA, '--backup-name', '../module-control.json'],
+        ['--release-sha', RELEASE_SHA, '--backup-name', '20260808T200000Z-module-control.json'],
         ['--release-sha', RELEASE_SHA, '--backup-name', BACKUP_NAME, '--backup-name', BACKUP_NAME],
         ['--release-sha', RELEASE_SHA],
     ]) {

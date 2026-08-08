@@ -6,7 +6,7 @@ import { validateAtendimentoStagingControl } from './validate-atendimento-stagin
 
 export const STAGING_CONTROL_BACKUP_ROOT = '/var/backups/skincos/clientes/staging-control'
 const SHA = /^[0-9a-f]{40}$/
-const BACKUP_NAME = /^[0-9]{8}T[0-9]{6}Z-module-control\.json$/
+const BACKUP_NAME = /^[0-9]{8}T[0-9]{6}Z-module-control\.[A-Za-z0-9]{6}\.json$/
 
 function invalid(message, code) {
     const error = new Error(message)

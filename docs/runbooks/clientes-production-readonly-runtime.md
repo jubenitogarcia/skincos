@@ -164,13 +164,14 @@ O rollback de staging não tem caminho para o CRM compartilhado. Ele só aceita
 um par explícito de backups dos diretórios privados versionados: uma unidade
 isolada e um controle `maintenance` do mesmo SHA. Os nomes são emitidos como
 `unit_backup` pelo instalador e `control_backup` pelo escritor de controle;
-registre ambos na evidência da promoção.
+registre ambos na evidência da promoção. Cada nome inclui um sufixo único
+pré-criado pelo `mktemp`; nunca reutilize, renomeie ou substitua um backup.
 
 ```bash
 scripts/runtime/rollback-atendimento-staging.sh \
   --to-sha <sha-staging-anterior> \
-  --unit-backup <timestamp>-crm-atendimento-staging.service \
-  --control-backup <timestamp>-module-control.json
+  --unit-backup <timestamp>-crm-atendimento-staging.<unico>.service \
+  --control-backup <timestamp>-module-control.<unico>.json
 ```
 
 O modo padrão verifica toda a cadeia sem alterar o host. Ele exige source

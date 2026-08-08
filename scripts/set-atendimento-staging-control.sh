@@ -51,7 +51,7 @@ elif [[ -n "$RELEASE_SHA" && ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 [[ "$REASON" =~ ^[A-Za-z0-9._:-]{1,120}$ ]] || { echo '--reason contains unsupported characters.' >&2; exit 64; }
 
-for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/install /usr/bin/date /usr/bin/mktemp /usr/bin/cat /usr/bin/rm /usr/bin/cp /usr/bin/test; do
+for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/install /usr/bin/date /usr/bin/mktemp /usr/bin/cat /usr/bin/rm /usr/bin/cp /usr/bin/cmp /usr/bin/stat /usr/bin/test; do
   [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
 done
 /usr/bin/sudo -n /usr/bin/true
@@ -62,7 +62,16 @@ if [[ -n "$RELEASE_SHA" ]]; then
   release_json="\"$RELEASE_SHA\""
 fi
 tmp_control="$(/usr/bin/mktemp /tmp/atendimento-staging-control.XXXXXX)"
-trap '/usr/bin/rm -f "$tmp_control"' EXIT
+CONTROL_BACKUP_NAME='none'
+CONTROL_BACKUP_PATH=''
+CONTROL_BACKUP_COMMITTED=0
+cleanup_artifacts() {
+  /usr/bin/rm -f "$tmp_control"
+  if [[ "$CONTROL_BACKUP_COMMITTED" != '1' && "$CONTROL_BACKUP_PATH" =~ ^/var/backups/skincos/clientes/staging-control/[0-9]{8}T[0-9]{6}Z-module-control\.[A-Za-z0-9]{6}\.json$ ]]; then
+    run_sudo_clean /usr/bin/rm -f -- "$CONTROL_BACKUP_PATH" || true
+  fi
+}
+trap cleanup_artifacts EXIT
 /usr/bin/cat >"$tmp_control" <<EOF
 {"schemaVersion":1,"module":"atendimento","state":"$STATE","releaseSha":$release_json,"readOnly":true,"commercialContactWritesEnabled":false,"syntheticOnly":true,"reason":"$REASON","updatedAt":"$stamp"}
 EOF
@@ -70,8 +79,27 @@ EOF
 if [[ "$APPLY" == '1' ]]; then
   run_sudo_clean /usr/bin/test -f "$CONTROL_FILE" || { echo "Control file is missing: $CONTROL_FILE" >&2; exit 1; }
   run_sudo_clean /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
-  readonly CONTROL_BACKUP_NAME="${stamp}-module-control.json"
-  run_sudo_clean /usr/bin/cp -p "$CONTROL_FILE" "$BACKUP_ROOT/$CONTROL_BACKUP_NAME"
+  # The pre-created root-private filename is the collision-resistant identity
+  # of the control snapshot. It cannot overwrite a prior promotion's proof.
+  CONTROL_BACKUP_PATH="$(run_sudo_clean /usr/bin/mktemp "$BACKUP_ROOT/${stamp}-module-control.XXXXXX.json")"
+  [[ "$CONTROL_BACKUP_PATH" =~ ^/var/backups/skincos/clientes/staging-control/[0-9]{8}T[0-9]{6}Z-module-control\.[A-Za-z0-9]{6}\.json$ ]] || {
+    echo 'Control backup path was not generated from the fixed unique contract.' >&2
+    exit 78
+  }
+  run_sudo_clean /usr/bin/test -f "$CONTROL_BACKUP_PATH"
+  run_sudo_clean /usr/bin/test -O "$CONTROL_BACKUP_PATH"
+  CONTROL_BACKUP_NAME="${CONTROL_BACKUP_PATH##*/}"
+  run_sudo_clean /usr/bin/cp -p "$CONTROL_FILE" "$CONTROL_BACKUP_PATH"
+  control_backup_metadata="$(run_sudo_clean /usr/bin/stat -c '%U:%G:%a' "$CONTROL_BACKUP_PATH")"
+  [[ "$control_backup_metadata" == 'root:skincos:640' ]] || {
+    echo 'Control backup ownership or mode does not satisfy the rollback contract.' >&2
+    exit 78
+  }
+  run_sudo_clean /usr/bin/cmp -s "$CONTROL_FILE" "$CONTROL_BACKUP_PATH" || {
+    echo 'Control backup did not preserve the current staging control.' >&2
+    exit 78
+  }
+  CONTROL_BACKUP_COMMITTED=1
   run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"
   printf 'module_control=%s release_sha=%s read_only=true commercial_writes=false control_backup=%s applied=true\n' "$STATE" "${RELEASE_SHA:-none}" "$CONTROL_BACKUP_NAME"
 else

@@ -36,7 +36,7 @@ CONTROL_BACKUP_NAME=''
 APPLY=0
 
 usage() {
-  printf '%s\n' 'Usage: scripts/runtime/rollback-atendimento-staging.sh --to-sha <full-sha> --unit-backup <timestamp-crm-atendimento-staging.service> --control-backup <timestamp-module-control.json> [--apply]'
+  printf '%s\n' 'Usage: scripts/runtime/rollback-atendimento-staging.sh --to-sha <full-sha> --unit-backup <timestamp-crm-atendimento-staging.unique.service> --control-backup <timestamp-module-control.unique.json> [--apply]'
   printf '%s\n' 'The default is a full verification dry-run. Apply restores only a verified isolated staging unit and a matching maintenance control.'
 }
 
@@ -53,8 +53,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--to-sha must be a full lowercase SHA.' >&2; exit 64; }
-[[ "$UNIT_BACKUP_NAME" =~ ^[0-9]{8}T[0-9]{6}Z-crm-atendimento-staging\.service$ ]] || { echo '--unit-backup must be a fixed staging unit backup basename.' >&2; exit 64; }
-[[ "$CONTROL_BACKUP_NAME" =~ ^[0-9]{8}T[0-9]{6}Z-module-control\.json$ ]] || { echo '--control-backup must be a fixed staging control backup basename.' >&2; exit 64; }
+[[ "$UNIT_BACKUP_NAME" =~ ^[0-9]{8}T[0-9]{6}Z-crm-atendimento-staging\.[A-Za-z0-9]{6}\.service$ ]] || { echo '--unit-backup must be a fixed unique staging unit backup basename.' >&2; exit 64; }
+[[ "$CONTROL_BACKUP_NAME" =~ ^[0-9]{8}T[0-9]{6}Z-module-control\.[A-Za-z0-9]{6}\.json$ ]] || { echo '--control-backup must be a fixed unique staging control backup basename.' >&2; exit 64; }
 
 readonly SOURCE_ROOT="$RELEASE_BASE/$TARGET_SHA/source"
 readonly UNIT_BACKUP="$UNIT_BACKUP_ROOT/$UNIT_BACKUP_NAME"
