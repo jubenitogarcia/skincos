@@ -38,6 +38,10 @@ function unifiedTeamEnabled(env) {
   return ['1', 'true', 'yes', 'on'].includes(value);
 }
 
+function legacyUserRoutesDisabled(env) {
+  return unifiedTeamEnabled(env);
+}
+
 function slugifyCategory(value) {
   const s0 = String(value || '').trim().toLowerCase();
   if (!s0) return '';
@@ -629,7 +633,10 @@ export async function handleAdminRoutes({
       if (onboardingHasUsername) {
         const usernameTaken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(requestedUsername).first();
         if (usernameTaken) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está cadastrado', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
-        const pendingUsername = await env.DB.prepare('SELECT 1 FROM crm_employee_onboarding WHERE LOWER(requested_username)=LOWER(?) AND id<>? AND account_status NOT IN (\'TERMINATED\', \'SUSPENDED\') LIMIT 1').bind(requestedUsername, id).first();
+        // Usernames are immutable login identifiers and remain reserved after
+        // suspension or termination so history and audit references cannot be
+        // rebound to another person.
+        const pendingUsername = await env.DB.prepare('SELECT 1 FROM crm_employee_onboarding WHERE LOWER(requested_username)=LOWER(?) AND id<>? LIMIT 1').bind(requestedUsername, id).first();
         if (pendingUsername) return withCORS(JSON.stringify({ success: false, error: 'Este nome de usuário já está reservado', code: 'USERNAME_TAKEN' }), { status: 409 }, appOrigin);
         if (invitesHasUsername) {
           const invitedUsername = await env.DB.prepare(`SELECT 1 FROM ${invitesTable} WHERE LOWER(requested_username)=LOWER(?) AND LOWER(invitee_email)<>LOWER(?) AND COALESCE(revoked, 0)=0 LIMIT 1`).bind(requestedUsername, input.corporateEmail).first();
@@ -1301,9 +1308,13 @@ export async function handleAdminRoutes({
 
   const teamMemberMatch = url.pathname.match(/^\/admin\/team\/([^/]+)$/);
   if (teamMemberMatch && request.method === 'PUT') {
+    let onboardingId = '';
+    let current = null;
+    let workforceSynchronized = false;
+    let localPersistenceStage = 'PREPARATION';
     try {
-      const onboardingId = decodeURIComponent(teamMemberMatch[1] || '').trim();
-      const current = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
+      onboardingId = decodeURIComponent(teamMemberMatch[1] || '').trim();
+      current = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json
         FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
       if (!current) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
       if (!teamUnitsVisible(auth, current.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
@@ -1349,7 +1360,9 @@ export async function handleAdminRoutes({
         department: nextDepartment,
         createdBy: String(auth?.user?.username || ''),
       }, requestId);
+      workforceSynchronized = true;
 
+      localPersistenceStage = 'ONBOARDING_UPDATE';
       const sets = ['full_name=?', 'profile=?', 'job_title=?', 'department_name=?', 'units_json=?', 'updated_at=?'];
       const values = [nextName, nextProfile.profile || nextProfile, displayJobTitle(nextProfile.profile || nextProfile), nextDepartment, JSON.stringify(nextUnits), new Date().toISOString()];
       if (nextPersonalEmail) {
@@ -1361,8 +1374,10 @@ export async function handleAdminRoutes({
         values.push(nextPhoneEncrypted, nextPhoneHash);
       }
       values.push(onboardingId);
-      await env.DB.prepare(`UPDATE crm_employee_onboarding SET ${sets.join(', ')} WHERE id=?`).bind(...values).run();
+      const onboardingUpdate = await env.DB.prepare(`UPDATE crm_employee_onboarding SET ${sets.join(', ')} WHERE id=?`).bind(...values).run();
+      if (Number(onboardingUpdate?.meta?.changes ?? 0) !== 1) throw new Error('TEAM_ONBOARDING_LOCAL_UPDATE_NOT_APPLIED');
 
+      localPersistenceStage = 'TEAM_UPDATE';
       const teamData = normalizeTeamData(body.team, nextUnits, {
         professionalId: current.schedule_professional_id,
         status: current.schedule_status,
@@ -1380,10 +1395,11 @@ export async function handleAdminRoutes({
         return withCORS(JSON.stringify({ success: false, error: 'As unidades operacionais devem estar dentro do escopo do cadastro', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
       }
       const nextScheduleProfessionalId = teamData.professionalId || current.schedule_professional_id || null;
-      await env.DB.prepare(`UPDATE crm_employee_team SET schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
+      const teamUpdate = await env.DB.prepare(`UPDATE crm_employee_team SET schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
         nextScheduleProfessionalId, teamData.status || null, teamData.role || null, teamData.shift || null,
         teamData.nickname || null, teamData.instagram || null, teamData.color || null, JSON.stringify(teamData.units), new Date().toISOString(), onboardingId,
       ).run();
+      if (Number(teamUpdate?.meta?.changes ?? 0) !== 1) throw new Error('TEAM_LOCAL_UPDATE_NOT_APPLIED');
       const scheduleState = hasScheduleIntent(teamData) || nextScheduleProfessionalId ? 'PENDING' : 'NOT_CONFIGURED';
       const scheduleSync = await persistScheduleSyncOperation({
         env,
@@ -1400,6 +1416,28 @@ export async function handleAdminRoutes({
       return withCORS(JSON.stringify({ success: true, data: publicTeamMember(updated, (links?.results || []).map(publicIdentityLink), scheduleSync?.scheduleSync || { state: scheduleState, professionalId: nextScheduleProfessionalId }) }), { status: 200 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'TEAM_UPDATE_FAILED');
+      if (workforceSynchronized && ['ONBOARDING_UPDATE', 'TEAM_UPDATE'].includes(localPersistenceStage)) {
+        const now = new Date().toISOString();
+        const safeErrorCode = message.slice(0, 120);
+        await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='LOCAL_TEAM_UPDATE_PENDING', last_error_code=?, updated_at=? WHERE id=?")
+          .bind(safeErrorCode, now, onboardingId)
+          .run()
+          .catch(() => {});
+        await Promise.resolve(appendAuditLog?.({
+          env,
+          actor: auth.user.username,
+          role: auth.user.role,
+          ip,
+          userAgent,
+          action: 'EMPLOYEE_TEAM_COMPENSATION_PENDING',
+          entity: 'EMPLOYEE_ONBOARDING',
+          entityId: onboardingId,
+          unidade: normalizeAllowedUnits(current?.units_json).join(','),
+          after: { stage: localPersistenceStage, workforceSynchronized: true, requestId, failClosed: true },
+        })).catch(() => {});
+        await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_UPDATED', actorRole: auth.user.role, outcome: 'PENDING', itemCount: 1, unitCount: normalizeAllowedUnits(current?.units_json).length });
+        return withCORS(JSON.stringify({ success: false, error: 'Atualização local da equipe pendente de compensação', code: 'TEAM_LOCAL_PERSISTENCE_PENDING' }), { status: 503 }, appOrigin);
+      }
       const status = /^WORKFORCE_|^IDENTITY_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Atualização da identidade pendente' : 'Não foi possível atualizar a equipe', code: message.slice(0, 120) }), { status }, appOrigin);
     }
@@ -1808,6 +1846,9 @@ export async function handleAdminRoutes({
 
   // GET /admin/users
   if (url.pathname === '/admin/users' && request.method === 'GET') {
+    if (legacyUserRoutesDisabled(env)) {
+      return withCORS(JSON.stringify({ success: false, error: 'Use a gestão centralizada de equipe.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' }), { status: 410 }, appOrigin);
+    }
     try {
       const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
       const limit = Math.max(1, Math.min(200, parseInt(url.searchParams.get('limit') || '100', 10) || 100));
@@ -1855,6 +1896,9 @@ export async function handleAdminRoutes({
 
   // POST /admin/users
   if (url.pathname === '/admin/users' && request.method === 'POST') {
+    if (legacyUserRoutesDisabled(env)) {
+      return withCORS(JSON.stringify({ success: false, error: 'Use a gestão centralizada de equipe e convites.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' }), { status: 410 }, appOrigin);
+    }
     try {
       if (normalizeRole(auth?.user?.role) !== 'ADMIN' || String(env?.ALLOW_ADMIN_USER_PROVISIONING || '').trim().toLowerCase() !== 'true') {
         return withCORS(JSON.stringify({ success: false, error: 'Criação direta desabilitada. Use um convite autorizado.', code: 'INVITE_REQUIRED' }), { status: 403 }, appOrigin);
@@ -1951,6 +1995,9 @@ export async function handleAdminRoutes({
 
   // PUT /admin/users/:username
   if (url.pathname.startsWith('/admin/users/') && request.method === 'PUT') {
+    if (legacyUserRoutesDisabled(env)) {
+      return withCORS(JSON.stringify({ success: false, error: 'Use a gestão centralizada de equipe e convites.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' }), { status: 410 }, appOrigin);
+    }
     try {
       const target = decodeURIComponent(url.pathname.slice('/admin/users/'.length)).trim();
       if (!target) return withCORS(JSON.stringify({ success: false, error: 'USERNAME_REQUIRED' }), { status: 400 }, appOrigin);
@@ -2051,6 +2098,9 @@ export async function handleAdminRoutes({
 
   // POST /admin/users/:username/reset-password
   if (url.pathname.startsWith('/admin/users/') && url.pathname.endsWith('/reset-password') && request.method === 'POST') {
+    if (legacyUserRoutesDisabled(env)) {
+      return withCORS(JSON.stringify({ success: false, error: 'A senha deve ser criada pelo próprio integrante após o convite.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' }), { status: 410 }, appOrigin);
+    }
     try {
       const target = decodeURIComponent(url.pathname.slice('/admin/users/'.length, -'/reset-password'.length)).trim();
       if (!target) return withCORS(JSON.stringify({ success: false, error: 'USERNAME_REQUIRED' }), { status: 400 }, appOrigin);

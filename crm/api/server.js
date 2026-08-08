@@ -2110,13 +2110,22 @@ if (DEV_AUTH_ENABLED) {
         res.status(200).set('cache-control', 'no-store').json({ success: true, data, activeOnly: false, status: requestedStatus, summary: { members: data.length, pendingInvites: data.filter((member) => member.accountStatus === 'INVITED').length } })
     })
 
-    app.get('/api/crm/admin/users', async (_req, res) => {
+    app.get('/api/crm/admin/users', async (req, res) => {
+        const session = getDevSession(req) || getLocalProxySession(req)
+        const role = normalizeRole(session?.user?.role)
+        if (!['ADMIN', 'GESTOR', 'GERENTE'].includes(role)) {
+            return res.status(401).json({ ok: false, success: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
+        }
+        if (localUnifiedTeamEnabled) {
+            return res.status(410).json({ success: false, error: 'Use a gestão centralizada de equipe.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' })
+        }
         const store = await loadLocalCrmStore()
         res.status(200).set('cache-control', 'no-store').json({ success: true, data: store.users })
     })
     app.post('/api/crm/admin/users', async (req, res) => {
         const session = requireDevAdmin(req, res)
         if (!session) return
+        if (localUnifiedTeamEnabled) return res.status(410).json({ success: false, error: 'Use a gestão centralizada de equipe e convites.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' })
         const store = await loadLocalCrmStore()
         const body = req.body && typeof req.body === 'object' ? req.body : {}
         const username = String(body.username || '').trim()
@@ -2143,6 +2152,7 @@ if (DEV_AUTH_ENABLED) {
     app.put('/api/crm/admin/users/:username', async (req, res) => {
         const session = requireDevAdmin(req, res)
         if (!session) return
+        if (localUnifiedTeamEnabled) return res.status(410).json({ success: false, error: 'Use a gestão centralizada de equipe.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' })
         const store = await loadLocalCrmStore()
         const username = String(req.params.username || '').trim()
         const idx = store.users.findIndex((u) => String(u?.username || '').toLowerCase() === username.toLowerCase())
@@ -2168,6 +2178,7 @@ if (DEV_AUTH_ENABLED) {
     app.post('/api/crm/admin/users/:username/reset-password', async (req, res) => {
         const session = requireDevAdmin(req, res)
         if (!session) return
+        if (localUnifiedTeamEnabled) return res.status(410).json({ success: false, error: 'A senha deve ser criada pelo próprio integrante.', code: 'UNIFIED_TEAM_ROUTE_DISABLED' })
         const store = await loadLocalCrmStore()
         const username = String(req.params.username || '').trim()
         const idx = store.users.findIndex((u) => String(u?.username || '').toLowerCase() === username.toLowerCase())

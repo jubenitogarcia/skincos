@@ -130,6 +130,43 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(localApi, /team\/:id\/activate/);
 });
 
+test('team edits expose a fail-closed local persistence compensation boundary', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const updateBlock = admin.slice(admin.indexOf('const teamMemberMatch'), admin.indexOf("if (url.pathname === '/admin/team' && request.method === 'GET')"));
+  assert.match(updateBlock, /let workforceSynchronized = false/);
+  assert.match(updateBlock, /localPersistenceStage = 'ONBOARDING_UPDATE'/);
+  assert.match(updateBlock, /localPersistenceStage = 'TEAM_UPDATE'/);
+  assert.match(updateBlock, /LOCAL_TEAM_UPDATE_PENDING/);
+  assert.match(updateBlock, /EMPLOYEE_TEAM_COMPENSATION_PENDING/);
+  assert.match(updateBlock, /TEAM_LOCAL_PERSISTENCE_PENDING/);
+  assert.match(updateBlock, /failClosed: true/);
+  assert.match(updateBlock, /outcome: 'PENDING'/);
+});
+
+test('team usernames remain reserved across lifecycle history', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const usernameStart = admin.indexOf('if (onboardingHasUsername) {');
+  const usernameEnd = admin.indexOf('const at = new Date().toISOString();', usernameStart);
+  const usernameBlock = admin.slice(usernameStart, usernameEnd);
+  assert.match(usernameBlock, /LOWER\(requested_username\)=LOWER\(\?\) AND id<>\?/);
+  assert.doesNotMatch(usernameBlock, /account_status NOT IN/);
+  const migration = await readFile(new URL('../migrations/0024_unified_team_identity.sql', import.meta.url), 'utf8');
+  assert.match(migration, /idx_crm_employee_onboarding_requested_username/);
+  assert.match(migration, /WHERE requested_username IS NOT NULL/);
+});
+
+test('centralized team mode disables every legacy password-management route', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const localApi = await readFile(new URL('../../crm/api/server.js', import.meta.url), 'utf8');
+  assert.equal((admin.match(/UNIFIED_TEAM_ROUTE_DISABLED/g) || []).length, 4);
+  assert.match(admin, /A senha deve ser criada pelo próprio integrante/);
+  assert.equal((admin.match(/legacyUserRoutesDisabled\(env\)/g) || []).length, 5);
+  assert.ok((admin.match(/status: 410/g) || []).length >= 4);
+  assert.equal((localApi.match(/UNIFIED_TEAM_ROUTE_DISABLED/g) || []).length, 4);
+  assert.match(localApi, /const localUnifiedTeamEnabled =/);
+  assert.match(localApi, /Use a gestão centralizada de equipe/);
+});
+
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {
   const telemetry = await readFile(new URL('../src/services/teamTelemetry.js', import.meta.url), 'utf8');
   assert.match(telemetry, /item_count/);
