@@ -55,7 +55,9 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    readiness no env privado e concede ao app apenas `SELECT`/`USAGE`; ele não
    abre uma rota nem inicia uma unidade. O invólucro da migration só executa
    a cópia imutável já preparada: isso garante o mesmo conjunto de dependências
-   e a linhagem que a futura unidade consumirá. Em todo `--apply` ou
+   e a linhagem que a futura unidade consumirá. Os heredocs enviados ao
+   PostgreSQL usam apenas comentários SQL `--` (nunca comentários de shell `#`).
+   O teste de contrato verifica isso antes de qualquer `--apply`. Em todo `--apply` ou
    `--rollback` de migration, depois dos gates e imediatamente antes do runner,
    ele cria e verifica exatamente um dump privado e único em
    `/var/backups/skincos/clientes/staging`; a evidência contém somente SHA-256,

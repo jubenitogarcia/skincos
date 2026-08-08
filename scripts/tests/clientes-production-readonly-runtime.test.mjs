@@ -14,6 +14,12 @@ function assertNoDynamicShell(relative) {
   assert.doesNotMatch(text, /^\s*(?:exec\s+)?bash\s+-c\b/m, `${relative} must not create a shell command string`)
 }
 
+function sqlHeredocs(script, relative) {
+  const heredocs = [...script.matchAll(/<<SQL\r?\n([\s\S]*?)\r?\nSQL/g)].map((match) => match[1])
+  assert.ok(heredocs.length > 0, `${relative} must contain SQL heredocs covered by this regression`)
+  return heredocs
+}
+
 test('isolated Clientes unit starts only the dedicated read-only entrypoint', () => {
   const unit = read('ops/runtime/units/crm-atendimento-production.service')
   assert.match(unit, /Description=.*Clientes.*read-only/)
@@ -128,6 +134,12 @@ test('staging release, control and application role remain fixed and read-only',
   assert.match(provision, /random_hex\(\)/)
   assert.match(provision, /\\set app_password/)
   assert.doesNotMatch(provision, /--set=app_password|--set=migrator_password/)
+  const provisionSql = sqlHeredocs(provision, 'scripts/provision-atendimento-staging.sh')
+  assert.equal(provisionSql.length, 2, 'staging provision must keep both SQL payloads under regression coverage')
+  for (const sql of provisionSql) {
+    assert.doesNotMatch(sql, /^\s*#/m, 'PostgreSQL heredocs must use SQL comments, never shell # comments')
+  }
+  assert.match(provisionSql[1], /^-- The isolated application has no safe direct Caixa projection yet\. Do not$/m)
   assert.match(provision, /readonly BACKUP_ROOT='\/var\/backups\/skincos\/clientes\/staging-control'/)
   assert.match(provision, /ATENDIMENTO_READINESS_TOKEN=\$readiness_token/)
   assert.match(provision, /"state":"maintenance"/)
