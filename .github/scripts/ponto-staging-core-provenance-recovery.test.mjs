@@ -31,6 +31,8 @@ test("Core provenance recovery is staging-only, exact, and fail-closed", () => {
   assert.match(workflow, /ponto-automatic-rollback\.mjs/);
   assert.match(workflow, /activeVersions\[0\]\?\.percentage !== 100/);
   assert.match(workflow, /body\?\.availability\?\.state !== "maintenance"/);
+  assert.match(workflow, /body\?\.versionMetadata\?\.gatewayEnvironment !== "staging"/);
+  assert.match(workflow, /x-skincos-gateway-environment/);
   assert.match(workflow, /name: Upload immutable Core provenance recovery evidence[\s\S]*?if: always\(\)/);
   assert.doesNotMatch(workflow, /target:\s*production/);
 });
