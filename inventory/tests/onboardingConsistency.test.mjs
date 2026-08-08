@@ -17,6 +17,7 @@ test('onboarding consistency migrations are additive and keep non-operational de
 test('unified team identity migration is additive and creates explicit link ledgers', async () => {
   const inventory = await readFile(new URL('../migrations/0024_unified_team_identity.sql', import.meta.url), 'utf8');
   const inviteIdentity = await readFile(new URL('../migrations/0026_unified_invite_identity.sql', import.meta.url), 'utf8');
+  const accountLinks = await readFile(new URL('../migrations/0027_crm_employee_account_links.sql', import.meta.url), 'utf8');
   const escala = await readFile(new URL('../../workforce/schedule/migrations-d1/0005_unified_employee_links.sql', import.meta.url), 'utf8');
   const atendimento = await readFile(new URL('../../crm/api/server/atendimento/migrations/20260805_unified_workforce_identity_v1.up.sql', import.meta.url), 'utf8');
   assert.match(inventory, /requested_username/i);
@@ -30,6 +31,14 @@ test('unified team identity migration is additive and creates explicit link ledg
   assert.match(inviteIdentity, /crm_employee_onboarding/i);
   assert.match(inviteIdentity, /idx_crm_invites_corporate_email/i);
   assert.doesNotMatch(inviteIdentity, /\bDROP\b/i);
+  assert.match(accountLinks, /crm_employee_account_links/i);
+  assert.match(accountLinks, /workforce_employee_id TEXT NOT NULL UNIQUE/i);
+  assert.match(accountLinks, /onboarding_id TEXT NOT NULL UNIQUE/i);
+  assert.match(accountLinks, /crm_username TEXT NOT NULL UNIQUE/i);
+  assert.match(accountLinks, /review_note TEXT/i);
+  assert.match(accountLinks, /reviewed_by TEXT/i);
+  assert.match(accountLinks, /reviewed_at TEXT/i);
+  assert.doesNotMatch(accountLinks, /\bDROP\b/i);
   assert.match(escala, /workforce_employee_id/i);
   assert.match(escala, /professional_id/i);
   assert.match(atendimento, /professional_workforce_links/i);
@@ -51,6 +60,34 @@ test('unified invitations deliver to personal email while preserving corporate l
   assert.match(auth, /INVITE_EMAIL_MISMATCH/);
   assert.match(auth, /const loginEmail = normalizedCorporateEmail \|\| email/);
   assert.match(auth, /SELECT \?, \?, \?, \?, role/);
+  assert.match(auth, /INVITE_IDENTITY_MIGRATION_REQUIRED/);
+  assert.match(auth, /crm_employee_account_links/);
+  assert.match(auth, /AUTH_INVITE_ACCOUNT_LINKED/);
+});
+
+test('CRM account exceptions require an exact username, human review and fail-closed status changes', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const localApi = await readFile(new URL('../../crm/api/server.js', import.meta.url), 'utf8');
+  const previewFixture = JSON.parse(await readFile(new URL('../../crm/api/fixtures/local-unified-team.v1.json', import.meta.url), 'utf8'));
+  const accountBlock = admin.slice(admin.indexOf('const teamAccountLinkMatch'), admin.indexOf('const teamLinksMatch'));
+  assert.match(accountBlock, /crmUsername = normalizeCrmUsername/);
+  assert.match(accountBlock, /validateUsername\(crmUsername\)/);
+  assert.match(accountBlock, /EXPLICIT_CRM_USERNAME/);
+  assert.match(accountBlock, /EMPLOYEE_CRM_ACCOUNT_LINK_PROPOSED/);
+  assert.match(accountBlock, /EMPLOYEE_CRM_ACCOUNT_LINK_REVIEWED/);
+  assert.match(accountBlock, /CRM_ACCOUNT_LINK_CONFIRMED_IMMUTABLE/);
+  assert.match(admin, /CRM_ACCOUNT_LINK_REQUIRED/);
+  assert.match(admin, /crm_account_review_status/);
+  assert.match(admin, /review_note/);
+  assert.doesNotMatch(accountBlock, /LOWER\(email\)/i);
+  assert.match(localApi, /team\/:id\/account-link/);
+  assert.match(localApi, /CRM_ACCOUNT_USERNAME_INVALID/);
+  assert.match(localApi, /CRM_ACCOUNT_LINK_REQUIRED/);
+  assert.match(localApi, /EMPLOYEE_CRM_ACCOUNT_LINK_REVIEWED/);
+  assert.equal(previewFixture.version, 2);
+  assert.equal(previewFixture.team.find((member) => member.id === 'local-team-ana-ribeiro')?.crmAccountReviewStatus, 'CONFIRMED');
+  assert.equal(previewFixture.team.find((member) => member.id === 'local-team-carla-souza')?.crmAccountReviewStatus, 'PENDING_REVIEW');
+  assert.equal(previewFixture.team.find((member) => member.id === 'local-team-carla-souza')?.crmAccountUsername, 'legacycarla');
 });
 
 test('onboarding retries require a payload fingerprint after the unified identity migration', async () => {
