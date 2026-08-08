@@ -1322,10 +1322,18 @@ export default function BeautyMovementExperience({
                         ) : null}
                     </div>
 
-                    {finaleStage === "hidden" && tableIsUnlocked && tableSelected ? (
+                    {finaleStage === "hidden" ? (
                         <div className={styles.actAdvance}>
                             <p className={styles.advanceNote} role="status">
-                                Carta revelada. As outras cartas serão recolhidas antes da próxima mão.
+                                {waitingForInitialDeal
+                                    ? "Clique no baralho para distribuir esta mão."
+                                    : tableSelected
+                                      ? "Carta revelada. As outras cartas serão recolhidas antes da próxima mão."
+                                      : handStage === "ready"
+                                        ? "Escolha uma carta para liberar o avanço."
+                                      : handStage === "held"
+                                        ? "Escolha uma carta para liberar o avanço."
+                                        : "A próxima mão está sendo preparada."}
                             </p>
                             {autoAdvanceActive ? (
                                 <div className={styles.autoAdvance} role="status" aria-live="polite">
@@ -1345,7 +1353,7 @@ export default function BeautyMovementExperience({
                                     className={styles.continueButton}
                                     type="button"
                                     onClick={() => moveToNextHand(displayedActIndex)}
-                                    disabled={handStage !== "held"}
+                                    disabled={!tableSelected || handStage !== "held"}
                                 >
                                     Continuar para {nextDefinition.label}
                                 </button>
@@ -1354,7 +1362,7 @@ export default function BeautyMovementExperience({
                                     className={styles.continueButton}
                                     type="button"
                                     onClick={beginFinale}
-                                    disabled={handStage !== "held"}
+                                    disabled={!tableSelected || handStage !== "held"}
                                 >
                                     Continuar para confirmar
                                 </button>
