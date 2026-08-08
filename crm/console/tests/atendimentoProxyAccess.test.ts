@@ -13,7 +13,10 @@ function createContext(url: string, env: Record<string, unknown>) {
 }
 
 describe('Atendimento Clientes proxy access', () => {
-  beforeEach(() => vi.restoreAllMocks())
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+  })
   afterEach(() => vi.unstubAllGlobals())
 
   it('rejects GERENTE from a Clientes route before opening the upstream request', async () => {
@@ -46,15 +49,16 @@ describe('Atendimento Clientes proxy access', () => {
 
     expect(response.status).toBe(200)
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect((fetchMock.mock.calls[0][0] as Request).url).toBe('https://crm-api.skincos.com.br/api/atendimento/commercial/overview')
+    const upstream = fetchMock.mock.calls[0][0] as Request
+    expect(upstream.url).toBe('https://crm-api.skincos.com.br/api/atendimento/commercial/overview')
+    expect(upstream.headers.get('x-crm-signature-version')).toBe('2')
+    expect(upstream.headers.get('x-crm-nonce')).toMatch(/^[A-Za-z0-9_-]{16,128}$/)
+    expect(upstream.headers.get('x-crm-signature')).toBeTruthy()
   })
 
-  it('forwards a GESTOR source-state identity review decision to the configured upstream', async () => {
+  it('blocks a GESTOR identity review mutation at the edge before opening the upstream request', async () => {
     ;(requireCrmUser as Mock).mockResolvedValue({ id: 'gestor-1', role: 'GESTOR', allowedModules: ['atendimento'] })
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, decision: { state: 'confirmed' } }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }))
+    const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const payload = {
       sourceId: 'app-registration-42',
@@ -73,12 +77,9 @@ describe('Atendimento Clientes proxy access', () => {
       env: { ATENDIMENTO_API_TARGET: 'https://crm-api.skincos.com.br', ATENDIMENTO_ACTOR_HMAC_KEY: 'test-secret' },
     })
 
-    expect(response.status).toBe(200)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const upstream = fetchMock.mock.calls[0][0] as Request
-    expect(upstream.url).toBe('https://crm-api.skincos.com.br/api/atendimento/commercial/review/app_caixa/decision')
-    expect(upstream.method).toBe('POST')
-    await expect(upstream.clone().json()).resolves.toEqual(payload)
+    expect(response.status).toBe(405)
+    await expect(response.json()).resolves.toEqual({ ok: false, error: 'READ_ONLY_RUNTIME' })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('rejects GERENTE from an identity review decision before opening the upstream request', async () => {
@@ -93,6 +94,53 @@ describe('Atendimento Clientes proxy access', () => {
 
     expect(response.status).toBe(403)
     await expect(response.json()).resolves.toEqual({ ok: false, error: 'FORBIDDEN' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does not expose the token-gated internal surface through Pages', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await onRequest(createContext(
+      'https://crm.skincos.com.br/api/atendimento/internal/readiness',
+      { ATENDIMENTO_API_TARGET: 'https://crm-api.skincos.com.br', ATENDIMENTO_ACTOR_HMAC_KEY: 'test-secret' },
+    ))
+
+    expect(response.status).toBe(404)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('forwards only the PII-free public health path without minting an actor header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, readOnlyRuntime: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await onRequest(createContext(
+      'https://crm.skincos.com.br/api/atendimento/health',
+      { ATENDIMENTO_API_TARGET: 'https://crm-api.skincos.com.br' },
+    ))
+
+    expect(response.status).toBe(200)
+    expect(requireCrmUser).not.toHaveBeenCalled()
+    const upstream = fetchMock.mock.calls[0][0] as Request
+    expect(upstream.url).toBe('https://crm-api.skincos.com.br/api/atendimento/health')
+    expect(upstream.headers.has('x-crm-user')).toBe(false)
+  })
+
+  it('does not fall back to CRM_API_TARGET when the isolated target is absent', async () => {
+    ;(requireCrmUser as Mock).mockResolvedValue({ id: 'gestor-1', role: 'GESTOR', allowedModules: ['atendimento'] })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await onRequest(createContext(
+      'https://crm.skincos.com.br/api/atendimento/commercial/overview',
+      { CRM_API_TARGET: 'https://shared-crm.skincos.com.br', ATENDIMENTO_ACTOR_HMAC_KEY: 'test-secret' },
+    ))
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toEqual({ ok: false, error: 'ATENDIMENTO_RUNTIME_UNAVAILABLE' })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })

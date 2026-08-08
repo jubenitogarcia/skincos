@@ -1,68 +1,83 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PORT="${PORT:-8110}"
-SERVICE="crm-atendimento-production.service"
-CONFIG_FILE="${CONFIG_FILE:-/etc/skincos/crm-clientes-production-readonly.env}"
-CONTROL_FILE="${CONTROL_FILE:-/etc/skincos/atendimento-production/module-control.json}"
-EXPECTED_STATE="${EXPECTED_STATE:-active}"
+# Verify the isolated runtime without loading a private env file into a shell.
+# The signed smoke owns the narrow literal parser and never prints its secrets.
+readonly PORT='8110'
+readonly SERVICE='crm-atendimento-production.service'
+readonly CONTROL_FILE='/etc/skincos/atendimento-production/module-control.json'
+readonly DATABASE='skincos_clientes_production'
+readonly APP_ROLE='skincos_clientes_ro'
+readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly SMOKE="$ROOT_DIR/crm/api/scripts/atendimento-production-signed-smoke.mjs"
+readonly PROTECTED_SERVICES=(
+  'crm.service'
+  'crm-atendimento-staging.service'
+  'crm-jobs.service'
+  'cloudflare-runtime.service'
+  'cloudflare-orb.service'
+  'orb.service'
+  'orb-proxy.service'
+)
 
-[[ "$EXPECTED_STATE" =~ ^(disabled|maintenance|active)$ ]] || { echo 'EXPECTED_STATE must be disabled, maintenance or active.' >&2; exit 64; }
-for command_name in curl psql ss systemctl; do
+RELEASE_SHA=''
+usage() { echo "Usage: $0 --expected-release-sha <full-sha>"; }
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --expected-release-sha) shift; RELEASE_SHA="${1:-}" ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 64 ;;
+  esac
+  shift
+done
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--expected-release-sha must be a full lowercase SHA.' >&2; exit 64; }
+
+for command_name in curl psql ss systemctl sudo node; do
   command -v "$command_name" >/dev/null 2>&1 || { echo "Missing required command: $command_name" >&2; exit 1; }
 done
 sudo -n true
+sudo -n test -r "$CONTROL_FILE" || { echo 'Module control is unavailable.' >&2; exit 1; }
 sudo -n systemctl is-active --quiet "$SERVICE" || { echo "Service is not active: $SERVICE" >&2; exit 1; }
-sudo -n test -r "$CONFIG_FILE" || { echo "Runtime config is unavailable: $CONFIG_FILE" >&2; exit 1; }
-sudo -n test -r "$CONTROL_FILE" || { echo "Module control is unavailable: $CONTROL_FILE" >&2; exit 1; }
+[[ -f "$SMOKE" ]] || { echo 'Fixed signed smoke is unavailable.' >&2; exit 78; }
 
+snapshot_protected_services() {
+  local service main_pid started_at
+  for service in "${PROTECTED_SERVICES[@]}"; do
+    main_pid="$(sudo -n systemctl show --property=MainPID --value "$service" 2>/dev/null || true)"
+    started_at="$(sudo -n systemctl show --property=ActiveEnterTimestampMonotonic --value "$service" 2>/dev/null || true)"
+    printf '%s|%s|%s\n' "$service" "$main_pid" "$started_at"
+  done
+}
+
+protected_before="$(snapshot_protected_services)"
 listen_line="$(ss -ltn | awk -v port=":$PORT" '$4 == "127.0.0.1" port || $4 == "[::1]" port { print; exit }')"
 [[ -n "$listen_line" ]] || { echo "Runtime is not bound to loopback port $PORT." >&2; exit 1; }
 
-health_body="$(mktemp)"
-write_body="$(mktemp)"
-trap 'rm -f "$health_body" "$write_body"' EXIT
-health_status="$(curl -sS --max-time 10 -o "$health_body" -w '%{http_code}' "http://127.0.0.1:$PORT/api/atendimento/health")"
-if [[ "$EXPECTED_STATE" == "active" ]]; then
-  [[ "$health_status" == "200" ]] || { echo "Clientes health expected 200, got $health_status." >&2; exit 1; }
-else
-  [[ "$health_status" == "503" ]] || { echo "Clientes health expected 503 while $EXPECTED_STATE, got $health_status." >&2; exit 1; }
-fi
-grep -Fq '"readOnlyRuntime":true' "$health_body" || { echo 'Health did not attest readOnlyRuntime=true.' >&2; exit 1; }
-grep -Fq '"module":"atendimento"' "$health_body" || { echo 'Health did not attest the Atendimento module.' >&2; exit 1; }
+health_status="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/health")"
+[[ "$health_status" == '200' ]] || { echo "Liveness health expected 200, got $health_status." >&2; exit 1; }
 
-sudo -n -u postgres psql --dbname=skincos_crm_local --set=ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | while IFS='|' read -r role_name role_login read_only schema_ok atendimento_ok caixa_ok harmonia_schema_ok harmonia_phone_ok harmonia_opt_out_ok; do
+# These checks contain only role names and booleans.  The app role has no
+# cross-database raw phone grant, no DDL and no mutation permission.
+sudo -n -u postgres psql --dbname="$DATABASE" --set=ON_ERROR_STOP=1 --tuples-only --no-align <<SQL | while IFS='|' read -r role_name role_login readonly connect_ok schema_ok identity_select policy_select identity_insert schema_create database_create; do
 select r.rolname,
        r.rolcanlogin,
        coalesce(array_to_string(r.rolconfig, ','), '') like '%default_transaction_read_only=on%',
+       has_database_privilege(r.rolname, '$DATABASE', 'CONNECT'),
        has_schema_privilege(r.rolname, 'crm_atendimento', 'USAGE'),
        has_table_privilege(r.rolname, 'crm_atendimento.global_client_identities', 'SELECT'),
-       has_table_privilege(r.rolname, 'crm_caixa.sales', 'SELECT'),
-       has_schema_privilege(r.rolname, 'harmonia', 'USAGE'),
-       has_column_privilege(r.rolname, 'harmonia.contacts', 'phone_raw', 'SELECT'),
-       has_column_privilege(r.rolname, 'harmonia.contacts', 'opted_out_at', 'SELECT')
-  from pg_roles r where r.rolname = 'skincos_clientes_ro';
+       has_table_privilege(r.rolname, 'crm_atendimento.commercial_policy_config', 'SELECT'),
+       has_table_privilege(r.rolname, 'crm_atendimento.global_client_identities', 'INSERT'),
+       has_schema_privilege(r.rolname, 'crm_atendimento', 'CREATE'),
+       has_database_privilege(r.rolname, '$DATABASE', 'CREATE')
+  from pg_roles r where r.rolname = '$APP_ROLE';
 SQL
-  [[ "$role_name" == 'skincos_clientes_ro' && "$role_login" == 't' && "$read_only" == 't' && "$schema_ok" == 't' && "$atendimento_ok" == 't' && "$caixa_ok" == 't' && "$harmonia_schema_ok" == 't' && "$harmonia_phone_ok" == 't' && "$harmonia_opt_out_ok" == 't' ]] || {
+  [[ "$role_name" == "$APP_ROLE" && "$role_login" == 't' && "$readonly" == 't' && "$connect_ok" == 't' && "$schema_ok" == 't' && "$identity_select" == 't' && "$policy_select" == 't' && "$identity_insert" == 'f' && "$schema_create" == 'f' && "$database_create" == 'f' ]] || {
     echo 'Read-only database role contract is incomplete.' >&2
     exit 1
   }
 done
 
-# Prove the API gate with a signed synthetic actor. The request must be rejected
-# before the store mutation boundary and no real data is sent.
-set -a
-# shellcheck disable=SC1090
-source "$CONFIG_FILE"
-set +a
-[[ -n "${ATENDIMENTO_ACTOR_HMAC_KEY:-}" ]] || { echo 'Actor key is not configured.' >&2; exit 1; }
-actor_b64="$(printf '%s' '{"id":"clientes-readonly-validation","role":"GESTOR","allowedModules":["atendimento"]}' | base64 -w0 | tr '+/' '-_' | tr -d '=')"
-ts="$(date +%s%3N)"
-signature="$(printf '%s.%s' "$ts" "$actor_b64" | openssl dgst -sha256 -hmac "$ATENDIMENTO_ACTOR_HMAC_KEY" -binary | base64 -w0 | tr '+/' '-_' | tr -d '=')"
-write_status="$(curl -sS --max-time 10 -o "$write_body" -w '%{http_code}' -X POST \
-  -H "x-crm-user: $actor_b64" -H "x-crm-ts: $ts" -H "x-crm-signature: $signature" \
-  -H 'content-type: application/json' --data '{}' "http://127.0.0.1:$PORT/api/atendimento/commercial/actions")"
-[[ "$write_status" == "405" ]] || { echo "Read-only API gate expected 405 for a signed write, got $write_status." >&2; exit 1; }
-grep -Fq 'READ_ONLY_RUNTIME' "$write_body" || { echo 'Read-only API gate did not return its stable error.' >&2; exit 1; }
-
-echo "Atendimento production read-only validation passed: service=$SERVICE port=$PORT state=$EXPECTED_STATE"
+sudo -n /usr/bin/node "$SMOKE" --expected-release-sha "$RELEASE_SHA"
+protected_after="$(snapshot_protected_services)"
+[[ "$protected_before" == "$protected_after" ]] || { echo 'A protected shared service changed during isolated validation.' >&2; exit 1; }
+printf 'validation_passed=true service=%s release_sha=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"

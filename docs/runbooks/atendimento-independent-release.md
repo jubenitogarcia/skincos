@@ -1,93 +1,92 @@
-# Atendimento — contrato de promoção independente
+# Atendimento — release independente e fail-closed
 
-**Estado atual:** staging isolado operacional e contrato de produção isolado
-somente leitura preparado pelos scripts versionados, sempre com backups
-privados. O production runtime fica em loopback, sem rota pública e sem escrita
-comercial; o CRM global não é reiniciado por ele. Os workflows continuam
-dispatch-only e apenas atestam o SHA imutável e o health do runtime; nunca
-reiniciam `crm.service`.
+## Estado atual
 
-## Fluxos canônicos
+O código contém um entrypoint Node independente, unidades systemd, release por
+SHA, controle estrito, smoke HMAC v2, rollback e templates de túnel. Isso é
+**preparação técnica**, não evidência de ambiente: esta alteração não instala
+serviço, não provisiona banco, não executa migration, não cria túnel/DNS e não
+promove staging ou produção.
 
-| Superfície | Workflow | Efeito atual |
-| --- | --- | --- |
-| Artefato/processo de Atendimento | `.github/workflows/deploy-atendimento.yml` | `workflow_dispatch` em `main` somente; valida o SHA com `promotion-gate.yml`, testa a API no preview e, em staging, atesta o health do runtime isolado após a transição nativa. |
-| Disponibilidade do módulo | `.github/workflows/atendimento-availability.yml` | `workflow_dispatch` em `main` somente; mantém a mesma cadeia SHA/evidência e atesta o estado do arquivo de controle via health. |
+O worker contínuo de Clientes/Harmonia permanece no processo próprio
+`crm-jobs.service`; o entrypoint `atendimentoRuntime.js` não importa o servidor
+HTTP monolítico ou código de worker. O processo HTTP isolado é somente leitura.
 
-O preview produz evidência somente depois da validação local do artefato. O
-staging produz evidência adicional de health público, estado do módulo e banco
-configurado, sem dados pessoais. Produção permanece separada e fail-closed até
-existir um runtime isolado equivalente.
+## Contrato de release
 
-## Custódia e execução segura
-
-Os dois workflows recusam qualquer ref que não seja `main`, replay de run e SHA
-que não seja hexadecimal completo. `promotion-gate.yml` confirma que o SHA é
-ancestral de `origin/main` e exige a evidência predecessor. O validador que lê
-as variáveis do Environment é obtido de `github.workflow_sha`, não do checkout
-do candidato.
-
-`CRM_ATENDIMENTO_*_COMMAND` não aceita uma linha de shell. Cada valor deve ser
-um identificador semântico resolvido por uma futura allowlist no executor nativo:
-
-| Variável | Valor exigido |
+| Item | Regra |
 | --- | --- |
-| `CRM_ATENDIMENTO_DEPLOY_COMMAND` | `atendimento-release-deploy-v1` |
-| `CRM_ATENDIMENTO_ROLLBACK_COMMAND` | `atendimento-release-rollback-v1` |
-| `CRM_ATENDIMENTO_CONTROL_COMMAND` | `atendimento-module-control-v1` |
+| Origem | Apenas release nativa `/opt/skincos/releases/<sha-40>/source`, com SHA ancestral de `main` e predecessor registrado. |
+| Processo | `crm-atendimento-staging.service` ou `crm-atendimento-production.service`; nenhum instalador toca `crm.service`, `crm-jobs.service`, Orb ou túnel compartilhado. |
+| Shutdown | `SIGTERM` fecha o listener antes do pool e do ledger de replay; o timeout força apenas conexões do processo dedicado. |
+| Health | público, PII-free e independente do banco. |
+| Readiness | loopback + token; verifica arquivo de controle, ledger de replay, banco, database/role esperados, schema, fontes e domínio clínico. |
+| Ator | HMAC `atendimento-actor/v2`, timestamp de cinco minutos e nonce persistido; replay ou falha de ledger negam a requisição. |
+| Escrita | Edge e runtime limitam a `GET`, `HEAD`, `OPTIONS`; controle exige `readOnly:true`, `syntheticOnly:true` e escrita comercial `false`. |
+| Staging | O app usa `skincos_staging_crm_app` com `default_transaction_read_only=on`, apenas `SELECT`/`USAGE`; migration fica no login separado `skincos_staging_migrator_login`. |
 
-O único wrapper de Actions é
-`.github/scripts/atendimento-deployment-contract.mjs`: ele compara esses
-identificadores, grava evidência sem valores de variáveis e nunca chama `eval`,
-`bash -c`, SSH, `systemctl` ou um comando vindo do Environment. Os scripts
-nativos de preparação, controle, migration e instalação implementam essa
-allowlist fora do checkout de runtime mutável; os valores nunca são
-interpretados como comandos.
+## Workflows e GitHub Environments
 
-## Configuração externa que ainda falta
+Os workflows podem apenas atestar SHA, ref `main` e evidência predecessor. Eles
+não recebem nem interpretam comandos de shell, SSH, `eval` ou uma linha de
+comando de GitHub Environments. O executor nativo usa caminhos/argumentos
+allowlisted e arquivos privados de localização fixa.
 
-Nos Environments GitHub separados `staging` e `production`, configurar somente
-os nomes abaixo com os valores específicos de cada ambiente:
+O contrato de deployment é específico por alvo: staging usa
+`/etc/skincos/atendimento-staging/module-control.json` e liveness nativa em
+`http://127.0.0.1:8111/health`; produção usa
+`/etc/skincos/atendimento-production/module-control.json` e, somente após a
+instalação do túnel dedicado, `https://crm-atendimento.skincos.com.br/health`.
+Staging não possui rota pública nesta tranche. Portanto Actions hospedadas
+atestam apenas o contrato de staging e nunca chamam ou registram como saudável
+um hostname público de staging não provisionado; a verificação de loopback
+ocorre no runtime nativo autorizado. Nenhum fluxo usa
+`/etc/skincos/atendimento/module-control.json` ou `crm.skincos.com.br` como
+fallback.
 
-| Variável | Contrato |
-| --- | --- |
-| `ENABLE_ATENDIMENTO_DEPLOY` | `false` por padrão; somente `true` permite a atestação do runtime nativo isolado. A transição efetiva continua sendo feita pelos scripts versionados, com backup e rollback. |
-| `CRM_MODULE_CONTROL_FILE` | Exatamente `/etc/skincos/atendimento/module-control.json`. |
-| `CRM_ATENDIMENTO_DEPLOY_COMMAND` | Identificador `atendimento-release-deploy-v1`. |
-| `CRM_ATENDIMENTO_ROLLBACK_COMMAND` | Identificador `atendimento-release-rollback-v1`. |
-| `CRM_ATENDIMENTO_CONTROL_COMMAND` | Identificador `atendimento-module-control-v1`. |
-| `CRM_ATENDIMENTO_HEALTH_URL` | `https://crm-atendimento-staging.skincos.com.br/api/atendimento/health` em staging; `https://crm.skincos.com.br/api/atendimento/health` em produção. |
+Enquanto `ENABLE_ATENDIMENTO_DEPLOY=false`, qualquer workflow deve permanecer
+sem alteração de runtime. Uma variável de Environment não pode mudar o
+entrypoint, host/porta, domínio, modo de escrita, worker, SHA ou arquivo de
+controle porque esses valores são fixados depois do `EnvironmentFile` pela
+unidade systemd. Variáveis capazes de carregar código (`NODE_OPTIONS`,
+`LD_PRELOAD` e equivalentes) são removidas explicitamente.
 
-Pré-requisitos técnicos cobertos no staging:
+## Gaps que bloqueiam ativação
 
-1. o `crm-atendimento-staging.service` isolado, com porta, banco/role e health próprios;
-2. o `crm-atendimento-production.service` isolado, com papel PostgreSQL
-   `skincos_clientes_ro`, bind loopback e bloqueio de métodos de escrita;
-3. suporte efetivo e testado de `CRM_DOMAIN=atendimento` e
-   `CRM_MODULE_CONTROL_FILE` no processo — hoje o servidor CRM compartilhado não
-   prova esse isolamento;
-4. gateway/túnel com rota para o processo isolado em staging, sem redirecionar
-   para `crm.service`;
-5. scripts nativos confiáveis com allowlist dos três identificadores acima,
-   autoria/auditoria por SHA e sem fallback de shell ou SSH do GitHub;
-6. migration staging somente aditiva, banco alvo explicitamente identificado,
-   checkpoint/backup e verificação de idempotência em staging;
-7. registro do SHA candidato e do SHA de retorno, smoke autenticado do mesmo SHA
-   e prova de rollback do processo isolado.
+1. Staging precisa ter as migrations aditivas de fontes e aprovação clínica
+   aplicadas e validadas. Até isso ocorrer, `readiness` deve responder `503`.
+2. O banco de produção dedicado e os roles separados precisam de backup,
+   provisionamento e prova de grants mínimos; o app não pode ter DDL nem acesso
+   a contato bruto de Harmonia/Caixa.
+3. São necessários arquivo de controle, HMAC do ator, token de readiness e
+   credenciais do túnel nos caminhos privados fixos. Nunca os registre no Git.
+4. O túnel dedicado, rota DNS e `ATENDIMENTO_API_TARGET` precisam apontar só ao
+   processo isolado; não há fallback ao CRM compartilhado.
+5. É necessário smoke sintético do SHA efetivamente instalado, incluindo
+   health durante falha de banco, readiness `503`, replay, método de escrita
+   bloqueado, SIGTERM e rollback.
 
-## Rollback e disponibilidade
+Enquanto qualquer item faltar, mantenha `maintenance`, canário vazio e todas as
+escritas/automação de mensagem desabilitadas.
 
-O rollback futuro é sempre o SHA já promovido anterior: o executor deve manter
-o arquivo de controle em `disabled` ou `maintenance`, repor apenas o processo
-`crm-atendimento.service`, executar o health local/público e preservar dados,
-ledgers e auditoria. Não deve reiniciar, parar ou reconfigurar `crm.service`,
-Orb, Pages ou outros módulos. Migrations e registros comerciais permanecem
-aditivos; se o dado não puder ser revertido com segurança, o rollback desliga a
-escrita/controle e recupera somente de checkpoint aprovado em ambiente isolado.
+O controle de staging está em
+`/etc/skincos/atendimento-staging/module-control.json`, não no controle legado
+compartilhado. O provisionamento cria somente `maintenance`, com
+`readOnly:true`, `commercialContactWritesEnabled:false` e `syntheticOnly:true`.
+Antes de instalar uma unidade de SHA específico, grave o mesmo SHA nesse
+controle pelo escritor nativo; o instalador recusa iniciar se o controle não
+for estrito e correspondente. O token de readiness é gerado no arquivo privado
+`/etc/skincos/crm-atendimento-staging.env` e nunca deve entrar em logs.
 
-O staging atende esses pré-requisitos e está apto a promoção sintética. A
-produção agora possui o runtime equivalente em modo somente leitura, mas
-permanece sem rota de Atendimento dedicada e sem qualquer escrita; nenhum
-workflow de publicação pública ou promoção global é considerado executado até
-que os gates de proxy, autenticação e rollback sejam comprovados
-separadamente.
+`scripts/runtime/add-atendimento-staging-tunnel-route.sh` foi aposentado: ele
+não pode modificar nem reiniciar o `cloudflare-runtime.service` compartilhado.
+Até existir uma unidade de túnel de staging dedicada e revisada, mantenha a
+rota externa do runtime isolado ausente e valide somente por loopback.
+
+## Operação e rollback
+
+Consulte [clientes-production-readonly-runtime.md](clientes-production-readonly-runtime.md)
+para a sequência de dry-run, backup, migração de staging, smoke e rollback. A
+ação emergencial mínima é `maintenance`/`disabled` no arquivo de controle. O
+rollback por SHA requer um manifest de release anterior já preparado; nenhum
+script tenta “adivinhar” checkout, shell ou destino a partir de uma variável.

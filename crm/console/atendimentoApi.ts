@@ -829,6 +829,10 @@ export type CommercialProfile = {
   contactEligibility: CommercialContactEligibility
 }
 
+// The paginated discovery surface deliberately excludes direct identifiers.
+// A name is returned only from the explicitly addressed profile endpoint.
+export type CommercialProfileListItem = Omit<CommercialProfile, 'name'>
+
 export type CommercialAction = {
   id: string
   identityId: string
@@ -858,6 +862,50 @@ export type CommercialPolicy = {
   policyVersion: string
   updatedBy: string
   updatedAt: string | null
+}
+
+export type CommercialCanaryCandidate = {
+  candidateRef: string
+  displayNameMasked: string
+  unit: string
+  identityQuality: 'confirmed_multi_source' | 'review_required'
+  permissionStatus: string
+  phoneStatus: 'correlated' | 'uncorrelated'
+  optOut: 'opted_out' | 'not_recorded'
+  freshness: 'healthy' | 'stale' | 'unknown'
+  inclusionReason: 'validated_synthetic' | 'validated_explicit_approved' | 'validation_required'
+  validationStatus: 'valid' | 'required'
+  validationRevision: number
+  eligibility: 'eligible' | 'blocked' | 'review_required'
+}
+
+export type CommercialCanarySummary = {
+  totalCohort: number
+  eligible: number
+  blocked: number
+  inReview: number
+  permissionsExpiring: number
+  phonesUncorrelated: number
+  staleSources: number
+  pendingIdentityDecisions: number
+  duplicateSelections: number
+  outOfScope: number
+  notValidated: number
+  impact: { messagesSent: 0; commercialWritesEnabled: false; contactsRecorded: 0; actionsCreated: 0 }
+}
+
+export type CommercialCanaryState = {
+  canary: {
+    ready: boolean
+    selectorConfigured: boolean
+    sourceFreshness: 'healthy' | 'stale' | 'unknown'
+    commercialWritesEnabled: false
+    messagesSent: 0
+    activeCohorts: Array<{ unit: string; version: number; status: string; memberCount: number; createdAt: string | null; removedAt: string | null }>
+    latestCohorts: Array<{ unit: string; version: number; status: string; memberCount: number; createdAt: string | null; removedAt: string | null }>
+    emergencyOffAvailable: boolean
+  }
+  policy: Pick<CommercialPolicy, 'policyVersion' | 'commercialContactWritesEnabled' | 'commercialContactCanaryIdentityIds'>
 }
 
 export type CommercialDataQualitySeverity = 'critical' | 'high' | 'medium' | 'low'
@@ -959,7 +1007,7 @@ export type CommercialOverview = {
   limit: number
   offset: number
   pagination?: { mode: 'sql' | 'legacy'; sort: string; direction: 'asc' | 'desc'; hasPrevious: boolean; hasNext: boolean }
-  profiles: CommercialProfile[]
+  profiles: CommercialProfileListItem[]
 }
 
 export type CommercialTimelineEntry = {
@@ -1004,6 +1052,95 @@ export type ClientIdentityReviewQueue = {
   offset: number
   items: ClientIdentityReviewItem[]
   workflow?: { writesReady: boolean }
+}
+
+export type IdentityClusterMember = {
+  source: 'attendance_client' | 'caixa_customer' | 'app_registration' | 'lead_profile' | string
+  sourceLabel: string
+  name: string
+  aliases: string[]
+  units: string[]
+  matchingFields: Array<{ field: 'name' | 'phone' | 'email' | 'cpf' | 'unit' | string; label: string; status: string; values?: string[] }>
+  freshness: 'current' | 'stale' | 'unknown' | string
+  stale: boolean
+  contact: { phone: string[]; email: string[]; masked: true }
+}
+
+export type IdentityReviewCluster = {
+  schemaVersion: 'crm-identity-cluster/v2' | string
+  clusterKey: string
+  version: string
+  summary: { memberCount: number; identityCount: number; sourceCount: number; unitCount: number }
+  members: IdentityClusterMember[]
+  membersBySource: Array<{ source: string; sourceLabel: string; count: number }>
+  units: string[]
+  matchingFields: string[]
+  conflicts: Array<{ field: string; label: string; severity: 'strong' | 'weak' | string; summary: string }>
+  evidence: { strong: IdentityClusterEvidence[]; weak: IdentityClusterEvidence[] }
+  confidence: number
+  decision: { state: 'pending' | 'confirmed' | 'rejected' | 'stale'; count: number; lastAt: string | null }
+  decisionHistory: Array<{ reviewType: string; decision: string; resultingStatus: string; recordedAt: string | null; stale: boolean }>
+  materializations: Array<{ mode: string; status: string; recordedAt: string | null; membersMoved: number }>
+  automaticLinks: Array<{ source: string; target: string; status: string; method: string; confidence: number; history: Array<{ transition: string; resultingStatus: string; origin: string; recordedAt: string | null }> }>
+  sourceChanges: Array<{ source: string; name: string; changedAt: string | null }>
+  staleState: 'current' | 'stale'
+  lineage: Array<{ relation: string; recordedAt: string | null }>
+  impact: {
+    membersToMove: Array<{ sourceLabel: string; name: string }>
+    survivorIdentity: { name: string; sourceCount: number; sourceLabels: string[] } | null
+    retiredIdentities: Array<{ name: string; sourceCount: number; sourceLabels: string[] }>
+    commercialHistoryPresent: boolean
+    consentHistoryPresent: boolean
+    predictedAction: string
+  }
+  undo: { blocked: boolean; reasons: string[]; blockingHistory: { commercialActions: number; consentPermissions: number; consentEvents: number; identityAuditEvents: number } }
+  bulkReview: { eligible: boolean; mode: 'bulk_safe' | 'individual_only' | string; sharedContactField: 'phone' | 'email' | null; reasons: string[] }
+  privacy: { contactsMasked: true; technicalIdsHidden: true; revealRequired: true }
+}
+
+export type IdentityClusterEvidence = {
+  kind: 'source_link' | string
+  label: string
+  strength: 'strong' | 'weak' | string
+  confidence: number
+  source: string
+  target: string
+  summary: string
+}
+
+export type IdentityClusterQueue = {
+  schemaVersion: string
+  total: number
+  limit: number
+  offset: number
+  clusters: IdentityReviewCluster[]
+  workflow: { writesReady: boolean }
+  workspace: { ready: boolean; migrationId: string }
+  graph: { members: number; edges: number }
+  pagination: { hasPrevious: boolean; hasNext: boolean }
+}
+
+export type IdentityClusterBulkPreview = {
+  schemaVersion: string
+  clusterCount: number
+  eligibleCount: number
+  blockedCount: number
+  memberCount: number
+  eligibleMembers: number
+  blockedReasons: string[]
+  clusters: Array<{ clusterKey: string; version: string; eligible: boolean; reasons: string[] }>
+  workspace: { ready: boolean; migrationId: string }
+  workflow: { writesReady: boolean }
+}
+
+export type IdentityClusterReveal = {
+  clusterKey: string
+  version: string
+  auditId: string | null
+  revealedAt: string | null
+  expiresAt: string
+  contacts: Array<{ sourceLabel: string; name: string; phone: string[]; email: string[] }>
+  privacy: { explicitAction: true; reasonRecorded: true; metricsAndLogsRedacted: true }
 }
 
 export type ClientIdentityReviewDecision = {
@@ -1072,6 +1209,40 @@ export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityR
   return api<ClientIdentityReviewQueue>(`/commercial/review${qs ? `?${qs}` : ''}`)
 }
 
+export function fetchIdentityClusterWorkspace(filters: { q?: string; unit?: string; status?: string; stale?: boolean; limit?: number; offset?: number; includeResolved?: boolean } = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === true) params.set(key, 'true')
+    else if (value !== undefined && value !== '') params.set(key, String(value))
+  })
+  const qs = params.toString()
+  return api<IdentityClusterQueue>(`/commercial/identity-clusters${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchIdentityClusterDetail(clusterKey: string, filters: { unit?: string } = {}) {
+  const params = new URLSearchParams()
+  if (filters.unit && filters.unit !== 'all') params.set('unit', filters.unit)
+  const qs = params.toString()
+  return api<{ cluster: IdentityReviewCluster; workflow: { writesReady: boolean }; workspace: { ready: boolean; migrationId: string } }>(
+    `/commercial/identity-clusters/${encodeURIComponent(clusterKey)}${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export function previewIdentityClusterBulk(payload: { clusterKeys?: string[]; unit?: string }) {
+  return api<IdentityClusterBulkPreview>('/commercial/identity-clusters/bulk/preview', { method: 'POST', body: payload })
+}
+
+export function applyIdentityClusterBulk(payload: { clusterKeys: string[]; expectedVersions: Record<string, string>; reason: string; confirmation: 'REVIEW_CLUSTER'; unit?: string }, idempotencyKey: string) {
+  return api<{ schemaVersion: string; idempotent: boolean; appliedClusters: number; membersMoved: number; results: Array<{ clusterKey: string; idempotent: boolean; membersMoved?: number; decisionState?: string }> }>(
+    '/commercial/identity-clusters/bulk/apply',
+    { method: 'POST', body: payload, headers: { 'idempotency-key': idempotencyKey } },
+  )
+}
+
+export function revealIdentityCluster(clusterKey: string, payload: { expectedVersion: string; fields: Array<'phone' | 'email'>; reason: string; confirmation: 'REVIEW_CLUSTER'; unit?: string }) {
+  return api<IdentityClusterReveal>(`/commercial/identity-clusters/${encodeURIComponent(clusterKey)}/reveal`, { method: 'POST', body: payload })
+}
+
 export function decideClientIdentityReview(type: ClientIdentityReviewItem['type'], payload: {
   sourceId: string
   targetId: string
@@ -1127,9 +1298,41 @@ export function fetchCommercialPolicy() {
 }
 
 export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'> &
-  Partial<Pick<CommercialPolicy, 'commercialContactWritesEnabled' | 'commercialContactCanaryIdentityIds'>> &
   { expectedPolicyVersion: string }) {
   return api<{ policy: CommercialPolicy }>('/commercial/policy', { method: 'PUT', body: payload })
+}
+
+export function fetchCommercialCanaryState(unit?: string) {
+  const query = unit ? `?unit=${encodeURIComponent(unit)}` : ''
+  return api<CommercialCanaryState>(`/commercial/canary/state${query}`)
+}
+
+export function fetchCommercialCanaryCandidates(query: { unit: string; q?: string; limit?: number; offset?: number }) {
+  const params = new URLSearchParams({ unit: query.unit })
+  if (query.q) params.set('q', query.q)
+  if (query.limit) params.set('limit', String(query.limit))
+  if (query.offset) params.set('offset', String(query.offset))
+  return api<{ unit: string; candidates: CommercialCanaryCandidate[]; pagination: { hasNext: boolean; hasPrevious: boolean }; total: number; sourceFreshness: CommercialCanaryCandidate['freshness'] }>(`/commercial/canary/candidates?${params.toString()}`)
+}
+
+export function previewCommercialCanary(payload: { unit: string; candidateRefs: string[] }) {
+  return api<{ unit: string; candidates: CommercialCanaryCandidate[]; summary: CommercialCanarySummary; canApply: boolean; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary/preview', { method: 'POST', body: payload })
+}
+
+export function validateCommercialCanaryIdentity(payload: { unit: string; candidateRef: string; validationType: 'synthetic' | 'explicit_approved'; approvalReference?: string; justification: string; confirmed: true; expectedPolicyVersion: string; expectedValidationRevision: number; idempotencyKey: string }) {
+  return api<{ validation: { unit: string; validationStatus: 'valid'; validationType: 'synthetic' | 'explicit_approved'; revision: number; expiresAt: string | null }; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary/identities/validate', { method: 'POST', body: payload })
+}
+
+export function saveCommercialCanary(payload: { unit: string; candidateRefs: string[]; justification: string; confirmed: true; expectedPolicyVersion: string; expectedCohortVersion: number; idempotencyKey: string }) {
+  return api<{ cohort: { unit: string; version: number; status: 'active'; memberCount: number; createdAt: string | null }; summary: CommercialCanarySummary; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary', { method: 'POST', body: payload })
+}
+
+export function removeCommercialCanary(payload: { unit: string; justification: string; confirmed: true; expectedPolicyVersion: string; expectedCohortVersion: number; idempotencyKey: string }) {
+  return api<{ removed: boolean; unit: string; cohortVersion: number; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary/remove', { method: 'POST', body: payload })
+}
+
+export function emergencyOffCommercialCanary(payload: { justification: string; confirmed: true; expectedPolicyVersion: string; idempotencyKey: string }) {
+  return api<{ emergencyOff: true; disabledCohorts: number; commercialWritesEnabled: false; messagesSent: 0 }>('/commercial/canary/emergency-off', { method: 'POST', body: payload })
 }
 
 export function fetchCommercialCadences() {

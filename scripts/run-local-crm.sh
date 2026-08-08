@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/crm-local-persona-runtime.sh"
+source "$ROOT_DIR/scripts/crm-local-port-plan.sh"
 FRONTEND_DIR="$ROOT_DIR/crm/console"
 BACKEND_DIR="$ROOT_DIR/backend"
 TIMEKEEPING_DIR="$ROOT_DIR/workforce/timekeeping"
@@ -25,6 +26,8 @@ crm_source_git() {
 }
 
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
+CRM_BIND_HOST="${CRM_BIND_HOST:-127.0.0.1}"
+CRM_PUBLIC_HOST="${CRM_PUBLIC_HOST:-localhost}"
 if [[ -n "${CRM_VITE_PORT+x}" ]]; then
   CRM_VITE_PORT_EXPLICIT=1
 else
@@ -32,6 +35,9 @@ else
 fi
 CRM_VITE_PORT="${CRM_VITE_PORT:-5173}"
 CRM_PAGES_PORT="${CRM_PAGES_PORT:-8791}"
+CRM_DYNAMIC_PORT_BUNDLE="${CRM_DYNAMIC_PORT_BUNDLE:-0}"
+CRM_PORT_BUNDLE_STRIDE="${CRM_PORT_BUNDLE_STRIDE:-10}"
+CRM_PORT_BUNDLE_MAX_ATTEMPTS="${CRM_PORT_BUNDLE_MAX_ATTEMPTS:-200}"
 CRM_ROUTE="${CRM_ROUTE:-/}"
 CRM_MODULE="${CRM_MODULE:-}"
 CRM_PROFILE="${CRM_PROFILE:-realistic}"
@@ -94,6 +100,8 @@ CRM_INVENTORY_IDENTITY_ENV_FILE="${CRM_INVENTORY_IDENTITY_ENV_FILE:-}"
 CRM_TIMEKEEPING_RELEASE_SHA="${CRM_TIMEKEEPING_RELEASE_SHA:-}"
 CRM_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}"
 CRM_REFRESH_INSUMOS_SNAPSHOT="${CRM_REFRESH_INSUMOS_SNAPSHOT:-0}"
+CRM_INSUMOS_PREVIEW_SNAPSHOT="${CRM_INSUMOS_PREVIEW_SNAPSHOT:-0}"
+CRM_INSUMOS_PREVIEW_RETAIN_COUNT="${CRM_INSUMOS_PREVIEW_RETAIN_COUNT:-2}"
 CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
 readonly CRM_LOCAL_IDENTITY_VERSION_ID="00000000-0000-4000-8000-000000000001"
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
@@ -103,6 +111,7 @@ if [[ -z "${CRM_TARGET_COMMIT:-}" ]]; then
   CRM_TARGET_COMMIT="$(crm_source_git rev-parse HEAD 2>/dev/null || true)"
 fi
 crm_persona_runtime_init
+CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT="${CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT:-$CRM_RUNTIME_ROOT/snapshots}"
 CRM_BUILD_LOCK_DIR="${CRM_BUILD_LOCK_DIR:-$CRM_RUNTIME_ROOT/build.lock}"
 CRM_DEPENDENCY_STATE_ROOT="${CRM_DEPENDENCY_STATE_ROOT:-$(dirname "$CRM_BUILD_LOCK_DIR")/dependencies}"
 CRM_FRONTEND_DEPENDENCY_CACHE_ROOT="${CRM_FRONTEND_DEPENDENCY_CACHE_ROOT:-/home/$(id -un)/.cache/skincos/crm-local/frontend-dependencies}"
@@ -259,8 +268,7 @@ if [[ -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
   CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "metaAdsLocalScenario" "$CRM_META_ADS_SCENARIO")"
 fi
 
-DEFAULT_URL="http://localhost:${CRM_PAGES_PORT}${CRM_ROUTE}"
-NETWORK_URL="http://${CRM_HOST}:${CRM_PAGES_PORT}${CRM_ROUTE}"
+crm_port_plan_refresh_urls
 
 collect_descendants() {
   local parent_pid="$1"
@@ -448,6 +456,20 @@ select_available_vite_port() {
   done
   echo "[crm-local] Nenhuma porta Vite livre encontrada entre $preferred e $((preferred + 20))." >&2
   exit 1
+}
+
+assert_runtime_ports_free() {
+  assert_port_free "$CRM_VITE_PORT" "vite"
+  assert_port_free "$CRM_PAGES_PORT" "pages"
+  if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+    assert_port_free "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
+  fi
+  if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+    assert_port_free "$CRM_INSUMOS_PORT" "insumos"
+  fi
+  if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
+    assert_port_free "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
+  fi
 }
 
 wait_for_http() {
@@ -990,11 +1012,118 @@ refresh_insumos_snapshot_if_needed() {
   if [[ "$CRM_REFRESH_INSUMOS_SNAPSHOT" != "1" ]]; then
     return 0
   fi
-  mkdir -p "$(dirname "$SNAPSHOT_DEFAULT_PATH")"
+  if [[ "$CRM_INSUMOS_PREVIEW_SNAPSHOT" == "1" && -z "$CRM_INSUMOS_SNAPSHOT" ]]; then
+    echo "[crm-local] A prévia de Insumos exige um caminho de snapshot privado." >&2
+    exit 1
+  fi
   local out_path="${CRM_INSUMOS_SNAPSHOT:-$SNAPSHOT_DEFAULT_PATH}"
-  echo "[crm-local] Exportando snapshot remoto de Insumos para $out_path"
-  node "$INSUMOS_EXPORTER" "$out_path"
-  CRM_INSUMOS_SNAPSHOT="$out_path"
+  local expected_snapshot_root
+  expected_snapshot_root="$(realpath -m "$CRM_RUNTIME_ROOT/snapshots")"
+  local snapshot_root
+  snapshot_root="$(realpath -m "$CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT")"
+  local resolved_output
+  resolved_output="$(realpath -m "$out_path")"
+  if [[ "$CRM_INSUMOS_PREVIEW_SNAPSHOT" == "1" &&
+        ( "$snapshot_root" != "$expected_snapshot_root" || "$resolved_output" != "$expected_snapshot_root"/* ) ]]; then
+    echo "[crm-local] O snapshot de prévia recusado está fora do runtime privado." >&2
+    exit 1
+  fi
+  mkdir -p "$snapshot_root"
+  echo "[crm-local] Atualizando snapshot remoto de Insumos (somente leitura)..."
+  INSUMOS_PREVIEW_SNAPSHOT_MODE=1 \
+    INSUMOS_PREVIEW_SNAPSHOT_ROOT="$snapshot_root" \
+    "$INSUMOS_HELPER" snapshot-export "$resolved_output"
+  CRM_INSUMOS_SNAPSHOT="$resolved_output"
+}
+
+configure_insumos_preview_snapshot_state() {
+  CRM_INSUMOS_SNAPSHOT_ID=""
+  if [[ "$CRM_INSUMOS_PREVIEW_SNAPSHOT" != "1" ]]; then
+    return 0
+  fi
+  if [[ -z "$CRM_INSUMOS_SNAPSHOT" || ! -f "$CRM_INSUMOS_SNAPSHOT" ]]; then
+    echo "[crm-local] O snapshot privado de Insumos não foi produzido." >&2
+    exit 1
+  fi
+  local expected_snapshot_root
+  expected_snapshot_root="$(realpath -m "$CRM_RUNTIME_ROOT/snapshots")"
+  local resolved_snapshot
+  resolved_snapshot="$(realpath -m "$CRM_INSUMOS_SNAPSHOT")"
+  if [[ "$resolved_snapshot" != "$expected_snapshot_root"/* ]]; then
+    echo "[crm-local] O snapshot de Insumos não pertence a este runtime privado." >&2
+    exit 1
+  fi
+  CRM_INSUMOS_SNAPSHOT_ID="$(node "$INSUMOS_EXPORTER" --inspect "$resolved_snapshot" --field snapshotId)"
+  if [[ ! "$CRM_INSUMOS_SNAPSHOT_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    echo "[crm-local] O snapshot de Insumos não passou na verificação de integridade." >&2
+    exit 1
+  fi
+  local runtime_root
+  runtime_root="$(realpath -m "$CRM_RUNTIME_ROOT")"
+  local snapshot_state_root
+  snapshot_state_root="$(realpath -m "$CRM_RUNTIME_ROOT/state/insumos-snapshots")"
+  if [[ "$snapshot_state_root" != "$runtime_root/state/insumos-snapshots" ]]; then
+    echo "[crm-local] O estado isolado de Insumos não pertence ao runtime privado." >&2
+    exit 1
+  fi
+  # A fresh private D1 directory prevents old local movements or mutations
+  # from being mixed into metrics restored from the remote snapshot.
+  CRM_INSUMOS_PERSIST_DIR="$snapshot_state_root/$CRM_INSUMOS_SNAPSHOT_ID"
+  CRM_INSUMOS_SNAPSHOT="$resolved_snapshot"
+  export CRM_INSUMOS_PERSIST_DIR CRM_INSUMOS_SNAPSHOT_ID
+}
+
+cleanup_insumos_preview_artifacts() {
+  if [[ "$CRM_INSUMOS_PREVIEW_SNAPSHOT" != "1" ]]; then
+    return 0
+  fi
+  local retain_count="$CRM_INSUMOS_PREVIEW_RETAIN_COUNT"
+  if [[ ! "$retain_count" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[crm-local] Retenção de snapshots de Insumos inválida; a limpeza privada foi ignorada." >&2
+    return 0
+  fi
+
+  local runtime_root state_root snapshot_root active_state active_snapshot
+  runtime_root="$(realpath -m "$CRM_RUNTIME_ROOT")"
+  state_root="$(realpath -m "$CRM_RUNTIME_ROOT/state/insumos-snapshots")"
+  snapshot_root="$(realpath -m "$CRM_INSUMOS_PREVIEW_SNAPSHOT_ROOT")"
+  active_state="$(realpath -m "$CRM_INSUMOS_PERSIST_DIR")"
+  active_snapshot="$(realpath -m "$CRM_INSUMOS_SNAPSHOT")"
+  if [[ "$state_root" != "$runtime_root/state/insumos-snapshots" ||
+        "$snapshot_root" != "$runtime_root/snapshots" ||
+        "$active_state" != "$state_root"/* ||
+        "$active_snapshot" != "$snapshot_root"/* ]]; then
+    echo "[crm-local] A limpeza recusou um caminho fora do runtime privado." >&2
+    return 0
+  fi
+
+  local preserved=0 entry stamp candidate name
+  while IFS='|' read -r stamp candidate; do
+    name="$(basename "$candidate")"
+    [[ "$name" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || continue
+    if [[ "$candidate" == "$active_state" ]]; then
+      continue
+    fi
+    if (( preserved < retain_count - 1 )); then
+      preserved=$((preserved + 1))
+      continue
+    fi
+    rm -rf -- "$candidate"
+  done < <(find "$state_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@|%p\n' 2>/dev/null | sort -rn)
+
+  preserved=0
+  while IFS='|' read -r stamp candidate; do
+    name="$(basename "$candidate")"
+    [[ "$name" =~ ^insumos-d1-preview-[0-9a-f]{32}\.json$ ]] || continue
+    if [[ "$candidate" == "$active_snapshot" ]]; then
+      continue
+    fi
+    if (( preserved < retain_count - 1 )); then
+      preserved=$((preserved + 1))
+      continue
+    fi
+    rm -f -- "$candidate"
+  done < <(find "$snapshot_root" -mindepth 1 -maxdepth 1 -type f -printf '%T@|%p\n' 2>/dev/null | sort -rn)
 }
 
 ensure_insumos_local_schema() {
@@ -1016,6 +1145,33 @@ start_insumos_local() {
   if [[ "$CRM_PROFILE" == "realistic" ]]; then
     auth_bypass=true
   fi
+  # Wrangler 4 filters values from --env-file to [secrets].required. The
+  # production config intentionally does not declare the local-only seed
+  # token, so hand the Worker only a non-reversible digest through --var.
+  # The raw token remains solely in the private env file and seed request.
+  local seed_token=""
+  local seed_token_sha256=""
+  if [[ -n "$CRM_INSUMOS_SNAPSHOT" ]]; then
+    if [[ ! -f "$CRM_INSUMOS_SNAPSHOT" ]]; then
+      echo "[crm-local] Snapshot do Insumos não encontrado: $CRM_INSUMOS_SNAPSHOT" >&2
+      exit 1
+    fi
+    seed_token="$(sed -nE 's/^[[:space:]]*INSUMOS_SEED_TOKEN[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$/\1/p' "$CRM_INVENTORY_IDENTITY_ENV_FILE" | head -n 1)"
+    if [[ "$seed_token" == \"*\" && "$seed_token" == *\" ]]; then
+      seed_token="${seed_token:1:${#seed_token}-2}"
+    elif [[ "$seed_token" == \'*\' && "$seed_token" == *\' ]]; then
+      seed_token="${seed_token:1:${#seed_token}-2}"
+    fi
+    if [[ -z "$seed_token" ]]; then
+      echo "[crm-local] INSUMOS_SEED_TOKEN ausente no env-file privado validado." >&2
+      exit 1
+    fi
+    seed_token_sha256="$(printf '%s' "$seed_token" | sha256sum | awk '{print $1}')"
+    if [[ ! "$seed_token_sha256" =~ ^[a-f0-9]{64}$ ]]; then
+      echo "[crm-local] Não foi possível derivar o digest privado do seed de Insumos." >&2
+      exit 1
+    fi
+  fi
   local insumos_args=(
     --log-level "$CRM_LOCAL_LOG_LEVEL"
     --show-interactive-dev-session false
@@ -1025,6 +1181,9 @@ start_insumos_local() {
     --var "ALLOW_DEV_SEED:true"
     --var "ALLOW_DEV_AUTH_BYPASS:$auth_bypass"
   )
+  if [[ -n "$seed_token_sha256" ]]; then
+    insumos_args+=(--var "INSUMOS_SEED_TOKEN_SHA256:$seed_token_sha256")
+  fi
   if local_timekeeping_requested; then
     insumos_args+=(
       --var "APP_VERSION:$CRM_TIMEKEEPING_RELEASE_SHA"
@@ -1035,7 +1194,7 @@ start_insumos_local() {
   (
     cd "$ROOT_DIR"
     ALLOW_DEV_AUTH_BYPASS="$auth_bypass" ./backend/scripts/insumos.sh dev \
-      --ip 127.0.0.1 \
+      --ip "$CRM_BIND_HOST" \
       --port "$CRM_INSUMOS_PORT" \
       "${insumos_args[@]}"
   ) >>"$LOG_FILE" 2>&1 &
@@ -1047,23 +1206,9 @@ start_insumos_local() {
   fi
 
   if [[ -n "$CRM_INSUMOS_SNAPSHOT" ]]; then
-    if [[ ! -f "$CRM_INSUMOS_SNAPSHOT" ]]; then
-      echo "[crm-local] Snapshot do Insumos não encontrado: $CRM_INSUMOS_SNAPSHOT" >&2
-      exit 1
-    fi
     echo "[crm-local] Aplicando seed de Insumos com $CRM_INSUMOS_SNAPSHOT"
-    local seed_token
-    seed_token="$(sed -nE 's/^[[:space:]]*INSUMOS_SEED_TOKEN[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$/\1/p' "$CRM_INVENTORY_IDENTITY_ENV_FILE" | head -n 1)"
-    if [[ "$seed_token" == \"*\" && "$seed_token" == *\" ]]; then
-      seed_token="${seed_token:1:${#seed_token}-2}"
-    elif [[ "$seed_token" == \'*\' && "$seed_token" == *\' ]]; then
-      seed_token="${seed_token:1:${#seed_token}-2}"
-    fi
-    if [[ -z "$seed_token" ]]; then
-      echo "[crm-local] INSUMOS_SEED_TOKEN ausente no env-file privado validado." >&2
-      exit 1
-    fi
     INSUMOS_SEED_TOKEN="$seed_token" \
+      INSUMOS_SEED_EXPECT_SNAPSHOT_ID="${CRM_INSUMOS_SNAPSHOT_ID:-}" \
       INSUMOS_API_URL="http://127.0.0.1:${CRM_INSUMOS_PORT}/insumos" \
       "$INSUMOS_SEEDER" "$CRM_INSUMOS_SNAPSHOT" >>"$LOG_FILE" 2>&1
   fi
@@ -1209,6 +1354,14 @@ case "$CRM_ALLOW_LEGACY_DEPENDENCY_MIGRATION" in
     ;;
 esac
 
+case "$CRM_DYNAMIC_PORT_BUNDLE" in
+  0|1) ;;
+  *)
+    echo "CRM_DYNAMIC_PORT_BUNDLE inválido: $CRM_DYNAMIC_PORT_BUNDLE (use 0 ou 1)." >&2
+    exit 1
+    ;;
+esac
+
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm não encontrado no PATH." >&2
   exit 1
@@ -1229,6 +1382,7 @@ crm_persona_runtime_acquire_lock || runtime_lock_status=$?
 if [[ "$runtime_lock_status" == "2" ]]; then
   echo "[crm-local] Aguardando o gate completo do runtime existente de $CRM_PERSONA..."
   if crm_persona_runtime_wait_ready 360 &&
+     crm_port_plan_hydrate_from_manifest &&
      wait_for_crm_api "http://127.0.0.1:${CRM_PAGES_PORT}/api/auth/me" 10 &&
      wait_for_http "$DEFAULT_URL" 10; then
     if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
@@ -1259,6 +1413,7 @@ bootstrap_cleanup() {
     fi
   done
   crm_persona_runtime_write_manifest failed 2>/dev/null || true
+  crm_port_plan_release_bundle_lock
   crm_persona_runtime_release_lock
 }
 trap bootstrap_cleanup EXIT
@@ -1269,6 +1424,30 @@ BROWSER_DIAGNOSTICS_LOG="${CRM_BROWSER_DIAGNOSTICS_LOG:-$(dirname "$LOG_FILE")/c
 mkdir -p "$GATE_ARTIFACT_DIR"
 
 refresh_insumos_snapshot_if_needed
+configure_insumos_preview_snapshot_state
+
+stop_existing
+rotate_current_log
+crm_persona_runtime_write_manifest starting
+
+if [[ "$CRM_DYNAMIC_PORT_BUNDLE" == "1" ]]; then
+  # Building does not bind any service port. Do it before selecting the dynamic
+  # bundle so a long build cannot turn an otherwise-free candidate into a stale
+  # reservation while unrelated tools start and stop around it.
+  prepare_frontend_artifact
+  ensure_playwright_chromium
+  crm_port_plan_acquire_bundle_lock
+  crm_port_plan_select_dynamic_bundle
+else
+  select_available_vite_port
+  crm_port_plan_refresh_urls
+  # Static launchers retain their fail-fast contract: an occupied configured
+  # service port must abort before any build or browser preparation begins.
+  assert_runtime_ports_free
+  prepare_frontend_artifact
+  ensure_playwright_chromium
+fi
+crm_persona_runtime_write_manifest starting
 
 echo ""
 echo "SKINCOS • Testar CRM local"
@@ -1286,7 +1465,7 @@ echo "  Rede   : $NETWORK_URL"
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   echo "Insumos local: http://127.0.0.1:${CRM_INSUMOS_PORT}/insumos"
   if [[ -n "$CRM_INSUMOS_SNAPSHOT" ]]; then
-    echo "Snapshot Insumos: $CRM_INSUMOS_SNAPSHOT"
+    echo "Snapshot Insumos: ${CRM_INSUMOS_SNAPSHOT_ID:-manual}"
   fi
 fi
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
@@ -1295,28 +1474,16 @@ fi
 echo "Log: $LOG_FILE"
 echo ""
 
-stop_existing
-rotate_current_log
-select_available_vite_port
-crm_persona_runtime_write_manifest starting
-assert_port_free "$CRM_VITE_PORT" "vite"
-assert_port_free "$CRM_PAGES_PORT" "pages"
-if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
-  assert_port_free "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
-fi
-prepare_frontend_artifact
-ensure_playwright_chromium
+assert_runtime_ports_free
 
 INSUMOS_PID=""
 WHATSAPP_ORCHESTRATOR_PID=""
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
-  assert_port_free "$CRM_INSUMOS_PORT" "insumos"
   start_insumos_local
 fi
 
 TIMEKEEPING_PID=""
 if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
-  assert_port_free "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
   start_timekeeping_local
 fi
 
@@ -1329,6 +1496,7 @@ if [[ "$CRM_PROFILE" == "realistic" ]]; then
   export LOCAL_AUTH_TEST_USER_ADMIN="${LOCAL_AUTH_TEST_USER_ADMIN:-true}"
   export LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}"
   export LOCAL_AUTH_NAME="${LOCAL_AUTH_NAME:-Teste CRM Local}"
+  export LOCAL_AUTH_ALLOWED_HOSTS="${LOCAL_AUTH_ALLOWED_HOSTS:-}"
   if local_timekeeping_requested; then
     if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
       export PONTO_API_TARGET="http://127.0.0.1:${CRM_TIMEKEEPING_PORT}"
@@ -1392,6 +1560,7 @@ cleanup() {
     fi
   fi
   crm_persona_runtime_write_manifest stopped 2>/dev/null || true
+  crm_port_plan_release_bundle_lock
   crm_persona_runtime_release_lock
 }
 
@@ -1406,6 +1575,10 @@ if ! wait_for_http "$DEFAULT_URL" 60; then
   echo "[crm-local] O shell do CRM não respondeu em $DEFAULT_URL dentro do tempo esperado." >&2
   exit 1
 fi
+
+# All listeners are now bound and reachable. Releasing this advisory lease lets
+# another preview choose a distinct bundle based on the actual listeners.
+crm_port_plan_release_bundle_lock
 
 if [[ "$CRM_MODULE" == 'atendimento' && "$CRM_WITH_WHATSAPP" == '1' ]]; then
   verify_atendimento_proxy
@@ -1541,6 +1714,9 @@ if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
   open_browser
 fi
 
+if ! cleanup_insumos_preview_artifacts; then
+  echo '[crm-local] A prévia ficou pronta, mas a limpeza privada de snapshots falhou.' >&2
+fi
 crm_persona_runtime_write_manifest ready
 
 echo "Notas:"

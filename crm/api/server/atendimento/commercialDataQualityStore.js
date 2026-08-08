@@ -1,5 +1,6 @@
 import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
 import { COMMERCIAL_DATA_QUALITY_MIGRATION_ID } from './commercialDataQualityMigration.js'
+import { actorSubject } from './actorSubject.js'
 
 export const COMMERCIAL_DATA_QUALITY_SOURCE_STALE_THRESHOLD_HOURS = 48
 export const COMMERCIAL_DATA_QUALITY_REFRESH_LOCK_KEY = 'commercial-data-quality:refresh'
@@ -176,9 +177,9 @@ function requirePool(pool) {
 }
 
 function actorIdentity(actor) {
-    const identity = String(actor?.id || actor?.username || actor?.email || '').trim()
+    const identity = actorSubject(actor)
     if (!identity) throw qualityError('ACTOR_IDENTITY_REQUIRED', 401)
-    return identity.slice(0, 160)
+    return identity
 }
 
 function assertCommercialQualityManager(actor) {
@@ -745,6 +746,7 @@ export function createCommercialDataQualityStore(options = {}) {
 }
 
 export const __testables = {
+    actorIdentity,
     assertCommercialQualityManager,
     assertFindingId,
     commercialObservationTransition,

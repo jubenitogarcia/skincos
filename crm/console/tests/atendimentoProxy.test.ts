@@ -82,39 +82,44 @@ describe('Atendimento proxy helpers', () => {
     }).allowedModules).toEqual(['atendimento'])
   })
 
-  it('falls back to escala keys when the dedicated atendimento key is absent', () => {
+  it('requires the dedicated actor key and never falls back to a shared module key', () => {
     expect(__testables.resolveAtendimentoActorHmacKey({
       ATENDIMENTO_ACTOR_HMAC_KEY: '',
       ESCALA_ACTOR_HMAC_KEY: 'escala-secret',
       CRM_ESCALA_HMAC_KEY: 'crm-escala-secret',
-    })).toBe('escala-secret')
+    })).toBe('')
     expect(__testables.resolveAtendimentoActorHmacKey({
-      CRM_ESCALA_HMAC_KEY: 'crm-escala-secret',
-    })).toBe('crm-escala-secret')
+      ATENDIMENTO_ACTOR_HMAC_KEY: 'dedicated-secret',
+    })).toBe('dedicated-secret')
   })
 
   it('ignores placeholder actor keys before falling back', () => {
     expect(__testables.resolveAtendimentoActorHmacKey({
       ATENDIMENTO_ACTOR_HMAC_KEY: '__CONFIGURE_REAL_ATENDIMENTO_HMAC_KEY__',
       ESCALA_ACTOR_HMAC_KEY: 'escala-secret',
-    })).toBe('escala-secret')
+    })).toBe('')
   })
 
-  it('allows unsigned local proxy only when localhost bypass is active and no real actor key exists', () => {
-    expect(__testables.shouldAllowUnsignedLocalProxy({
-      request: new Request('http://localhost:8791/api/atendimento/overview'),
-      env: { LOCAL_AUTH_BYPASS: 'true' },
-    }, '')).toBe(true)
+  it('accepts only a dedicated URL target and rejects remote plaintext or embedded credentials', () => {
+    expect(__testables.resolveAtendimentoTarget({
+      ATENDIMENTO_API_TARGET: 'https://crm-atendimento.skincos.com.br/root',
+      CRM_API_TARGET: 'https://shared-crm.invalid',
+    })).toBe('https://crm-atendimento.skincos.com.br/root')
+    expect(__testables.resolveAtendimentoTarget({ CRM_API_TARGET: 'https://shared-crm.invalid' })).toBe('')
+    expect(__testables.resolveAtendimentoTarget({ ATENDIMENTO_API_TARGET: 'http://shared-crm.invalid' })).toBe('')
+    expect(__testables.resolveAtendimentoTarget({ ATENDIMENTO_API_TARGET: 'https://user:secret@crm-atendimento.skincos.com.br' })).toBe('')
+  })
 
-    expect(__testables.shouldAllowUnsignedLocalProxy({
-      request: new Request('https://crm.skincos.com.br/api/atendimento/overview'),
-      env: { LOCAL_AUTH_BYPASS: 'true' },
-    }, '')).toBe(false)
-
-    expect(__testables.shouldAllowUnsignedLocalProxy({
-      request: new Request('http://localhost:8791/api/atendimento/overview'),
-      env: { LOCAL_AUTH_BYPASS: 'true' },
-    }, 'real-secret')).toBe(false)
+  it('binds signature v2 to method, exact upstream path, actor and nonce', () => {
+    expect(__testables.actorSignatureMessage(
+      '1000',
+      'n'.repeat(32),
+      'GET',
+      '/api/atendimento/commercial/policy?unit=synthetic',
+      'actor-payload',
+    )).toBe(`atendimento-actor/v2.1000.${'n'.repeat(32)}.GET./api/atendimento/commercial/policy?unit=synthetic.actor-payload`)
+    expect(__testables.signedPath('https://crm-atendimento.skincos.com.br/root/api/atendimento/overview?unit=synthetic'))
+      .toBe('/root/api/atendimento/overview?unit=synthetic')
   })
 
   it('does not expose upstream transport details to the browser', async () => {

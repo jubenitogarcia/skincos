@@ -36,6 +36,134 @@ function hasBackupPayloadInsumos(payload) {
     );
 }
 
+const INSUMOS_PREVIEW_TABLES = [
+    ['insumosItems', 'insumos_items'],
+    ['insumosStocks', 'insumos_stocks'],
+    ['insumosMovements', 'insumos_movements'],
+    ['insumosTransfers', 'insumos_transfers'],
+    ['insumosSuppliers', 'insumos_suppliers'],
+    ['insumosPurchaseOrders', 'insumos_purchase_orders'],
+    ['insumosPurchaseOrderLines', 'insumos_purchase_order_lines'],
+    ['insumosPurchaseReceipts', 'insumos_purchase_receipts'],
+    ['insumosReplenishmentPolicies', 'insumos_replenishment_policies'],
+    ['insumosReplenishmentSuggestions', 'insumos_replenishment_suggestions'],
+    ['insumosCountSessions', 'insumos_count_sessions'],
+    ['insumosCountLines', 'insumos_count_lines'],
+    ['insumosCountReads', 'insumos_count_reads'],
+];
+
+const INSUMOS_PREVIEW_KIND = 'insumos-local-preview-snapshot';
+const INSUMOS_PREVIEW_VERSION = 2;
+const INSUMOS_PREVIEW_CONSISTENCY_MODE = 'd1-batch';
+
+function canonicalJson(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
+async function sha256Hex(value) {
+    const cryptoApi = globalThis.crypto;
+    if (!cryptoApi?.subtle) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_CRYPTO_UNAVAILABLE');
+    const bytes = new TextEncoder().encode(value);
+    const digest = await cryptoApi.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function hasExactKeys(value, expectedKeys) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const actual = Object.keys(value).sort();
+    const expected = [...expectedKeys].sort();
+    return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+export function getInsumosPreviewSnapshotMetadata(payload) {
+    const previewMarkerPresent = payload?.version === INSUMOS_PREVIEW_VERSION || payload?.kind === INSUMOS_PREVIEW_KIND;
+    if (!previewMarkerPresent) return null;
+    if (payload?.version !== INSUMOS_PREVIEW_VERSION || payload?.kind !== INSUMOS_PREVIEW_KIND) {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_INVALID');
+    }
+    const snapshotId = String(payload?.snapshotId || '');
+    const d1Sha256 = String(payload?.integrity?.d1Sha256 || '');
+    const d1Bytes = Number(payload?.integrity?.d1Bytes);
+    const d1CanonicalJson = payload?.integrity?.d1CanonicalJson;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(snapshotId) ||
+        !/^[a-f0-9]{64}$/i.test(d1Sha256) || !Number.isInteger(d1Bytes) || d1Bytes < 2 ||
+        typeof d1CanonicalJson !== 'string' || !d1CanonicalJson.length) {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_INVALID');
+    }
+    if (payload?.sources?.d1?.readOnly !== true) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_NOT_READ_ONLY');
+    if (payload?.sources?.d1?.consistency?.mode !== INSUMOS_PREVIEW_CONSISTENCY_MODE) {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_CONSISTENCY_INVALID');
+    }
+    const expectedKeys = INSUMOS_PREVIEW_TABLES.map(([key]) => key);
+    if (!hasExactKeys(payload?.d1, expectedKeys)) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_D1_KEYS_INVALID');
+    if (!hasExactKeys(payload?.sources?.d1?.tables, expectedKeys)) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_TABLES_INVALID');
+    for (const [key] of INSUMOS_PREVIEW_TABLES) {
+        if (!Array.isArray(payload?.d1?.[key])) throw new Error(`INSUMOS_PREVIEW_SNAPSHOT_TABLE_INVALID:${key}`);
+        if (Number(payload.sources.d1.tables[key]?.count) !== payload.d1[key].length) {
+            throw new Error(`INSUMOS_PREVIEW_SNAPSHOT_COUNT_INVALID:${key}`);
+        }
+    }
+    return { snapshotId, d1Sha256, d1Bytes, d1CanonicalJson };
+}
+
+export async function verifyInsumosPreviewSnapshotIntegrity(payload) {
+    const snapshot = getInsumosPreviewSnapshotMetadata(payload);
+    if (!snapshot) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_INVALID');
+    const actualDigest = await sha256Hex(snapshot.d1CanonicalJson);
+    const actualBytes = new TextEncoder().encode(snapshot.d1CanonicalJson).byteLength;
+    if (actualDigest !== snapshot.d1Sha256 || actualBytes !== snapshot.d1Bytes) {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_DIGEST_INVALID');
+    }
+    let trustedD1;
+    try {
+        trustedD1 = JSON.parse(snapshot.d1CanonicalJson);
+    } catch {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_D1_CANONICAL_INVALID');
+    }
+    const expectedKeys = INSUMOS_PREVIEW_TABLES.map(([key]) => key);
+    if (!hasExactKeys(trustedD1, expectedKeys)) {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_D1_KEYS_INVALID');
+    }
+    for (const [key] of INSUMOS_PREVIEW_TABLES) {
+        if (!Array.isArray(trustedD1[key]) || Number(payload.sources.d1.tables[key]?.count) !== trustedD1[key].length) {
+            throw new Error(`INSUMOS_PREVIEW_SNAPSHOT_COUNT_INVALID:${key}`);
+        }
+    }
+    // Compare the duplicated transport body within this one Worker runtime.
+    // This catches altered outer JSON while avoiding a cross-engine signature
+    // comparison for Unicode escaping.
+    if (canonicalJson(payload.d1) !== canonicalJson(trustedD1)) {
+        throw new Error('INSUMOS_PREVIEW_SNAPSHOT_DIGEST_INVALID');
+    }
+    return { ...snapshot, d1: trustedD1 };
+}
+
+export async function verifyInsumosPreviewRestore({ env, payload }) {
+    const snapshot = await verifyInsumosPreviewSnapshotIntegrity(payload);
+    if (!snapshot) throw new Error('INSUMOS_PREVIEW_SNAPSHOT_INVALID');
+    const counts = {};
+    for (const [key, table] of INSUMOS_PREVIEW_TABLES) {
+        const expected = snapshot.d1[key].length;
+        const row = await env.DB.prepare(`SELECT COUNT(*) AS count FROM ${table}`).first();
+        const actual = Number(row?.count ?? -1);
+        if (!Number.isInteger(actual) || actual !== expected) {
+            throw new Error(`INSUMOS_PREVIEW_SEED_COUNT_MISMATCH:${key}`);
+        }
+        counts[key] = actual;
+    }
+    // This result is returned by the local seed endpoint. Keep its proof
+    // aggregate-only: the canonical payload is an input to verification, not
+    // a record-bearing API response.
+    return {
+        snapshotId: snapshot.snapshotId,
+        d1Sha256: snapshot.d1Sha256,
+        d1Bytes: snapshot.d1Bytes,
+        counts,
+    };
+}
+
 // -------------------------------------------------------------
 // Backups (Cloudflare-only)
 // - Prefer storing large payloads in R2 when BACKUP_BUCKET exists.
@@ -305,9 +433,20 @@ export async function buildBackupPayload({ env }) {
     };
 }
 
-export async function restoreBackupPayload({ env, payload }) {
+export async function restoreBackupPayload({ env, payload, strict = false }) {
     if (!env?.DB) throw new Error('DB_NOT_CONFIGURED');
-    const p = payload;
+    const previewSnapshot = getInsumosPreviewSnapshotMetadata(payload);
+    const verifiedPreviewSnapshot = previewSnapshot ? await verifyInsumosPreviewSnapshotIntegrity(payload) : null;
+    const p = previewSnapshot
+        ? {
+            version: payload.version,
+            kind: payload.kind,
+            d1: Object.fromEntries(INSUMOS_PREVIEW_TABLES.map(([key]) => [key, verifiedPreviewSnapshot.d1[key]])),
+        }
+        : payload;
+    if (previewSnapshot) {
+        strict = true;
+    }
     if (!hasBackupPayloadInsumos(p)) throw new Error('PAYLOAD_INVALID');
 
     if (env?.DB && p?.d1) {
@@ -677,12 +816,15 @@ export async function restoreBackupPayload({ env, payload }) {
                     )
                     .run();
             }
-        } catch {
-            // ignore
+        } catch (error) {
+            if (strict) throw error;
+            // Legacy restore is intentionally best-effort for historical backup
+            // files. The private preview sets strict and fails closed instead.
         }
-        try {
-            await env.DB.prepare('DELETE FROM audit_log').run();
-            for (const row of (p.d1.auditLog || []).reverse()) {
+        if (Array.isArray(p.d1.auditLog)) {
+            try {
+                await env.DB.prepare('DELETE FROM audit_log').run();
+                for (const row of p.d1.auditLog.slice().reverse()) {
                 await env.DB.prepare(
                     `INSERT INTO audit_log (ts, actor, role, action, entity, entity_id, unidade, ip, user_agent, idempotency_key, before_json, after_json)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -701,14 +843,18 @@ export async function restoreBackupPayload({ env, payload }) {
                         row.beforeJson || null,
                         row.afterJson || null
                     )
-                    .run();
+                        .run();
+                }
+            } catch (error) {
+                if (strict) throw error;
+                // Historical audit restoration remains best-effort outside the
+                // read-only local preview contract.
             }
-        } catch {
-            // ignore
         }
-        try {
-            await env.DB.prepare('DELETE FROM notification_snapshot').run();
-            for (const row of (p.d1.notificationSnapshots || []).reverse()) {
+        if (Array.isArray(p.d1.notificationSnapshots)) {
+            try {
+                await env.DB.prepare('DELETE FROM notification_snapshot').run();
+                for (const row of p.d1.notificationSnapshots.slice().reverse()) {
                 await env.DB.prepare(
                     `INSERT INTO notification_snapshot (ts, unidade, low_stock, expiring_soon, expired_with_stock, payload_json)
                      VALUES (?, ?, ?, ?, ?, ?)`
@@ -721,10 +867,13 @@ export async function restoreBackupPayload({ env, payload }) {
                         Number(row.expiredWithStock || 0),
                         row.payloadJson || null
                     )
-                    .run();
+                        .run();
+                }
+            } catch (error) {
+                if (strict) throw error;
+                // Historical notification restoration remains best-effort
+                // outside the read-only local preview contract.
             }
-        } catch {
-            // ignore
         }
     }
 

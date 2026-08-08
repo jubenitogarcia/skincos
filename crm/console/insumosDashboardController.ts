@@ -2,6 +2,8 @@ import React from 'react'
 import { toast } from 'sonner'
 
 import { dateInputToIso } from '@/insumosShared'
+import { INSUMOS_ALL_UNITS } from '@/insumosUnitAccess'
+import { mergeInsightsData, mergeOverviewData } from '@/insumosAggregate'
 import type {
   Actionables,
   EstoqueAlerta,
@@ -76,6 +78,7 @@ type UseInsumosDashboardControllerArgs = DashboardStateSetters & {
   overviewPeriod: InsumosOverviewPeriod
   overviewSectionRef: React.RefObject<HTMLDivElement | null>
   overviewVisible: boolean
+  readableUnits: string[]
   unidade: string
 }
 
@@ -90,11 +93,29 @@ export function resolveOverviewDateRange(args: {
   now?: Date
 }) {
   const now = args.now ?? new Date()
-  const yyyyMmDd = (value: Date) => value.toISOString().slice(0, 10)
+  const yyyyMmDd = (value: Date) => {
+    const year = value.getFullYear()
+    const month = String(value.getMonth() + 1).padStart(2, '0')
+    const day = String(value.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
 
   let de = ''
   let ate = yyyyMmDd(now)
-  let days = args.period === '7d' ? 7 : args.period === '30d' ? 30 : 365
+  let days = args.period === '7d' ? 7 : args.period === '30d' ? 30 : args.period === '1y' ? 365 : 1
+
+  if (args.period === 'currentWeek' || args.period === 'currentMonth') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    if (args.period === 'currentWeek') {
+      const mondayOffset = (start.getDay() + 6) % 7
+      start.setDate(start.getDate() - mondayOffset)
+    } else {
+      start.setDate(1)
+    }
+    de = yyyyMmDd(start)
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    days = Math.max(1, Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1)
+  }
 
   if (args.period === 'custom') {
     const deIso = dateInputToIso(args.customFrom)
@@ -157,6 +178,7 @@ export function useInsumosDashboardController({
   overviewPeriod,
   overviewSectionRef,
   overviewVisible,
+  readableUnits,
   setInsightsAlertas,
   setInsightsLoaded,
   setInsightsLoading,
@@ -292,12 +314,22 @@ export function useInsumosDashboardController({
         })
         const isLite = opts?.lite !== false
         if (isLite) params.set('lite', '1')
-        const out = await apiJson<{ success?: boolean; data?: OverviewBundleData }>(
-          `/analytics/overview?${params.toString()}`,
-          { signal: ac.signal }
+        const units = unidade === INSUMOS_ALL_UNITS ? readableUnits : [unidade]
+        const responses = await Promise.all(
+          units.filter(Boolean).map(async (unit) => {
+            const unitParams = new URLSearchParams(params)
+            unitParams.set('unidade', unit)
+            const response = await apiJson<{ success?: boolean; data?: OverviewBundleData }>(
+              `/analytics/overview?${unitParams.toString()}`,
+              { signal: ac.signal }
+            )
+            return response?.data || null
+          })
         )
+        const data = unidade === INSUMOS_ALL_UNITS
+          ? mergeOverviewData(responses, units)
+          : responses[0] || null
         if (overviewAbortRef.current !== ac) return
-        const data = out?.data || null
         setOverviewResumo(data?.resumo || null)
         if (Array.isArray(data?.itens)) {
           setOverviewInsumos(data.itens as Insumo[])
@@ -363,6 +395,7 @@ export function useInsumosDashboardController({
       setOverviewResumo,
       setOverviewRoi,
       unidade,
+      readableUnits,
     ]
   )
 
@@ -398,12 +431,20 @@ export function useInsumosDashboardController({
         }
         params.set('days', String(days))
 
-        const out = await apiJson<{ success?: boolean; data?: InsightsBundleData }>(
-          `/analytics/insights?${params.toString()}`,
-          { signal: ac.signal }
+        const units = unidade === INSUMOS_ALL_UNITS ? readableUnits : [unidade]
+        const responses = await Promise.all(
+          units.filter(Boolean).map(async (unit) => {
+            const unitParams = new URLSearchParams(params)
+            unitParams.set('unidade', unit)
+            const response = await apiJson<{ success?: boolean; data?: InsightsBundleData }>(
+              `/analytics/insights?${unitParams.toString()}`,
+              { signal: ac.signal }
+            )
+            return response?.data || null
+          })
         )
         if (insightsAbortRef.current !== ac) return
-        const data = out?.data || null
+        const data = unidade === INSUMOS_ALL_UNITS ? mergeInsightsData(responses) : responses[0] || null
         setInsightsAlertas(Array.isArray(data?.alertas) ? data.alertas : [])
         setInsightsTrends(data?.trends || null)
         setInsightsTurnover(data?.turnover || null)
@@ -438,6 +479,7 @@ export function useInsumosDashboardController({
       setInsightsTrends,
       setInsightsTurnover,
       setOverviewEverVisible,
+      readableUnits,
       unidade,
     ]
   )

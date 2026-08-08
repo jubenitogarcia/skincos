@@ -2,7 +2,30 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const ATENDIMENTO_CONTROL_FILE = "/etc/skincos/atendimento/module-control.json";
+// Every non-preview target has its own local control file and health surface.
+// Staging intentionally remains loopback-only until a separately reviewed
+// dedicated tunnel exists; a hosted GitHub runner must never mistake an
+// unprovisioned public hostname for evidence of a staging runtime.
+export const ATENDIMENTO_RUNTIME_TARGETS = Object.freeze({
+  staging: Object.freeze({
+    controlFile: "/etc/skincos/atendimento-staging/module-control.json",
+    healthUrl: "http://127.0.0.1:8111/health",
+    healthVerification: "native-loopback-only",
+  }),
+  production: Object.freeze({
+    controlFile: "/etc/skincos/atendimento-production/module-control.json",
+    healthUrl: "https://crm-atendimento.skincos.com.br/health",
+    healthVerification: "dedicated-production-tunnel",
+  }),
+});
+
+export const ATENDIMENTO_CONTROL_FILES = Object.freeze(
+  Object.fromEntries(Object.entries(ATENDIMENTO_RUNTIME_TARGETS).map(([target, runtime]) => [target, runtime.controlFile])),
+);
+
+export const ATENDIMENTO_HEALTH_URLS = Object.freeze(
+  Object.fromEntries(Object.entries(ATENDIMENTO_RUNTIME_TARGETS).map(([target, runtime]) => [target, runtime.healthUrl])),
+);
 
 // These identifiers are resolved by the versioned native runtime scripts and
 // are deliberately not shell command strings. This validator never invokes a
@@ -11,11 +34,6 @@ export const ATENDIMENTO_COMMAND_IDS = Object.freeze({
   deploy: "atendimento-release-deploy-v1",
   rollback: "atendimento-release-rollback-v1",
   control: "atendimento-module-control-v1",
-});
-
-export const ATENDIMENTO_HEALTH_URLS = Object.freeze({
-  staging: "https://crm-atendimento-staging.skincos.com.br/api/atendimento/health",
-  production: "https://crm.skincos.com.br/api/atendimento/health",
 });
 
 const TARGETS = new Set(["preview", "staging", "production"]);
@@ -80,6 +98,17 @@ export function validateAtendimentoDeploymentContract(environment = process.env)
     return report;
   }
 
+  const runtimeTarget = ATENDIMENTO_RUNTIME_TARGETS[target];
+  if (!runtimeTarget) {
+    report.result = "blocked";
+    return report;
+  }
+  report.runtime = {
+    controlFile: runtimeTarget.controlFile,
+    healthUrl: runtimeTarget.healthUrl,
+    healthVerification: runtimeTarget.healthVerification,
+  };
+
   const explicitlyEnabled = string(environment.ENABLE_ATENDIMENTO_DEPLOY) === "true";
   report.controls.releaseEnabled = { explicitlyEnabled };
   if (!explicitlyEnabled) {
@@ -91,7 +120,7 @@ export function validateAtendimentoDeploymentContract(environment = process.env)
     errors,
     "controlFile",
     string(environment.CRM_MODULE_CONTROL_FILE),
-    ATENDIMENTO_CONTROL_FILE,
+    runtimeTarget.controlFile,
     "CRM_MODULE_CONTROL_FILE",
   );
   checkExact(
@@ -123,7 +152,7 @@ export function validateAtendimentoDeploymentContract(environment = process.env)
     errors,
     "healthUrl",
     string(environment.CRM_ATENDIMENTO_HEALTH_URL),
-    ATENDIMENTO_HEALTH_URLS[target],
+    runtimeTarget.healthUrl,
     "CRM_ATENDIMENTO_HEALTH_URL",
   );
 

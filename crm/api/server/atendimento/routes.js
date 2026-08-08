@@ -2,10 +2,12 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import express from 'express'
 import { createAtendimentoStore, canAccessAtendimento } from './store.js'
 import { createCommercialDataQualityStore } from './commercialDataQualityStore.js'
+import { createCommercialOperationsStore } from './commercialOperationsStore.js'
 import { createClientesSourceOperationsStore } from '../clientes/sourceOperationsStore.js'
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
 import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
 import { createClinicalApprovalStore } from '../clinical/clinicalApprovalStore.js'
+import { actorSubject } from './actorSubject.js'
 
 const json = (res, status, body, headers = {}) => {
     res.status(status)
@@ -59,8 +61,10 @@ function parseActorHeader(req) {
         const actor = JSON.parse(b64UrlDecode(encoded))
         if (!actor || typeof actor !== 'object') return null
         const rawRole = actor.role
+        const id = actorSubject(actor)
+        if (!id) return null
         return {
-            id: String(actor.id || actor.username || actor.email || '').trim(),
+            id,
             username: actor.username ? String(actor.username) : undefined,
             email: actor.email ? String(actor.email) : undefined,
             name: actor.name ? String(actor.name) : undefined,
@@ -102,8 +106,10 @@ function devSessionActor(req, getDevSession) {
     const user = session?.user || null
     if (!user) return null
     const rawRole = user.role
+    const id = actorSubject(user)
+    if (!id) return null
     return {
-        id: String(user.username || user.email || '').trim(),
+        id,
         username: user.username ? String(user.username) : undefined,
         email: user.email ? String(user.email) : undefined,
         name: user.displayName ? String(user.displayName) : undefined,
@@ -187,6 +193,16 @@ function requestsClinicalCadenceApproval(payload) {
     return String(payload?.status || '').trim().toLowerCase() === 'approved'
 }
 
+function commercialOperationPayload(req) {
+    const body = req?.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+    const bodyKey = String(body.idempotencyKey || '').trim()
+    const headerKey = String(req?.headers?.['idempotency-key'] || '').trim()
+    if (bodyKey && headerKey && bodyKey !== headerKey) {
+        throw sourceOperationsError('COMMERCIAL_IDEMPOTENCY_KEY_MISMATCH', 400)
+    }
+    return { ...body, idempotencyKey: headerKey || bodyKey }
+}
+
 function isLocalRequest(req) {
     // Host is caller-controlled. Only the peer address may authorize the
     // unsigned local-development actor or the local mirror diagnostics.
@@ -260,6 +276,16 @@ export function createAtendimentoRouter(options = {}) {
         pool: options.commercialDataQualityPool,
         databaseUrl: options.databaseUrl,
     })
+    let commercialOperationsStore = options.commercialOperationsStore || null
+    const getCommercialOperationsStore = () => {
+        if (!commercialOperationsStore) {
+            commercialOperationsStore = createCommercialOperationsStore({
+                pool: options.commercialOperationsPool,
+                databaseUrl: options.databaseUrl,
+            })
+        }
+        return commercialOperationsStore
+    }
     let commercialSourceOperationsStore = options.commercialSourceOperationsStore || null
     const getCommercialSourceOperationsStore = () => {
         if (!commercialSourceOperationsStore) {
@@ -280,6 +306,12 @@ export function createAtendimentoRouter(options = {}) {
     const metaAdsOfferContextToken = String(
         options.metaAdsOfferContextToken || process.env.META_ADS_OFFER_CONTEXT_TOKEN || '',
     ).trim()
+    // The dedicated read-only runtime owns a replay-protected actor verifier.
+    // Keep the shared CRM's long-lived v1 verifier intact until it can migrate
+    // under its own compatibility gate.
+    const customVerifySignedActor = typeof options.verifySignedActor === 'function'
+        ? options.verifySignedActor
+        : null
     const getDevSession = options.getDevSession || null
     const expressRouter = options.routerFactory ? options.routerFactory() : express.Router()
 
@@ -313,10 +345,12 @@ export function createAtendimentoRouter(options = {}) {
                 req.metaAdsOfferContext = true
                 return next()
             }
-            if (!actorKey && String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+            if (!actorKey && !customVerifySignedActor && String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
                 return json(res, 503, { ok: false, error: 'ACTOR_KEY_NOT_CONFIGURED' })
             }
-            let actor = await verifySignedActor(req, actorKey)
+            let actor = customVerifySignedActor
+                ? await customVerifySignedActor(req)
+                : await verifySignedActor(req, actorKey)
             if (!actor) actor = devSessionActor(req, getDevSession)
             if (!actor) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
             if (!canAccessAtendimento(actor, req.path, req.method)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
@@ -431,6 +465,60 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    expressRouter.get('/commercial/identity-clusters', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.identityClusterWorkspace(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/identity-clusters/:clusterKey', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.identityClusterDetail(String(req.params.clusterKey || ''), req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/identity-clusters/bulk/preview', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.previewIdentityClusterBulk(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/identity-clusters/bulk/apply', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await store.applyIdentityClusterBulk({
+                    ...(req.body || {}),
+                    idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim(),
+                }, req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/identity-clusters/:clusterKey/reveal', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await store.revealIdentityCluster({ ...(req.body || {}), clusterKey: String(req.params.clusterKey || '') }, req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.post('/commercial/review/:type/decision', async (req, res) => {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
@@ -468,6 +556,72 @@ export function createAtendimentoRouter(options = {}) {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
             return json(res, 200, { ok: true, ...(await store.commercialPolicy(req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    // Rollout is intentionally separate from commercial policy, consent and
+    // clinical cadence. No endpoint here enables contact writes or dispatches
+    // a message; it only maintains an auditable, unit-scoped cohort.
+    expressRouter.get('/commercial/canary/state', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.commercialCanaryState(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/canary/candidates', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.commercialCanaryCandidates(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary/preview', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.previewCommercialCanary(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary/identities/validate', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.validateCommercialCanaryIdentity(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.saveCommercialCanary(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary/remove', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.removeCommercialCanary(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/canary/emergency-off', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.emergencyOffCommercialCanary(req.body || {}, req.atendimentoActor)) })
         } catch (error) {
             return errorResponse(res, error)
         }
@@ -555,6 +709,143 @@ export function createAtendimentoRouter(options = {}) {
             // Missing schema, a pool failure or an unavailable dependency must
             // not disclose database details to the console.
             return json(res, 503, { ok: false, error: 'COMMERCIAL_SOURCE_OPERATIONS_UNAVAILABLE' })
+        }
+    })
+
+    // Commercial Operations v2 is intentionally separate from the legacy
+    // action store.  Its read models are PII-minimized, and every mutation
+    // below is an internal ledger/work-queue operation only: there is no send,
+    // consent write, campaign dispatch or automated contact route here.
+    expressRouter.get('/commercial/operations/readiness', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            const readiness = await getCommercialOperationsStore().readiness(req.atendimentoActor)
+            return json(res, readiness.ready ? 200 : 503, { ok: readiness.ready, ...readiness })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/operations/wallet', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialOperationsStore().wallet(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/operations/team', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialOperationsStore().team(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/operations/campaigns', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialOperationsStore().campaigns(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/operations/campaigns/:campaignId', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await getCommercialOperationsStore().campaign(String(req.params.campaignId || ''), req.query || {}, req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/operations/customer-360/:identityId', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await getCommercialOperationsStore().customer360(String(req.params.identityId || ''), req.query || {}, req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/operations/campaigns', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialOperationsStore().createCampaign(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.patch('/commercial/operations/campaigns/:campaignId', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await getCommercialOperationsStore().updateCampaign(String(req.params.campaignId || ''), commercialOperationPayload(req), req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/operations/actions/:actionId/reassign', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await getCommercialOperationsStore().reassignAction(String(req.params.actionId || ''), commercialOperationPayload(req), req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/operations/actions/:actionId/outcome', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await getCommercialOperationsStore().recordOutcome(String(req.params.actionId || ''), commercialOperationPayload(req), req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/operations/absences', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialOperationsStore().upsertAbsence(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/operations/rebalance/preview', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialOperationsStore().previewRebalance(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/operations/rebalance/apply', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialOperationsStore().applyRebalance(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
         }
     })
 
@@ -852,6 +1143,7 @@ export const __testables = {
     projectCommercialSourceOperation,
     requestsClinicalCadenceApproval,
     parseActorHeader,
+    devSessionActor,
     isLocalRequest,
     atendimentoReadOnlyRuntime,
     atendimentoClientesOnlyRuntime,

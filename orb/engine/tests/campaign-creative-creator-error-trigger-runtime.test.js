@@ -22,6 +22,8 @@ test('Orb starts n8n through the error-workflow bootstrap', () => {
   assert.match(unit, /^ExecStart=__REPO_ROOT__\/orb\/engine\/scripts\/start-n8n-runtime\.sh$/m);
   assert.match(starter, /--require=\$preload/);
   assert.match(starter, /exec \/usr\/local\/bin\/n8n start/);
+  const bootstrapCore = fs.readFileSync(bootstrapCorePath, 'utf8');
+  assert.doesNotMatch(bootstrapCore, /\nbootstrap\(\);\n/);
 });
 
 test('bootstrap preserves only the CCG recovery lineage in the native error payload', { skip: !fs.existsSync(servicePath) }, () => {
@@ -158,6 +160,44 @@ test('smoke-only drain waits for the native error execution before the CLI exits
   drain.track(Promise.resolve());
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.deepEqual(exits, [1]);
+});
+
+test('smoke-only drain registers the detached error path before the CLI exit can win', async () => {
+  const bootstrap = require(bootstrapCorePath);
+  const exits = [];
+  const fakeProcess = {
+    env: { SKINCOS_AWAIT_ERROR_WORKFLOW: '1', SKINCOS_AWAIT_ERROR_WORKFLOW_TIMEOUT_MS: '1000' },
+    exit(code) { exits.push(code); },
+  };
+  const drain = bootstrap.createCliErrorWorkflowDrain(fakeProcess, { timeoutMs: 1000 });
+  fakeProcess.exit(1);
+  const release = drain.beginExpectedErrorWorkflow();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(exits, []);
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(exits, [1]);
+});
+
+test('smoke-only drain tracks error-workflow service setup and releases its expected gate', async () => {
+  const bootstrap = require(bootstrapCorePath);
+  const tracked = [];
+  let released = 0;
+  const drain = {
+    track(value) { tracked.push(value); },
+    settleExpectedErrorWorkflow() { released += 1; },
+  };
+  class FakeWorkflowExecutionService {
+    async executeErrorWorkflow() { return 'scheduled'; }
+  }
+  assert.equal(
+    bootstrap.patchWorkflowExecutionServiceForCliDrain(FakeWorkflowExecutionService, drain),
+    true,
+  );
+  const service = new FakeWorkflowExecutionService();
+  assert.equal(await service.executeErrorWorkflow(), 'scheduled');
+  assert.equal(released, 1);
+  assert.equal(await tracked[0], 'scheduled');
 });
 
 test('smoke-only drain tracks the post-execution promise for native error workflows only', async () => {

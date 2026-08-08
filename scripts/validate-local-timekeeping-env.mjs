@@ -35,6 +35,14 @@ function permissionModel(resolved, label) {
     try {
       return inspectWindowsPrivateAcl(resolved, label)
     } catch (error) {
+      // Supported launches are initiated by the native Windows shortcut. If
+      // WSL cannot spawn powershell.exe, accept only its file-specific native
+      // ACL attestation; direct WSL launches remain fail-closed.
+      const nativeValidated = label === 'CRM_INVENTORY_IDENTITY_ENV_FILE'
+        && process.env.CRM_WINDOWS_PRIVATE_ACL_VALIDATED === 'inventory-v1'
+        && process.env.CRM_WINDOWS_PRIVATE_ACL_VALIDATED_PATH
+        && fs.realpathSync(process.env.CRM_WINDOWS_PRIVATE_ACL_VALIDATED_PATH) === resolved
+      if (nativeValidated) return 'windows-native-launcher-acl'
       fail(error?.message || `${label} não pôde ter sua DACL verificada.`)
     }
   }

@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto'
 import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
 import { lockContactPhone } from '../contactPhoneLock.js'
+import { actorSubject } from './actorSubject.js'
 import {
     buildConversionReportFromRawRows,
     buildScheduleDropdowns,
@@ -32,7 +33,7 @@ import {
     splitList,
     stableConfigHash,
 } from './domain.js'
-import { segmentCommercialProfiles, summarizeCommercialProfiles } from './clientCommercial.js'
+import { minimizeCommercialOverviewProfile, segmentCommercialProfiles, summarizeCommercialProfiles } from './clientCommercial.js'
 import {
     resolveCommercialContactEligibility,
     transitionCommercialAction,
@@ -77,6 +78,36 @@ import {
     IDENTITY_REVIEW_WORKFLOW_MIGRATION_IDS,
     IDENTITY_REVIEW_WORKFLOW_MIGRATION_ID,
 } from './identityReviewMigration.js'
+import {
+    IDENTITY_CLUSTER_PRESENTATION_SCHEMA,
+    assertIdentityClusterConfirmation,
+    buildIdentityClusterBulkPreview,
+    buildIdentityReviewClusterPresentation,
+    explicitRevealFields,
+    identityClusterFingerprint,
+    identityClusterSourceFreshness,
+    stripIdentityClusterInternals,
+} from './identityClusterWorkspace.js'
+import {
+    IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID,
+} from './identityClusterWorkspaceMigration.js'
+import { COMMERCIAL_CANARY_LOCK_KEY, COMMERCIAL_CANARY_MIGRATION_ID } from './commercialCanaryMigration.js'
+import {
+    canaryOpaqueIdentityHash,
+    commercialCanaryApplyAllowed,
+    commercialCanaryRequestHash,
+    createCommercialCanaryCandidateCodec,
+    maskCanaryDisplayName,
+    normalizeCanaryApprovalReference,
+    normalizeCanaryExpectedRevision,
+    normalizeCanaryIdempotencyKey,
+    normalizeCanaryJustification,
+    normalizeCanaryPolicyVersion,
+    normalizeCanarySearch,
+    normalizeCanaryUnit,
+    normalizeCanaryValidationType,
+    summarizeCommercialCanaryCandidates,
+} from './commercialCanaryDomain.js'
 
 let pool = null
 
@@ -581,14 +612,17 @@ function requirePool(pool) {
 }
 
 function actorLabel(actor) {
-    return String(actor?.username || actor?.email || actor?.id || actor?.role || 'system').trim() || 'system'
+    if (actor === null || actor === undefined) return 'system'
+    const identity = actorSubject(actor)
+    if (!identity) throw mutationError('ACTOR_IDENTITY_REQUIRED', 401)
+    return identity
 }
 
 // Mutation idempotency and audit attribution must never fall back to a role.
 // Two distinct operators with the same role would otherwise share an
 // idempotency namespace and could receive each other's persisted response.
 export function actorIdentityForMutation(actor) {
-    const identity = String(actor?.id || actor?.username || actor?.email || '').trim()
+    const identity = actorSubject(actor)
     if (!identity) throw mutationError('ACTOR_IDENTITY_REQUIRED', 401)
     return identity
 }
@@ -3359,19 +3393,26 @@ async function assertCommercialContactCooldownControls(pgPool) {
     return availability
 }
 
-async function assertCommercialContactWriteRollout(client, identityId) {
+async function assertCommercialContactWriteRollout(client, identityId, unitSlug = '') {
     const result = await client.query(
-        `select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids
+        `select commercial_contact_writes_enabled
          from crm_atendimento.commercial_policy_config where singleton = true for share`,
     )
     const row = result.rows[0] || {}
     if (row.commercial_contact_writes_enabled !== true) {
         throw commercialContactError('COMMERCIAL_CONTACT_ROLLOUT_DISABLED')
     }
-    const identities = Array.isArray(row.commercial_contact_canary_identity_ids)
-        ? row.commercial_contact_canary_identity_ids.map(String)
-        : []
-    if (!identities.includes(String(identityId || '').trim())) {
+    // The legacy policy UUID array is intentionally never consulted. A future
+    // enablement must pass through the v2 append-only cohort, whose selected
+    // member was independently scoped, validated and freshness-checked.
+    const membership = await client.query(`select exists(
+        select 1
+          from crm_atendimento.commercial_canary_cohort_members member
+          join crm_atendimento.commercial_canary_cohorts cohort on cohort.id = member.cohort_id
+         where member.identity_id = $1::uuid and cohort.status = 'active'
+           and ($2::text = '' or member.unit_slug = $2)
+    ) as included`, [String(identityId || '').trim(), commercialUnit(unitSlug)])
+    if (membership.rows[0]?.included !== true) {
         throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED')
     }
 }
@@ -3497,6 +3538,236 @@ function commercialContactWritesEnabled(value) {
     if (value === undefined) return undefined
     if (typeof value !== 'boolean') throw commercialContactError('INVALID_COMMERCIAL_CONTACT_ROLLOUT', 400)
     return value
+}
+
+function commercialCanarySelectorSecret(options = {}) {
+    const secret = String(options.commercialCanarySelectorSecret || process.env.COMMERCIAL_CANARY_SELECTOR_HMAC_KEY || '').trim()
+    // A deliberately absent key leaves the new selector unavailable. There is
+    // no development fallback because a candidate reference must never become
+    // forgeable when an environment is misconfigured.
+    return Buffer.byteLength(secret, 'utf8') >= 32 ? secret : ''
+}
+
+function commercialCanaryCodec(secret) {
+    if (!secret) throw commercialContactError('COMMERCIAL_CANARY_SELECTOR_KEY_NOT_CONFIGURED', 503)
+    return createCommercialCanaryCandidateCodec(secret)
+}
+
+function commercialCanaryActorReference(secret, actor) {
+    // Keep durable selector evidence attributable without persisting an e-mail,
+    // username, or another actor identifier in the canary ledger.
+    const identity = actorIdentityForMutation(actor)
+    return `actor:${commercialCanaryRequestHash(secret, { scope: 'commercial-canary-actor-v1', identity })}`
+}
+
+function commercialCanaryAuditActor(actorReference, actor) {
+    return {
+        id: actorReference,
+        role: String(actor?.role || '').trim().toUpperCase() || 'UNKNOWN',
+    }
+}
+
+function commercialCanaryJustificationReference(secret, justification) {
+    // Validate the original text at the boundary, then retain only a keyed
+    // receipt. Free text must not reach a durable operational ledger.
+    return `reason:${commercialCanaryRequestHash(secret, { scope: 'commercial-canary-justification-v1', justification })}`
+}
+
+async function readCommercialCanaryAvailability(pgPool) {
+    const result = await pgPool.query(`select
+        to_regclass('crm_atendimento.commercial_canary_cohorts') as cohorts,
+        to_regclass('crm_atendimento.commercial_canary_cohort_members') as members,
+        to_regclass('crm_atendimento.commercial_canary_identity_validations') as validations,
+        to_regclass('crm_atendimento.commercial_canary_events') as events,
+        to_regclass('crm_atendimento.commercial_data_quality_findings') as findings,
+        to_regclass('crm_atendimento.schema_migrations') as registry,
+        exists(select 1 from pg_trigger where tgrelid = to_regclass('crm_atendimento.commercial_canary_events')
+            and tgname = 'commercial_canary_events_immutable' and tgenabled = 'O'
+            and tgfoid = to_regprocedure('crm_atendimento.prevent_commercial_canary_event_mutation()')
+            and (tgtype::integer & 8) <> 0 and (tgtype::integer & 16) <> 0) as events_immutable,
+        exists(select 1 from pg_trigger where tgrelid = to_regclass('crm_atendimento.commercial_canary_events')
+            and tgname = 'commercial_canary_events_no_truncate' and tgenabled = 'O'
+            and tgfoid = to_regprocedure('crm_atendimento.prevent_commercial_canary_event_mutation()')
+            and (tgtype::integer & 32) <> 0) as events_no_truncate`)
+    const row = result.rows[0] || {}
+    if (!row.cohorts || !row.members || !row.validations || !row.events || !row.registry || !row.events_immutable || !row.events_no_truncate) {
+        return { ready: false, sourceFreshnessReady: !!row.findings }
+    }
+    const migration = await pgPool.query(`select id from crm_atendimento.schema_migrations
+        where id = $1 and rolled_back_at is null`, [COMMERCIAL_CANARY_MIGRATION_ID])
+    return {
+        ready: migration.rows.length === 1,
+        sourceFreshnessReady: !!row.findings,
+        ledgerReady: !!row.events_immutable && !!row.events_no_truncate,
+    }
+}
+
+async function assertCommercialCanaryReady(pgPool) {
+    const availability = await readCommercialCanaryAvailability(pgPool)
+    if (!availability.ready || !availability.ledgerReady) throw commercialContactError('COMMERCIAL_CANARY_CONTROLS_NOT_READY')
+    return availability
+}
+
+async function commercialCanarySourceFreshness(pgPool, availability) {
+    // The v2 selector treats the absence of an operational freshness finding as
+    // unknown, never as healthy. A source must be explicitly observed healthy
+    // before it can be used in a cohort.
+    if (!availability?.sourceFreshnessReady) return 'unknown'
+    const result = await pgPool.query(`select
+        count(*)::int as observed_sources,
+        count(*) filter (where status not in ('resolved', 'suppressed'))::int as unhealthy_sources
+        from crm_atendimento.commercial_data_quality_findings
+        where finding_key like 'source.%'`)
+    const row = result.rows[0] || {}
+    if (Number(row.observed_sources || 0) < 1) return 'unknown'
+    return Number(row.unhealthy_sources || 0) === 0 ? 'healthy' : 'stale'
+}
+
+async function readCommercialCanaryValidations(pgPool, identityIds, unitSlug) {
+    const ids = Array.isArray(identityIds) ? identityIds.map(String).filter(Boolean) : []
+    const values = new Map()
+    if (!ids.length) return values
+    const result = await pgPool.query(`select identity_id::text as identity_id, validation_type, revision, expires_at
+        from crm_atendimento.commercial_canary_identity_validations
+        where identity_id = any($1::uuid[]) and unit_slug = $2`, [ids, unitSlug])
+    for (const row of result.rows || []) {
+        const expired = row.expires_at && new Date(row.expires_at).getTime() <= Date.now()
+        values.set(String(row.identity_id), {
+            type: row.validation_type,
+            revision: Number(row.revision || 0),
+            valid: !expired,
+        })
+    }
+    return values
+}
+
+function commercialCanaryIdentityQuality(sourceTypes) {
+    const values = Array.isArray(sourceTypes) ? sourceTypes : []
+    return values.length >= 2 ? 'confirmed_multi_source' : 'review_required'
+}
+
+function commercialCanaryCandidate({ identityId, canonicalName, sourceTypes, contactEligibility, validation, unitSlug, freshness, codec }) {
+    const phoneStatus = contactEligibility?.hasPhone ? 'correlated' : 'uncorrelated'
+    const optOut = contactEligibility?.optOutRecorded === true ? 'opted_out' : 'not_recorded'
+    const identityQuality = commercialCanaryIdentityQuality(sourceTypes)
+    const validationStatus = validation?.valid === true ? 'valid' : 'required'
+    let eligibility = contactEligibility?.status === 'blocked' || optOut === 'opted_out' ? 'blocked' : 'review_required'
+    if (contactEligibility?.status === 'eligible' && phoneStatus === 'correlated' && optOut !== 'opted_out' &&
+        identityQuality === 'confirmed_multi_source' && validationStatus === 'valid' && freshness === 'healthy') eligibility = 'eligible'
+    return {
+        candidateRef: codec.encode({ identityId, unit: unitSlug }),
+        displayNameMasked: maskCanaryDisplayName(canonicalName),
+        unit: unitSlug,
+        identityQuality,
+        permissionStatus: contactEligibility?.permissionStatus || 'unknown',
+        phoneStatus,
+        optOut,
+        freshness,
+        inclusionReason: validation?.type === 'synthetic' ? 'validated_synthetic' : validation?.type === 'explicit_approved' ? 'validated_explicit_approved' : 'validation_required',
+        validationStatus,
+        validationRevision: Number(validation?.revision || 0),
+        eligibility,
+    }
+}
+
+function commercialCanaryMutationPayload(payload) {
+    const candidateRefs = Array.isArray(payload?.candidateRefs) ? payload.candidateRefs.map((value) => String(value || '').trim()).filter(Boolean) : []
+    if (!candidateRefs.length || candidateRefs.length > 100) throw commercialContactError('COMMERCIAL_CANARY_COHORT_INVALID', 400)
+    if (new Set(candidateRefs).size !== candidateRefs.length) throw commercialContactError('COMMERCIAL_CANARY_DUPLICATE_SELECTION', 409)
+    if (payload?.confirmed !== true) throw commercialContactError('COMMERCIAL_CANARY_CONFIRMATION_REQUIRED', 409)
+    return {
+        unit: normalizeCanaryUnit(payload?.unit),
+        candidateRefs,
+        justification: normalizeCanaryJustification(payload?.justification),
+        idempotencyKey: normalizeCanaryIdempotencyKey(payload?.idempotencyKey),
+        expectedPolicyVersion: normalizeCanaryPolicyVersion(payload?.expectedPolicyVersion),
+        expectedCohortVersion: normalizeCanaryExpectedRevision(payload?.expectedCohortVersion),
+    }
+}
+
+function commercialCanaryRemovalPayload(payload) {
+    if (payload?.confirmed !== true) throw commercialContactError('COMMERCIAL_CANARY_CONFIRMATION_REQUIRED', 409)
+    return {
+        unit: normalizeCanaryUnit(payload?.unit),
+        justification: normalizeCanaryJustification(payload?.justification),
+        idempotencyKey: normalizeCanaryIdempotencyKey(payload?.idempotencyKey),
+        expectedPolicyVersion: normalizeCanaryPolicyVersion(payload?.expectedPolicyVersion),
+        expectedCohortVersion: normalizeCanaryExpectedRevision(payload?.expectedCohortVersion),
+    }
+}
+
+async function assertCommercialCanaryUnit(client, actor, unitSlug) {
+    assertCommercialUnitInScope(actor, unitSlug)
+    const unit = await client.query(`select slug from crm_atendimento.units where slug = $1`, [unitSlug])
+    if (!unit.rows[0]?.slug) throw commercialContactError('COMMERCIAL_CANARY_UNIT_NOT_FOUND', 404)
+}
+
+function decodeCommercialCanaryReferences(codec, candidateRefs, unitSlug) {
+    const decoded = candidateRefs.map((reference) => codec.decode(reference))
+    if (decoded.some((candidate) => candidate.unit !== unitSlug)) throw commercialScopeError('COMMERCIAL_CANARY_UNIT_FORBIDDEN')
+    const identityIds = decoded.map((candidate) => candidate.identityId)
+    if (new Set(identityIds).size !== identityIds.length) throw commercialContactError('COMMERCIAL_CANARY_DUPLICATE_SELECTION', 409)
+    return identityIds.sort()
+}
+
+async function readCommercialCanaryIdentityRows(client, identityIds) {
+    const result = await client.query(`select id::text as identity_id, canonical_name, source_types
+        from crm_atendimento.global_client_identities
+        where id = any($1::uuid[])
+          and exists (select 1 from crm_atendimento.global_client_identity_members member where member.identity_id = global_client_identities.id)`, [identityIds])
+    const rows = new Map((result.rows || []).map((row) => [String(row.identity_id), row]))
+    if (rows.size !== identityIds.length) throw commercialContactError('COMMERCIAL_CANARY_CANDIDATE_INVALID', 409)
+    return rows
+}
+
+async function resolveCommercialCanarySelection(client, { identityIds, unitSlug, availability, codec }) {
+    const [rows, contactEligibility, validations, freshness] = await Promise.all([
+        readCommercialCanaryIdentityRows(client, identityIds),
+        queryCommercialContactEligibility(client, identityIds, { unitSlugs: [unitSlug] }),
+        readCommercialCanaryValidations(client, identityIds, unitSlug),
+        commercialCanarySourceFreshness(client, availability),
+    ])
+    const candidates = []
+    for (const identityId of identityIds) {
+        await assertCommercialIdentityUnitMembership(client, { identityId, unitSlug, availability: await readCommercialContactAvailability(client) })
+        const row = rows.get(identityId)
+        candidates.push(commercialCanaryCandidate({
+            identityId,
+            canonicalName: row.canonical_name,
+            sourceTypes: row.source_types,
+            contactEligibility: contactEligibility.get(identityId),
+            validation: validations.get(identityId),
+            unitSlug,
+            freshness,
+            codec,
+        }))
+    }
+    return candidates
+}
+
+async function commercialCanaryIdempotentResult(client, idempotencyKey, requestHash) {
+    const event = await client.query(`select request_hash, payload
+        from crm_atendimento.commercial_canary_events where idempotency_key = $1`, [idempotencyKey])
+    const existing = event.rows[0]
+    if (!existing) return null
+    if (existing.request_hash !== requestHash) throw commercialContactError('COMMERCIAL_CANARY_IDEMPOTENCY_CONFLICT', 409)
+    return existing.payload?.result || null
+}
+
+async function appendCommercialCanaryEvent(client, { idempotencyKey, requestHash, eventType, cohortId = null, unitSlug = null, policyVersion, actorReference, justificationReference, payload, result }) {
+    await client.query(`insert into crm_atendimento.commercial_canary_events(
+        idempotency_key, request_hash, event_type, cohort_id, unit_slug, policy_version, actor, justification, payload
+    ) values ($1, $2, $3, $4::uuid, $5, $6, $7, $8, $9::jsonb)`, [
+        idempotencyKey,
+        requestHash,
+        eventType,
+        cohortId,
+        unitSlug,
+        policyVersion,
+        actorReference,
+        justificationReference,
+        JSON.stringify({ ...payload, result }),
+    ])
 }
 
 function commercialExpectedPolicyVersion(value) {
@@ -4685,20 +4956,23 @@ function assertNoCurrentIdentityReviewDecision(latest, candidate) {
 
 async function createIdentityReviewDecision(client, {
     candidate, decision, reason, actor, sourceSnapshot = {}, materializationRunId = null,
-    resultingStatus = candidate.rawStatus, sourceVersion = candidate.version,
+    resultingStatus = candidate.rawStatus, sourceVersion = candidate.version, redactSourceSnapshot = false,
 }) {
     const actorIdentity = actorIdentityForMutation(actor)
-    const result = await client.query(`insert into crm_atendimento.identity_review_decisions(
-            materialization_run_id,review_type,source_id,target_id,decision,source_status,resulting_status,source_version,reason,actor,source_snapshot)
-        values($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb) returning id::text,created_at`, [
-        materializationRunId, candidate.reviewType, candidate.sourceId, candidate.targetId, decision, candidate.rawStatus,
-        resultingStatus, sourceVersion, reason, JSON.stringify({ id: actorIdentity, role: actor?.role || '' }), JSON.stringify({
+    const persistedSnapshot = redactSourceSnapshot
+        ? { sourceVersion: candidate.version, evidenceRedacted: true, ...sourceSnapshot }
+        : {
             sourceName: candidate.sourceName,
             targetName: candidate.targetName,
             evidence: candidate.evidence,
             context: candidate.context,
             ...sourceSnapshot,
-        }),
+        }
+    const result = await client.query(`insert into crm_atendimento.identity_review_decisions(
+            materialization_run_id,review_type,source_id,target_id,decision,source_status,resulting_status,source_version,reason,actor,source_snapshot)
+        values($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb) returning id::text,created_at`, [
+        materializationRunId, candidate.reviewType, candidate.sourceId, candidate.targetId, decision, candidate.rawStatus,
+        resultingStatus, sourceVersion, reason, JSON.stringify({ id: actorIdentity, role: actor?.role || '' }), JSON.stringify(persistedSnapshot),
     ])
     return result.rows[0]
 }
@@ -5017,10 +5291,532 @@ async function materializeIdentityReviewReversal(client, { candidate, reversesDe
     return { ...run, summary }
 }
 
+async function identityClusterWorkspaceStatus(pgPool) {
+    const availability = await pgPool.query(`select
+        to_regclass('crm_atendimento.schema_migrations') as registry,
+        to_regclass('crm_atendimento.identity_cluster_review_operations') as operations,
+        to_regclass('crm_atendimento.identity_cluster_reveal_events') as reveals,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_cluster_review_operations')
+            and tgname='identity_cluster_review_operations_immutable' and tgenabled='O') as operations_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_cluster_review_operations')
+            and tgname='identity_cluster_review_operations_no_truncate' and tgenabled='O') as operations_no_truncate,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_cluster_reveal_events')
+            and tgname='identity_cluster_reveal_events_immutable' and tgenabled='O') as reveals_immutable,
+        exists(select 1 from pg_trigger where tgrelid=to_regclass('crm_atendimento.identity_cluster_reveal_events')
+            and tgname='identity_cluster_reveal_events_no_truncate' and tgenabled='O') as reveals_no_truncate`)
+    const row = availability.rows[0] || {}
+    if (!row.registry || !row.operations || !row.reveals || !row.operations_immutable || !row.operations_no_truncate || !row.reveals_immutable || !row.reveals_no_truncate) {
+        return { ready: false, migrationId: IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID }
+    }
+    const migration = await pgPool.query(`select id from crm_atendimento.schema_migrations
+        where id=$1 and rolled_back_at is null`, [IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID])
+    return { ready: !!migration.rows[0]?.id, migrationId: IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID }
+}
+
+async function identityClusterSourceOperationCheckpoints(pgPool) {
+    const availability = await pgPool.query(`select to_regclass('crm_atendimento.clientes_source_operation_checkpoints') as checkpoints`)
+    if (!availability.rows[0]?.checkpoints) return {}
+    const checkpoints = await pgPool.query(`select source_id,last_status,validated_at,validated_snapshot_complete,reconciliation_required
+        from crm_atendimento.clientes_source_operation_checkpoints
+        where source_id = any($1::text[])`, [[
+        'atendimento.local_mirror',
+        'atendimento.google_sheet',
+        'vendas.caixa_google_sheet',
+        'cadastro.app_registrations',
+        'leads.supplemental_google_sheet',
+        'identity.global_graph',
+    ]])
+    return Object.fromEntries((checkpoints.rows || []).map((row) => [row.source_id, {
+        lastStatus: row.last_status,
+        validatedAt: row.validated_at,
+        validatedSnapshotComplete: row.validated_snapshot_complete === true,
+        reconciliationRequired: row.reconciliation_required === true,
+    }]))
+}
+
+function identityClusterEdgeSql() {
+    return [
+        `select 'attendance_name_merge'::text as review_type, m.left_client_id::text as source_id, m.right_client_id::text as target_id,
+                'attendance_client'::text as source_type, 'attendance_client'::text as target_type, m.status,
+                m.similarity::numeric as confidence, 'name'::text as method, m.evidence, m.updated_at,
+                md5(jsonb_build_object('type','attendance_name_merge','sourceId',m.left_client_id::text,
+                    'targetId',m.right_client_id::text,'status',m.status,'confidence',m.similarity,'evidence',m.evidence)::text) as source_version,
+                case when m.status='ambiguous' then 2 else 1 end as candidate_count
+           from crm_atendimento.client_merge_suggestions m
+          where m.status in ('pending','confirmed','rejected')`,
+        `select 'attendance_caixa'::text, link.client_id::text, link.caixa_customer_id::text,
+                'attendance_client'::text, 'caixa_customer'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence, link.updated_at,
+                md5(jsonb_build_object('type','attendance_caixa','sourceId',link.client_id::text,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end
+           from crm_atendimento.client_caixa_links link
+          where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+        `select 'app_attendance'::text, link.app_registration_id, link.client_id::text,
+                'app_registration'::text, 'attendance_client'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence, link.updated_at,
+                md5(jsonb_build_object('type','app_attendance','sourceId',link.app_registration_id,
+                    'targetId',link.client_id::text,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end
+           from crm_atendimento.app_registration_attendance_links link
+          where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+        `select 'app_caixa'::text, link.app_registration_id, link.caixa_customer_id::text,
+                'app_registration'::text, 'caixa_customer'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence, link.updated_at,
+                md5(jsonb_build_object('type','app_caixa','sourceId',link.app_registration_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end
+           from crm_atendimento.app_registration_caixa_links link
+          where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+        `select 'lead_app'::text, link.source_profile_id, link.app_registration_id,
+                'lead_profile'::text, 'app_registration'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence, link.updated_at,
+                md5(jsonb_build_object('type','lead_app','sourceId',link.source_profile_id,
+                    'targetId',link.app_registration_id,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end
+           from crm_atendimento.supplemental_lead_profile_app_links link
+          where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+        `select 'lead_caixa'::text, link.source_profile_id, link.caixa_customer_id::text,
+                'lead_profile'::text, 'caixa_customer'::text, link.status, link.confidence::numeric,
+                link.method, link.evidence, link.updated_at,
+                md5(jsonb_build_object('type','lead_caixa','sourceId',link.source_profile_id,
+                    'targetId',link.caixa_customer_id::text,'status',link.status,'method',link.method,
+                    'confidence',link.confidence,'evidence',link.evidence)::text),
+                case when link.status='ambiguous' then 2 else 1 end
+           from crm_atendimento.supplemental_lead_profile_caixa_links link
+          where link.status in ('suggested','ambiguous','confirmed','rejected','auto_confirmed')`,
+    ].join(' union all ')
+}
+
+function clusterEvidenceArray(value, keys) {
+    const source = value && typeof value === 'object' ? value : {}
+    for (const key of keys) {
+        if (Array.isArray(source[key])) return source[key].map((entry) => String(entry || '').trim()).filter(Boolean)
+    }
+    return []
+}
+
+function clusterValidatedMatch(row) {
+    const method = String(row?.method || '').trim()
+    return ['exact_phone', 'exact_email', 'exact_name_phone', 'exact_name_phone_sales_unit', 'phone_sales_attendance_anchor', 'spelling_same_caixa_customer'].includes(method)
+        || clusterEvidenceArray(row?.evidence, ['matchedFields', 'sharedFields']).some((field) => field === 'phone' || field === 'email')
+}
+
+async function queryIdentityClusterGraph(pgPool, actor, query = {}) {
+    const unitSlugs = commercialUnitSlugsForQuery(actor, query?.unit)
+    const edgeResult = await pgPool.query(`select * from (${identityClusterEdgeSql()}) cluster_edges`)
+    const edgeRows = edgeResult.rows || []
+    if (!edgeRows.length) {
+        return {
+            clusters: [],
+            graph: { members: 0, edges: 0 },
+            unitSlugs,
+            workflow: await identityReviewWorkflowStatus(pgPool),
+            workspace: await identityClusterWorkspaceStatus(pgPool),
+        }
+    }
+    const endpoints = edgeRows.flatMap((row) => [
+        { sourceType: row.source_type, sourceId: row.source_id },
+        { sourceType: row.target_type, sourceId: row.target_id },
+    ]).filter((entry) => entry.sourceType && entry.sourceId)
+    const endpointPayload = JSON.stringify([...new Map(endpoints.map((entry) => [`${entry.sourceType}:${entry.sourceId}`, entry])).values()])
+    const identityMembers = await pgPool.query(`with endpoints as (
+            select source_type,source_id from jsonb_to_recordset($1::jsonb) as endpoint(source_type text,source_id text)
+        ), selected_identities as (
+            select distinct member.identity_id
+              from crm_atendimento.global_client_identity_members member
+              join endpoints endpoint on endpoint.source_type=member.source_type and endpoint.source_id=member.source_id
+        )
+        select member.identity_id::text as identity_id, identity.canonical_name as identity_name,
+               identity.created_at as identity_created_at, member.source_type, member.source_id, member.updated_at
+          from crm_atendimento.global_client_identity_members member
+          join crm_atendimento.global_client_identities identity on identity.id=member.identity_id
+         where member.identity_id in (select identity_id from selected_identities)`, [endpointPayload])
+    const requested = [...new Map([
+        ...endpoints,
+        ...(identityMembers.rows || []).map((row) => ({ sourceType: row.source_type, sourceId: row.source_id })),
+    ].map((entry) => [`${entry.sourceType}:${entry.sourceId}`, entry])).values()]
+    const idsBySource = Object.fromEntries(['attendance_client', 'caixa_customer', 'app_registration', 'lead_profile'].map((sourceType) => [
+        sourceType,
+        requested.filter((entry) => entry.sourceType === sourceType).map((entry) => String(entry.sourceId)),
+    ]))
+    const [attendance, caixa, app, leads, decisions, lineage, sourceLinkHistory, sourceOperationCheckpoints] = await Promise.all([
+        pgPool.query(`select 'attendance_client'::text as source_type, client.id::text as source_id,
+                client.canonical_name as name,
+                coalesce(array_agg(distinct alias.alias_name order by alias.alias_name) filter (where alias.alias_name is not null), '{}'::text[]) as aliases,
+                coalesce(array_agg(distinct unit.slug order by unit.slug) filter (where unit.slug is not null), '{}'::text[]) as unit_slugs,
+                '[]'::jsonb as phone_keys, '[]'::jsonb as email_keys, '[]'::jsonb as cpf_keys, client.updated_at,
+                md5(concat_ws('|',client.id::text,client.canonical_name,client.updated_at::text)) as source_fingerprint
+           from crm_atendimento.canonical_clients client
+           left join crm_atendimento.client_aliases alias on alias.client_id=client.id
+           left join crm_atendimento.attendance_client_links link on link.client_id=client.id
+           left join crm_atendimento.attendances attendance on attendance.id=link.attendance_id and attendance.deleted_at is null
+           left join crm_atendimento.units unit on unit.id=attendance.unit_id
+          where client.id::text=any($1::text[])
+          group by client.id,client.canonical_name,client.updated_at`, [idsBySource.attendance_client]),
+        pgPool.query(`select 'caixa_customer'::text as source_type, customer.id::text as source_id,
+                customer.name, '{}'::text[] as aliases,
+                coalesce(array_agg(distinct unit.slug order by unit.slug) filter (where unit.slug is not null), '{}'::text[]) as unit_slugs,
+                case when nullif(customer.phone_key,'') is null then '[]'::jsonb else jsonb_build_array(customer.phone_key) end as phone_keys,
+                '[]'::jsonb as email_keys, '[]'::jsonb as cpf_keys, customer.updated_at,
+                md5(concat_ws('|',customer.id::text,customer.name,customer.phone_key,customer.updated_at::text)) as source_fingerprint
+           from crm_caixa.customers customer
+           left join crm_caixa.sales sale on sale.customer_id=customer.id
+           left join crm_atendimento.units unit on unit.id=sale.unit_id
+          where customer.id::text=any($1::text[])
+          group by customer.id,customer.name,customer.phone_key,customer.updated_at`, [idsBySource.caixa_customer]),
+        pgPool.query(`select 'app_registration'::text as source_type, source_client_id as source_id,
+                canonical_name as name,name_variants as aliases,unit_slugs,phone_keys,email_keys,cpf_keys,updated_at,
+                md5(jsonb_build_object('id',source_client_id,'name',canonical_name,'phones',phone_keys,'emails',email_keys,'units',unit_slugs,'updatedAt',updated_at)::text) as source_fingerprint
+           from crm_atendimento.app_client_registrations where source_client_id=any($1::text[])`, [idsBySource.app_registration]),
+        pgPool.query(`select 'lead_profile'::text as source_type, source_profile_id as source_id,
+                canonical_name as name,name_variants as aliases,unit_slugs,phone_keys,email_keys,'[]'::jsonb as cpf_keys,updated_at,
+                md5(jsonb_build_object('id',source_profile_id,'name',canonical_name,'phones',phone_keys,'emails',email_keys,'units',unit_slugs,'updatedAt',updated_at)::text) as source_fingerprint
+           from crm_atendimento.supplemental_lead_profiles where source_profile_id=any($1::text[])`, [idsBySource.lead_profile]),
+        pgPool.query(`select decision.event_order,decision.review_type,decision.source_id,decision.target_id,decision.decision,
+                decision.resulting_status,decision.source_version,decision.created_at,decision.materialization_run_id::text as materialization_run_id,
+                run.mode as run_mode,run.status as run_status,run.created_at as run_created_at,
+                coalesce(case when run.summary->>'membersMoved' ~ '^[0-9]+$' then (run.summary->>'membersMoved')::int else 0 end,0) as run_members_moved
+           from crm_atendimento.identity_review_decisions decision
+           left join crm_atendimento.identity_materialization_runs run on run.id=decision.materialization_run_id
+          order by decision.event_order desc`),
+        pgPool.query(`select predecessor_identity_id::text as predecessor_identity_id,successor_identity_id::text as successor_identity_id,relation,created_at
+           from crm_atendimento.identity_lineage order by created_at desc`),
+        pgPool.query(`select link_type as review_type,source_type,source_id,target_type,target_id,transition,resulting_status,origin,created_at
+           from crm_atendimento.identity_source_link_history order by created_at desc`),
+        identityClusterSourceOperationCheckpoints(pgPool),
+    ])
+    const sourceMap = new Map()
+    const now = new Date()
+    for (const row of [...attendance.rows, ...caixa.rows, ...app.rows, ...leads.rows]) {
+        sourceMap.set(`${row.source_type}:${row.source_id}`, {
+            sourceType: row.source_type, sourceId: row.source_id, name: row.name, canonicalName: row.name,
+            aliases: row.aliases, unitSlugs: row.unit_slugs, phoneKeys: row.phone_keys, emailKeys: row.email_keys,
+            cpfKeys: row.cpf_keys, updatedAt: row.updated_at, sourceFingerprint: row.source_fingerprint,
+            sourceFreshness: identityClusterSourceFreshness(row.source_type, sourceOperationCheckpoints, now),
+        })
+    }
+    const members = (identityMembers.rows || []).map((row) => ({
+        ...(sourceMap.get(`${row.source_type}:${row.source_id}`) || {}),
+        sourceType: row.source_type, sourceId: row.source_id, identityId: row.identity_id,
+        identityName: row.identity_name, identityCreatedAt: row.identity_created_at,
+        updatedAt: sourceMap.get(`${row.source_type}:${row.source_id}`)?.updatedAt || row.updated_at,
+    }))
+    const present = new Set(members.map((member) => `${member.sourceType}:${member.sourceId}`))
+    for (const endpoint of endpoints) {
+        const key = `${endpoint.sourceType}:${endpoint.sourceId}`
+        if (present.has(key) || !sourceMap.has(key)) continue
+        members.push({ ...sourceMap.get(key), identityId: '', identityName: sourceMap.get(key).name, identityCreatedAt: null })
+    }
+    const edges = edgeRows.map((row) => ({
+        reviewType: row.review_type, sourceType: row.source_type, sourceId: row.source_id,
+        targetType: row.target_type, targetId: row.target_id, status: row.status,
+        confidence: Number(row.confidence || 0), method: row.method,
+        matchedFields: clusterEvidenceArray(row.evidence, ['matchedFields', 'sharedFields']),
+        sharedUnits: clusterEvidenceArray(row.evidence, ['sharedUnits']),
+        sourceVersion: row.source_version, candidateCount: Number(row.candidate_count || 0),
+        validatedMatch: clusterValidatedMatch(row),
+    }))
+    const identityIds = [...new Set((identityMembers.rows || []).map((row) => row.identity_id).filter(Boolean))]
+    const history = identityIds.length ? await pgPool.query(`select identity_id::text as identity_id,
+            count(*) filter (where source='commercial_action')::int as actions,
+            count(*) filter (where source='commercial_permission')::int as permissions,
+            count(*) filter (where source='commercial_permission_event')::int as permission_events,
+            count(*) filter (where source='identity_audit')::int as audit_identity_events
+          from (
+            select action.identity_id,'commercial_action'::text as source from crm_atendimento.commercial_actions action where action.identity_id=any($1::uuid[])
+            union all select permission.identity_id,'commercial_permission'::text from crm_atendimento.commercial_contact_permissions permission where permission.identity_id=any($1::uuid[])
+            union all select event.identity_id,'commercial_permission_event'::text from crm_atendimento.commercial_contact_permission_events event where event.identity_id=any($1::uuid[])
+            union all select case when payload->>'identityId' ~ '^[0-9a-fA-F-]{36}$' then (payload->>'identityId')::uuid else null end,'identity_audit'::text from crm_atendimento.audit_events
+              where nullif(payload->>'identityId','') is not null
+          ) events where identity_id is not null group by identity_id`, [identityIds]) : { rows: [] }
+    const clusters = buildIdentityReviewClusterPresentation({
+        members,
+        edges,
+        decisions: (decisions.rows || []).map((row) => ({
+            eventOrder: row.event_order, reviewType: row.review_type, sourceId: row.source_id, targetId: row.target_id,
+            decision: row.decision, resultingStatus: row.resulting_status, sourceVersion: row.source_version,
+            createdAt: row.created_at, materializationRunId: row.materialization_run_id, runMode: row.run_mode,
+            runStatus: row.run_status, runCreatedAt: row.run_created_at, runMembersMoved: row.run_members_moved,
+        })),
+        lineage: (lineage.rows || []).map((row) => ({ predecessorIdentityId: row.predecessor_identity_id, successorIdentityId: row.successor_identity_id, relation: row.relation, createdAt: row.created_at })),
+        automaticLinkHistory: (sourceLinkHistory.rows || []).map((row) => ({ reviewType: row.review_type, sourceType: row.source_type, sourceId: row.source_id, targetType: row.target_type, targetId: row.target_id, transition: row.transition, resultingStatus: row.resulting_status, origin: row.origin, createdAt: row.created_at })),
+        historyByIdentity: Object.fromEntries((history.rows || []).map((row) => [row.identity_id, row])),
+        unitScope: unitSlugs,
+        includeInternals: true,
+    })
+    const search = normalizeText(query?.q || query?.search || '')
+    const includeResolved = String(query?.includeResolved || '').toLowerCase() === 'true'
+    const staleOnly = String(query?.stale || '').toLowerCase() === 'true'
+    const status = String(query?.status || '').trim()
+    const visibleClusters = clusters.filter((cluster) => {
+        if (!includeResolved && ['confirmed', 'rejected'].includes(cluster.decision.state)) return false
+        if (staleOnly && cluster.staleState !== 'stale') return false
+        if (status && cluster.decision.state !== status) return false
+        if (!search) return true
+        return cluster._members.flatMap((member) => [member.name, ...member.aliases, ...member.units]).join(' ').toLowerCase().includes(search)
+    })
+    return {
+        clusters: visibleClusters,
+        // Unit-scoped managers must never receive global traversal counts. The
+        // aggregate mirrors exactly the already-authorized, filtered graph.
+        graph: {
+            members: visibleClusters.reduce((sum, cluster) => sum + Number(cluster.summary?.memberCount || 0), 0),
+            edges: visibleClusters.reduce((sum, cluster) => sum + Number(cluster._edges?.length || 0), 0),
+        },
+        unitSlugs,
+        workflow: await identityReviewWorkflowStatus(pgPool),
+        workspace: await identityClusterWorkspaceStatus(pgPool),
+    }
+}
+
+function findIdentityCluster(clusters, clusterKey) {
+    const key = String(clusterKey || '').trim()
+    return (clusters || []).find((cluster) => cluster.clusterKey === key) || null
+}
+
+async function assertIdentityClusterWorkspaceReady(pgPool) {
+    const status = await identityClusterWorkspaceStatus(pgPool)
+    if (status.ready) return status
+    throw identityReviewError('IDENTITY_CLUSTER_WORKSPACE_NOT_READY', 409)
+}
+
+function identityClusterAuditSecret() {
+    const secret = String(
+        process.env.ATENDIMENTO_ACTOR_HMAC_KEY ||
+        process.env.ESCALA_ACTOR_HMAC_KEY ||
+        process.env.CRM_ESCALA_HMAC_KEY || '',
+    ).trim()
+    if (secret.length < 32) throw identityReviewError('IDENTITY_CLUSTER_AUDIT_KEY_REQUIRED', 503)
+    return secret
+}
+
+function identityClusterAuditDigest(actor, purpose, value) {
+    const actorIdentity = actorIdentityForMutation(actor)
+    return createHmac('sha256', identityClusterAuditSecret())
+        .update(`${purpose}:${actorIdentity}:${JSON.stringify(value)}`)
+        .digest('hex')
+}
+
+function identityClusterAuditActor(actor) {
+    const actorReference = identityClusterAuditDigest(actor, 'actor', { version: 1 })
+    const role = String(actor?.role || '').trim().toUpperCase()
+    if (!['GESTOR', 'ADMIN'].includes(role)) throw commercialScopeError('COMMERCIAL_UNIT_FORBIDDEN')
+    const scope = commercialUnitScope(actor)
+    return {
+        actorReference,
+        actorRole: role,
+        unitScope: scope === null ? ['global'] : scope,
+        mutationActor: {
+            ...actor,
+            id: actorReference,
+            username: undefined,
+            email: undefined,
+            name: undefined,
+            displayName: undefined,
+        },
+    }
+}
+
+function identityClusterExpectedVersions(payload = {}, requestedKeys = []) {
+    if (!payload.expectedVersions || typeof payload.expectedVersions !== 'object' || Array.isArray(payload.expectedVersions)) {
+        throw identityReviewError('IDENTITY_CLUSTER_EXPECTED_VERSIONS_REQUIRED')
+    }
+    const expectedVersions = payload.expectedVersions
+    const expectedKeys = Object.keys(expectedVersions).sort()
+    const requested = [...new Set(requestedKeys)].sort()
+    if (expectedKeys.length !== requested.length || expectedKeys.some((key, index) => key !== requested[index])) {
+        throw identityReviewError('IDENTITY_CLUSTER_EXPECTED_VERSIONS_REQUIRED')
+    }
+    for (const key of requested) {
+        if (!/^[a-f0-9]{64}$/.test(String(expectedVersions[key] || '').trim())) {
+            throw identityReviewError('IDENTITY_CLUSTER_VERSION_REQUIRED')
+        }
+    }
+    return expectedVersions
+}
+
+function identityClusterSelection(payload = {}) {
+    const keys = [...new Set((Array.isArray(payload.clusterKeys) ? payload.clusterKeys : [])
+        .map((value) => String(value || '').trim())
+        .filter((value) => /^[a-f0-9]{32}$/.test(value)))]
+    if (!keys.length || keys.length > 50) throw identityReviewError('IDENTITY_CLUSTER_BULK_SELECTION_REQUIRED')
+    return keys
+}
+
+async function applyIdentityClusterBulkTransaction(client, payload, actor) {
+    const { reason } = assertIdentityClusterConfirmation(payload)
+    const requestedKeys = identityClusterSelection(payload)
+    const expectedVersions = identityClusterExpectedVersions(payload, requestedKeys)
+    const idempotencyKey = normalizeIdempotencyKey(payload.idempotencyKey)
+    if (!idempotencyKey) throw identityReviewError('IDENTITY_CLUSTER_IDEMPOTENCY_KEY_REQUIRED')
+    const auditActor = identityClusterAuditActor(actor)
+    const requests = requestedKeys.map((clusterKey) => {
+        const expectedVersion = String(expectedVersions[clusterKey] || '').trim()
+        return {
+            clusterKey,
+            expectedVersion,
+            // A caller-controlled idempotency key can contain arbitrary text.
+            // Store only an opaque HMAC reference in the append-only ledger.
+            operationKey: identityClusterAuditDigest(actor, 'bulk-operation', { clusterKey, idempotencyKey }),
+            requestFingerprint: identityClusterAuditDigest(actor, 'bulk-request', {
+                clusterKey,
+                expectedVersion,
+                reason,
+                idempotencyKey,
+            }),
+        }
+    })
+    const resultsByKey = new Map()
+    const pending = []
+    for (const request of requests) {
+        const existing = await client.query(`select result,request_fingerprint from crm_atendimento.identity_cluster_review_operations
+            where operation_key=$1 for update`, [request.operationKey])
+        if (!existing.rows[0]) {
+            pending.push(request)
+            continue
+        }
+        if (existing.rows[0].request_fingerprint !== request.requestFingerprint) throw identityReviewError('IDENTITY_CLUSTER_IDEMPOTENCY_CONFLICT', 409)
+        resultsByKey.set(request.clusterKey, { clusterKey: request.clusterKey, idempotent: true, ...(existing.rows[0].result || {}) })
+    }
+    // Read and mutate the graph only for new commands. A successful first
+    // command changes the current graph version; replays must resolve from the
+    // immutable operation ledger before that version comparison can occur.
+    const graph = pending.length
+        ? await queryIdentityClusterGraph(client, actor, { unit: payload.unit, includeResolved: true })
+        : null
+    for (const request of pending) {
+        const { clusterKey, expectedVersion, operationKey, requestFingerprint } = request
+        const cluster = findIdentityCluster(graph?.clusters, clusterKey)
+        if (!cluster) throw identityReviewError('IDENTITY_CLUSTER_NOT_FOUND', 404)
+        if (!expectedVersion || expectedVersion !== cluster.version) throw identityReviewError('IDENTITY_CLUSTER_CONFLICT', 409)
+        if (!cluster.bulkReview.eligible) throw identityReviewError('IDENTITY_CLUSTER_BULK_NOT_ELIGIBLE', 409)
+        // The core decision ledger is retained for undo dependency analysis.
+        // Keep this new path free of operator-entered text: the HMAC digest is
+        // the auditable proof of the required justification.
+        const decisionReason = `identity_cluster_reason:${requestFingerprint}`
+        let clusterMoved = 0
+        for (const edge of cluster._edges) {
+            const normalized = {
+                reviewType: edge.reviewType,
+                sourceId: edge.sourceId,
+                targetId: edge.targetId,
+                survivorClientId: null,
+            }
+            await acquireIdentityReviewLocks(client, { ...normalized, ...IDENTITY_REVIEW_DEFINITIONS[edge.reviewType] })
+            const candidate = await readIdentityReviewCandidate(client, normalized)
+            await assertCommercialReviewCandidateScope(client, actor, candidate)
+            assertIdentityReviewCandidateVersion(candidate, edge.sourceVersion)
+            const latest = await readLatestIdentityReviewDecision(client, candidate)
+            assertNoCurrentIdentityReviewDecision(latest, candidate)
+            const sourceState = await writeIdentityReviewSourceStatus(client, candidate, 'confirmed', auditActor.mutationActor)
+            const materialization = await materializeIdentityReviewConfirmation(client, { candidate, actor: auditActor.mutationActor })
+            const sourceLinkTransitions = await recordIdentityReviewSourceLinkTransition(client, {
+                materializationRunId: materialization.id,
+                candidate,
+                previousStatus: candidate.rawStatus,
+                resultingStatus: sourceState.rawStatus,
+                origin: 'identity_cluster_bulk_review_v2',
+            })
+            await createIdentityReviewDecision(client, {
+                candidate,
+                decision: 'confirmed',
+                reason: decisionReason,
+                actor: auditActor.mutationActor,
+                materializationRunId: materialization.id,
+                resultingStatus: sourceState.rawStatus,
+                sourceVersion: sourceState.version,
+                redactSourceSnapshot: true,
+                sourceSnapshot: {
+                    clusterKey,
+                    previousSourceVersion: candidate.version,
+                    sourceLinkTransitions: sourceLinkTransitions.length,
+                },
+            })
+            clusterMoved += Number(materialization.summary?.membersMoved || 0)
+        }
+        const result = { membersMoved: clusterMoved, decisionState: 'confirmed' }
+        await client.query(`insert into crm_atendimento.identity_cluster_review_operations(
+                operation_key,cluster_key,cluster_version,operation,request_fingerprint,actor_reference,actor_role,unit_scope,result)
+            values($1,$2,$3,'bulk_confirm',$4,$5,$6,$7::jsonb,$8::jsonb)`, [
+            operationKey,
+            cluster.clusterKey,
+            cluster.version,
+            requestFingerprint,
+            auditActor.actorReference,
+            auditActor.actorRole,
+            JSON.stringify(auditActor.unitScope),
+            JSON.stringify(result),
+        ])
+        resultsByKey.set(clusterKey, { clusterKey, idempotent: false, ...result })
+    }
+    const results = requests.map((request) => resultsByKey.get(request.clusterKey)).filter(Boolean)
+    return {
+        schemaVersion: IDENTITY_CLUSTER_PRESENTATION_SCHEMA,
+        idempotent: results.every((result) => result.idempotent),
+        appliedClusters: results.length,
+        membersMoved: results.reduce((sum, result) => sum + Number(result.membersMoved || 0), 0),
+        results,
+    }
+}
+
+// Kept deliberately narrow for deterministic unit tests of the ledger replay
+// boundary. It is not an HTTP surface and does not expose raw graph members.
+export const __identityClusterWorkspaceTestables = Object.freeze({
+    applyIdentityClusterBulkTransaction,
+    identityClusterExpectedVersions,
+    identityClusterSelection,
+})
+
+async function revealIdentityCluster(client, payload, actor) {
+    const { reason, expectedVersion } = assertIdentityClusterConfirmation(payload)
+    if (!expectedVersion) throw identityReviewError('IDENTITY_CLUSTER_VERSION_REQUIRED')
+    const fields = explicitRevealFields(payload)
+    const graph = await queryIdentityClusterGraph(client, actor, { unit: payload.unit, includeResolved: true })
+    const cluster = findIdentityCluster(graph.clusters, payload.clusterKey)
+    if (!cluster) throw identityReviewError('IDENTITY_CLUSTER_NOT_FOUND', 404)
+    if (cluster.version !== expectedVersion) throw identityReviewError('IDENTITY_CLUSTER_CONFLICT', 409)
+    const auditActor = identityClusterAuditActor(actor)
+    const reasonDigest = identityClusterAuditDigest(actor, 'reveal-reason', { clusterKey: cluster.clusterKey, reason })
+    const inserted = await client.query(`insert into crm_atendimento.identity_cluster_reveal_events(
+            cluster_key,cluster_version,fields,reason_digest,actor_reference,actor_role,unit_scope)
+        values($1,$2,$3::jsonb,$4,$5,$6,$7::jsonb) returning id::text,created_at`, [
+        cluster.clusterKey,
+        cluster.version,
+        JSON.stringify(fields),
+        reasonDigest,
+        auditActor.actorReference,
+        auditActor.actorRole,
+        JSON.stringify(auditActor.unitScope),
+    ])
+    const contacts = cluster._members.map((member) => ({
+        sourceLabel: ({ attendance_client: 'Atendimento', caixa_customer: 'Caixa', app_registration: 'Cadastro do app', lead_profile: 'Leads e planilhas' })[member.sourceType] || 'Fonte',
+        name: member.name,
+        phone: fields.includes('phone') ? [...new Set(member.phoneKeys)].filter(Boolean) : [],
+        email: fields.includes('email') ? [...new Set(member.emailKeys)].filter(Boolean) : [],
+    })).filter((entry) => entry.phone.length || entry.email.length)
+    return {
+        clusterKey: cluster.clusterKey,
+        version: cluster.version,
+        revealRecorded: Boolean(inserted.rows[0]?.id),
+        revealedAt: inserted.rows[0]?.created_at || null,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        contacts,
+        privacy: { explicitAction: true, reasonRecorded: true, metricsAndLogsRedacted: true },
+    }
+}
+
 export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
     const clinicalApprovalStore = options.clinicalApprovalStore || null
     const schemaManaged = options.schemaManaged === true || String(process.env.CRM_ATENDIMENTO_SCHEMA_MANAGED || '').trim().toLowerCase() === 'true'
+    const canarySelectorSecret = commercialCanarySelectorSecret(options)
+    const expectedDatabase = String(options.expectedDatabase || process.env.CRM_ATENDIMENTO_EXPECTED_DATABASE || '').trim()
+    const expectedDatabaseUser = String(options.expectedDatabaseUser || process.env.CRM_ATENDIMENTO_EXPECTED_DATABASE_USER || '').trim()
     let readinessPromise = null
 
     async function ensureReady() {
@@ -5044,6 +5840,48 @@ export function createAtendimentoStore(options = {}) {
                 ok: !!pgPool,
                 databaseConfigured: !!pgPool,
             }
+        },
+
+        // Unlike health(), readiness intentionally performs the minimum
+        // dependency probe necessary to serve the isolated Clientes runtime.
+        // It never runs migrations and only reads PostgreSQL metadata, so an
+        // application role with no DDL remains sufficient.
+        async readiness() {
+            requirePool(pgPool)
+            const result = await pgPool.query(`
+                select
+                    current_database() as database_name,
+                    current_user as database_user,
+                    (current_setting('transaction_read_only', true) = 'on'
+                        or current_setting('default_transaction_read_only', true) = 'on') as transaction_read_only,
+                    to_regclass('crm_atendimento.schema_migrations') is not null as migrations_table,
+                    to_regclass('crm_atendimento.global_client_identities') is not null as identities_table,
+                    to_regclass('crm_atendimento.commercial_policy_config') is not null as commercial_policy_table,
+                    to_regclass('crm_atendimento.clientes_source_operation_runs') is not null as source_operations_table,
+                    to_regclass('clinical_approval.rules') is not null as clinical_approval_table
+            `)
+            const row = result.rows[0] || {}
+            const databaseIdentity = (!expectedDatabase || row.database_name === expectedDatabase)
+                && (!expectedDatabaseUser || row.database_user === expectedDatabaseUser)
+            const schemaReady = row.migrations_table === true
+                && row.identities_table === true
+                && row.commercial_policy_table === true
+                && row.source_operations_table === true
+                && row.clinical_approval_table === true
+            return {
+                ok: databaseIdentity && schemaReady && row.transaction_read_only === true,
+                databaseReachable: true,
+                databaseIdentity,
+                schemaManaged,
+                schemaReady,
+                sourceOperationsReady: row.source_operations_table === true,
+                clinicalApprovalReady: row.clinical_approval_table === true,
+                transactionReadOnly: row.transaction_read_only === true,
+            }
+        },
+
+        async close() {
+            if (typeof pgPool?.end === 'function') await pgPool.end()
         },
 
         async migrate() {
@@ -5453,8 +6291,87 @@ export function createAtendimentoStore(options = {}) {
                     hasPrevious: offset > 0,
                     hasNext: offset + limit < filtered.length,
                 },
-                profiles: (serverPage ? filtered : filtered.slice(offset, offset + limit)).map(minimizeCommercialProfile),
+                profiles: (serverPage ? filtered : filtered.slice(offset, offset + limit)).map(minimizeCommercialOverviewProfile),
             }
+        },
+
+        async identityClusterWorkspace(query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            const graph = await queryIdentityClusterGraph(pgPool, actor, query || {})
+            const limit = sanitizeLimit(query?.limit, 50, 100)
+            const offset = sanitizeOffset(query?.offset, 0)
+            const page = graph.clusters.slice(offset, offset + limit)
+            return {
+                schemaVersion: IDENTITY_CLUSTER_PRESENTATION_SCHEMA,
+                total: graph.clusters.length,
+                limit,
+                offset,
+                clusters: page.map(stripIdentityClusterInternals),
+                workflow: { writesReady: graph.workflow.ready },
+                workspace: graph.workspace,
+                graph: graph.graph,
+                pagination: { hasPrevious: offset > 0, hasNext: offset + page.length < graph.clusters.length },
+            }
+        },
+
+        async identityClusterDetail(clusterKey, query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            const graph = await queryIdentityClusterGraph(pgPool, actor, { ...(query || {}), includeResolved: true })
+            const cluster = findIdentityCluster(graph.clusters, clusterKey)
+            if (!cluster) throw identityReviewError('IDENTITY_CLUSTER_NOT_FOUND', 404)
+            return {
+                schemaVersion: IDENTITY_CLUSTER_PRESENTATION_SCHEMA,
+                cluster: stripIdentityClusterInternals(cluster),
+                workflow: { writesReady: graph.workflow.ready },
+                workspace: graph.workspace,
+            }
+        },
+
+        async previewIdentityClusterBulk(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            const graph = await queryIdentityClusterGraph(pgPool, actor, { unit: payload?.unit, includeResolved: true })
+            const requested = identityClusterSelection(payload || {})
+            const selected = graph.clusters.filter((cluster) => requested.includes(cluster.clusterKey))
+            // Do not turn an out-of-scope selection into a partial preview: it
+            // would conceal a scope error and make later application diverge.
+            if (selected.length !== requested.length) throw identityReviewError('IDENTITY_CLUSTER_NOT_FOUND', 404)
+            return {
+                ...buildIdentityClusterBulkPreview(selected),
+                workspace: graph.workspace,
+                workflow: { writesReady: graph.workflow.ready },
+            }
+        },
+
+        async applyIdentityClusterBulk(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            await assertIdentityReviewWorkflowReady(pgPool)
+            await assertIdentityClusterWorkspaceReady(pgPool)
+            return withPgTransaction(pgPool, async (client) => {
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
+                await assertIdentityReviewWorkflowReady(client)
+                await assertIdentityClusterWorkspaceReady(client)
+                return applyIdentityClusterBulkTransaction(client, payload || {}, actor)
+            })
+        },
+
+        async revealIdentityCluster(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            await assertIdentityClusterWorkspaceReady(pgPool)
+            return withPgTransaction(pgPool, async (client) => {
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
+                await assertIdentityClusterWorkspaceReady(client)
+                return revealIdentityCluster(client, payload || {}, actor)
+            })
         },
 
         async identityReviewQueue(query, actor) {
@@ -5808,10 +6725,358 @@ export function createAtendimentoStore(options = {}) {
             return { policy: await readCommercialPolicy(pgPool) }
         },
 
+        async commercialCanaryState(query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const requestedUnit = String(query?.unit || '').trim()
+            const unitSlug = requestedUnit ? normalizeCanaryUnit(requestedUnit) : ''
+            if (unitSlug) assertCommercialUnitInScope(actor, unitSlug)
+            const availability = await readCommercialCanaryAvailability(pgPool)
+            const policy = await readCommercialPolicy(pgPool)
+            const unitSlugs = unitSlug ? [unitSlug] : commercialUnitSlugsForQuery(actor)
+            let cohorts = []
+            if (availability.ready) {
+                const result = await pgPool.query(`select unit_slug, version, status, member_count, created_at, removed_at
+                    from crm_atendimento.commercial_canary_cohorts
+                    where ($1::text[] is null or unit_slug = any($1::text[]))
+                    order by unit_slug, version desc`, [unitSlugs])
+                const latest = new Map()
+                for (const row of result.rows || []) {
+                    if (!latest.has(row.unit_slug)) latest.set(row.unit_slug, row)
+                }
+                cohorts = [...latest.values()].map((row) => ({
+                    unit: row.unit_slug,
+                    version: Number(row.version || 0),
+                    status: row.status,
+                    memberCount: Number(row.member_count || 0),
+                    createdAt: row.created_at || null,
+                    removedAt: row.removed_at || null,
+                }))
+            }
+            return {
+                canary: {
+                    ready: availability.ready && availability.ledgerReady && !!canarySelectorSecret,
+                    selectorConfigured: !!canarySelectorSecret,
+                    sourceFreshness: await commercialCanarySourceFreshness(pgPool, availability),
+                    commercialWritesEnabled: false,
+                    messagesSent: 0,
+                    activeCohorts: cohorts.filter((cohort) => cohort.status === 'active'),
+                    latestCohorts: cohorts,
+                    emergencyOffAvailable: commercialUnitScope(actor) === null,
+                },
+                policy: {
+                    policyVersion: policy.policyVersion,
+                    commercialContactWritesEnabled: false,
+                    commercialContactCanaryIdentityIds: [],
+                },
+            }
+        },
+
+        async commercialCanaryCandidates(query, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const availability = await assertCommercialCanaryReady(pgPool)
+            const codec = commercialCanaryCodec(canarySelectorSecret)
+            const unitSlug = normalizeCanaryUnit(query?.unit)
+            await assertCommercialCanaryUnit(pgPool, actor, unitSlug)
+            const policy = await readCommercialPolicy(pgPool)
+            const page = await queryCommercialProfilesServerPage(pgPool, {
+                asOf: commercialAsOf(query?.asOf),
+                unitSlugs: [unitSlug],
+                thresholds: policy.returnRiskThresholds,
+                query: {
+                    q: normalizeCanarySearch(query?.q || query?.search),
+                    limit: sanitizeLimit(query?.limit, 25, 50),
+                    offset: sanitizeOffset(query?.offset, 0),
+                    sort: 'name',
+                    direction: 'asc',
+                },
+            })
+            const identityIds = page.profiles.map((profile) => profile.identityId)
+            const [validations, freshness] = await Promise.all([
+                readCommercialCanaryValidations(pgPool, identityIds, unitSlug),
+                commercialCanarySourceFreshness(pgPool, availability),
+            ])
+            return {
+                unit: unitSlug,
+                candidates: page.profiles.map((profile) => commercialCanaryCandidate({
+                    identityId: profile.identityId,
+                    canonicalName: profile.name,
+                    sourceTypes: profile.sourceTypes,
+                    contactEligibility: profile.contactEligibility,
+                    validation: validations.get(profile.identityId),
+                    unitSlug,
+                    freshness,
+                    codec,
+                })),
+                pagination: page.pagination,
+                total: page.total,
+                sourceFreshness: freshness,
+            }
+        },
+
+        async previewCommercialCanary(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const availability = await assertCommercialCanaryReady(pgPool)
+            const codec = commercialCanaryCodec(canarySelectorSecret)
+            const unitSlug = normalizeCanaryUnit(payload?.unit)
+            const candidateRefs = Array.isArray(payload?.candidateRefs) ? payload.candidateRefs.map((value) => String(value || '').trim()).filter(Boolean) : []
+            if (!candidateRefs.length || candidateRefs.length > 100 || new Set(candidateRefs).size !== candidateRefs.length) {
+                throw commercialContactError('COMMERCIAL_CANARY_COHORT_INVALID', 400)
+            }
+            await assertCommercialCanaryUnit(pgPool, actor, unitSlug)
+            const identityIds = decodeCommercialCanaryReferences(codec, candidateRefs, unitSlug)
+            const candidates = await resolveCommercialCanarySelection(pgPool, { identityIds, unitSlug, availability, codec })
+            const summary = summarizeCommercialCanaryCandidates(candidates)
+            return { unit: unitSlug, candidates, summary, canApply: commercialCanaryApplyAllowed(summary), commercialWritesEnabled: false, messagesSent: 0 }
+        },
+
+        async validateCommercialCanaryIdentity(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            if (payload?.confirmed !== true) throw commercialContactError('COMMERCIAL_CANARY_CONFIRMATION_REQUIRED', 409)
+            await assertCommercialCanaryReady(pgPool)
+            const codec = commercialCanaryCodec(canarySelectorSecret)
+            const unitSlug = normalizeCanaryUnit(payload?.unit)
+            const validationType = normalizeCanaryValidationType(payload?.validationType)
+            const candidate = codec.decode(payload?.candidateRef)
+            if (candidate.unit !== unitSlug) throw commercialScopeError('COMMERCIAL_CANARY_UNIT_FORBIDDEN')
+            const justification = normalizeCanaryJustification(payload?.justification)
+            const actorReference = commercialCanaryActorReference(canarySelectorSecret, actor)
+            const justificationReference = commercialCanaryJustificationReference(canarySelectorSecret, justification)
+            const idempotencyKey = normalizeCanaryIdempotencyKey(payload?.idempotencyKey)
+            const expectedPolicyVersion = normalizeCanaryPolicyVersion(payload?.expectedPolicyVersion)
+            const expectedValidationRevision = normalizeCanaryExpectedRevision(payload?.expectedValidationRevision, 'COMMERCIAL_CANARY_VALIDATION_VERSION_REQUIRED')
+            const approvalReference = validationType === 'explicit_approved' ? normalizeCanaryApprovalReference(payload?.approvalReference) : 'synthetic-validation'
+            const identityRefHash = canaryOpaqueIdentityHash(canarySelectorSecret, candidate.identityId)
+            const approvalReferenceHash = commercialCanaryRequestHash(canarySelectorSecret, { approvalReference })
+            const requestHash = commercialCanaryRequestHash(canarySelectorSecret, {
+                operation: 'identity_validated', actorReference, unit: unitSlug, identityRefHash, validationType, approvalReferenceHash, justificationReference, expectedPolicyVersion, expectedValidationRevision,
+            })
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [COMMERCIAL_CANARY_LOCK_KEY])
+                await assertCommercialCanaryReady(client)
+                const prior = await commercialCanaryIdempotentResult(client, idempotencyKey, requestHash)
+                if (prior) return prior
+                await assertCommercialCanaryUnit(client, actor, unitSlug)
+                await acquireCommercialContactIdentityLock(client, candidate.identityId)
+                const policy = await readCommercialPolicy(client)
+                if (policy.policyVersion !== expectedPolicyVersion) throw commercialContactError('COMMERCIAL_POLICY_CONFLICT')
+                await assertCommercialIdentityUnitMembership(client, { identityId: candidate.identityId, unitSlug, availability: await readCommercialContactAvailability(client) })
+                const identity = await readCommercialCanaryIdentityRows(client, [candidate.identityId])
+                const current = await client.query(`select revision from crm_atendimento.commercial_canary_identity_validations
+                    where identity_id = $1::uuid and unit_slug = $2 for update`, [candidate.identityId, unitSlug])
+                const currentRevision = Number(current.rows[0]?.revision || 0)
+                if (currentRevision !== expectedValidationRevision) throw commercialContactError('COMMERCIAL_CANARY_VALIDATION_CONFLICT', 409)
+                const sourceTypes = identity.get(candidate.identityId)?.source_types
+                if (validationType === 'synthetic' && !(Array.isArray(sourceTypes) && sourceTypes.includes('synthetic'))) {
+                    throw commercialContactError('COMMERCIAL_CANARY_SYNTHETIC_IDENTITY_REQUIRED', 409)
+                }
+                const nextRevision = currentRevision + 1
+                const result = await client.query(`insert into crm_atendimento.commercial_canary_identity_validations(
+                    identity_id, unit_slug, validation_type, approval_reference_hash, justification, revision, validated_by, validated_at, expires_at
+                ) values ($1::uuid, $2, $3, $4, $5, $6, $7, now(), now() + interval '24 hours')
+                on conflict(identity_id, unit_slug) do update set validation_type = excluded.validation_type,
+                    approval_reference_hash = excluded.approval_reference_hash, justification = excluded.justification,
+                    revision = excluded.revision, validated_by = excluded.validated_by, validated_at = now(), expires_at = excluded.expires_at
+                returning revision, expires_at`, [candidate.identityId, unitSlug, validationType, approvalReferenceHash, justificationReference, nextRevision, actorReference])
+                const row = result.rows[0] || {}
+                const response = { validation: { unit: unitSlug, validationStatus: 'valid', validationType, revision: Number(row.revision || nextRevision), expiresAt: row.expires_at || null }, commercialWritesEnabled: false, messagesSent: 0 }
+                await appendCommercialCanaryEvent(client, {
+                    idempotencyKey, requestHash, eventType: 'identity_validated', unitSlug, policyVersion: policy.policyVersion,
+                    actorReference, justificationReference, payload: { identityRefHash, validationType, revision: response.validation.revision }, result: response,
+                })
+                await audit(client, 'commercial.canary.identity_validated', commercialCanaryAuditActor(actorReference, actor), null, { unit: unitSlug, validationType, revision: response.validation.revision })
+                return response
+            })
+        },
+
+        async saveCommercialCanary(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const operation = commercialCanaryMutationPayload(payload)
+            await assertCommercialCanaryReady(pgPool)
+            const codec = commercialCanaryCodec(canarySelectorSecret)
+            await assertCommercialCanaryUnit(pgPool, actor, operation.unit)
+            const identityIds = decodeCommercialCanaryReferences(codec, operation.candidateRefs, operation.unit)
+            const identityRefHashes = identityIds.map((identityId) => canaryOpaqueIdentityHash(canarySelectorSecret, identityId)).sort()
+            const actorReference = commercialCanaryActorReference(canarySelectorSecret, actor)
+            const justificationReference = commercialCanaryJustificationReference(canarySelectorSecret, operation.justification)
+            const requestHash = commercialCanaryRequestHash(canarySelectorSecret, {
+                operation: 'cohort_saved', actorReference, unit: operation.unit, identityRefHashes, justificationReference,
+                expectedPolicyVersion: operation.expectedPolicyVersion, expectedCohortVersion: operation.expectedCohortVersion,
+            })
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                // One global lock makes emergency-off atomic with every save;
+                // the graph lock held by withCommercialContactTransaction makes
+                // source rebinds and identity decisions visible before a cohort
+                // can be committed.
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [COMMERCIAL_CANARY_LOCK_KEY])
+                const transactionAvailability = await assertCommercialCanaryReady(client)
+                const prior = await commercialCanaryIdempotentResult(client, operation.idempotencyKey, requestHash)
+                if (prior) return prior
+                await assertCommercialCanaryUnit(client, actor, operation.unit)
+                const policy = await readCommercialPolicy(client)
+                if (policy.policyVersion !== operation.expectedPolicyVersion) throw commercialContactError('COMMERCIAL_POLICY_CONFLICT')
+                const currentCohort = await client.query(`select id, version from crm_atendimento.commercial_canary_cohorts
+                    where unit_slug = $1 and status = 'active' for update`, [operation.unit])
+                const currentVersion = Number(currentCohort.rows[0]?.version || 0)
+                if (currentVersion !== operation.expectedCohortVersion) throw commercialContactError('COMMERCIAL_CANARY_COHORT_CONFLICT', 409)
+                for (const identityId of identityIds) await acquireCommercialContactIdentityLock(client, identityId)
+                const candidates = await resolveCommercialCanarySelection(client, { identityIds, unitSlug: operation.unit, availability: transactionAvailability, codec })
+                const summary = summarizeCommercialCanaryCandidates(candidates)
+                if (!commercialCanaryApplyAllowed(summary)) throw commercialContactError('COMMERCIAL_CANARY_COHORT_NOT_ELIGIBLE', 409)
+                const cohortHash = commercialCanaryRequestHash(canarySelectorSecret, { unit: operation.unit, identityRefHashes })
+                if (currentCohort.rows[0]?.id) {
+                    await client.query(`update crm_atendimento.commercial_canary_cohorts
+                        set status = 'removed', removed_by = $2, removed_at = now(), removal_reason = 'replaced'
+                        where id = $1::uuid`, [currentCohort.rows[0].id, actorReference])
+                }
+                const saved = await client.query(`insert into crm_atendimento.commercial_canary_cohorts(
+                    unit_slug, version, status, policy_version, cohort_hash, member_count, eligible_count, blocked_count, review_count, justification, created_by
+                ) values ($1, $2, 'active', $3, $4, $5, $6, $7, $8, $9, $10)
+                returning id, version, created_at`, [
+                    operation.unit, currentVersion + 1, policy.policyVersion, cohortHash, summary.totalCohort,
+                    summary.eligible, summary.blocked, summary.inReview, justificationReference, actorReference,
+                ])
+                const cohort = saved.rows[0] || {}
+                for (let index = 0; index < identityIds.length; index += 1) {
+                    const candidate = candidates[index]
+                    await client.query(`insert into crm_atendimento.commercial_canary_cohort_members(
+                        cohort_id, identity_id, unit_slug, inclusion_reason, validation_type, validation_revision, source_freshness, eligibility_status, identity_ref_hash
+                    ) values ($1::uuid, $2::uuid, $3, $4, $5, $6, 'healthy', 'eligible', $7)`, [
+                        cohort.id,
+                        identityIds[index],
+                        operation.unit,
+                        candidate.inclusionReason,
+                        candidate.inclusionReason === 'validated_synthetic' ? 'synthetic' : 'explicit_approved',
+                        candidate.validationRevision,
+                        identityRefHashes[index],
+                    ])
+                }
+                // A cohort is an audited rollout selection, never an enablement
+                // operation. Preserve the global commercial write and message
+                // gates in their fail-closed state even after a successful save.
+                const updatedPolicy = await client.query(`update crm_atendimento.commercial_policy_config
+                    set commercial_contact_writes_enabled = false, commercial_contact_canary_identity_ids = '{}'::uuid[],
+                        updated_by = $1, updated_at = now() where singleton = true
+                    returning ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version`, [actorReference])
+                const response = {
+                    cohort: { unit: operation.unit, version: Number(cohort.version || currentVersion + 1), status: 'active', memberCount: summary.totalCohort, createdAt: cohort.created_at || null },
+                    summary,
+                    commercialWritesEnabled: false,
+                    messagesSent: 0,
+                }
+                await appendCommercialCanaryEvent(client, {
+                    idempotencyKey: operation.idempotencyKey, requestHash, eventType: 'cohort_saved', cohortId: cohort.id,
+                    unitSlug: operation.unit, policyVersion: updatedPolicy.rows[0]?.policy_version || policy.policyVersion,
+                    actorReference, justificationReference,
+                    payload: { identityRefHashes, memberCount: summary.totalCohort, eligibleCount: summary.eligible }, result: response,
+                })
+                await audit(client, 'commercial.canary.cohort_saved', commercialCanaryAuditActor(actorReference, actor), null, { unit: operation.unit, memberCount: summary.totalCohort, commercialWritesEnabled: false })
+                return response
+            })
+        },
+
+        async removeCommercialCanary(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            const operation = commercialCanaryRemovalPayload(payload)
+            await assertCommercialCanaryReady(pgPool)
+            await assertCommercialCanaryUnit(pgPool, actor, operation.unit)
+            const actorReference = commercialCanaryActorReference(canarySelectorSecret, actor)
+            const justificationReference = commercialCanaryJustificationReference(canarySelectorSecret, operation.justification)
+            const requestHash = commercialCanaryRequestHash(canarySelectorSecret, {
+                operation: 'cohort_removed', actorReference, unit: operation.unit, justificationReference,
+                expectedPolicyVersion: operation.expectedPolicyVersion, expectedCohortVersion: operation.expectedCohortVersion,
+            })
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [COMMERCIAL_CANARY_LOCK_KEY])
+                await assertCommercialCanaryReady(client)
+                const prior = await commercialCanaryIdempotentResult(client, operation.idempotencyKey, requestHash)
+                if (prior) return prior
+                await assertCommercialCanaryUnit(client, actor, operation.unit)
+                const policy = await readCommercialPolicy(client)
+                if (policy.policyVersion !== operation.expectedPolicyVersion) throw commercialContactError('COMMERCIAL_POLICY_CONFLICT')
+                const current = await client.query(`select id, version, member_count from crm_atendimento.commercial_canary_cohorts
+                    where unit_slug = $1 and status = 'active' for update`, [operation.unit])
+                const currentVersion = Number(current.rows[0]?.version || 0)
+                if (currentVersion !== operation.expectedCohortVersion) throw commercialContactError('COMMERCIAL_CANARY_COHORT_CONFLICT', 409)
+                if (current.rows[0]?.id) {
+                    await client.query(`update crm_atendimento.commercial_canary_cohorts
+                        set status = 'removed', removed_by = $2, removed_at = now(), removal_reason = 'operator_removed'
+                        where id = $1::uuid`, [current.rows[0].id, actorReference])
+                }
+                const updatedPolicy = await client.query(`update crm_atendimento.commercial_policy_config
+                    set commercial_contact_writes_enabled = false, commercial_contact_canary_identity_ids = '{}'::uuid[], updated_by = $1, updated_at = now()
+                    where singleton = true returning ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version`, [actorReference])
+                const response = {
+                    removed: !!current.rows[0]?.id,
+                    unit: operation.unit,
+                    cohortVersion: currentVersion,
+                    commercialWritesEnabled: false,
+                    messagesSent: 0,
+                }
+                await appendCommercialCanaryEvent(client, {
+                    idempotencyKey: operation.idempotencyKey, requestHash, eventType: 'cohort_removed', cohortId: current.rows[0]?.id || null,
+                    unitSlug: operation.unit, policyVersion: updatedPolicy.rows[0]?.policy_version || policy.policyVersion,
+                    actorReference, justificationReference, payload: { removed: response.removed, cohortVersion: currentVersion }, result: response,
+                })
+                await audit(client, 'commercial.canary.cohort_removed', commercialCanaryAuditActor(actorReference, actor), null, { unit: operation.unit, removed: response.removed, commercialWritesEnabled: false })
+                return response
+            })
+        },
+
+        async emergencyOffCommercialCanary(payload, actor) {
+            await ensureReady()
+            assertCommercialManager(actor)
+            assertCommercialGlobalScope(actor)
+            if (payload?.confirmed !== true) throw commercialContactError('COMMERCIAL_CANARY_CONFIRMATION_REQUIRED', 409)
+            await assertCommercialCanaryReady(pgPool)
+            const justification = normalizeCanaryJustification(payload?.justification)
+            const actorReference = commercialCanaryActorReference(canarySelectorSecret, actor)
+            const justificationReference = commercialCanaryJustificationReference(canarySelectorSecret, justification)
+            const idempotencyKey = normalizeCanaryIdempotencyKey(payload?.idempotencyKey)
+            const expectedPolicyVersion = normalizeCanaryPolicyVersion(payload?.expectedPolicyVersion)
+            const requestHash = commercialCanaryRequestHash(canarySelectorSecret, { operation: 'emergency_off', actorReference, justificationReference, expectedPolicyVersion })
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [COMMERCIAL_CANARY_LOCK_KEY])
+                await assertCommercialCanaryReady(client)
+                const prior = await commercialCanaryIdempotentResult(client, idempotencyKey, requestHash)
+                if (prior) return prior
+                const policy = await readCommercialPolicy(client)
+                if (policy.policyVersion !== expectedPolicyVersion) throw commercialContactError('COMMERCIAL_POLICY_CONFLICT')
+                const active = await client.query(`select id from crm_atendimento.commercial_canary_cohorts where status = 'active' for update`)
+                if (active.rows.length) {
+                    await client.query(`update crm_atendimento.commercial_canary_cohorts
+                        set status = 'emergency_off', removed_by = $1, removed_at = now(), removal_reason = 'emergency_off'
+                        where status = 'active'`, [actorReference])
+                }
+                const updatedPolicy = await client.query(`update crm_atendimento.commercial_policy_config
+                    set commercial_contact_writes_enabled = false, commercial_contact_canary_identity_ids = '{}'::uuid[], updated_by = $1, updated_at = now()
+                    where singleton = true returning ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version`, [actorReference])
+                const response = { emergencyOff: true, disabledCohorts: active.rows.length, commercialWritesEnabled: false, messagesSent: 0 }
+                await appendCommercialCanaryEvent(client, {
+                    idempotencyKey, requestHash, eventType: 'emergency_off', policyVersion: updatedPolicy.rows[0]?.policy_version || policy.policyVersion,
+                    actorReference, justificationReference, payload: { disabledCohorts: active.rows.length }, result: response,
+                })
+                await audit(client, 'commercial.canary.emergency_off', commercialCanaryAuditActor(actorReference, actor), null, { disabledCohorts: active.rows.length, commercialWritesEnabled: false })
+                return response
+            })
+        },
+
         async updateCommercialPolicy(payload, actor) {
             await ensureReady()
             assertCommercialManager(actor)
             assertCommercialGlobalScope(actor)
+            if (Object.prototype.hasOwnProperty.call(payload || {}, 'commercialContactWritesEnabled') ||
+                Object.prototype.hasOwnProperty.call(payload || {}, 'commercialContactCanaryIdentityIds')) {
+                // Opening a rollout with an arbitrary UUID array is retired.
+                // This endpoint owns commercial policy only; rollout selection
+                // has its own auditable, unit-scoped v2 workflow.
+                throw commercialContactError('COMMERCIAL_CANARY_SELECTOR_REQUIRED', 409)
+            }
             const cooldown = Number(payload?.activeContactCooldownDays)
             if (!Number.isInteger(cooldown) || cooldown < 1 || cooldown > 180) {
                 const error = new Error('INVALID_ACTIVE_CONTACT_COOLDOWN')
@@ -5819,14 +7084,12 @@ export function createAtendimentoStore(options = {}) {
                 throw error
             }
             const thresholds = commercialThresholds(payload?.returnRiskThresholds)
-            const requestedWritesEnabled = commercialContactWritesEnabled(payload?.commercialContactWritesEnabled)
-            const requestedCanaryIdentityIds = commercialCanaryIdentityIds(payload?.commercialContactCanaryIdentityIds)
             const expectedPolicyVersion = commercialExpectedPolicyVersion(payload?.expectedPolicyVersion)
             // Policy changes control an outbound-contact rollout. Every write
             // is compare-and-swap, including legacy-only cooldown changes, so
             // a stale manager form cannot silently replace a newer decision.
             if (!expectedPolicyVersion) throw commercialContactError('COMMERCIAL_POLICY_VERSION_REQUIRED', 409)
-            const changesRollout = requestedWritesEnabled !== undefined || requestedCanaryIdentityIds !== undefined
+            const changesRollout = false
             const availability = await readCommercialContactAvailability(pgPool)
             if (changesRollout && !availability.contactWriteControlsReady) {
                 throw commercialContactError('COMMERCIAL_CONTACT_COOLDOWN_CONTROLS_NOT_READY')
@@ -5877,18 +7140,8 @@ export function createAtendimentoStore(options = {}) {
                 if (currentRow.policy_version !== expectedPolicyVersion) {
                     throw commercialContactError('COMMERCIAL_POLICY_CONFLICT')
                 }
-                const writesEnabled = requestedWritesEnabled === undefined
-                    ? currentRow.commercial_contact_writes_enabled === true
-                    : requestedWritesEnabled
-                const canaryIdentityIds = requestedCanaryIdentityIds === undefined
-                    ? (Array.isArray(currentRow.commercial_contact_canary_identity_ids)
-                        ? currentRow.commercial_contact_canary_identity_ids.map(String).filter(Boolean)
-                        : [])
-                    : requestedCanaryIdentityIds
-                await assertCommercialCanaryIdentities(client, canaryIdentityIds)
-                if (writesEnabled && !canaryIdentityIds.length) {
-                    throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED', 400)
-                }
+                const writesEnabled = false
+                const canaryIdentityIds = []
                 const result = await client.query(
                     `update crm_atendimento.commercial_policy_config
                      set active_contact_cooldown_days = $1, return_risk_thresholds = $2::int[],
@@ -6217,7 +7470,7 @@ export function createAtendimentoStore(options = {}) {
                     throw commercialContactError(code)
                 }
                 if (recordingContact) {
-                    await assertCommercialContactWriteRollout(client, current.identity_id)
+                    await assertCommercialContactWriteRollout(client, current.identity_id, current.unit_slug)
                     const policy = await client.query(
                         `select active_contact_cooldown_days from crm_atendimento.commercial_policy_config where singleton = true`,
                     )

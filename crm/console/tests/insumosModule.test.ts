@@ -5,6 +5,7 @@ import { getNextChartPresetPatch, getNextMovementsGroupByPatch, parseChartSlots 
 import { resolveOverviewDateRange } from '../insumosDashboardController'
 import { buildMovimentacoesView, isMovementReversed } from '../insumosDerivations'
 import { brToIsoDate, calcularStatusEstoque, normalizeTipoUnidadeToCanonical, parseBarcodeInput } from '../insumosShared'
+import { mergeInsumosByUnitResponses, mergeOverviewData } from '../insumosAggregate'
 import { buildMovimentacoesQuery } from '../useInsumosMovementsController'
 
 describe('Insumos module helpers', () => {
@@ -32,6 +33,42 @@ describe('Insumos module helpers', () => {
     expect(normalizeInsumosHeaderAction({ action: 'reload', period: '30d' })).toEqual({
       type: 'set-overview',
       value: { action: 'reload', period: '30d' },
+    })
+
+    expect(normalizeInsumosHeaderAction({ type: 'set-overview', period: 'currentMonth' })).toEqual({
+      type: 'set-overview',
+      value: { period: 'currentMonth' },
+    })
+  })
+
+  it('merges aggregate inventory by registro while preserving each unit stock', () => {
+    const merged = mergeInsumosByUnitResponses([
+      {
+        unit: 'novo-hamburgo',
+        items: [{ registro: 'lot-1', codigoBarras: '789', produto: 'Produto A', estoqueAtual: 4, estoques: { 'novo-hamburgo': 4 } }],
+      },
+      {
+        unit: 'barra-shopping-sul',
+        items: [{ registro: 'lot-1', codigoBarras: '789', produto: 'Produto A', estoqueAtual: 6, estoques: { 'barra-shopping-sul': 6 } }],
+      },
+    ])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      registro: 'lot-1',
+      estoqueAtual: 10,
+      estoques: { 'novo-hamburgo': 4, 'barra-shopping-sul': 6 },
+    })
+  })
+
+  it('keeps summary counts when overview responses are lite and omit item rows', () => {
+    expect(mergeOverviewData([
+      { resumo: { totalInsumos: 4, valorEstoqueTotal: 100, criticos: 1 } },
+      { resumo: { totalInsumos: 6, valorEstoqueTotal: 200, criticos: 2 } },
+    ], ['novo-hamburgo', 'barra-shopping-sul']).resumo).toEqual({
+      totalInsumos: 10,
+      valorEstoqueTotal: 300,
+      criticos: 3,
     })
   })
 
@@ -207,6 +244,32 @@ describe('Insumos module helpers', () => {
       de: '2026-04-10',
       ate: '2026-05-10',
       days: 30,
+    })
+
+    expect(
+      resolveOverviewDateRange({
+        period: 'currentWeek',
+        customFrom: '',
+        customTo: '',
+        now: new Date('2026-05-10T12:00:00.000Z'),
+      })
+    ).toEqual({
+      de: '2026-05-04',
+      ate: '2026-05-10',
+      days: 7,
+    })
+
+    expect(
+      resolveOverviewDateRange({
+        period: 'currentMonth',
+        customFrom: '',
+        customTo: '',
+        now: new Date('2026-05-10T12:00:00.000Z'),
+      })
+    ).toEqual({
+      de: '2026-05-01',
+      ate: '2026-05-10',
+      days: 10,
     })
 
     expect(

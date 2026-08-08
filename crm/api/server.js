@@ -1231,6 +1231,10 @@ if (DEV_AUTH_ENABLED) {
         const values = Array.isArray(value) ? value : String(value || '').split(',')
         return Array.from(new Set(values.map((item) => String(item || '').trim()).filter((item) => LOCAL_TEAM_UNIT_KEYS.has(item))))
     }
+    const localHasUnknownUnits = (value) => {
+        const values = Array.isArray(value) ? value : String(value || '').split(',')
+        return values.map((item) => String(item || '').trim()).filter(Boolean).some((item) => !LOCAL_TEAM_UNIT_KEYS.has(item))
+    }
 
     const localProfileForTitle = (value) => LOCAL_TEAM_TITLE_PROFILES[localNormalizeKey(value)] || ''
     const localDisplayJobTitle = (profile, fallback = '') => LOCAL_TEAM_DISPLAY_TITLES[String(profile || '').toUpperCase()] || String(fallback || '').trim()
@@ -1512,11 +1516,17 @@ if (DEV_AUTH_ENABLED) {
         const department = String(body.department ?? current?.department ?? '').trim().replace(/\s+/g, ' ').slice(0, 120)
         const jobTitle = String(body.jobTitle ?? current?.jobTitle ?? '').trim()
         const profile = localProfileForTitle(jobTitle) || String(current?.profile || '').toUpperCase()
-        const units = localNormalizeUnits(body.units ?? current?.units)
+        const rawUnits = body.units ?? current?.units
+        if (localHasUnknownUnits(rawUnits)) return { error: 'TEAM_UNITS_INVALID' }
+        const units = localNormalizeUnits(rawUnits)
         const keepsExistingCorporateEmail = Boolean(current?.corporateEmail) && corporateEmail === current.corporateEmail
         if (!fullName || !generatedCorporateEmail || !corporateEmail || (!localIsAllowedCorporateEmail(fullName, corporateEmail) && !keepsExistingCorporateEmail) || !requestedUsername || !/^[a-z0-9][a-z0-9._-]{2,39}$/.test(requestedUsername) || !personalEmail || !mobilePhone || !department || !profile || !units.length) {
             return { error: 'TEAM_INPUT_INVALID' }
         }
+        const rawScheduleUnits = body.team && typeof body.team === 'object' && body.team.units !== undefined ? body.team.units : units
+        if (localHasUnknownUnits(rawScheduleUnits)) return { error: 'TEAM_UNITS_INVALID' }
+        const schedule = localNormalizeSchedule({ ...(body.team && typeof body.team === 'object' ? body.team : {}), phone: body.mobilePhone ?? current?.mobilePhone, email: body.corporateEmail ?? current?.corporateEmail }, units, current?.schedule || {})
+        if (schedule.units.some((unit) => !units.includes(unit))) return { error: 'TEAM_UNITS_DENIED' }
         return {
             fullName,
             generatedCorporateEmail,
@@ -1528,7 +1538,7 @@ if (DEV_AUTH_ENABLED) {
             profile,
             jobTitle: localDisplayJobTitle(profile, jobTitle),
             units,
-            schedule: localNormalizeSchedule({ ...(body.team && typeof body.team === 'object' ? body.team : {}), phone: body.mobilePhone ?? current?.mobilePhone, email: body.corporateEmail ?? current?.corporateEmail }, units, current?.schedule || {}),
+            schedule,
         }
     }
 
@@ -1630,6 +1640,8 @@ if (DEV_AUTH_ENABLED) {
         if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
         const store = await loadLocalCrmStore()
         const input = localTeamInput(req.body && typeof req.body === 'object' ? req.body : {})
+        if (input.error === 'TEAM_UNITS_DENIED') return res.status(403).json({ success: false, error: 'As unidades operacionais devem estar dentro do escopo do cadastro', code: input.error })
+        if (input.error === 'TEAM_UNITS_INVALID') return res.status(400).json({ success: false, error: 'Unidades operacionais inválidas', code: input.error })
         if (input.error) return res.status(400).json({ success: false, error: 'Dados de cadastro inválidos', code: input.error })
         const hierarchyError = localTeamHierarchyError(session, input.profile, input.units)
         if (hierarchyError) return res.status(403).json({ success: false, error: 'Sem permissão para cadastrar este cargo ou unidade', code: hierarchyError })
@@ -1731,6 +1743,8 @@ if (DEV_AUTH_ENABLED) {
         if (body.username !== undefined && localNormalizeUsername(body.username) !== current.username) return res.status(409).json({ success: false, error: 'O nome de usuário não pode ser trocado depois do convite', code: 'TEAM_USERNAME_IMMUTABLE' })
         if (body.corporateEmail !== undefined && localNormalizeCorporateEmail(body.corporateEmail) !== current.corporateEmail) return res.status(409).json({ success: false, error: 'O e-mail corporativo não pode ser trocado neste fluxo', code: 'TEAM_EMAIL_IMMUTABLE' })
         const input = localTeamInput(body, current)
+        if (input.error === 'TEAM_UNITS_DENIED') return res.status(403).json({ success: false, error: 'As unidades operacionais devem estar dentro do escopo do cadastro', code: input.error })
+        if (input.error === 'TEAM_UNITS_INVALID') return res.status(400).json({ success: false, error: 'Unidades operacionais inválidas', code: input.error })
         if (input.error) return res.status(400).json({ success: false, error: 'Dados de edição inválidos', code: 'TEAM_UPDATE_INVALID' })
         const hierarchyError = localTeamHierarchyError(session, input.profile, input.units)
         if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia ou unidade não autorizada', code: hierarchyError })
@@ -1757,6 +1771,36 @@ if (DEV_AUTH_ENABLED) {
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_UPDATED', 'SUCCESS', 1, updated.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(updated) })
+    })
+    app.post(['/api/crm/admin/team/:id/activate', '/admin/team/:id/activate'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const id = String(req.params.id || '').trim()
+        const index = store.team.findIndex((member) => member.id === id)
+        if (index < 0) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        const member = store.team[index]
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const hierarchyError = localTeamHierarchyError(session, member.profile, member.units)
+        if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia não permite ativar este membro', code: hierarchyError })
+        const accountStatus = String(member.accountStatus || '').trim().toUpperCase()
+        if (accountStatus === 'ACTIVE') return res.status(200).json({ success: true, data: localPublicTeamMember(member), replayed: true })
+        if (accountStatus !== 'INVITED') return res.status(409).json({ success: false, error: 'Ativação não está pronta para este estado', code: 'ONBOARDING_ACTIVATION_NOT_READY' })
+        const registeredUser = store.users.find((user) => String(user.email || '').trim().toLowerCase() === String(member.corporateEmail || '').trim().toLowerCase())
+        if (!registeredUser?.username) return res.status(409).json({ success: false, error: 'O funcionário ainda precisa criar a senha pelo convite', code: 'INVITE_REGISTRATION_REQUIRED' })
+        const before = { accountStatus: member.accountStatus, provisioningState: member.provisioningState }
+        const at = new Date().toISOString()
+        member.accountStatus = 'ACTIVE'
+        member.provisioningState = 'COMPLETED'
+        member.compensationState = null
+        member.updatedAt = at
+        registeredUser.ativo = true
+        registeredUser.updatedAt = at
+        localAudit(store, session, 'EMPLOYEE_ONBOARDING_ACTIVATION_RETRY', id, { accountStatus: 'ACTIVE', localPreview: true }, before)
+        localTeamTelemetry(store, session, 'EMPLOYEE_ONBOARDING_ACTIVATION_RETRY', 'SUCCESS', 1, member.units.length)
+        await saveLocalCrmStore(store)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
     })
     app.post(['/api/crm/admin/team/:id/schedule-sync', '/admin/team/:id/schedule-sync'], async (req, res) => {
         const session = requireDevAdmin(req, res)

@@ -8,6 +8,9 @@ param(
 
     [string]$BrowserPath,
 
+    [ValidateRange(1, 120)]
+    [int]$ReachabilityTimeoutSeconds = 45,
+
     [switch]$DryRun
 )
 
@@ -20,14 +23,24 @@ if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$uri)) {
 }
 
 $loopbackHost = $uri.DnsSafeHost.Trim('[', ']').ToLowerInvariant()
+$privateIpv4 = $false
+$parsedAddress = $null
+if ([Net.IPAddress]::TryParse($loopbackHost, [ref]$parsedAddress) -and
+    $parsedAddress.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) {
+    $bytes = $parsedAddress.GetAddressBytes()
+    $privateIpv4 =
+        $bytes[0] -eq 10 -or
+        ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
+        ($bytes[0] -eq 192 -and $bytes[1] -eq 168)
+}
 if (
     $uri.Scheme -ne 'http' -or
-    $loopbackHost -notin @('localhost', '127.0.0.1', '::1') -or
+    ($loopbackHost -notin @('localhost', '127.0.0.1', '::1') -and -not $privateIpv4) -or
     -not [string]::IsNullOrEmpty($uri.UserInfo) -or
     $uri.Port -lt 1 -or
     $uri.Port -gt 65535
 ) {
-    throw 'A URL do CRM deve usar HTTP, um host loopback explícito e uma porta válida, sem credenciais.'
+    throw 'A URL do CRM deve usar HTTP, um host local ou IP privado e uma porta válida, sem credenciais.'
 }
 
 $privateRuntimeRoot = [IO.Path]::GetFullPath('C:\CodexRuntime\operator\admin\skincos')
@@ -79,6 +92,24 @@ function Resolve-CrmLocalBrowser {
     throw 'Microsoft Edge ou Google Chrome não foi encontrado neste host.'
 }
 
+function Wait-CrmLocalReachability {
+    param(
+        [Parameter(Mandatory = $true)][Uri]$TargetUri,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        try {
+            $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Uri $TargetUri.AbsoluteUri
+            if ($response.StatusCode -eq 200) { return $true }
+        } catch {
+            # The local launcher may still be publishing the WSL-bound listener.
+        }
+        Start-Sleep -Milliseconds 300
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
+
 $resolvedBrowserPath = Resolve-CrmLocalBrowser -RequestedPath $BrowserPath
 $browserArguments = @(
     "--user-data-dir=`"$profileFullPath`""
@@ -95,6 +126,10 @@ if ($DryRun) {
         Arguments = $browserArguments
     }
     return
+}
+
+if (-not (Wait-CrmLocalReachability -TargetUri $uri -TimeoutSeconds $ReachabilityTimeoutSeconds)) {
+    throw "A prévia CRM não respondeu no host Windows em $($uri.AbsoluteUri) dentro de $ReachabilityTimeoutSeconds segundos; o navegador não foi aberto."
 }
 
 New-Item -ItemType Directory -Path $profileFullPath -Force | Out-Null

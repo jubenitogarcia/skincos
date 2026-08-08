@@ -140,9 +140,11 @@ são privados por combinação.
 Abra o worktree da tarefa no Codex App e use esta ação para montar o seu `HEAD`
 e alterações locais não commitadas em uma fonte imutável privada. A ação se
 recusa a partir do clone compartilhado, mantém uma proveniência com branch, SHA
-e impressão do snapshot e abre o módulo em uma faixa de portas própria (`25000+`),
-sem substituir `CRM – Módulos`. Pelo mesmo menu é possível encerrar somente a
-prévia pertencente àquele worktree.
+e impressão do snapshot. A prévia parte da faixa preferencial `25000+`, reserva
+dinamicamente um bundle completo sem colidir com listeners existentes e só
+publica sua URL em `current.json` após o gate de prontidão; ela não substitui
+`CRM – Módulos`. Pelo mesmo menu é possível encerrar somente a prévia
+pertencente àquele worktree.
 
 ### CRM – Prévia Usuários Equipe Thread
 

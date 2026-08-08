@@ -39,8 +39,15 @@ function cloneRows() {
   return syntheticTeam.map((row) => ({ ...row, units: [...row.units], schedule: { ...row.schedule, units: [...row.schedule.units] }, scheduleSync: row.scheduleSync ? { ...row.scheduleSync } : undefined, identityLinks: row.identityLinks.map((link) => ({ ...link })) }))
 }
 
-export async function mockUsersApi(page: Page, role = 'GESTOR') {
+type MockUsersOptions = { failedActivationFor?: string }
+
+export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUsersOptions = {}) {
   const rows = cloneRows()
+  const failedActivationRow = rows.find((row) => row.id === options.failedActivationFor)
+  if (failedActivationRow) {
+    failedActivationRow.accountStatus = 'INVITED'
+    failedActivationRow.provisioningState = 'FAILED'
+  }
   await page.route('**/api/**', async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -73,6 +80,14 @@ export async function mockUsersApi(page: Page, role = 'GESTOR') {
     if (statusMatch && request.method() === 'POST') {
       const body = await json(); const row = rows.find((item) => item.id === decodeURIComponent(statusMatch[1]))
       if (row) row.accountStatus = body.accountStatus
+      return send({ success: true, data: row })
+    }
+    const activationMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)\/activate$/)
+    if (activationMatch && request.method() === 'POST') {
+      const row = rows.find((item) => item.id === decodeURIComponent(activationMatch[1]))
+      if (!row) return send({ success: false, error: 'Membro não encontrado' }, 404)
+      row.accountStatus = 'ACTIVE'
+      row.provisioningState = 'COMPLETED'
       return send({ success: true, data: row })
     }
     const inviteMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)\/invite\/(resend|revoke)$/)

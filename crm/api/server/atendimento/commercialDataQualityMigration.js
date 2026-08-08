@@ -37,6 +37,7 @@ function runtimeGrantStatements(target) {
     if (!role) throw migrationError('COMMERCIAL_DATA_QUALITY_RUNTIME_ROLE_UNKNOWN')
     return [
         `grant usage on schema crm_atendimento to ${role}`,
+        `grant select on table crm_atendimento.schema_migrations to ${role}`,
         `grant select, insert, update on table crm_atendimento.commercial_data_quality_findings to ${role}`,
         `grant select, insert on table crm_atendimento.commercial_data_quality_finding_events to ${role}`,
         `grant usage, select on sequence crm_atendimento.commercial_data_quality_finding_events_event_order_seq to ${role}`,

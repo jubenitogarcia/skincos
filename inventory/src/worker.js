@@ -3,6 +3,7 @@ import { toCsv } from './lib/csv.js';
 import { safeJson, safeJsonNoTruncate } from './lib/json.js';
 import { qrSvg } from './lib/qr.js';
 import { getClientIp, getUserAgent } from './lib/request.js';
+import { isAuthorizedDevSeedRequest } from './lib/devSeed.js';
 import { handleBackupRoutes } from './routes/backup.js';
 import { createIdentityD1Store, handleAuthRoutes } from './routes/auth.js';
 import { handleAdminRoutes } from './routes/admin.js';
@@ -1448,10 +1449,7 @@ export default {
         const methodUpper = (request.method || 'GET').toUpperCase();
         const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(methodUpper);
         const isAuthRoute = url.pathname.startsWith('/auth/');
-        const allowDevSeed = String(env?.ALLOW_DEV_SEED || '').trim().toLowerCase() === 'true';
-        const seedToken = String(env?.INSUMOS_SEED_TOKEN || '').trim();
-        const seedHeader = String(request.headers.get('x-seed-token') || request.headers.get('x-insumos-seed-token') || '').trim();
-        const isDevSeed = url.pathname === '/admin/seed' && allowDevSeed && seedToken && seedHeader === seedToken;
+        const isDevSeed = await isAuthorizedDevSeedRequest({ env, request, url });
         if (isMutating && !isAuthRoute && !isDevSeed) {
             const csrfCookie = cookies.csrfToken || '';
             const csrfHeader = request.headers.get('x-csrf-token') || request.headers.get('X-CSRF-Token') || '';
