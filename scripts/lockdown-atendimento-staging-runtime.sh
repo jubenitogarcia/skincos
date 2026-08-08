@@ -6,7 +6,7 @@ set -euo pipefail
 # spawning any child process.  Callers invoke it through a sanitized sudo env.
 readonly SAFE_PATH='/usr/sbin:/usr/bin:/sbin:/bin'
 export PATH="$SAFE_PATH"
-unset BASH_ENV ENV CDPATH GLOBIGNORE \
+unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
   HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
 
 # Seals the staging application login after every schema migration.  The
@@ -91,13 +91,21 @@ select case when
       and has_function_privilege('skincos_staging_crm_app', p.oid, 'EXECUTE')
   )
   and not coalesce(has_schema_privilege('skincos_staging_crm_app', to_regnamespace('harmonia'), 'USAGE'), false)
-  and not coalesce(has_table_privilege('skincos_staging_crm_app', to_regclass('harmonia.contacts'), 'SELECT'), false)
+  and not coalesce(has_schema_privilege('skincos_staging_crm_app', to_regnamespace('crm_caixa'), 'USAGE'), false)
+  and not exists (
+    select 1
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname in ('harmonia', 'crm_caixa') and c.relkind in ('r', 'p', 'v', 'm', 'f')
+      and has_table_privilege('skincos_staging_crm_app', c.oid, 'SELECT')
+  )
   and not exists (
     select 1
     from pg_attribute a
-    where a.attrelid = to_regclass('harmonia.contacts')
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname in ('harmonia', 'crm_caixa') and c.relkind in ('r', 'p', 'v', 'm', 'f')
       and a.attnum > 0 and not a.attisdropped
-      and has_column_privilege('skincos_staging_crm_app', a.attrelid, a.attname, 'SELECT')
+      and has_column_privilege('skincos_staging_crm_app', c.oid, a.attname, 'SELECT')
   )
 then 'true' else 'false' end;
 SQL
@@ -181,15 +189,30 @@ begin
 end $$;
 
 revoke all privileges on schema harmonia from skincos_staging_crm_app;
+revoke all privileges on schema crm_caixa from skincos_staging_crm_app;
 do $$
-declare column_record record;
+declare
+  column_record record;
+  relation_record record;
 begin
-  if to_regclass('harmonia.contacts') is not null then
-    revoke select on table harmonia.contacts from skincos_staging_crm_app;
-    for column_record in select attname from pg_attribute where attrelid = 'harmonia.contacts'::regclass and attnum > 0 and not attisdropped loop
-      execute format('revoke select (%I) on table harmonia.contacts from skincos_staging_crm_app', column_record.attname);
-    end loop;
-  end if;
+  for relation_record in
+    select n.nspname, c.relname
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname in ('harmonia', 'crm_caixa') and c.relkind in ('r', 'p', 'v', 'm', 'f')
+  loop
+    execute format('revoke select on table %I.%I from skincos_staging_crm_app', relation_record.nspname, relation_record.relname);
+  end loop;
+
+  for column_record in
+    select n.nspname, c.relname, a.attname
+    from pg_attribute a
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname in ('harmonia', 'crm_caixa') and c.relkind in ('r', 'p', 'v', 'm', 'f')
+      and a.attnum > 0 and not a.attisdropped
+  loop
+    execute format('revoke select (%I) on table %I.%I from skincos_staging_crm_app', column_record.attname, column_record.nspname, column_record.relname);
+  end loop;
 end $$;
 commit;
 SQL
@@ -200,4 +223,4 @@ if ! verify_contract; then
   exit 1
 fi
 
-printf 'staging_runtime_grants_read_only=true database=%s role=%s action=%s pii_harmonia_contacts=false role_set_blocked=true privileged_function_execute_blocked=true\n' "$DB_NAME" "$APP_ROLE" "$ACTION"
+printf 'staging_runtime_grants_read_only=true database=%s role=%s action=%s pii_harmonia_read=false pii_caixa_source_read=false role_set_blocked=true privileged_function_execute_blocked=true\n' "$DB_NAME" "$APP_ROLE" "$ACTION"

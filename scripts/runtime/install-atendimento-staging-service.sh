@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly SAFE_PATH='/usr/sbin:/usr/bin:/sbin:/bin'
 export PATH="$SAFE_PATH"
-unset BASH_ENV ENV CDPATH GLOBIGNORE \
+unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
   HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
 
 run_sudo_clean() {
@@ -59,7 +59,9 @@ run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" -
 run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 
-render_dir="$(/usr/bin/mktemp -d)"
+umask 0077
+render_dir="$(/usr/bin/mktemp -d /tmp/atendimento-staging-unit.XXXXXX)"
+/usr/bin/test -d "$render_dir" -a -O "$render_dir"
 rendered="$render_dir/crm-atendimento-staging.service"
 trap '/usr/bin/rm -f "$rendered"; /usr/bin/rmdir "$render_dir" 2>/dev/null || true' EXIT
 /usr/bin/sed \

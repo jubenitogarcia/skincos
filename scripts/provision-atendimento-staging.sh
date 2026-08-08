@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly SAFE_PATH='/usr/sbin:/usr/bin:/sbin:/bin'
 export PATH="$SAFE_PATH"
-unset BASH_ENV ENV CDPATH GLOBIGNORE \
+unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
   HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy \
   OPENSSL_CONF RANDFILE
 
@@ -107,8 +107,11 @@ grant usage, select, update on all sequences in schema crm_atendimento, crm_caix
 revoke all privileges on schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
 revoke all privileges on all tables in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
 revoke all privileges on all sequences in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
-grant usage on schema crm_atendimento, crm_caixa, crm_sessions to $APP_ROLE;
-grant select on all tables in schema crm_atendimento, crm_caixa, crm_sessions to $APP_ROLE;
+# The isolated application has no safe direct Caixa projection yet. Do not
+# give it source-system reads during provisioning; terminal lockdown removes
+# temporary migration compatibility grants before the runtime can start.
+grant usage on schema crm_atendimento, crm_sessions to $APP_ROLE;
+grant select on all tables in schema crm_atendimento, crm_sessions to $APP_ROLE;
 grant usage, create on schema harmonia to $MIGRATOR_ROLE;
 grant select, insert, update, delete on all tables in schema harmonia to $MIGRATOR_ROLE;
 grant usage, select, update on all sequences in schema harmonia to $MIGRATOR_ROLE;
@@ -126,9 +129,12 @@ app_url="postgresql://${APP_ROLE}:${app_password}@127.0.0.1:5432/${DB_NAME}?sslm
 migrator_url="postgresql://${MIGRATOR_ROLE}:${migrator_password}@127.0.0.1:5432/${DB_NAME}?sslmode=require&uselibpqcompat=true&application_name=atendimento-migration"
 
 umask 0077
-tmp_env="$(/usr/bin/mktemp)"
-tmp_migrator="$(/usr/bin/mktemp)"
-tmp_control="$(/usr/bin/mktemp)"
+tmp_env="$(/usr/bin/mktemp /tmp/atendimento-staging-app-env.XXXXXX)"
+tmp_migrator="$(/usr/bin/mktemp /tmp/atendimento-staging-migrator-env.XXXXXX)"
+tmp_control="$(/usr/bin/mktemp /tmp/atendimento-staging-control.XXXXXX)"
+/usr/bin/test -f "$tmp_env" -a -O "$tmp_env"
+/usr/bin/test -f "$tmp_migrator" -a -O "$tmp_migrator"
+/usr/bin/test -f "$tmp_control" -a -O "$tmp_control"
 trap '/usr/bin/rm -f "$tmp_env" "$tmp_migrator" "$tmp_control"' EXIT
 /usr/bin/cat >"$tmp_env" <<EOF
 NODE_ENV=production
