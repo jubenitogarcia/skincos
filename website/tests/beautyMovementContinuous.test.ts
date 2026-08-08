@@ -48,7 +48,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /className=\{styles\.progressButton\}/);
     assert.match(experience, /disabled=\{!isCurrent\}/);
     assert.match(experience, /className=\{styles\.progressCopy\}/);
-    assert.match(experience, /role="group" aria-label="Cartas finais"/);
+    assert.match(experience, /className=\{styles\.specialCardStage\}/);
     assert.match(experience, /role="group" aria-label=\{`Cartas da etapa \$\{tableDefinition\.label\}`\}/);
     assert.doesNotMatch(experience, /role="list" aria-label="Cartas finais"/);
     assert.doesNotMatch(experience, /className=\{styles\.progressNumber\}/);
@@ -66,7 +66,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.doesNotMatch(experience, /actsStack|revealedStrip/);
     assert.doesNotMatch(experience, /BeautyMovementModalReading/);
     assert.doesNotMatch(experience, /finaleCardGridSettled/);
-    assert.match(experience, /aria-label="Cartas finais"/);
+    assert.match(experience, /aria-label=\{finaleStage === "result" \? "Carta especial do benefício"/);
     assert.match(experience, /className=\{styles\.cardSparkles\}/);
     assert.match(experience, /className=\{styles\.deckStage\}/);
     assert.match(experience, /type HandStage = "waiting"/);
@@ -126,12 +126,19 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.doesNotMatch(styles, /\.tableStage\[data-hand-stage="deal"\] \.cardButton:nth-child\(2\)[^}]*animation-delay/);
     assert.doesNotMatch(styles, /\.tableStage\[data-hand-stage="deal"\] \.cardButton:nth-child\(3\)[^}]*animation-delay/);
     assert.doesNotMatch(styles, /@keyframes finaleReturnToDeck/);
-    assert.match(styles, /@keyframes finaleCardsReappear/);
-    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCard\s*\{\s*animation: finaleCardsReappear/);
+    assert.match(styles, /@keyframes finaleCardsMerge/);
+    assert.match(
+        styles,
+        /\.tableStage\[data-hand-stage="finale"\] \.finaleCardGridMerging \.finaleCard\s*\{\s*animation: finaleCardsMerge/,
+    );
     assert.doesNotMatch(styles, /\.finaleCardGridSettled/);
     assert.match(styles, /@keyframes finaleIllustrationPulse/);
     assert.match(styles, /@keyframes finaleIllustrationPulse[\s\S]*100%[\s\S]*opacity: 1/);
     assert.match(styles, /\.finaleCardGrid/);
+    assert.match(styles, /\.specialCardStage/);
+    assert.match(styles, /\.specialCard/);
+    assert.match(styles, /@keyframes specialCardFlip/);
+    assert.match(styles, /@keyframes specialCardIconFloat/);
     assert.match(styles, /\.inlineFinale/);
     assert.match(styles, /\.deckPrompt/);
     assert.match(styles, /\.deckPrompt[\s\S]*bottom: 148px/);
@@ -150,9 +157,17 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /<BrandMark/);
     assert.match(experience, /aria-hidden=\{!isSelected\}/);
     assert.match(experience, /BeautyMovementCardIllustration/);
+    assert.match(experience, /function renderSpecialCard/);
+    assert.match(experience, /finaleCardGridMerging/);
+    assert.match(experience, /Carta especial do benefício/);
+    assert.doesNotMatch(experience, /aria-label="Cartas finais"/);
     assert.match(experience, /function drawStoryCardIllustration/);
     assert.match(experience, /drawStoryCardIllustration\(context, line\.cardId/);
     assert.match(experience, /getStoryCanvasFont\("--font-brand-ui"/);
+    assert.match(illustrations, /case "reward-reserved"/);
+    assert.match(illustrations, /case "reward-procedure"/);
+    assert.match(illustrations, /case "reward-discount"/);
+    assert.match(illustrations, /case "reward-velocity"/);
     assert.doesNotMatch(experience, /Arial, sans-serif/);
     assert.match(illustrations, /beleza-presenca/);
     assert.match(illustrations, /celebracao-encontro/);

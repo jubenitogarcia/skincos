@@ -255,6 +255,52 @@ export default function BeautyMovementCardIllustration({ cardId }: BeautyMovemen
                 </>
             );
             break;
+        case "reward-reserved":
+            art = (
+                <>
+                    <rect x="39" y="36" width="82" height="88" rx="10" {...strokeProps} />
+                    <path d="M 54 63 H 106 M 54 82 H 94 M 54 101 H 82" {...strokeProps} />
+                    <path d="M 80 22 V 39 M 80 121 V 138" {...accentStrokeProps} />
+                    <AccentDot cx={38} cy={48} r={3} />
+                    <AccentDot cx={122} cy={112} r={3} />
+                </>
+            );
+            break;
+        case "reward-procedure":
+            art = (
+                <>
+                    <circle cx="80" cy="75" r="42" {...strokeProps} />
+                    <path d="M 64 110 L 58 139 L 80 127 L 102 139 L 96 110" {...strokeProps} />
+                    <path d="M 80 46 L 87 67 L 109 68 L 92 81 L 98 103 L 80 90 L 62 103 L 68 81 L 51 68 L 73 67 Z" {...accentStrokeProps} />
+                    <AccentDot cx={39} cy={42} r={3} />
+                    <AccentDot cx={121} cy={42} r={3} />
+                </>
+            );
+            break;
+        case "reward-discount":
+            art = (
+                <>
+                    <path d="M 30 55 L 62 28 H 126 V 92 L 94 124 H 30 Z" {...strokeProps} />
+                    <circle cx="103" cy="52" r="6" {...accentFillProps} />
+                    <path d="M 50 100 L 104 46" {...accentStrokeProps} />
+                    <circle cx="57" cy="75" r="7" {...strokeProps} />
+                    <circle cx="94" cy="96" r="7" {...strokeProps} />
+                    <path d="M 30 55 V 124 H 94" {...accentStrokeProps} opacity="0.8" />
+                </>
+            );
+            break;
+        case "reward-velocity":
+            art = (
+                <>
+                    <circle cx="80" cy="80" r="48" {...strokeProps} />
+                    <path d="M 49 50 L 63 110 L 80 80 L 97 110 L 111 50" {...strokeProps} />
+                    <path d="M 22 128 C 47 143 113 143 138 128" {...accentStrokeProps} />
+                    <path d="M 31 32 C 56 16 104 16 129 32" {...accentStrokeProps} opacity="0.78" />
+                    <AccentDot cx={35} cy={128} r={3} />
+                    <AccentDot cx={125} cy={128} r={3} />
+                </>
+            );
+            break;
         default:
             art = <DefaultArt />;
     }
