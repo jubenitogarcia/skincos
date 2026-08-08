@@ -1329,6 +1329,8 @@ export default function BeautyMovementExperience({
                                     ? "Clique no baralho para distribuir esta mão."
                                     : tableSelected
                                       ? "Carta revelada. As outras cartas serão recolhidas antes da próxima mão."
+                                      : handStage === "ready"
+                                        ? "Escolha uma carta para liberar o avanço."
                                       : handStage === "held"
                                         ? "Escolha uma carta para liberar o avanço."
                                         : "A próxima mão está sendo preparada."}
