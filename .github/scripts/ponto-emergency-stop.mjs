@@ -28,6 +28,7 @@ export const HIGH_RISK_WORKFLOWS = Object.freeze([
   { path: ".github/workflows/timekeeping-staging-journey.yml", targets: ["staging"] },
   { path: ".github/workflows/ponto-staging-rollback-drill.yml", targets: ["staging"] },
   { path: ".github/workflows/ponto-staging-recovery-rollback.yml", targets: ["staging"] },
+  { path: ".github/workflows/ponto-staging-core-provenance-recovery.yml", targets: ["staging"] },
   { path: ".github/workflows/ponto-production-baseline.yml", targets: ["production"] },
   { path: ".github/workflows/ponto-production-slo.yml", targets: ["production"] },
 ]);
