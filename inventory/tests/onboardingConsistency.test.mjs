@@ -145,7 +145,9 @@ test('team edits expose a fail-closed local persistence compensation boundary', 
 
 test('team usernames remain reserved across lifecycle history', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
-  const usernameBlock = admin.slice(admin.indexOf('if (onboardingHasUsername) {'), admin.indexOf('const at = new Date().toISOString();'));
+  const usernameStart = admin.indexOf('if (onboardingHasUsername) {');
+  const usernameEnd = admin.indexOf('const at = new Date().toISOString();', usernameStart);
+  const usernameBlock = admin.slice(usernameStart, usernameEnd);
   assert.match(usernameBlock, /LOWER\(requested_username\)=LOWER\(\?\) AND id<>\?/);
   assert.doesNotMatch(usernameBlock, /account_status NOT IN/);
   const migration = await readFile(new URL('../migrations/0024_unified_team_identity.sql', import.meta.url), 'utf8');
@@ -155,10 +157,14 @@ test('team usernames remain reserved across lifecycle history', async () => {
 
 test('centralized team mode disables every legacy password-management route', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const localApi = await readFile(new URL('../../crm/api/server.js', import.meta.url), 'utf8');
   assert.equal((admin.match(/UNIFIED_TEAM_ROUTE_DISABLED/g) || []).length, 4);
   assert.match(admin, /A senha deve ser criada pelo próprio integrante/);
   assert.equal((admin.match(/legacyUserRoutesDisabled\(env\)/g) || []).length, 5);
   assert.ok((admin.match(/status: 410/g) || []).length >= 4);
+  assert.equal((localApi.match(/UNIFIED_TEAM_ROUTE_DISABLED/g) || []).length, 4);
+  assert.match(localApi, /const localUnifiedTeamEnabled =/);
+  assert.match(localApi, /Use a gestão centralizada de equipe/);
 });
 
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {
