@@ -59,7 +59,7 @@ done
 /usr/bin/sudo -n /usr/bin/test -f "$UNIT_TEMPLATE" || { echo 'Isolated unit template is unavailable in immutable release.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$UNIT_FILE" || { echo 'Installed isolated unit is unavailable.' >&2; exit 1; }
 /usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE" || { echo "Service is not active: $SERVICE" >&2; exit 1; }
-run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$RELEASE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$RELEASE_ROOT" --release-sha "$RELEASE_SHA" --target staging >/dev/null
 
 snapshot_protected_services() {
   local service main_pid started_at

@@ -55,7 +55,7 @@ done
 /usr/bin/sudo -n /usr/bin/test -f "$CONTROL_VALIDATOR" || { echo 'Strict staging control validator is unavailable in immutable release.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Staging runtime grant lockdown is unavailable in immutable release.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$CONTROL_FILE" || { echo 'Strict staging control file is unavailable.' >&2; exit 78; }
-run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" --target staging >/dev/null
 run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 
@@ -81,8 +81,10 @@ fi
 
 stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
 /usr/bin/sudo -n /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
+unit_backup='none'
 if /usr/bin/sudo -n /usr/bin/test -f "$UNIT_DEST/$SERVICE"; then
-  /usr/bin/sudo -n /usr/bin/cp -p "$UNIT_DEST/$SERVICE" "$BACKUP_ROOT/${stamp}-$SERVICE"
+  unit_backup="${stamp}-$SERVICE"
+  /usr/bin/sudo -n /usr/bin/cp -p "$UNIT_DEST/$SERVICE" "$BACKUP_ROOT/$unit_backup"
 fi
 /usr/bin/sudo -n /usr/bin/install -m 0644 "$rendered" "$UNIT_DEST/$SERVICE"
 /usr/bin/sudo -n /usr/bin/systemctl daemon-reload
@@ -92,4 +94,4 @@ fi
 /usr/bin/sudo -n /usr/bin/systemctl enable "$SERVICE" >/dev/null
 /usr/bin/sudo -n /usr/bin/systemctl restart "$SERVICE"
 /usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE"
-printf 'installed=true service=%s release_sha=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"
+printf 'installed=true service=%s release_sha=%s unit_backup=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$unit_backup"

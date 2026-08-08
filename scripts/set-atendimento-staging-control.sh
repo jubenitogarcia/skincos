@@ -70,9 +70,10 @@ EOF
 if [[ "$APPLY" == '1' ]]; then
   run_sudo_clean /usr/bin/test -f "$CONTROL_FILE" || { echo "Control file is missing: $CONTROL_FILE" >&2; exit 1; }
   run_sudo_clean /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
-  run_sudo_clean /usr/bin/cp -p "$CONTROL_FILE" "$BACKUP_ROOT/${stamp}-module-control.json"
+  readonly CONTROL_BACKUP_NAME="${stamp}-module-control.json"
+  run_sudo_clean /usr/bin/cp -p "$CONTROL_FILE" "$BACKUP_ROOT/$CONTROL_BACKUP_NAME"
   run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"
-  printf 'module_control=%s release_sha=%s read_only=true commercial_writes=false applied=true\n' "$STATE" "${RELEASE_SHA:-none}"
+  printf 'module_control=%s release_sha=%s read_only=true commercial_writes=false control_backup=%s applied=true\n' "$STATE" "${RELEASE_SHA:-none}" "$CONTROL_BACKUP_NAME"
 else
-  printf 'module_control=%s release_sha=%s read_only=true commercial_writes=false dry_run=true\n' "$STATE" "${RELEASE_SHA:-none}"
+  printf 'module_control=%s release_sha=%s read_only=true commercial_writes=false control_backup=none dry_run=true\n' "$STATE" "${RELEASE_SHA:-none}"
 fi
