@@ -293,7 +293,7 @@ async function main() {
       const deprovision = await post(
         adminPage,
         `/api/insumos/admin/onboarding/${encodeURIComponent(fixture.onboardingId)}/status`,
-        { accountStatus: 'TERMINATED' },
+        { accountStatus: 'TERMINATED', reason: 'Synthetic staging deprovisioning' },
         `identity-status-${fixtureKey}`,
       )
       recordCleanupRequest(deprovision)
