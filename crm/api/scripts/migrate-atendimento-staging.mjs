@@ -55,6 +55,10 @@ import {
     rollbackIdentityReviewWorkflowMigration,
 } from '../server/atendimento/identityReviewMigration.js'
 import {
+    applyCommercialAssistedMigration,
+    rollbackCommercialAssistedMigration,
+} from '../server/atendimento/commercialAssistedCommunicationMigration.js'
+import {
     applyClinicalApprovalMigration,
     rollbackClinicalApprovalMigration,
 } from '../server/clinical/clinicalApprovalMigration.js'
@@ -77,6 +81,8 @@ export const ATENDIMENTO_STAGING_MIGRATIONS = Object.freeze([
     // source-quality controls. Keep it last so a clean staging bootstrap
     // cannot create a partially usable canary schema.
     { id: '20260807_commercial_canary_selector_v2', apply: applyCommercialCanaryMigration, rollback: rollbackCommercialCanaryMigration },
+    // Assisted communication depends on source freshness, materialized identities and the canary registry. It remains disabled until its own guarded runtime controls exist.
+    { id: '20260807_commercial_assisted_whatsapp_v2', apply: applyCommercialAssistedMigration, rollback: rollbackCommercialAssistedMigration },
 ])
 
 export function parseAtendimentoStagingMigrationAction(args = []) {

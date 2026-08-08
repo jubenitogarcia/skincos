@@ -374,3 +374,152 @@ test('routes Commercial Operations through its injected store with a single opaq
     assert.equal(mismatch.state.status, 400)
     assert.equal(calls.length, beforeForbidden)
 })
+
+test('routes Commercial Analytics through its injected, non-contacting store and preserves RBAC/idempotency', async () => {
+    const calls = []
+    const analytics = {
+        async readiness(actor) { calls.push(['readiness', actor.id]); return { ready: true, safety: { messagesEnabled: false, commercialContactWritesEnabled: false } } },
+        async quality(query, actor) { calls.push(['quality', query, actor.id]); return { coverage: [], safety: { messagesEnabled: false } } },
+        async funnel(query, actor) { calls.push(['funnel', query, actor.id]); return { observed: {}, safety: { messagesEnabled: false } } },
+        async segments(query, actor) { calls.push(['segments', query, actor.id]); return { segments: [], safety: { messagesEnabled: false } } },
+        async attributionWindows(query, actor) { calls.push(['windows', query, actor.id]); return { windows: [], safety: { messagesEnabled: false } } },
+        async experiments(query, actor) { calls.push(['experiments', query, actor.id]); return { experiments: [], safety: { messagesEnabled: false } } },
+        async experimentMetrics(id, actor) { calls.push(['metrics', id, actor.id]); return { safety: { messagesEnabled: false } } },
+        async createSegment(payload, actor) { calls.push(['createSegment', payload, actor.id]); return { definitionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', safety: { messagesEnabled: false, commercialContactWritesEnabled: false } } },
+        async createSegmentVersion() { throw new Error('not used') },
+        async snapshotSegment() { throw new Error('not used') },
+        async upsertAttributionWindow() { throw new Error('not used') },
+        async createExperiment() { throw new Error('not used') },
+        async updateExperimentState() { throw new Error('not used') },
+    }
+    const routes = captureAtendimentoRoutes({}, { commercialAnalyticsStore: analytics })
+    const actor = { id: 'gestor-analytics', role: 'GESTOR', allowedModules: ['atendimento'], allowedUnits: ['centro'], allowedUnitsDeclared: true }
+
+    const readiness = captureResponse()
+    await routes.get('GET /commercial/analytics/readiness')({ atendimentoActor: actor }, readiness)
+    assert.equal(readiness.state.status, 200)
+    assert.equal(readiness.state.body.safety.commercialContactWritesEnabled, false)
+
+    const quality = captureResponse()
+    await routes.get('GET /commercial/analytics/quality')({ atendimentoActor: actor, query: { unit: 'centro' } }, quality)
+    assert.equal(quality.state.status, 200)
+    assert.deepEqual(calls[1], ['quality', { unit: 'centro' }, 'gestor-analytics'])
+
+    const create = captureResponse()
+    await routes.get('POST /commercial/analytics/segments')({
+        atendimentoActor: actor,
+        headers: { 'idempotency-key': 'analytics:segment:001' },
+        body: { idempotencyKey: 'analytics:segment:001', reason: 'Coorte analítica sintética' },
+    }, create)
+    assert.equal(create.state.status, 200)
+    assert.equal(calls[2][0], 'createSegment')
+    assert.equal(calls[2][1].idempotencyKey, 'analytics:segment:001')
+
+    const beforeForbidden = calls.length
+    const forbidden = captureResponse()
+    await routes.get('GET /commercial/analytics/funnel')({ atendimentoActor: { ...actor, role: 'GERENTE' }, query: {} }, forbidden)
+    assert.equal(forbidden.state.status, 403)
+    assert.equal(calls.length, beforeForbidden)
+
+    const mismatch = captureResponse()
+    await routes.get('POST /commercial/analytics/segments')({
+        atendimentoActor: actor, headers: { 'idempotency-key': 'analytics:segment:002' },
+        body: { idempotencyKey: 'analytics:segment:003', reason: 'Coorte analítica sintética' },
+    }, mismatch)
+    assert.equal(mismatch.state.status, 400)
+    assert.equal(calls.length, beforeForbidden)
+    assert.equal([...routes.keys()].some((key) => /commercial\/analytics\/(?:send|message|dispatch|consent)/i.test(key)), false)
+})
+
+
+test('adapts only opaque signed subjects for the assisted ledger', () => {
+  assert.equal(__testables.commercialAssistedActor({ id: 'gestor-assisted', role: 'GESTOR' }).actorSubject, 'gestor-assisted')
+  assert.throws(() => __testables.commercialAssistedActor({ role: 'GESTOR', email: 'email-only' }), /ACTOR_IDENTITY_REQUIRED/)
+})
+
+test('routes assisted WhatsApp through its injected domain without publishing transport, raw reveal, or webhook ingress', async () => {
+  const calls = []
+  const safety = { providerSend: false, automationEnabled: false, bulkDispatchEnabled: false, commercialContactWritesEnabled: false, externalDispatch: false }
+  const assisted = {
+    async readiness(actor) { calls.push(['readiness', actor.actorSubject]); return { ready: true, safety } },
+    async availableOffers(query, actor) { calls.push(['offers', query, actor.actorSubject]); return { offers: [], safety } },
+    async listTemplates(query, actor) { calls.push(['templates', query, actor.actorSubject]); return { templates: [], safety } },
+    async createTemplate(payload, actor) { calls.push(['createTemplate', payload, actor.actorSubject]); return { template: { templateId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }, safety } },
+    async preview(payload, actor) { calls.push(['preview', payload, actor.actorSubject]); return { eligible: false, providerSend: false, externalDispatch: false, safety } },
+    async confirm(payload, actor) { calls.push(['confirm', payload, actor.actorSubject]); return { dispatchResult: 'not_dispatched', providerSend: false, externalDispatch: false, safety } },
+    async issueHandoff(payload, actor) { calls.push(['handoff', payload, actor.actorSubject]); return { destinationMasked: '***-****', providerSend: false, externalDispatch: false, safety } },
+    async emergencyControls(query, actor) { calls.push(['controls', query, actor.actorSubject]); return { controls: [], safety } },
+    async setEmergencyControl(payload, actor) { calls.push(['setControl', payload, actor.actorSubject]); return { emergencyOff: true, providerSend: false, externalDispatch: false, safety } },
+  }
+  const routes = captureAtendimentoRoutes({}, { commercialAssistedCommunicationStore: assisted })
+  const actor = { id: 'gestor-assisted', role: 'GESTOR', allowedModules: ['atendimento'], allowedUnits: ['centro'], allowedUnitsDeclared: true }
+  const routeKey = (...parts) => parts.join('-')
+  const templateKey = routeKey('assisted', 'template', '001')
+  const confirmKey = routeKey('assisted', 'confirm', '001')
+  const handoffKey = routeKey('assisted', 'handoff', '001')
+  const stopKey = routeKey('assisted', 'stop', '001')
+  const mismatchHeader = routeKey('assisted', 'confirm', '002')
+  const mismatchBody = routeKey('assisted', 'confirm', '003')
+
+  const readiness = captureResponse()
+  await routes.get('GET /commercial/assisted-whatsapp/readiness')({ atendimentoActor: actor }, readiness)
+  assert.equal(readiness.state.status, 200)
+  assert.equal(readiness.state.body.safety.providerSend, false)
+
+  const offers = captureResponse()
+  await routes.get('GET /commercial/assisted-whatsapp/offers')({ atendimentoActor: actor, query: { actionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' } }, offers)
+  assert.equal(offers.state.status, 200)
+  assert.deepEqual(calls[1], ['offers', { actionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }, 'gestor-assisted'])
+
+  const template = captureResponse()
+  await routes.get('POST /commercial/assisted-whatsapp/templates')({ atendimentoActor: actor, headers: { 'idempotency-key': templateKey }, body: { idempotencyKey: templateKey, unit: 'centro' } }, template)
+  assert.equal(template.state.status, 200)
+  assert.equal(calls[2][0], 'createTemplate')
+  assert.equal(calls[2][1].idempotencyKey, templateKey)
+
+  const preview = captureResponse()
+  await routes.get('POST /commercial/assisted-whatsapp/preview')({ atendimentoActor: actor, headers: {}, body: { actionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' } }, preview)
+  assert.equal(preview.state.status, 200)
+  assert.equal(calls[3][0], 'preview')
+
+  const confirm = captureResponse()
+  await routes.get('POST /commercial/assisted-whatsapp/confirm')({ atendimentoActor: actor, headers: { 'idempotency-key': confirmKey }, body: { idempotencyKey: confirmKey } }, confirm)
+  assert.equal(confirm.state.status, 200)
+  assert.equal(confirm.state.body.dispatchResult, 'not_dispatched')
+
+  const handoff = captureResponse()
+  await routes.get('POST /commercial/assisted-whatsapp/handoffs')({ atendimentoActor: actor, headers: { 'idempotency-key': handoffKey }, body: { idempotencyKey: handoffKey } }, handoff)
+  assert.equal(handoff.state.status, 200)
+  assert.equal(handoff.state.body.destinationMasked, '***-****')
+
+  const controls = captureResponse()
+  await routes.get('GET /commercial/assisted-whatsapp/emergency-controls')({ atendimentoActor: actor, query: { unit: 'centro' } }, controls)
+  assert.equal(controls.state.status, 200)
+  assert.deepEqual(calls[6], ['controls', { unit: 'centro' }, 'gestor-assisted'])
+
+  const setControl = captureResponse()
+  await routes.get('PUT /commercial/assisted-whatsapp/emergency-controls')({ atendimentoActor: actor, headers: { 'idempotency-key': stopKey }, body: { idempotencyKey: stopKey, unit: 'centro', emergencyOff: true, expectedRevision: 1, reason: 'Teste sint?tico.' } }, setControl)
+  assert.equal(setControl.state.status, 200)
+  assert.equal(calls[7][0], 'setControl')
+
+  const beforeForbidden = calls.length
+  const forbidden = captureResponse()
+  await routes.get('GET /commercial/assisted-whatsapp/readiness')({ atendimentoActor: { ...actor, role: 'GERENTE' } }, forbidden)
+  assert.equal(forbidden.state.status, 403)
+  assert.equal(calls.length, beforeForbidden)
+
+  const mismatch = captureResponse()
+  await routes.get('POST /commercial/assisted-whatsapp/confirm')({ atendimentoActor: actor, headers: { 'idempotency-key': mismatchHeader }, body: { idempotencyKey: mismatchBody } }, mismatch)
+  assert.equal(mismatch.state.status, 400)
+  assert.equal(calls.length, beforeForbidden)
+
+  assert.equal([...routes.keys()].some((key) => /assisted-whatsapp\/(?:send|message|dispatch|webhook|reveal)/i.test(key)), false)
+})
+
+test('maps an unavailable assisted migration to a read-only safe 503', async () => {
+  const routes = captureAtendimentoRoutes({}, { commercialAssistedCommunicationStore: { async readiness() { return { ready: false, reason: 'MIGRATION_PENDING' } } } })
+  const response = captureResponse()
+  await routes.get('GET /commercial/assisted-whatsapp/readiness')({ atendimentoActor: { id: 'gestor-readiness', role: 'GESTOR' } }, response)
+  assert.equal(response.state.status, 503)
+  assert.deepEqual(response.state.body, { ok: false, ready: false, reason: 'MIGRATION_PENDING' })
+})
