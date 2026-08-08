@@ -18,7 +18,8 @@ describe('Clientes assisted communication console', () => {
     expect(panelSource).toContain('const COMMERCIAL_ASSISTED_MUTATIONS_ENABLED = false')
     expect(panelSource).toContain('commercialContactWritesEnabled')
     expect(panelSource).toContain('CONFIRMAR_CONTATO_ASSISTIDO')
-    expect(panelSource).not.toMatch(/wa\.me|window\.open|href=|handoffs|reveal|dispatch|provider|phone|email/i)
+    expect(panelSource).toContain('dispatchResult')
+    expect(panelSource).not.toMatch(/wa\.me|window\.open|href=|handoffs|reveal|provider|phone|email/i)
     expect(apiSource).not.toContain('/commercial/assisted-whatsapp/handoffs')
   })
 

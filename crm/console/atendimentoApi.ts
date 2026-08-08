@@ -854,11 +854,11 @@ export type CommercialAction = {
 }
 
 export type CommercialAssistedSafety = {
-  providerSend: false
-  automationEnabled: false
-  bulkDispatchEnabled: false
-  commercialContactWritesEnabled: false
-  externalDispatch: false
+  providerSend: boolean
+  automationEnabled: boolean
+  bulkDispatchEnabled: boolean
+  commercialContactWritesEnabled: boolean
+  externalDispatch: boolean
 }
 
 export type CommercialAssistedReadiness = {
