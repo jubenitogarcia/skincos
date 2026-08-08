@@ -306,3 +306,46 @@ test("watchdog refuses rollback for a terminal exact-title child with no signed 
   }]);
   assert.equal(fs.existsSync(path.join(root, "runs/timekeeping.json")), false);
 });
+
+test("watchdog accepts an exact terminal coordination-gate failure with no mutation", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-watchdog-pre-mutation-"));
+  const child = run(
+    10,
+    "deploy-core-workers.yml",
+    `Core inventory staging ${sha} orchestrator=99 nonce=${"1".repeat(32)}`,
+  );
+  child.conclusion = "failure";
+  const request = scopedRequest([child], async (pathname) => {
+    if (pathname.includes(`/commits/${sha}/check-runs?`)) {
+      return { check_runs: [] };
+    }
+    if (pathname.endsWith(`/actions/runs/10/jobs?per_page=100`)) {
+      return {
+        jobs: [
+          { id: 1, name: "coordination / consume", status: "completed", conclusion: "failure" },
+          { id: 2, name: "promotion", status: "completed", conclusion: "skipped" },
+          { id: 3, name: "deploy", status: "completed", conclusion: "skipped" },
+        ],
+      };
+    }
+  });
+  const report = await reconstructWatchdogJournal({
+    repository,
+    repositoryId,
+    capabilityPublicKeysJson,
+    coordinatorRunId: "99",
+    releaseSha: sha,
+    stage: "staging",
+    artifactRoot: root,
+    request,
+  });
+  assert.equal(report.passed, true);
+  assert.deepEqual(report.unresolved, []);
+  assert.deepEqual(report.ignoredUnprovenChildren, [{
+    surface: "identityWorkforce",
+    runId: "10",
+    reason: "terminal-pre-mutation-gate-failure",
+    mutationStarted: false,
+  }]);
+  assert.equal(fs.existsSync(path.join(root, "runs/identity.json")), false);
+});
