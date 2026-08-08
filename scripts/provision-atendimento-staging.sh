@@ -107,9 +107,9 @@ grant usage, select, update on all sequences in schema crm_atendimento, crm_caix
 revoke all privileges on schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
 revoke all privileges on all tables in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
 revoke all privileges on all sequences in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
-# The isolated application has no safe direct Caixa projection yet. Do not
-# give it source-system reads during provisioning; terminal lockdown removes
-# temporary migration compatibility grants before the runtime can start.
+-- The isolated application has no safe direct Caixa projection yet. Do not
+-- give it source-system reads during provisioning; terminal lockdown removes
+-- temporary migration compatibility grants before the runtime can start.
 grant usage on schema crm_atendimento, crm_sessions to $APP_ROLE;
 grant select on all tables in schema crm_atendimento, crm_sessions to $APP_ROLE;
 grant usage, create on schema harmonia to $MIGRATOR_ROLE;
