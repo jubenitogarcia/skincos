@@ -65,6 +65,23 @@ rejeições exigem motivo, a confirmação é auditada e um vínculo confirmado 
 é rebaixado neste fluxo. Isso fecha a fila de exceções sem permitir que a
 interface resolva identidade por nome.
 
+## Exceções de conta CRM
+
+Contas CRM antigas que não nasceram no fluxo de convite não são associadas por
+nome, e-mail, telefone ou proximidade textual. O cadastro central as apresenta
+como `CRM_ACCOUNT_LINK` pendente. O operador deve localizar a conta no módulo
+de usuários e informar o nome de usuário exato em
+`POST /admin/team/:id/account-link`; a API valida que a conta existe e registra
+uma proposta `PENDING_REVIEW` em `crm_employee_account_links`. A confirmação ou
+rejeição exige a rota
+`POST /admin/team/:id/account-link/:linkId/review`; rejeição exige motivo e
+ambas as decisões geram auditoria e telemetria agregada.
+
+Enquanto não houver `CONFIRMED`, reativação, suspensão ou desligamento de um
+membro que já esteja `ACTIVE`/`SUSPENDED` é bloqueado com
+`CRM_ACCOUNT_LINK_REQUIRED`. Isso evita alterar a identidade errada e mantém a
+pendência visível até a revisão humana.
+
 Edições parciais preservam os dados operacionais já persistidos da Escala. A
 alteração de telefone recalcula o hash enviado ao Workforce e não expõe o
 telefone pessoal nas respostas do cadastro.
@@ -101,9 +118,10 @@ de agenda sem enviar mensagens ou tocar bancos remotos.
 ## Migrações e validação de staging
 
 As migrações devem ser aplicadas pelo runner versionado do Worker de Inventário,
-nunca por SQL manual no console do D1. A sequência esperada é `0024` seguida de
-`0025`; a segunda adiciona o fingerprint completo da requisição de onboarding e
-fecha a possibilidade de reutilizar uma chave de idempotência com outro payload.
+nunca por SQL manual no console do D1. A sequência esperada é `0024`, `0025`,
+`0026` e `0027`: a segunda adiciona o fingerprint completo da requisição de
+onboarding, `0026` separa o destino pessoal do login corporativo dos convites e
+`0027` cria o vínculo explícito entre conta CRM, onboarding e Workforce.
 
 Antes da aplicação, registrar no checkpoint privado:
 
@@ -113,9 +131,11 @@ Antes da aplicação, registrar no checkpoint privado:
 - fingerprint do inventário aprovado e estado da flag
   `UNIFIED_TEAM_ENABLED`.
 
-Depois da aplicação, confirmar que os dois tags aparecem em `d1_migrations`,
-que a coluna `request_fingerprint` e seu índice existem e que a reaplicação é
-`noop`. A API só pode ser exercitada depois dessa confirmação. O primeiro
+Depois da aplicação, confirmar que os quatro tags aparecem em `d1_migrations`,
+que a coluna `request_fingerprint`, a coluna `crm_invites.corporate_email` e a
+tabela `crm_employee_account_links` existem, com os índices correspondentes,
+e que a reaplicação é `noop`. A API só pode ser exercitada depois dessa
+confirmação. O primeiro
 exercício deve usar identidade sintética, unidade autorizada e destinatário de
 teste controlado; registrar resposta, auditoria e telemetria agregada, sem
 armazenar senha, token ou conteúdo de mensagem.
@@ -124,10 +144,12 @@ O gate de staging é encerrado somente quando a jornada sintética comprovar:
 
 1. cadastro idempotente e rejeição de payload divergente com a mesma chave;
 2. convite único, criação de senha pelo próprio usuário e login por usuário e
-   e-mail corporativo;
+   e-mail corporativo, com uma linha `CONFIRMED` em
+   `crm_employee_account_links`;
 3. edição, desativação, revogação e preservação da agenda;
 4. acesso permitido para Gestor/Gerente na unidade autorizada e bloqueio de
-   Consultor, de unidade externa e de vínculo implícito;
+   Consultor, de unidade externa e de vínculo implícito; uma conta histórica
+   deve passar pela proposta, confirmação/rejeição e bloqueio fail-closed;
 5. sincronização da Escala com vínculo explícito e Atendimento/Ponto sem
    associação por semelhança de nome.
 

@@ -1310,6 +1310,8 @@ export default function AppFunctionalNeatlab() {
                 <div className="relative z-10 flex h-screen">
                     {/* Premium Sidebar */}
                     <div
+                        role="complementary"
+                        aria-label="Navegação principal do CRM"
                         className="glass-morphism border-r border-white/10 backdrop-blur-2xl flex flex-col transition-[width] duration-200 ease-out"
                         style={{ width: sidebarExpanded ? '20rem' : '4.5rem' }}
                         onMouseEnter={() => { if (sidebarCanHover) setSidebarHover(true) }}

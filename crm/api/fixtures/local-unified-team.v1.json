@@ -1,6 +1,29 @@
 {
-  "version": 1,
-  "users": [],
+  "version": 2,
+  "users": [
+    {
+      "username": "anaribeiro",
+      "email": "anaribeiro@espacofacial.com",
+      "displayName": "Ana Ribeiro",
+      "role": "INJETOR",
+      "allowedUnits": ["novo-hamburgo"],
+      "allowedModules": ["atendimento"],
+      "ativo": 1,
+      "createdAt": "2026-08-05T00:00:00.000Z",
+      "updatedAt": "2026-08-05T00:00:00.000Z"
+    },
+    {
+      "username": "legacycarla",
+      "email": "legacycarla@example.test",
+      "displayName": "Conta legada sintética",
+      "role": "SUPERVISOR",
+      "allowedUnits": ["barra-shopping-sul"],
+      "allowedModules": ["atendimento"],
+      "ativo": 1,
+      "createdAt": "2026-08-05T00:00:00.000Z",
+      "updatedAt": "2026-08-05T00:00:00.000Z"
+    }
+  ],
   "invites": [
     {
       "id": "local-invite-lucas-mendes",
@@ -33,6 +56,10 @@
       "department": "Atendimento",
       "units": ["novo-hamburgo"],
       "accountStatus": "ACTIVE",
+      "crmAccountLinked": true,
+      "crmAccountUsername": "anaribeiro",
+      "crmAccountReviewStatus": "CONFIRMED",
+      "crmAccountLinkId": "local-account-link-ana-ribeiro",
       "inviteId": null,
       "provisioningState": "COMPLETED",
       "schedule": {
@@ -75,6 +102,8 @@
       "department": "Comercial",
       "units": ["novo-hamburgo", "barra-shopping-sul"],
       "accountStatus": "INVITED",
+      "crmAccountLinked": false,
+      "crmAccountReviewStatus": null,
       "inviteId": "local-invite-lucas-mendes",
       "provisioningState": "COMPLETED",
       "schedule": {
@@ -105,6 +134,10 @@
       "department": "Operações",
       "units": ["barra-shopping-sul"],
       "accountStatus": "ACTIVE",
+      "crmAccountLinked": false,
+      "crmAccountUsername": "legacycarla",
+      "crmAccountReviewStatus": "PENDING_REVIEW",
+      "crmAccountLinkId": "local-account-link-carla-souza",
       "inviteId": null,
       "provisioningState": "COMPLETED",
       "schedule": {

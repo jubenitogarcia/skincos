@@ -1324,6 +1324,10 @@ if (DEV_AUTH_ENABLED) {
             department: String(member.department || '').trim(),
             units,
             accountStatus: String(member.accountStatus || 'INVITED').trim().toUpperCase(),
+            crmAccountLinked: member.crmAccountLinked === undefined ? true : Boolean(member.crmAccountLinked),
+            crmAccountUsername: String(member.crmAccountUsername || '').trim() || null,
+            crmAccountReviewStatus: String(member.crmAccountReviewStatus || (member.crmAccountLinked === false ? '' : 'CONFIRMED')).trim().toUpperCase() || null,
+            crmAccountLinkId: String(member.crmAccountLinkId || '').trim() || null,
             inviteId: String(member.inviteId || '').trim() || null,
             provisioningState: String(member.provisioningState || 'COMPLETED').trim(),
             schedule: localNormalizeSchedule(member.schedule, units),
@@ -1346,6 +1350,19 @@ if (DEV_AUTH_ENABLED) {
         createdBy: String(link?.createdBy || ''),
         createdAt: link?.createdAt || null,
     })
+
+    const localPublicAccountLink = (member) => member?.crmAccountLinkId ? ({
+        id: member.crmAccountLinkId,
+        crmUsername: member.crmAccountUsername || '',
+        linkMethod: 'EXPLICIT_CRM_USERNAME',
+        reviewStatus: String(member.crmAccountReviewStatus || '').toUpperCase(),
+        reviewNote: member.crmAccountReviewNote || null,
+        reviewedBy: member.crmAccountReviewedBy || null,
+        reviewedAt: member.crmAccountReviewedAt || null,
+        createdBy: member.crmAccountCreatedBy || '',
+        createdAt: member.crmAccountCreatedAt || null,
+        updatedAt: member.updatedAt || null,
+    }) : null
 
     const localPublicTeamAudit = (entry) => ({
         id: String(entry?.id || ''),
@@ -1371,6 +1388,10 @@ if (DEV_AUTH_ENABLED) {
         department: member.department,
         units: member.units,
         accountStatus: member.accountStatus,
+        crmAccountLinked: Boolean(member.crmAccountLinked),
+        crmAccountUsername: member.crmAccountUsername || null,
+        crmAccountReviewStatus: member.crmAccountReviewStatus || null,
+        crmAccountLinkId: member.crmAccountLinkId || null,
         inviteId: member.inviteId || null,
         provisioningState: member.provisioningState || null,
         compensationState: member.compensationState || null,
@@ -1392,6 +1413,9 @@ if (DEV_AUTH_ENABLED) {
             }
             const compensationState = String(row?.compensationState || '').trim().toUpperCase()
             if (compensationState) items.push({ memberId, kind: 'COMPENSATION', status: compensationState })
+            if (!row?.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(String(row?.accountStatus || '').toUpperCase())) {
+                items.push({ memberId, kind: 'CRM_ACCOUNT_LINK', status: 'PENDING' })
+            }
             for (const link of row?.identityLinks || []) {
                 if (String(link?.reviewStatus || '').toUpperCase() === 'PENDING_REVIEW') {
                     items.push({ memberId, kind: 'IDENTITY_LINK', source: String(link?.source || '').toUpperCase(), status: 'PENDING_REVIEW' })
@@ -1686,6 +1710,8 @@ if (DEV_AUTH_ENABLED) {
             department: input.department,
             units: input.units,
             accountStatus: 'INVITED',
+            crmAccountLinked: false,
+            crmAccountUsername: null,
             inviteId,
             provisioningState: 'COMPLETED',
             schedule: input.schedule,
@@ -1869,6 +1895,9 @@ if (DEV_AUTH_ENABLED) {
             currentStatus !== 'TERMINATED' && nextStatus === 'SUSPENDED' ||
             currentStatus === 'SUSPENDED' && nextStatus === 'ACTIVE'
         if (!validTransition) return res.status(409).json({ success: false, error: 'Transição de estado não permitida', code: 'ACCOUNT_STATUS_TRANSITION_DENIED' })
+        if (currentStatus !== nextStatus && ['ACTIVE', 'SUSPENDED'].includes(currentStatus) && String(member.crmAccountReviewStatus || '').toUpperCase() !== 'CONFIRMED') {
+            return res.status(409).json({ success: false, error: 'Resolva o vínculo explícito da conta CRM antes de alterar o acesso', code: 'CRM_ACCOUNT_LINK_REQUIRED' })
+        }
         const terminationReason = String(req.body?.reason ?? req.body?.terminationReason ?? '').trim().replace(/\s+/g, ' ').slice(0, 500)
         if (nextStatus === 'TERMINATED' && terminationReason.length < 5) return res.status(400).json({ success: false, error: 'O desligamento exige um motivo', code: 'TEAM_TERMINATION_REASON_REQUIRED' })
         member.accountStatus = nextStatus
@@ -1925,6 +1954,7 @@ if (DEV_AUTH_ENABLED) {
             if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia não permite alterar este membro', code: hierarchyError })
             const currentStatus = String(member.accountStatus || '').toUpperCase()
             if (!['ACTIVE', 'SUSPENDED'].includes(currentStatus)) return res.status(409).json({ success: false, error: 'Ação em lote aceita somente membros ativos ou suspensos', code: 'BULK_STATUS_TRANSITION_DENIED' })
+            if (currentStatus !== nextStatus && String(member.crmAccountReviewStatus || '').toUpperCase() !== 'CONFIRMED') return res.status(409).json({ success: false, error: 'Resolva o vínculo explícito da conta CRM antes de alterar o acesso', code: 'CRM_ACCOUNT_LINK_REQUIRED' })
         }
         const at = new Date().toISOString()
         for (const member of members) {
@@ -2004,6 +2034,94 @@ if (DEV_AUTH_ENABLED) {
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_INVITE_REVOKED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
+    })
+    app.post(['/api/crm/admin/team/:id/account-link/:linkId/review', '/admin/team/:id/account-link/:linkId/review'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const member = store.team.find((row) => row.id === String(req.params.id || '').trim())
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const hierarchyError = localTeamHierarchyError(session, member.profile, member.units)
+        if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia não permite revisar o vínculo da conta', code: hierarchyError })
+        if (!member.crmAccountLinkId || member.crmAccountLinkId !== String(req.params.linkId || '').trim()) return res.status(404).json({ success: false, error: 'Vínculo da conta não encontrado para este membro', code: 'CRM_ACCOUNT_LINK_NOT_FOUND' })
+        const nextStatus = String(req.body?.reviewStatus || req.body?.review_status || '').trim().toUpperCase()
+        const reason = String(req.body?.reason || req.body?.reviewNote || '').trim().replace(/\s+/g, ' ').slice(0, 500)
+        if (!['PENDING_REVIEW', 'CONFIRMED', 'REJECTED'].includes(nextStatus)) return res.status(400).json({ success: false, error: 'Revisão do vínculo da conta inválida', code: 'CRM_ACCOUNT_LINK_REVIEW_INVALID' })
+        if (nextStatus === 'REJECTED' && reason.length < 5) return res.status(400).json({ success: false, error: 'A rejeição exige um motivo', code: 'CRM_ACCOUNT_LINK_REJECTION_REASON_REQUIRED' })
+        const currentStatus = String(member.crmAccountReviewStatus || '').toUpperCase()
+        if (currentStatus === 'CONFIRMED' && nextStatus !== 'CONFIRMED') return res.status(409).json({ success: false, error: 'Um vínculo de conta confirmado não pode ser rebaixado neste fluxo', code: 'CRM_ACCOUNT_LINK_CONFIRMED_IMMUTABLE' })
+        if (currentStatus === nextStatus) return res.status(200).json({ success: true, data: localPublicAccountLink(member), replayed: true })
+        if (nextStatus === 'CONFIRMED') {
+            const account = (store.users || []).find((user) => localNormalizeUsername(user.username) === localNormalizeUsername(member.crmAccountUsername))
+            if (!account) return res.status(404).json({ success: false, error: 'A conta CRM informada não existe mais', code: 'CRM_ACCOUNT_NOT_FOUND' })
+            const conflict = store.team.find((row) => row.id !== member.id && row.crmAccountLinkId && localNormalizeUsername(row.crmAccountUsername) === localNormalizeUsername(member.crmAccountUsername))
+            if (conflict) return res.status(409).json({ success: false, error: 'A conta CRM já está vinculada a outro funcionário', code: 'CRM_ACCOUNT_LINK_CONFLICT' })
+        }
+        const before = { crmUsername: member.crmAccountUsername, reviewStatus: currentStatus }
+        const at = new Date().toISOString()
+        member.crmAccountReviewStatus = nextStatus
+        member.crmAccountReviewNote = reason || null
+        member.crmAccountReviewedBy = session.user.username || session.user.email || 'gestor-local'
+        member.crmAccountReviewedAt = at
+        member.updatedAt = at
+        localAudit(store, session, 'EMPLOYEE_CRM_ACCOUNT_LINK_REVIEWED', member.id, { crmUsername: member.crmAccountUsername, reviewStatus: nextStatus, reason: reason || null, localPreview: true }, before)
+        localTeamTelemetry(store, session, 'EMPLOYEE_CRM_ACCOUNT_LINK_REVIEWED', nextStatus, 1, member.units.length)
+        await saveLocalCrmStore(store)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicAccountLink(member) })
+    })
+    app.get(['/api/crm/admin/team/:id/account-link', '/admin/team/:id/account-link'], async (req, res) => {
+        const session = getDevSession(req) || getLocalProxySession(req)
+        const role = normalizeRole(session?.user?.role)
+        if (!['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)) return res.status(401).json({ ok: false, success: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const member = store.team.find((row) => row.id === String(req.params.id || '').trim())
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicAccountLink(member) })
+    })
+    app.post(['/api/crm/admin/team/:id/account-link', '/admin/team/:id/account-link'], async (req, res) => {
+        const session = requireDevAdmin(req, res)
+        if (!session) return
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const member = store.team.find((row) => row.id === String(req.params.id || '').trim())
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const hierarchyError = localTeamHierarchyError(session, member.profile, member.units)
+        if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia não permite propor o vínculo da conta', code: hierarchyError })
+        const crmUsername = localNormalizeUsername(req.body?.crmUsername || req.body?.crm_username || req.body?.username)
+        if (!crmUsername || crmUsername.length < 3 || !/^[a-z0-9][a-z0-9._-]{2,39}$/.test(crmUsername)) return res.status(400).json({ success: false, error: 'Informe o nome de usuário exato da conta CRM', code: 'CRM_ACCOUNT_USERNAME_INVALID' })
+        const account = (store.users || []).find((user) => localNormalizeUsername(user.username) === crmUsername)
+        if (!account) return res.status(404).json({ success: false, error: 'A conta CRM informada não existe', code: 'CRM_ACCOUNT_NOT_FOUND' })
+        const conflict = store.team.find((row) => row.id !== member.id && row.crmAccountLinkId && localNormalizeUsername(row.crmAccountUsername) === crmUsername)
+        if (conflict) return res.status(409).json({ success: false, error: 'A conta CRM já está vinculada a outro funcionário', code: 'CRM_ACCOUNT_LINK_CONFLICT' })
+        const currentStatus = String(member.crmAccountReviewStatus || '').toUpperCase()
+        if (currentStatus === 'CONFIRMED') {
+            if (localNormalizeUsername(member.crmAccountUsername) === crmUsername) return res.status(200).json({ success: true, data: localPublicAccountLink(member), replayed: true })
+            return res.status(409).json({ success: false, error: 'O vínculo confirmado não pode ser substituído neste fluxo', code: 'CRM_ACCOUNT_LINK_CONFIRMED_IMMUTABLE' })
+        }
+        if (currentStatus === 'PENDING_REVIEW') {
+            if (localNormalizeUsername(member.crmAccountUsername) === crmUsername) return res.status(200).json({ success: true, data: localPublicAccountLink(member), replayed: true })
+            return res.status(409).json({ success: false, error: 'Já existe uma proposta de vínculo pendente para este membro', code: 'CRM_ACCOUNT_LINK_REVIEW_PENDING' })
+        }
+        const at = new Date().toISOString()
+        const before = { crmUsername: member.crmAccountUsername || null, reviewStatus: currentStatus || null }
+        member.crmAccountLinkId = member.crmAccountLinkId || `local-account-link-${randomUUID()}`
+        member.crmAccountUsername = crmUsername
+        member.crmAccountReviewStatus = 'PENDING_REVIEW'
+        member.crmAccountReviewNote = null
+        member.crmAccountReviewedBy = null
+        member.crmAccountReviewedAt = null
+        member.crmAccountCreatedBy = session.user.username || session.user.email || 'gestor-local'
+        member.crmAccountCreatedAt = member.crmAccountCreatedAt || at
+        member.updatedAt = at
+        localAudit(store, session, 'EMPLOYEE_CRM_ACCOUNT_LINK_PROPOSED', member.id, { crmUsername, reviewStatus: 'PENDING_REVIEW', linkMethod: 'EXPLICIT_CRM_USERNAME', localPreview: true }, before)
+        localTeamTelemetry(store, session, 'EMPLOYEE_CRM_ACCOUNT_LINK_PROPOSED', 'PENDING_REVIEW', 1, member.units.length)
+        await saveLocalCrmStore(store)
+        return res.status(201).set('cache-control', 'no-store').json({ success: true, data: localPublicAccountLink(member) })
     })
     app.post(['/api/crm/admin/team/:id/links/:linkId/review', '/admin/team/:id/links/:linkId/review'], async (req, res) => {
         const session = requireDevAdmin(req, res)
@@ -2107,7 +2225,7 @@ if (DEV_AUTH_ENABLED) {
             .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle, ...member.units].some((value) => String(value || '').toLowerCase().includes(query)))
             .filter((member) => role === 'ADMIN' || localTeamUnitsVisible(session, member))
             .map(localPublicTeamMember)
-        res.status(200).set('cache-control', 'no-store').json({ success: true, data, activeOnly: false, status: requestedStatus, summary: { members: data.length, pendingInvites: data.filter((member) => member.accountStatus === 'INVITED').length } })
+        res.status(200).set('cache-control', 'no-store').json({ success: true, data, activeOnly: false, status: requestedStatus, summary: { members: data.length, pendingInvites: data.filter((member) => member.accountStatus === 'INVITED').length, pendingAccountLinks: data.filter((member) => !member.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(String(member.accountStatus || '').toUpperCase())).length } })
     })
 
     app.get('/api/crm/admin/users', async (req, res) => {
