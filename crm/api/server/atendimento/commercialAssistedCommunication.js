@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const UUID_IN_TEXT_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi
 const UNIT_RE = /^[a-z0-9][a-z0-9._-]{0,119}$/i
 const IDEMPOTENCY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/
 const TEMPLATE_KEY_RE = /^[a-z0-9][a-z0-9._-]{1,95}$/
@@ -61,7 +62,8 @@ function normalizedMetadataKey(value) {
 
 function directPiiInText(value) {
     const source = String(value || '')
-    return /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(source) || /(?:\+?\d[\s().-]*){8,}\d/.test(source)
+    const phoneSource = source.replace(UUID_IN_TEXT_RE, ' ')
+    return /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(source) || /(?:\+?\d[\s().-]*){8,}\d/.test(phoneSource)
 }
 
 export function containsDirectPii(value, seen = new WeakSet()) {
