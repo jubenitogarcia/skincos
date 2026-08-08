@@ -52,6 +52,9 @@ async function createFixture({ state = 'active' } = {}) {
             CRM_DOMAIN: 'atendimento',
             CRM_API_HOST: '127.0.0.1',
             CRM_API_PORT: '0',
+            CRM_ATENDIMENTO_READ_ONLY: 'true',
+            CRM_ATENDIMENTO_CLIENTES_ONLY: 'true',
+            CRM_ATENDIMENTO_COMMERCIAL_WRITES_ENABLED: 'false',
             CRM_MODULE_CONTROL_FILE: control,
             ATENDIMENTO_RUNTIME_RELEASE_SHA: RELEASE_SHA,
             ATENDIMENTO_REPLAY_STATE_FILE: replay,
@@ -367,60 +370,6 @@ test('isolated runtime rejects commercial reads before source-system PII can be 
     }
 })
 
-test('synthetic signed probe consumes a nonce, rejects replay, and blocks a bodyless write before a domain handler', async () => {
-    const fixture = await createFixture()
-    const running = await startRuntime(fixture, async () => ({
-        ok: true,
-        databaseReachable: true,
-        databaseIdentity: true,
-        schemaReady: true,
-        sourceOperationsReady: true,
-        clinicalApprovalReady: true,
-        transactionReadOnly: true,
-        migrationRegistryReadable: true,
-        persistentWritePrivilegesBlocked: true,
-        persistentPiiReadPrivilegesBlocked: true,
-    }))
-    try {
-        const actor = encode({ id: 'staging-smoke-synthetic', role: 'GESTOR', allowedModules: ['atendimento'] })
-        const timestamp = String(Date.now())
-        const nonce = 'S'.repeat(32)
-        const requestPath = '/api/atendimento/__staging-smoke__/signature-replay'
-        const headers = {
-            'x-crm-user': actor,
-            'x-crm-ts': timestamp,
-            'x-crm-nonce': nonce,
-            'x-crm-signature-version': '2',
-            'x-crm-signature': signature({ timestamp, nonce, requestPath, actor }),
-        }
-        const accepted = await fetch(running.baseUrl + requestPath, { headers })
-        assert.equal(accepted.status, 404)
-        assert.deepEqual(await accepted.json(), { ok: false, error: 'CLIENTES_SURFACE_ONLY' })
-
-        const replay = await fetch(running.baseUrl + requestPath, { headers })
-        assert.equal(replay.status, 401)
-        assert.deepEqual(await replay.json(), { ok: false, error: 'UNAUTHORIZED' })
-
-        const writePath = '/api/atendimento/__staging-smoke__/write-guard'
-        const writeNonce = 'W'.repeat(32)
-        const write = await fetch(running.baseUrl + writePath, {
-            method: 'POST',
-            headers: {
-                'x-crm-user': actor,
-                'x-crm-ts': timestamp,
-                'x-crm-nonce': writeNonce,
-                'x-crm-signature-version': '2',
-                'x-crm-signature': signature({ timestamp, nonce: writeNonce, method: 'POST', requestPath: writePath, actor }),
-            },
-        })
-        assert.equal(write.status, 405)
-        assert.deepEqual(await write.json(), { ok: false, error: 'READ_ONLY_RUNTIME' })
-    } finally {
-        await running.close()
-        await fixture.cleanup()
-    }
-})
-
 test('v2 actor nonces survive a restart and reject a replay', async () => {
     const fixture = await createFixture()
     const actor = encode({ id: 'synthetic-actor', role: 'GESTOR', allowedUnits: ['synthetic-unit'] })
@@ -527,7 +476,7 @@ test('SIGTERM closes the isolated listener and releases its port', async () => {
     }
 })
 
-test('standalone entrypoint receives SIGTERM and releases its listener', { timeout: 60_000 }, async () => {
+test('standalone entrypoint enforces the signed synthetic probe contract and releases its listener', { timeout: 60_000 }, async () => {
     const fixture = await createFixture()
     const entrypoint = fileURLToPath(new URL('../../atendimentoRuntime.js', import.meta.url))
     const child = spawn(process.execPath, [entrypoint], {
@@ -565,7 +514,43 @@ test('standalone entrypoint receives SIGTERM and releases its listener', { timeo
         })
         const port = Number(listening.port)
         assert.ok(Number.isInteger(port) && port > 0)
-        assert.equal((await fetch(`http://127.0.0.1:${port}/health`)).status, 200)
+        const baseUrl = `http://127.0.0.1:${port}`
+        assert.equal((await fetch(`${baseUrl}/health`)).status, 200)
+
+        const actor = encode({ id: 'staging-smoke-synthetic', role: 'GESTOR', allowedModules: ['atendimento'] })
+        const timestamp = String(Date.now())
+        const nonce = 'S'.repeat(32)
+        const requestPath = '/api/atendimento/__staging-smoke__/signature-replay'
+        const headers = {
+            'x-crm-user': actor,
+            'x-crm-ts': timestamp,
+            'x-crm-nonce': nonce,
+            'x-crm-signature-version': '2',
+            'x-crm-signature': signature({ timestamp, nonce, requestPath, actor }),
+        }
+        const accepted = await fetch(baseUrl + requestPath, { headers })
+        assert.equal(accepted.status, 404)
+        assert.deepEqual(await accepted.json(), { ok: false, error: 'CLIENTES_SURFACE_ONLY' })
+
+        const replay = await fetch(baseUrl + requestPath, { headers })
+        assert.equal(replay.status, 401)
+        assert.deepEqual(await replay.json(), { ok: false, error: 'UNAUTHORIZED' })
+
+        const writePath = '/api/atendimento/__staging-smoke__/write-guard'
+        const writeNonce = 'W'.repeat(32)
+        const write = await fetch(baseUrl + writePath, {
+            method: 'POST',
+            headers: {
+                'x-crm-user': actor,
+                'x-crm-ts': timestamp,
+                'x-crm-nonce': writeNonce,
+                'x-crm-signature-version': '2',
+                'x-crm-signature': signature({ timestamp, nonce: writeNonce, method: 'POST', requestPath: writePath, actor }),
+            },
+        })
+        assert.equal(write.status, 405)
+        assert.deepEqual(await write.json(), { ok: false, error: 'READ_ONLY_RUNTIME' })
+
         child.kill('SIGTERM')
         const [exitCode, signal] = await once(child, 'exit')
         assert.equal(signal, null)
