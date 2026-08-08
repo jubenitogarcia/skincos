@@ -78,6 +78,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const ATENDIMENTO_STAGING_MIGRATION_TARGET = ATENDIMENTO_MIGRATION_TARGETS.STAGING
+export const ATENDIMENTO_STAGING_MIGRATION_LOCK_KEY = 'skincos:atendimento:staging:migrations:v1'
 export const ATENDIMENTO_STAGING_MIGRATIONS = Object.freeze([
     { id: '20260718_atendimento_professional_identity_v1', apply: applyProfessionalIdentityMigration, rollback: rollbackProfessionalIdentityMigration },
     { id: '20260718_atendimento_write_safety_v1', apply: applyAtendimentoWriteSafetyMigration, rollback: rollbackAtendimentoWriteSafetyMigration },
@@ -113,6 +114,7 @@ export async function runAtendimentoStagingMigration({
     action,
     createPool = createPgPool,
     createRunId = randomUUID,
+    assertDestination = assertAtendimentoMigrationDestination,
 } = {}) {
     const target = ATENDIMENTO_STAGING_MIGRATION_TARGET
     const normalizedUrl = String(databaseUrl || '').trim()
@@ -125,43 +127,68 @@ export async function runAtendimentoStagingMigration({
     const pool = createPool(normalizedUrl)
     if (!pool) throw new Error('Não foi possível criar o pool staging.')
     const runId = createRunId()
+    let lockClient = null
+    let lockAcquired = false
     try {
-    const client = await pool.connect()
-    try {
-        // The destination guard intentionally rejects a read-only session for
-        // an apply-capable connection. Dry-run performs no writes, but keeps
-        // the same identity mode so it proves the exact migrator can apply.
-        await client.query('begin')
-        const identity = await assertAtendimentoMigrationDestination(client, normalizedUrl, target)
-        const registryExists = await client.query(`select to_regclass('crm_atendimento.schema_migrations') as registry`)
-        const registry = registryExists.rows[0]?.registry
-            ? await client.query(`select id, applied_at, rolled_back_at
-                from crm_atendimento.schema_migrations
-                order by id`)
-            : { rows: [] }
-        await client.query('commit')
-        if (action === 'dry-run') {
-            return { runId, action, target, identity, registryPresent: Boolean(registryExists.rows[0]?.registry), migrations: registry.rows }
+        lockClient = await pool.connect()
+        const lock = await lockClient.query(
+            'select pg_try_advisory_lock(hashtext($1)) as acquired',
+            [ATENDIMENTO_STAGING_MIGRATION_LOCK_KEY],
+        )
+        lockAcquired = lock.rows[0]?.acquired === true
+        if (!lockAcquired) {
+            throw new Error('ATENDIMENTO_STAGING_MIGRATION_LOCK_UNAVAILABLE')
         }
-    } catch (error) {
-        try { await client.query('rollback') } catch { /* preserve original error */ }
-        throw error
-    } finally {
-        client.release()
-    }
 
-    if (action !== 'dry-run') {
-        const ordered = action === 'rollback' ? [...ATENDIMENTO_STAGING_MIGRATIONS].reverse() : ATENDIMENTO_STAGING_MIGRATIONS
-        const reports = []
-        for (const migration of ordered) {
-            const report = await migration[action]({ pool, databaseUrl: normalizedUrl, target })
-            reports.push({ id: migration.id, report })
+        const client = await pool.connect()
+        try {
+            // The destination guard intentionally rejects a read-only session for
+            // an apply-capable connection. Dry-run performs no writes, but keeps
+            // the same identity mode so it proves the exact migrator can apply.
+            await client.query('begin')
+            const identity = await assertDestination(client, normalizedUrl, target)
+            const registryExists = await client.query(`select to_regclass('crm_atendimento.schema_migrations') as registry`)
+            const registry = registryExists.rows[0]?.registry
+                ? await client.query(`select id, applied_at, rolled_back_at
+                    from crm_atendimento.schema_migrations
+                    order by id`)
+                : { rows: [] }
+            await client.query('commit')
+            if (action === 'dry-run') {
+                return { runId, action, target, identity, registryPresent: Boolean(registryExists.rows[0]?.registry), migrations: registry.rows }
+            }
+        } catch (error) {
+            try { await client.query('rollback') } catch { /* preserve original error */ }
+            throw error
+        } finally {
+            client.release()
         }
-        return { runId, action, target, migrations: reports, commercialWritesEnabled: false, contactCanary: [] }
+
+        if (action !== 'dry-run') {
+            const ordered = action === 'rollback' ? [...ATENDIMENTO_STAGING_MIGRATIONS].reverse() : ATENDIMENTO_STAGING_MIGRATIONS
+            const reports = []
+            for (const migration of ordered) {
+                const report = await migration[action]({ pool, databaseUrl: normalizedUrl, target })
+                reports.push({ id: migration.id, report })
+            }
+            return { runId, action, target, migrations: reports, commercialWritesEnabled: false, contactCanary: [] }
+        }
+    } finally {
+        if (lockClient) {
+            if (lockAcquired) {
+                try {
+                    await lockClient.query(
+                        'select pg_advisory_unlock(hashtext($1))',
+                        [ATENDIMENTO_STAGING_MIGRATION_LOCK_KEY],
+                    )
+                } catch {
+                    // The pool close still releases a session-scoped advisory lock.
+                }
+            }
+            lockClient.release()
+        }
+        await pool.end()
     }
-} finally {
-    await pool.end()
-}
 }
 
 const thisFile = fileURLToPath(import.meta.url)

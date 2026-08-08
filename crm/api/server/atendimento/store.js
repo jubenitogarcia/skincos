@@ -5852,8 +5852,71 @@ export function createAtendimentoStore(options = {}) {
                 select
                     current_database() as database_name,
                     current_user as database_user,
+                    session_user as session_database_user,
                     (current_setting('transaction_read_only', true) = 'on'
-                        or current_setting('default_transaction_read_only', true) = 'on') as transaction_read_only,
+                        and current_setting('default_transaction_read_only', true) = 'on') as transaction_read_only,
+                    coalesce(has_table_privilege(current_user, 'crm_atendimento.schema_migrations', 'SELECT'), false) as migrations_read,
+                    not has_database_privilege(current_user, current_database(), 'CREATE')
+                        and not has_database_privilege(current_user, current_database(), 'TEMPORARY')
+                        and not exists (
+                            select 1 from pg_namespace n
+                            where n.nspname not like 'pg_%' and n.nspname <> 'information_schema'
+                                and has_schema_privilege(current_user, n.oid, 'CREATE')
+                        )
+                        and not exists (
+                            select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                            where n.nspname not like 'pg_%' and n.nspname <> 'information_schema'
+                                and c.relkind in ('r', 'p', 'v', 'm', 'f')
+                                and (
+                                    has_table_privilege(current_user, c.oid, 'INSERT')
+                                    or has_table_privilege(current_user, c.oid, 'UPDATE')
+                                    or has_table_privilege(current_user, c.oid, 'DELETE')
+                                    or has_table_privilege(current_user, c.oid, 'TRUNCATE')
+                                    or has_table_privilege(current_user, c.oid, 'REFERENCES')
+                                    or has_table_privilege(current_user, c.oid, 'TRIGGER')
+                                )
+                        )
+                        and not exists (
+                            select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname not like 'pg_%' and n.nspname <> 'information_schema'
+                                and p.prosecdef
+                                and has_function_privilege(current_user, p.oid, 'EXECUTE')
+                        )
+                        and not exists (
+                            select 1 from pg_roles candidate
+                            where candidate.rolname <> current_user
+                                and pg_has_role(current_user, candidate.oid, 'SET')
+                        )
+                        and not exists (
+                            select 1 from pg_roles current_role
+                            where current_role.rolname = current_user
+                                and (current_role.rolsuper or current_role.rolcreatedb
+                                    or current_role.rolcreaterole or current_role.rolreplication
+                                    or current_role.rolbypassrls)
+                        )
+                        and not exists (
+                            select 1
+                            from pg_attribute a
+                            join pg_class c on c.oid = a.attrelid
+                            join pg_namespace n on n.oid = c.relnamespace
+                            where n.nspname not like 'pg_%' and n.nspname <> 'information_schema'
+                                and c.relkind in ('r', 'p', 'v', 'm', 'f')
+                                and a.attnum > 0 and not a.attisdropped
+                                and (
+                                    has_column_privilege(current_user, c.oid, a.attname, 'INSERT')
+                                    or has_column_privilege(current_user, c.oid, a.attname, 'UPDATE')
+                                    or has_column_privilege(current_user, c.oid, a.attname, 'REFERENCES')
+                                )
+                        )
+                        and not exists (
+                            select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                            where n.nspname not like 'pg_%' and n.nspname <> 'information_schema'
+                                and c.relkind = 'S'
+                                and (
+                                    has_sequence_privilege(current_user, c.oid, 'USAGE')
+                                    or has_sequence_privilege(current_user, c.oid, 'UPDATE')
+                                )
+                        ) as persistent_write_privileges_blocked,
                     to_regclass('crm_atendimento.schema_migrations') is not null as migrations_table,
                     to_regclass('crm_atendimento.global_client_identities') is not null as identities_table,
                     to_regclass('crm_atendimento.commercial_policy_config') is not null as commercial_policy_table,
@@ -5862,14 +5925,18 @@ export function createAtendimentoStore(options = {}) {
             `)
             const row = result.rows[0] || {}
             const databaseIdentity = (!expectedDatabase || row.database_name === expectedDatabase)
-                && (!expectedDatabaseUser || row.database_user === expectedDatabaseUser)
+                && (!expectedDatabaseUser || (
+                    row.database_user === expectedDatabaseUser
+                    && row.session_database_user === expectedDatabaseUser
+                ))
             const schemaReady = row.migrations_table === true
                 && row.identities_table === true
                 && row.commercial_policy_table === true
                 && row.source_operations_table === true
                 && row.clinical_approval_table === true
             return {
-                ok: databaseIdentity && schemaReady && row.transaction_read_only === true,
+                ok: databaseIdentity && schemaReady && row.migrations_read === true
+                    && row.transaction_read_only === true && row.persistent_write_privileges_blocked === true,
                 databaseReachable: true,
                 databaseIdentity,
                 schemaManaged,
@@ -5877,6 +5944,8 @@ export function createAtendimentoStore(options = {}) {
                 sourceOperationsReady: row.source_operations_table === true,
                 clinicalApprovalReady: row.clinical_approval_table === true,
                 transactionReadOnly: row.transaction_read_only === true,
+                migrationRegistryReadable: row.migrations_read === true,
+                persistentWritePrivilegesBlocked: row.persistent_write_privileges_blocked === true,
             }
         },
 
