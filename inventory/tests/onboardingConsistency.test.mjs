@@ -189,3 +189,11 @@ test('unified team rollout is explicit, staging-only and fail-closed by default'
   assert.match(workflow, /--var "APP_VERSION:\$RELEASE_SHA"/);
   assert.match(workflow, /--var "UNIFIED_TEAM_ENABLED:\$unified_team_var"/);
 });
+
+test('the governed Ponto staging identity publisher preserves the unified-team flag', async () => {
+  const workflow = await readFile(
+    new URL('../../.github/workflows/ponto-progressive-release.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /unified_team_enabled: process\.env\.STAGE === "staging"/);
+});

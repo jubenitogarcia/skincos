@@ -1026,7 +1026,15 @@ jobs:
           timekeeping_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId||'')" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
           node - "$RUNNER_TEMP/identity-inputs.json" "$timekeeping_id" <<'NODE'
           const fs = require("fs");
-          const inputs = { target: process.env.STAGE, unit: "inventory", release_scope: "ponto", release_sha: process.env.RELEASE_SHA, bootstrap_finance_context: false, orchestrator_run_id: process.env.GITHUB_RUN_ID };
+          const inputs = {
+            target: process.env.STAGE,
+            unit: "inventory",
+            release_scope: "ponto",
+            release_sha: process.env.RELEASE_SHA,
+            bootstrap_finance_context: false,
+            unified_team_enabled: process.env.STAGE === "staging",
+            orchestrator_run_id: process.env.GITHUB_RUN_ID,
+          };
           if (process.env.STAGE === "staging") {
             inputs.preview_run_id = process.env.PREDECESSOR_RUN_ID;
             inputs.timekeeping_version_id = process.argv[3];
