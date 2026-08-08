@@ -55,6 +55,18 @@ import {
     rollbackIdentityReviewWorkflowMigration,
 } from '../server/atendimento/identityReviewMigration.js'
 import {
+    applyIdentityClusterWorkspaceMigration,
+    rollbackIdentityClusterWorkspaceMigration,
+} from '../server/atendimento/identityClusterWorkspaceMigration.js'
+import {
+    applyCommercialOperationsMigration,
+    rollbackCommercialOperationsMigration,
+} from '../server/atendimento/commercialOperationsMigration.js'
+import {
+    applyCommercialAnalyticsMigration,
+    rollbackCommercialAnalyticsMigration,
+} from '../server/atendimento/commercialAnalyticsMigration.js'
+import {
     applyCommercialAssistedMigration,
     rollbackCommercialAssistedMigration,
 } from '../server/atendimento/commercialAssistedCommunicationMigration.js'
@@ -76,7 +88,10 @@ export const ATENDIMENTO_STAGING_MIGRATIONS = Object.freeze([
     { id: '20260805_commercial_data_quality_queue_v1', apply: applyCommercialDataQualityMigration, rollback: rollbackCommercialDataQualityMigration },
     { id: '20260807_clientes_source_operations_v2', apply: applyClientesSourceOperationsMigration, rollback: rollbackClientesSourceOperationsMigration },
     { id: '20260805_identity_review_workflow_v1', apply: applyIdentityReviewWorkflowMigration, rollback: rollbackIdentityReviewWorkflowMigration },
+    { id: '20260807_identity_cluster_workspace_v2', apply: applyIdentityClusterWorkspaceMigration, rollback: rollbackIdentityClusterWorkspaceMigration },
     { id: '20260806_clinical_cadence_approval_v1', apply: applyClinicalApprovalMigration, rollback: rollbackClinicalApprovalMigration },
+    { id: '20260807_commercial_operations_v2', apply: applyCommercialOperationsMigration, rollback: rollbackCommercialOperationsMigration },
+    { id: '20260807_commercial_analytics_v2', apply: applyCommercialAnalyticsMigration, rollback: rollbackCommercialAnalyticsMigration },
     // The selector references materialized global identities and the current
     // source-quality controls. Keep it last so a clean staging bootstrap
     // cannot create a partially usable canary schema.

@@ -64,9 +64,14 @@ test('native scripts parse fixed configuration without dynamic shell evaluation'
   ]) assertNoDynamicShell(relative)
 
   const migration = read('crm/api/scripts/run-atendimento-staging-migration.mjs')
+  const stagingMigration = read('scripts/run-atendimento-staging-migration.sh')
   assert.match(migration, /MIGRATOR_ENV_FILE = '\/etc\/skincos\/crm-atendimento-staging-migrator\.env'/)
   assert.match(migration, /readLiteralEnvironment/)
   assert.doesNotMatch(migration, /process\.env\.DATABASE_URL/)
+  assert.match(stagingMigration, /--release-sha/)
+  assert.match(stagingMigration, /\/opt\/skincos\/releases\/\$RELEASE_SHA\/source/)
+  assert.match(stagingMigration, /validate-atendimento-release\.mjs/)
+  assert.doesNotMatch(stagingMigration, /ROOT_DIR=.*BASH_SOURCE/)
 
   const qualityRefresh = read('crm/api/scripts/run-atendimento-staging-quality-refresh.mjs')
   assert.match(qualityRefresh, /MIGRATOR_ENV_FILE = '\/etc\/skincos\/crm-atendimento-staging-migrator\.env'/)
