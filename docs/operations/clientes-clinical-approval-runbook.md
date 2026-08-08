@@ -25,10 +25,12 @@ npm run migrate-clinical-approval -- --target=local --apply
 npm run migrate-clinical-approval -- --target=local --rollback
 ```
 
-O destino é validado contra o espelho local ou o PostgreSQL staging loopback
-com login migrator. Produção é rejeitada. A migration é aditiva e registra o
-estado em `clinical_approval.schema_migrations`; rollback preserva schema,
-ledgers e triggers.
+O CLI de domínio valida exclusivamente o espelho local. `--target=staging` é
+recusado para que staging só passe pelo runner de release target-bound de
+Atendimento, com lock compartilhado, backup privado e a ordem completa de
+migrations. Produção é rejeitada. A migration é aditiva e registra o estado em
+`clinical_approval.schema_migrations`; rollback preserva schema, ledgers e
+triggers.
 
 ## Operação
 

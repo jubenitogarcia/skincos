@@ -21,7 +21,10 @@ function parseTarget(args) {
     const values = args.filter((arg) => arg.startsWith('--target='))
     if (values.length > 1) throw commandError('COMMERCIAL_OPERATIONS_TARGET_INVALID')
     const value = values[0] ? values[0].slice('--target='.length) : ATENDIMENTO_MIGRATION_TARGETS.LOCAL
-    if (value === ATENDIMENTO_MIGRATION_TARGETS.LOCAL || value === ATENDIMENTO_MIGRATION_TARGETS.STAGING) return value
+    if (value === ATENDIMENTO_MIGRATION_TARGETS.STAGING) {
+        throw commandError('COMMERCIAL_OPERATIONS_STAGING_REQUIRES_CONTROLLED_RUNNER')
+    }
+    if (value === ATENDIMENTO_MIGRATION_TARGETS.LOCAL) return value
     throw commandError('COMMERCIAL_OPERATIONS_TARGET_INVALID')
 }
 
