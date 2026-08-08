@@ -4,7 +4,7 @@
 
 O dom?nio, a migration aditiva, o armazenamento e uma superf?cie HTTP m?nima de Clientes est?o versionados. As rotas exigem ator assinado, papel `GESTOR`, escopo de unidade e um sujeito opaco derivado somente de `subject`, `subjectId` ou `id`; e-mail e username n?o s?o aceitos como identidade de auditoria.
 
-A superf?cie exp?e somente readiness, ofertas compat?veis, templates aprovados, preview mascarado, confirma??o/handoff humanos e controle de emerg?ncia. O runtime de Clientes somente leitura continua bloqueando toda muta??o antes dos handlers. N?o h? UI, cliente de console, worker, SDK de provedor, URL de envio, rota de webhook, rota de reveal de telefone ou dispatch nesta tranche.
+O console expõe apenas uma leitura contextual de ofertas e modelos aprovados no perfil endereçado. O preview e a confirmação permanecem bloqueados pelas flags compiladas e pelo runtime somente leitura; não há reveal de destino, URI de envio, SDK de provedor, worker, rota de webhook ou dispatch nesta tranche.
 
 Nenhuma mensagem, contato comercial, consentimento ou altera??o de identidade ? enviada ou aplicada por este c?digo. O processo HTTP n?o ganha automa??o nem job cont?nuo.
 
@@ -73,4 +73,4 @@ O smoke autorizado nesta tranche ? est?tico/sint?tico: flags false, origem inace
 
 ## Pr?xima tranche necess?ria
 
-Uma PR posterior, pequena e revisada, pode adicionar a UI de preview mascarado e reveal tempor?rio/auditado. O reveal precisa continuar one-time, justificado e sem URI de provedor. O ingress de webhook tamb?m fica separado: deve manter raw HMAC, replay, rate limit, STOP imediato e bloqueio expl?cito no runtime somente leitura. Automa??o, disparo em massa e envio aut?nomo continuam proibidos.
+O console agora apresenta ofertas e modelos aprovados para a ação selecionada, destinatário mascarado e a confirmação literal. As flags compiladas continuam em false, portanto os controles mutáveis permanecem desabilitados e o painel não emite transporte externo. Uma PR posterior, pequena e revisada, pode introduzir reveal temporário/auditado; ele precisa continuar one-time, justificado e sem URI de provedor. O ingresso de webhook também fica separado: deve manter raw HMAC, replay, rate limit, STOP imediato e bloqueio explícito no runtime somente leitura. Automação, disparo em massa e envio autônomo continuam proibidos.

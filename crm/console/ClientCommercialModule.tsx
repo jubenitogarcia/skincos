@@ -4,6 +4,7 @@ import { Button } from '@/button'
 import { IdentityClusterWorkspace } from './IdentityClusterWorkspace'
 import { CommercialCanaryManager } from '@/CommercialCanaryManager'
 import { CommercialAnalyticsPanel } from './CommercialAnalyticsPanel'
+import { CommercialAssistedWhatsappPanel } from './CommercialAssistedWhatsappPanel'
 import {
   createCommercialAction,
   commercialCadenceManagerStatuses,
@@ -311,6 +312,7 @@ function ProfilePanel({ detail, units, professionals, onRefresh }: { detail: Com
     <ContactPermission key={`${profile.identityId}:${contactEligibility.permissionRevision}`} profile={profile} contactRolloutAllowed={contactRolloutAllowed} onSaved={onRefresh} />
     <ActionForm detail={detail} units={units} professionals={professionals} onSaved={onRefresh} />
     <ActionHistory actions={detail.actions} contactEligibility={contactEligibility} contactRolloutAllowed={contactRolloutAllowed} onUpdated={onRefresh} />
+    <CommercialAssistedWhatsappPanel actions={detail.actions} onUpdated={onRefresh} />
   </aside>
 }
 
