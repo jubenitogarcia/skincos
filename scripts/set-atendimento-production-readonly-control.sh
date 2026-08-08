@@ -1,11 +1,20 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash -p
 set -euo pipefail
+
+readonly SAFE_PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH="$SAFE_PATH"
+unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
+
+run_sudo_clean() {
+  /usr/bin/sudo -n /usr/bin/env -i "PATH=$SAFE_PATH" 'HOME=/nonexistent' 'LANG=C' "$@"
+}
 
 readonly CONTROL_FILE='/etc/skincos/atendimento-production/module-control.json'
 readonly BACKUP_ROOT='/var/backups/skincos/clientes/production-readonly'
-STATE=""
-RELEASE_SHA=""
-REASON="clientes-production-readonly"
+STATE=''
+RELEASE_SHA=''
+REASON='clientes-production-readonly'
 APPLY=0
 
 usage() {
@@ -31,36 +40,41 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$STATE" =~ ^(disabled|maintenance|active|canary)$ ]] || { echo '--state must be disabled, maintenance, active or canary.' >&2; exit 64; }
-if [[ "$STATE" == "active" || "$STATE" == "canary" ]]; then
+if [[ "$STATE" == 'active' || "$STATE" == 'canary' ]]; then
   [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--release-sha must be a full lowercase SHA for active or canary state.' >&2; exit 64; }
 elif [[ -n "$RELEASE_SHA" && ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo '--release-sha must be a full lowercase SHA when supplied.' >&2
   exit 64
 fi
 [[ "$REASON" =~ ^[A-Za-z0-9._:-]{1,120}$ ]] || { echo '--reason contains unsupported characters.' >&2; exit 64; }
-command -v install >/dev/null 2>&1 || { echo 'Missing install' >&2; exit 1; }
-command -v date >/dev/null 2>&1 || { echo 'Missing date' >&2; exit 1; }
-sudo -n true
 
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-if [[ "$APPLY" == "1" ]]; then
-  sudo -n test -f "$CONTROL_FILE" || { echo "Control file is missing: $CONTROL_FILE" >&2; exit 1; }
-  sudo -n install -d -m 0750 -o root -g postgres "$BACKUP_ROOT"
-  sudo -n cp -p "$CONTROL_FILE" "$BACKUP_ROOT/${stamp}-module-control.json"
-fi
+for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/install /usr/bin/date /usr/bin/mktemp /usr/bin/cat /usr/bin/rm /usr/bin/cp /usr/bin/chmod /usr/bin/test; do
+  [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
+done
+/usr/bin/sudo -n /usr/bin/true
 
-tmp_control="$(mktemp)"
-trap 'rm -f "$tmp_control"' EXIT
+stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
 release_json='null'
 if [[ -n "$RELEASE_SHA" ]]; then
   release_json="\"$RELEASE_SHA\""
 fi
-cat >"$tmp_control" <<EOF
+umask 0077
+tmp_control="$(/usr/bin/mktemp /tmp/atendimento-production-control.XXXXXX)"
+/usr/bin/test -f "$tmp_control" -a -O "$tmp_control"
+trap '/usr/bin/rm -f "$tmp_control"' EXIT
+/usr/bin/cat >"$tmp_control" <<EOF
 {"schemaVersion":1,"module":"atendimento","state":"$STATE","releaseSha":$release_json,"readOnly":true,"commercialContactWritesEnabled":false,"syntheticOnly":true,"reason":"$REASON","updatedAt":"$stamp"}
 EOF
-if [[ "$APPLY" == "1" ]]; then
-  sudo -n install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"
-  echo "Atendimento production control updated: state=$STATE release_sha=${RELEASE_SHA:-none}"
+
+if [[ "$APPLY" == '1' ]]; then
+  run_sudo_clean /usr/bin/test -f "$CONTROL_FILE" || { echo "Control file is missing: $CONTROL_FILE" >&2; exit 1; }
+  run_sudo_clean /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
+  backup="$(run_sudo_clean /usr/bin/mktemp "$BACKUP_ROOT/${stamp}-module-control.XXXXXX.json")"
+  [[ "$backup" =~ ^/var/backups/skincos/clientes/production-readonly/[0-9]{8}T[0-9]{6}Z-module-control\.[A-Za-z0-9]{6}\.json$ ]] || { echo 'Control backup path was not generated from the fixed contract.' >&2; exit 1; }
+  run_sudo_clean /usr/bin/cp -p "$CONTROL_FILE" "$backup"
+  run_sudo_clean /usr/bin/chmod 0600 "$backup"
+  run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"
+  printf 'module_control=%s release_sha=%s read_only=true commercial_writes=false applied=true\n' "$STATE" "${RELEASE_SHA:-none}"
 else
-  echo "Atendimento production control verified: state=$STATE release_sha=${RELEASE_SHA:-none} (dry-run)"
+  printf 'module_control=%s release_sha=%s read_only=true commercial_writes=false dry_run=true\n' "$STATE" "${RELEASE_SHA:-none}"
 fi

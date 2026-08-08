@@ -54,6 +54,7 @@ test('native scripts parse fixed configuration without dynamic shell evaluation'
     'scripts/runtime/add-atendimento-staging-tunnel-route.sh',
     'scripts/runtime/install-atendimento-staging-service.sh',
     'scripts/provision-atendimento-production-readonly.sh',
+    'scripts/lockdown-atendimento-production-runtime.sh',
     'scripts/set-atendimento-production-readonly-control.sh',
     'scripts/runtime/install-atendimento-production-service.sh',
     'scripts/runtime/install-atendimento-production-tunnel.sh',
@@ -216,14 +217,69 @@ test('staging release, control and application role remain fixed and read-only',
 
 test('production database contract has a separate read-only app role without raw contact access', () => {
   const provision = read('scripts/provision-atendimento-production-readonly.sh')
+  const lockdown = read('scripts/lockdown-atendimento-production-runtime.sh')
+  const installer = read('scripts/runtime/install-atendimento-production-service.sh')
+  const prepare = read('scripts/runtime/prepare-atendimento-production-release.sh')
+  const control = read('scripts/set-atendimento-production-readonly-control.sh')
+  const validation = read('scripts/validate-atendimento-production-readonly.sh')
+  const smoke = read('crm/api/scripts/atendimento-production-signed-smoke.mjs')
   assert.match(provision, /DB_NAME='skincos_clientes_production'/)
   assert.match(provision, /MIGRATOR_ROLE='skincos_clientes_migrator_login'/)
   assert.match(provision, /APP_ROLE='skincos_clientes_ro'/)
   assert.match(provision, /default_transaction_read_only = on/)
   assert.match(provision, /alter default privileges for role \$MIGRATOR_ROLE/)
+  assert.match(provision, /^#!\/usr\/bin\/bash -p/m)
+  assert.match(provision, /unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP/)
+  assert.match(provision, /Production provisioning requires the isolated runtime to be inactive/)
+  assert.match(provision, /run_sudo_clean \/usr\/bin\/mktemp "\$BACKUP_ROOT\/\$stamp-\$DB_NAME-preapply\.XXXXXX\.dump"/)
+  assert.match(provision, /Backup output path was not generated from the fixed contract/)
+  assert.match(provision, /chown postgres:postgres "\$backup"/)
+  assert.match(provision, /chown root:root "\$backup"/)
+  assert.match(provision, /trap cleanup_partial_artifacts EXIT/)
+  assert.match(provision, /mktemp \/tmp\/atendimento-production-app-env\.XXXXXX/)
+  assert.match(provision, /mktemp \/tmp\/atendimento-production-control\.XXXXXX/)
+  assert.match(provision, /RUNTIME_GRANT_LOCKDOWN=.*lockdown-atendimento-production-runtime\.sh/)
+  assert.match(provision, /run_sudo_clean \/usr\/bin\/bash -p "\$RUNTIME_GRANT_LOCKDOWN" --apply/)
   assert.doesNotMatch(provision, /harmonia\.contacts/)
   assert.doesNotMatch(provision, /phone_raw/)
   assert.doesNotMatch(provision, /grant .*insert/i)
+
+  assert.match(lockdown, /DB_NAME='skincos_clientes_production'/)
+  assert.match(lockdown, /APP_ROLE='skincos_clientes_ro'/)
+  assert.match(lockdown, /^#!\/usr\/bin\/bash -p/m)
+  assert.match(lockdown, /n\.nspname in \('harmonia', 'crm_caixa'\)/)
+  assert.match(lockdown, /c\.relkind in \('r', 'p', 'v', 'm', 'f'\)/)
+  assert.match(lockdown, /has_column_privilege\('skincos_clientes_ro', c\.oid, a\.attname, 'SELECT'\)/)
+  assert.match(lockdown, /revoke all privileges on schema harmonia from skincos_clientes_ro/)
+  assert.match(lockdown, /revoke all privileges on schema crm_caixa from skincos_clientes_ro/)
+  assert.match(lockdown, /production_runtime_grants_read_only=true/)
+
+  assert.match(installer, /^#!\/usr\/bin\/bash -p/m)
+  assert.match(installer, /CONTROL_VALIDATOR=.*validate-atendimento-production-control\.mjs/)
+  assert.match(installer, /"\$CONTROL_VALIDATOR" --release-sha "\$RELEASE_SHA"/)
+  assert.match(installer, /RUNTIME_GRANT_LOCKDOWN=.*lockdown-atendimento-production-runtime\.sh/)
+  assert.match(installer, /"\$RUNTIME_GRANT_LOCKDOWN" --dry-run/)
+  assert.match(installer, /"\$RUNTIME_GRANT_LOCKDOWN" --apply/)
+  assert.match(installer, /mktemp -d \/tmp\/atendimento-production-unit\.XXXXXX/)
+  assert.match(installer, /systemctl enable "\$SERVICE"/)
+  assert.match(installer, /systemctl restart "\$SERVICE"/)
+  assert.doesNotMatch(installer, /systemctl enable --now/)
+
+  assert.match(prepare, /^#!\/usr\/bin\/bash -p/m)
+  assert.match(prepare, /unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP/)
+  assert.match(prepare, /mktemp \/tmp\/atendimento-production-manifest\.XXXXXX/)
+  assert.match(control, /^#!\/usr\/bin\/bash -p/m)
+  assert.match(control, /unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP/)
+  assert.match(control, /mktemp \/tmp\/atendimento-production-control\.XXXXXX/)
+  assert.match(validation, /RUNTIME_GRANT_LOCKDOWN=.*lockdown-atendimento-production-runtime\.sh/)
+  assert.match(validation, /CONTROL_VALIDATOR=.*validate-atendimento-production-control\.mjs/)
+  assert.match(validation, /"\$CONTROL_VALIDATOR" --release-sha "\$RELEASE_SHA"/)
+  assert.match(validation, /"\$RUNTIME_GRANT_LOCKDOWN" --dry-run/)
+  assert.match(validation, /WorkingDirectory=\$RELEASE_ROOT/)
+  assert.match(validation, /--noproxy '\*'/)
+  assert.match(smoke, /commercialReadsDisabled: firstRead\.response\.status === 503/)
+  assert.match(smoke, /COMMERCIAL_READS_DISABLED/)
+  assert.doesNotMatch(smoke, /replayRejected/)
 })
 
 test('release, rollback and tunnel paths are immutable, fixed and isolated', () => {
