@@ -1301,7 +1301,10 @@ export default function BeautyMovementExperience({
                                 id="beauty-movement-deck-prompt"
                                 role="note"
                             >
-                                Clique no baralho <span aria-hidden="true">↗</span>
+                                Clique no baralho
+                                <span className={styles.deckPromptArrow} aria-hidden="true">
+                                    ↓
+                                </span>
                             </span>
                         ) : null}
                         {finaleStage === "collecting" ? (
@@ -1309,7 +1312,7 @@ export default function BeautyMovementExperience({
                                 {reading.map(renderFinaleCard)}
                             </div>
                         ) : finaleStage === "confirmation" || finaleStage === "result" ? (
-                            <div className={`${styles.finaleCardGrid} ${styles.finaleCardGridSettled}`} role="group" aria-label="Cartas finais">
+                            <div className={styles.finaleCardGrid} role="group" aria-label="Cartas finais">
                                 {reading.map(renderFinaleCard)}
                             </div>
                         ) : finaleStage === "hidden" && !waitingForInitialDeal ? (

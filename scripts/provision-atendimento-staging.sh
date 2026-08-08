@@ -1,5 +1,10 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash -p
 set -euo pipefail
+
+readonly SAFE_PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH="$SAFE_PATH"
+unset BASH_ENV ENV CDPATH GLOBIGNORE \
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
 
 # Creates the isolated synthetic staging database contract. Secret material is
 # generated in memory and written only to the private native configuration
@@ -26,40 +31,39 @@ readonly LOG_ROOT='/var/log/skincos/crm-atendimento'
 # PostgreSQL dump directory owned by the postgres group.
 readonly BACKUP_ROOT='/var/backups/skincos/clientes/staging-control'
 
-require_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }; }
-require_cmd sudo
-require_cmd openssl
-require_cmd install
-sudo -n true
+for command_path in /usr/bin/sudo /usr/bin/openssl /usr/bin/install /usr/bin/psql /usr/bin/date /usr/bin/mktemp /usr/bin/cat /usr/bin/rm /usr/bin/cp /usr/bin/basename /usr/bin/test; do
+  [[ -x "$command_path" ]] || { echo "Missing required command: $command_path" >&2; exit 1; }
+done
+/usr/bin/sudo -n true
 
 if [[ "$ACTION" == "--dry-run" ]]; then
-  sudo -n -u postgres psql --dbname=postgres --set=ON_ERROR_STOP=1 --tuples-only --no-align <<SQL
+  /usr/bin/sudo -n -u postgres /usr/bin/env -i "PATH=$SAFE_PATH" 'HOME=/var/lib/postgresql' 'LANG=C' /usr/bin/psql --dbname=postgres --set=ON_ERROR_STOP=1 --tuples-only --no-align <<SQL
 select 'database=' || datname from pg_database where datname = '$DB_NAME';
 select 'role=' || rolname || ':login=' || rolcanlogin from pg_roles where rolname in ('$APP_ROLE', '$MIGRATOR_ROLE', '$OWNER_ROLE');
 SQL
   for path in "$ATENDIMENTO_CONFIG" "$MIGRATOR_CONFIG" "$CONTROL_FILE"; do
-    if sudo -n test -f "$path"; then echo "present=$path"; else echo "missing=$path"; fi
+    if /usr/bin/sudo -n /usr/bin/test -f "$path"; then echo "present=$path"; else echo "missing=$path"; fi
   done
   exit 0
 fi
 
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-sudo -n install -d -m 0750 -o root -g skincos "$CONFIG_DIR" "$CONTROL_DIR"
-sudo -n install -d -m 0750 -o skincos -g skincos "$STATE_ROOT" "$STATE_ROOT/var" "$LOG_ROOT"
-sudo -n install -d -m 0700 -o root -g root "$BACKUP_ROOT"
+stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
+/usr/bin/sudo -n /usr/bin/install -d -m 0750 -o root -g skincos "$CONFIG_DIR" "$CONTROL_DIR"
+/usr/bin/sudo -n /usr/bin/install -d -m 0750 -o skincos -g skincos "$STATE_ROOT" "$STATE_ROOT/var" "$LOG_ROOT"
+/usr/bin/sudo -n /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
 
 for path in "$ATENDIMENTO_CONFIG" "$MIGRATOR_CONFIG" "$CONTROL_FILE"; do
-  if sudo -n test -f "$path"; then
-    sudo -n cp -p "$path" "$BACKUP_ROOT/${stamp}-$(basename "$path")"
+  if /usr/bin/sudo -n /usr/bin/test -f "$path"; then
+    /usr/bin/sudo -n /usr/bin/cp -p "$path" "$BACKUP_ROOT/${stamp}-$(/usr/bin/basename "$path")"
   fi
 done
 
-app_password="$(openssl rand -hex 32)"
-migrator_password="$(openssl rand -hex 32)"
-actor_key="$(openssl rand -hex 32)"
-readiness_token="$(openssl rand -hex 32)"
+app_password="$(/usr/bin/openssl rand -hex 32)"
+migrator_password="$(/usr/bin/openssl rand -hex 32)"
+actor_key="$(/usr/bin/openssl rand -hex 32)"
+readiness_token="$(/usr/bin/openssl rand -hex 32)"
 
-sudo -n -u postgres psql --dbname=postgres --set=ON_ERROR_STOP=1 --set=app_password="$app_password" --set=migrator_password="$migrator_password" <<SQL
+/usr/bin/sudo -n -u postgres /usr/bin/env -i "PATH=$SAFE_PATH" 'HOME=/var/lib/postgresql' 'LANG=C' /usr/bin/psql --dbname=postgres --set=ON_ERROR_STOP=1 --set=app_password="$app_password" --set=migrator_password="$migrator_password" <<SQL
 alter role $APP_ROLE password :'app_password';
 alter role $MIGRATOR_ROLE password :'migrator_password';
 alter role $MIGRATOR_ROLE inherit;
@@ -81,8 +85,8 @@ grant usage, select, update on all sequences in schema crm_atendimento, crm_caix
 revoke all privileges on schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
 revoke all privileges on all tables in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
 revoke all privileges on all sequences in schema crm_atendimento, crm_caixa, crm_sessions, harmonia from $APP_ROLE;
-grant usage on schema crm_atendimento, crm_caixa, crm_sessions, harmonia to $APP_ROLE;
-grant select on all tables in schema crm_atendimento, crm_caixa, crm_sessions, harmonia to $APP_ROLE;
+grant usage on schema crm_atendimento, crm_caixa, crm_sessions to $APP_ROLE;
+grant select on all tables in schema crm_atendimento, crm_caixa, crm_sessions to $APP_ROLE;
 grant usage, create on schema harmonia to $MIGRATOR_ROLE;
 grant select, insert, update, delete on all tables in schema harmonia to $MIGRATOR_ROLE;
 grant usage, select, update on all sequences in schema harmonia to $MIGRATOR_ROLE;
@@ -100,11 +104,11 @@ app_url="postgresql://${APP_ROLE}:${app_password}@127.0.0.1:5432/${DB_NAME}?sslm
 migrator_url="postgresql://${MIGRATOR_ROLE}:${migrator_password}@127.0.0.1:5432/${DB_NAME}?sslmode=require&uselibpqcompat=true&application_name=atendimento-migration"
 
 umask 0077
-tmp_env="$(mktemp)"
-tmp_migrator="$(mktemp)"
-tmp_control="$(mktemp)"
-trap 'rm -f "$tmp_env" "$tmp_migrator" "$tmp_control"' EXIT
-cat >"$tmp_env" <<EOF
+tmp_env="$(/usr/bin/mktemp)"
+tmp_migrator="$(/usr/bin/mktemp)"
+tmp_control="$(/usr/bin/mktemp)"
+trap '/usr/bin/rm -f "$tmp_env" "$tmp_migrator" "$tmp_control"' EXIT
+/usr/bin/cat >"$tmp_env" <<EOF
 NODE_ENV=production
 CRM_DOMAIN=atendimento
 CRM_API_HOST=127.0.0.1
@@ -124,15 +128,15 @@ NO_AUTH=false
 CRM_ATENDIMENTO_COMMERCIAL_WRITES_ENABLED=false
 CRM_ATENDIMENTO_SCHEMA_MANAGED=true
 EOF
-cat >"$tmp_migrator" <<EOF
+/usr/bin/cat >"$tmp_migrator" <<EOF
 NODE_ENV=production
 DATABASE_URL="$migrator_url"
 EOF
-cat >"$tmp_control" <<EOF
+/usr/bin/cat >"$tmp_control" <<EOF
 {"schemaVersion":1,"module":"atendimento","state":"maintenance","releaseSha":null,"readOnly":true,"commercialContactWritesEnabled":false,"syntheticOnly":true,"reason":"clientes-staging-read-only-pending-release","updatedAt":"$stamp"}
 EOF
-sudo -n install -m 0640 -o root -g skincos "$tmp_env" "$ATENDIMENTO_CONFIG"
-sudo -n install -m 0600 -o root -g root "$tmp_migrator" "$MIGRATOR_CONFIG"
-sudo -n install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"
+/usr/bin/sudo -n /usr/bin/install -m 0640 -o root -g skincos "$tmp_env" "$ATENDIMENTO_CONFIG"
+/usr/bin/sudo -n /usr/bin/install -m 0600 -o root -g root "$tmp_migrator" "$MIGRATOR_CONFIG"
+/usr/bin/sudo -n /usr/bin/install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"
 
 echo "Atendimento staging database contract provisioned: database=$DB_NAME app_role=$APP_ROLE migrator_role=$MIGRATOR_ROLE control_file=$CONTROL_FILE control_state=maintenance commercial_writes=false"
