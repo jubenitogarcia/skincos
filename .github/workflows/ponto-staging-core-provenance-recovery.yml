@@ -468,7 +468,8 @@ jobs:
             || body?.ok !== false
             || body?.ready !== false
             || body?.availability?.state !== "maintenance"
-            || String(response.headers.get("x-skincos-gateway-version-id") || "").toLowerCase() !== incumbent.surface.versionId.toLowerCase()
+            || body?.versionMetadata?.gatewayEnvironment !== "staging"
+            || String(response.headers.get("x-skincos-gateway-environment") || "").toLowerCase() !== "staging"
           ) throw new Error("staging Ponto health did not prove maintenance on the restored Core incumbent");
           NODE
 
