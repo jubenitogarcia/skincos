@@ -56,7 +56,9 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.doesNotMatch(experience, /preparedNote/);
     assert.doesNotMatch(experience, /choiceInstruction/);
     assert.match(experience, /Continuar para confirmar/);
-    assert.match(experience, /disabled=\{handStage !== "held"\}/);
+    assert.match(experience, /finaleStage === "hidden" \? \(/);
+    assert.match(experience, /disabled=\{!tableSelected \|\| handStage !== "held"\}/);
+    assert.match(experience, /Escolha uma carta para liberar o avanço/);
     assert.match(experience, /Seu presente de celebração/);
     assert.match(experience, /Seu presente será revelado após a confirmação/);
     assert.doesNotMatch(experience, /benefitPreview/);
