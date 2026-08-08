@@ -16,6 +16,7 @@ test('onboarding consistency migrations are additive and keep non-operational de
 
 test('unified team identity migration is additive and creates explicit link ledgers', async () => {
   const inventory = await readFile(new URL('../migrations/0024_unified_team_identity.sql', import.meta.url), 'utf8');
+  const inviteIdentity = await readFile(new URL('../migrations/0026_unified_invite_identity.sql', import.meta.url), 'utf8');
   const escala = await readFile(new URL('../../workforce/schedule/migrations-d1/0005_unified_employee_links.sql', import.meta.url), 'utf8');
   const atendimento = await readFile(new URL('../../crm/api/server/atendimento/migrations/20260805_unified_workforce_identity_v1.up.sql', import.meta.url), 'utf8');
   assert.match(inventory, /requested_username/i);
@@ -25,12 +26,31 @@ test('unified team identity migration is additive and creates explicit link ledg
   assert.match(inventory, /crm_team_operations/i);
   assert.match(inventory, /crm_team_telemetry/i);
   assert.match(inventory, /CREATE TABLE IF NOT EXISTS/i);
+  assert.match(inviteIdentity, /ADD COLUMN corporate_email/i);
+  assert.match(inviteIdentity, /crm_employee_onboarding/i);
+  assert.match(inviteIdentity, /idx_crm_invites_corporate_email/i);
+  assert.doesNotMatch(inviteIdentity, /\bDROP\b/i);
   assert.match(escala, /workforce_employee_id/i);
   assert.match(escala, /professional_id/i);
   assert.match(atendimento, /professional_workforce_links/i);
   assert.doesNotMatch(inventory, /\bDROP\b/i);
   assert.doesNotMatch(escala, /\bDROP\b/i);
   assert.doesNotMatch(atendimento, /\bDROP\b/i);
+});
+
+test('unified invitations deliver to personal email while preserving corporate login identity', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const auth = await readFile(new URL('../../identity/routes/auth.js', import.meta.url), 'utf8');
+  const inviteBlock = admin.slice(admin.indexOf("const inviteColumns = ['id'"), admin.indexOf('await env.DB.prepare(`INSERT INTO ${invitesTable}', admin.indexOf("const inviteColumns = ['id")));
+  assert.match(inviteBlock, /'invitee_email'/);
+  assert.match(inviteBlock, /inviteColumns\.splice\(4, 0, 'corporate_email'\)/);
+  assert.match(inviteBlock, /inviteValues\.splice\(4, 0, input\.corporateEmail\)/);
+  assert.match(inviteBlock, /input\.personalEmail/);
+  assert.match(admin, /const invitesHasCorporateEmail = await tableHasColumn/);
+  assert.match(admin, /LOWER\(corporate_email\)=LOWER\(\?\)/);
+  assert.match(auth, /INVITE_EMAIL_MISMATCH/);
+  assert.match(auth, /const loginEmail = normalizedCorporateEmail \|\| email/);
+  assert.match(auth, /SELECT \?, \?, \?, \?, role/);
 });
 
 test('onboarding retries require a payload fingerprint after the unified identity migration', async () => {
@@ -76,6 +96,10 @@ test('onboarding status changes stay hierarchical, synchronized, audited and fai
   assert.match(statusBlock, /TEAM_TERMINATION_REASON_REQUIRED/);
   assert.match(statusBlock, /terminationReasonProvided/);
   assert.match(statusBlock, /terminationReason: nextStatus === 'TERMINATED'/);
+  assert.match(statusBlock, /const reactivation = nextStatus === 'ACTIVE' && currentStatus === 'SUSPENDED'/);
+  assert.match(statusBlock, /Re-enabling access is fail-closed/);
+  assert.match(statusBlock, /accountStatus: 'SUSPENDED'/);
+  assert.match(statusBlock, /EMPLOYEE_ONBOARDING_STATUS_COMPENSATION_PENDING/);
   assert.match(statusBlock, /teamUnitsVisible\(auth, onboarding\.units_json\)/);
   assert.match(admin, /IDENTITY_ONBOARDING_MANAGED/);
 });
@@ -119,7 +143,9 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(admin, /mobilePhoneHash: nextPhoneHash \|\| current\.mobile_phone_hash/);
   assert.match(admin, /normalizeTeamData\(body\.team, nextUnits, \{/);
   assert.match(admin, /teamData\.units\.some\(\(unit\) => !nextUnits\.includes\(unit\)\)/);
-  assert.match(admin, /pendingSync: pendingIds\.includes\(row\.id\)/);
+  assert.match(admin, /pendingSync: pending/);
+  assert.match(admin, /Reactivation must be accepted by Workforce before local login/);
+  assert.match(admin, /IDENTITY_LOCAL_ACTIVATION_NOT_APPLIED/);
   assert.match(admin, /compensationState/);
   assert.match(admin, /teamUnitsVisible\(auth, onboarding\.units_json\)/);
   assert.doesNotMatch(admin, /teamUnitsVisible\(auth, onboarding\)/);
@@ -134,6 +160,7 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(localApi, /localHasUnknownUnits/);
   assert.match(localApi, /schedule\.units\.some\(\(unit\) => !units\.includes\(unit\)\)/);
   assert.match(localApi, /team\/:id\/activate/);
+  assert.match(localApi, /registeredUser\?\.password \|\| registeredUser\?\.passwordHash/);
 });
 
 test('team edits expose a fail-closed local persistence compensation boundary', async () => {

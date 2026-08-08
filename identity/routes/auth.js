@@ -4,7 +4,7 @@
 import { resolveIdentityTables } from '../store/d1.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notifications/smtpMailer.js';
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
-import { normalizeEmployeeUsername } from '../policy/employeeOnboarding.js';
+import { normalizeCorporateEmail, normalizeEmployeeUsername } from '../policy/employeeOnboarding.js';
 import { normalizeAllowedUnits } from '../../shared/identity-contract/index.js';
 import { syncIdentityWorkforceStatus } from '../../shared/identity-runtime/workforce-onboarding.js';
 
@@ -277,6 +277,7 @@ export async function handleAuthRoutes({
 	        const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
 	        const invitesHasModules = await tableHasColumn(invitesTable, 'allowed_modules_json');
 	        const invitesHasInviteeEmail = await tableHasColumn(invitesTable, 'invitee_email');
+	        const invitesHasCorporateEmail = await tableHasColumn(invitesTable, 'corporate_email');
 	        const invitesHasRequestedUsername = await tableHasColumn(invitesTable, 'requested_username');
 
         const sha256Hex = async (input) => {
@@ -608,9 +609,10 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: "INVITE_MIGRATION_REQUIRED" }), { status: 503 }, appOrigin);
                 }
 
+                const corporateEmailColumn = invitesHasCorporateEmail ? ', corporate_email' : '';
                 const requestedUsernameColumn = invitesHasRequestedUsername ? ', requested_username' : '';
                 const invite = await env.DB.prepare(
-                    `SELECT id, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked${requestedUsernameColumn}
+                    `SELECT id, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked${corporateEmailColumn}${requestedUsernameColumn}
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                      LIMIT 1`
@@ -640,8 +642,15 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: "INVITE_EMAIL_MISMATCH" }), { status: 403 }, appOrigin);
                 }
 
+                const rawCorporateEmail = String(invite.corporate_email || '').trim();
+                const normalizedCorporateEmail = normalizeCorporateEmail(rawCorporateEmail);
+                if (rawCorporateEmail && (!normalizedCorporateEmail || !normalizedCorporateEmail.endsWith('@espacofacial.com'))) {
+                    return withCORS(JSON.stringify({ success: false, error: "INVITE_CORPORATE_EMAIL_INVALID" }), { status: 409 }, appOrigin);
+                }
+                const loginEmail = normalizedCorporateEmail || email;
                 const existing = await d1.getUserByIdentifier(email);
-                if (existing) {
+                const existingCorporate = loginEmail !== email ? await d1.getUserByIdentifier(loginEmail) : null;
+                if (existing || existingCorporate) {
                     return withCORS(JSON.stringify({ success: false, error: "EMAIL_TAKEN" }), { status: 409 }, appOrigin);
                 }
 
@@ -673,7 +682,7 @@ export async function handleAuthRoutes({
                 const registration = env.DB.prepare(
                     `INSERT INTO ${usersTable}
                      (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
-                     SELECT ?, invitee_email, ?, ?, role, '', ?, ?, 0, ?, ?
+                     SELECT ?, ?, ?, ?, role, '', ?, ?, 0, ?, ?
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                        AND invitee_email = ?
@@ -681,7 +690,7 @@ export async function handleAuthRoutes({
                        AND max_uses = 1
                        AND uses_count = 0
                        AND expires_at > ?`
-                ).bind(candidate, name, hash, JSON.stringify(allowedUnits), JSON.stringify(allowedModules), now, now, inviteHash, email, currentTime);
+                ).bind(candidate, loginEmail, name, hash, JSON.stringify(allowedUnits), JSON.stringify(allowedModules), now, now, inviteHash, email, currentTime);
                 const consume = env.DB.prepare(
                     `UPDATE ${invitesTable}
                      SET uses_count = 1
