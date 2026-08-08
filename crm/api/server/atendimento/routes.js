@@ -3,6 +3,7 @@ import express from 'express'
 import { createAtendimentoStore, canAccessAtendimento } from './store.js'
 import { createCommercialDataQualityStore } from './commercialDataQualityStore.js'
 import { createCommercialOperationsStore } from './commercialOperationsStore.js'
+import { createCommercialAnalyticsStore } from './commercialAnalyticsStore.js'
 import { createClientesSourceOperationsStore } from '../clientes/sourceOperationsStore.js'
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
 import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
@@ -285,6 +286,16 @@ export function createAtendimentoRouter(options = {}) {
             })
         }
         return commercialOperationsStore
+    }
+    let commercialAnalyticsStore = options.commercialAnalyticsStore || null
+    const getCommercialAnalyticsStore = () => {
+        if (!commercialAnalyticsStore) {
+            commercialAnalyticsStore = createCommercialAnalyticsStore({
+                pool: options.commercialAnalyticsPool,
+                databaseUrl: options.databaseUrl,
+            })
+        }
+        return commercialAnalyticsStore
     }
     let commercialSourceOperationsStore = options.commercialSourceOperationsStore || null
     const getCommercialSourceOperationsStore = () => {
@@ -844,6 +855,136 @@ export function createAtendimentoRouter(options = {}) {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
             return json(res, 200, { ok: true, ...(await getCommercialOperationsStore().applyRebalance(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    // Analytics is a governed, PII-minimized projection.  These configuration
+    // mutations only persist cohort/measurement evidence; they deliberately
+    // expose no messaging, consent or commercial-contact endpoint.
+    expressRouter.get('/commercial/analytics/readiness', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            const readiness = await getCommercialAnalyticsStore().readiness(req.atendimentoActor)
+            return json(res, readiness.ready ? 200 : 503, { ok: readiness.ready, ...readiness })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/quality', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAnalyticsStore().quality(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/funnel', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAnalyticsStore().funnel(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/segments', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAnalyticsStore().segments(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/attribution-windows', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAnalyticsStore().attributionWindows(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/experiments', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAnalyticsStore().experiments(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/analytics/experiments/:experimentId/metrics', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAnalyticsStore().experimentMetrics(String(req.params.experimentId || ''), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/segments', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAnalyticsStore().createSegment(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/segments/:definitionId/versions', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await getCommercialAnalyticsStore().createSegmentVersion(String(req.params.definitionId || ''), commercialOperationPayload(req), req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/segments/versions/:versionId/snapshot', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await getCommercialAnalyticsStore().snapshotSegment(String(req.params.versionId || ''), commercialOperationPayload(req), req.atendimentoActor)),
+            })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/attribution-windows', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAnalyticsStore().upsertAttributionWindow(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/experiments', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAnalyticsStore().createExperiment(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/analytics/experiments/:experimentId/state', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await getCommercialAnalyticsStore().updateExperimentState(String(req.params.experimentId || ''), commercialOperationPayload(req), req.atendimentoActor)),
+            })
         } catch (error) {
             return errorResponse(res, error)
         }
