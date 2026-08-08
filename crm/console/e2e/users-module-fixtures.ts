@@ -11,6 +11,10 @@ export type MockTeamMember = {
   department: string
   units: string[]
   accountStatus: string
+  crmAccountLinked?: boolean
+  crmAccountUsername?: string | null
+  crmAccountReviewStatus?: string | null
+  crmAccountLinkId?: string | null
   provisioningState: string
   schedule: { professionalId: string | null; status: string; role: string; shift: string; nickname: string; instagram: string; color: string; units: string[] }
   scheduleSync?: { state: string; professionalId?: string | null; errorCode?: string | null; attempt?: number; updatedAt?: string | null }
@@ -29,7 +33,7 @@ export const syntheticTeam: MockTeamMember[] = [
     identityLinks: [],
   },
   {
-    id: 'e2e-carla', fullName: 'Carla Souza', username: 'carlasouza', corporateEmail: 'carlasouza@espacofacial.com', workforceEmployeeId: 'e2e-wf-carla', profile: 'SUPERVISOR', jobTitle: 'Coordenador', department: 'Operações', units: ['barra-shopping-sul'], accountStatus: 'SUSPENDED', provisioningState: 'COMPLETED',
+    id: 'e2e-carla', fullName: 'Carla Souza', username: 'carlasouza', corporateEmail: 'carlasouza@espacofacial.com', workforceEmployeeId: 'e2e-wf-carla', profile: 'SUPERVISOR', jobTitle: 'Coordenador', department: 'Operações', units: ['barra-shopping-sul'], accountStatus: 'SUSPENDED', crmAccountLinked: false, crmAccountUsername: 'legacycarla', crmAccountReviewStatus: 'PENDING_REVIEW', crmAccountLinkId: 'e2e-account-link-carla', provisioningState: 'COMPLETED',
     schedule: { professionalId: null, status: 'Ativo', role: 'Coordenador', shift: 'Tarde', nickname: 'Carla', instagram: 'carla.souza', color: '#f97316', units: ['barra-shopping-sul'] }, scheduleSync: { state: 'FAILED', errorCode: 'ESCALA_API_ERROR', attempt: 2 },
     identityLinks: [{ id: 'e2e-link-carla', source: 'ESCALA', sourceId: 'e2e-escala-carla', reviewStatus: 'PENDING_REVIEW', matchMethod: 'EXPLICIT_WORKFORCE_ID', confidence: 'LOW' }],
   },
@@ -63,10 +67,11 @@ export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUse
       const query = (url.searchParams.get('q') || '').toLowerCase()
       const data = rows.filter((row) => status === 'ALL' ? true : status === 'ACTIVE' ? ['ACTIVE', 'INVITED'].includes(row.accountStatus) : row.accountStatus === status).filter((row) => !query || [row.fullName, row.username, row.corporateEmail, row.department, row.jobTitle, ...row.units].some((value) => value.toLowerCase().includes(query)))
       const pendingItems = data.flatMap((row) => [
+        ...(!row.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(row.accountStatus) ? [{ memberId: row.id, kind: 'CRM_ACCOUNT_LINK', status: row.crmAccountReviewStatus || 'PENDING' }] : []),
         ...row.identityLinks.filter((link) => link.reviewStatus === 'PENDING_REVIEW').map((link) => ({ memberId: row.id, kind: 'IDENTITY_LINK', source: link.source, status: link.reviewStatus })),
         ...(row.scheduleSync && ['PENDING', 'FAILED', 'BLOCKED'].includes(row.scheduleSync.state) ? [{ memberId: row.id, kind: 'ESCALA_SYNC', status: row.scheduleSync.state }] : []),
       ])
-      return send({ success: true, data, pendingItems, summary: { members: data.length, pendingInvites: data.filter((row) => row.accountStatus === 'INVITED').length, pendingLinks: pendingItems.length, pendingProvisioning: 0 } })
+      return send({ success: true, data, pendingItems, summary: { members: data.length, pendingInvites: data.filter((row) => row.accountStatus === 'INVITED').length, pendingLinks: pendingItems.length, pendingProvisioning: 0, pendingAccountLinks: data.filter((row) => !row.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(row.accountStatus)).length } })
     }
     if (path.endsWith('/api/crm/admin/team/bulk-status') && request.method() === 'POST') {
       const body = await json()
@@ -95,6 +100,14 @@ export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUse
       const row = rows.find((item) => item.id === decodeURIComponent(inviteMatch[1]))
       if (row) row.accountStatus = inviteMatch[2] === 'resend' ? 'INVITED' : 'PENDING_ACCESS'
       return send({ success: true, data: row })
+    }
+    const accountLinkReviewMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)\/account-link\/([^/]+)\/review$/)
+    if (accountLinkReviewMatch && request.method() === 'POST') {
+      const body = await json(); const row = rows.find((item) => item.id === decodeURIComponent(accountLinkReviewMatch[1]))
+      if (!row || row.crmAccountLinkId !== decodeURIComponent(accountLinkReviewMatch[2])) return send({ success: false, error: 'Vínculo da conta não encontrado' }, 404)
+      row.crmAccountReviewStatus = body.reviewStatus
+      row.crmAccountLinked = body.reviewStatus === 'CONFIRMED'
+      return send({ success: true, data: { id: row.crmAccountLinkId, crmUsername: row.crmAccountUsername, reviewStatus: row.crmAccountReviewStatus } })
     }
     const scheduleSyncMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)\/schedule-sync$/)
     if (scheduleSyncMatch && request.method() === 'POST') {
