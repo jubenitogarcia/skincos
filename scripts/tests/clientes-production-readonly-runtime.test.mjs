@@ -95,6 +95,16 @@ test('staging release, control and application role remain fixed and read-only',
   const control = read('scripts/set-atendimento-staging-control.sh')
   const backup = read('scripts/backup-atendimento-staging.sh')
   const stagingMigration = read('scripts/run-atendimento-staging-migration.sh')
+  const migrationRunner = read('crm/api/scripts/migrate-atendimento-staging.mjs')
+  const qualityRefresh = read('crm/api/scripts/refresh-commercial-data-quality-staging.mjs')
+  const harmoniaMigration = read('crm/api/scripts/migrate-harmonia-schema.mjs')
+  const pgPool = read('crm/api/server/harmonia/store/pg.js')
+  const domainOnlyMigrationCli = [
+    ['crm/api/scripts/migrate-clinical-approval.mjs', 'CLINICAL_APPROVAL_STAGING_REQUIRES_CONTROLLED_RUNNER'],
+    ['crm/api/scripts/migrate-atendimento-commercial-analytics.mjs', 'COMMERCIAL_ANALYTICS_STAGING_REQUIRES_CONTROLLED_RUNNER'],
+    ['crm/api/scripts/migrate-atendimento-commercial-operations.mjs', 'COMMERCIAL_OPERATIONS_STAGING_REQUIRES_CONTROLLED_RUNNER'],
+    ['crm/api/scripts/migrate-atendimento-commercial-assisted-whatsapp.mjs', 'COMMERCIAL_ASSISTED_STAGING_REQUIRES_CONTROLLED_RUNNER'],
+  ]
   const lockdown = read('scripts/lockdown-atendimento-staging-runtime.sh')
   const installer = read('scripts/runtime/install-atendimento-staging-service.sh')
   const rollback = read('scripts/runtime/rollback-atendimento-staging.sh')
@@ -139,6 +149,8 @@ test('staging release, control and application role remain fixed and read-only',
   for (const sql of provisionSql) {
     assert.doesNotMatch(sql, /^\s*#/m, 'PostgreSQL heredocs must use SQL comments, never shell # comments')
   }
+  assert.match(provisionSql[0], /rolconnlimit/)
+  assert.match(provisionSql[1], /alter role \$MIGRATOR_ROLE connection limit 3;/)
   assert.match(provisionSql[1], /^-- The isolated application has no safe direct Caixa projection yet\. Do not$/m)
   assert.match(provision, /readonly BACKUP_ROOT='\/var\/backups\/skincos\/clientes\/staging-control'/)
   assert.match(provision, /ATENDIMENTO_READINESS_TOKEN=\$readiness_token/)
@@ -177,6 +189,50 @@ test('staging release, control and application role remain fixed and read-only',
   assert.match(stagingMigration, /trap 'exit 143' TERM/)
   assert.match(stagingMigration, /trap '' HUP INT TERM/)
   assert.match(stagingMigration, /keeping the isolated service ineligible/)
+  assert.match(migrationRunner, /ATENDIMENTO_STAGING_MIGRATOR_CONNECTION_LIMIT/)
+  assert.match(migrationRunner, /ATENDIMENTO_STAGING_MIGRATION_POOL_MAX/)
+  assert.match(migrationRunner, /createPool\(normalizedUrl, \{ max: ATENDIMENTO_STAGING_MIGRATION_POOL_MAX \}\)/)
+  assert.match(migrationRunner, /assertAtendimentoStagingMigratorConnectionLimit\(lockClient\)/)
+  assert.match(qualityRefresh, /ATENDIMENTO_STAGING_QUALITY_REFRESH_POOL_MAX/)
+  assert.match(qualityRefresh, /acquireAtendimentoStagingMutationLock\(lockClient, 'ATENDIMENTO_STAGING_QUALITY_LOCK_UNAVAILABLE'\)/)
+  assert.match(qualityRefresh, /assertAtendimentoStagingMigratorConnectionLimit\(lockClient\)/)
+  assert.ok(qualityRefresh.lastIndexOf('acquireAtendimentoStagingMutationLock') < qualityRefresh.indexOf(').refresh('))
+  assert.match(harmoniaMigration, /target === 'staging' \? \{ max: HARMONIA_STAGING_MIGRATION_POOL_MAX \} : undefined/)
+  assert.match(harmoniaMigration, /acquireAtendimentoStagingMutationLock\(client, 'HARMONIA_STAGING_MIGRATION_LOCK_UNAVAILABLE'\)/)
+  assert.match(harmoniaMigration, /assertAtendimentoStagingMigratorConnectionLimit\(client\)/)
+  assert.ok(harmoniaMigration.lastIndexOf('acquireAtendimentoStagingMutationLock') < harmoniaMigration.indexOf("await client.query('begin')"))
+  assert.match(pgPool, /export function createPgPool\(databaseUrl, options = \{\}\)/)
+  assert.match(pgPool, /const max = Number\(options\?\.max \?\? 10\)/)
+  assert.match(pgPool, /max,\r?\n/)
+  for (const [relative, code] of domainOnlyMigrationCli) {
+    const cli = read(relative)
+    assert.match(cli, new RegExp(`if \\(.*ATENDIMENTO_MIGRATION_TARGETS\\.STAGING.*\\)[\\s\\S]{0,180}${code}`), `${relative} must reject staging before creating a pool`)
+    assert.ok(cli.indexOf(code) < cli.indexOf('pool = createPgPool(databaseUrl)'), `${relative} must reject staging before a pool can connect`)
+  }
+  const serialMigrationModules = [
+    'crm/api/server/atendimento/professionalIdentityMigration.js',
+    'crm/api/server/atendimento/writeSafetyMigration.js',
+    'crm/api/server/atendimento/commercialContactMigration.js',
+    'crm/api/server/atendimento/commercialContactRolloutMigration.js',
+    'crm/api/server/atendimento/clientIdentityMaterializationMigration.js',
+    'crm/api/server/atendimento/commercialActionLedgerMigration.js',
+    'crm/api/server/atendimento/commercialDataQualityMigration.js',
+    'crm/api/server/clientes/sourceOperationsMigration.js',
+    'crm/api/server/atendimento/identityReviewMigration.js',
+    'crm/api/server/atendimento/identityClusterWorkspaceMigration.js',
+    'crm/api/server/clinical/clinicalApprovalMigration.js',
+    'crm/api/server/atendimento/commercialOperationsMigration.js',
+    'crm/api/server/atendimento/commercialAnalyticsMigration.js',
+    'crm/api/server/atendimento/commercialCanaryMigration.js',
+    'crm/api/server/atendimento/commercialAssistedCommunicationMigration.js',
+  ]
+  for (const relative of serialMigrationModules) {
+    const migrationSource = read(relative)
+    assert.equal((migrationSource.match(/\bpool\.connect\(\)/g) || []).length, 2, `${relative} must use one client for each apply and rollback path`)
+    assert.equal((migrationSource.match(/\bclient\.release\(\)/g) || []).length, 2, `${relative} must release the client in both paths`)
+    assert.doesNotMatch(migrationSource, /\bpool\.query\(/, `${relative} must not open an unbounded pool query path`)
+    assert.doesNotMatch(migrationSource, /Promise\.all(?:Settled)?\(/, `${relative} must keep migration queries serial`)
+  }
   assert.match(lockdown, /readonly DB_NAME='skincos_staging'/)
   assert.match(lockdown, /readonly APP_ROLE='skincos_staging_crm_app'/)
   assert.match(lockdown, /\/usr\/bin\/sudo -n -u postgres \/usr\/bin\/psql/)

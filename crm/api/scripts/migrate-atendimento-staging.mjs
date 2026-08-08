@@ -10,6 +10,14 @@
 import { randomUUID } from 'node:crypto'
 import { createPgPool } from '../server/harmonia/store/pg.js'
 import {
+    acquireAtendimentoStagingMutationLock,
+    assertAtendimentoStagingMigratorConnectionLimit,
+    ATENDIMENTO_STAGING_MIGRATOR_CONNECTION_LIMIT,
+    ATENDIMENTO_STAGING_MIGRATION_POOL_MAX,
+    ATENDIMENTO_STAGING_MUTATION_LOCK_KEY,
+    releaseAtendimentoStagingMutationLock,
+} from './atendimento-staging-maintenance-lock.mjs'
+import {
     assertAtendimentoMigrationDestination,
     ATENDIMENTO_MIGRATION_TARGETS,
     isStrictAtendimentoMigrationDestination,
@@ -78,7 +86,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const ATENDIMENTO_STAGING_MIGRATION_TARGET = ATENDIMENTO_MIGRATION_TARGETS.STAGING
-export const ATENDIMENTO_STAGING_MIGRATION_LOCK_KEY = 'skincos:atendimento:staging:migrations:v1'
+export const ATENDIMENTO_STAGING_MIGRATION_LOCK_KEY = ATENDIMENTO_STAGING_MUTATION_LOCK_KEY
+export { ATENDIMENTO_STAGING_MIGRATOR_CONNECTION_LIMIT, ATENDIMENTO_STAGING_MIGRATION_POOL_MAX }
 export const ATENDIMENTO_STAGING_MIGRATIONS = Object.freeze([
     { id: '20260718_atendimento_professional_identity_v1', apply: applyProfessionalIdentityMigration, rollback: rollbackProfessionalIdentityMigration },
     { id: '20260718_atendimento_write_safety_v1', apply: applyAtendimentoWriteSafetyMigration, rollback: rollbackAtendimentoWriteSafetyMigration },
@@ -124,21 +133,20 @@ export async function runAtendimentoStagingMigration({
     if (!normalizedUrl || !isStrictAtendimentoMigrationDestination(normalizedUrl, target)) {
         throw new Error('DATABASE_URL deve apontar exclusivamente para skincos_staging via loopback TLS e o login migrator.')
     }
-    const pool = createPool(normalizedUrl)
+    // The session-scoped mutation lock remains checked out for the entire run.
+    // Every listed migration uses one additional client in serial order, so the
+    // executor pool budget is exactly two; a third role session is reserved
+    // only for a competing fixed entrypoint to fail on the shared lock.
+    const pool = createPool(normalizedUrl, { max: ATENDIMENTO_STAGING_MIGRATION_POOL_MAX })
     if (!pool) throw new Error('Não foi possível criar o pool staging.')
     const runId = createRunId()
     let lockClient = null
     let lockAcquired = false
     try {
         lockClient = await pool.connect()
-        const lock = await lockClient.query(
-            'select pg_try_advisory_lock(hashtext($1)) as acquired',
-            [ATENDIMENTO_STAGING_MIGRATION_LOCK_KEY],
-        )
-        lockAcquired = lock.rows[0]?.acquired === true
-        if (!lockAcquired) {
-            throw new Error('ATENDIMENTO_STAGING_MIGRATION_LOCK_UNAVAILABLE')
-        }
+        await acquireAtendimentoStagingMutationLock(lockClient, 'ATENDIMENTO_STAGING_MIGRATION_LOCK_UNAVAILABLE')
+        lockAcquired = true
+        await assertAtendimentoStagingMigratorConnectionLimit(lockClient)
 
         const client = await pool.connect()
         try {
@@ -177,10 +185,7 @@ export async function runAtendimentoStagingMigration({
         if (lockClient) {
             if (lockAcquired) {
                 try {
-                    await lockClient.query(
-                        'select pg_advisory_unlock(hashtext($1))',
-                        [ATENDIMENTO_STAGING_MIGRATION_LOCK_KEY],
-                    )
+                    await releaseAtendimentoStagingMutationLock(lockClient)
                 } catch {
                     // The pool close still releases a session-scoped advisory lock.
                 }

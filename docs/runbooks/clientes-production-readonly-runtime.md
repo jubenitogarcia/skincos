@@ -69,7 +69,12 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    invólucro obrigatório `lockdown-atendimento-staging-runtime.sh` os revoga
    com o administrador local do PostgreSQL. A migration exige controle
    `maintenance` com o SHA esperado e a unidade isolada inativa, obtém lock
-   advisory no banco e só então executa. O app fica sem DDL, DML, uso de
+   advisory no banco e só então executa. O login migrador tem `CONNECTION
+   LIMIT 3`: o runner retém no máximo duas sessões (lock completo + trabalho)
+   e a terceira serve somente para que um único refresh de qualidade ou
+   migration Harmonia concorrente observe o mesmo lock e falhe antes de
+   escrever; os pools desses entrypoints são fixados em `2`, `2` e `1`,
+   respectivamente. O app fica sem DDL, DML, uso de
    sequences, `SET ROLE` para qualquer papel pai, atributos privilegiados,
    execução de funções `SECURITY DEFINER` em schemas de aplicação ou acesso a
    `harmonia.contacts`; a instalação e a validação recusam prosseguir se a

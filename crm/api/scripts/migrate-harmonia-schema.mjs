@@ -4,6 +4,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { createPgPool } from '../server/harmonia/store/pg.js'
 import { harmoniaMigrationStatements, defaultUnitsSeedRows } from '../server/harmonia/store/migrate.js'
+import {
+    acquireAtendimentoStagingMutationLock,
+    assertAtendimentoStagingMigratorConnectionLimit,
+    HARMONIA_STAGING_MIGRATION_POOL_MAX,
+    releaseAtendimentoStagingMutationLock,
+} from './atendimento-staging-maintenance-lock.mjs'
 
 export const HARMONIA_MIGRATION_ID = '20260805_harmonia_worker_foundation_v1'
 
@@ -139,15 +145,23 @@ async function writeCheckpoint(checkpointPath, { target, databaseUrl, state, rel
     return destination
 }
 
-export async function runHarmoniaMigration({ databaseUrl, target: targetValue, action = 'dry-run', checkpointPath, releaseSha } = {}) {
+export async function runHarmoniaMigration({ databaseUrl, target: targetValue, action = 'dry-run', checkpointPath, releaseSha, createPool = createPgPool } = {}) {
     const target = assertHarmoniaMigrationDestination(databaseUrl, targetValue)
     if (!['dry-run', 'apply'].includes(action)) throw new Error('action must be dry-run or apply')
-    const pool = createPgPool(databaseUrl)
+    // Harmonia itself is serial and needs one client. Pinning it to one leaves
+    // the role's remaining budget available for the shared lock gate.
+    const pool = createPool(databaseUrl, target === 'staging' ? { max: HARMONIA_STAGING_MIGRATION_POOL_MAX } : undefined)
     if (!pool) throw new Error('DATABASE_URL is required')
 
     try {
         const client = await pool.connect()
+        let mutationLockAcquired = false
         try {
+            if (target === 'staging') {
+                await acquireAtendimentoStagingMutationLock(client, 'HARMONIA_STAGING_MIGRATION_LOCK_UNAVAILABLE')
+                mutationLockAcquired = true
+                await assertAtendimentoStagingMigratorConnectionLimit(client)
+            }
             await client.query('begin')
             await client.query("select pg_advisory_xact_lock(hashtextextended('skincos:harmonia-schema-migration', 0))")
             const before = await queryState(client)
@@ -194,6 +208,9 @@ export async function runHarmoniaMigration({ databaseUrl, target: targetValue, a
             try { await client.query('rollback') } catch { /* preserve original error */ }
             throw error
         } finally {
+            if (mutationLockAcquired) {
+                try { await releaseAtendimentoStagingMutationLock(client) } catch { /* connection cleanup releases the lock too */ }
+            }
             client.release()
         }
     } finally {

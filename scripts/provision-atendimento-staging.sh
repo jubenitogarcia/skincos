@@ -50,7 +50,8 @@ done
 if [[ "$ACTION" == "--dry-run" ]]; then
   run_postgres_clean --dbname=postgres --set=ON_ERROR_STOP=1 --tuples-only --no-align <<SQL
 select 'database=' || datname from pg_database where datname = '$DB_NAME';
-select 'role=' || rolname || ':login=' || rolcanlogin from pg_roles where rolname in ('$APP_ROLE', '$MIGRATOR_ROLE', '$OWNER_ROLE');
+select 'role=' || rolname || ':login=' || rolcanlogin || ':connection_limit=' || rolconnlimit
+  from pg_roles where rolname in ('$APP_ROLE', '$MIGRATOR_ROLE', '$OWNER_ROLE');
 SQL
   for path in "$ATENDIMENTO_CONFIG" "$MIGRATOR_CONFIG" "$CONTROL_FILE"; do
     if /usr/bin/sudo -n /usr/bin/test -f "$path"; then echo "present=$path"; else echo "missing=$path"; fi
@@ -89,6 +90,7 @@ run_postgres_clean --dbname=postgres --set=ON_ERROR_STOP=1 <<SQL
 alter role $APP_ROLE password :'app_password';
 alter role $MIGRATOR_ROLE password :'migrator_password';
 alter role $MIGRATOR_ROLE inherit;
+alter role $MIGRATOR_ROLE connection limit 3;
 alter role $APP_ROLE noinherit;
 alter role $APP_ROLE set default_transaction_read_only = on;
 revoke $OWNER_ROLE from $APP_ROLE;
