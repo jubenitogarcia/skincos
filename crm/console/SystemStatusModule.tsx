@@ -91,6 +91,11 @@ type AdminUser = {
   updatedAt?: string | null
 }
 
+type UnifiedTeamConfig = {
+  enabled?: boolean
+  legacyEscalaEditor?: boolean
+}
+
 async function apiJson<T>(
   path: string,
   opts: {
@@ -141,6 +146,7 @@ export function SystemStatusModule() {
   const unitMonitorUnitKey = effectiveUnit
   const insumosUnit = effectiveUnit
   const [insumosMe, setInsumosMe] = React.useState<InsumosMe | null>(null)
+  const [unifiedTeamEnabled, setUnifiedTeamEnabled] = React.useState(false)
   const [loadingProgress, setLoadingProgress] = React.useState(0)
   const loadingStartedAtRef = React.useRef<number | null>(null)
 
@@ -186,6 +192,24 @@ export function SystemStatusModule() {
       return null
     }
   }, [])
+
+  const refreshTeamConfig = React.useCallback(async () => {
+    if (!hasInsumosSession) {
+      setUnifiedTeamEnabled(false)
+      return
+    }
+    try {
+      const out = await apiJson<{ success?: boolean; data?: UnifiedTeamConfig }>('/admin/team?mode=config')
+      setUnifiedTeamEnabled(Boolean(out?.data?.enabled))
+    } catch {
+      // Keep the legacy contingency if the feature-config route is unavailable.
+      setUnifiedTeamEnabled(false)
+    }
+  }, [hasInsumosSession])
+
+  React.useEffect(() => {
+    void refreshTeamConfig()
+  }, [refreshTeamConfig])
 
   const refresh = React.useCallback(async () => {
     setLoading(true)
@@ -323,6 +347,10 @@ export function SystemStatusModule() {
 
   const loadUsers = React.useCallback(async () => {
     if (!canManageUsers) return
+    if (unifiedTeamEnabled) {
+      setUsers([])
+      return
+    }
     setUsersLoading(true)
     try {
       const params = new URLSearchParams()
@@ -335,7 +363,7 @@ export function SystemStatusModule() {
     } finally {
       setUsersLoading(false)
     }
-  }, [canManageUsers, usersQuery])
+  }, [canManageUsers, unifiedTeamEnabled, usersQuery])
 
   const canViewAudit = hasInsumosSession && (insumosRole === 'GESTOR' || insumosRole === 'GERENTE')
   const loadAudit = React.useCallback(async () => {
@@ -621,6 +649,14 @@ export function SystemStatusModule() {
               <div className="text-sm text-blue-100/70">Faça login para ver funções administrativas.</div>
             ) : !canManageUsers ? (
               <div className="text-sm text-blue-100/70">Seu perfil ({insumosRole || '—'}) não tem permissão para usuários.</div>
+            ) : unifiedTeamEnabled ? (
+              <div className="rounded-xl border border-emerald-200/20 bg-emerald-200/5 p-4 space-y-3">
+                <div>
+                  <div className="text-sm font-medium text-emerald-50">Gestão centralizada ativa</div>
+                  <div className="mt-1 text-sm text-blue-100/70">Usuários, equipe, convites e vínculos operacionais são administrados no módulo Usuários.</div>
+                </div>
+                <Button onClick={() => { window.location.href = '/?module=users' }}>Abrir Usuários</Button>
+              </div>
             ) : (
               <>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -694,8 +730,6 @@ export function SystemStatusModule() {
                     </tbody>
                   </table>
                 </div>
-              </>
-            )}
 
             <Dialog open={userCreateOpen} onOpenChange={(o) => { setUserCreateOpen(o); if (!o) setOneTimePassword(null) }}>
               <DialogContent className="sm:max-w-xl">
@@ -772,6 +806,8 @@ export function SystemStatusModule() {
                 ) : null}
               </DialogContent>
             </Dialog>
+              </>
+            )}
           </CardContent>
         ) : null}
 

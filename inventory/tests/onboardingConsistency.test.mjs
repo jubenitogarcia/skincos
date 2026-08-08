@@ -145,7 +145,9 @@ test('team edits expose a fail-closed local persistence compensation boundary', 
 
 test('team usernames remain reserved across lifecycle history', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
-  const usernameBlock = admin.slice(admin.indexOf('if (onboardingHasUsername) {'), admin.indexOf('const at = new Date().toISOString();'));
+  const usernameStart = admin.indexOf('if (onboardingHasUsername) {');
+  const usernameEnd = admin.indexOf('const at = new Date().toISOString();', usernameStart);
+  const usernameBlock = admin.slice(usernameStart, usernameEnd);
   assert.match(usernameBlock, /LOWER\(requested_username\)=LOWER\(\?\) AND id<>\?/);
   assert.doesNotMatch(usernameBlock, /account_status NOT IN/);
   const migration = await readFile(new URL('../migrations/0024_unified_team_identity.sql', import.meta.url), 'utf8');
