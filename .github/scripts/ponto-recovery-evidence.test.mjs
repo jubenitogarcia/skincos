@@ -186,6 +186,33 @@ test("watchdog evidence normalizes only capability-authorized terminal children"
   assert.equal(normalized.childReconciliation.discoveredChildren, 1);
 });
 
+test("watchdog evidence accepts a terminal child that failed before mutation", () => {
+  const normalized = normalizeRecoveryEvidence({
+    reconciliation: {
+      schemaVersion: 1,
+      target,
+      children: [{
+        runId: "7",
+        status: "completed",
+        capabilityAuthorization: "terminal-pre-mutation-gate-failure",
+      }],
+      unresolved: [],
+      passed: true,
+      credentialsIncluded: false,
+      piiIncluded: false,
+    },
+    maintenance,
+    propagation,
+    sourceMode: "watchdog",
+    coordinatorRunId,
+    emergencyRunId,
+    releaseSha: sha,
+    stage,
+    target,
+  });
+  assert.equal(normalized.childReconciliation.discoveredChildren, 1);
+});
+
 test("watchdog evidence accepts validated aggregate child custody", () => {
   const normalized = normalizeRecoveryEvidence({
     reconciliation: {
