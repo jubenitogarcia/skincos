@@ -33,6 +33,7 @@ readonly BACKUP_ROOT='/var/backups/skincos/clientes/production-readonly'
 readonly PORT='8110'
 readonly SCRIPT_DIR="$(cd -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")" && /usr/bin/pwd -P)"
 readonly RUNTIME_GRANT_LOCKDOWN="$SCRIPT_DIR/lockdown-atendimento-production-runtime.sh"
+readonly BACKUP_SCRIPT="$SCRIPT_DIR/backup-atendimento-production.sh"
 
 ACTION="${1:-}"
 case "$ACTION" in
@@ -45,6 +46,7 @@ for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/openssl /usr/bin/install
 done
 run_sudo_clean /usr/bin/true
 [[ -x "$RUNTIME_GRANT_LOCKDOWN" ]] || { echo 'Production runtime grant lockdown is unavailable.' >&2; exit 78; }
+[[ -x "$BACKUP_SCRIPT" ]] || { echo 'Production backup helper is unavailable.' >&2; exit 78; }
 
 database_exists() {
   run_postgres_clean /usr/bin/psql --dbname=postgres --tuples-only --no-align --set=ON_ERROR_STOP=1 \
@@ -87,21 +89,14 @@ service_state="$(run_sudo_clean /usr/bin/systemctl is-active "$SERVICE" 2>/dev/n
 [[ "$service_state" == 'inactive' ]] || { echo 'Production provisioning requires the isolated runtime to be inactive.' >&2; exit 1; }
 
 stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
-run_sudo_clean /usr/bin/install -d -m 0750 -o root -g postgres "$BACKUP_ROOT"
+run_sudo_clean /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
 if [[ "$(database_exists)" == 't' ]]; then
-  backup="$(run_sudo_clean /usr/bin/mktemp "$BACKUP_ROOT/$stamp-$DB_NAME-preapply.XXXXXX.dump")"
-  if [[ ! "$backup" =~ ^/var/backups/skincos/clientes/production-readonly/[0-9]{8}T[0-9]{6}Z-skincos_clientes_production-preapply\.[A-Za-z0-9]{6}\.dump$ ]]; then
-    echo 'Backup output path was not generated from the fixed contract.' >&2
-    exit 1
-  fi
-  backup_created=1
-  run_sudo_clean /usr/bin/chown postgres:postgres "$backup"
-  run_postgres_clean /usr/bin/pg_dump --format=custom --no-owner --no-privileges --dbname="$DB_NAME" --file="$backup"
-  run_sudo_clean /usr/bin/chown root:root "$backup"
-  run_sudo_clean /usr/bin/chmod 0600 "$backup"
-  checksum="$(run_sudo_clean /usr/bin/sha256sum "$backup" | /usr/bin/awk '{print $1}')"
-  backup_created=0
-  printf 'backup_created=true backup_sha256=%s\n' "$checksum"
+  backup_report="$(run_sudo_clean /usr/bin/bash -p "$BACKUP_SCRIPT")"
+  [[ "$backup_report" =~ ^backup_created=true\ database=skincos_clientes_production\ sha256=[0-9a-f]{64}\ private=true\ unique=true$ ]] || {
+    echo 'Production backup did not satisfy the private unique artifact contract.' >&2
+    exit 70
+  }
+  printf '%s\n' "$backup_report"
 else
   printf 'backup_created=false checkpoint=new_database\n'
 fi
