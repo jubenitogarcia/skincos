@@ -59,9 +59,9 @@ jobs:
           zone_count="$(jq 'if (.result | type) == "array" then (.result | length) else 0 end' "$tmp/zones.json")"
           existing_id="$(jq -r --arg name "$tunnel_name" 'if (.result | type) == "array" then [.result[] | select(type == "object" and .name == $name and (.deleted_at == null or .deleted_at == "")) | .id][0] // empty else empty end' "$tmp/tunnels.json")"
           existing_count="$(jq --arg name "$tunnel_name" 'if (.result | type) == "array" then [.result[] | select(type == "object" and .name == $name and (.deleted_at == null or .deleted_at == "")) | .id] | length else 0 end' "$tmp/tunnels.json")"
-          account_errors="$(jq -r '[.errors[]? | "\(.code // "unknown"): (.message // "")"] | join("; ")' "$tmp/account.json")"
-          tunnel_errors="$(jq -r '[.errors[]? | "\(.code // "unknown"): (.message // "")"] | join("; ")' "$tmp/tunnels.json")"
-          zone_errors="$(jq -r '[.errors[]? | "\(.code // "unknown"): (.message // "")"] | join("; ")' "$tmp/zones.json")"
+          account_errors="$(jq -r '[.errors[]? | ((.code // "unknown") + ": " + (.message // ""))] | join("; ")' "$tmp/account.json")"
+          tunnel_errors="$(jq -r '[.errors[]? | ((.code // "unknown") + ": " + (.message // ""))] | join("; ")' "$tmp/tunnels.json")"
+          zone_errors="$(jq -r '[.errors[]? | ((.code // "unknown") + ": " + (.message // ""))] | join("; ")' "$tmp/zones.json")"
           printf 'account_http=%s tunnel_list_http=%s zone_http=%s account_read=%s tunnel_list_read=%s zone_read=%s zone_count=%s existing_dedicated_tunnels=%s\n' \
             "$account_http" "$tunnel_http" "$zone_http" "$account_ok" "$tunnel_ok" "$zone_ok" "$zone_count" "$existing_count"
           [[ -z "$account_errors" ]] || printf 'account_error=%s\n' "$account_errors"
