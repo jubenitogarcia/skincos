@@ -38,30 +38,31 @@ jobs:
           request() {
             local method="$1" path="$2" body="${3:-}" out="$4"
             if [[ -n "$body" ]]; then
-              curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors \
-                -X "$method" "${auth[@]}" -d "$body" "${api}${path}" >"$out"
+              curl --silent --show-error --retry 2 --retry-all-errors \
+                -X "$method" "${auth[@]}" -d "$body" -o "$out" -w '%{http_code}' >"$out.status" || true
             else
-              curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors \
-                -X "$method" "${auth[@]}" "${api}${path}" >"$out"
+              curl --silent --show-error --retry 2 --retry-all-errors \
+                -X "$method" "${auth[@]}" -o "$out" -w '%{http_code}' "${api}${path}" >"$out.status" || true
             fi
           }
 
-          request GET /user/tokens/verify '' "$tmp/token.json"
           request GET "/accounts/${CLOUDFLARE_ACCOUNT_ID}" '' "$tmp/account.json"
           request GET "/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel?is_deleted=false&per_page=100" '' "$tmp/tunnels.json"
           request GET "/zones?name=skincos.com.br&status=active" '' "$tmp/zones.json"
 
-          token_ok="$(jq -r '.success // false' "$tmp/token.json")"
+          account_http="$(cat "$tmp/account.json.status")"
+          tunnel_http="$(cat "$tmp/tunnels.json.status")"
+          zone_http="$(cat "$tmp/zones.json.status")"
           account_ok="$(jq -r '.success // false' "$tmp/account.json")"
           tunnel_ok="$(jq -r '.success // false' "$tmp/tunnels.json")"
           zone_ok="$(jq -r '.success // false' "$tmp/zones.json")"
           zone_count="$(jq '[.result // []] | length' "$tmp/zones.json")"
           existing_id="$(jq -r --arg name "$tunnel_name" '[.result // []][] | select(.name == $name and (.deleted_at == null or .deleted_at == "")) | .id' "$tmp/tunnels.json" | head -n1)"
-          existing_count="$(jq --arg name "$tunnel_name" '[.result // []][] | select(.name == $name and (.deleted_at == null or .deleted_at == "")) | .id' "$tmp/tunnels.json" | length)"
-          printf 'token_valid=%s account_read=%s tunnel_list_read=%s zone_read=%s zone_count=%s existing_dedicated_tunnels=%s\n' \
-            "$token_ok" "$account_ok" "$tunnel_ok" "$zone_ok" "$zone_count" "$existing_count"
+          existing_count="$(jq --arg name "$tunnel_name" '[.result // []][] | select(.name == $name and (.deleted_at == null or .deleted_at == "")) | .id] | length' "$tmp/tunnels.json")"
+          printf 'account_http=%s tunnel_list_http=%s zone_http=%s account_read=%s tunnel_list_read=%s zone_read=%s zone_count=%s existing_dedicated_tunnels=%s\n' \
+            "$account_http" "$tunnel_http" "$zone_http" "$account_ok" "$tunnel_ok" "$zone_ok" "$zone_count" "$existing_count"
 
-          [[ "$token_ok" == true && "$account_ok" == true && "$tunnel_ok" == true && "$zone_ok" == true ]] || {
+          [[ "$account_http" =~ ^2[0-9][0-9]$ && "$tunnel_http" =~ ^2[0-9][0-9]$ && "$zone_http" =~ ^2[0-9][0-9]$ && "$account_ok" == true && "$tunnel_ok" == true && "$zone_ok" == true ]] || {
             echo 'Cloudflare capability probe failed closed.' >&2
             exit 78
           }
