@@ -156,6 +156,10 @@ jobs:
           GLOBAL_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           GLOBAL_RESOURCE: ${{ inputs.global_resource }}
           GLOBAL_MODULE: ${{ inputs.global_module }}
+          GLOBAL_INPUT_URL: ${{ inputs.global_coordinator_url }}
+          GLOBAL_TARGET: ${{ inputs.target }}
+          GLOBAL_STAGE: ${{ inputs.stage }}
+          GLOBAL_LEASE_KEY: ${{ inputs.lease_key }}
           RELEASE_SHA: ${{ inputs.release_sha }}
           GLOBAL_INPUTS_FILE: ${{ runner.temp }}/skincos-global-coordination-inputs.json
           GLOBAL_PROOF_FILE: ${{ runner.temp }}/skincos-global-coordination-proof.json
@@ -163,7 +167,9 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GLOBAL_REQUIRED" == true ]] || { echo 'SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true for a governed global lease'; exit 1; }
-          GLOBAL_URL="${{ inputs.global_coordinator_url || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}"
+          if [[ -n "$GLOBAL_INPUT_URL" ]]; then
+            GLOBAL_URL="$GLOBAL_INPUT_URL"
+          fi
           [[ -n "$GLOBAL_URL" && -n "$GLOBAL_SECRET" ]] || { echo 'Global coordination URL and shared custody are required'; exit 1; }
           [[ "$GLOBAL_RESOURCE" =~ ^(deploy|cloudflare|release):[a-z0-9][a-z0-9._/-]{0,127}:(preview|staging|pilot|canary|production|rollback)$ || "$GLOBAL_RESOURCE" =~ ^release:[a-z0-9][a-z0-9._/-]{0,127}$ ]] || {
             echo 'Global coordination resource is invalid'; exit 1;
@@ -174,7 +180,11 @@ jobs:
             git fetch --no-tags origin "$source_sha"
           fi
           git cat-file -e "$source_sha^{commit}" || { echo 'Global coordination source SHA is unavailable'; exit 1; }
-          printf '%s\n' "{\"target\":\"${{ inputs.target }}\",\"stage\":\"${{ inputs.stage }}\",\"leaseKey\":\"${{ inputs.lease_key }}\"}" > "$GLOBAL_INPUTS_FILE"
+          node - "$GLOBAL_INPUTS_FILE" "$GLOBAL_TARGET" "$GLOBAL_STAGE" "$GLOBAL_LEASE_KEY" <<'NODE'
+          const fs = require('node:fs');
+          const [output, target, stage, leaseKey] = process.argv.slice(2);
+          fs.writeFileSync(output, JSON.stringify({ target, stage, leaseKey }));
+          NODE
           SKINCOS_GLOBAL_COORDINATOR_URL="$GLOBAL_URL" \
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$GLOBAL_SECRET" \
             node scripts/codex-global-coordination-workflow.mjs acquire \
