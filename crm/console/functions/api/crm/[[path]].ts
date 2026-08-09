@@ -17,19 +17,30 @@ function isLoopbackTarget(value: string): boolean {
   }
 }
 
+export function buildCrmTargetUrl(targetOrigin: string, rest: string, search: string): string {
+  const targetUrl = new URL(targetOrigin)
+  const basePath = targetUrl.pathname.replace(/\/$/, '')
+  targetUrl.pathname = `${basePath}/inventory${rest.startsWith('/') ? '' : '/'}${rest}`
+  targetUrl.search = search
+  return targetUrl.toString()
+}
+
 export async function onRequest(context: any): Promise<Response> {
   const request: Request = context.request
   const url = new URL(request.url)
 
   // Incoming:  /api/crm/<rest>
-  // Outgoing:  https://api.skincos.com.br/<rest>
+  // Outgoing:  https://api.skincos.com.br/inventory/<rest>
+  //
+  // The Core gateway owns the public domain and mounts the Inventory/Identity
+  // Worker at /inventory. Keeping this boundary explicit prevents the CRM
+  // console from silently falling through to the gateway's route_not_found
+  // response when Users, onboarding or admin status routes are called.
   const prefix = '/api/crm'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
   const targetOrigin = (context.env?.INSUMOS_API_TARGET as string | undefined) || 'https://api.skincos.com.br'
-  const targetUrl = new URL(targetOrigin)
-  targetUrl.pathname = `${rest.startsWith('/') ? '' : '/'}${rest}`
-  targetUrl.search = url.search
+  const targetUrl = new URL(buildCrmTargetUrl(targetOrigin, rest, url.search))
 
   const headers = sanitizeProxyRequestHeaders(request.headers)
 
