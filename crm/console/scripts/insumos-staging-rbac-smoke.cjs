@@ -24,7 +24,7 @@ const canonical = ['novo-hamburgo', 'barra-shopping-sul']
 const expectedTeamMemberIds = (config) => {
   const allowed = new Set(config.fixture.expectedUnits)
   return fixture.teamMembers
-    .filter((member) => config.admin || member.units.some((unit) => allowed.has(unit)))
+    .filter((member) => config.admin || (member.units.length > 0 && member.units.every((unit) => allowed.has(unit))))
     .map((member) => String(member.onboardingId))
     .sort()
 }
