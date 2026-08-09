@@ -16,6 +16,7 @@ test('production migration runner defers only the fixed source-mirror set and us
     assert.match(source, /production_migration_deferrals/)
     assert.match(source, /!activeMigrationIds\.has\(migration\.id\)/)
     assert.match(source, /productionDeferralReport/)
+    assert.match(source, /PRODUCTION_MIGRATION_ROLLBACK_STATE_UNKNOWN/)
     assert.doesNotMatch(source, /inspectAndPersistStagingDeferral/)
 })
 

@@ -436,9 +436,7 @@ export async function runAtendimentoProductionMigration({
                     reports.push({ id: migration.id, report: productionDeferredRollbackReport({ migration, evidence }) })
                     continue
                 }
-                if (!evidence) {
-                    throw new Error('PRODUCTION_MIGRATION_ROLLBACK_STATE_UNKNOWN')
-                }
+                throw new Error('PRODUCTION_MIGRATION_ROLLBACK_STATE_UNKNOWN')
             }
 
             if (action === 'apply' && rule && !activeMigrationIds.has(migration.id)) {
