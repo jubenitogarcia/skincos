@@ -5,13 +5,18 @@ import { readFile } from 'node:fs/promises'
 const root = new URL('../../../', import.meta.url)
 const read = (relative) => readFile(new URL(relative, root), 'utf8')
 
-test('production migration runner is strict, non-deferring, and uses the shared lock budget', async () => {
+test('production migration runner defers only the fixed source-mirror set and uses the shared lock budget', async () => {
     const source = await read('crm/api/scripts/migrate-atendimento-production.mjs')
     assert.match(source, /ATENDIMENTO_MIGRATION_TARGETS\.PRODUCTION/)
     assert.match(source, /isStrictAtendimentoMigrationDestination\(normalizedUrl, target\)/)
     assert.match(source, /max: ATENDIMENTO_STAGING_MIGRATION_POOL_MAX/)
     assert.match(source, /ATENDIMENTO_PRODUCTION_MIGRATION_LOCK_UNAVAILABLE/)
-    assert.match(source, /deferred: \[\]/)
+    assert.match(source, /ATENDIMENTO_PRODUCTION_PREREQUISITE_DEFERRED_RULES/)
+    assert.match(source, /PRODUCTION_SOURCE_MIRROR_NOT_PROVISIONED/)
+    assert.match(source, /production_migration_deferrals/)
+    assert.match(source, /!activeMigrationIds\.has\(migration\.id\)/)
+    assert.match(source, /productionDeferralReport/)
+    assert.match(source, /PRODUCTION_MIGRATION_ROLLBACK_STATE_UNKNOWN/)
     assert.doesNotMatch(source, /inspectAndPersistStagingDeferral/)
 })
 
