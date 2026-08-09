@@ -58,6 +58,24 @@ release são os esperados. Antes de qualquer migration aplicável, o controle
 precisa estar em `maintenance` com o SHA exato e a unidade isolada precisa
 estar inativa; o runner obtém lock advisory no banco durante todo o fluxo.
 
+### Migrations comerciais condicionais em staging
+
+O runner isolado pode registrar como `deferred` somente Operations, Analytics
+e Assisted, e somente quando uma relação de pré-requisito declarada por aquela
+migration estiver ausente. Ele grava evidência sanitizada e versionada em
+`crm_atendimento.staging_migration_evidence` (`releaseSha`, `runId`, código e
+relações ausentes), sem criar uma linha aplicada em
+`crm_atendimento.schema_migrations`. A tabela é privada ao migrador. Canary
+não é opcional: suas pré-condições são fundações CRM e qualquer falha aborta.
+Um erro diferente do código esperado, uma rechecagem sem relação ausente ou um
+estado de rollback sem evidência durável também abortam. O destino `local`
+mantém suas migrations estritas.
+
+Uma deferral não altera a superfície do produto: `maintenance`, escrita
+comercial desabilitada, canário vazio e a rota Comercial `503` permanecem o
+contrato até uma promoção separada e autorizada. Nenhum bypass cria
+`commercial_offers`, concede leitura de Caixa/Harmonia ou inicia o serviço.
+
 ## Gaps que bloqueiam ativação
 
 1. Staging precisa ter o schema-base `20260808_atendimento_core_schema_v1` e as

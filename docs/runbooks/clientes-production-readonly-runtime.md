@@ -88,6 +88,38 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    `harmonia.contacts`; a instalação e a validação recusam prosseguir se a
    prova efetiva de grants falhar.
 
+   Há uma exceção estreita, exclusiva do runner de **staging**, para três
+   migrations comerciais condicionais: Operations
+   (`20260807_commercial_operations_v2`), Analytics
+   (`20260807_commercial_analytics_v2`) e Assisted
+   (`20260807_commercial_assisted_whatsapp_v2`). Antes de cada uma, o runner
+   consulta apenas `to_regclass` das relações declaradas pela própria migration.
+   Se uma delas estiver ausente, ele não chama `apply`, não cria nem atualiza
+   uma linha normal em `crm_atendimento.schema_migrations` e continua apenas
+   com as migrations seguintes que continuem válidas. O relatório sanitarizado
+   registra `status:"deferred"`, `applied:false`, `deferred:true`,
+   `schemaMigrationRecorded:false`, o código de pré-requisito e a lista fixa
+   de relações ausentes. O mesmo evento é guardado de forma durável, somente
+   para o migrador, em `crm_atendimento.staging_migration_evidence`, ligado ao
+   SHA e ao `runId`; o app perde explicitamente qualquer grant nessa tabela.
+   Uma reexecução que aplique de fato a migration acrescenta evidência
+   `applied` somente depois da linha normal de `schema_migrations` ter sido
+   gravada pelo módulo. `--rollback` pula exclusivamente um último evento
+   durável `deferred` sem marker ativo; estado sem marker que não prove esse
+   defer falha fechado, em vez de sintetizar um rollback. Qualquer timeout,
+   privilégio, lock, SQL, destino, erro de código diferente ou relação que
+   reapareça na rechecagem continua abortando o fluxo. A regra não existe para
+   `local`, não aceita `--skip` e não inclui Canary: Canary só depende de
+   fundações CRM e deve abortar se uma delas faltar.
+
+   Esta deferência não equivale a habilitar Comercial. Mesmo após fundações
+   aplicadas, o controle continua em `maintenance` e o runtime isolado
+   read-only mantém `/api/atendimento/commercial/*` em
+   `503 COMMERCIAL_READS_DISABLED`; nenhum grant em Caixa/Harmonia, escrita,
+   canário, automação ou envio é liberado. Quando uma promoção separada deixar
+   o runtime read-only `active`, a readiness geral ainda pode ser válida pelas
+   suas próprias fundações; isso não muda o `503` fixo da rota Comercial.
+
 3. Antes de instalar a unidade isolada de staging, prepare a release imutável e
    grave explicitamente o SHA no controle ainda em `maintenance`. O instalador
    valida esse JSON pelo mesmo parser do runtime e se recusa a iniciar caso o
@@ -114,12 +146,13 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    reconcilia, de forma idempotente e transacional, o schema-base oficial de
    `crm_atendimento` e o registra no journal. O `--dry-run` lista as relações
    ausentes em `coreSchema.missing`; nenhuma relação é criada nessa etapa.
-   Antes de qualquer `--apply` das migrations, prove também o plano de
-   migrations aditivas de fontes, clusters, operações, analytics e aprovação
-   clínica. Se elas ainda não existirem no staging, readiness deve continuar
-   `503`; não contorne isso com grants, bootstrap automático do processo da
-   aplicação ou flag. O schema-base só pode ser aplicado pelo runner fixo, com
-   o login migrador/owner e sob o backup/selagem descritos acima. O preparador recusa um
+   Antes de qualquer `--apply` das migrations, prove o plano de migrations
+   aditivas de fontes, clusters e aprovação clínica. Registre separadamente
+   qualquer defer comercial pelo relatório e pela evidência durável; nunca o
+   substitua por grant, schema manual ou flag. Se uma fundação ou Canary não
+   existir, o runner deve abortar e readiness continua `503`. O schema-base só
+   pode ser aplicado pelo runner fixo, com o login migrador/owner e sob o
+   backup/selagem descritos acima. O preparador recusa um
    SHA que não seja exatamente o `origin/main` buscado e grava a linhagem
    imutável com o predecessor confirmado. Não há túnel nem DNS de staging nesta tranche. A prova de liveness de
    staging é feita somente pelo validador nativo, no listener loopback fixo;

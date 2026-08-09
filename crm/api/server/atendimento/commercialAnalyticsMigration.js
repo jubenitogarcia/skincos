@@ -6,7 +6,7 @@ const RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
 })
 
-const PREREQUISITE_RELATIONS = Object.freeze([
+export const COMMERCIAL_ANALYTICS_PREREQUISITE_RELATIONS = Object.freeze([
     'crm_atendimento.schema_migrations',
     'crm_atendimento.units',
     'crm_atendimento.global_client_identities',
@@ -23,6 +23,7 @@ const PREREQUISITE_RELATIONS = Object.freeze([
     'crm_caixa.sales',
     'crm_caixa.sale_items',
 ])
+const PREREQUISITE_RELATIONS = COMMERCIAL_ANALYTICS_PREREQUISITE_RELATIONS
 
 function migrationError(code) {
     const error = new Error(code)

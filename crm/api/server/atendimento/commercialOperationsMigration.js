@@ -16,13 +16,14 @@ const RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
 })
 
-const PREREQUISITE_RELATIONS = Object.freeze([
+export const COMMERCIAL_OPERATIONS_PREREQUISITE_RELATIONS = Object.freeze([
     'crm_atendimento.units',
     'crm_atendimento.global_client_identities',
     'crm_atendimento.commercial_actions',
     'crm_atendimento.commercial_action_events',
     'crm_atendimento.commercial_offers',
 ])
+const PREREQUISITE_RELATIONS = COMMERCIAL_OPERATIONS_PREREQUISITE_RELATIONS
 
 const OUTCOME_SQL = COMMERCIAL_OUTCOME_CODES.map((value) => `'${value}'`).join(', ')
 const CAMPAIGN_STATE_SQL = COMMERCIAL_CAMPAIGN_STATES.map((value) => `'${value}'`).join(', ')
