@@ -83,3 +83,26 @@ test('rejects an unsafe destination before opening a migration connection', asyn
     }), /COMMERCIAL_CANARY_MIGRATION_DESTINATION_UNSAFE/)
     assert.equal(connected, false)
 })
+
+test('Canary keeps a missing local foundation terminal and never marks it applied', async () => {
+    const calls = []
+    const client = {
+        async query(sql, params = []) {
+            calls.push({ sql, params })
+            if (/current_database\(\)/i.test(sql)) return { rows: [{ database_name: 'skincos_crm_local', database_user: 'admin', session_user: 'admin', read_only: 'off' }] }
+            if (/relation_0/i.test(sql)) {
+                return { rows: [{ relation_0: 'schema_migrations', relation_1: null, relation_2: 'global_client_identities', relation_3: 'global_client_identity_members', relation_4: 'units', relation_5: 'commercial_contact_permissions' }] }
+            }
+            return { rows: [] }
+        },
+        release() {},
+    }
+    await assert.rejects(
+        applyCommercialCanaryMigration({
+            pool: { connect: async () => client },
+            databaseUrl: 'postgresql:///skincos_crm_local?host=/var/run/postgresql',
+        }),
+        { code: 'COMMERCIAL_CANARY_MIGRATION_PREREQUISITES_MISSING' },
+    )
+    assert.equal(calls.some(({ sql }) => /insert into crm_atendimento\.schema_migrations/i.test(sql)), false)
+})

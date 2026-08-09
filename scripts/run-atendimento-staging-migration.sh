@@ -108,4 +108,7 @@ if [[ "$LOCKDOWN_REQUIRED" == '1' ]]; then
   trap 'exit 143' TERM
 fi
 
-run_sudo_clean /usr/bin/node "$RUNNER" "$ACTION"
+# The runner persists only sanitized migration-evidence rows. Bind each
+# mutable invocation to the already-validated immutable release; no caller
+# supplied path or environment is retained.
+run_sudo_clean /usr/bin/node "$RUNNER" "$ACTION" --release-sha "$RELEASE_SHA"

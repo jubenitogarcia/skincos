@@ -60,3 +60,31 @@ test('commercial analytics migration holds its advisory lock in an explicit tran
         assert.match(block, /await client\.query\('rollback'\)/)
     }
 })
+
+test('commercial analytics keeps a missing local prerequisite terminal and never marks it applied', async () => {
+    const calls = []
+    const client = {
+        async query(sql, params = []) {
+            calls.push({ sql, params })
+            if (/current_database\(\)/i.test(sql)) return { rows: [{ database_name: 'skincos_crm_local', database_user: 'admin', session_user: 'admin', read_only: 'off' }] }
+            if (/relation_0/i.test(sql)) {
+                return {
+                    rows: [Object.fromEntries(__testables.PREREQUISITE_RELATIONS.map((_, index) => [
+                        `relation_${index}`,
+                        index !== __testables.PREREQUISITE_RELATIONS.indexOf('crm_caixa.sales'),
+                    ]))],
+                }
+            }
+            return { rows: [] }
+        },
+        release() {},
+    }
+    await assert.rejects(
+        applyCommercialAnalyticsMigration({
+            pool: { connect: async () => client },
+            databaseUrl: 'postgresql:///skincos_crm_local?host=/var/run/postgresql',
+        }),
+        { code: 'COMMERCIAL_ANALYTICS_MIGRATION_PREREQUISITES_MISSING' },
+    )
+    assert.equal(calls.some(({ sql }) => /insert into crm_atendimento\.schema_migrations/i.test(sql)), false)
+})
