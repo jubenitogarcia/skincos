@@ -73,7 +73,7 @@ cleanup_artifacts() {
   fi
 }
 trap cleanup_artifacts EXIT
-/usr/bin/sed \
+run_sudo_clean /usr/bin/sed \
   -e "s|__REPO_ROOT__|$SOURCE_ROOT|g" \
   -e "s|__STATE_ROOT__|$STATE_ROOT|g" \
   -e "s|__CONFIG_ROOT__|$CONFIG_ROOT|g" \

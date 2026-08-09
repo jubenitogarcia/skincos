@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readLiteralEnvironment } from '../server/atendimento/runtimeEnv.js'
 import {
-    parseAtendimentoStagingMigrationAction,
+    parseAtendimentoStagingMigrationInvocation,
     runAtendimentoStagingMigration,
 } from './migrate-atendimento-staging.mjs'
 
@@ -9,7 +9,7 @@ import {
 // file, URL, command, or executable path from an operator or GitHub variable.
 const MIGRATOR_ENV_FILE = '/etc/skincos/crm-atendimento-staging-migrator.env'
 
-const action = parseAtendimentoStagingMigrationAction(process.argv.slice(2))
+const { action, releaseSha } = parseAtendimentoStagingMigrationInvocation(process.argv.slice(2))
 const values = await readLiteralEnvironment(MIGRATOR_ENV_FILE, { allowedKeys: ['DATABASE_URL'] })
 const databaseUrl = String(values.DATABASE_URL || '').trim()
 if (!databaseUrl) {
@@ -18,5 +18,9 @@ if (!databaseUrl) {
     throw error
 }
 
-const report = await runAtendimentoStagingMigration({ databaseUrl, action })
+const report = await runAtendimentoStagingMigration({
+    databaseUrl,
+    action,
+    releaseSha,
+})
 console.log(JSON.stringify(report, null, 2))
