@@ -62,14 +62,27 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    ele cria e verifica exatamente um dump privado e único em
    `/var/backups/skincos/clientes/staging`; a evidência contém somente SHA-256,
    `private=true` e `unique=true`, nunca o caminho ou conteúdo do dump. Não
-   chame o helper de backup separadamente nesse fluxo. O runner lê exclusivamente
+   chame o helper de backup separadamente nesse fluxo. O `postgres` nunca recebe
+   esse caminho: o helper captura o archive custom por stdout em um spool
+   `.partial` `root:root:0600` dentro do diretório final `root:root:0700`, atesta
+   hash, dono e modo e só então publica o nome único por hard-link sem
+   sobrescrita. Isso substitui qualquer arquivo temporário cedido a `postgres`:
+   o processo só recebe stdout, nunca posse ou travessia de um artefato de
+   rollback. Ele não altera as permissões de `/var/backups/skincos` nem de
+   `/var/backups/skincos/clientes`, que podem permanecer intraversáveis para
+   `postgres`. O runner lê exclusivamente
    `/etc/skincos/crm-atendimento-staging-migrator.env` como texto literal e
    aceita uma só ação. A migração pode conceder temporariamente grants normais
    enquanto cria objetos; ao terminar (inclusive após rollback ou erro), o
    invólucro obrigatório `lockdown-atendimento-staging-runtime.sh` os revoga
    com o administrador local do PostgreSQL. A migration exige controle
    `maintenance` com o SHA esperado e a unidade isolada inativa, obtém lock
-   advisory no banco e só então executa. O app fica sem DDL, DML, uso de
+   advisory no banco e só então executa. O login migrador tem `CONNECTION
+   LIMIT 3`: o runner retém no máximo duas sessões (lock completo + trabalho)
+   e a terceira serve somente para que um único refresh de qualidade ou
+   migration Harmonia concorrente observe o mesmo lock e falhe antes de
+   escrever; os pools desses entrypoints são fixados em `2`, `2` e `1`,
+   respectivamente. O app fica sem DDL, DML, uso de
    sequences, `SET ROLE` para qualquer papel pai, atributos privilegiados,
    execução de funções `SECURITY DEFINER` em schemas de aplicação ou acesso a
    `harmonia.contacts`; a instalação e a validação recusam prosseguir se a
@@ -97,10 +110,16 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
      --source-root /opt/skincos/releases/<sha-main>/source
    ```
 
-   Antes de qualquer `--apply` da migration, prove o plano de migrations
-   aditivas de fontes, clusters, operações, analytics e aprovação clínica. Se
-   elas ainda não existirem no staging, readiness deve continuar `503`; não
-   contorne isso com grants, schema automático ou flag. O preparador recusa um
+   O primeiro item do runner é `20260808_atendimento_core_schema_v1`: ele
+   reconcilia, de forma idempotente e transacional, o schema-base oficial de
+   `crm_atendimento` e o registra no journal. O `--dry-run` lista as relações
+   ausentes em `coreSchema.missing`; nenhuma relação é criada nessa etapa.
+   Antes de qualquer `--apply` das migrations, prove também o plano de
+   migrations aditivas de fontes, clusters, operações, analytics e aprovação
+   clínica. Se elas ainda não existirem no staging, readiness deve continuar
+   `503`; não contorne isso com grants, bootstrap automático do processo da
+   aplicação ou flag. O schema-base só pode ser aplicado pelo runner fixo, com
+   o login migrador/owner e sob o backup/selagem descritos acima. O preparador recusa um
    SHA que não seja exatamente o `origin/main` buscado e grava a linhagem
    imutável com o predecessor confirmado. Não há túnel nem DNS de staging nesta tranche. A prova de liveness de
    staging é feita somente pelo validador nativo, no listener loopback fixo;

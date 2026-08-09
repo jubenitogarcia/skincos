@@ -95,6 +95,16 @@ test('staging release, control and application role remain fixed and read-only',
   const control = read('scripts/set-atendimento-staging-control.sh')
   const backup = read('scripts/backup-atendimento-staging.sh')
   const stagingMigration = read('scripts/run-atendimento-staging-migration.sh')
+  const migrationRunner = read('crm/api/scripts/migrate-atendimento-staging.mjs')
+  const qualityRefresh = read('crm/api/scripts/refresh-commercial-data-quality-staging.mjs')
+  const harmoniaMigration = read('crm/api/scripts/migrate-harmonia-schema.mjs')
+  const pgPool = read('crm/api/server/harmonia/store/pg.js')
+  const domainOnlyMigrationCli = [
+    ['crm/api/scripts/migrate-clinical-approval.mjs', 'CLINICAL_APPROVAL_STAGING_REQUIRES_CONTROLLED_RUNNER'],
+    ['crm/api/scripts/migrate-atendimento-commercial-analytics.mjs', 'COMMERCIAL_ANALYTICS_STAGING_REQUIRES_CONTROLLED_RUNNER'],
+    ['crm/api/scripts/migrate-atendimento-commercial-operations.mjs', 'COMMERCIAL_OPERATIONS_STAGING_REQUIRES_CONTROLLED_RUNNER'],
+    ['crm/api/scripts/migrate-atendimento-commercial-assisted-whatsapp.mjs', 'COMMERCIAL_ASSISTED_STAGING_REQUIRES_CONTROLLED_RUNNER'],
+  ]
   const lockdown = read('scripts/lockdown-atendimento-staging-runtime.sh')
   const installer = read('scripts/runtime/install-atendimento-staging-service.sh')
   const rollback = read('scripts/runtime/rollback-atendimento-staging.sh')
@@ -139,6 +149,8 @@ test('staging release, control and application role remain fixed and read-only',
   for (const sql of provisionSql) {
     assert.doesNotMatch(sql, /^\s*#/m, 'PostgreSQL heredocs must use SQL comments, never shell # comments')
   }
+  assert.match(provisionSql[0], /rolconnlimit/)
+  assert.match(provisionSql[1], /alter role \$MIGRATOR_ROLE connection limit 3;/)
   assert.match(provisionSql[1], /^-- The isolated application has no safe direct Caixa projection yet\. Do not$/m)
   assert.match(provision, /readonly BACKUP_ROOT='\/var\/backups\/skincos\/clientes\/staging-control'/)
   assert.match(provision, /ATENDIMENTO_READINESS_TOKEN=\$readiness_token/)
@@ -177,6 +189,50 @@ test('staging release, control and application role remain fixed and read-only',
   assert.match(stagingMigration, /trap 'exit 143' TERM/)
   assert.match(stagingMigration, /trap '' HUP INT TERM/)
   assert.match(stagingMigration, /keeping the isolated service ineligible/)
+  assert.match(migrationRunner, /ATENDIMENTO_STAGING_MIGRATOR_CONNECTION_LIMIT/)
+  assert.match(migrationRunner, /ATENDIMENTO_STAGING_MIGRATION_POOL_MAX/)
+  assert.match(migrationRunner, /createPool\(normalizedUrl, \{ max: ATENDIMENTO_STAGING_MIGRATION_POOL_MAX \}\)/)
+  assert.match(migrationRunner, /assertAtendimentoStagingMigratorConnectionLimit\(lockClient\)/)
+  assert.match(qualityRefresh, /ATENDIMENTO_STAGING_QUALITY_REFRESH_POOL_MAX/)
+  assert.match(qualityRefresh, /acquireAtendimentoStagingMutationLock\(lockClient, 'ATENDIMENTO_STAGING_QUALITY_LOCK_UNAVAILABLE'\)/)
+  assert.match(qualityRefresh, /assertAtendimentoStagingMigratorConnectionLimit\(lockClient\)/)
+  assert.ok(qualityRefresh.lastIndexOf('acquireAtendimentoStagingMutationLock') < qualityRefresh.indexOf(').refresh('))
+  assert.match(harmoniaMigration, /target === 'staging' \? \{ max: HARMONIA_STAGING_MIGRATION_POOL_MAX \} : undefined/)
+  assert.match(harmoniaMigration, /acquireAtendimentoStagingMutationLock\(client, 'HARMONIA_STAGING_MIGRATION_LOCK_UNAVAILABLE'\)/)
+  assert.match(harmoniaMigration, /assertAtendimentoStagingMigratorConnectionLimit\(client\)/)
+  assert.ok(harmoniaMigration.lastIndexOf('acquireAtendimentoStagingMutationLock') < harmoniaMigration.indexOf("await client.query('begin')"))
+  assert.match(pgPool, /export function createPgPool\(databaseUrl, options = \{\}\)/)
+  assert.match(pgPool, /const max = Number\(options\?\.max \?\? 10\)/)
+  assert.match(pgPool, /max,\r?\n/)
+  for (const [relative, code] of domainOnlyMigrationCli) {
+    const cli = read(relative)
+    assert.match(cli, new RegExp(`if \\(.*ATENDIMENTO_MIGRATION_TARGETS\\.STAGING.*\\)[\\s\\S]{0,180}${code}`), `${relative} must reject staging before creating a pool`)
+    assert.ok(cli.indexOf(code) < cli.indexOf('pool = createPgPool(databaseUrl)'), `${relative} must reject staging before a pool can connect`)
+  }
+  const serialMigrationModules = [
+    'crm/api/server/atendimento/professionalIdentityMigration.js',
+    'crm/api/server/atendimento/writeSafetyMigration.js',
+    'crm/api/server/atendimento/commercialContactMigration.js',
+    'crm/api/server/atendimento/commercialContactRolloutMigration.js',
+    'crm/api/server/atendimento/clientIdentityMaterializationMigration.js',
+    'crm/api/server/atendimento/commercialActionLedgerMigration.js',
+    'crm/api/server/atendimento/commercialDataQualityMigration.js',
+    'crm/api/server/clientes/sourceOperationsMigration.js',
+    'crm/api/server/atendimento/identityReviewMigration.js',
+    'crm/api/server/atendimento/identityClusterWorkspaceMigration.js',
+    'crm/api/server/clinical/clinicalApprovalMigration.js',
+    'crm/api/server/atendimento/commercialOperationsMigration.js',
+    'crm/api/server/atendimento/commercialAnalyticsMigration.js',
+    'crm/api/server/atendimento/commercialCanaryMigration.js',
+    'crm/api/server/atendimento/commercialAssistedCommunicationMigration.js',
+  ]
+  for (const relative of serialMigrationModules) {
+    const migrationSource = read(relative)
+    assert.equal((migrationSource.match(/\bpool\.connect\(\)/g) || []).length, 2, `${relative} must use one client for each apply and rollback path`)
+    assert.equal((migrationSource.match(/\bclient\.release\(\)/g) || []).length, 2, `${relative} must release the client in both paths`)
+    assert.doesNotMatch(migrationSource, /\bpool\.query\(/, `${relative} must not open an unbounded pool query path`)
+    assert.doesNotMatch(migrationSource, /Promise\.all(?:Settled)?\(/, `${relative} must keep migration queries serial`)
+  }
   assert.match(lockdown, /readonly DB_NAME='skincos_staging'/)
   assert.match(lockdown, /readonly APP_ROLE='skincos_staging_crm_app'/)
   assert.match(lockdown, /\/usr\/bin\/sudo -n -u postgres \/usr\/bin\/psql/)
@@ -207,16 +263,35 @@ test('staging release, control and application role remain fixed and read-only',
   assert.match(backup, /readonly SAFE_PATH='\/usr\/sbin:\/usr\/bin:\/sbin:\/bin'/)
   assert.match(backup, /run_postgres_dump_clean\(\)/)
   assert.match(backup, /\/usr\/bin\/env -i/)
-  assert.match(backup, /run_sudo_clean \/usr\/bin\/mktemp "\$BACKUP_DIR\/\$STAMP-clientes-staging-preapply\.XXXXXX\.dump"/)
+  assert.match(backup, /umask 077/)
+  assert.match(backup, /run_sudo_clean \/usr\/bin\/install -d -m 0700 -o root -g root "\$BACKUP_DIR"/)
+  assert.match(backup, /PENDING_OUTPUT="\$\(run_sudo_clean \/usr\/bin\/mktemp "\$BACKUP_DIR\/\$STAMP-clientes-staging-preapply\.XXXXXX\.dump\.partial"\)"/)
+  assert.match(backup, /OUTPUT="\$\{PENDING_OUTPUT%\.partial\}"/)
+  assert.match(backup, /Pending backup path was not generated from the fixed contract/)
   assert.match(backup, /Backup output path was not generated from the fixed contract/)
-  assert.match(backup, /chown postgres:postgres "\$OUTPUT"/)
-  assert.match(backup, /chown root:root "\$OUTPUT"/)
-  assert.match(backup, /\/usr\/bin\/test -O "\$OUTPUT"/)
+  assert.match(backup, /run_postgres_dump_clean --format=custom --no-owner --no-privileges --dbname="\$DATABASE" > "\$PENDING_OUTPUT"/)
+  assert.doesNotMatch(backup, /--file=/, 'postgres must not receive a root-private backup pathname')
+  assert.doesNotMatch(backup, /chown postgres:postgres/, 'postgres must never own a staging rollback artifact')
+  assert.doesNotMatch(backup, /install -d -m 0750 -o root -g postgres/, 'the final backup directory must be root-private')
+  assert.doesNotMatch(backup, /(?:install -d|chmod|chown)\b[^\n]*\/var\/backups\/skincos(?:\/clientes)?(?:[\s"']|$)/, 'backup ancestors must remain inaccessible to postgres')
+  assert.match(backup, /\/usr\/bin\/test -O "\$PENDING_OUTPUT"/)
+  assert.match(backup, /run_sudo_clean \/usr\/bin\/chmod 0600 "\$PENDING_OUTPUT"/)
+  assert.match(backup, /run_sudo_clean \/usr\/bin\/test -s "\$PENDING_OUTPUT"/)
+  assert.match(backup, /backup_metadata="\$\(run_sudo_clean \/usr\/bin\/stat -c '%U:%G:%a' "\$PENDING_OUTPUT"\)"/)
+  assert.ok(backup.indexOf('/usr/bin/chmod 0600 "$PENDING_OUTPUT"') < backup.indexOf('run_postgres_dump_clean --format=custom'), 'the root-only spool must be 0600 before pg_dump starts')
   assert.match(backup, /backup_metadata="\$\(run_sudo_clean \/usr\/bin\/stat -c '%U:%G:%a' "\$OUTPUT"\)"/)
+  assert.match(backup, /run_sudo_clean \/usr\/bin\/ln -- "\$PENDING_OUTPUT" "\$OUTPUT"/)
+  assert.ok(backup.indexOf('run_postgres_dump_clean --format=custom') < backup.indexOf('/usr/bin/ln -- "$PENDING_OUTPUT" "$OUTPUT"'), 'the final path must be linked only after pg_dump completes')
+  assert.ok(backup.indexOf("trap '' HUP INT TERM\nrun_sudo_clean /usr/bin/ln -- \"$PENDING_OUTPUT\" \"$OUTPUT\"\noutput_created=1") >= 0, 'trappable stops must not split publication from cleanup ownership')
+  assert.ok(backup.indexOf('/usr/bin/ln -- "$PENDING_OUTPUT" "$OUTPUT"') < backup.lastIndexOf('/usr/bin/rm -f -- "$PENDING_OUTPUT"'), 'the completed dump must be atomically linked before its pending name is removed')
+  assert.doesNotMatch(backup, /\/usr\/bin\/ln\s+(?:-[^\n]*f|--force)\b/, 'the final hard link must never overwrite an existing backup')
+  assert.doesNotMatch(backup, /\/usr\/bin\/(?:mv|cp)\b/, 'publication must be a hard link, not a replaceable copy or rename')
   assert.match(backup, /private=true unique=true/)
   assert.match(backup, /trap cleanup_partial_output EXIT/)
-  assert.match(backup, /output_created=1/)
-  assert.match(backup, /run_sudo_clean \/usr\/bin\/rm -f -- "\$OUTPUT"/)
+  assert.match(backup, /if \[\[ "\$pending_created" == '1' \]\]; then\s+run_sudo_clean \/usr\/bin\/rm -f -- "\$PENDING_OUTPUT"/)
+  assert.match(backup, /if \[\[ "\$output_created" == '1' \]\]; then\s+run_sudo_clean \/usr\/bin\/rm -f -- "\$OUTPUT"/)
+  assert.ok(backup.indexOf('run_postgres_dump_clean --format=custom') < backup.indexOf("trap '' HUP INT TERM"), 'a dump failure must occur before any final publication attempt')
+  assert.ok(backup.indexOf("trap '' HUP INT TERM") < backup.indexOf('output_created=1'), 'only a successfully linked output is eligible for final cleanup')
   assert.doesNotMatch(backup, /^#!\/usr\/bin\/env bash/m)
   assert.doesNotMatch(backup, /command -v/)
   assert.match(installer, /CONTROL_VALIDATOR="\$SOURCE_ROOT\/crm\/api\/scripts\/validate-atendimento-staging-control\.mjs"/)

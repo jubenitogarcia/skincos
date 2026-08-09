@@ -52,16 +52,24 @@ As rotas `/api/atendimento/commercial/analytics/*` exigem o mesmo papel Clientes
 
 ## Migração, rollback e grants
 
-O comando nativo aceita exclusivamente uma ação e o target local/staging:
+O comando de domínio aceita exclusivamente uma ação no espelho local:
 
 ```powershell
 # apenas no boundary WSL aprovado; não use shell vindo de Environment/GitHub variable
-npm run migrate-commercial-analytics -- --dry-run --target=staging
-npm run migrate-commercial-analytics -- --apply --target=staging
-npm run migrate-commercial-analytics -- --rollback --target=staging
+npm run migrate-commercial-analytics -- --dry-run --target=local
+npm run migrate-commercial-analytics -- --apply --target=local
+npm run migrate-commercial-analytics -- --rollback --target=local
 ```
 
-Ele exige `DATABASE_URL` que passe pela verificação estrita de destino e não executa argumentos arbitrários. Apply e rollback abrem uma transação antes de obter o advisory lock de migration, portanto o lock e cada passo da mudança permanecem atômicos. A role de runtime recebe apenas `USAGE` de schema e `SELECT`/DML mínimo para as relações listadas, incluindo `SELECT crm_atendimento.schema_migrations`; não recebe DDL, DELETE ou TRUNCATE. A role de migration permanece separada.
+`--target=staging` é recusado: staging só pode usar o runner de release
+target-bound de Atendimento, que obtém o lock compartilhado, cria o backup
+privado e executa a ordem completa de migrations. Ele exige `DATABASE_URL` que
+passe pela verificação estrita de destino e não executa argumentos arbitrários.
+Apply e rollback abrem uma transação antes de obter o advisory lock de
+migration, portanto o lock e cada passo da mudança permanecem atômicos. A role
+de runtime recebe apenas `USAGE` de schema e `SELECT`/DML mínimo para as
+relações listadas, incluindo `SELECT crm_atendimento.schema_migrations`; não
+recebe DDL, DELETE ou TRUNCATE. A role de migration permanece separada.
 
 Rollback é não destrutivo: marca o registry como rolled back e retém snapshots, assignments e evidência. Para rollback operacional, desabilite primeiro o experimento (se houver), registre o SHA predecessor, rode `--rollback` no mesmo target aprovado e valide readiness 503/fail-closed. Não remova tabelas nem dados de coorte.
 

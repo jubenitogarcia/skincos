@@ -60,6 +60,7 @@ done
 [[ "$RELEASE_LINEAGE_SHA256" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo '--lineage-sha256 must be a SHA-256 hexadecimal digest.' >&2; exit 1; }
 [[ ! -e "$DESTINATION" ]] || { echo "Source release destination already exists: $DESTINATION" >&2; exit 1; }
 [[ "$STAGE_ONLY" != "1" || "$APPLY" = "1" ]] || { echo '--stage-only requires --apply.' >&2; exit 1; }
+readonly ARCHIVE_PREFIX="skincos-$RELEASE_ID/"
 
 echo "Source release ID: $RELEASE_ID"
 echo "Native source archive: $RELEASE_ARCHIVE"
@@ -76,12 +77,25 @@ fi
 command -v npm >/dev/null 2>&1 || { echo 'Missing required command: npm' >&2; exit 1; }
 command -v sudo >/dev/null 2>&1 || { echo 'Missing required command: sudo' >&2; exit 1; }
 command -v sha256sum >/dev/null 2>&1 || { echo 'Missing required command: sha256sum' >&2; exit 1; }
+command -v tar >/dev/null 2>&1 || { echo 'Missing required command: tar' >&2; exit 1; }
+command -v awk >/dev/null 2>&1 || { echo 'Missing required command: awk' >&2; exit 1; }
 command -v setfacl >/dev/null 2>&1 || { echo 'Missing required command: setfacl (install the acl package).' >&2; exit 1; }
 sudo -n true
 actual_archive_sha256="$(sha256sum "$RELEASE_ARCHIVE" | awk '{print $1}')"
 [[ "${actual_archive_sha256,,}" == "${RELEASE_ARCHIVE_SHA256,,}" ]] || { echo 'Source archive checksum mismatch.' >&2; exit 1; }
 actual_lineage_sha256="$(sha256sum "$RELEASE_LINEAGE" | awk '{print $1}')"
 [[ "${actual_lineage_sha256,,}" == "${RELEASE_LINEAGE_SHA256,,}" ]] || { echo 'Source lineage checksum mismatch.' >&2; exit 1; }
+if ! tar -tzf "$RELEASE_ARCHIVE" | awk -v prefix="$ARCHIVE_PREFIX" '
+  BEGIN { found = 0; invalid = 0 }
+  NF {
+    found = 1
+    if (index($0, prefix) != 1 || $0 ~ /(^|\/)\.\.(\/|$)/) invalid = 1
+  }
+  END { exit !(found && !invalid) }
+'; then
+  echo "Source archive must contain only the expected top-level prefix: $ARCHIVE_PREFIX" >&2
+  exit 1
+fi
 lineage_parent="$(node - "$RELEASE_LINEAGE" "$RELEASE_ID" <<'NODE'
 const fs = require('fs');
 const [file, expectedRelease] = process.argv.slice(2);
@@ -100,7 +114,7 @@ cleanup_staging() {
 trap cleanup_staging EXIT INT TERM
 
 sudo -n install -d -o root -g skincos -m 0750 "$STAGING" "$CRM_NPM_CACHE"
-sudo -n tar -xf "$RELEASE_ARCHIVE" -C "$STAGING"
+sudo -n tar -xzf "$RELEASE_ARCHIVE" --strip-components=1 -C "$STAGING"
 sudo -n install -m 0640 "$RELEASE_LINEAGE" "$STAGING/.skincos-release-lineage.json"
 sudo -n chown -R root:skincos "$STAGING"
 sudo -n find "$STAGING" -type d -exec chmod 0750 {} +

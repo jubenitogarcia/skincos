@@ -12,7 +12,6 @@ import {
 } from '../server/atendimento/migrationDestination.js'
 
 const ALLOWED_ACTIONS = new Set(['--dry-run', '--apply', '--rollback'])
-const ALLOWED_TARGETS = new Set([ATENDIMENTO_MIGRATION_TARGETS.LOCAL, ATENDIMENTO_MIGRATION_TARGETS.STAGING])
 
 function commandError(code) {
     const error = new Error(code)
@@ -24,7 +23,10 @@ function parseTarget(args) {
     const values = args.filter((arg) => arg.startsWith('--target='))
     if (values.length > 1) throw commandError('COMMERCIAL_ASSISTED_TARGET_INVALID')
     const target = values[0] ? values[0].slice('--target='.length) : ATENDIMENTO_MIGRATION_TARGETS.LOCAL
-    if (ALLOWED_TARGETS.has(target)) return target
+    if (target === ATENDIMENTO_MIGRATION_TARGETS.STAGING) {
+        throw commandError('COMMERCIAL_ASSISTED_STAGING_REQUIRES_CONTROLLED_RUNNER')
+    }
+    if (target === ATENDIMENTO_MIGRATION_TARGETS.LOCAL) return target
     throw commandError('COMMERCIAL_ASSISTED_TARGET_INVALID')
 }
 

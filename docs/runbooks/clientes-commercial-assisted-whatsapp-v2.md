@@ -24,7 +24,7 @@ Uma integra??o futura deve preservar essas flags como default e introduzir uma P
 
 ## Migra??o aditiva e revers?vel
 
-O comando ? um CLI nativo com gram?tica fechada: uma a??o (`--dry-run`, `--apply` ou `--rollback`) e, opcionalmente, um target permitido (`local` ou `staging`). Ele n?o avalia shell, SSH, `eval`, comandos de ambiente ou entradas arbitr?rias.
+O comando ? um CLI nativo com gram?tica fechada: uma a??o (`--dry-run`, `--apply` ou `--rollback`) e o target local. `--target=staging` ? recusado: staging usa exclusivamente o runner de release target-bound de Atendimento, com lock compartilhado, backup privado e a ordem completa de migrations. Ele n?o avalia shell, SSH, `eval`, comandos de ambiente ou entradas arbitr?rias.
 
 O `DATABASE_URL` ? lido somente da configura??o privada do migrador; nunca deve ser escrito no reposit?rio, logs, artefatos ou issue. Antes de qualquer execu??o, confirme que o release ? um SHA imut?vel e que o destino ? o banco/role permitido pelo validador de destino.
 

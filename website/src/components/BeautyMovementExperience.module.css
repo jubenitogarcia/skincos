@@ -98,6 +98,14 @@
   list-style: none;
 }
 
+.tableStage > .progress {
+  position: relative;
+  z-index: 2;
+  width: min(100%, 930px);
+  margin: -10px auto 0;
+  padding-bottom: 2px;
+}
+
 .progressItem {
   min-height: 0;
   background: transparent;
@@ -188,7 +196,6 @@
 }
 
 .tableStage,
-.confirmationStage,
 .resultStage {
   width: min(100%, 1040px);
   margin: clamp(24px, 3.5vw, 40px) auto 0;
@@ -391,7 +398,6 @@
   margin-top: 0;
 }
 
-.confirmationIntro h2,
 .resultLead h2 {
   margin: 10px 0 0;
   color: var(--bm-ink);
@@ -415,7 +421,6 @@
 }
 
 .actHeading p:last-child,
-.confirmationIntro > p:last-child,
 .resultLead > p:last-child {
   margin: 14px 0 0;
   color: var(--bm-muted);
@@ -460,8 +465,12 @@
   --finale-rotate: 8deg;
 }
 
-.tableStage[data-hand-stage="finale"] .deckCardTop {
+.tableStage[data-hand-stage="finale"][data-finale-stage="merging"] .deckCardTop {
   animation: deckReceivePulse 1120ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
+}
+
+.tableStage[data-hand-stage="finale"][data-finale-stage="collecting"] .finaleCardGridHolding .finaleCard {
+  animation: finaleCardsHold 880ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
 }
 
 .tableStage[data-hand-stage="finale"] .finaleCardGridMerging .finaleCard {
@@ -528,10 +537,75 @@
 
 .specialCardStage {
   display: grid;
-  width: min(100%, 380px);
+  gap: 18px;
+  width: min(100%, 520px);
   min-height: 430px;
   place-items: center;
   margin: 2px auto 0;
+}
+
+.specialCardConfirmation {
+  display: grid;
+  gap: 12px;
+  width: min(100%, 520px);
+  padding: 16px 18px;
+  border: 1px solid var(--bm-line-strong);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--bm-shadow);
+  text-align: center;
+}
+
+.specialCardConfirmation:focus {
+  outline: 3px solid var(--bm-yellow);
+  outline-offset: 5px;
+}
+
+.specialCardConfirmation h2 {
+  margin: 0;
+  color: var(--bm-ink);
+  font-family: var(--font-brand-ui);
+  font-size: clamp(1.28rem, 3vw, 1.8rem);
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.specialCardConfirmation .consentField {
+  width: 100%;
+  text-align: left;
+}
+
+.specialCardConfirmation .primaryButton {
+  width: 100%;
+}
+
+.finaleHoldStatus {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  margin: -4px auto 0;
+  color: var(--bm-muted);
+  text-align: center;
+}
+
+.finaleHoldStatus span {
+  font-family: var(--font-brand-ui);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.finaleHoldStatus strong {
+  color: var(--bm-ink);
+  font-family: var(--font-brand-ui);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.finaleHoldStatus small {
+  font-size: 0.82rem;
 }
 
 .specialCard {
@@ -1066,6 +1140,24 @@
   }
 }
 
+@keyframes finaleCardsHold {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--finale-x), var(--finale-y), 0) rotate(var(--finale-rotate)) scale(0.58);
+  }
+
+  62% {
+    opacity: 1;
+    transform: translate3d(calc(var(--finale-x) * 0.08), calc(var(--finale-y) * 0.08), 0)
+      rotate(calc(var(--finale-rotate) * 0.12)) scale(1.04);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+  }
+}
+
 @keyframes specialCardEnter {
   from {
     opacity: 0;
@@ -1456,7 +1548,6 @@
   text-wrap: balance;
 }
 
-.inlineFinale > .confirmationStage,
 .inlineFinale > .resultStage {
   width: 100%;
   margin: 0;
@@ -1546,7 +1637,6 @@
   transform: none;
 }
 
-.confirmationStage,
 .resultStage {
   display: grid;
   gap: 22px;
@@ -1555,45 +1645,16 @@
   padding: 24px;
 }
 
-.confirmationIntro,
 .resultLead {
   text-align: center;
 }
 
-.contactSummary,
-.confirmationForm,
 .invitationPanel,
 .benefitPanel {
   border: 1px solid var(--bm-line);
   border-radius: 10px;
   background: var(--bm-surface);
   box-shadow: var(--bm-shadow);
-}
-
-.contactSummary {
-  display: grid;
-  gap: 5px;
-  padding: 22px 24px;
-  text-align: center;
-}
-
-.contactSummary span,
-.contactSummary small {
-  color: var(--bm-muted);
-  font-size: 0.81rem;
-}
-
-.contactSummary strong {
-  color: var(--bm-ink);
-  font-family: var(--font-brand-ui);
-  font-size: 1.1rem;
-  letter-spacing: 0.02em;
-}
-
-.confirmationForm {
-  display: grid;
-  gap: 16px;
-  padding: clamp(20px, 4vw, 32px);
 }
 
 .consentField {
@@ -1619,11 +1680,6 @@
 
 .consentFieldInvalid {
   border-color: var(--bm-ink);
-}
-
-.confirmationForm .primaryButton {
-  width: 100%;
-  margin-top: 4px;
 }
 
 .invitationPanel h3,
@@ -1880,7 +1936,6 @@
     height: 112px;
   }
 
-  .confirmationStage,
   .resultStage {
     padding: 18px;
   }
@@ -1894,7 +1949,6 @@
     width: 100%;
   }
 
-  .inlineFinale > .confirmationStage,
   .inlineFinale > .resultStage {
     padding: 14px;
     border-radius: 10px;
@@ -1930,8 +1984,6 @@
     font-size: 2.2rem;
   }
 
-  .contactSummary,
-  .confirmationForm,
   .invitationPanel,
   .benefitPanel {
     border-radius: 8px;

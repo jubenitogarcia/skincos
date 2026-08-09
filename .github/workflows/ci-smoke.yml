@@ -44,6 +44,7 @@ jobs:
       whatsapp: ${{ steps.scope.outputs.whatsapp }}
       codex: ${{ steps.scope.outputs.codex }}
       observability: ${{ steps.scope.outputs.observability }}
+      clientes_runtime_contract: ${{ steps.scope.outputs.clientes_runtime_contract }}
       orb_runtime: ${{ steps.scope.outputs.orb_runtime }}
       ccg: ${{ steps.scope.outputs.ccg }}
       all: ${{ steps.scope.outputs.all }}
@@ -74,16 +75,18 @@ jobs:
           whatsapp="$(changed messaging/channels/whatsapp/engine)"
           codex="$(changed .codex skills ops/codex scripts/codex-*.mjs scripts/codex-*.sh scripts/*codex*.ps1)"
           observability="$(changed scripts/observability)"
+          clientes_runtime_contract="$(changed scripts crm/api ops/runtime/units)"
           orb_runtime="$(changed orb ops/runtime platform service)"
           ccg="$(changed orb/engine)"
           all="$(changed .github/workflows/ci-smoke.yml)"
           node=false
-          if [[ "$website" == true || "$crm_api" == true || "$whatsapp" == true || "$observability" == true || "$ccg" == true || "$all" == true ]]; then node=true; fi
+          if [[ "$website" == true || "$crm_api" == true || "$whatsapp" == true || "$observability" == true || "$clientes_runtime_contract" == true || "$ccg" == true || "$all" == true ]]; then node=true; fi
           echo "website=$website" >> "$GITHUB_OUTPUT"
           echo "crm_api=$crm_api" >> "$GITHUB_OUTPUT"
           echo "whatsapp=$whatsapp" >> "$GITHUB_OUTPUT"
           echo "codex=$codex" >> "$GITHUB_OUTPUT"
           echo "observability=$observability" >> "$GITHUB_OUTPUT"
+          echo "clientes_runtime_contract=$clientes_runtime_contract" >> "$GITHUB_OUTPUT"
           echo "orb_runtime=$orb_runtime" >> "$GITHUB_OUTPUT"
           echo "ccg=$ccg" >> "$GITHUB_OUTPUT"
           echo "all=$all" >> "$GITHUB_OUTPUT"
@@ -149,6 +152,10 @@ jobs:
       - name: Validate observability catalog
         if: ${{ needs.changes.outputs.observability == 'true' || needs.changes.outputs.all == 'true' }}
         run: node scripts/observability/validate-catalog.mjs
+
+      - name: Verify Clientes staging runtime contract
+        if: ${{ needs.changes.outputs.clientes_runtime_contract == 'true' || needs.changes.outputs.all == 'true' }}
+        run: node --test scripts/tests/clientes-production-readonly-runtime.test.mjs
 
       - name: Install website dependencies
         if: ${{ needs.changes.outputs.website == 'true' || needs.changes.outputs.all == 'true' }}
