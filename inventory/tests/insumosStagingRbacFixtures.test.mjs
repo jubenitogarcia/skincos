@@ -20,8 +20,12 @@ test('staging RBAC fixtures are bounded, synthetic and auditable', () => {
     assert.equal(data.scenarios.length, 7);
     assert.deepEqual(data.scenarios.find((item) => item.id === 'alias').allowedUnits, ['NH']);
     assert.equal(data.scenarios.find((item) => item.id === 'consultor').role, 'CONSULTOR');
+    assert.deepEqual(data.teamMembers.map((item) => item.units), [['novo-hamburgo'], ['barra-shopping-sul'], ['novo-hamburgo', 'barra-shopping-sul']]);
     const statement = readFileSync(sql, 'utf8');
     assert.match(statement, /STAGING_SYNTHETIC_IDENTITY_PROVISIONED/);
+    assert.match(statement, /STAGING_SYNTHETIC_TEAM_PROVISIONED/);
+    assert.match(statement, /crm_employee_onboarding/);
+    assert.match(statement, /crm_employee_team/);
     assert.match(statement, /\["insumos"\]/);
     assert.doesNotMatch(statement, /\["inventory"\]/);
     assert.doesNotMatch(statement, /BEGIN TRANSACTION|COMMIT;/);

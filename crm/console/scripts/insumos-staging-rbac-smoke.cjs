@@ -18,8 +18,16 @@ const reportPath = String(process.env.INSUMOS_STAGING_REPORT_FILE || '')
 if (!fixturePath || !reportPath) throw new Error('private fixture and sanitised report paths are required')
 const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'))
 if (fixture?.environment !== 'staging' || !Array.isArray(fixture?.scenarios)) throw new Error('staging fixture is invalid')
+if (!Array.isArray(fixture.teamMembers) || fixture.teamMembers.length !== 3) throw new Error('staging team fixture is invalid')
 
 const canonical = ['novo-hamburgo', 'barra-shopping-sul']
+const expectedTeamMemberIds = (config) => {
+  const allowed = new Set(config.fixture.expectedUnits)
+  return fixture.teamMembers
+    .filter((member) => config.admin || member.units.some((unit) => allowed.has(unit)))
+    .map((member) => String(member.onboardingId))
+    .sort()
+}
 const byId = (id) => fixture.scenarios.find((scenario) => scenario.id === id)
 const requireScenario = (id) => {
   const scenario = byId(id)
@@ -61,6 +69,7 @@ async function runScenario(browser, config) {
     if (!localStorage.getItem('app.activeModule')) localStorage.setItem('app.activeModule', 'insumos')
   }, config.staleUnit)
   const page = await context.newPage()
+  const assertRequestBounds = () => assert(requests.authMe <= 4 && requests.insumosMe <= 4 && requests.health <= 4 && requests.team <= 4, `${config.fixture.id}: request storm detected`)
   page.on('request', (request) => {
     const pathname = new URL(request.url()).pathname
     if (pathname === '/api/auth/me') requests.authMe += 1
@@ -97,10 +106,12 @@ async function runScenario(browser, config) {
       assert(teamConfig.status === 403, `${config.fixture.id}: Consultor must be denied Users/Equipe access, got ${teamConfig.status}`)
     } else {
       assert(teamConfig.status === 200 && teamConfig.json?.data?.enabled === true && teamConfig.json?.data?.legacyEscalaEditor === false, `${config.fixture.id}: unified Users/Equipe config failed (${teamConfig.status})`)
-      const teamList = await api(page, '/api/crm/admin/team?status=ACTIVE')
+      const teamList = await api(page, `/api/crm/admin/team?status=ACTIVE&q=${encodeURIComponent(fixture.prefix)}`)
+      const visibleIds = Array.isArray(teamList.json?.data) ? teamList.json.data.map((member) => String(member.id || '')).sort() : []
       teamValidation.listStatus = teamList.status
-      teamValidation.visibleMembers = Array.isArray(teamList.json?.data) ? teamList.json.data.length : null
+      teamValidation.visibleMembers = visibleIds.length
       assert(teamList.status === 200 && Array.isArray(teamList.json?.data), `${config.fixture.id}: Users/Equipe list failed (${teamList.status})`)
+      assert(JSON.stringify(visibleIds) === JSON.stringify(expectedTeamMemberIds(config)), `${config.fixture.id}: Users/Equipe unit visibility mismatch`)
     }
 
     // nosemgrep: playwright-goto-injection -- constant query on validated staging origin
@@ -113,6 +124,7 @@ async function runScenario(browser, config) {
       assert(requests.data.length === 0, `empty scope issued Insumos data requests: ${[...new Set(requests.data)].join(', ')}`)
       const stored = await page.evaluate(() => localStorage.getItem('skincos.insumos.unidade.v1'))
       assert(stored === null, 'empty scope retained a unit in localStorage')
+      assertRequestBounds()
       return { id: config.fixture.id, result: 'denied-no-unit', scopes, requests, team: teamValidation }
     }
 
@@ -142,7 +154,7 @@ async function runScenario(browser, config) {
       await page.waitForFunction((unit) => localStorage.getItem('skincos.insumos.unidade.v1') === unit, config.switchTo, { timeout: 20_000 })
     }
     await sleep(1500)
-    assert(requests.authMe <= 4 && requests.insumosMe <= 4 && requests.health <= 4 && requests.team <= 4, `${config.fixture.id}: request storm detected`)
+    assertRequestBounds()
     return { id: config.fixture.id, result: 'authorized', scopes, requests, team: teamValidation, switched: Boolean(config.switchTo) }
   } finally {
     await context.close()
