@@ -166,6 +166,7 @@ test('readiness returns 200 only after the read-only database contract succeeds'
         databaseReachable: true,
         databaseIdentity: true,
         schemaReady: true,
+        commercialSourceDeferred: false,
         sourceOperationsReady: true,
         clinicalApprovalReady: true,
         transactionReadOnly: true,
@@ -183,6 +184,7 @@ test('readiness returns 200 only after the read-only database contract succeeds'
             databaseReachable: true,
             databaseIdentity: true,
             schemaReady: true,
+            commercialSourceDeferred: false,
             sourceOperationsReady: true,
             clinicalApprovalReady: true,
             transactionReadOnly: true,
@@ -231,6 +233,7 @@ test('store readiness requires the expected database, app role, schema and read-
     assert.equal(ready.transactionReadOnly, true)
     assert.equal(ready.persistentWritePrivilegesBlocked, true)
     assert.equal(ready.persistentPiiReadPrivilegesBlocked, true)
+    assert.equal(ready.commercialSourceDeferred, false)
     assert.match(queries[0], /current_database\(\)/)
     assert.match(queries[0], /and current_setting\('default_transaction_read_only', true\) = 'on'/)
     assert.match(queries[0], /has_table_privilege\(current_user, c\.oid, 'INSERT'\)/)
@@ -334,6 +337,41 @@ test('store readiness fails closed when the application role retains source-syst
     const readiness = await store.readiness()
     assert.equal(readiness.ok, false)
     assert.equal(readiness.persistentPiiReadPrivilegesBlocked, false)
+})
+
+test('production readiness can defer absent commercial source mirrors without enabling commercial reads', async () => {
+    const store = createAtendimentoStore({
+        schemaManaged: true,
+        commercialSourceDeferred: true,
+        expectedDatabase: 'skincos_clientes_production',
+        expectedDatabaseUser: 'skincos_clientes_ro',
+        pool: {
+            async query() {
+                return {
+                    rows: [{
+                        database_name: 'skincos_clientes_production',
+                        database_user: 'skincos_clientes_ro',
+                        session_database_user: 'skincos_clientes_ro',
+                        transaction_read_only: true,
+                        migrations_read: true,
+                        persistent_write_privileges_blocked: true,
+                        persistent_pii_read_privileges_blocked: true,
+                        migrations_table: true,
+                        identities_table: false,
+                        commercial_policy_table: true,
+                        source_operations_table: false,
+                        clinical_approval_table: true,
+                    }],
+                }
+            },
+            async end() {},
+        },
+    })
+    const readiness = await store.readiness()
+    assert.equal(readiness.ok, true)
+    assert.equal(readiness.schemaReady, true)
+    assert.equal(readiness.commercialSourceDeferred, true)
+    assert.equal(readiness.sourceOperationsReady, false)
 })
 
 test('isolated runtime rejects commercial reads before source-system PII can be queried', async () => {

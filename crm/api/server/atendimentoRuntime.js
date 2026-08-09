@@ -103,9 +103,10 @@ export function createIsolatedAtendimentoRuntime({
     const readinessToken = String(env.ATENDIMENTO_READINESS_TOKEN || '').trim()
     const actorHmacKey = String(env.ATENDIMENTO_ACTOR_HMAC_KEY || '').trim()
     const appStore = store || createAtendimentoStore({
-        databaseUrl: env.DATABASE_URL,
-        schemaManaged: String(env.CRM_ATENDIMENTO_SCHEMA_MANAGED || '').trim().toLowerCase() === 'true',
-        expectedDatabase: env.CRM_ATENDIMENTO_EXPECTED_DATABASE,
+          databaseUrl: env.DATABASE_URL,
+          schemaManaged: String(env.CRM_ATENDIMENTO_SCHEMA_MANAGED || '').trim().toLowerCase() === 'true',
+          commercialSourceDeferred: String(env.CRM_ATENDIMENTO_COMMERCIAL_SOURCE_DEFERRED || '').trim().toLowerCase() === 'true',
+          expectedDatabase: env.CRM_ATENDIMENTO_EXPECTED_DATABASE,
         expectedDatabaseUser: env.CRM_ATENDIMENTO_EXPECTED_DATABASE_USER,
     })
     const guard = replayGuard || createPersistentReplayGuard({
@@ -218,6 +219,7 @@ export function createIsolatedAtendimentoRuntime({
                 databaseReachable: readiness.databaseReachable === true,
                 databaseIdentity: readiness.databaseIdentity === true,
                 schemaReady: readiness.schemaReady === true,
+                commercialSourceDeferred: readiness.commercialSourceDeferred === true,
                 sourceOperationsReady: readiness.sourceOperationsReady === true,
                 clinicalApprovalReady: readiness.clinicalApprovalReady === true,
                 transactionReadOnly: readiness.transactionReadOnly === true,

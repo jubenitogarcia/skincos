@@ -5814,6 +5814,13 @@ export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
     const clinicalApprovalStore = options.clinicalApprovalStore || null
     const schemaManaged = options.schemaManaged === true || String(process.env.CRM_ATENDIMENTO_SCHEMA_MANAGED || '').trim().toLowerCase() === 'true'
+    // Production may intentionally defer source-dependent commercial
+    // migrations while the dedicated database remains free of Caixa/Harmonia
+    // mirrors.  This flag never enables a commercial route; it only lets the
+    // core/clinical read-only runtime report readiness while /commercial is
+    // blocked before the shared router.
+    const commercialSourceDeferred = options.commercialSourceDeferred === true
+        || String(process.env.CRM_ATENDIMENTO_COMMERCIAL_SOURCE_DEFERRED || '').trim().toLowerCase() === 'true'
     const canarySelectorSecret = commercialCanarySelectorSecret(options)
     const expectedDatabase = String(options.expectedDatabase || process.env.CRM_ATENDIMENTO_EXPECTED_DATABASE || '').trim()
     const expectedDatabaseUser = String(options.expectedDatabaseUser || process.env.CRM_ATENDIMENTO_EXPECTED_DATABASE_USER || '').trim()
@@ -5947,10 +5954,11 @@ export function createAtendimentoStore(options = {}) {
                     row.database_user === expectedDatabaseUser
                     && row.session_database_user === expectedDatabaseUser
                 ))
-            const schemaReady = row.migrations_table === true
-                && row.identities_table === true
-                && row.commercial_policy_table === true
+            const sourceDependentSchemaReady = row.identities_table === true
                 && row.source_operations_table === true
+            const schemaReady = row.migrations_table === true
+                && row.commercial_policy_table === true
+                && (commercialSourceDeferred || sourceDependentSchemaReady)
                 && row.clinical_approval_table === true
             return {
                 ok: databaseIdentity && schemaReady && row.migrations_read === true
@@ -5960,6 +5968,7 @@ export function createAtendimentoStore(options = {}) {
                 databaseIdentity,
                 schemaManaged,
                 schemaReady,
+                commercialSourceDeferred,
                 sourceOperationsReady: row.source_operations_table === true,
                 clinicalApprovalReady: row.clinical_approval_table === true,
                 transactionReadOnly: row.transaction_read_only === true,
