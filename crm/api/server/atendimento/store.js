@@ -5888,11 +5888,11 @@ export function createAtendimentoStore(options = {}) {
                                 and pg_has_role(current_user, candidate.oid, 'SET')
                         )
                         and not exists (
-                            select 1 from pg_roles current_role
-                            where current_role.rolname = current_user
-                                and (current_role.rolsuper or current_role.rolcreatedb
-                                    or current_role.rolcreaterole or current_role.rolreplication
-                                    or current_role.rolbypassrls)
+                            select 1 from pg_roles role_record
+                            where role_record.rolname = current_user
+                                and (role_record.rolsuper or role_record.rolcreatedb
+                                    or role_record.rolcreaterole or role_record.rolreplication
+                                    or role_record.rolbypassrls)
                         )
                         and not exists (
                             select 1

@@ -39,11 +39,11 @@ readonly BACKUP_SCRIPT="$RELEASE_ROOT/scripts/backup-atendimento-staging.sh"
 readonly SERVICE='crm-atendimento-staging.service'
 LOCKDOWN_REQUIRED=0
 [[ "$RELEASE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || { echo 'Staging release root is invalid.' >&2; exit 64; }
-[[ -f "$RUNNER" ]] || { echo 'Fixed staging migration runner is unavailable in the immutable release.' >&2; exit 78; }
-[[ -f "$RELEASE_VALIDATOR" ]] || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
-[[ -f "$CONTROL_VALIDATOR" ]] || { echo 'Strict staging control validator is unavailable.' >&2; exit 78; }
-[[ -x "$RUNTIME_GRANT_LOCKDOWN" ]] || { echo 'Fixed staging read-only grant lockdown is unavailable.' >&2; exit 78; }
-[[ -x "$BACKUP_SCRIPT" ]] || { echo 'Fixed staging backup helper is unavailable in the immutable release.' >&2; exit 78; }
+run_sudo_clean /usr/bin/test -f "$RUNNER" || { echo 'Fixed staging migration runner is unavailable in the immutable release.' >&2; exit 78; }
+run_sudo_clean /usr/bin/test -f "$RELEASE_VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
+run_sudo_clean /usr/bin/test -f "$CONTROL_VALIDATOR" || { echo 'Strict staging control validator is unavailable.' >&2; exit 78; }
+run_sudo_clean /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Fixed staging read-only grant lockdown is unavailable.' >&2; exit 78; }
+run_sudo_clean /usr/bin/test -x "$BACKUP_SCRIPT" || { echo 'Fixed staging backup helper is unavailable in the immutable release.' >&2; exit 78; }
 
 # The Node runner reads one fixed root-owned file as literal key/value data.
 # It always resolves dependencies from the immutable release that was already
