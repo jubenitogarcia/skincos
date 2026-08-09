@@ -1,0 +1,105 @@
+name: Atendimento Cloudflare capability probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Create/reuse the dedicated tunnel and route the fixed production hostname
+        required: true
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET: ${{ secrets.ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET }}
+      APPLY: ${{ inputs.apply }}
+    steps:
+      - name: Probe or provision the fixed Atendimento edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+          api='https://api.cloudflare.com/client/v4'
+          hostname='crm-atendimento.skincos.com.br'
+          tunnel_name='skincos-atendimento-production'
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H 'Content-Type: application/json')
+
+          request() {
+            local method="$1" path="$2" body="${3:-}" out="$4"
+            if [[ -n "$body" ]]; then
+              curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors \
+                -X "$method" "${auth[@]}" -d "$body" "${api}${path}" >"$out"
+            else
+              curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors \
+                -X "$method" "${auth[@]}" "${api}${path}" >"$out"
+            fi
+          }
+
+          request GET /user/tokens/verify '' "$tmp/token.json"
+          request GET "/accounts/${CLOUDFLARE_ACCOUNT_ID}" '' "$tmp/account.json"
+          request GET "/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel?is_deleted=false&per_page=100" '' "$tmp/tunnels.json"
+          request GET "/zones?name=skincos.com.br&status=active" '' "$tmp/zones.json"
+
+          token_ok="$(jq -r '.success // false' "$tmp/token.json")"
+          account_ok="$(jq -r '.success // false' "$tmp/account.json")"
+          tunnel_ok="$(jq -r '.success // false' "$tmp/tunnels.json")"
+          zone_ok="$(jq -r '.success // false' "$tmp/zones.json")"
+          zone_count="$(jq '[.result // []] | length' "$tmp/zones.json")"
+          existing_id="$(jq -r --arg name "$tunnel_name" '[.result // []][] | select(.name == $name and (.deleted_at == null or .deleted_at == "")) | .id' "$tmp/tunnels.json" | head -n1)"
+          existing_count="$(jq --arg name "$tunnel_name" '[.result // []][] | select(.name == $name and (.deleted_at == null or .deleted_at == "")) | .id' "$tmp/tunnels.json" | length)"
+          printf 'token_valid=%s account_read=%s tunnel_list_read=%s zone_read=%s zone_count=%s existing_dedicated_tunnels=%s\n' \
+            "$token_ok" "$account_ok" "$tunnel_ok" "$zone_ok" "$zone_count" "$existing_count"
+
+          [[ "$token_ok" == true && "$account_ok" == true && "$tunnel_ok" == true && "$zone_ok" == true ]] || {
+            echo 'Cloudflare capability probe failed closed.' >&2
+            exit 78
+          }
+          [[ "$zone_count" == 1 ]] || { echo 'Expected exactly one active skincos.com.br zone.' >&2; exit 78; }
+
+          if [[ "$APPLY" != true ]]; then
+            echo 'apply=false; no tunnel or DNS mutation was attempted.'
+            exit 0
+          fi
+
+          : "${ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET:?ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET is required for apply}"
+          [[ "$ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET" =~ ^[A-Za-z0-9+/]+=*$ ]] || { echo 'Tunnel secret format is invalid.' >&2; exit 64; }
+          if [[ -n "$existing_id" ]]; then
+            tunnel_id="$existing_id"
+            echo "Reusing existing dedicated tunnel id (name=$tunnel_name)."
+          else
+            create_body="$(jq -cn --arg name "$tunnel_name" --arg secret "$ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET" '{name:$name,config_src:"cloudflare",tunnel_secret:$secret}')"
+            request POST "/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel" "$create_body" "$tmp/create.json"
+            tunnel_id="$(jq -r '.result.id // empty' "$tmp/create.json")"
+            [[ "$tunnel_id" =~ ^[0-9a-f-]{36}$ ]] || { echo 'Tunnel creation returned no valid UUID.' >&2; exit 78; }
+            echo 'Created the fixed dedicated tunnel.'
+          fi
+
+          request GET "/zones?name=skincos.com.br&status=active" '' "$tmp/zones-final.json"
+          zone_id="$(jq -r '.result[0].id // empty' "$tmp/zones-final.json")"
+          [[ "$zone_id" =~ ^[0-9a-f]{32}$ ]] || { echo 'Zone lookup returned no valid id.' >&2; exit 78; }
+          request GET "/zones/${zone_id}/dns_records?type=CNAME&name=${hostname}&per_page=100" '' "$tmp/dns.json"
+          expected_content="${tunnel_id}.cfargotunnel.com"
+          dns_count="$(jq '[.result // []] | length' "$tmp/dns.json")"
+          matching_count="$(jq --arg content "$expected_content" '[.result // []][] | select(.type == "CNAME" and .content == $content and (.data == null or .data == {})) | .id' "$tmp/dns.json" | length)"
+          wrong_count="$(jq --arg content "$expected_content" '[.result // []][] | select(.type != "CNAME" or .content != $content or (.data != null and .data != {})) | .id' "$tmp/dns.json" | length)"
+          [[ "$wrong_count" == 0 ]] || { echo 'A conflicting DNS record exists; refusing to overwrite it.' >&2; exit 78; }
+          if [[ "$matching_count" == 0 ]]; then
+            dns_body="$(jq -cn --arg name "$hostname" --arg content "$expected_content" '{type:"CNAME",name:$name,content:$content,ttl:1,proxied:true}')"
+            request POST "/zones/${zone_id}/dns_records" "$dns_body" "$tmp/dns-create.json"
+            [[ "$(jq -r '.success // false' "$tmp/dns-create.json")" == true ]] || { echo 'DNS creation failed.' >&2; exit 78; }
+            echo 'Created the fixed dedicated DNS CNAME.'
+          else
+            echo 'Reused the existing correct dedicated DNS CNAME.'
+          fi
+          printf 'apply=true tunnel_id=%s hostname=%s dns_content=%s\n' "$tunnel_id" "$hostname" "$expected_content"
