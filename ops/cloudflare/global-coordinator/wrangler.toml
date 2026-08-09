@@ -1,0 +1,16 @@
+name = "skincos-global-coordinator"
+main = "index.js"
+compatibility_date = "2026-08-09"
+workers_dev = false
+
+[vars]
+COORDINATION_CONTRACT_ID = "skincos/global-coordination/v1"
+
+[durable_objects]
+bindings = [
+  { name = "GLOBAL_COORDINATOR", class_name = "GlobalCoordinator" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GlobalCoordinator"]

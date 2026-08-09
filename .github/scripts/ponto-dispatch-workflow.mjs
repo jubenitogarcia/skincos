@@ -1,8 +1,15 @@
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { matchesDispatchedRun } from "./ponto-dispatch-run-match.mjs";
+import {
+  assertDependencyClosureUnchanged,
+  dependencyClosureForSource,
+  lockScopeFor,
+  normalizeResourceKey,
+} from "../../scripts/codex-global-coordinator.mjs";
 import {
   capabilityCheckName,
   capabilityExternalId,
@@ -38,6 +45,49 @@ export function assertMainShaUnchanged(orchestratorSha, mainSha) {
     throw new Error("main advanced after the immutable Ponto coordinator was selected");
   }
   return expected;
+}
+
+export function assertPontoDependencyClosureUnchanged(orchestratorDigest, mainDigest) {
+  return assertDependencyClosureUnchanged(orchestratorDigest, mainDigest);
+}
+
+export function globalResourceFor(workflow, inputs) {
+  const target = String(inputs?.target || "").trim().toLowerCase();
+  const stage = String(inputs?.stage || inputs?.orchestrator_stage || "").trim().toLowerCase();
+  const lifecycle = target || stage;
+  const environment = target || stage;
+  if (!["preview", "staging", "pilot", "canary", "production", "rollback"].includes(lifecycle)) return "";
+  if (workflow === "deploy-timekeeping.yml" && inputs.release_scope === "ponto") return normalizeResourceKey(`deploy:timekeeping:${environment}`);
+  if (workflow === "deploy-core-workers.yml" && inputs.release_scope === "ponto" && ["api", "inventory"].includes(inputs.unit)) {
+    return normalizeResourceKey(`deploy:core-${inputs.unit}:${environment}`);
+  }
+  if (workflow === "deploy-crm-pages.yml" && inputs.release_scope === "ponto") return normalizeResourceKey(`deploy:crm-pages:${environment}`);
+  if (workflow === "cloudflare-workers-sync-ponto-secrets.yml") return normalizeResourceKey(`cloudflare:ponto-workers:${environment}`);
+  if (workflow === "cloudflare-pages-sync-ponto.yml") return normalizeResourceKey(`cloudflare:ponto-pages:${environment}`);
+  if (["timekeeping-staging-journey.yml", "ponto-staging-rollback-drill.yml", "ponto-production-baseline.yml", "ponto-production-slo.yml"].includes(workflow)) {
+    return normalizeResourceKey(`release:ponto`);
+  }
+  if (workflow === "module-availability.yml" && inputs.module === "timekeeping") return normalizeResourceKey("release:ponto");
+  return "";
+}
+
+function localCommitAvailable(commit) {
+  try {
+    execFileSync("git", ["cat-file", "-e", `${commit}^{commit}`], { cwd: path.resolve(import.meta.dirname, "../.."), stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureCommitAvailable(commit) {
+  if (localCommitAvailable(commit)) return;
+  execFileSync("git", ["fetch", "--no-tags", "origin", commit], { cwd: path.resolve(import.meta.dirname, "../.."), stdio: "ignore" });
+  if (!localCommitAvailable(commit)) throw new Error("current main commit could not be fetched for dependency-closure attestation");
+}
+
+function pontoDependencyClosureDigest(sourceCommit) {
+  return dependencyClosureForSource({ module: "ponto", sourceCommit }).digest;
 }
 
 export function governedLeaseKeyFor(workflow, inputs) {
@@ -160,7 +210,13 @@ const request = async (pathname, init = {}) => {
 };
 
 const currentMain = await request(`/repos/${repository}/commits/main`);
-assertMainShaUnchanged(orchestratorHeadSha, currentMain?.sha);
+const currentMainSha = String(currentMain?.sha || "").trim().toLowerCase();
+if (!/^[0-9a-f]{40}$/.test(currentMainSha)) throw new Error("current main SHA is unavailable");
+ensureCommitAvailable(currentMainSha);
+assertPontoDependencyClosureUnchanged(
+  pontoDependencyClosureDigest(orchestratorHeadSha),
+  pontoDependencyClosureDigest(currentMainSha),
+);
 
 const inputs = JSON.parse(fs.readFileSync(inputsFile, "utf8"));
 inputs.orchestrator_run_id = correlation;
@@ -261,6 +317,10 @@ fs.writeFileSync(outputFile, `${JSON.stringify({
   orchestratorRunId: correlation,
   dispatchNonce,
   leaseKey,
+  resourceKey: globalResourceFor(workflow, normalizedIntent || inputs),
+  lockScope: globalResourceFor(workflow, normalizedIntent || inputs)
+    ? lockScopeFor(globalResourceFor(workflow, normalizedIntent || inputs))
+    : "",
   intentDigest,
 }, null, 2)}\n`, { mode: 0o600 });
 await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {

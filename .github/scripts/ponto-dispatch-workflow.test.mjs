@@ -3,7 +3,9 @@ import crypto from "node:crypto";
 import test from "node:test";
 import {
   assertMainShaUnchanged,
+  assertPontoDependencyClosureUnchanged,
   dispatchTimeoutMsFor,
+  globalResourceFor,
   governedLeaseKeyFor,
   isBodylessResponseStatus,
   readGitHubResponse,
@@ -82,6 +84,23 @@ test("child dispatch refuses a coordinator SHA after main advances", () => {
     () => assertMainShaUnchanged(sha, "b".repeat(40)),
     /main advanced after the immutable Ponto coordinator was selected/,
   );
+});
+
+test("child dispatch keeps an immutable release valid across unrelated main changes", () => {
+  const digest = "c".repeat(64);
+  assert.equal(assertPontoDependencyClosureUnchanged(digest, digest).valid, true);
+  assert.throws(
+    () => assertPontoDependencyClosureUnchanged(digest, "d".repeat(64)),
+    /relevant dependency-closure input changed/,
+  );
+});
+
+test("Ponto child mutations expose the canonical global resource and conflict scope", () => {
+  assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "staging" }), "deploy:timekeeping:staging");
+  assert.equal(globalResourceFor("cloudflare-pages-sync-ponto.yml", { target: "staging" }), "cloudflare:ponto-pages:staging");
+  assert.equal(globalResourceFor("module-availability.yml", { module: "timekeeping", target: "production" }), "release:ponto");
+  assert.equal(globalResourceFor("ponto-production-baseline.yml", { orchestrator_stage: "pilot" }), "release:ponto");
+  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "general", unit: "api", target: "production" }), "");
 });
 
 test("governed success requires one exact Ed25519-consumed capability check", () => {

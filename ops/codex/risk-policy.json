@@ -31,7 +31,12 @@
     },
     {
       "id": "codex-baseline",
-      "patterns": [".codex/**", "skills/**", "scripts/codex-*.mjs", "scripts/codex-*.sh", "scripts/*codex*.ps1", "ops/codex/**"],
+      "patterns": [".codex/**", "skills/**", "scripts/codex-*.mjs", "scripts/tests/codex-*.mjs", "scripts/codex-*.sh", "scripts/*codex*.ps1", "ops/codex/**", "ops/governance/**"],
+      "releaseInput": true
+    },
+    {
+      "id": "global-coordination",
+      "patterns": ["ops/governance/**", "ops/cloudflare/global-coordinator/**", "scripts/codex-global-coordination*.mjs", "scripts/tests/codex-global-coordination*.mjs"],
       "releaseInput": true
     },
     {
@@ -64,12 +69,12 @@
     {
       "risk": "high",
       "reason": "Authentication, sessions, permissions, secrets, migrations, payment, deployment, workflow, Worker, database, tracking, or externally integrated surface changed and needs a focal check plus rollback.",
-      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/migrations/**", "**/*migration*", ".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "platform/**", "ops/runtime/**", "website/**/api/**", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**"]
+      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/migrations/**", "**/*migration*", ".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "platform/**", "ops/runtime/**", "website/**/api/**", "ops/cloudflare/**", "ops/governance/**", "scripts/codex-global-coordination*.mjs", "scripts/tests/codex-global-coordination*.mjs", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**"]
     },
     {
       "risk": "medium",
       "reason": "Codex or governance implementation changed without an elevated executable or exceptional path.",
-      "patterns": [".codex/**", "skills/**", "scripts/codex-*.mjs", "scripts/codex-*.sh", "scripts/*codex*.ps1", "ops/codex/**", ".github/governance/**"]
+      "patterns": [".codex/**", "skills/**", "scripts/codex-*.mjs", "scripts/tests/codex-*.mjs", "scripts/codex-*.sh", "scripts/*codex*.ps1", "ops/codex/**", "ops/governance/**", ".github/governance/**"]
     },
     {
       "risk": "low",
@@ -77,5 +82,5 @@
       "patterns": ["**/*.md", "docs/**", "TASKS.md", "DECISIONS.md", "CODEX_CONTEXT.md", "ops/project-orchestration/**", "docs/project-state/**"]
     }
   ],
-  "releaseSharedInputs": ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", ".github/governance/progressive-release-policy.json", "ops/codex/risk-policy.json"]
+  "releaseSharedInputs": ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", ".github/governance/progressive-release-policy.json", "ops/codex/risk-policy.json", "ops/governance/global-concurrency-policy.json"]
 }

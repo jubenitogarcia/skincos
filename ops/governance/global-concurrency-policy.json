@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "contractId": "skincos/global-coordination/v1",
+  "authority": {
+    "mode": "fail-closed",
+    "leaseProof": "resource-key-plus-fencing-token-plus-intent-digest",
+    "mutationRule": "revalidate-before-every-external-mutation"
+  },
+  "lease": {
+    "minimumTtlMs": 30000,
+    "maximumTtlMs": 900000,
+    "clockSkewMs": 30000,
+    "renewBeforeExpiryMs": 15000
+  },
+  "resourceClasses": {
+    "merge": "^merge:[a-z0-9][a-z0-9._/-]{0,127}$",
+    "release": "^release:[a-z0-9][a-z0-9._/-]{0,127}$",
+    "deploy": "^deploy:[a-z0-9][a-z0-9._/-]{0,127}:(?:preview|staging|pilot|canary|production|rollback|local)$",
+    "cloudflare": "^cloudflare:[a-z0-9][a-z0-9._/-]{0,127}:(?:preview|staging|pilot|canary|production|rollback|local)$",
+    "promotion": "^promotion:[a-z0-9][a-z0-9._/-]{0,127}:(?:preview|staging|pilot|canary|production|rollback|local)$",
+    "global": "^global:[a-z0-9][a-z0-9._/-]{0,127}$"
+  },
+  "operationPolicies": {
+    "prepare": {
+      "leaseRequired": false,
+      "mainTipPolicy": "none"
+    },
+    "mutation": {
+      "leaseRequired": true,
+      "mainTipPolicy": "dependency-closure",
+      "revalidateBeforeMutation": true
+    },
+    "promotion": {
+      "leaseRequired": true,
+      "mainTipPolicy": "dependency-closure",
+      "revalidateBeforeMutation": true,
+      "artifactIdentityRequired": true
+    }
+  },
+  "releaseClosures": {
+    "ponto": {
+      "patterns": [
+        "workforce/timekeeping/**",
+        "crm/console/**",
+        "api/**",
+        ".github/governance/progressive-release-policy.json",
+        ".github/workflows/ponto-*.yml",
+        ".github/workflows/deploy-timekeeping.yml",
+        ".github/workflows/deploy-core-workers.yml",
+        ".github/workflows/deploy-crm-pages.yml",
+        ".github/workflows/module-availability.yml",
+        ".github/workflows/timekeeping-staging-journey.yml",
+        ".github/workflows/promotion-gate.yml",
+        ".github/workflows/ponto-orchestrator-gate.yml",
+        ".github/scripts/ponto-*.mjs",
+        ".github/scripts/validate-progressive-release.mjs"
+      ],
+      "sharedInputs": true
+    },
+    "atendimento": {
+      "patterns": [
+        "crm/console/**",
+        "crm/api/**",
+        "api/**",
+        "ops/runtime/**",
+        ".github/workflows/atendimento-*.yml",
+        ".github/scripts/atendimento-*.mjs"
+      ],
+      "sharedInputs": true
+    },
+    "finance": {
+      "patterns": ["finance/**", ".github/workflows/deploy-finance*.yml", ".github/scripts/finance-*.mjs"],
+      "sharedInputs": true
+    },
+    "website": {
+      "patterns": ["website/**", "booking/**", ".github/workflows/deploy-website-cloudflare.yml"],
+      "sharedInputs": true
+    },
+    "orb": {
+      "patterns": ["orb/**", "ops/runtime/**", ".github/workflows/orb-*.yml"],
+      "sharedInputs": true
+    },
+    "default": {
+      "patterns": [],
+      "sharedInputs": true,
+      "requiresExplicitClosure": true
+    }
+  },
+  "sharedInputs": [
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "ops/codex/risk-policy.json",
+    "ops/governance/global-concurrency-policy.json"
+  ],
+  "adapters": {
+    "codex": "private state adapter must use the same transition contract and fail closed on an unknown lock",
+    "github": "Actions concurrency is a scheduling hint; mutation authority requires a lease proof",
+    "cloudflare": "one SQLite-backed Durable Object instance per lock scope",
+    "mini-pc": "runtime client must present the lease proof before a service or workflow mutation"
+  }
+}

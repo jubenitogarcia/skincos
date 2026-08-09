@@ -1,0 +1,28 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+
+const source = fs.readFileSync(path.join(import.meta.dirname, "index.js"), "utf8");
+const config = fs.readFileSync(path.join(import.meta.dirname, "wrangler.toml"), "utf8");
+
+test("Cloudflare adapter uses one SQLite Durable Object per normalized lock scope", () => {
+  assert.match(source, /class GlobalCoordinator extends DurableObject/);
+  assert.match(source, /blockConcurrencyWhile/);
+  assert.match(source, /storage\.sql\.exec/);
+  assert.match(source, /getByName\(scope\)/);
+  assert.match(config, /new_sqlite_classes = \["GlobalCoordinator"\]/);
+});
+
+test("remote custody is mandatory and the adapter has no local fallback", () => {
+  assert.match(source, /COORDINATION_SHARED_SECRET/);
+  assert.match(source, /coordination authority custody is unavailable/);
+  assert.match(source, /return bad\(message, message\.includes\("unavailable"\) \? 503 : 401\)/);
+  assert.doesNotMatch(source, /in-memory fallback|local fallback|allowWithout/);
+});
+
+test("revocation uses separate administrative custody", () => {
+  assert.match(source, /COORDINATION_ADMIN_SECRET/);
+  assert.match(source, /body\.action === "revoke"/);
+  assert.match(source, /coordination revocation authority is unavailable/);
+});

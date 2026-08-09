@@ -45,6 +45,7 @@ if (mode === "write") {
     sourceSha,
     sourceTree: required("PROMOTION_SOURCE_TREE"),
     releaseInputDigest: process.env.PROMOTION_RELEASE_INPUT_DIGEST || releaseInputDigest(unit, sourceSha),
+    dependencyClosureDigest: process.env.PROMOTION_DEPENDENCY_CLOSURE_DIGEST || process.env.PROMOTION_RELEASE_INPUT_DIGEST || releaseInputDigest(unit, sourceSha),
     artifacts: process.env.PROMOTION_ARTIFACT_DIGESTS_JSON ? JSON.parse(process.env.PROMOTION_ARTIFACT_DIGESTS_JSON) : [],
     runId: required("GITHUB_RUN_ID"),
     repository: required("GITHUB_REPOSITORY"),
@@ -64,7 +65,8 @@ if (mode === "write") {
   }
   if (expectedSha && evidence.sourceSha !== expectedSha) throw new Error("promotion evidence SHA differs from requested release SHA");
   if (expectedReleaseInputDigest && evidence.releaseInputDigest !== expectedReleaseInputDigest) throw new Error("promotion evidence release-input digest differs from the requested candidate");
-  if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `source_sha=${evidence.sourceSha}\nsource_tree=${evidence.sourceTree}\nrelease_input_digest=${evidence.releaseInputDigest || ""}\n`);
+  if (evidence.dependencyClosureDigest && evidence.dependencyClosureDigest !== evidence.releaseInputDigest) throw new Error("promotion evidence dependency-closure digest differs from release-input digest");
+  if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `source_sha=${evidence.sourceSha}\nsource_tree=${evidence.sourceTree}\nrelease_input_digest=${evidence.releaseInputDigest || ""}\ndependency_closure_digest=${evidence.dependencyClosureDigest || evidence.releaseInputDigest || ""}\n`);
   process.stdout.write(`Promotion evidence verified for ${evidence.unit} ${evidence.sourceSha} from ${evidence.target}.\n`);
 } else if (mode === "digest") {
   const unit = required("PROMOTION_UNIT");
