@@ -236,6 +236,8 @@ test('store readiness requires the expected database, app role, schema and read-
     assert.match(queries[0], /has_table_privilege\(current_user, c\.oid, 'INSERT'\)/)
     assert.match(queries[0], /session_user as session_database_user/)
     assert.match(queries[0], /pg_has_role\(current_user, candidate\.oid, 'SET'\)/)
+    assert.doesNotMatch(queries[0], /pg_roles current_role/)
+    assert.match(queries[0], /pg_roles role_record/)
     assert.match(queries[0], /p\.prosecdef/)
     assert.match(queries[0], /n\.nspname in \('harmonia', 'crm_caixa'\)/)
     assert.match(queries[0], /clientes_source_operation_runs/)

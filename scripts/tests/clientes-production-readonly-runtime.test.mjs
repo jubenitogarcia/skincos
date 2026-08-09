@@ -81,6 +81,7 @@ test('native scripts parse fixed configuration without dynamic shell evaluation'
   assert.match(stagingMigration, /\/opt\/skincos\/releases\/\$RELEASE_SHA\/source/)
   assert.match(stagingMigration, /validate-atendimento-release\.mjs/)
   assert.match(stagingMigration, /--release-sha "\$RELEASE_SHA" --target staging/)
+  assert.match(stagingMigration, /run_sudo_clean \/usr\/bin\/test -f "\$RUNNER"/)
   assert.doesNotMatch(stagingMigration, /ROOT_DIR=.*BASH_SOURCE/)
 
   const qualityRefresh = read('crm/api/scripts/run-atendimento-staging-quality-refresh.mjs')
@@ -305,6 +306,7 @@ test('staging release, control and application role remain fixed and read-only',
   assert.match(installer, /mktemp -d \/tmp\/atendimento-staging-unit\.XXXXXX/)
   assert.match(installer, /readonly SERVICE='crm-atendimento-staging\.service'/)
   assert.match(installer, /\/usr\/bin\/systemd-analyze verify/)
+  assert.match(installer, /run_sudo_clean \/usr\/bin\/sed/)
   assert.match(installer, /\/usr\/bin\/systemctl enable "\$SERVICE"/)
   assert.match(installer, /\/usr\/bin\/systemctl restart "\$SERVICE"/)
   assert.match(installer, /unit_backup='none'/)
@@ -450,6 +452,7 @@ test('staging validation attests only the fixed loopback runtime and strict stag
   assert.match(validation, /RELEASE_VALIDATOR="\$RELEASE_ROOT\/crm\/api\/scripts\/validate-atendimento-release\.mjs"/)
   assert.match(validation, /"\$RELEASE_VALIDATOR" --source-root "\$RELEASE_ROOT" --release-sha "\$RELEASE_SHA" --target staging/)
   assert.match(validation, /\/usr\/bin\/cmp -s "\$rendered" "\$UNIT_FILE"/)
+  assert.match(validation, /run_sudo_clean \/usr\/bin\/sed/)
   assert.match(validation, /\/proc\/\$main_pid\/cmdline/)
   assert.match(validation, /--noproxy '\*'/)
   assert.match(validation, /http:\/\/127\.0\.0\.1:\$PORT\/health/)

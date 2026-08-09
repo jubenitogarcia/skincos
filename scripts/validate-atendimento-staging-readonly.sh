@@ -74,7 +74,7 @@ protected_before="$(snapshot_protected_services)"
 render_dir="$(/usr/bin/mktemp -d)"
 rendered="$render_dir/crm-atendimento-staging.service"
 trap '/usr/bin/rm -f "$rendered"; /usr/bin/rmdir "$render_dir" 2>/dev/null || true' EXIT
-/usr/bin/sed \
+run_sudo_clean /usr/bin/sed \
   -e "s|__REPO_ROOT__|$RELEASE_ROOT|g" \
   -e "s|__STATE_ROOT__|/var/lib/skincos-runtime|g" \
   -e "s|__CONFIG_ROOT__|/etc/skincos|g" \
