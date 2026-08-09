@@ -39,7 +39,7 @@ jobs:
             local method="$1" path="$2" body="${3:-}" out="$4"
             if [[ -n "$body" ]]; then
               curl --silent --show-error --retry 2 --retry-all-errors \
-                -X "$method" "${auth[@]}" -d "$body" -o "$out" -w '%{http_code}' >"$out.status" || true
+                -X "$method" "${auth[@]}" -d "$body" -o "$out" -w '%{http_code}' "${api}${path}" >"$out.status" || true
             else
               curl --silent --show-error --retry 2 --retry-all-errors \
                 -X "$method" "${auth[@]}" -o "$out" -w '%{http_code}' "${api}${path}" >"$out.status" || true
@@ -97,9 +97,9 @@ jobs:
           [[ "$zone_id" =~ ^[0-9a-f]{32}$ ]] || { echo 'Zone lookup returned no valid id.' >&2; exit 78; }
           request GET "/zones/${zone_id}/dns_records?type=CNAME&name=${hostname}&per_page=100" '' "$tmp/dns.json"
           expected_content="${tunnel_id}.cfargotunnel.com"
-          dns_count="$(jq '[.result // []] | length' "$tmp/dns.json")"
-          matching_count="$(jq --arg content "$expected_content" '[.result // []][] | select(.type == "CNAME" and .content == $content and (.data == null or .data == {})) | .id' "$tmp/dns.json" | length)"
-          wrong_count="$(jq --arg content "$expected_content" '[.result // []][] | select(.type != "CNAME" or .content != $content or (.data != null and .data != {})) | .id' "$tmp/dns.json" | length)"
+          dns_count="$(jq 'if (.result | type) == "array" then (.result | length) else 0 end' "$tmp/dns.json")"
+          matching_count="$(jq --arg content "$expected_content" 'if (.result | type) == "array" then [.result[] | select(type == "object" and .type == "CNAME" and .content == $content and (.data == null or .data == {})) | .id] | length else 0 end' "$tmp/dns.json")"
+          wrong_count="$(jq --arg content "$expected_content" 'if (.result | type) == "array" then [.result[] | select(type == "object" and (.type != "CNAME" or .content != $content or (.data != null and .data != {}))) | .id] | length else 0 end' "$tmp/dns.json")"
           [[ "$wrong_count" == 0 ]] || { echo 'A conflicting DNS record exists; refusing to overwrite it.' >&2; exit 78; }
           if [[ "$matching_count" == 0 ]]; then
             dns_body="$(jq -cn --arg name "$hostname" --arg content "$expected_content" '{type:"CNAME",name:$name,content:$content,ttl:1,proxied:true}')"
