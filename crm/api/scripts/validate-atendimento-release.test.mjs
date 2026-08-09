@@ -50,17 +50,22 @@ test('immutable release validator accepts only a canonical full-SHA source root'
   })
 })
 
-test('immutable release validator accepts only the explicit staging target', () => {
+test('immutable release validator accepts only the explicit managed targets', () => {
   assert.equal(__testables.parseArgs([
     '--source-root', `/opt/skincos/releases/${SHA}/source`,
     '--release-sha', SHA,
     '--target', 'staging',
   ]).target, 'staging')
+  assert.equal(__testables.parseArgs([
+    '--source-root', `/opt/skincos/releases/${SHA}/source`,
+    '--release-sha', SHA,
+    '--target', 'production',
+  ]).target, 'production')
   assert.throws(
     () => __testables.parseArgs([
       '--source-root', `/opt/skincos/releases/${SHA}/source`,
       '--release-sha', SHA,
-      '--target', 'production',
+      '--target', 'other',
     ]),
     /ATENDIMENTO_RELEASE_IDENTITY_INVALID/,
   )
