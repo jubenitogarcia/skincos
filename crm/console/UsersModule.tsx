@@ -49,6 +49,22 @@ class RequestError extends Error {
   }
 }
 
+function requestErrorMessage(error: any, fallback: string) {
+  const code = String(error?.code || '').trim().toUpperCase()
+  const message = String(error?.message || '').trim()
+  const normalized = `${code} ${message.toUpperCase()}`
+  if (['DOMAIN_SERVICE_DEGRADED', 'SERVICE_DEGRADED', 'WORKFORCE_SERVICE_DEGRADED', 'MODULE_MAINTENANCE'].some((value) => normalized.includes(value))) {
+    return 'A integração operacional está temporariamente em manutenção. Nenhum acesso foi liberado; tente novamente após a normalização do serviço.'
+  }
+  if (['TEAM_LOCAL_PERSISTENCE_PENDING', 'LOCAL_TEAM_CREATE_PENDING'].some((value) => code === value || message.toUpperCase().includes(value))) {
+    return 'A identidade foi sincronizada, mas a projeção da equipe ficou pendente de compensação. Atualize a lista e tente novamente.'
+  }
+  if (['TEAM_MIGRATION_REQUIRED', 'ONBOARDING_MIGRATION_REQUIRED'].includes(code)) {
+    return 'A estrutura do cadastro unificado ainda não foi aplicada neste ambiente.'
+  }
+  return message || fallback
+}
+
 const unitLabels: Record<string, string> = { 'novo-hamburgo': 'Novo Hamburgo', 'barra-shopping-sul': 'Barra Shopping Sul' }
 const titleOptions = ['Gestor', 'Gerente', 'Coordenador', 'Responsável Técnico', 'Injetor', 'Consultor']
 const creatableTitlesByRole: Record<string, string[]> = {
@@ -385,7 +401,7 @@ export function UsersModule() {
       })
       return true
     } catch (error: any) {
-      toast.warning(`Cadastro salvo, mas o vínculo com a Escala ficou pendente: ${error?.message || 'tente novamente'}.`)
+      toast.warning(`Cadastro salvo, mas o vínculo com a Escala ficou pendente: ${requestErrorMessage(error, 'tente novamente')}.`)
       return false
     }
   }
@@ -401,7 +417,7 @@ export function UsersModule() {
       })
       return true
     } catch (error: any) {
-      toast.warning(`A Escala foi processada, mas o estado não pôde ser registrado: ${error?.message || 'tente atualizar a lista'}.`)
+      toast.warning(`A Escala foi processada, mas o estado não pôde ser registrado: ${requestErrorMessage(error, 'tente atualizar a lista')}.`)
       return false
     }
   }
@@ -425,7 +441,7 @@ export function UsersModule() {
       toast.success('Vínculo registrado para revisão.')
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'Não foi possível registrar o vínculo.')
+      toast.error(requestErrorMessage(error, 'Não foi possível registrar o vínculo.'))
     } finally {
       setLinkSaving(false)
     }
@@ -451,7 +467,7 @@ export function UsersModule() {
       toast.success(reviewStatus === 'CONFIRMED' ? 'Vínculo confirmado.' : 'Vínculo rejeitado.')
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'Não foi possível atualizar a revisão do vínculo.')
+      toast.error(requestErrorMessage(error, 'Não foi possível atualizar a revisão do vínculo.'))
     } finally {
       setLinkReviewingId(null)
     }
@@ -470,7 +486,7 @@ export function UsersModule() {
       toast.success('Conta CRM registrada para revisão explícita.')
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'Não foi possível registrar o vínculo da conta CRM.')
+      toast.error(requestErrorMessage(error, 'Não foi possível registrar o vínculo da conta CRM.'))
     } finally {
       setCrmLinkSaving(false)
     }
@@ -496,7 +512,7 @@ export function UsersModule() {
       toast.success(reviewStatus === 'CONFIRMED' ? 'Conta CRM confirmada.' : 'Vínculo da conta CRM rejeitado.')
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'Não foi possível atualizar a revisão da conta CRM.')
+      toast.error(requestErrorMessage(error, 'Não foi possível atualizar a revisão da conta CRM.'))
     } finally {
       setCrmLinkReviewing(false)
     }
@@ -607,7 +623,7 @@ export function UsersModule() {
       } else if (error instanceof RequestError && error.code === 'USERNAME_TAKEN') {
         toast.error('Esse nome de usuário já está reservado. Escolha outro.')
       } else {
-        toast.error(error?.message || 'Não foi possível concluir o cadastro.')
+        toast.error(requestErrorMessage(error, 'Não foi possível concluir o cadastro.'))
       }
     } finally {
       setSaving(false)
@@ -632,7 +648,7 @@ export function UsersModule() {
       setEditingId(null)
       await load()
     } catch (error: any) {
-      toast.error(error?.message || `Não foi possível ${activating ? 'ativar' : 'desativar'} o membro.`)
+      toast.error(requestErrorMessage(error, `Não foi possível ${activating ? 'ativar' : 'desativar'} o membro.`))
     }
   }
 
@@ -647,7 +663,7 @@ export function UsersModule() {
       setEditingId(null)
       await load()
     } catch (error: any) {
-      toast.error(error?.message || `Não foi possível ${action === 'resend' ? 'reenviar' : 'revogar'} o convite.`)
+      toast.error(requestErrorMessage(error, `Não foi possível ${action === 'resend' ? 'reenviar' : 'revogar'} o convite.`))
     }
   }
 
@@ -660,7 +676,7 @@ export function UsersModule() {
       toast.success('Acesso ativado e Workforce reconciliado.')
       await load()
     } catch (error: any) {
-      toast.error(error?.code === 'INVITE_REGISTRATION_REQUIRED' ? 'O funcionário ainda não criou a senha pelo convite.' : error?.message || 'Não foi possível concluir a ativação.')
+      toast.error(error?.code === 'INVITE_REGISTRATION_REQUIRED' ? 'O funcionário ainda não criou a senha pelo convite.' : requestErrorMessage(error, 'Não foi possível concluir a ativação.'))
     } finally {
       setActivationRetryingId(null)
     }
@@ -688,7 +704,7 @@ export function UsersModule() {
       toast.success(`${ids.length} membro${ids.length === 1 ? '' : 's'} ${nextStatus === 'ACTIVE' ? 'ativado' : 'suspenso'}${ids.length === 1 ? '' : 's'}.`)
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'A ação em lote ficou pendente de sincronização.')
+      toast.error(requestErrorMessage(error, 'A ação em lote ficou pendente de sincronização.'))
       await load()
     } finally {
       setBulkSaving(false)

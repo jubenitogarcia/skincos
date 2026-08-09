@@ -37,7 +37,9 @@ function isOnboardingDependencyError(value) {
   const code = String(value || '').trim().toUpperCase();
   return code === 'IDENTITY_PII_KEY_NOT_CONFIGURED'
     || code === 'AUTH_EMAIL_NOT_CONFIGURED'
-    || /^(WORKFORCE_|IDENTITY_WORKFORCE_|SMTP_|EMAIL_|MODULE_|TIMEKEEPING_|RELEASE_AFFINITY_|RUNTIME_BINDINGS_|SERVICE_|DATABASE_UNAVAILABLE|ONBOARDING_MIGRATION_REQUIRED)/.test(code);
+    || /^(WORKFORCE_|IDENTITY_WORKFORCE_|SMTP_|EMAIL_|MODULE_|TIMEKEEPING_|RELEASE_AFFINITY_|RUNTIME_BINDINGS_|SERVICE_|DATABASE_UNAVAILABLE|ONBOARDING_MIGRATION_REQUIRED)/.test(code)
+    || code === 'DOMAIN_SERVICE_DEGRADED'
+    || code === 'SERVICE_DEGRADED';
 }
 
 function unifiedTeamEnabled(env) {
@@ -610,6 +612,10 @@ export async function handleAdminRoutes({
   // The client supplies employment facts only. Profile, scopes and invite state
   // are derived here so no browser can grant modules or a wider unit scope.
   if ((url.pathname === '/admin/onboarding' || url.pathname === '/admin/team') && request.method === 'POST') {
+    let onboardingId = '';
+    let requestId = '';
+    let workforceSynchronized = false;
+    let localPersistenceStage = 'PREPARATION';
     try {
       const body = await request.json().catch(() => ({}));
       const input = validateOnboardingInput(body, {
@@ -656,6 +662,7 @@ export async function handleAdminRoutes({
         if (existing?.provisioning_state === 'COMPLETED') return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
       }
       const id = await sha256Hex(`employee-onboarding:v1:${input.corporateEmail}`);
+      onboardingId = id;
       const existingOnboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
       if (existingOnboarding && String(existingOnboarding.id || '').trim() !== id) {
         throw new Error('ONBOARDING_IDEMPOTENCY_CONFLICT');
@@ -696,7 +703,7 @@ export async function handleAdminRoutes({
         }
       }
       const at = new Date().toISOString();
-      const requestId = String(request.headers.get('x-request-id') || `identity-onboarding-${id}`).slice(0, 180);
+      requestId = String(request.headers.get('x-request-id') || `identity-onboarding-${id}`).slice(0, 180);
       let repairMissingTeam = false;
       if (existingOnboarding?.provisioning_state === 'COMPLETED') {
         if (url.pathname !== '/admin/team') {
@@ -748,8 +755,10 @@ export async function handleAdminRoutes({
 
       let current = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(id).first();
       let workforce = current?.workforce_employee_id ? { employeeId: current.workforce_employee_id } : null;
+      workforceSynchronized = Boolean(workforce?.employeeId);
       if (!workforce) {
         try {
+          localPersistenceStage = 'WORKFORCE_SYNC';
           workforce = await syncIdentityWorkforceOnboarding(env, {
             onboardingId: id,
             fullName: input.fullName,
@@ -763,6 +772,8 @@ export async function handleAdminRoutes({
             createdBy: String(auth?.user?.username || ''),
           }, requestId);
           await env.DB.prepare('UPDATE crm_employee_onboarding SET workforce_employee_id=?, provisioning_state=?, updated_at=?, last_error_code=NULL WHERE id=?').bind(workforce?.employeeId || null, 'WORKFORCE_SYNCED', new Date().toISOString(), id).run();
+          workforceSynchronized = Boolean(workforce?.employeeId);
+          localPersistenceStage = 'WORKFORCE_SYNCED';
         } catch (error) {
           await env.DB.prepare('UPDATE crm_employee_onboarding SET provisioning_state=?, last_error_code=?, updated_at=? WHERE id=?').bind('FAILED', String(error?.message || 'WORKFORCE_SYNC_FAILED').slice(0, 120), new Date().toISOString(), id).run().catch(() => {});
           await Promise.resolve(appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_FAILED', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { stage: 'WORKFORCE_SYNC', compensated: false, requestId } })).catch(() => {});
@@ -773,6 +784,7 @@ export async function handleAdminRoutes({
       let inviteId = current?.invite_id || null;
       let token = '';
       let expiresAt = '';
+      localPersistenceStage = 'INVITE_PROVISIONING';
       if (shouldIssueInvite(input.accountStatus)) {
         if (inviteId) {
           const invite = await env.DB.prepare(`SELECT id, expires_at, revoked FROM ${invitesTable} WHERE id=? LIMIT 1`).bind(inviteId).first();
@@ -807,6 +819,7 @@ export async function handleAdminRoutes({
         const reuseExistingInvite = repairMissingTeam && existingOnboarding?.invite_id && inviteId === existingOnboarding.invite_id;
         if (!reuseExistingInvite) {
           try {
+            localPersistenceStage = 'INVITE_DELIVERY';
             await sendAccountInviteEmail({ env, to: input.personalEmail, token, expiresAt, appUrl: String(env?.AUTH_INVITE_APP_URL || appOrigin) });
           } catch (error) {
             await env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=?`).bind(inviteId).run().catch(() => {});
@@ -817,9 +830,11 @@ export async function handleAdminRoutes({
           }
         }
       }
+      localPersistenceStage = 'ONBOARDING_COMPLETE';
       await env.DB.prepare('UPDATE crm_employee_onboarding SET invite_id=?, workforce_employee_id=?, provisioning_state=?, updated_at=?, last_error_code=NULL WHERE id=?').bind(inviteId, workforce?.employeeId || null, 'COMPLETED', new Date().toISOString(), id).run();
       let scheduleSync = null;
       if (url.pathname === '/admin/team') {
+        localPersistenceStage = 'TEAM_CREATE';
         const workforceEmployeeId = String(workforce?.employeeId || '').trim();
         if (!workforceEmployeeId) throw new Error('WORKFORCE_EMPLOYEE_ID_REQUIRED');
         const teamAt = new Date().toISOString();
@@ -854,6 +869,28 @@ export async function handleAdminRoutes({
       return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created), team: url.pathname === '/admin/team' ? { ...normalizeTeamData(teamData, input.units), scheduleSync: publicScheduleSync(scheduleSync?.scheduleSync || { state: hasScheduleIntent(teamData) ? 'PENDING' : 'NOT_CONFIGURED' }, '') } : undefined }), { status: existingOnboarding ? 200 : 201 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_FAILED');
+      if (url.pathname === '/admin/team' && workforceSynchronized && onboardingId && ['ONBOARDING_COMPLETE', 'TEAM_CREATE'].includes(localPersistenceStage)) {
+        const safeErrorCode = message.slice(0, 120);
+        await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='LOCAL_TEAM_CREATE_PENDING', last_error_code=?, updated_at=? WHERE id=?")
+          .bind(safeErrorCode, new Date().toISOString(), onboardingId)
+          .run()
+          .catch(() => {});
+        await Promise.resolve(appendAuditLog?.({
+          env,
+          actor: auth.user.username,
+          role: auth.user.role,
+          ip,
+          userAgent,
+          idempotencyKey: String(request.headers.get('idempotency-key') || '').trim().slice(0, 180),
+          action: 'EMPLOYEE_TEAM_COMPENSATION_PENDING',
+          entity: 'EMPLOYEE_ONBOARDING',
+          entityId: onboardingId,
+          unidade: '',
+          after: { stage: localPersistenceStage, workforceSynchronized: true, requestId, failClosed: true },
+        })).catch(() => {});
+        await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_CREATED', actorRole: auth.user.role, outcome: 'PENDING', itemCount: 1 });
+        return withCORS(JSON.stringify({ success: false, error: 'Projeção local da equipe pendente de compensação', code: 'TEAM_LOCAL_PERSISTENCE_PENDING' }), { status: 503 }, appOrigin);
+      }
       const status = ['ONBOARDING_IDEMPOTENCY_CONFLICT', 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED'].includes(message)
         ? 409
         : isOnboardingDependencyError(message) ? 503 : 500;
@@ -1619,6 +1656,22 @@ export async function handleAdminRoutes({
       const nextPersonalEmailHash = nextPersonalEmail ? await sha256Hex(nextPersonalEmail) : '';
       const nextPhoneEncrypted = nextPhone ? await encryptOnboardingPii(env, nextPhone) : '';
       const nextPhoneHash = nextPhone ? await sha256Hex(nextPhone) : '';
+      const teamData = normalizeTeamData(body.team, nextUnits, {
+        professionalId: current.schedule_professional_id,
+        status: current.schedule_status,
+        role: current.schedule_role,
+        shift: current.schedule_shift,
+        nickname: current.schedule_nickname,
+        instagram: current.schedule_instagram,
+        color: current.schedule_color,
+        units: nextUnits,
+      });
+      if (body?.team?.units !== undefined && unknownUnitScopes(body.team.units).length) {
+        return withCORS(JSON.stringify({ success: false, error: 'Unidades operacionais inválidas', code: 'TEAM_UNITS_INVALID' }), { status: 400 }, appOrigin);
+      }
+      if (teamData.units.some((unit) => !nextUnits.includes(unit))) {
+        return withCORS(JSON.stringify({ success: false, error: 'As unidades operacionais devem estar dentro do escopo do cadastro', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      }
 
       const requestId = String(request.headers.get('x-request-id') || `identity-team-update-${onboardingId}`).slice(0, 180);
       await syncIdentityWorkforceOnboarding(env, {
@@ -1651,22 +1704,6 @@ export async function handleAdminRoutes({
       if (Number(onboardingUpdate?.meta?.changes ?? 0) !== 1) throw new Error('TEAM_ONBOARDING_LOCAL_UPDATE_NOT_APPLIED');
 
       localPersistenceStage = 'TEAM_UPDATE';
-      const teamData = normalizeTeamData(body.team, nextUnits, {
-        professionalId: current.schedule_professional_id,
-        status: current.schedule_status,
-        role: current.schedule_role,
-        shift: current.schedule_shift,
-        nickname: current.schedule_nickname,
-        instagram: current.schedule_instagram,
-        color: current.schedule_color,
-        units: nextUnits,
-      });
-      if (body?.team?.units !== undefined && unknownUnitScopes(body.team.units).length) {
-        return withCORS(JSON.stringify({ success: false, error: 'Unidades operacionais inválidas', code: 'TEAM_UNITS_INVALID' }), { status: 400 }, appOrigin);
-      }
-      if (teamData.units.some((unit) => !nextUnits.includes(unit))) {
-        return withCORS(JSON.stringify({ success: false, error: 'As unidades operacionais devem estar dentro do escopo do cadastro', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
-      }
       const nextScheduleProfessionalId = teamData.professionalId || current.schedule_professional_id || null;
       const teamUpdate = await env.DB.prepare(`UPDATE crm_employee_team SET schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
         nextScheduleProfessionalId, teamData.status || null, teamData.role || null, teamData.shift || null,

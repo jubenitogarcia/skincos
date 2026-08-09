@@ -1534,7 +1534,10 @@ export default function AppFunctionalNeatlab() {
 					                                                    value={selectedUnit}
 			                                                    onValueChange={(v) => setSelectedUnit(v)}
 			                                                >
-                                                    <SelectTrigger className="h-8 w-44 bg-white/[0.06] border-white/20 text-white">
+                                                    <SelectTrigger
+                                                        className="h-8 w-44 bg-white/[0.06] border-white/20 text-white"
+                                                        aria-label="Unidade do módulo Insumos"
+                                                    >
 				                                                        <SelectValue placeholder="Unidade" />
 				                                                    </SelectTrigger>
 				                                                    <SelectContent>
@@ -2421,7 +2424,10 @@ export default function AppFunctionalNeatlab() {
 		                                    <div className="flex items-center gap-2">
 		                                        <div className="flex-1">
 		                                            <Select value={selectedUnit} onValueChange={(v) => setSelectedUnit(v)}>
-		                                                <SelectTrigger className="h-10 w-full bg-white/[0.06] border-white/20 text-white">
+                                                    <SelectTrigger
+                                                        className="h-10 w-full bg-white/[0.06] border-white/20 text-white"
+                                                        aria-label="Unidade do módulo Insumos"
+                                                    >
 		                                                    <SelectValue placeholder="Selecione a unidade" />
 		                                                </SelectTrigger>
 		                                                <SelectContent>
