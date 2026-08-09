@@ -5,6 +5,7 @@ export const COMMERCIAL_CONTACT_MIGRATION_ID = '20260804_commercial_contact_cont
 const COMMERCIAL_CONTACT_RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.LOCAL]: 'skincos',
     [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
+    [ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION]: 'skincos_clientes_ro',
 })
 
 const CONTACT_TABLES = [

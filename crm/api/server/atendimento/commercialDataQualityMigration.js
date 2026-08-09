@@ -30,6 +30,7 @@ const PREREQUISITE_RELATIONS = [
 const COMMERCIAL_DATA_QUALITY_RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.LOCAL]: 'skincos',
     [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
+    [ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION]: 'skincos_clientes_ro',
 })
 
 function runtimeGrantStatements(target) {
