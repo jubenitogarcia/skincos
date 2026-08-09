@@ -17,8 +17,9 @@ test('staging RBAC fixtures are bounded, synthetic and auditable', () => {
     assert.equal(out.status, 0, out.stderr);
     const data = JSON.parse(readFileSync(fixture, 'utf8'));
     assert.equal(data.environment, 'staging');
-    assert.equal(data.scenarios.length, 6);
+    assert.equal(data.scenarios.length, 7);
     assert.deepEqual(data.scenarios.find((item) => item.id === 'alias').allowedUnits, ['NH']);
+    assert.equal(data.scenarios.find((item) => item.id === 'consultor').role, 'CONSULTOR');
     const statement = readFileSync(sql, 'utf8');
     assert.match(statement, /STAGING_SYNTHETIC_IDENTITY_PROVISIONED/);
     assert.match(statement, /\["insumos"\]/);

@@ -29,6 +29,7 @@ const definitions = [
   { id: 'both', role: 'GESTOR', allowedUnits: ['novo-hamburgo', 'barra-shopping-sul'], expectedUnits: ['novo-hamburgo', 'barra-shopping-sul'] },
   { id: 'empty', role: 'GESTOR', allowedUnits: [], expectedUnits: [] },
   { id: 'admin', role: 'ADMIN', allowedUnits: [], expectedUnits: [] },
+  { id: 'consultor', role: 'CONSULTOR', allowedUnits: ['novo-hamburgo'], expectedUnits: ['novo-hamburgo'] },
   // This intentionally persists only a recognized legacy alias. The auth boundary
   // must normalize it, without widening it to an unrelated scope.
   { id: 'alias', role: 'GESTOR', allowedUnits: ['NH'], expectedUnits: ['novo-hamburgo'] },
