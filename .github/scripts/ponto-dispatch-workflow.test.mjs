@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import {
-  assertMainShaUnchanged,
   assertPontoDependencyClosureUnchanged,
   dispatchTimeoutMsFor,
   globalResourceFor,
@@ -75,15 +74,6 @@ test("preview dispatches never require a capability while every governed mutatio
     release_scope: "general",
     unit: "api",
   }), "");
-});
-
-test("child dispatch refuses a coordinator SHA after main advances", () => {
-  const sha = "a".repeat(40);
-  assert.equal(assertMainShaUnchanged(sha, sha.toUpperCase()), sha);
-  assert.throws(
-    () => assertMainShaUnchanged(sha, "b".repeat(40)),
-    /main advanced after the immutable Ponto coordinator was selected/,
-  );
 });
 
 test("child dispatch keeps an immutable release valid across unrelated main changes", () => {

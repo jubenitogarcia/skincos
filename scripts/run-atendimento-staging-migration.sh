@@ -108,19 +108,23 @@ seal_staging_runtime_grants() {
   trap '' HUP INT TERM
   if [[ "$LOCKDOWN_REQUIRED" == '1' ]]; then
     set +e
+    coordination_status=0
     if ! native_coordination_check; then
       echo 'Global coordination proof was unavailable before staging grant lockdown; the isolated service remains ineligible.' >&2
-      exit 70
+      coordination_status=70
     fi
     run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --apply
     local lockdown_status=$?
     set -e
     if [[ "$lockdown_status" -ne 0 ]]; then
       echo 'Staging runtime grant lockdown failed; keeping the isolated service ineligible.' >&2
-      exit 70
+      coordination_status=70
     fi
     native_coordination_cleanup || true
     coordination_acquired=0
+    if [[ "$coordination_status" -ne 0 ]]; then
+      exit 70
+    fi
   fi
   exit "$exit_status"
 }

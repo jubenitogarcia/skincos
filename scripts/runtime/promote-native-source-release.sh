@@ -48,10 +48,10 @@ target="$RELEASE_BASE/$release_id/source"
 [[ -d "$target/orb/engine" ]] || { echo "Staged release is missing: $target" >&2; exit 1; }
 lineage_file="$target/.skincos-release-lineage.json"
 [[ -f "$lineage_file" ]] || { echo 'Staged release has no immutable lineage manifest.' >&2; exit 1; }
-coordination_closure="$target/.skincos-global-coordination-orb.json"
-[[ -f "$coordination_closure" ]] || { echo 'Staged release has no Orb dependency-closure attestation.' >&2; exit 1; }
-release_identity="$target/.skincos-release-identity-orb.json"
-[[ -f "$release_identity" ]] || { echo 'Staged release has no exact Orb artifact identity.' >&2; exit 1; }
+coordination_closure="$target/.skincos-global-coordination-native-runtime.json"
+[[ -f "$coordination_closure" ]] || { echo 'Staged release has no native-runtime dependency-closure attestation.' >&2; exit 1; }
+release_identity="$target/.skincos-release-identity-native-runtime.json"
+[[ -f "$release_identity" ]] || { echo 'Staged release has no exact native-runtime artifact identity.' >&2; exit 1; }
 current_target="$(readlink -f "$CURRENT_LINK")"
 current_release="$(basename "$(dirname "$current_target")")"
 [[ "$current_release" = "$expected_current" ]] || { echo "Current release changed: expected $expected_current, found $current_release." >&2; exit 1; }
@@ -81,13 +81,13 @@ coordination_run() {
 }
 coordination_acquire() {
   coordination_run acquire \
-    --resource release:orb --module orb --source "$release_id" --closure-file "$coordination_closure" \
+    --resource release:native-runtime --module native-runtime --source "$release_id" --closure-file "$coordination_closure" \
     --operation promotion --release-identity-file "$release_identity" \
-    --idempotency-key "mini-pc:release:orb:$release_id:$$"
+    --idempotency-key "mini-pc:release:native-runtime:$release_id:$$"
 }
 coordination_check() {
   coordination_run check \
-    --resource release:orb --module orb --source "$release_id" --closure-file "$coordination_closure"
+    --resource release:native-runtime --module native-runtime --source "$release_id" --closure-file "$coordination_closure"
 }
 coordination_renew_if_due() {
   local now

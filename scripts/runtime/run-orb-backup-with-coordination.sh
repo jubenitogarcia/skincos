@@ -10,7 +10,42 @@ unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
 readonly SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 readonly RESOURCE='global:orb-backup'
 readonly CLOSURE="$SCRIPT_ROOT/.skincos-global-coordination-orb.json"
+readonly COORDINATION_ENV_FILE="${SKINCOS_GLOBAL_COORDINATION_ENV_FILE:-/etc/skincos/global-coordination/orb-backup.env}"
 coordination_acquired=0
+
+load_private_coordination_environment() {
+  [[ "$COORDINATION_ENV_FILE" = /* && "$COORDINATION_ENV_FILE" != *$'\n'* && "$COORDINATION_ENV_FILE" != *$'\r'* ]] || {
+    echo 'Orb backup coordination environment path is invalid.' >&2
+    exit 78
+  }
+  [[ -f "$COORDINATION_ENV_FILE" ]] || {
+    echo 'Orb backup coordination environment is unavailable.' >&2
+    exit 78
+  }
+  local mode line key value
+  mode="$(stat -c '%a' "$COORDINATION_ENV_FILE")"
+  [[ "$mode" == '600' || "$mode" == '640' ]] || {
+    echo 'Orb backup coordination environment must be mode 0600 or 0640.' >&2
+    exit 78
+  }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || {
+      echo 'Orb backup coordination environment contains an invalid record.' >&2
+      exit 78
+    }
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    [[ "$key" == SKINCOS_GLOBAL_COORDINATOR_URL || "$key" == SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET ]] || {
+      echo 'Orb backup coordination environment contains an unsupported key.' >&2
+      exit 78
+    }
+    export "$key=$value"
+  done < "$COORDINATION_ENV_FILE"
+}
+
+load_private_coordination_environment
 
 [[ "$SCRIPT_ROOT" =~ ^/opt/skincos/releases/([0-9a-f]{40})/source$ ]] || {
   echo 'Orb backup must run from an immutable native release, never a checkout.' >&2

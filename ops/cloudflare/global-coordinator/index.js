@@ -39,7 +39,7 @@ const jsonResponse = (payload, status = 200, headers = {}) => new Response(JSON.
   status,
   headers: { "content-type": "application/json", "cache-control": "no-store", ...headers },
 });
-const bad = (error, status = 401) => jsonResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed: false, error }, status);
+const bad = (message, status = 401) => jsonResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed: false, error: message }, status);
 
 function bindingFor(request, url, nonce, requestedAt, requestDigest) {
   return {
@@ -54,7 +54,7 @@ function bindingFor(request, url, nonce, requestedAt, requestDigest) {
 }
 
 async function authenticatedBody(request, env, url, rawBody) {
-  if (!env.COORDINATION_SHARED_SECRET || env.COORDINATION_CONTRACT_ID !== CONTRACT_ID) throw new Error("coordination authority custody is unavailable");
+  if (!env.COORDINATION_SHARED_SECRET || env.COORDINATION_CONTRACT_ID !== CONTRACT_ID) return { custodyUnavailable: true };
   const nonce = request.headers.get("x-skincos-coordination-nonce") || "";
   const requestedAt = request.headers.get("x-skincos-coordination-requested-at") || "";
   const requestedMs = Date.parse(requestedAt);
@@ -130,10 +130,10 @@ export default {
     let authenticated;
     try {
       authenticated = await authenticatedBody(request, env, url, rawBody);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return bad(message, message.includes("unavailable") ? 503 : 401);
+    } catch {
+      return bad("coordination request rejected", 401);
     }
+    if (authenticated.custodyUnavailable) return bad("coordination authority custody is unavailable", 503);
     const { body, nonce, requestDigest } = authenticated;
     let resource;
     try {
@@ -161,8 +161,8 @@ export default {
       const payload = await signResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed: resolved.accepted !== false && resolved.valid !== false, ...resolved }, env.COORDINATION_SHARED_SECRET);
       const status = resolved.accepted === false && resolved.reason === "resource-lease-held" ? 409 : resolved.valid === false ? 409 : resolved.accepted === false ? 409 : 200;
       return jsonResponse(payload, status);
-    } catch (error) {
-      return bad(error instanceof Error ? error.message : String(error), 400);
+    } catch {
+      return bad("coordination request could not be processed", 400);
     }
   },
 };

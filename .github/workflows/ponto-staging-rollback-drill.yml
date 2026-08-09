@@ -44,7 +44,7 @@ jobs:
     with:
       required: true
       global_lease_required: true
-      global_resource: release:ponto
+      global_resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
       global_module: ponto
       global_coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
       lease_key: staging-rollback
@@ -82,8 +82,9 @@ jobs:
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/timekeeping-staging-journey.yml" > "$RUNNER_TEMP/journey-workflow.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_JOURNEY_RUN_ID" > "$RUNNER_TEMP/journey-run.json"
-          node - "$RUNNER_TEMP/journey-workflow.json" "$RUNNER_TEMP/journey-run.json" <<'NODE'
-          const fs = require("fs");
+          node --input-type=module - "$RUNNER_TEMP/journey-workflow.json" "$RUNNER_TEMP/journey-run.json" <<'NODE'
+          import fs from "node:fs";
+          import { pontoSourceClosureMatches } from "./.github/scripts/ponto-source-closure.mjs";
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           if (
@@ -96,6 +97,7 @@ jobs:
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
+            || !pontoSourceClosureMatches(process.env.RELEASE_SHA, String(run.head_sha || "").toLowerCase())
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
             || !String(run.display_title || "").includes(`orchestrator=${process.env.ORCHESTRATOR_RUN_ID}`)
@@ -145,7 +147,7 @@ jobs:
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
-          resource: release:ponto
+          resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
           module: ponto
           source_sha: ${{ inputs.release_sha }}
       - name: Attest exact staging D1 and module-control identities before rollback drill mutation

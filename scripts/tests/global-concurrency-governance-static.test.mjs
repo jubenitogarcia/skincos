@@ -71,8 +71,36 @@ test("the reusable check action accepts either an external proof file or an enco
   const action = read(".github/actions/global-coordination-check/action.yml");
   assert.match(action, /proof_b64:[\s\S]*?required: false/);
   assert.match(action, /proof_file:[\s\S]*?required: false/);
+  assert.match(action, /observed_source_sha:[\s\S]*?required: false/);
+  assert.match(action, /git fetch --no-tags --force origin main:refs\/remotes\/origin\/main/);
+  assert.match(action, /git fetch --no-tags origin "\$GLOBAL_SOURCE_SHA"/);
+  assert.match(action, /--source "\$GLOBAL_OBSERVED_SOURCE_SHA"/);
+  assert.match(action, /--candidate-source "\$GLOBAL_SOURCE_SHA"/);
   assert.match(action, /GLOBAL_PROOF_FILE_INPUT/);
   assert.match(action, /base64 -d/);
+});
+
+test("the Ponto composite lease starts before candidate mutation, selects the correct authority, and spans the orchestrator", () => {
+  const workflow = read(".github/workflows/ponto-progressive-release.yml");
+  const acquire = workflow.indexOf("Acquire the composite Ponto release lease before candidate mutation");
+  const firstDispatch = workflow.indexOf("node .github/scripts/ponto-dispatch-workflow.mjs");
+  const release = workflow.indexOf("Release the composite Ponto release lease");
+  assert.ok(acquire >= 0 && firstDispatch > acquire && release > firstDispatch);
+  assert.match(workflow, /SKINCOS_GLOBAL_COORDINATOR_URL: \$\{\{ contains\(fromJSON\('\["preview","staging"\]'\)/);
+  assert.match(workflow, /coordinator_url: \$\{\{ env\.SKINCOS_GLOBAL_COORDINATOR_URL \}\}/);
+  assert.match(read(".github/scripts/ponto-dispatch-workflow.mjs"), /revalidatePontoCompositeLease/);
+  assert.match(read(".github/scripts/ponto-dispatch-workflow.mjs"), /cancelActiveChildBestEffort/);
+  assert.match(read(".github/scripts/ponto-source-closure.mjs"), /assertPontoSourceClosureUnchanged/);
+  assert.match(read(".github/scripts/ponto-source-closure.mjs"), /assertDependencyClosureUnchanged/);
+  for (const workflowName of [
+    ".github/workflows/module-availability.yml",
+    ".github/workflows/ponto-production-baseline.yml",
+    ".github/workflows/ponto-production-slo.yml",
+    ".github/workflows/ponto-staging-rollback-drill.yml",
+    ".github/workflows/timekeeping-staging-journey.yml",
+  ]) {
+    assert.match(read(workflowName), /release:ponto-child/);
+  }
 });
 
 test("merge:main is a fail-closed GitHub mutation authority", () => {
@@ -165,8 +193,9 @@ test("native mini-PC mutations use the common coordinator and detached closure p
   }
 
   const orb = read("scripts/runtime/promote-native-source-release.sh");
-  assert.match(orb, /--resource release:orb/);
-  assert.match(orb, /\.skincos-release-identity-orb\.json/);
+  assert.match(orb, /--resource release:native-runtime/);
+  assert.match(orb, /\.skincos-global-coordination-native-runtime\.json/);
+  assert.match(orb, /\.skincos-release-identity-native-runtime\.json/);
   assert.match(orb, /--release-identity-file/);
   assert.match(orb, /coordination_renew_if_due/);
   assert.ok(orb.includes("coordination_check >/dev/null"));
@@ -182,6 +211,24 @@ test("native mini-PC mutations use the common coordinator and detached closure p
   const rollback = read("scripts/runtime/rollback-atendimento-production.sh");
   assert.match(rollback, /--resource deploy:atendimento:production/);
   assert.match(rollback, /coordination_acquired/);
+  assert.match(rollback, /--coordination-proof-file "\$coordination_proof" --coordination-reuse/);
+  assert.match(read("scripts/runtime/global-coordination-native.sh"), /NATIVE_COORDINATION_OWNED/);
+  assert.match(read("scripts/runtime/install-atendimento-production-service.sh"), /--coordination-reuse/);
+  assert.match(read("scripts/set-atendimento-production-readonly-control.sh"), /--coordination-reuse/);
+  assert.match(read("scripts/run-atendimento-staging-migration.sh"), /run_sudo_clean \/usr\/bin\/bash -p "\$RUNTIME_GRANT_LOCKDOWN" --apply/);
+  assert.match(read("scripts/runtime/prepare-atendimento-staging-release.sh"), /native_coordination_cleanup\ncoordination_acquired=0\ntrap - EXIT/);
+});
+
+test("the scheduled native backup bridge carries private custody and a stable owner identity", () => {
+  const publisher = read("scripts/runtime/publish-orb-backup.ps1");
+  const runner = read("scripts/runtime/run-orb-backup-with-coordination.sh");
+  assert.match(publisher, /SKINCOS_GLOBAL_COORDINATION_ENV_FILE=/);
+  assert.match(publisher, /GLOBAL_COORDINATION_MISSION_ID=windows:skincos-orb-backup/);
+  assert.match(publisher, /GLOBAL_COORDINATION_THREAD_ID=scheduled:SkincosOrbBackup/);
+  assert.match(publisher, /GLOBAL_COORDINATION_ACTOR=windows-scheduled-task/);
+  assert.match(runner, /COORDINATION_ENV_FILE=.*orb-backup\.env/);
+  assert.match(runner, /unsupported key/);
+  assert.match(runner, /mode 0600 or 0640/);
 });
 
 test("shared staging D1 custody serializes synthetic mutators before every write path", () => {

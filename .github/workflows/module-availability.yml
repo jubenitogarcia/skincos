@@ -138,7 +138,7 @@ jobs:
     with:
       required: ${{ inputs.module == 'timekeeping' && contains(fromJSON('["canary","active"]'), inputs.state) }}
       global_lease_required: true
-      global_resource: release:ponto
+      global_resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
       global_module: ponto
       global_coordinator_url: ${{ inputs.target == 'production' && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
       lease_key: ${{ inputs.orchestrator_lease_key }}
@@ -180,7 +180,7 @@ jobs:
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
-          resource: release:ponto
+          resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
           module: ponto
           source_sha: ${{ inputs.orchestrator_release_sha || inputs.release_sha || github.sha }}
       - name: Guard isolated control store

@@ -201,6 +201,11 @@ EOF
 native_coordination_check
 run_sudo_clean /usr/bin/mv -- "$STAGING" "$DESTINATION"
 /usr/bin/rm -f -- "$lineage_file"
+# Release the remote custody before disabling the EXIT trap.  The successful
+# move is the final mutation; keeping the lease until process exit would hold
+# release:atendimento for the remainder of the native command timeout.
+native_coordination_cleanup
+coordination_acquired=0
 trap - EXIT INT TERM
 echo "release_sha=$RELEASE_SHA"
 echo "source_tree=$tree_sha"

@@ -220,9 +220,10 @@ if (
   || gateTrustedHeadIndex < 0
   || gateConsumeIndex < 0
   || !(gateCheckoutIndex < gateTrustedHeadIndex && gateTrustedHeadIndex < gateConsumeIndex)
-  || !orchestratorGate.includes('"$GITHUB_SHA" == "$RELEASE_SHA"')
+  || !orchestratorGate.includes('assertPontoSourceClosureUnchanged')
+  || !orchestratorGate.includes('git rev-parse HEAD)" == "$GITHUB_SHA"')
 ) {
-  fail('Ponto orchestrator capability verification must execute trusted main workflow code, never candidate-controlled code');
+  fail('Ponto orchestrator capability verification must execute trusted main workflow code and attest the immutable dependency closure');
 }
 for (const [source, label] of [
   [productionBaseline, 'Ponto production baseline'],
@@ -231,10 +232,10 @@ for (const [source, label] of [
   if (
     source.includes('ref: ${{ inputs.release_sha }}')
     || !source.includes('ref: ${{ github.sha }}')
-    || !source.includes('"$GITHUB_SHA" == "$RELEASE_SHA"')
+    || !source.includes('assertPontoSourceClosureUnchanged')
     || !source.includes('git rev-parse HEAD')
   ) {
-    fail(`${label} must prove the trusted exact main checkout before hydrating production secrets`);
+    fail(`${label} must prove the trusted main checkout and immutable dependency closure before hydrating production secrets`);
   }
 }
 const clinicSloStart = productionSlo.indexOf('  consultor-journey:');
@@ -855,7 +856,7 @@ for (const required of [
   'status=${status}&per_page=100&page=${page}',
   'non-terminal ${status} run inventory exceeds the governed discovery bound',
   'authorizeAndInvalidateCapability',
-  '/commits/${run.head_sha}/check-runs?filter=all',
+  '/commits/${releaseSha}/check-runs?filter=all',
   'transitionCapabilityDocument',
   'state: "invalidated"',
   'method: "PATCH"',

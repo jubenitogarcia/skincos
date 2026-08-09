@@ -26,10 +26,10 @@ const child = {
   status: "in_progress",
 };
 
-test("matches only the exact governed child correlation and immutable head", () => {
+test("matches only the exact governed child correlation and main branch", () => {
   assert.equal(isCorrelatedChild(child, context), true);
   assert.equal(isCorrelatedChild({ ...child, id: 12345 }, context), false);
-  assert.equal(isCorrelatedChild({ ...child, head_sha: "b".repeat(40) }, context), false);
+  assert.equal(isCorrelatedChild({ ...child, head_sha: "b".repeat(40) }, context), true);
   assert.equal(isCorrelatedChild({ ...child, display_title: "orchestrator=123450" }, context), false);
   assert.equal(isCorrelatedChild({ ...child, repository: { full_name: "other/repo" } }, context), false);
 });
@@ -197,7 +197,7 @@ test("ordered predecessor provenance is exact and replay resistant before artifa
     /String\(run\?\.id \|\| ""\) !== process\.env\.PREDECESSOR_RUN_ID/,
     /(?:run\.path !== `\$\{workflow\.path\}@refs\/heads\/main`|!\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\))/,
     /run\.run_attempt !== 1/,
-    /run\.head_sha \|\| ""\)\.toLowerCase\(\) !== process\.env\.RELEASE_SHA/,
+    /assertPontoSourceClosureUnchanged/,
     /run\.display_title !== expectedTitle/,
   ]) {
     const match = provenance.search(contract);

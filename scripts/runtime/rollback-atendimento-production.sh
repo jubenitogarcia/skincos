@@ -83,21 +83,36 @@ protected_before="$(snapshot_protected_services)"
 coordination_run check \
   --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
   --closure-file "$COORDINATION_CLOSURE" >/dev/null
-sudo -n "$CONTROL_WRITER" --state maintenance --release-sha "$TARGET_SHA" --reason rollback-in-progress --apply
+sudo -n "$CONTROL_WRITER" \
+  --state maintenance --release-sha "$TARGET_SHA" \
+  --coordination-closure "$COORDINATION_CLOSURE" \
+  --coordination-proof-file "$coordination_proof" --coordination-reuse \
+  --reason rollback-in-progress --apply
 coordination_run check \
   --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
   --closure-file "$COORDINATION_CLOSURE" >/dev/null
-if ! sudo -n "$INSTALLER" --source-root "$SOURCE_ROOT" --apply; then
+if ! sudo -n "$INSTALLER" \
+  --source-root "$SOURCE_ROOT" \
+  --coordination-proof-file "$coordination_proof" --coordination-reuse \
+  --apply; then
   coordination_run check \
     --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
     --closure-file "$COORDINATION_CLOSURE" >/dev/null
-  sudo -n "$CONTROL_WRITER" --state maintenance --release-sha "$TARGET_SHA" --reason rollback-install-failed --apply || true
+  sudo -n "$CONTROL_WRITER" \
+    --state maintenance --release-sha "$TARGET_SHA" \
+    --coordination-closure "$COORDINATION_CLOSURE" \
+    --coordination-proof-file "$coordination_proof" --coordination-reuse \
+    --reason rollback-install-failed --apply || true
   exit 1
 fi
 coordination_run check \
   --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
   --closure-file "$COORDINATION_CLOSURE" >/dev/null
-sudo -n "$CONTROL_WRITER" --state active --release-sha "$TARGET_SHA" --reason rollback-active --apply
+sudo -n "$CONTROL_WRITER" \
+  --state active --release-sha "$TARGET_SHA" \
+  --coordination-closure "$COORDINATION_CLOSURE" \
+  --coordination-proof-file "$coordination_proof" --coordination-reuse \
+  --reason rollback-active --apply
 coordination_run check \
   --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
   --closure-file "$COORDINATION_CLOSURE" >/dev/null
@@ -105,7 +120,11 @@ if ! sudo -n "$VALIDATOR" --expected-release-sha "$TARGET_SHA"; then
   coordination_run check \
     --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
     --closure-file "$COORDINATION_CLOSURE" >/dev/null
-  sudo -n "$CONTROL_WRITER" --state maintenance --release-sha "$TARGET_SHA" --reason rollback-validation-failed --apply || true
+  sudo -n "$CONTROL_WRITER" \
+    --state maintenance --release-sha "$TARGET_SHA" \
+    --coordination-closure "$COORDINATION_CLOSURE" \
+    --coordination-proof-file "$coordination_proof" --coordination-reuse \
+    --reason rollback-validation-failed --apply || true
   exit 1
 fi
 protected_after="$(snapshot_protected_services)"

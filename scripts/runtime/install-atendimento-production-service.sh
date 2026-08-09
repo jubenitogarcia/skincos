@@ -21,11 +21,15 @@ readonly SERVICE='crm-atendimento-production.service'
 
 SOURCE_ROOT=''
 APPLY=0
+COORDINATION_PROOF_FILE=''
+COORDINATION_REUSE=0
 
-usage() { echo "Usage: $0 --source-root /opt/skincos/releases/<full-sha>/source [--apply]"; }
+usage() { echo "Usage: $0 --source-root /opt/skincos/releases/<full-sha>/source [--coordination-proof-file <private-proof>] [--coordination-reuse] [--apply]"; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --source-root) shift; SOURCE_ROOT="${1:-}" ;;
+    --coordination-proof-file) shift; COORDINATION_PROOF_FILE="${1:-}" ;;
+    --coordination-reuse) COORDINATION_REUSE=1 ;;
     --apply) APPLY=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 64 ;;
@@ -46,8 +50,13 @@ readonly RUNTIME_GRANT_LOCKDOWN="$SOURCE_ROOT/scripts/lockdown-atendimento-produ
 readonly RELEASE_MANIFEST="$STATE_ROOT/crm-atendimento-production/release-manifests/$RELEASE_SHA.json"
 readonly CONTROL_FILE="$CONFIG_ROOT/atendimento-production/module-control.json"
 readonly COORDINATION_CLOSURE="$SOURCE_ROOT/.skincos-global-coordination-atendimento.json"
-coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/atendimento-production-$RELEASE_SHA-$$.json}"
+coordination_proof="${COORDINATION_PROOF_FILE:-${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/atendimento-production-$RELEASE_SHA-$$.json}}"
+if [[ "$COORDINATION_REUSE" == '1' ]]; then
+  export SKINCOS_GLOBAL_COORDINATION_REUSE=1
+  export SKINCOS_GLOBAL_COORDINATION_PROOF_FILE="$coordination_proof"
+fi
 coordination_acquired=0
+coordination_owned=0
 
 for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/sed /usr/bin/systemd-analyze /usr/bin/mktemp /usr/bin/install /usr/bin/node /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/date /usr/bin/cp /usr/bin/systemctl /usr/bin/test /usr/bin/grep /usr/bin/bash; do
   [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
@@ -91,18 +100,29 @@ coordination_run() {
   "$SOURCE_ROOT/scripts/runtime/global-coordination-mini-pc.sh" "$@" --proof-file "$coordination_proof"
 }
 cleanup_coordination() {
-  if (( coordination_acquired == 1 )); then
+  if (( coordination_acquired == 1 && coordination_owned == 1 )); then
     coordination_run release >/dev/null 2>&1 || echo 'Unable to release the Atendimento production surface lease; it will expire fail-closed.' >&2
   fi
   /usr/bin/rm -f "$rendered"
   /usr/bin/rmdir "$render_dir" 2>/dev/null || true
 }
 trap cleanup_coordination EXIT INT TERM
-coordination_run acquire \
-  --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
-  --closure-file "$COORDINATION_CLOSURE" --operation mutation \
-  --idempotency-key "mini-pc:deploy:atendimento:production:install:$RELEASE_SHA:$$" >/dev/null
+if [[ "$COORDINATION_REUSE" == '1' ]]; then
+  coordination_run check \
+    --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+    --closure-file "$COORDINATION_CLOSURE" >/dev/null
+else
+  coordination_run acquire \
+    --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+    --closure-file "$COORDINATION_CLOSURE" --operation mutation \
+    --idempotency-key "mini-pc:deploy:atendimento:production:install:$RELEASE_SHA:$$" >/dev/null
+fi
 coordination_acquired=1
+if [[ "$COORDINATION_REUSE" == '1' ]]; then
+  coordination_owned=0
+else
+  coordination_owned=1
+fi
 coordination_run check \
   --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
   --closure-file "$COORDINATION_CLOSURE" >/dev/null

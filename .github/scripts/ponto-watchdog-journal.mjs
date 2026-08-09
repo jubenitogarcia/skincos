@@ -10,6 +10,7 @@ import {
   resolveCapabilityVerifier,
   verifyCapabilityDocument,
 } from "./ponto-orchestrator-lease.mjs";
+import { pontoSourceClosureMatches } from "./ponto-source-closure.mjs";
 import { attestTerminalPreMutationGateFailure } from "./ponto-child-mutation-attestation.mjs";
 
 const DISPATCH_NONCE = /^[0-9a-f]{32}$/;
@@ -148,6 +149,7 @@ async function verifyCapabilityAnchor({
     || claims.childWorkflowId !== run.workflow_id
     || claims.childWorkflowPath !== childWorkflowPath
     || claims.childRunId !== String(run.id)
+    || !pontoSourceClosureMatches(releaseSha, String(run?.head_sha || "").trim().toLowerCase())
     || claims.leaseKey !== match[1]
     || claims.dispatchNonce !== match[3]
     || claims.releaseSha !== releaseSha

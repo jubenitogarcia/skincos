@@ -517,11 +517,12 @@ jobs:
           [[ "$TARGET" == pilot ]] && target=production
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ROOT_CUSTODY_RUN_ID" > "$RUNNER_TEMP/timekeeping-root-custody-run.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cloudflare-workers-sync-ponto-secrets.yml" > "$RUNNER_TEMP/timekeeping-root-custody-workflow.json"
-          node - \
+          node --input-type=module - \
             "$RUNNER_TEMP/timekeeping-root-custody-run.json" \
             "$RUNNER_TEMP/timekeeping-root-custody-workflow.json" \
             "$target" <<'NODE'
-          const fs = require("fs");
+          import fs from "node:fs";
+          import { pontoSourceClosureMatches } from "./.github/scripts/ponto-source-closure.mjs";
           const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           const target = process.argv[4];
@@ -540,7 +541,7 @@ jobs:
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
-            || run.head_sha !== process.env.RELEASE_SHA
+            || !pontoSourceClosureMatches(process.env.RELEASE_SHA, String(run.head_sha || "").toLowerCase())
             || !expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
@@ -575,10 +576,12 @@ jobs:
             "$artifact_metadata" \
             "$artifact_provenance" \
             "$artifact_name" \
-            "$artifact_id" <<'NODE'
+            "$artifact_id" \
+            "$RUNNER_TEMP/timekeeping-root-custody-run.json" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const artifact = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const run = JSON.parse(fs.readFileSync(process.argv[7], "utf8"));
           const outputFile = process.argv[4];
           const artifactName = process.argv[5];
           const artifactId = process.argv[6];
@@ -595,7 +598,7 @@ jobs:
             || expiresAt <= Date.now()
             || !/^sha256:[0-9a-f]{64}$/.test(digest)
             || artifact.workflow_run?.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
-            || artifact.workflow_run?.head_sha !== process.env.RELEASE_SHA
+            || artifact.workflow_run?.head_sha !== run.head_sha
             || String(listed[0].digest || "") !== digest
             || listed[0].workflow_run?.id !== artifact.workflow_run.id
             || listed[0].workflow_run?.head_sha !== artifact.workflow_run.head_sha

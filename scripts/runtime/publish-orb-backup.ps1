@@ -4,6 +4,7 @@ param(
     [string]$LinuxUser = 'admin',
     [string]$NativeBackupRoot = '/var/backups/skincos/orb/daily',
     [string]$DestinationRoot = 'C:\CodexRuntime\backups\orb\daily',
+    [string]$CoordinationEnvironmentFile = '/etc/skincos/global-coordination/orb-backup.env',
     [ValidateRange(1, 30)][int]$RetentionCount = 1,
     [switch]$SkipGenerate
 )
@@ -68,8 +69,24 @@ function Test-BackupPayload {
 }
 
 $DestinationRoot = Assert-AllowedDestination -Path $DestinationRoot
+if ($CoordinationEnvironmentFile -notmatch '^/[A-Za-z0-9._/-]+$') {
+    throw 'CoordinationEnvironmentFile must be an absolute private WSL path.'
+}
 if (-not $SkipGenerate) {
-    & wsl.exe -d $Distribution -u $LinuxUser -- /usr/bin/bash -p /opt/skincos/current/source/scripts/runtime/run-orb-backup-with-coordination.sh
+    $coordinationBridgeArgs = @(
+        '-d', $Distribution,
+        '-u', $LinuxUser,
+        '--',
+        '/usr/bin/env',
+        "SKINCOS_GLOBAL_COORDINATION_ENV_FILE=$CoordinationEnvironmentFile",
+        'GLOBAL_COORDINATION_MISSION_ID=windows:skincos-orb-backup',
+        'GLOBAL_COORDINATION_THREAD_ID=scheduled:SkincosOrbBackup',
+        'GLOBAL_COORDINATION_ACTOR=windows-scheduled-task',
+        '/usr/bin/bash',
+        '-p',
+        '/opt/skincos/current/source/scripts/runtime/run-orb-backup-with-coordination.sh'
+    )
+    & wsl.exe @coordinationBridgeArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Coordinated native Orb backup failed with exit code $LASTEXITCODE."
     }

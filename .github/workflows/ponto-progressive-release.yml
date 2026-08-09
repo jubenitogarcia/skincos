@@ -123,8 +123,9 @@ jobs:
       # uses the dedicated coordinator; production remains blocked until its
       # separate endpoint and custody are provisioned.
       SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-      SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+      SKINCOS_GLOBAL_COORDINATOR_URL: ${{ contains(fromJSON('["preview","staging"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_URL || contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || '' }}
       SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
@@ -162,11 +163,17 @@ jobs:
           [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'numeric predecessor_run_id is required'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-progressive-release.yml" > "$RUNNER_TEMP/ponto-workflow.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREDECESSOR_RUN_ID" > "$RUNNER_TEMP/predecessor-run.json"
-          PREDECESSOR_STAGE="$predecessor" node - "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json" <<'NODE'
-          const fs = require("fs");
+          PREDECESSOR_STAGE="$predecessor" node --input-type=module - "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json" <<'NODE'
+          import fs from "node:fs";
+          const { assertPontoSourceClosureUnchanged } = await import("./.github/scripts/ponto-source-closure.mjs");
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           const expectedTitle = `Ponto ${process.env.PREDECESSOR_STAGE} ${process.env.RELEASE_SHA} orchestrator=${process.env.PREDECESSOR_RUN_ID}`;
+          try {
+            assertPontoSourceClosureUnchanged(process.env.RELEASE_SHA, String(run?.head_sha || "").toLowerCase());
+          } catch {
+            throw new Error("predecessor run dependency closure differs from the immutable release");
+          }
           if (
             workflow?.state !== "active"
             || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
@@ -179,7 +186,6 @@ jobs:
             || run.run_attempt !== 1
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
-            || String(run.head_sha || "").toLowerCase() !== process.env.RELEASE_SHA
             || run.name !== expectedTitle
             || run.display_title !== expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
@@ -788,6 +794,17 @@ jobs:
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
           rm -f "$evidence_dir/artifact.zip"
+      - name: Acquire the composite Ponto release lease before candidate mutation
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ env.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
       - name: Prove selected root separation before any candidate mutation
         if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
         env:
@@ -836,8 +853,9 @@ jobs:
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-production-baseline.yml" > "$RUNNER_TEMP/baseline-workflow.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-production-baseline.yml/runs?event=workflow_dispatch&branch=main&per_page=100" > "$RUNNER_TEMP/baseline-runs.json"
-          baseline_run_id="$(node - "$RUNNER_TEMP/baseline-workflow.json" "$RUNNER_TEMP/baseline-runs.json" <<'NODE'
-          const fs = require("fs");
+          baseline_run_id="$(node --input-type=module - "$RUNNER_TEMP/baseline-workflow.json" "$RUNNER_TEMP/baseline-runs.json" <<'NODE'
+          import fs from "node:fs";
+          const { pontoSourceClosureMatches } = await import("./.github/scripts/ponto-source-closure.mjs");
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const runs = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).workflow_runs || [];
           if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-production-baseline.yml") throw new Error("canonical baseline workflow is unavailable");
@@ -851,7 +869,7 @@ jobs:
               && run.conclusion === "success"
               && run.event === "workflow_dispatch"
               && run.head_branch === "main"
-              && run.head_sha === process.env.RELEASE_SHA
+              && pontoSourceClosureMatches(process.env.RELEASE_SHA, String(run.head_sha || "").toLowerCase())
               && run.run_attempt === 1
               && run.name === "Ponto production baseline"
               && run.repository?.full_name === process.env.GITHUB_REPOSITORY
@@ -1728,6 +1746,14 @@ jobs:
           path: ${{ runner.temp }}/ponto-release/runs
           retention-days: 90
           if-no-files-found: warn
+      - name: Release the composite Ponto release lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ env.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
 
   recovery-latch:
     needs: orchestrate

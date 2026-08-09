@@ -170,8 +170,9 @@ jobs:
           fi
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ROOT_CUSTODY_RUN_ID" > "$RUNNER_TEMP/root-custody-run.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cloudflare-workers-sync-ponto-secrets.yml" > "$RUNNER_TEMP/root-custody-workflow.json"
-          node - "$RUNNER_TEMP/root-custody-run.json" "$RUNNER_TEMP/root-custody-workflow.json" <<'NODE'
-          const fs = require("fs");
+          node --input-type=module - "$RUNNER_TEMP/root-custody-run.json" "$RUNNER_TEMP/root-custody-workflow.json" <<'NODE'
+          import fs from "node:fs";
+          import { pontoSourceClosureMatches } from "./.github/scripts/ponto-source-closure.mjs";
           const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           const expectedTitle = new RegExp(
@@ -189,7 +190,7 @@ jobs:
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
-            || run.head_sha !== process.env.RELEASE_SHA
+            || !pontoSourceClosureMatches(process.env.RELEASE_SHA, String(run.head_sha || "").toLowerCase())
             || !expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY

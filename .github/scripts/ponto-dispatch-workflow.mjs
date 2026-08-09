@@ -27,6 +27,7 @@ import {
   resolveCapabilityVerifier,
   verifyCapabilityDocument,
 } from "./ponto-orchestrator-lease.mjs";
+import { assertPontoSourceClosureUnchanged } from "./ponto-source-closure.mjs";
 
 export const isBodylessResponseStatus = (status) => status === 202 || status === 204;
 export const readGitHubResponse = (response) => (
@@ -45,15 +46,6 @@ export const dispatchTimeoutMsFor = (workflow, configuredTimeoutMs) => Math.max(
   configuredTimeoutMs,
   minimumDispatchTimeoutMsByWorkflow[workflow] || 0,
 );
-
-export function assertMainShaUnchanged(orchestratorSha, mainSha) {
-  const expected = String(orchestratorSha || "").trim().toLowerCase();
-  const observed = String(mainSha || "").trim().toLowerCase();
-  if (!/^[0-9a-f]{40}$/.test(expected) || observed !== expected) {
-    throw new Error("main advanced after the immutable Ponto coordinator was selected");
-  }
-  return expected;
-}
 
 export function assertPontoDependencyClosureUnchanged(orchestratorDigest, mainDigest) {
   return assertDependencyClosureUnchanged(orchestratorDigest, mainDigest);
@@ -124,6 +116,7 @@ function sourceTreeForCommit(commit) {
 async function acquireGlobalDispatchLease({ resourceKey, workflow, inputs, repository, correlation, stage, actor, runId, sourceCommit, dependencyClosureDigest }) {
   if (!globalCoordinationRequired()) return null;
   if (!resourceKey) throw new Error(`global coordination resource is undefined for ${workflow}`);
+  if (resourceKey === "release:ponto" && compositeCoordinationProofFile()) return null;
   const url = String(process.env.SKINCOS_GLOBAL_COORDINATOR_URL || "").trim();
   const secret = String(process.env.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET || "").trim();
   if (!url || !secret) throw new Error("global coordination authority custody is unavailable");
@@ -180,6 +173,54 @@ async function releaseGlobalDispatchLease(lease) {
   if (!lease) return;
   const released = await releaseGlobalLease({ proof: lease.proof, url: lease.url });
   if (released.passed !== true) throw new Error(`global coordination lease release failed: ${released.reason || "unknown"}`);
+}
+
+function compositeCoordinationProofFile() {
+  const value = String(process.env.PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE || "").trim();
+  return value || null;
+}
+
+function writeCompositeCoordinationProof(file, lease) {
+  const resolved = path.resolve(file);
+  const repositoryRoot = path.resolve(import.meta.dirname, "../..");
+  if (resolved === repositoryRoot || resolved.startsWith(`${repositoryRoot}${path.sep}`)) {
+    throw new Error("Ponto composite coordination proof must remain outside the checkout");
+  }
+  fs.mkdirSync(path.dirname(resolved), { recursive: true, mode: 0o700 });
+  const temporary = `${resolved}.tmp.${process.pid}`;
+  fs.writeFileSync(temporary, `${JSON.stringify(proofForLease(lease), null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporary, resolved);
+}
+
+async function revalidatePontoCompositeLease({ observedDependencyClosureDigest }) {
+  if (!globalCoordinationRequired()) return false;
+  const proofFile = compositeCoordinationProofFile();
+  if (!proofFile) return false;
+  const url = String(process.env.SKINCOS_GLOBAL_COORDINATOR_URL || "").trim();
+  if (!url || !String(process.env.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET || "").trim()) {
+    throw new Error("global coordination authority custody is unavailable");
+  }
+  const proof = JSON.parse(fs.readFileSync(proofFile, "utf8"));
+  if (proof.resource !== "release:ponto") throw new Error("Ponto composite proof resource is invalid");
+  const renewed = await renewGlobalLease({ proof, ttlMs: 900_000, url });
+  if (renewed.passed !== true || !renewed.lease) {
+    throw new Error(`Ponto composite lease renewal failed: ${renewed.reason || "unknown"}`);
+  }
+  const renewedProof = proofForLease(renewed.lease);
+  writeCompositeCoordinationProof(proofFile, renewed.lease);
+  const checked = await checkGlobalLease({
+    proof: renewedProof,
+    url,
+    authorization: {
+      expectedResource: "release:ponto",
+      expectedIntentDigest: renewedProof.intentDigest,
+      observedDependencyClosureDigest,
+    },
+  });
+  if (checked.passed !== true) {
+    throw new Error(`Ponto composite coordination authorization failed: ${checked.reason || "unknown"}`);
+  }
+  return true;
 }
 
 export function governedLeaseKeyFor(workflow, inputs) {
@@ -301,6 +342,16 @@ const request = async (pathname, init = {}) => {
   return readGitHubResponse(response);
 };
 
+const cancelActiveChildBestEffort = async (candidate) => {
+  if (!candidate || candidate.status === "completed") return;
+  try {
+    await request(`/repos/${repository}/actions/runs/${candidate.id}/cancel`, { method: "POST" });
+  } catch {
+    // The coordinator still fails closed; a missing cancellation response is
+    // recorded by the failed parent run and never authorizes another mutation.
+  }
+};
+
 const currentMain = await request(`/repos/${repository}/commits/main`);
 const currentMainSha = String(currentMain?.sha || "").trim().toLowerCase();
 if (!/^[0-9a-f]{40}$/.test(currentMainSha)) throw new Error("current main SHA is unavailable");
@@ -309,6 +360,9 @@ assertPontoDependencyClosureUnchanged(
   pontoDependencyClosureDigest(orchestratorHeadSha),
   pontoDependencyClosureDigest(currentMainSha),
 );
+await revalidatePontoCompositeLease({
+  observedDependencyClosureDigest: pontoDependencyClosureDigest(currentMainSha),
+});
 
 const inputs = JSON.parse(fs.readFileSync(inputsFile, "utf8"));
 inputs.orchestrator_run_id = correlation;
@@ -405,6 +459,7 @@ const globalDispatchLease = await acquireGlobalDispatchLease({
   dependencyClosureDigest: pontoDependencyClosureDigest(orchestratorHeadSha),
 });
 let globalDispatchLeaseReleased = false;
+let compositeLeaseLastRenewedAt = Date.now();
 try {
 fs.mkdirSync(path.dirname(outputFile), { recursive: true });
 fs.writeFileSync(outputFile, `${JSON.stringify({
@@ -445,6 +500,8 @@ assertPontoDependencyClosureUnchanged(
   pontoDependencyClosureDigest(orchestratorHeadSha),
   dispatchClosureDigest,
 );
+await revalidatePontoCompositeLease({ observedDependencyClosureDigest: dispatchClosureDigest });
+compositeLeaseLastRenewedAt = Date.now();
 await revalidateGlobalDispatchLease(globalDispatchLease, {
   resourceKey: globalResourceKey,
   observedDependencyClosureDigest: dispatchClosureDigest,
@@ -469,6 +526,20 @@ let capabilityIssued = false;
 let capabilityCheckId = 0;
 let capabilityCheckAppId = 0;
 while (Date.now() - startedAt < timeoutMs) {
+  if (compositeCoordinationProofFile() && Date.now() - compositeLeaseLastRenewedAt >= 5 * 60 * 1000) {
+    try {
+      const observedMain = await request(`/repos/${repository}/commits/main`);
+      const observedMainSha = String(observedMain?.sha || "").trim().toLowerCase();
+      if (!/^[0-9a-f]{40}$/.test(observedMainSha)) throw new Error("current main SHA is unavailable during child dispatch");
+      ensureCommitAvailable(observedMainSha);
+      const observedClosureDigest = pontoDependencyClosureDigest(observedMainSha);
+      await revalidatePontoCompositeLease({ observedDependencyClosureDigest: observedClosureDigest });
+      compositeLeaseLastRenewedAt = Date.now();
+    } catch (coordinationError) {
+      await cancelActiveChildBestEffort(run);
+      throw coordinationError;
+    }
+  }
   const payload = await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}/runs?event=workflow_dispatch&branch=main&per_page=50`);
   const matches = (payload.workflow_runs || [])
     .filter((item) => matchesDispatchedRun(item, {
@@ -481,6 +552,10 @@ while (Date.now() - startedAt < timeoutMs) {
         ? expectedGovernedRunName(expectedPath, normalizedIntent)
         : undefined,
       dispatchNonce: leaseKey ? dispatchNonce : undefined,
+      // The immutable release SHA remains the artifact identity. The run is
+      // dispatched from main, so its head may advance independently while its
+      // Ponto dependency closure remains unchanged.
+      headShaMatches: () => true,
     }));
   if (matches.length > 1) {
     throw new Error(`dispatched ${workflow} correlation is ambiguous`);
@@ -490,6 +565,12 @@ while (Date.now() - startedAt < timeoutMs) {
     run = await request(`/repos/${repository}/actions/runs/${run.id}`);
     const childRunId = String(run.id);
     const expectedDisplayTitle = expectedGovernedRunName(expectedPath, normalizedIntent);
+    const childHeadSha = String(run.head_sha || "").trim().toLowerCase();
+    try {
+      assertPontoSourceClosureUnchanged(orchestratorHeadSha, childHeadSha);
+    } catch {
+      throw new Error("dispatched Ponto child source closure differs from the immutable release");
+    }
     if (
       run.workflow_id !== workflowMetadata.id
       || !pathMatchesMainRef(run.path, expectedPath)
@@ -498,7 +579,6 @@ while (Date.now() - startedAt < timeoutMs) {
       || run.conclusion != null
       || run.event !== "workflow_dispatch"
       || run.head_branch !== "main"
-      || run.head_sha !== orchestratorHeadSha
       || run.name !== expectedDisplayTitle
       || run.display_title !== expectedDisplayTitle
       || String(run?.repository?.id || "") !== repositoryId
@@ -650,13 +730,17 @@ if (
   run.workflow_id !== workflowMetadata.id
   || !pathMatchesMainRef(run.path, expectedPath)
   || run.run_attempt !== 1
-  || run.head_sha !== orchestratorHeadSha
   || run.event !== "workflow_dispatch"
   || run.head_branch !== "main"
   || run.repository?.full_name !== repository
   || run.head_repository?.full_name !== repository
 ) {
   throw new Error(`${workflow} run ${run.id} failed provenance or success checks`);
+}
+try {
+  assertPontoSourceClosureUnchanged(orchestratorHeadSha, String(run.head_sha || "").trim().toLowerCase());
+} catch {
+  throw new Error(`${workflow} run ${run.id} executed outside the immutable Ponto dependency closure`);
 }
 if (leaseKey && (
   String(run.id) !== persistedRunId

@@ -51,7 +51,7 @@ jobs:
     with:
       required: true
       global_lease_required: true
-      global_resource: release:ponto
+      global_resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
       global_module: ponto
       global_coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
       lease_key: production-baseline
@@ -89,14 +89,19 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && "$STAGING_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'Invalid baseline source/predecessor'; exit 1; }
           [[ "$ORCHESTRATOR_STAGE" == pilot ]] || { echo 'Production baseline is valid only inside the pilot coordinator'; exit 1; }
-          [[ "$GITHUB_SHA" == "$RELEASE_SHA" ]] || { echo 'Baseline workflow revision differs'; exit 1; }
-          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'Baseline checkout differs'; exit 1; }
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Baseline observed workflow revision is invalid'; exit 1; }
+          PONTO_RELEASE_SHA="$RELEASE_SHA" PONTO_OBSERVED_SHA="$GITHUB_SHA" node --input-type=module <<'NODE'
+          import { assertPontoSourceClosureUnchanged } from "./.github/scripts/ponto-source-closure.mjs";
+          assertPontoSourceClosureUnchanged(process.env.PONTO_RELEASE_SHA, process.env.PONTO_OBSERVED_SHA);
+          NODE
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Baseline checkout differs from the observed workflow revision'; exit 1; }
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'Baseline SHA is not reachable from main'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-progressive-release.yml" > "$RUNNER_TEMP/staging-workflow.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_RUN_ID" > "$RUNNER_TEMP/staging-run.json"
-          node - "$RUNNER_TEMP/staging-workflow.json" "$RUNNER_TEMP/staging-run.json" <<'NODE'
-          const fs = require("fs");
+          node --input-type=module - "$RUNNER_TEMP/staging-workflow.json" "$RUNNER_TEMP/staging-run.json" <<'NODE'
+          import fs from "node:fs";
+          const { pontoSourceClosureMatches } = await import("./.github/scripts/ponto-source-closure.mjs");
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           if (
@@ -108,7 +113,7 @@ jobs:
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
-            || run.head_sha !== process.env.RELEASE_SHA
+            || !pontoSourceClosureMatches(process.env.RELEASE_SHA, String(run.head_sha || "").toLowerCase())
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
           ) throw new Error("baseline staging predecessor provenance is invalid");
@@ -139,7 +144,7 @@ jobs:
           coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           proof_b64: ${{ needs.orchestrator.outputs.global_proof_b64 }}
-          resource: release:ponto
+          resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
           module: ponto
           source_sha: ${{ inputs.release_sha }}
       - name: Verify exact cataloged production Ponto Core bootstrap predecessor

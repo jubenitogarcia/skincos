@@ -232,6 +232,15 @@ async function main(args) {
       const source = sourceFor(args);
       const module = requiredArgument(args, "--module");
       const closure = closureFor(args, { module, source });
+      const candidateSource = argument(args, "--candidate-source");
+      if (candidateSource) {
+        const candidate = String(candidateSource).trim().toLowerCase();
+        if (!FULL_SHA.test(candidate)) throw new Error("global coordination candidate source must be a full commit SHA");
+        const candidateClosure = dependencyClosureForSource({ module, sourceCommit: candidate });
+        if (candidateClosure.digest !== closure.digest) {
+          throw new Error("a relevant dependency-closure input changed after the immutable release was selected");
+        }
+      }
       result = await checkGlobalLease({
         ...options,
         authorization: {

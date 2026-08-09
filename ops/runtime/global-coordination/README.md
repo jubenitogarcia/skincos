@@ -36,4 +36,8 @@ promotion, MCP gateway promotion, verified backup generation, Harmonia
 migration, Atendimento provisioning/control/migration and lifecycle service
 mutations. The Windows Orb backup publisher invokes
 `run-orb-backup-with-coordination.sh`; it does not start the systemd backup
-unit directly.
+unit directly. The scheduled bridge passes the private WSL environment-file
+reference plus a fixed scheduler owner identity. The default file is
+`/etc/skincos/global-coordination/orb-backup.env`, mode `0600` or `0640`, and
+may contain only the coordinator URL and shared secret names. It is never
+stored in the repository or copied to Windows.

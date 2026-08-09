@@ -6,6 +6,7 @@
 
 NATIVE_COORDINATION_SCRIPT_ROOT="${NATIVE_COORDINATION_SCRIPT_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)}"
 NATIVE_COORDINATION_ACQUIRED="${NATIVE_COORDINATION_ACQUIRED:-0}"
+NATIVE_COORDINATION_OWNED="${NATIVE_COORDINATION_OWNED:-0}"
 NATIVE_COORDINATION_LAST_RENEW="${NATIVE_COORDINATION_LAST_RENEW:-0}"
 
 native_coordination_init() {
@@ -19,6 +20,11 @@ native_coordination_init() {
   NATIVE_COORDINATION_CLOSURE="$4"
   NATIVE_COORDINATION_OPERATION="${5:-mutation}"
   NATIVE_COORDINATION_IDENTITY_FILE="${6:-}"
+  NATIVE_COORDINATION_REUSE="${SKINCOS_GLOBAL_COORDINATION_REUSE:-0}"
+  if [[ "$NATIVE_COORDINATION_REUSE" == '1' && -z "${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-}" ]]; then
+    echo 'Reusing global coordination custody requires an explicit proof file.' >&2
+    return 78
+  fi
 
   [[ "$NATIVE_COORDINATION_SOURCE" =~ ^[0-9a-f]{40}$ ]] || {
     echo 'Native coordination source must be a full lowercase SHA.' >&2
@@ -62,6 +68,7 @@ native_coordination_init() {
   NATIVE_COORDINATION_PROOF_FILE="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-$proof_root/$proof_name.json}"
   export SKINCOS_GLOBAL_COORDINATION_PROOF_FILE="$NATIVE_COORDINATION_PROOF_FILE"
   NATIVE_COORDINATION_ACQUIRED=0
+  NATIVE_COORDINATION_OWNED=0
   NATIVE_COORDINATION_LAST_RENEW="$(date +%s)"
 }
 
@@ -72,6 +79,13 @@ native_coordination_run() {
 
 native_coordination_acquire() {
   local idempotency_key="${1:-native:${NATIVE_COORDINATION_RESOURCE}:${NATIVE_COORDINATION_SOURCE}:$$}"
+  if [[ "${NATIVE_COORDINATION_REUSE:-0}" == '1' ]]; then
+    native_coordination_check
+    NATIVE_COORDINATION_ACQUIRED=1
+    NATIVE_COORDINATION_OWNED=0
+    NATIVE_COORDINATION_LAST_RENEW="$(date +%s)"
+    return 0
+  fi
   local args=(
     acquire
     --resource "$NATIVE_COORDINATION_RESOURCE"
@@ -86,6 +100,7 @@ native_coordination_acquire() {
   fi
   native_coordination_run "${args[@]}" >/dev/null
   NATIVE_COORDINATION_ACQUIRED=1
+  NATIVE_COORDINATION_OWNED=1
   NATIVE_COORDINATION_LAST_RENEW="$(date +%s)"
 }
 
@@ -107,11 +122,12 @@ native_coordination_renew_if_due() {
 }
 
 native_coordination_release() {
-  if [[ "${NATIVE_COORDINATION_ACQUIRED:-0}" != 1 ]]; then
+  if [[ "${NATIVE_COORDINATION_ACQUIRED:-0}" != 1 || "${NATIVE_COORDINATION_OWNED:-0}" != 1 ]]; then
     return 0
   fi
   native_coordination_run release >/dev/null
   NATIVE_COORDINATION_ACQUIRED=0
+  NATIVE_COORDINATION_OWNED=0
 }
 
 native_coordination_cleanup() {

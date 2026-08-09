@@ -20,6 +20,7 @@ CRM_NPM_CACHE="${CRM_NPM_CACHE:-/var/lib/skincos-runtime/cache/crm-api}"
 COORDINATION_PROOF_FILE="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-}"
 coordination_acquired=0
 release_identity_file=''
+native_runtime_identity_file=''
 APPLY=0
 STAGE_ONLY=0
 
@@ -149,7 +150,8 @@ actual_archive_sha256="$(sha256sum "$RELEASE_ARCHIVE" | awk '{print $1}')"
 actual_lineage_sha256="$(sha256sum "$RELEASE_LINEAGE" | awk '{print $1}')"
 [[ "${actual_lineage_sha256,,}" == "${RELEASE_LINEAGE_SHA256,,}" ]] || { echo 'Source lineage checksum mismatch.' >&2; exit 1; }
 release_identity_file="$(mktemp /tmp/skincos-native-release-identity.XXXXXX)"
-cleanup_identity() { rm -f -- "$release_identity_file"; }
+native_runtime_identity_file="$(mktemp /tmp/skincos-native-runtime-release-identity.XXXXXX)"
+cleanup_identity() { rm -f -- "$release_identity_file" "$native_runtime_identity_file"; }
 trap cleanup_identity EXIT INT TERM
 node - "$coordination_orb_closure" "$RELEASE_ID" "${RELEASE_ARCHIVE_SHA256,,}" > "$release_identity_file" <<'NODE'
 const fs = require('fs');
@@ -158,6 +160,20 @@ const closure = JSON.parse(fs.readFileSync(closureFile, 'utf8'));
 const identity = {
   schemaVersion: 1,
   module: 'orb',
+  sourceCommit: String(closure.sourceCommit).toLowerCase(),
+  sourceTree: String(closure.sourceTree).toLowerCase(),
+  dependencyClosureDigest: String(closure.digest).toLowerCase(),
+  artifacts: [{ name: 'native-source-archive', id: `native-source:${releaseId}`, digest: archiveDigest }],
+};
+process.stdout.write(`${JSON.stringify(identity, null, 2)}\n`);
+NODE
+node - "$coordination_native_runtime_closure" "$RELEASE_ID" "${RELEASE_ARCHIVE_SHA256,,}" > "$native_runtime_identity_file" <<'NODE'
+const fs = require('fs');
+const [closureFile, releaseId, archiveDigest] = process.argv.slice(2);
+const closure = JSON.parse(fs.readFileSync(closureFile, 'utf8'));
+const identity = {
+  schemaVersion: 1,
+  module: 'native-runtime',
   sourceCommit: String(closure.sourceCommit).toLowerCase(),
   sourceTree: String(closure.sourceTree).toLowerCase(),
   dependencyClosureDigest: String(closure.digest).toLowerCase(),
@@ -208,8 +224,8 @@ cleanup_all() {
     coordination_run release >/dev/null 2>&1 || echo 'Unable to release the mini-PC Orb staging lease; it will expire fail-closed.' >&2
     coordination_acquired=0
   fi
-  if [[ -n "$release_identity_file" ]]; then
-    rm -f -- "$release_identity_file"
+  if [[ -n "$release_identity_file" || -n "$native_runtime_identity_file" ]]; then
+    rm -f -- "$release_identity_file" "$native_runtime_identity_file"
   fi
 }
 trap cleanup_all EXIT INT TERM
@@ -239,6 +255,8 @@ NODE
 done
 coordination_check
 sudo -n install -m 0640 "$release_identity_file" "$STAGING/.skincos-release-identity-orb.json"
+coordination_check
+sudo -n install -m 0640 "$native_runtime_identity_file" "$STAGING/.skincos-release-identity-native-runtime.json"
 coordination_check
 sudo -n chown -R root:skincos "$STAGING"
 coordination_check

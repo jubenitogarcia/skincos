@@ -17,7 +17,9 @@ test("Cloudflare adapter uses one SQLite Durable Object per normalized lock scop
 test("remote custody is mandatory and the adapter has no local fallback", () => {
   assert.match(source, /COORDINATION_SHARED_SECRET/);
   assert.match(source, /coordination authority custody is unavailable/);
-  assert.match(source, /return bad\(message, message\.includes\("unavailable"\) \? 503 : 401\)/);
+  assert.match(source, /return bad\("coordination authority custody is unavailable", 503\)/);
+  assert.match(source, /coordination request rejected/);
+  assert.match(source, /coordination request could not be processed/);
   assert.doesNotMatch(source, /in-memory fallback|local fallback|allowWithout/);
   assert.match(source, /authorizeMutation/);
   assert.match(source, /input\.authorization/);

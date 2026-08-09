@@ -19,6 +19,9 @@ inputs:
   source_sha:
     description: Exact source commit whose dependency closure is observed
     required: true
+  observed_source_sha:
+    description: Optional explicit current-main source commit used for the observed closure
+    required: false
   enabled:
     description: Repository-level activation switch
     required: true
@@ -42,6 +45,7 @@ runs:
         GLOBAL_RESOURCE: ${{ inputs.resource }}
         GLOBAL_MODULE: ${{ inputs.module }}
         GLOBAL_SOURCE_SHA: ${{ inputs.source_sha }}
+        GLOBAL_OBSERVED_SOURCE_SHA: ${{ inputs.observed_source_sha }}
         GLOBAL_ENABLED: ${{ inputs.enabled }}
         GLOBAL_PROOF_FILE: ${{ runner.temp }}/skincos-global-coordination-proof-check.json
       run: |
@@ -49,6 +53,16 @@ runs:
         [[ "$GLOBAL_ENABLED" == true ]] || { echo 'Global coordination is not active'; exit 1; }
         [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" && -n "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" ]] || { echo 'Global coordination custody is unavailable'; exit 1; }
         [[ "$GLOBAL_SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Global coordination source SHA is invalid'; exit 1; }
+        if [[ -z "$GLOBAL_OBSERVED_SOURCE_SHA" ]]; then
+          git fetch --no-tags --force origin main:refs/remotes/origin/main
+          GLOBAL_OBSERVED_SOURCE_SHA="$(git rev-parse refs/remotes/origin/main)"
+        fi
+        [[ "$GLOBAL_OBSERVED_SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Observed main source SHA is invalid'; exit 1; }
+        if ! git cat-file -e "${GLOBAL_SOURCE_SHA}^{commit}" 2>/dev/null; then
+          git fetch --no-tags origin "$GLOBAL_SOURCE_SHA"
+        fi
+        git cat-file -e "${GLOBAL_SOURCE_SHA}^{commit}"
+        git cat-file -e "${GLOBAL_OBSERVED_SOURCE_SHA}^{commit}"
         if [[ -n "${GLOBAL_PROOF_FILE_INPUT:-}" ]]; then
           GLOBAL_PROOF_FILE="$GLOBAL_PROOF_FILE_INPUT"
         else
@@ -66,4 +80,5 @@ runs:
             --proof-file "$GLOBAL_PROOF_FILE" \
             --resource "$GLOBAL_RESOURCE" \
             --module "$GLOBAL_MODULE" \
-            --source "$GLOBAL_SOURCE_SHA"
+            --source "$GLOBAL_OBSERVED_SOURCE_SHA" \
+            --candidate-source "$GLOBAL_SOURCE_SHA"

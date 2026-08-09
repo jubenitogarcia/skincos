@@ -14,13 +14,11 @@ export const readGitHubResponse = (response) => (
 export function isCorrelatedChild(run, {
   repository,
   orchestratorRunId,
-  orchestratorHeadSha,
 }) {
   const titleMatch = CORRELATED_TITLE_SUFFIX.exec(String(run?.display_title || ""));
   return String(run?.id || "") !== String(orchestratorRunId)
     && run?.event === "workflow_dispatch"
     && run?.head_branch === "main"
-    && String(run?.head_sha || "").toLowerCase() === orchestratorHeadSha
     && run?.repository?.full_name === repository
     && titleMatch?.[1] === String(orchestratorRunId)
     && String(run?.path || "").startsWith(".github/workflows/");

@@ -93,7 +93,15 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto release SHA is invalid'; exit 1; }
           [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto gate must execute from main'; exit 1; }
-          [[ "$GITHUB_SHA" == "$RELEASE_SHA" ]] || { echo 'Ponto gate source differs from the coordinator SHA'; exit 1; }
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto gate observed source SHA is invalid'; exit 1; }
+          if ! git cat-file -e "$RELEASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "$RELEASE_SHA"
+          fi
+          git cat-file -e "$RELEASE_SHA^{commit}" || { echo 'Ponto release source cannot be attested locally'; exit 1; }
+          PONTO_RELEASE_SHA="$RELEASE_SHA" PONTO_OBSERVED_SHA="$GITHUB_SHA" node --input-type=module <<'NODE'
+          import { assertPontoSourceClosureUnchanged } from "./.github/scripts/ponto-source-closure.mjs";
+          assertPontoSourceClosureUnchanged(process.env.PONTO_RELEASE_SHA, process.env.PONTO_OBSERVED_SHA);
+          NODE
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Ponto gate checkout is not the trusted workflow revision'; exit 1; }
       - name: Revalidate protected target environment before consuming authority
         if: ${{ inputs.required }}
