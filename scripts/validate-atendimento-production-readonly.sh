@@ -47,6 +47,7 @@ readonly RELEASE_ROOT="$RELEASE_BASE/$RELEASE_SHA/source"
 readonly SMOKE="$RELEASE_ROOT/crm/api/scripts/atendimento-production-signed-smoke.mjs"
 readonly CONTROL_VALIDATOR="$RELEASE_ROOT/crm/api/scripts/validate-atendimento-production-control.mjs"
 readonly RUNTIME_GRANT_LOCKDOWN="$RELEASE_ROOT/scripts/lockdown-atendimento-production-runtime.sh"
+readonly PRODUCTION_DEFERRAL_RELATION='crm_atendimento.production_migration_deferrals'
 
 for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/curl /usr/bin/psql /usr/bin/ss /usr/bin/systemctl /usr/bin/node /usr/bin/test /usr/bin/grep /usr/bin/awk /usr/bin/bash; do
   [[ -x "$command_path" ]] || { echo "Missing required command: $command_path" >&2; exit 1; }
@@ -59,6 +60,14 @@ run_sudo_clean /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Production 
 run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 run_sudo_clean /usr/bin/systemctl is-active --quiet "$SERVICE" || { echo "Service is not active: $SERVICE" >&2; exit 1; }
+
+# Source-dependent commercial migrations are deliberately deferred in the
+# dedicated production database.  Readiness is still valid for the core and
+# clinical read-only runtime, but only when the durable deferral journal and
+# the independent clinical/policy tables exist.  The commercial mount remains
+# blocked before the shared router and no Caixa/Harmonia privilege is reopened.
+source_contract="$(run_postgres_clean /usr/bin/psql --dbname="$DATABASE" --set=ON_ERROR_STOP=1 --tuples-only --no-align --command "select (to_regclass('crm_atendimento.schema_migrations') is not null and to_regclass('crm_atendimento.commercial_policy_config') is not null and to_regclass('$PRODUCTION_DEFERRAL_RELATION') is not null and to_regclass('clinical_approval.rules') is not null);")"
+[[ "$source_contract" == 't' ]] || { echo 'Core/clinical production schema contract is incomplete.' >&2; exit 1; }
 
 snapshot_protected_services() {
   local service main_pid started_at
@@ -85,21 +94,30 @@ health_status="$(/usr/bin/curl --noproxy '*' -sS --max-time 10 -o /dev/null -w '
 
 # These checks contain only role names and booleans. The grant lockdown above
 # proves the complete effective read-only/PII contract before this narrower
-# schema assertion is evaluated.
-run_postgres_clean /usr/bin/psql --dbname="$DATABASE" --set=ON_ERROR_STOP=1 --tuples-only --no-align <<SQL | while IFS='|' read -r role_name role_login readonly connect_ok schema_ok identity_select policy_select identity_insert schema_create database_create; do
+# schema assertion is evaluated. Identity/source tables are intentionally not
+# required here: their migrations are durably deferred until a source mirror
+# exists, and the runtime's commercial mount remains a fixed 503 boundary.
+run_postgres_clean /usr/bin/psql --dbname="$DATABASE" --set=ON_ERROR_STOP=1 --tuples-only --no-align <<SQL | while IFS='|' read -r role_name role_login readonly connect_ok schema_ok policy_select policy_insert deferral_table deferrals_recorded clinical_table schema_create database_create; do
 select r.rolname,
        r.rolcanlogin,
        coalesce(array_to_string(r.rolconfig, ','), '') like '%default_transaction_read_only=on%',
        has_database_privilege(r.rolname, '$DATABASE', 'CONNECT'),
        has_schema_privilege(r.rolname, 'crm_atendimento', 'USAGE'),
-       has_table_privilege(r.rolname, 'crm_atendimento.global_client_identities', 'SELECT'),
        has_table_privilege(r.rolname, 'crm_atendimento.commercial_policy_config', 'SELECT'),
-       has_table_privilege(r.rolname, 'crm_atendimento.global_client_identities', 'INSERT'),
+       has_table_privilege(r.rolname, 'crm_atendimento.commercial_policy_config', 'INSERT'),
+       to_regclass('$PRODUCTION_DEFERRAL_RELATION') is not null,
+       exists (
+         select 1 from $PRODUCTION_DEFERRAL_RELATION d
+          where d.event_state = 'deferred'
+            and d.schema_migration_recorded = false
+            and d.reason_code = 'PRODUCTION_SOURCE_MIRROR_NOT_PROVISIONED'
+       ),
+       to_regclass('clinical_approval.rules') is not null,
        has_schema_privilege(r.rolname, 'crm_atendimento', 'CREATE'),
        has_database_privilege(r.rolname, '$DATABASE', 'CREATE')
   from pg_roles r where r.rolname = '$APP_ROLE';
 SQL
-  [[ "$role_name" == "$APP_ROLE" && "$role_login" == 't' && "$readonly" == 't' && "$connect_ok" == 't' && "$schema_ok" == 't' && "$identity_select" == 't' && "$policy_select" == 't' && "$identity_insert" == 'f' && "$schema_create" == 'f' && "$database_create" == 'f' ]] || {
+  [[ "$role_name" == "$APP_ROLE" && "$role_login" == 't' && "$readonly" == 't' && "$connect_ok" == 't' && "$schema_ok" == 't' && "$policy_select" == 't' && "$policy_insert" == 'f' && "$deferral_table" == 't' && "$deferrals_recorded" == 't' && "$clinical_table" == 't' && "$schema_create" == 'f' && "$database_create" == 'f' ]] || {
     echo 'Read-only database role contract is incomplete.' >&2
     exit 1
   }

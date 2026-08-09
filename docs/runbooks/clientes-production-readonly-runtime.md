@@ -13,7 +13,7 @@ desligadas e sem canário.
 | Processo | `crm-atendimento-{staging,production}.service` executa somente `crm/api/server/atendimentoRuntime.js`; ele não importa `server.js` nem workers Harmonia. |
 | Bind | Loopback apenas: staging `127.0.0.1:8111`, produção `127.0.0.1:8110`. |
 | Liveness | `GET /health` e `GET /api/atendimento/health` respondem `200` sem consultar PostgreSQL e sem PII. |
-| Readiness | `GET /internal/readiness` requer loopback e `x-atendimento-readiness-token`; responde `503` se controle, replay, banco, role, schema, fonte ou aprovação clínica falharem. |
+| Readiness | `GET /internal/readiness` requer loopback e `x-atendimento-readiness-token`; produção pode responder `200` com o journal de deferências íntegro quando apenas fontes comerciais ainda não foram espelhadas. Controle, replay, banco, role, schema-base, política e aprovação clínica continuam obrigatórios; `/commercial/*` permanece `503`. |
 | Dados | Produção usa `skincos_clientes_production`, `skincos_clientes_ro` (somente leitura) e `skincos_clientes_migrator_login` (migration separada). O app não recebe grant de contatos brutos Harmonia/Caixa. |
 | Escritas | O gateway e o processo aceitam somente `GET`, `HEAD` e `OPTIONS`; qualquer outro método retorna `405 READ_ONLY_RUNTIME`. |
 | Controle | O JSON local exige `readOnly:true`, `commercialContactWritesEnabled:false`, `syntheticOnly:true` e SHA exato antes de ficar `active` ou `canary`. |
@@ -31,6 +31,7 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
 | `CRM_ATENDIMENTO_READ_ONLY` | `true` (fixado na unidade) |
 | `CRM_ATENDIMENTO_CLIENTES_ONLY` | `true` (fixado na unidade) |
 | `CRM_ATENDIMENTO_COMMERCIAL_WRITES_ENABLED` | `false` (fixado na unidade) |
+| `CRM_ATENDIMENTO_COMMERCIAL_SOURCE_DEFERRED` | `true` somente na unidade de produção enquanto as fontes Caixa/Harmonia não forem provisionadas; não libera nenhuma rota Comercial |
 | `HARMONIA_WORKER_ENABLED` | `false` (fixado na unidade) |
 | `WA_BOOTSTRAP_SYNC_ENABLED` | `false` (fixado na unidade) |
 | `commercialContactWritesEnabled` | `false` (arquivo de controle) |
