@@ -46,6 +46,31 @@ const scenarios = [
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const assert = (condition, message) => { if (!condition) throw new Error(message) }
+const writeReport = (report) => {
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true })
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+}
+const navigationSnapshot = async (page) => page.evaluate(() => ({
+  url: window.location.href,
+  readyState: document.readyState,
+  activeModule: localStorage.getItem('app.activeModule'),
+  modules: [...document.querySelectorAll('[data-module-nav="true"]')].map((node) => ({
+    key: node.getAttribute('data-module-key'),
+    label: node.getAttribute('data-module-label'),
+    active: node.getAttribute('data-module-active'),
+    disabled: node.hasAttribute('disabled'),
+  })),
+})).catch(() => ({ url: page.url(), modules: [] }))
+const clickInsumosNavigation = async (page, scenarioId) => {
+  const button = page.locator('[data-module-nav="true"][data-module-key="insumos"]').first()
+  try {
+    await button.waitFor({ state: 'visible', timeout: 30_000 })
+    await button.click({ timeout: 30_000 })
+  } catch (error) {
+    const snapshot = await navigationSnapshot(page)
+    throw new Error(`${scenarioId}: Insumos navigation was not ready (${JSON.stringify(snapshot)}): ${String(error?.message || error)}`)
+  }
+}
 // All callers pass only literal relative API paths defined in this file; the
 // browser remains pinned to the validated immutable staging origin above.
 // nosemgrep: playwright-evaluate-arg-injection -- fixed relative route set on validated staging origin
@@ -114,10 +139,14 @@ async function runScenario(browser, config) {
       assert(JSON.stringify(visibleIds) === JSON.stringify(expectedTeamMemberIds(config)), `${config.fixture.id}: Users/Equipe unit visibility mismatch`)
     }
 
-    // nosemgrep: playwright-goto-injection -- constant query on validated staging origin
-    await page.goto(`${base.toString()}?insumos=1`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
-    const insumosButton = page.getByRole('button', { name: 'Insumos', exact: true }).first()
-    await insumosButton.click({ timeout: 20_000 })
+    // Use the canonical module route so the smoke exercises the same URL that
+    // the console writes after a real sidebar selection. The readiness wait
+    // prevents a slow BootGate from becoming an opaque locator timeout.
+    const insumosUrl = new URL(base.origin)
+    insumosUrl.searchParams.set('module', 'insumos')
+    // nosemgrep: playwright-goto-injection -- immutable origin and literal module query
+    await page.goto(insumosUrl.toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await clickInsumosNavigation(page, config.fixture.id)
     if (config.noUnit) {
       await page.getByText(/ainda não possui uma unidade autorizada/i).waitFor({ state: 'visible', timeout: 20_000 })
       await sleep(1200)
@@ -150,7 +179,7 @@ async function runScenario(browser, config) {
       // nosemgrep: playwright-evaluate-arg-injection -- switchTo is a canonical literal from scenarios above
       await page.evaluate((unit) => localStorage.setItem('skincos.insumos.unidade.v1', unit), config.switchTo)
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
-      await page.getByRole('button', { name: 'Insumos', exact: true }).first().click({ timeout: 20_000 })
+      await clickInsumosNavigation(page, config.fixture.id)
       await page.waitForFunction((unit) => localStorage.getItem('skincos.insumos.unidade.v1') === unit, config.switchTo, { timeout: 20_000 })
     }
     await sleep(1500)
@@ -163,18 +192,27 @@ async function runScenario(browser, config) {
 
 async function main() {
   const browser = await chromium.launch({ headless: true, args: ['--disable-dev-shm-usage', '--disable-gpu'] })
+  const results = []
+  let pagesHealth = null
+  let inventoryHealth = null
   try {
     const healthContext = await browser.newContext()
     const healthPage = await healthContext.newPage()
     // nosemgrep: playwright-goto-injection -- base is restricted to skincos-staging.pages.dev above
     await healthPage.goto(base.toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
-    const pagesHealth = await api(healthPage, '/api/health')
+    pagesHealth = await api(healthPage, '/api/health')
     assert(pagesHealth.status === 200 && pagesHealth.json?.service === 'crm-pages', 'CRM Pages health failed')
-    const inventoryHealth = await api(healthPage, '/api/insumos/health')
+    inventoryHealth = await api(healthPage, '/api/insumos/health')
     assert(inventoryHealth.status === 200 && inventoryHealth.json?.service === 'insumos' && inventoryHealth.json?.ready === true, 'Inventory staging health/readiness failed')
     await healthContext.close()
-    const results = []
-    for (const scenario of scenarios) results.push(await runScenario(browser, scenario))
+    for (const scenario of scenarios) {
+      try {
+        results.push(await runScenario(browser, scenario))
+      } catch (error) {
+        results.push({ id: scenario.fixture.id, result: 'failed' })
+        throw error
+      }
+    }
     const report = {
       schemaVersion: 1,
       environment: 'staging',
@@ -185,9 +223,21 @@ async function main() {
       scenarios: results,
       credentialsIncluded: false,
     }
-    fs.mkdirSync(path.dirname(reportPath), { recursive: true })
-    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+    writeReport(report)
     console.log(JSON.stringify({ environment: report.environment, origin: report.origin, scenarioResults: results.map(({ id, result }) => ({ id, result })), credentialsIncluded: false }))
+  } catch (error) {
+    writeReport({
+      schemaVersion: 1,
+      environment: 'staging',
+      origin: base.origin,
+      at: new Date().toISOString(),
+      pagesHealth: pagesHealth?.status ?? null,
+      inventoryHealth: inventoryHealth?.status ?? null,
+      scenarios: results,
+      credentialsIncluded: false,
+      failure: { name: String(error?.name || 'Error'), message: String(error?.message || error) },
+    })
+    throw error
   } finally {
     await browser.close()
   }
