@@ -129,6 +129,8 @@ async function runScenario(browser, config) {
     const teamValidation = { configStatus: teamConfig.status, listStatus: null, visibleMembers: null, denied: Boolean(config.teamDenied) }
     if (config.teamDenied) {
       assert(teamConfig.status === 403, `${config.fixture.id}: Consultor must be denied Users/Equipe access, got ${teamConfig.status}`)
+      assertRequestBounds()
+      return { id: config.fixture.id, result: 'team-denied', scopes, requests, team: teamValidation }
     } else {
       assert(teamConfig.status === 200 && teamConfig.json?.data?.enabled === true && teamConfig.json?.data?.legacyEscalaEditor === false, `${config.fixture.id}: unified Users/Equipe config failed (${teamConfig.status})`)
       const teamList = await api(page, `/api/crm/admin/team?status=ACTIVE&q=${encodeURIComponent(fixture.prefix)}`)
