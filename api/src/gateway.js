@@ -8,6 +8,11 @@ const isOperationalProbe = (request) => request.method === 'GET' && ['/health', 
 const FINANCE_PROBE_TIMEOUT_MS = 3_000;
 const FINANCE_READ_TIMEOUT_MS = 3_000;
 const FINANCE_WRITE_TIMEOUT_MS = 5_000;
+// Inventory's authenticated routes traverse the service's rate-limiter
+// Durable Object before reaching D1. Keep this bounded, but above the public
+// probe budget so normal cold-start latency is not turned into a fabricated
+// 503 by the Core gateway.
+const INVENTORY_READ_TIMEOUT_MS = 3_000;
 const CLOUDFLARE_VERSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NETWORK_CONTEXT_RE = /^v1:[A-Za-z0-9_-]{43}$/;
 const B64URL_SHA256_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -134,7 +139,7 @@ export function createApiGateway({ inventoryHandler, timekeepingHandler, finance
 export { createGatewayHandler } from './router.js';
 
 export const handleGatewayRequest = createApiGateway({
-    inventoryHandler: (request, env) => fetchBoundService(request, env, 'INVENTORY', { timeoutMs: 800 }),
+    inventoryHandler: (request, env) => fetchBoundService(request, env, 'INVENTORY', { timeoutMs: INVENTORY_READ_TIMEOUT_MS }),
     timekeepingHandler: (request, env) => fetchBoundService(request, env, 'TIMEKEEPING', { timeoutMs: 800 }),
     financeDomainHandler: forwardFinanceToService,
 });
