@@ -18,8 +18,16 @@ const reportPath = String(process.env.INSUMOS_STAGING_REPORT_FILE || '')
 if (!fixturePath || !reportPath) throw new Error('private fixture and sanitised report paths are required')
 const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'))
 if (fixture?.environment !== 'staging' || !Array.isArray(fixture?.scenarios)) throw new Error('staging fixture is invalid')
+if (!Array.isArray(fixture.teamMembers) || fixture.teamMembers.length !== 3) throw new Error('staging team fixture is invalid')
 
 const canonical = ['novo-hamburgo', 'barra-shopping-sul']
+const expectedTeamMemberIds = (config) => {
+  const allowed = new Set(config.fixture.expectedUnits)
+  return fixture.teamMembers
+    .filter((member) => config.admin || member.units.some((unit) => allowed.has(unit)))
+    .map((member) => String(member.onboardingId))
+    .sort()
+}
 const byId = (id) => fixture.scenarios.find((scenario) => scenario.id === id)
 const requireScenario = (id) => {
   const scenario = byId(id)
@@ -32,6 +40,7 @@ const scenarios = [
   { fixture: requireScenario('both'), staleUnit: 'unidade-proibida', expectedUnit: 'novo-hamburgo', requestUnits: canonical, switchTo: 'barra-shopping-sul' },
   { fixture: requireScenario('empty'), staleUnit: 'novo-hamburgo', expectedUnit: '', requestUnits: [], noUnit: true },
   { fixture: requireScenario('admin'), staleUnit: 'unidade-proibida', expectedUnit: 'novo-hamburgo', requestUnits: canonical, admin: true },
+  { fixture: requireScenario('consultor'), staleUnit: 'barra-shopping-sul', expectedUnit: 'novo-hamburgo', requestUnits: ['novo-hamburgo'], teamDenied: true },
   { fixture: requireScenario('alias'), staleUnit: 'barra-shopping-sul', expectedUnit: 'novo-hamburgo', requestUnits: ['novo-hamburgo'], alias: true },
 ]
 
@@ -49,7 +58,7 @@ const api = async (page, pathname, init = {}) => page.evaluate(async ({ pathname
 }, { pathname, init })
 
 async function runScenario(browser, config) {
-  const requests = { authMe: 0, insumosMe: 0, health: 0, data: [] }
+  const requests = { authMe: 0, insumosMe: 0, health: 0, team: 0, data: [] }
   const context = await browser.newContext({ viewport: { width: 1365, height: 860 } })
   await context.addInitScript((staleUnit) => {
     // addInitScript runs for every document, including reloads used to verify a
@@ -60,11 +69,13 @@ async function runScenario(browser, config) {
     if (!localStorage.getItem('app.activeModule')) localStorage.setItem('app.activeModule', 'insumos')
   }, config.staleUnit)
   const page = await context.newPage()
+  const assertRequestBounds = () => assert(requests.authMe <= 4 && requests.insumosMe <= 4 && requests.health <= 4 && requests.team <= 4, `${config.fixture.id}: request storm detected`)
   page.on('request', (request) => {
     const pathname = new URL(request.url()).pathname
     if (pathname === '/api/auth/me') requests.authMe += 1
     if (pathname === '/api/insumos/auth/me') requests.insumosMe += 1
     if (pathname === '/api/insumos/health') requests.health += 1
+    if (pathname.startsWith('/api/crm/admin/team')) requests.team += 1
     if (pathname.startsWith('/api/insumos/') && !['/api/insumos/auth/me', '/api/insumos/health', '/api/insumos/_proxy-status', '/api/insumos/prefs'].includes(pathname)) {
       // This is a fixed same-origin route path and query only; it deliberately
       // excludes headers, bodies, credentials and response content.
@@ -89,6 +100,20 @@ async function runScenario(browser, config) {
     assert(JSON.stringify(scopes) === JSON.stringify(config.fixture.expectedUnits), `${config.fixture.id}: unexpected unit scopes`)
     if (config.alias) assert(JSON.stringify(scopes) === JSON.stringify(['novo-hamburgo']), 'alias did not normalize exclusively to Novo Hamburgo')
 
+    const teamConfig = await api(page, '/api/crm/admin/team?mode=config')
+    const teamValidation = { configStatus: teamConfig.status, listStatus: null, visibleMembers: null, denied: Boolean(config.teamDenied) }
+    if (config.teamDenied) {
+      assert(teamConfig.status === 403, `${config.fixture.id}: Consultor must be denied Users/Equipe access, got ${teamConfig.status}`)
+    } else {
+      assert(teamConfig.status === 200 && teamConfig.json?.data?.enabled === true && teamConfig.json?.data?.legacyEscalaEditor === false, `${config.fixture.id}: unified Users/Equipe config failed (${teamConfig.status})`)
+      const teamList = await api(page, `/api/crm/admin/team?status=ACTIVE&q=${encodeURIComponent(fixture.prefix)}`)
+      const visibleIds = Array.isArray(teamList.json?.data) ? teamList.json.data.map((member) => String(member.id || '')).sort() : []
+      teamValidation.listStatus = teamList.status
+      teamValidation.visibleMembers = visibleIds.length
+      assert(teamList.status === 200 && Array.isArray(teamList.json?.data), `${config.fixture.id}: Users/Equipe list failed (${teamList.status})`)
+      assert(JSON.stringify(visibleIds) === JSON.stringify(expectedTeamMemberIds(config)), `${config.fixture.id}: Users/Equipe unit visibility mismatch`)
+    }
+
     // nosemgrep: playwright-goto-injection -- constant query on validated staging origin
     await page.goto(`${base.toString()}?insumos=1`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
     const insumosButton = page.getByRole('button', { name: 'Insumos', exact: true }).first()
@@ -99,7 +124,8 @@ async function runScenario(browser, config) {
       assert(requests.data.length === 0, `empty scope issued Insumos data requests: ${[...new Set(requests.data)].join(', ')}`)
       const stored = await page.evaluate(() => localStorage.getItem('skincos.insumos.unidade.v1'))
       assert(stored === null, 'empty scope retained a unit in localStorage')
-      return { id: config.fixture.id, result: 'denied-no-unit', scopes, requests }
+      assertRequestBounds()
+      return { id: config.fixture.id, result: 'denied-no-unit', scopes, requests, team: teamValidation }
     }
 
     await page.waitForFunction((expectedUnit) => localStorage.getItem('skincos.insumos.unidade.v1') === expectedUnit, config.expectedUnit, { timeout: 20_000 })
@@ -128,8 +154,8 @@ async function runScenario(browser, config) {
       await page.waitForFunction((unit) => localStorage.getItem('skincos.insumos.unidade.v1') === unit, config.switchTo, { timeout: 20_000 })
     }
     await sleep(1500)
-    assert(requests.authMe <= 4 && requests.insumosMe <= 4 && requests.health <= 4, `${config.fixture.id}: request storm detected`)
-    return { id: config.fixture.id, result: 'authorized', scopes, requests, switched: Boolean(config.switchTo) }
+    assertRequestBounds()
+    return { id: config.fixture.id, result: 'authorized', scopes, requests, team: teamValidation, switched: Boolean(config.switchTo) }
   } finally {
     await context.close()
   }
