@@ -475,6 +475,7 @@ test('release, rollback and tunnel paths are immutable, fixed and isolated', () 
   assert.match(tunnel, /mktemp \/tmp\/atendimento-production-tunnel-unit\.XXXXXX\.service/)
   assert.match(dns, /dns_change=false/)
   assert.match(read('ops/runtime/units/cloudflare-atendimento-production.service'), /ExecStart=\/usr\/bin\/cloudflared/)
+  assert.match(read('ops/runtime/units/cloudflare-atendimento-production.service'), /ReadWritePaths=__LOG_ROOT__\n/)
 })
 
 test('production validation invokes only loopback health plus the fixed signed smoke', () => {
