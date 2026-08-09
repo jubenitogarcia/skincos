@@ -4,6 +4,7 @@ import { COMMERCIAL_ANALYTICS_MIGRATION_ID } from './commercialAnalytics.js'
 const RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.LOCAL]: 'skincos',
     [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
+    [ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION]: 'skincos_clientes_ro',
 })
 
 export const COMMERCIAL_ANALYTICS_PREREQUISITE_RELATIONS = Object.freeze([

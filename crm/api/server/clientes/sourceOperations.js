@@ -255,7 +255,7 @@ export function createClientesSourceOperationsRunner({
     clock = () => new Date(),
 } = {}) {
     if (!store || typeof store.withSourceLock !== 'function') throw sourceError('SOURCE_OPERATIONS_STORE_REQUIRED', false, 500)
-    if (!['local', 'staging'].includes(String(target))) throw sourceError('SOURCE_OPERATIONS_TARGET_UNSAFE', false, 400)
+    if (!['local', 'staging', 'production'].includes(String(target))) throw sourceError('SOURCE_OPERATIONS_TARGET_UNSAFE', false, 400)
     const byId = new Map(catalog.map((source) => [source.id, source]))
     const active = new Set()
 

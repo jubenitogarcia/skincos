@@ -24,6 +24,7 @@ readonly APP_ROLE='skincos_clientes_ro'
 readonly SERVICE='crm-atendimento-production.service'
 readonly CONFIG_DIR='/etc/skincos'
 readonly ATENDIMENTO_CONFIG='/etc/skincos/crm-clientes-production-readonly.env'
+readonly MIGRATOR_CONFIG='/etc/skincos/crm-clientes-production-migrator.env'
 readonly CONTROL_DIR='/etc/skincos/atendimento-production'
 readonly CONTROL_FILE='/etc/skincos/atendimento-production/module-control.json'
 readonly STATE_ROOT='/var/lib/skincos-runtime/crm-atendimento-production'
@@ -32,6 +33,7 @@ readonly BACKUP_ROOT='/var/backups/skincos/clientes/production-readonly'
 readonly PORT='8110'
 readonly SCRIPT_DIR="$(cd -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")" && /usr/bin/pwd -P)"
 readonly RUNTIME_GRANT_LOCKDOWN="$SCRIPT_DIR/lockdown-atendimento-production-runtime.sh"
+readonly BACKUP_SCRIPT="$SCRIPT_DIR/backup-atendimento-production.sh"
 
 ACTION="${1:-}"
 case "$ACTION" in
@@ -44,6 +46,7 @@ for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/openssl /usr/bin/install
 done
 run_sudo_clean /usr/bin/true
 [[ -x "$RUNTIME_GRANT_LOCKDOWN" ]] || { echo 'Production runtime grant lockdown is unavailable.' >&2; exit 78; }
+[[ -x "$BACKUP_SCRIPT" ]] || { echo 'Production backup helper is unavailable.' >&2; exit 78; }
 
 database_exists() {
   run_postgres_clean /usr/bin/psql --dbname=postgres --tuples-only --no-align --set=ON_ERROR_STOP=1 \
@@ -53,12 +56,14 @@ database_exists() {
 backup=''
 backup_created=0
 tmp_env=''
+tmp_migrator=''
 tmp_control=''
 cleanup_partial_artifacts() {
   if [[ "$backup_created" == '1' && -n "$backup" ]]; then
     run_sudo_clean /usr/bin/rm -f -- "$backup" || true
   fi
   [[ -z "$tmp_env" ]] || /usr/bin/rm -f -- "$tmp_env"
+  [[ -z "$tmp_migrator" ]] || /usr/bin/rm -f -- "$tmp_migrator"
   [[ -z "$tmp_control" ]] || /usr/bin/rm -f -- "$tmp_control"
 }
 trap cleanup_partial_artifacts EXIT
@@ -73,7 +78,7 @@ select 'database_exists=$exists';
 select 'role=' || rolname || ':login=' || rolcanlogin || ':read_only=' || coalesce(array_to_string(rolconfig, ','), '')
   from pg_roles where rolname in ('$OWNER_ROLE','$MIGRATOR_ROLE','$APP_ROLE') order by rolname;
 SQL
-  for target in "$ATENDIMENTO_CONFIG" "$CONTROL_FILE"; do
+  for target in "$ATENDIMENTO_CONFIG" "$MIGRATOR_CONFIG" "$CONTROL_FILE"; do
     if run_sudo_clean /usr/bin/test -f "$target"; then echo "present=$(/usr/bin/basename "$target")"; else echo "missing=$(/usr/bin/basename "$target")"; fi
   done
   printf 'service=%s database=%s app_role=%s migrator_role=%s port=%s loopback_only=true dry_run=true\n' "$SERVICE" "$DB_NAME" "$APP_ROLE" "$MIGRATOR_ROLE" "$PORT"
@@ -84,31 +89,26 @@ service_state="$(run_sudo_clean /usr/bin/systemctl is-active "$SERVICE" 2>/dev/n
 [[ "$service_state" == 'inactive' ]] || { echo 'Production provisioning requires the isolated runtime to be inactive.' >&2; exit 1; }
 
 stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
-run_sudo_clean /usr/bin/install -d -m 0750 -o root -g postgres "$BACKUP_ROOT"
+run_sudo_clean /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
 if [[ "$(database_exists)" == 't' ]]; then
-  backup="$(run_sudo_clean /usr/bin/mktemp "$BACKUP_ROOT/$stamp-$DB_NAME-preapply.XXXXXX.dump")"
-  if [[ ! "$backup" =~ ^/var/backups/skincos/clientes/production-readonly/[0-9]{8}T[0-9]{6}Z-skincos_clientes_production-preapply\.[A-Za-z0-9]{6}\.dump$ ]]; then
-    echo 'Backup output path was not generated from the fixed contract.' >&2
-    exit 1
-  fi
-  backup_created=1
-  run_sudo_clean /usr/bin/chown postgres:postgres "$backup"
-  run_postgres_clean /usr/bin/pg_dump --format=custom --no-owner --no-privileges --dbname="$DB_NAME" --file="$backup"
-  run_sudo_clean /usr/bin/chown root:root "$backup"
-  run_sudo_clean /usr/bin/chmod 0600 "$backup"
-  checksum="$(run_sudo_clean /usr/bin/sha256sum "$backup" | /usr/bin/awk '{print $1}')"
-  backup_created=0
-  printf 'backup_created=true backup_sha256=%s\n' "$checksum"
+  backup_report="$(run_sudo_clean /usr/bin/bash -p "$BACKUP_SCRIPT")"
+  [[ "$backup_report" =~ ^backup_created=true\ database=skincos_clientes_production\ sha256=[0-9a-f]{64}\ private=true\ unique=true$ ]] || {
+    echo 'Production backup did not satisfy the private unique artifact contract.' >&2
+    exit 70
+  }
+  printf '%s\n' "$backup_report"
 else
   printf 'backup_created=false checkpoint=new_database\n'
 fi
 
 run_sudo_clean /usr/bin/install -d -m 0750 -o root -g skincos "$CONFIG_DIR" "$CONTROL_DIR"
 run_sudo_clean /usr/bin/install -d -m 0750 -o skincos -g skincos "$STATE_ROOT" "$STATE_ROOT/var" "$LOG_ROOT"
-for target in "$ATENDIMENTO_CONFIG" "$CONTROL_FILE"; do
+for target in "$ATENDIMENTO_CONFIG" "$MIGRATOR_CONFIG" "$CONTROL_FILE"; do
   if run_sudo_clean /usr/bin/test -f "$target"; then
     if [[ "$target" == "$CONTROL_FILE" ]]; then
       archive_label='control'
+    elif [[ "$target" == "$MIGRATOR_CONFIG" ]]; then
+      archive_label='migrator-env'
     else
       archive_label='app-env'
     fi
@@ -130,7 +130,9 @@ begin
   if not exists (select 1 from pg_roles where rolname = '$MIGRATOR_ROLE') then create role $MIGRATOR_ROLE login; end if;
   if not exists (select 1 from pg_roles where rolname = '$APP_ROLE') then create role $APP_ROLE login; end if;
 end \$\$;
+alter role $OWNER_ROLE nologin;
 alter role $MIGRATOR_ROLE login password '$migrator_password';
+alter role $MIGRATOR_ROLE connection limit 3;
 alter role $APP_ROLE login password '$app_password';
 alter role $APP_ROLE set default_transaction_read_only = on;
 grant $OWNER_ROLE to $MIGRATOR_ROLE;
@@ -159,8 +161,9 @@ run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --apply
 
 umask 0077
 tmp_env="$(/usr/bin/mktemp /tmp/atendimento-production-app-env.XXXXXX)"
+tmp_migrator="$(/usr/bin/mktemp /tmp/atendimento-production-migrator-env.XXXXXX)"
 tmp_control="$(/usr/bin/mktemp /tmp/atendimento-production-control.XXXXXX)"
-[[ -f "$tmp_env" && -O "$tmp_env" && -f "$tmp_control" && -O "$tmp_control" ]] || { echo 'Private temporary control artifacts are invalid.' >&2; exit 1; }
+[[ -f "$tmp_env" && -O "$tmp_env" && -f "$tmp_migrator" && -O "$tmp_migrator" && -f "$tmp_control" && -O "$tmp_control" ]] || { echo 'Private temporary control artifacts are invalid.' >&2; exit 1; }
 /usr/bin/cat >"$tmp_env" <<EOF
 NODE_ENV=production
 DATABASE_URL=postgresql://$APP_ROLE:$app_password@127.0.0.1:5432/$DB_NAME?sslmode=require&uselibpqcompat=true&application_name=crm-atendimento-production-readonly
@@ -172,10 +175,14 @@ WA_BOOTSTRAP_SYNC_AUTO_ON_CONNECTED=false
 CRM_LOCAL_NO_AUTH=false
 NO_AUTH=false
 EOF
+/usr/bin/cat >"$tmp_migrator" <<EOF
+DATABASE_URL=postgresql://$MIGRATOR_ROLE:$migrator_password@127.0.0.1:5432/$DB_NAME?sslmode=require&uselibpqcompat=true&application_name=crm-atendimento-production-migrator
+EOF
 /usr/bin/cat >"$tmp_control" <<EOF
 {"schemaVersion":1,"module":"atendimento","state":"maintenance","releaseSha":null,"readOnly":true,"commercialContactWritesEnabled":false,"syntheticOnly":true,"reason":"clientes-production-readonly-pending-release","updatedAt":"$stamp"}
 EOF
 run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp_env" "$ATENDIMENTO_CONFIG"
+run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp_migrator" "$MIGRATOR_CONFIG"
 run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"
 
 printf 'provisioned=true database=%s app_role=%s migrator_role=%s service=%s port=%s control_state=maintenance commercial_writes=false pii_source_access=false\n' "$DB_NAME" "$APP_ROLE" "$MIGRATOR_ROLE" "$SERVICE" "$PORT"
