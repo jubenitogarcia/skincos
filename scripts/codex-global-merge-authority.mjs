@@ -78,7 +78,10 @@ export async function mergePullRequest({ repository, pullNumber, expectedHeadSha
   if (initial.state !== "open" || initial.base?.ref !== "main") throw new Error("pull request is not an open main integration candidate");
   if (initial.head?.repo?.full_name !== repository) throw new Error("pull request head repository is outside the governed repository");
   if (assertSha(initial.head?.sha, "pull request head SHA") !== headSha) throw new Error("pull request head advanced before lease acquisition");
-  if (initial.draft === true || initial.mergeable_state === "dirty" || initial.mergeable_state === "blocked") {
+  // A required global-merge-authority status makes the PR appear blocked until
+  // this authority posts its success status. GitHub's merge API remains the
+  // final enforcement point for every other required check or review.
+  if (initial.draft === true || initial.mergeable_state === "dirty") {
     throw new Error("pull request is not mergeable by its current GitHub state");
   }
   const baseSha = assertSha(initial.base?.sha, "pull request base SHA");
