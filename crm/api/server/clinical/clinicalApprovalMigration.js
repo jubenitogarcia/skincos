@@ -10,6 +10,7 @@ export const CLINICAL_APPROVAL_MIGRATION_ACTIONS = Object.freeze(['--apply', '--
 const RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.LOCAL]: 'skincos',
     [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
+    [ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION]: 'skincos_clientes_ro',
 })
 
 const PREREQUISITE_RELATIONS = Object.freeze([

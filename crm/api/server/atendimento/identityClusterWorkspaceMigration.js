@@ -6,6 +6,7 @@ export const IDENTITY_CLUSTER_WORKSPACE_MIGRATION_ID = '20260807_identity_cluste
 const RUNTIME_ROLES = Object.freeze({
     [ATENDIMENTO_MIGRATION_TARGETS.LOCAL]: 'skincos',
     [ATENDIMENTO_MIGRATION_TARGETS.STAGING]: 'skincos_staging_crm_app',
+    [ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION]: 'skincos_clientes_ro',
 })
 
 const PREREQUISITES = [

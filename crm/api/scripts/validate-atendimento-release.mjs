@@ -21,7 +21,7 @@ function parseArgs(args = []) {
     const sourceRoot = String(values['--source-root'] || '')
     const target = String(values['--target'] || '').trim().toLowerCase()
     if (!SHA.test(releaseSha) || (predecessorSha && !SHA.test(predecessorSha))
-        || (target && target !== 'staging')
+        || (target && !['staging', 'production'].includes(target))
         || sourceRoot !== `/opt/skincos/releases/${releaseSha}/source`) {
         throw new Error('ATENDIMENTO_RELEASE_IDENTITY_INVALID')
     }
