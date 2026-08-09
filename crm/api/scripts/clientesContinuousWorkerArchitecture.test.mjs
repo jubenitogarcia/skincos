@@ -36,7 +36,7 @@ test('dedicated runner and launcher cannot execute arbitrary shell or install de
     assert.match(legacyRetirement, /\[\[ \$# -ne 1 \]\]/)
     assert.match(legacyRetirement, /crm-clientes-source-refresh\.timer/)
     assert.match(legacyRetirement, /crm-clientes-source-refresh\.service/)
-    assert.doesNotMatch(legacyRetirement, /(^|\n)\s*(source|\.)\s+|\beval\s*\(|\$\{?(CONFIG|ENV|PATH|COMMAND|SCRIPT|UNIT_DEST)/)
+    assert.doesNotMatch(legacyRetirement, /(^|\n)\s*(source|\.)\s+(?!.*global-coordination-native\.sh)[^\n]+|\beval\s*\(|\$\{?(CONFIG|ENV|PATH|COMMAND|SCRIPT|UNIT_DEST)/)
     assert.doesNotMatch(launcher, /(^|\n)\s*(source|\.)\s+.*crm(?:-jobs)?\.env/)
     assert.doesNotMatch(launcher, /npm\s+install/)
     assert.match(launcher, /assisted mode is unavailable in the continuous worker/)

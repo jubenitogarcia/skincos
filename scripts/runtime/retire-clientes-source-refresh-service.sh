@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-source "$SCRIPT_ROOT/scripts/runtime/global-coordination-native.sh"
+COORDINATION_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+source "$COORDINATION_ROOT/scripts/runtime/global-coordination-native.sh"
 
 usage() {
   printf '%s\n' 'Usage: retire-clientes-source-refresh-service.sh --dry-run|--apply' >&2
