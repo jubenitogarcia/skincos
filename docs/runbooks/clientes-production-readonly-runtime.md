@@ -120,6 +120,21 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    o runtime read-only `active`, a readiness geral ainda pode ser válida pelas
    suas próprias fundações; isso não muda o `503` fixo da rota Comercial.
 
+Produção mantém uma regra ainda mais estreita e explícita para o banco
+dedicado: somente migrations cujo contrato revisado declara dependência de
+espelho ausente (Caixa/Harmonia ou identidade materializada) podem ser
+registradas como `deferred`. O runner consulta novamente as relações
+declaradas, exige que não exista marker ativo para aquele `migration_id`,
+grava o evento somente em
+`crm_atendimento.production_migration_deferrals` (sem grant ao app) e
+continua apenas com as fundações independentes, incluindo aprovação clínica.
+Um marker ativo, uma relação que reapareça, erro de lock, privilégio,
+destino, SQL ou qualquer código não listado aborta fechado; não há `--skip`
+genérico nem criação manual de espelho. O relatório expõe o código e as
+relações ausentes, mantendo `commercialWritesEnabled:false`; até um
+provisionamento separado e auditado do espelho, o runtime continua em
+`maintenance`/comercial `503`.
+
 3. Antes de instalar a unidade isolada de staging, prepare a release imutável e
    grave explicitamente o SHA no controle ainda em `maintenance`. O instalador
    valida esse JSON pelo mesmo parser do runtime e se recusa a iniciar caso o
