@@ -47,8 +47,13 @@ jobs:
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
     with:
       required: true
+      global_lease_required: true
+      global_resource: release:ponto
+      global_module: ponto
+      global_coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
       lease_key: production-baseline
       stage: ${{ inputs.orchestrator_stage }}
       target: production
@@ -126,6 +131,17 @@ jobs:
             "$ORCHESTRATOR_STAGE" \
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
+      - name: Authorize global Ponto baseline mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_b64: ${{ needs.orchestrator.outputs.global_proof_b64 }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
       - name: Verify exact cataloged production Ponto Core bootstrap predecessor
         id: core_bootstrap
         env:
@@ -242,3 +258,13 @@ jobs:
           path: ${{ runner.temp }}/ponto-production-baseline.json
           retention-days: 90
           if-no-files-found: error
+  global-coordination-release:
+    needs: [orchestrator, capture]
+    if: ${{ always() && needs.orchestrator.outputs.global_lease_required == 'true' }}
+    uses: ./.github/workflows/global-coordination-release.yml
+    secrets:
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+    with:
+      required: true
+      proof_b64: ${{ needs.orchestrator.outputs.global_proof_b64 }}
+      coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}

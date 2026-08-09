@@ -45,6 +45,9 @@ readonly CONTROL_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-pr
 readonly RUNTIME_GRANT_LOCKDOWN="$SOURCE_ROOT/scripts/lockdown-atendimento-production-runtime.sh"
 readonly RELEASE_MANIFEST="$STATE_ROOT/crm-atendimento-production/release-manifests/$RELEASE_SHA.json"
 readonly CONTROL_FILE="$CONFIG_ROOT/atendimento-production/module-control.json"
+readonly COORDINATION_CLOSURE="$SOURCE_ROOT/.skincos-global-coordination-atendimento.json"
+coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/atendimento-production-$RELEASE_SHA-$$.json}"
+coordination_acquired=0
 
 for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/sed /usr/bin/systemd-analyze /usr/bin/mktemp /usr/bin/install /usr/bin/node /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/date /usr/bin/cp /usr/bin/systemctl /usr/bin/test /usr/bin/grep /usr/bin/bash; do
   [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
@@ -83,21 +86,63 @@ if [[ "$APPLY" != '1' ]]; then
   exit 0
 fi
 
+[[ -f "$COORDINATION_CLOSURE" ]] || { echo 'Atendimento dependency-closure attestation is required for production service mutation.' >&2; exit 78; }
+coordination_run() {
+  "$SOURCE_ROOT/scripts/runtime/global-coordination-mini-pc.sh" "$@" --proof-file "$coordination_proof"
+}
+cleanup_coordination() {
+  if (( coordination_acquired == 1 )); then
+    coordination_run release >/dev/null 2>&1 || echo 'Unable to release the Atendimento production surface lease; it will expire fail-closed.' >&2
+  fi
+  /usr/bin/rm -f "$rendered"
+  /usr/bin/rmdir "$render_dir" 2>/dev/null || true
+}
+trap cleanup_coordination EXIT INT TERM
+coordination_run acquire \
+  --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" --operation mutation \
+  --idempotency-key "mini-pc:deploy:atendimento:production:install:$RELEASE_SHA:$$" >/dev/null
+coordination_acquired=1
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
+
 stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 run_sudo_clean /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
 if run_sudo_clean /usr/bin/test -f "$UNIT_DEST/$SERVICE"; then
+  coordination_run check \
+    --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+    --closure-file "$COORDINATION_CLOSURE" >/dev/null
   run_sudo_clean /usr/bin/cp -p "$UNIT_DEST/$SERVICE" "$BACKUP_ROOT/${stamp}-$SERVICE"
 fi
 # Reapply the seal after any privileged release preparation and before the
 # unit is installed or restarted. A failed seal leaves the current runtime
 # untouched.
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --apply
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 run_sudo_clean /usr/bin/install -m 0644 "$rendered" "$UNIT_DEST/$SERVICE"
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 run_sudo_clean /usr/bin/systemctl daemon-reload
 # `enable --now` does not replace an active legacy instance. Restart only this
 # dedicated service after its immutable unit is installed.
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 run_sudo_clean /usr/bin/systemctl enable "$SERVICE" >/dev/null
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 run_sudo_clean /usr/bin/systemctl restart "$SERVICE"
 run_sudo_clean /usr/bin/systemctl is-active --quiet "$SERVICE"
 printf 'installed=true service=%s release_sha=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"

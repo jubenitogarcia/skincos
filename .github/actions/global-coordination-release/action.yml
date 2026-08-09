@@ -1,0 +1,36 @@
+name: Release global coordination lease
+description: Release a global coordination lease when a governed job exits
+inputs:
+  required:
+    description: Whether the caller acquired a remote lease
+    required: true
+  coordinator_url:
+    description: HTTPS global coordinator endpoint
+    required: true
+  shared_secret:
+    description: Shared custody secret passed only in process environment
+    required: true
+  proof_file:
+    description: Absolute runner-temporary path containing the lease proof
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Release remote custody
+      if: ${{ inputs.required == 'true' }}
+      shell: bash
+      env:
+        SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
+        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
+        GLOBAL_PROOF_FILE: ${{ inputs.proof_file }}
+      run: |
+        set -euo pipefail
+        [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" && -n "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" ]] || { echo 'Global coordination custody is unavailable'; exit 1; }
+        if [[ ! -f "$GLOBAL_PROOF_FILE" ]]; then
+          echo 'No global coordination proof was acquired; nothing to release'
+          exit 0
+        fi
+        SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
+        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+          node scripts/codex-global-coordination-workflow.mjs release \
+            --proof-file "$GLOBAL_PROOF_FILE"

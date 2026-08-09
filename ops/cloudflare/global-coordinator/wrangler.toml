@@ -14,3 +14,16 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GlobalCoordinator"]
+
+[env.staging]
+name = "skincos-global-coordinator-staging"
+workers_dev = true
+preview_urls = false
+
+[env.staging.vars]
+COORDINATION_CONTRACT_ID = "skincos/global-coordination/v1"
+
+[env.staging.durable_objects]
+bindings = [
+  { name = "GLOBAL_COORDINATOR", class_name = "GlobalCoordinator" }
+]

@@ -309,6 +309,12 @@ export function authorizeMutation(state, proof, { now, expectedResource, expecte
   if (!checked.valid) return checked;
   if (expectedResource && normalizeResourceKey(expectedResource) !== checked.lease.resource) return { valid: false, failClosed: true, reason: "resource-mismatch", state: checked.state };
   if (expectedIntentDigest && lower(expectedIntentDigest) !== checked.lease.intentDigest) return { valid: false, failClosed: true, reason: "intent-digest-mismatch", state: checked.state };
+  if (observedDependencyClosureDigest !== undefined && observedDependencyClosureDigest !== null) {
+    const expectedIntentClosure = checked.lease.intent?.dependencyClosureDigest
+      || checked.lease.intent?.releaseIdentity?.dependencyClosureDigest;
+    const closure = compareDependencyClosure(expectedIntentClosure, observedDependencyClosureDigest);
+    if (!closure.valid) return { ...closure, reason: closure.reason === "dependency-closure-unavailable" ? "dependency-closure-intent-missing" : closure.reason, state: checked.state };
+  }
   const identity = checked.lease.intent?.releaseIdentity;
   if (checked.lease.operation === "release" || checked.lease.operation === "promotion") {
     if (!identity) return { valid: false, failClosed: true, reason: "release-identity-missing", state: checked.state };

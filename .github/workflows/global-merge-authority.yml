@@ -1,0 +1,87 @@
+name: Global merge authority
+run-name: Merge PR #${{ inputs.pull_number }} through merge:main
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pull_number:
+        description: Open pull request targeting main
+        required: true
+        type: string
+      expected_head_sha:
+        description: Exact PR head SHA approved for this merge attempt
+        required: true
+        type: string
+      merge_method:
+        description: GitHub merge method
+        required: true
+        default: squash
+        type: choice
+        options: [squash, merge, rebase]
+
+concurrency:
+  group: merge-main-authority
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  authority-signal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark direct UI merge as unauthorized
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'pull request head SHA is invalid'; exit 1; }
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state=failure \
+            -f context=global-merge-authority \
+            -f description='Merge must be issued by global-merge-authority after lease revalidation.' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/global-merge-authority.yml" \
+            >/dev/null
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Fetch the exact base tree used by the merge intent
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL_NUMBER: ${{ inputs.pull_number }}
+        run: |
+          set -euo pipefail
+          [[ "$PULL_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo 'pull_number must be numeric'; exit 1; }
+          base_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL_NUMBER" --jq '.base.sha')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'pull request base SHA is invalid'; exit 1; }
+          git fetch --no-tags origin "$base_sha"
+      - name: Acquire merge:main, revalidate base/head, and merge exactly once
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_WORKFLOW: ${{ github.workflow }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          PULL_NUMBER: ${{ inputs.pull_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          MERGE_METHOD: ${{ inputs.merge_method }}
+        run: |
+          set -euo pipefail
+          node scripts/codex-global-merge-authority.mjs \
+            --pull-number "$PULL_NUMBER" \
+            --expected-head-sha "$EXPECTED_HEAD_SHA" \
+            --merge-method "$MERGE_METHOD"

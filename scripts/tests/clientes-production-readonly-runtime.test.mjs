@@ -9,7 +9,9 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8')
 
 function assertNoDynamicShell(relative) {
   const text = read(relative)
-  assert.doesNotMatch(text, /^\s*(?:source|\.)\s+[^\n]+/m, `${relative} must not load an env file as shell code`)
+  const shellLoads = [...text.matchAll(/^\s*(?:source|\.)\s+([^\n]+)/gm)]
+  const nonStaticLoads = shellLoads.filter((match) => !match[1].includes('global-coordination-native.sh'))
+  assert.equal(nonStaticLoads.length, 0, `${relative} must not load an env file as shell code`)
   assert.doesNotMatch(text, /^\s*eval\s+/m, `${relative} must not evaluate data as shell`)
   assert.doesNotMatch(text, /^\s*(?:exec\s+)?bash\s+-c\b/m, `${relative} must not create a shell command string`)
 }
@@ -356,7 +358,7 @@ test('staging release, control and application role remain fixed and read-only',
   assert.match(rollback, /\/usr\/bin\/systemctl restart "\$SERVICE"/)
   assert.match(rollback, /shared_restart=false/)
   assert.doesNotMatch(rollback, /systemctl\s+(?:restart|stop|start)\s+(?:crm\.service|crm-jobs\.service|orb\.service|cloudflare-runtime\.service)/)
-  assert.doesNotMatch(rollback, /^\s*(?:source|\.)\s+[^\n]+/m)
+  assert.doesNotMatch(rollback, /^\s*(?:source|\.)\s+(?!.*global-coordination-native\.sh)[^\n]+/m)
   assert.doesNotMatch(rollback, /^\s*eval\s+/m)
   assert.match(rollbackControl, /STAGING_CONTROL_BACKUP_ROOT = '\/var\/backups\/skincos\/clientes\/staging-control'/)
   assert.match(rollbackControl, /const BACKUP_NAME = \/\^\[0-9\]\{8\}T\[0-9\]\{6\}Z-module-control\\\.\[A-Za-z0-9\]\{6\}\\\.json\$\//)

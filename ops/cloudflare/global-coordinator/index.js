@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   acquireLease,
+  authorizeMutation,
   buildIntent,
   canonicalJson,
   checkLease,
@@ -105,7 +106,11 @@ export class GlobalCoordinator extends DurableObject {
     if (!nonce.accepted) return { accepted: false, valid: false, reason: nonce.reason };
     let result;
     if (input.action === "acquire") result = acquireLease(nonce.state, input.request, { now: input.now, leaseId: input.leaseId });
-    else if (input.action === "check") result = checkLease(nonce.state, input.request, { now: input.now });
+    else if (input.action === "check") {
+      result = input.authorization
+        ? authorizeMutation(nonce.state, input.request, { now: input.now, ...input.authorization })
+        : checkLease(nonce.state, input.request, { now: input.now });
+    }
     else if (input.action === "renew") result = renewLease(nonce.state, input.request, { now: input.now, ttlMs: input.ttlMs });
     else if (input.action === "release") result = releaseLease(nonce.state, input.request, { now: input.now });
     else if (input.action === "revoke") result = revokeLease(nonce.state, input.request, { now: input.now, reason: input.reason });
@@ -148,6 +153,7 @@ export default {
         leaseId: crypto.randomUUID(),
         request: body.action === "acquire" ? body.request : undefined,
         ...(body.action !== "acquire" ? { request: body.proof } : {}),
+        authorization: body.authorization,
         ttlMs: body.ttlMs,
         reason: body.reason,
       });

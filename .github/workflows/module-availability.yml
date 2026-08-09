@@ -134,12 +134,17 @@ jobs:
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
     with:
       required: ${{ inputs.module == 'timekeeping' && contains(fromJSON('["canary","active"]'), inputs.state) }}
+      global_lease_required: true
+      global_resource: release:ponto
+      global_module: ponto
+      global_coordinator_url: ${{ inputs.target == 'production' && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
       lease_key: ${{ inputs.orchestrator_lease_key }}
       stage: ${{ inputs.orchestrator_stage }}
       target: ${{ inputs.target }}
-      release_sha: ${{ inputs.orchestrator_release_sha || inputs.release_sha }}
+      release_sha: ${{ inputs.orchestrator_release_sha || inputs.release_sha || github.sha }}
       orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
   set-state:
     needs: coordination
@@ -167,6 +172,17 @@ jobs:
             "$ORCHESTRATOR_STAGE" \
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
+      - name: Authorize global module-control mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.orchestrator_release_sha || inputs.release_sha || github.sha }}
       - name: Guard isolated control store
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -629,3 +645,13 @@ jobs:
           path: ${{ runner.temp }}/ponto-emergency
           retention-days: 90
           if-no-files-found: error
+  global-coordination-release:
+    needs: [source, coordination, set-state, emergency-reconciliation]
+    if: ${{ always() && needs.coordination.outputs.global_lease_required == 'true' }}
+    uses: ./.github/workflows/global-coordination-release.yml
+    secrets:
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+    with:
+      required: true
+      proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
+      coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}

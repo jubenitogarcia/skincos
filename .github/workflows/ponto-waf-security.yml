@@ -174,6 +174,28 @@ jobs:
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'WAF apply checkout differs from main SHA'; exit 1; }
           mkdir -p "$RUNNER_TEMP/ponto-waf-security"
+      - name: Acquire global WAF mutation lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: cloudflare:ponto-waf:production
+          module: ponto
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-waf.json
+      - name: Check global WAF mutation lease before hydrating write authority
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-waf.json
+          resource: cloudflare:ponto-waf:production
+          module: ponto
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Attest split WAF token custody before hydrating write authority
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -311,6 +333,17 @@ jobs:
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
           rm -f "$RUNNER_TEMP/ponto-waf-workflow.json" "$RUNNER_TEMP/ponto-waf-probe-run.json" "$RUNNER_TEMP/ponto-waf-probe-artifacts.json"
+      - name: Check global WAF mutation lease immediately before WAF mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-waf.json
+          resource: cloudflare:ponto-waf:production
+          module: ponto
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Reconcile exact first-position Ponto WAF blocks atomically
         env:
           PONTO_WAF_MODE: apply
@@ -328,3 +361,11 @@ jobs:
           path: ${{ runner.temp }}/ponto-waf-security
           retention-days: 90
           if-no-files-found: error
+      - name: Release global WAF mutation lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-waf.json

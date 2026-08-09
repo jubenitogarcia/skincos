@@ -11,6 +11,14 @@ import {
   normalizeResourceKey,
 } from "../../scripts/codex-global-coordinator.mjs";
 import {
+  acquireGlobalLease,
+  buildLeaseRequest,
+  checkGlobalLease,
+  proofForLease,
+  releaseGlobalLease,
+  renewGlobalLease,
+} from "../../scripts/codex-global-coordination-client.mjs";
+import {
   capabilityCheckName,
   capabilityExternalId,
   canonicalizeGovernedIntent,
@@ -58,7 +66,7 @@ export function globalResourceFor(workflow, inputs) {
   const environment = target || stage;
   if (!["preview", "staging", "pilot", "canary", "production", "rollback"].includes(lifecycle)) return "";
   if (workflow === "deploy-timekeeping.yml" && inputs.release_scope === "ponto") return normalizeResourceKey(`deploy:timekeeping:${environment}`);
-  if (workflow === "deploy-core-workers.yml" && inputs.release_scope === "ponto" && ["api", "inventory"].includes(inputs.unit)) {
+  if (workflow === "deploy-core-workers.yml" && inputs.release_scope === "ponto" && ["api", "inventory", "all"].includes(inputs.unit)) {
     return normalizeResourceKey(`deploy:core-${inputs.unit}:${environment}`);
   }
   if (workflow === "deploy-crm-pages.yml" && inputs.release_scope === "ponto") return normalizeResourceKey(`deploy:crm-pages:${environment}`);
@@ -88,6 +96,90 @@ function ensureCommitAvailable(commit) {
 
 function pontoDependencyClosureDigest(sourceCommit) {
   return dependencyClosureForSource({ module: "ponto", sourceCommit }).digest;
+}
+
+function globalCoordinationRequired() {
+  const value = String(process.env.SKINCOS_GLOBAL_COORDINATION_REQUIRED || "").trim().toLowerCase();
+  if (value && value !== "true" && value !== "false") throw new Error("SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true or false");
+  return value === "true";
+}
+
+function globalCoordinationOwner({ repository, correlation, workflow, stage, actor, runId }) {
+  return {
+    provider: "github",
+    missionId: `github:${repository}:${correlation}`,
+    threadId: `${workflow}:${correlation}:${stage || "preview"}`,
+    actor: actor || "github-actions",
+    runId,
+  };
+}
+
+function sourceTreeForCommit(commit) {
+  return execFileSync("git", ["rev-parse", `${commit}^{tree}`], {
+    cwd: path.resolve(import.meta.dirname, "../.."),
+    encoding: "utf8",
+  }).trim().toLowerCase();
+}
+
+async function acquireGlobalDispatchLease({ resourceKey, workflow, inputs, repository, correlation, stage, actor, runId, sourceCommit, dependencyClosureDigest }) {
+  if (!globalCoordinationRequired()) return null;
+  if (!resourceKey) throw new Error(`global coordination resource is undefined for ${workflow}`);
+  const url = String(process.env.SKINCOS_GLOBAL_COORDINATOR_URL || "").trim();
+  const secret = String(process.env.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET || "").trim();
+  if (!url || !secret) throw new Error("global coordination authority custody is unavailable");
+  const owner = globalCoordinationOwner({ repository, correlation, workflow, stage, actor, runId });
+  const intent = {
+    module: "ponto",
+    workflow,
+    sourceCommit,
+    sourceTree: sourceTreeForCommit(sourceCommit),
+    dependencyClosureDigest,
+    inputs,
+  };
+  const idempotencyKey = `ponto:${correlation}:${workflow}:${resourceKey}:${stage || "preview"}`;
+  const request = buildLeaseRequest({
+    operation: "mutation",
+    resource: resourceKey,
+    owner,
+    intent,
+    idempotencyKey,
+    ttlMs: 900_000,
+  });
+  const result = await acquireGlobalLease({ request, url });
+  if (result.passed !== true || !result.lease) {
+    throw new Error(`global coordination lease acquisition failed: ${result.reason || "unknown"}`);
+  }
+  return {
+    proof: proofForLease(result.lease),
+    url,
+    lastRenewedAt: Date.now(),
+  };
+}
+
+async function revalidateGlobalDispatchLease(lease, { resourceKey, observedDependencyClosureDigest }) {
+  if (!lease) return;
+  if (Date.now() - lease.lastRenewedAt >= 5 * 60 * 1000) {
+    const renewed = await renewGlobalLease({ proof: lease.proof, ttlMs: 900_000, url: lease.url });
+    if (renewed.passed !== true || !renewed.lease) throw new Error(`global coordination lease renewal failed: ${renewed.reason || "unknown"}`);
+    lease.proof = proofForLease(renewed.lease);
+    lease.lastRenewedAt = Date.now();
+  }
+  const checked = await checkGlobalLease({
+    proof: lease.proof,
+    url: lease.url,
+    authorization: {
+      expectedResource: resourceKey,
+      expectedIntentDigest: lease.proof.intentDigest,
+      observedDependencyClosureDigest,
+    },
+  });
+  if (checked.passed !== true) throw new Error(`global coordination mutation authorization failed: ${checked.reason || "unknown"}`);
+}
+
+async function releaseGlobalDispatchLease(lease) {
+  if (!lease) return;
+  const released = await releaseGlobalLease({ proof: lease.proof, url: lease.url });
+  if (released.passed !== true) throw new Error(`global coordination lease release failed: ${released.reason || "unknown"}`);
 }
 
 export function governedLeaseKeyFor(workflow, inputs) {
@@ -299,6 +391,21 @@ if (leaseKey) {
     || parentRun?.display_title !== `Ponto ${process.env.STAGE} ${orchestratorHeadSha} orchestrator=${correlation}`
   ) throw new Error("active Ponto coordinator cannot issue a child-bound capability");
 }
+const globalResourceKey = globalResourceFor(workflow, normalizedIntent || inputs);
+const globalDispatchLease = await acquireGlobalDispatchLease({
+  resourceKey: globalResourceKey,
+  workflow,
+  inputs: normalizedIntent || inputs,
+  repository,
+  correlation,
+  stage: String(process.env.STAGE || inputs.stage || inputs.target || "preview").trim().toLowerCase(),
+  actor: String(process.env.GITHUB_ACTOR || "github-actions").trim(),
+  runId: issuerRunId,
+  sourceCommit: orchestratorHeadSha,
+  dependencyClosureDigest: pontoDependencyClosureDigest(orchestratorHeadSha),
+});
+let globalDispatchLeaseReleased = false;
+try {
 fs.mkdirSync(path.dirname(outputFile), { recursive: true });
 fs.writeFileSync(outputFile, `${JSON.stringify({
   schemaVersion: 1,
@@ -317,12 +424,31 @@ fs.writeFileSync(outputFile, `${JSON.stringify({
   orchestratorRunId: correlation,
   dispatchNonce,
   leaseKey,
-  resourceKey: globalResourceFor(workflow, normalizedIntent || inputs),
-  lockScope: globalResourceFor(workflow, normalizedIntent || inputs)
-    ? lockScopeFor(globalResourceFor(workflow, normalizedIntent || inputs))
+  resourceKey: globalResourceKey,
+  lockScope: globalResourceKey
+    ? lockScopeFor(globalResourceKey)
     : "",
   intentDigest,
+  globalCoordination: globalDispatchLease ? {
+    required: true,
+    resourceKey: globalResourceKey,
+    lockScope: lockScopeFor(globalResourceKey),
+    fencingToken: globalDispatchLease.proof.fencingToken,
+  } : { required: false },
 }, null, 2)}\n`, { mode: 0o600 });
+const dispatchMain = await request(`/repos/${repository}/commits/main`);
+const dispatchMainSha = String(dispatchMain?.sha || "").trim().toLowerCase();
+if (!/^[0-9a-f]{40}$/.test(dispatchMainSha)) throw new Error("current main SHA is unavailable before child dispatch");
+ensureCommitAvailable(dispatchMainSha);
+const dispatchClosureDigest = pontoDependencyClosureDigest(dispatchMainSha);
+assertPontoDependencyClosureUnchanged(
+  pontoDependencyClosureDigest(orchestratorHeadSha),
+  dispatchClosureDigest,
+);
+await revalidateGlobalDispatchLease(globalDispatchLease, {
+  resourceKey: globalResourceKey,
+  observedDependencyClosureDigest: dispatchClosureDigest,
+});
 await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
   method: "POST",
   headers: { "content-type": "application/json" },
@@ -334,6 +460,8 @@ await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workf
     ])),
   }),
 });
+await releaseGlobalDispatchLease(globalDispatchLease);
+globalDispatchLeaseReleased = true;
 
 let run;
 let persistedRunId = "";
@@ -601,6 +729,12 @@ const sanitized = {
   headSha: run.head_sha,
   repository,
   url: run.html_url,
+  resourceKey: globalResourceKey,
+  lockScope: globalResourceKey ? lockScopeFor(globalResourceKey) : "",
+  globalCoordination: globalDispatchLease ? {
+    required: true,
+    fencingToken: globalDispatchLease.proof.fencingToken,
+  } : { required: false },
 };
 fs.mkdirSync(path.dirname(outputFile), { recursive: true });
 fs.writeFileSync(outputFile, `${JSON.stringify(sanitized, null, 2)}\n`, { mode: 0o600 });
@@ -609,6 +743,9 @@ if (run.conclusion !== "success") {
 }
 if (output) fs.appendFileSync(output, `run_id=${run.id}\nrun_url=${run.html_url}\n`);
 process.stdout.write(`${workflow} completed successfully as run ${run.id}.\n`);
+} finally {
+  if (!globalDispatchLeaseReleased) await releaseGlobalDispatchLease(globalDispatchLease);
+}
 }
 
 const invokedAsScript = process.argv[1]

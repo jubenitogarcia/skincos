@@ -63,8 +63,13 @@ jobs:
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
     with:
       required: true
+      global_lease_required: true
+      global_resource: release:ponto
+      global_module: ponto
+      global_coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
       lease_key: production-slo
       stage: ${{ inputs.orchestrator_stage }}
       target: production
@@ -105,6 +110,17 @@ jobs:
             "$ORCHESTRATOR_STAGE" \
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
+      - name: Authorize global Ponto SLO journey mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_b64: ${{ needs.orchestrator.outputs.global_proof_b64 }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
       - name: Attest the exact registered clinic runner before hydrating control-plane authority
         id: runner-inventory
         env:
@@ -340,6 +356,17 @@ jobs:
             "$ORCHESTRATOR_STAGE" \
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
+      - name: Authorize global Ponto rollback observation mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_b64: ${{ needs.orchestrator.outputs.global_proof_b64 }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
       - name: Attest exact immutable preflight artifact before clinic secrets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -382,6 +409,7 @@ jobs:
           path: ${{ runner.temp }}/ponto-production-slo.json
           retention-days: 90
           if-no-files-found: error
+
       - name: Remove any unconsumed JIT and delegated material
         if: ${{ always() }}
         run: |
@@ -391,6 +419,16 @@ jobs:
             "$RUNNER_TEMP/ponto-slo-artifact.json" \
             "$RUNNER_TEMP/ponto-slo-preflight/control-plane-attestation.json" \
             "$RUNNER_TEMP/ponto-slo-preflight/release-probe-capability.json"
+  global-coordination-release:
+    needs: [orchestrator, control-plane-preflight, consultor-journey, rollback-observation]
+    if: ${{ always() && needs.orchestrator.outputs.global_lease_required == 'true' }}
+    uses: ./.github/workflows/global-coordination-release.yml
+    secrets:
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+    with:
+      required: true
+      proof_b64: ${{ needs.orchestrator.outputs.global_proof_b64 }}
+      coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}
   rollback-observation:
     needs: orchestrator
     if: ${{ needs.orchestrator.result == 'success' && github.run_attempt == 1 && github.ref == 'refs/heads/main' && inputs.stage == 'rollback' }}

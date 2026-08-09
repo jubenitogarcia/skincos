@@ -119,6 +119,12 @@ jobs:
       PONTO_DISPATCH_TIMEOUT_MS: "1200000"
       PONTO_REQUIRED_CHECK_SETTLE_TIMEOUT_SECONDS: "900"
       PONTO_REQUIRED_CHECK_SETTLE_POLL_SECONDS: "10"
+      # The global authority is fail-closed when explicitly enabled.  Staging
+      # uses the dedicated coordinator; production remains blocked until its
+      # separate endpoint and custody are provisioned.
+      SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+      SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
@@ -1740,6 +1746,28 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+      - name: Acquire global recovery lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+      - name: Check global recovery lease before latching closed
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Monotonically latch Ponto closed outside the surface mutex
         env:
           PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
@@ -1750,6 +1778,17 @@ jobs:
           PONTO_FAILED_COORDINATOR_RUN_ID: ${{ github.run_id }}
           PONTO_EMERGENCY_LATCH_REPORT: ${{ runner.temp }}/ponto-ordinary-recovery/latch.json
         run: node .github/scripts/ponto-emergency-latch-write.mjs
+      - name: Check global recovery lease before overlay propagation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Attempt external overlay propagation before reconciliation
         env:
           PONTO_MODULE_HEALTH_URL: ${{ inputs.stage == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
@@ -1795,6 +1834,14 @@ jobs:
           path: ${{ runner.temp }}/ponto-ordinary-recovery
           retention-days: 90
           if-no-files-found: error
+      - name: Release global recovery lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
 
   recovery-reconcile:
     needs: [orchestrate, recovery-latch]
@@ -1810,11 +1857,33 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+      - name: Acquire global recovery lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
       - name: Download the durable recovery journal
         uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           name: ponto-recovery-journal-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-ordinary-recovery/journal
+      - name: Check global recovery lease before child reconciliation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Cancel and reconcile children without waiting on the surface mutex
         env:
           # Recovery must retain the protected Actions-read token used by the
@@ -1881,6 +1950,14 @@ jobs:
           path: ${{ runner.temp }}/ponto-ordinary-recovery/journal
           retention-days: 90
           if-no-files-found: error
+      - name: Release global recovery lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
 
   recovery-close:
     needs: [orchestrate, recovery-latch, recovery-reconcile]
@@ -1899,6 +1976,28 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+      - name: Acquire global recovery lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+      - name: Check global recovery lease before close mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Write regular maintenance under the exact closed latch
         env:
           PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
@@ -1909,6 +2008,17 @@ jobs:
           PONTO_FAILED_COORDINATOR_RUN_ID: ${{ github.run_id }}
           PONTO_EMERGENCY_MAINTENANCE_REPORT: ${{ runner.temp }}/ponto-ordinary-recovery/maintenance.json
         run: node .github/scripts/ponto-emergency-maintenance-write.mjs
+      - name: Check global recovery lease before overlay verification
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Prove external fail-close through overlay or exact incumbent control
         env:
           PONTO_MODULE_HEALTH_URL: ${{ inputs.stage == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
@@ -1963,6 +2073,14 @@ jobs:
           path: ${{ runner.temp }}/ponto-ordinary-recovery
           retention-days: 90
           if-no-files-found: error
+      - name: Release global recovery lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
 
   recovery-rollback:
     needs: [orchestrate, recovery-reconcile, recovery-close]
@@ -1982,6 +2100,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+      - name: Acquire global recovery lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
       - name: Revalidate protected target environment before rollback mutation
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -2017,6 +2146,17 @@ jobs:
           name: ponto-ordinary-recovery-maintenance-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-ordinary-recovery/evidence/fail-close
 
+      - name: Check global recovery lease before materializing broker close
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Materialize the exact broker close under the recovery surface mutex
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -2068,6 +2208,17 @@ jobs:
             "$RUNNER_TEMP/ponto-ordinary-recovery/evidence/fail-close/final-propagation.json" \
             "$RUNNER_TEMP/ponto-ordinary-recovery/journal" \
             "$RUNNER_TEMP/ponto-ordinary-recovery/journal/automatic-rollback/ponto-module-control-direct-readback.json"
+      - name: Check global recovery lease before restoring incumbents
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Restore every attested incumbent idempotently
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -2120,3 +2271,11 @@ jobs:
           path: ${{ runner.temp }}/ponto-ordinary-recovery/journal/automatic-rollback
           retention-days: 90
           if-no-files-found: warn
+      - name: Release global recovery lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json

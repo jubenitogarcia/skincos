@@ -1,0 +1,70 @@
+name: Acquire global coordination lease
+description: Acquire and persist a global coordination lease outside the checkout
+inputs:
+  required:
+    description: Whether the caller must acquire a remote lease
+    required: true
+  enabled:
+    description: Repository-level activation switch
+    required: true
+  coordinator_url:
+    description: HTTPS global coordinator endpoint
+    required: true
+  shared_secret:
+    description: Shared custody secret passed only in process environment
+    required: true
+  resource:
+    description: Canonical resource key to acquire
+    required: true
+  module:
+    description: Release-closure module represented by the lease
+    required: true
+  source_sha:
+    description: Exact source commit whose dependency closure is acquired
+    required: true
+  proof_file:
+    description: Absolute runner-temporary path for the lease proof
+    required: true
+  inputs_json:
+    description: Optional JSON inputs bound into the immutable lease intent
+    required: false
+    default: '{}'
+runs:
+  using: composite
+  steps:
+    - name: Acquire remote custody
+      if: ${{ inputs.required == 'true' }}
+      shell: bash
+      env:
+        SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
+        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
+        GLOBAL_ENABLED: ${{ inputs.enabled }}
+        GLOBAL_RESOURCE: ${{ inputs.resource }}
+        GLOBAL_MODULE: ${{ inputs.module }}
+        GLOBAL_SOURCE_SHA: ${{ inputs.source_sha }}
+        GLOBAL_PROOF_FILE: ${{ inputs.proof_file }}
+        GLOBAL_INPUTS_JSON: ${{ inputs.inputs_json }}
+        GLOBAL_IDEMPOTENCY_KEY: github:${{ github.repository }}:${{ github.run_id }}:${{ github.run_attempt }}:${{ inputs.resource }}
+      run: |
+        set -euo pipefail
+        [[ "$GLOBAL_ENABLED" == true ]] || { echo 'Global coordination is not active'; exit 1; }
+        [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" && -n "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" ]] || { echo 'Global coordination custody is unavailable'; exit 1; }
+        [[ "$GLOBAL_SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Global coordination source SHA is invalid'; exit 1; }
+        [[ "$GLOBAL_PROOF_FILE" != "$GITHUB_WORKSPACE"/* ]] || { echo 'Global coordination proof must live outside the repository'; exit 1; }
+        mkdir -p "$(dirname "$GLOBAL_PROOF_FILE")"
+        inputs_file="$RUNNER_TEMP/skincos-global-coordination-inputs.json"
+        printf '%s' "$GLOBAL_INPUTS_JSON" > "$inputs_file"
+        node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));' "$inputs_file"
+        if ! git cat-file -e "${GLOBAL_SOURCE_SHA}^{commit}" 2>/dev/null; then
+          git fetch --no-tags origin "$GLOBAL_SOURCE_SHA"
+        fi
+        git cat-file -e "${GLOBAL_SOURCE_SHA}^{commit}"
+        SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
+        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+          node scripts/codex-global-coordination-workflow.mjs acquire \
+            --resource "$GLOBAL_RESOURCE" \
+            --module "$GLOBAL_MODULE" \
+            --source "$GLOBAL_SOURCE_SHA" \
+            --proof-file "$GLOBAL_PROOF_FILE" \
+            --inputs-file "$inputs_file" \
+            --idempotency-key "$GLOBAL_IDEMPOTENCY_KEY"

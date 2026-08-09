@@ -65,6 +65,32 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y jq
 
+      - name: Acquire Cloudflare alerting lease
+        if: ${{ steps.guard.outputs.skip != 'true' && (github.event.inputs.dry_run || 'false') != 'true' }}
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: cloudflare:alerting:production
+          module: cloudflare-alerting
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-cloudflare-alerting.json
+
+      - name: Check Cloudflare alerting lease before policy mutation
+        if: ${{ steps.guard.outputs.skip != 'true' && (github.event.inputs.dry_run || 'false') != 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-cloudflare-alerting.json
+          resource: cloudflare:alerting:production
+          module: cloudflare-alerting
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Apply Cloudflare alerting policies
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
@@ -94,3 +120,12 @@ jobs:
         with:
           name: cloudflare-alerting-apply
           path: /tmp/cloudflare-alerting-apply.summary.json
+
+      - name: Release Cloudflare alerting lease
+        if: ${{ always() && steps.guard.outputs.skip != 'true' && (github.event.inputs.dry_run || 'false') != 'true' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-cloudflare-alerting.json

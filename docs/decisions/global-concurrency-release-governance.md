@@ -1,6 +1,7 @@
 # Governança global de concorrência e release
 
-**Status:** contrato implementado; autoridade remota ainda não provisionada
+**Status:** contrato implementado; autoridade Cloudflare staging provisionada e
+ativada; autoridade de produção permanece ausente e fail-closed
 
 ## Problema
 
@@ -66,33 +67,63 @@ O dispatcher Ponto agora busca a ponta atual de `main` antes de cada dispatch e
 compara a closure Ponto. `assertMainShaUnchanged` permanece exportado para
 compatibilidade histórica, mas não é mais a condição que invalida uma release;
 `assertPontoDependencyClosureUnchanged` é a guarda aplicada ao caminho real.
+O lease do dispatcher cobre somente a chamada de dispatch; o workflow filho
+adquire e renova seu próprio recurso de superfície antes da mutação e libera o
+lease ao final.
 
 ## Adaptadores
 
 - GitHub mantém `concurrency` como scheduler, mas a saída do dispatcher registra
   `resourceKey`/`lockScope`; scheduling sozinho não é prova de autoridade.
+  `global-merge-authority.yml` é o caminho de integração assistida em `main`;
+  `codex-keep-prs-mergeable.yml` não habilita mais auto-merge sem lease e
+  também adquire `merge:main` antes de atualizar branches de PR.
 - Cloudflare usa `ops/cloudflare/global-coordinator/index.js`, com uma classe
   SQLite-backed Durable Object por `lockScope`. A requisição exige nonce,
   timestamp, digest e HMAC; revogação exige custódia administrativa separada.
 - Codex App e mini-PC podem consumir o mesmo envelope/lease, sem compartilhar
   cookies, tokens ou estado do checkout. O cliente e o CLI são os pontos
   comuns para essa integração; nenhum segredo é persistido no repositório.
+  No mini-PC, `scripts/runtime/global-coordination-mini-pc.sh` força o provider
+  `mini-pc`, exige owner explícito e mantém provas fora da árvore imutável.
 
-O Worker não é roteado nem promovido por esta mudança. Sem os secrets,
-bindings, route, environment gate, rollback deployment e smoke do próprio
-coordenador, ele retorna 503 e não há fallback local que possa ser confundido
-com autoridade global. O dispatcher Ponto já aplica a nova dependency closure
-antes de cada dispatch; a aquisição remota do lease global fica deliberadamente
-como gate de rollout até a custódia remota ser provisionada e os jobs de
-recuperação receberem o mesmo ciclo de vida.
+O ambiente dedicado `staging` do Worker foi provisionado sem rota de produção,
+com Durable Object SQLite, secrets separados e `preview_urls = false`. O smoke
+remoto comprovou aquisição, conflito, autorização, drift de closure, renovação
+e liberação. `SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL` permanece ausente, de
+modo que pilot/canary/production falham antes de qualquer mutação. O estado de
+produção não é inferido do endpoint staging.
+
+Os workflows GitHub Ponto passam pela mesma prova: o gate reutilizável adquire
+o lease, cada job mutador renova e autoriza imediatamente antes da mutação, e
+um job `always()` libera a prova depois que os dependentes terminam. O helper
+`scripts/codex-global-coordination-workflow.mjs` é o adaptador comum para
+GitHub Actions, Codex App e mini-PC; o provider e o owner são explícitos, e a
+custódia nunca é gravada no checkout. WAF apply e os caminhos legados de
+watchdog/recovery também usam essa autoridade antes da mutação Cloudflare. O
+broker de emergência close-only permanece a única pré-condição anterior ao
+lease, porque o fail-close não pode ficar impedido por uma disputa de recurso;
+as mutações de materialização e rollback continuam sob lease remoto.
+
+O caminho nativo também é técnico: a preparação instala os atestados
+`.skincos-global-coordination-<module>.json` junto da release; a promoção do
+Orb, a promoção do artefato WhatsApp, a promoção/rollback do gateway MCP, o
+backup do Orb, a migration Harmonia, o rollback/instalação de Atendimento e as
+rotas Cloudflare dedicadas adquirem, renovam e verificam leases antes das
+mutações. O atestado é rejeitado se o SHA, source tree, módulo, material ou
+digest não coincidirem. O publicador Windows do backup só inicia a unidade
+nativa através do wrapper coordenado; ausência de custody ou closure interrompe
+a operação antes da geração do artefato.
 
 ## Validação e rollout
 
 Os contratos são exercitados por
 `scripts/tests/codex-global-coordination.test.mjs` e
-`scripts/tests/codex-global-coordination-client.test.mjs`, além de
-`ops/cloudflare/global-coordinator/index.test.mjs`. O próximo gate operacional
-é provisionar a autoridade Cloudflare em ambiente dedicado, attestar o
-rollback, integrar clientes GitHub/Codex/mini-PC e só então marcar o recurso
-remoto como elegível. A existência do código, um build ou um endpoint 200 não
-constitui prova de autoridade global em produção.
+`scripts/tests/codex-global-coordination-client.test.mjs`,
+`scripts/tests/codex-global-coordination-workflow.test.mjs`, além de
+`ops/cloudflare/global-coordinator/index.test.mjs` e do teste focado do
+dispatcher Ponto. A validação remota do staging comprovou a versão implantada;
+rollback é a restauração de uma versão anterior do Worker ou a remoção
+controlada do ambiente staging, sem tocar uma rota de produção. A existência
+do código, um build ou um endpoint 200 não constitui prova de autoridade global
+em produção.

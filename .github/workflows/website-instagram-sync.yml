@@ -16,7 +16,7 @@ on:
 
 concurrency:
   group: website-instagram-sync
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -77,6 +77,32 @@ jobs:
           . .venv-instagram-sync/bin/activate
           pip install -r social/instagram/instagrapi/requirements.txt
 
+      - name: Acquire Website release lease for Instagram sync
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-instagram.json
+
+      - name: Check Website release lease before Instagram session restore
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-instagram.json
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Restore instagrapi session
         if: ${{ steps.guard.outputs.skip != 'true' }}
         id: restore_session
@@ -99,6 +125,32 @@ jobs:
 
           echo "session_file=$SESSION_FILE" >> "$GITHUB_OUTPUT"
           echo "summary_file=$SESSION_DIR/summary.json" >> "$GITHUB_OUTPUT"
+
+      - name: Check Website release lease before primary Instagram sync
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-instagram.json
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Check Website release lease before Instagram session persistence
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-instagram.json
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
 
       - name: Run primary instagrapi sync
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -140,6 +192,19 @@ jobs:
           cd website
           npx wrangler r2 bucket create "${INSTAGRAPI_SESSION_BUCKET}" >/dev/null 2>&1 || true
           npx wrangler r2 object put "${INSTAGRAPI_SESSION_BUCKET}/${INSTAGRAPI_SESSION_OBJECT}" --remote --file "$SESSION_FILE" --content-type "application/json"
+
+      - name: Check Website release lease before Instagram API fallback
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-instagram.json
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
 
       - name: Fallback to website web sync when needed
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -224,3 +289,12 @@ jobs:
             jq -c '.results[] | select(.ok != true) | {handle,error,attempts}' response.json || true
             exit 1
           fi
+
+      - name: Release Website release lease for Instagram sync
+        if: ${{ always() && steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-instagram.json

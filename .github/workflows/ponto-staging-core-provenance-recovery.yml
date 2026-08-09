@@ -36,7 +36,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-
       - name: Verify trusted source and exact failed coordinator
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,6 +229,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: Acquire global Core staging recovery lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: deploy:core-api:staging
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
 
       - name: Download the exact close and historical Core custody
         env:
@@ -260,6 +270,17 @@ jobs:
           ) throw new Error("fresh Core custody is not correlated");
           NODE
 
+      - name: Check global Core staging recovery lease immediately before materialization
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
+          resource: deploy:core-api:staging
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Materialize the exact fresh maintenance under the surface mutex
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -282,7 +303,6 @@ jobs:
           if [[ "$maintenance" != "$PONTO_MAINTENANCE_FILE" ]]; then cp "$maintenance" "$PONTO_MAINTENANCE_FILE"; fi
           node .github/scripts/ponto-cloudflare-resource-identity.mjs
           node .github/scripts/ponto-module-control-materialize.mjs
-
       - name: Download and validate the exact Core mutation journal
         env:
           GH_TOKEN: ${{ github.token }}
@@ -382,6 +402,17 @@ jobs:
           ) throw new Error("live staging Core is not the exact cataloged candidate custody");
           NODE
 
+      - name: Check global Core staging recovery lease immediately before Core rollback
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
+          resource: deploy:core-api:staging
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Normalize exact maintenance and recover the cataloged Core incumbent
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -481,3 +512,11 @@ jobs:
           path: ${{ runner.temp }}/ponto-core-recovery
           retention-days: 90
           if-no-files-found: warn
+      - name: Release global Core staging recovery lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json

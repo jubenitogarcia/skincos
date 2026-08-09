@@ -34,12 +34,14 @@ done
   echo 'SOURCE_ROOT must be an immutable native release path with a full lowercase SHA.' >&2
   exit 64
 }
+readonly RELEASE_SHA="${BASH_REMATCH[1]}"
 [[ "$TUNNEL_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || {
   echo 'TUNNEL_ID must be a lowercase RFC 4122 UUID.' >&2
   exit 64
 }
 readonly UNIT_SRC="$SOURCE_ROOT/ops/runtime/units/cloudflare-atendimento-production.service"
 readonly CREDENTIALS_FILE="$CONFIG_DIR/$TUNNEL_ID.json"
+readonly COORDINATION_CLOSURE="$SOURCE_ROOT/.skincos-global-coordination-atendimento.json"
 
 for command_name in sudo install sed systemd-analyze mktemp date; do
   command -v "$command_name" >/dev/null 2>&1 || { echo "Missing $command_name" >&2; exit 1; }
@@ -80,6 +82,31 @@ if [[ "$APPLY" != '1' ]]; then
   exit 0
 fi
 
+sudo -n test -f "$COORDINATION_CLOSURE" || { echo 'Immutable Atendimento dependency-closure attestation is unavailable.' >&2; exit 78; }
+coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/cloudflare-atendimento-production-tunnel-$$.json}"
+coordination_acquired=0
+coordination_run() {
+  "$SOURCE_ROOT/scripts/runtime/global-coordination-mini-pc.sh" "$@" --proof-file "$coordination_proof"
+}
+cleanup_coordination() {
+  rm -f "$tmp_config" "$tmp_unit"
+  if (( coordination_acquired == 1 )); then
+    coordination_run release >/dev/null 2>&1 || echo 'Unable to release the mini-PC Cloudflare lease; it will expire fail-closed.' >&2
+  fi
+}
+trap cleanup_coordination EXIT
+coordination_run acquire \
+  --resource cloudflare:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" --operation mutation \
+  --idempotency-key "mini-pc:cloudflare:atendimento:production:tunnel:$RELEASE_SHA:$$" >/dev/null
+coordination_acquired=1
+coordination_run check \
+  --resource cloudflare:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
+
+coordination_run check \
+  --resource cloudflare:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 sudo -n install -d -m 0750 -o root -g skincos "$CONFIG_DIR" "$LOG_ROOT"
 sudo -n install -d -m 0700 -o root -g root "$BACKUP_ROOT"
@@ -90,6 +117,9 @@ for target in "$CONFIG_FILE" "$UNIT_DEST"; do
 done
 sudo -n install -m 0640 -o root -g skincos "$tmp_config" "$CONFIG_FILE"
 sudo -n install -m 0644 -o root -g root "$tmp_unit" "$UNIT_DEST"
+coordination_run check \
+  --resource cloudflare:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n systemctl daemon-reload
 sudo -n systemctl enable --now cloudflare-atendimento-production.service >/dev/null
 sudo -n systemctl is-active --quiet cloudflare-atendimento-production.service

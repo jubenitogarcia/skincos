@@ -6,10 +6,11 @@ lock scope to a SQLite-backed Durable Object, so independent release modules
 can proceed in parallel while deploy and Cloudflare mutations for the same
 surface/environment share one fence.
 
-The Worker is intentionally not provisioned or routed by this change. It
-requires a separately managed `COORDINATION_SHARED_SECRET` and
-`COORDINATION_ADMIN_SECRET`, protected environment bindings, an authenticated
-route, and a rollback deployment before any real mutation is enabled. Missing
+The production Worker is intentionally not routed by this change. The isolated
+`staging` environment is the activation target for synthetic contract tests;
+production remains disabled until the same version, custody, route, rollback,
+and live readback gates are recorded. It requires separately managed
+`COORDINATION_SHARED_SECRET` and `COORDINATION_ADMIN_SECRET` bindings. Missing
 custody returns HTTP 503; it never falls back to an in-memory or local lock.
 
 Clients must send the signed request envelope described by the contract and

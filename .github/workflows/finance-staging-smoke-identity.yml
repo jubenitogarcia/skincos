@@ -46,6 +46,42 @@ jobs:
           date --date="$EXPIRES_AT" --iso-8601=seconds >/dev/null
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do [[ -n "${!name:-}" ]] || { echo "Missing required staging value: $name"; exit 1; }; done
           if [[ "$ACTION" != revoke ]]; then [[ ${#FINANCE_SMOKE_PASSWORD} -ge 24 ]] || { echo 'FINANCE_SMOKE_PASSWORD is missing or too short.'; exit 1; }; fi
+
+      - name: Acquire Finance release lease for synthetic identity
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:finance
+          module: finance
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-smoke-identity.json
+
+      - name: Acquire shared staging D1 lease for synthetic identity
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: global:staging-d1
+          module: finance
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json
+
+      - name: Check Finance release lease before identity lifecycle SQL
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-smoke-identity.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Verify one safe synthetic-identity target
         env:
           ACTION: ${{ inputs.action }}
@@ -67,6 +103,28 @@ jobs:
           else
             [[ "$active_count" == 1 && "$total_count" == 1 ]] || { echo 'Expected exactly one active synthetic identity.'; exit 1; }
           fi
+      - name: Recheck Finance release lease before identity lifecycle SQL
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-smoke-identity.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      - name: Check shared staging D1 lease before identity lifecycle SQL
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json
+          resource: global:staging-d1
+          module: finance
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Apply audited staging identity lifecycle SQL
         env:
           ACTION: ${{ inputs.action }}
@@ -83,3 +141,20 @@ jobs:
           npx --yes wrangler@4.114.0 d1 execute skincos-db-staging --remote --file "$core_sql"
           npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --file "$finance_sql"
           rm -f "$core_sql" "$finance_sql"
+
+      - name: Release Finance release lease for synthetic identity
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-smoke-identity.json
+      - name: Release shared staging D1 lease for synthetic identity
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json

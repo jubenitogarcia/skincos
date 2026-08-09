@@ -111,6 +111,44 @@ test("release promotion accepts an unrelated main tip and rejects closure drift 
   assert.equal(invalidated.reason, "dependency-closure-changed");
 });
 
+test("mutation leases also require the observed closure when a caller supplies it", () => {
+  const request = buildLeaseRequest({
+    operation: "mutation",
+    resource: "deploy:website:staging",
+    owner,
+    idempotencyKey: "mutation-closure-1",
+    ttlMs: 60_000,
+    intent: { dependencyClosureDigest: digest("c"), purpose: "surface-mutation" },
+  });
+  const acquired = acquireLease(emptyState(), request, { now: 1_000, leaseId: "lease-0000000000000004" });
+  const proof = {
+    resource: acquired.lease.resource,
+    leaseId: acquired.lease.leaseId,
+    fencingToken: acquired.lease.fencingToken,
+    intentDigest: acquired.lease.intentDigest,
+    owner: acquired.lease.owner,
+  };
+  assert.equal(authorizeMutation(acquired.state, proof, {
+    now: 2_000,
+    expectedResource: "deploy:website:staging",
+    observedDependencyClosureDigest: digest("c"),
+  }).valid, true);
+  const drift = authorizeMutation(acquired.state, proof, {
+    now: 2_000,
+    expectedResource: "deploy:website:staging",
+    observedDependencyClosureDigest: digest("d"),
+  });
+  assert.equal(drift.valid, false);
+  assert.equal(drift.reason, "dependency-closure-changed");
+  const missing = authorizeMutation(acquired.state, proof, {
+    now: 2_000,
+    expectedResource: "deploy:website:staging",
+    observedDependencyClosureDigest: "",
+  });
+  assert.equal(missing.valid, false);
+  assert.equal(missing.reason, "dependency-closure-intent-missing");
+});
+
 test("missing closure, artifact identity, owner or lease authority fails closed", () => {
   assert.deepEqual(compareDependencyClosure(digest("c"), ""), {
     valid: false,

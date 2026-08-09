@@ -19,6 +19,8 @@ test("remote custody is mandatory and the adapter has no local fallback", () => 
   assert.match(source, /coordination authority custody is unavailable/);
   assert.match(source, /return bad\(message, message\.includes\("unavailable"\) \? 503 : 401\)/);
   assert.doesNotMatch(source, /in-memory fallback|local fallback|allowWithout/);
+  assert.match(source, /authorizeMutation/);
+  assert.match(source, /input\.authorization/);
 });
 
 test("revocation uses separate administrative custody", () => {

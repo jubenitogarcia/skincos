@@ -49,7 +49,7 @@ function endpointFor(value) {
   return endpoint;
 }
 
-function envelopeFor({ action, request, proof, ttlMs, reason, nonce, requestedAt }) {
+function envelopeFor({ action, request, proof, authorization, ttlMs, reason, nonce, requestedAt }) {
   if (!NONCE_RE.test(String(nonce || ""))) throw new Error("coordination request nonce is invalid");
   const body = {
     schemaVersion: REQUEST_SCHEMA_VERSION,
@@ -60,6 +60,7 @@ function envelopeFor({ action, request, proof, ttlMs, reason, nonce, requestedAt
   };
   if (action === "acquire") body.request = request;
   else body.proof = proof;
+  if (authorization !== undefined) body.authorization = authorization;
   if (action === "renew") body.ttlMs = ttlMs;
   if (action === "revoke") body.reason = reason;
   return body;
@@ -72,13 +73,14 @@ export function buildAuthenticatedRequest({
   action,
   request,
   proof,
+  authorization,
   ttlMs,
   reason,
   nonce = newRequestNonce(),
   requestedAt = new Date().toISOString(),
 }) {
   const endpoint = endpointFor(url);
-  const body = envelopeFor({ action, request, proof, ttlMs, reason, nonce, requestedAt });
+  const body = envelopeFor({ action, request, proof, authorization, ttlMs, reason, nonce, requestedAt });
   const rawBody = canonicalJson(body);
   const requestDigest = sha256(rawBody);
   const binding = {
@@ -148,13 +150,14 @@ export async function coordinate({
   action,
   request,
   proof,
+  authorization,
   ttlMs,
   reason,
   nonce,
   requestedAt,
 }) {
   if (typeof fetchImpl !== "function") throw new Error("global coordinator fetch is unavailable");
-  const signed = buildAuthenticatedRequest({ url, secret, adminSecret, action, request, proof, ttlMs, reason, nonce, requestedAt });
+  const signed = buildAuthenticatedRequest({ url, secret, adminSecret, action, request, proof, authorization, ttlMs, reason, nonce, requestedAt });
   const response = await fetchImpl(signed.endpoint, { method: "POST", headers: signed.headers, body: signed.rawBody });
   const raw = await response.text();
   let payload;
@@ -171,8 +174,8 @@ export async function acquireGlobalLease({ request, ...options }) {
   return coordinate({ ...options, action: "acquire", request });
 }
 
-export async function checkGlobalLease({ proof, ...options }) {
-  return coordinate({ ...options, action: "check", proof });
+export async function checkGlobalLease({ proof, authorization, ...options }) {
+  return coordinate({ ...options, action: "check", proof, authorization });
 }
 
 export async function renewGlobalLease({ proof, ttlMs, ...options }) {

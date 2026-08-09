@@ -25,11 +25,17 @@ test("GitHub and mini-PC clients produce the same signed envelope contract", () 
         intentDigest: "a".repeat(64),
         owner: { provider: "github", missionId: "mission-1", threadId: "thread-1", actor: "actions" },
       },
+      authorization: {
+        expectedResource: "deploy:website:staging",
+        expectedIntentDigest: "a".repeat(64),
+        observedDependencyClosureDigest: "c".repeat(64),
+      },
       nonce,
       requestedAt: "2026-08-09T18:00:00.000Z",
   });
   assert.equal(request.endpoint.pathname, "/v1/leases");
   assert.equal(request.body.contractId, CONTRACT_ID);
+  assert.equal(request.body.authorization.observedDependencyClosureDigest, "c".repeat(64));
   assert.equal(request.headers["x-skincos-coordination-request-digest"], request.requestDigest);
   const expectedSignature = crypto.createHmac("sha256", secret)
     .update(canonicalJson({

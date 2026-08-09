@@ -9,11 +9,12 @@ RELEASE_ID="${MESSAGING_RELEASE_ID:-}"
 DESTINATION="$RELEASE_BASE/$RELEASE_ID/messaging-whatsapp"
 STAGING="$RELEASE_BASE/.staging-$RELEASE_ID-$$"
 NPM_CACHE="${MESSAGING_NPM_CACHE:-/var/lib/skincos-runtime/cache/npm}"
+COORDINATION_CLOSURE="${SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE:-}"
 APPLY=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/runtime/prepare-messaging-whatsapp-release.sh [--apply]
+Usage: scripts/runtime/prepare-messaging-whatsapp-release.sh [--coordination-closure <json>] [--apply]
 
 Stages the WhatsApp engine as a native Linux release. With --apply it copies
 only tracked source and lockfiles, installs dependencies, generates Prisma,
@@ -29,6 +30,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=1 ;;
+    --coordination-closure) shift; COORDINATION_CLOSURE="${1:-}" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -37,7 +39,7 @@ done
 
 [[ -f "$SOURCE_DIR/package-lock.json" ]] || { echo "Missing lockfile: $SOURCE_DIR/package-lock.json" >&2; exit 1; }
 [[ -f "$SOURCE_DIR/src/main.ts" ]] || { echo "Missing source entrypoint: $SOURCE_DIR/src/main.ts" >&2; exit 1; }
-[[ "$RELEASE_ID" =~ ^[0-9a-f]{7,64}$ ]] || { echo 'MESSAGING_RELEASE_ID must be a reviewed hexadecimal commit SHA.' >&2; exit 1; }
+[[ "$RELEASE_ID" =~ ^[0-9a-f]{40}$ ]] || { echo 'MESSAGING_RELEASE_ID must be a full reviewed commit SHA.' >&2; exit 1; }
 [[ ! -e "$DESTINATION" ]] || { echo "Release destination already exists: $DESTINATION" >&2; exit 1; }
 
 echo "Release ID: $RELEASE_ID"
@@ -48,16 +50,43 @@ if [[ "$APPLY" != "1" ]]; then
   exit 0
 fi
 
-command -v rsync >/dev/null 2>&1 || { echo 'Missing required command: rsync' >&2; exit 1; }
-command -v npm >/dev/null 2>&1 || { echo 'Missing required command: npm' >&2; exit 1; }
-command -v sudo >/dev/null 2>&1 || { echo 'Missing required command: sudo' >&2; exit 1; }
-sudo -n true
-
+[[ -n "$COORDINATION_CLOSURE" && -f "$COORDINATION_CLOSURE" ]] || {
+  echo 'An immutable Orb dependency-closure attestation is required for WhatsApp artifact promotion.' >&2
+  exit 78
+}
+coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/release-orb-whatsapp-$RELEASE_ID-$$.json}"
+artifact_identity_file="$(mktemp /tmp/skincos-whatsapp-release-identity.XXXXXX)"
+coordination_acquired=0
+coordination_run() {
+  "$ROOT_DIR/scripts/runtime/global-coordination-mini-pc.sh" "$@" --proof-file "$coordination_proof"
+}
 cleanup_staging() {
   sudo -n rm -rf "$STAGING"
 }
-trap cleanup_staging EXIT INT TERM
+cleanup_coordination() {
+  if (( coordination_acquired == 1 )); then
+    coordination_run release >/dev/null 2>&1 || echo 'Unable to release the mini-PC Orb lease; it will expire fail-closed.' >&2
+  fi
+  cleanup_staging
+  rm -f -- "$artifact_identity_file"
+}
+trap cleanup_coordination EXIT INT TERM
+coordination_run acquire \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" \
+  --operation mutation --idempotency-key "mini-pc:release:orb:whatsapp:build:$RELEASE_ID:$$" >/dev/null
+coordination_acquired=1
+coordination_run check \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 
+command -v rsync >/dev/null 2>&1 || { echo 'Missing required command: rsync' >&2; exit 1; }
+command -v npm >/dev/null 2>&1 || { echo 'Missing required command: npm' >&2; exit 1; }
+command -v sha256sum >/dev/null 2>&1 || { echo 'Missing required command: sha256sum' >&2; exit 1; }
+command -v awk >/dev/null 2>&1 || { echo 'Missing required command: awk' >&2; exit 1; }
+command -v sudo >/dev/null 2>&1 || { echo 'Missing required command: sudo' >&2; exit 1; }
+sudo -n true
+
+coordination_run check \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n install -d -o skincos -g skincos -m 0750 "$STAGING" "$NPM_CACHE"
 # The cache is durable runtime state. A prior diagnostic run as another user
 # must not make a later production release fail before dependencies are built.
@@ -77,9 +106,44 @@ sudo -n -u skincos npm --prefix "$STAGING" run db:generate
 sudo -n -u skincos npm --prefix "$STAGING" run build
 [[ -f "$STAGING/dist/main.js" ]] || { echo "Build did not produce dist/main.js" >&2; exit 1; }
 
+artifact_digest="$(sha256sum "$STAGING/dist/main.js" | awk '{print $1}')"
+node - "$COORDINATION_CLOSURE" "$RELEASE_ID" "$artifact_digest" > "$artifact_identity_file" <<'NODE'
+const fs = require('fs');
+const [closureFile, releaseId, artifactDigest] = process.argv.slice(2);
+const closure = JSON.parse(fs.readFileSync(closureFile, 'utf8'));
+const identity = {
+  schemaVersion: 1,
+  module: 'orb',
+  sourceCommit: String(closure.sourceCommit).toLowerCase(),
+  sourceTree: String(closure.sourceTree).toLowerCase(),
+  dependencyClosureDigest: String(closure.digest).toLowerCase(),
+  artifacts: [{ name: 'whatsapp-dist-main', id: `whatsapp-dist:${releaseId}`, digest: artifactDigest }],
+};
+process.stdout.write(`${JSON.stringify(identity, null, 2)}\n`);
+NODE
+
+coordination_run check \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$DESTINATION")"
+coordination_run check \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+coordination_run release >/dev/null
+coordination_acquired=0
+coordination_run acquire \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" \
+  --operation promotion --release-identity-file "$artifact_identity_file" \
+  --idempotency-key "mini-pc:release:orb:whatsapp:promote:$RELEASE_ID:$$" >/dev/null
+coordination_acquired=1
+coordination_run check \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
+sudo -n install -m 0640 "$artifact_identity_file" "$STAGING/.skincos-release-identity-orb.json"
+coordination_run check \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n mv "$STAGING" "$DESTINATION"
-trap - EXIT INT TERM
+coordination_run check \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$CURRENT_LINK")"
+coordination_run check \
+  --resource release:orb --module orb --source "$RELEASE_ID" --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n ln -sfn "$DESTINATION" "$CURRENT_LINK"
 echo "Native WhatsApp release prepared: $CURRENT_LINK -> $DESTINATION"

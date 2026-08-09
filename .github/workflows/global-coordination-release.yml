@@ -1,0 +1,46 @@
+name: Release global coordination lease
+
+on:
+  workflow_call:
+    inputs:
+      required:
+        required: true
+        type: boolean
+      proof_b64:
+        required: true
+        type: string
+      coordinator_url:
+        required: true
+        type: string
+    secrets:
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: ${{ inputs.required }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Release the remote lease after all dependent jobs settle
+        env:
+          SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
+          SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          GLOBAL_PROOF_B64: ${{ inputs.proof_b64 }}
+          GLOBAL_PROOF_FILE: ${{ runner.temp }}/skincos-global-coordination-proof.json
+        run: |
+          set -euo pipefail
+          [[ "${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}" == true ]] || { echo 'Global coordination is not active; no remote release is permitted'; exit 1; }
+          [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" && -n "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" ]] || { echo 'Global coordination custody is unavailable'; exit 1; }
+          [[ -n "$GLOBAL_PROOF_B64" ]] || { echo 'Global coordination proof is missing'; exit 1; }
+          printf '%s' "$GLOBAL_PROOF_B64" | base64 -d > "$GLOBAL_PROOF_FILE"
+          SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
+          SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+            node scripts/codex-global-coordination-workflow.mjs release \
+              --proof-file "$GLOBAL_PROOF_FILE"

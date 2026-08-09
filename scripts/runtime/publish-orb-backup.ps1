@@ -8,8 +8,8 @@ param(
     [switch]$SkipGenerate
 )
 
-# WSL_BOUNDARY_EXCEPTION: this backup publication bridge starts the governed
-# native systemd unit and copies its verified artifact into Windows.
+# WSL_BOUNDARY_EXCEPTION: this backup publication bridge invokes the native
+# coordinator wrapper, then copies its verified artifact into Windows.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -69,9 +69,9 @@ function Test-BackupPayload {
 
 $DestinationRoot = Assert-AllowedDestination -Path $DestinationRoot
 if (-not $SkipGenerate) {
-    & wsl.exe -d $Distribution -u $LinuxUser -- sudo -n systemctl start orb-backup.service
+    & wsl.exe -d $Distribution -u $LinuxUser -- /usr/bin/bash -p /opt/skincos/current/source/scripts/runtime/run-orb-backup-with-coordination.sh
     if ($LASTEXITCODE -ne 0) {
-        throw "Native Orb backup failed with exit code $LASTEXITCODE."
+        throw "Coordinated native Orb backup failed with exit code $LASTEXITCODE."
     }
 }
 

@@ -31,19 +31,25 @@ done
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--release-sha must be a full lowercase SHA.' >&2; exit 64; }
 
 readonly RELEASE_ROOT="/opt/skincos/releases/$RELEASE_SHA/source"
+readonly SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly RUNNER="$RELEASE_ROOT/crm/api/scripts/run-atendimento-staging-migration.mjs"
 readonly RELEASE_VALIDATOR="$RELEASE_ROOT/crm/api/scripts/validate-atendimento-release.mjs"
 readonly CONTROL_VALIDATOR="$RELEASE_ROOT/crm/api/scripts/validate-atendimento-staging-control.mjs"
 readonly RUNTIME_GRANT_LOCKDOWN="$RELEASE_ROOT/scripts/lockdown-atendimento-staging-runtime.sh"
 readonly BACKUP_SCRIPT="$RELEASE_ROOT/scripts/backup-atendimento-staging.sh"
+readonly COORDINATION_CLOSURE="$RELEASE_ROOT/.skincos-global-coordination-atendimento.json"
 readonly SERVICE='crm-atendimento-staging.service'
 LOCKDOWN_REQUIRED=0
+coordination_acquired=0
 [[ "$RELEASE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || { echo 'Staging release root is invalid.' >&2; exit 64; }
 run_sudo_clean /usr/bin/test -f "$RUNNER" || { echo 'Fixed staging migration runner is unavailable in the immutable release.' >&2; exit 78; }
 run_sudo_clean /usr/bin/test -f "$RELEASE_VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
 run_sudo_clean /usr/bin/test -f "$CONTROL_VALIDATOR" || { echo 'Strict staging control validator is unavailable.' >&2; exit 78; }
 run_sudo_clean /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Fixed staging read-only grant lockdown is unavailable.' >&2; exit 78; }
 run_sudo_clean /usr/bin/test -x "$BACKUP_SCRIPT" || { echo 'Fixed staging backup helper is unavailable in the immutable release.' >&2; exit 78; }
+if [[ "$ACTION" != '--dry-run' ]]; then
+  run_sudo_clean /usr/bin/test -f "$COORDINATION_CLOSURE" || { echo 'Atendimento coordination closure is unavailable in the immutable release.' >&2; exit 78; }
+fi
 
 # The Node runner reads one fixed root-owned file as literal key/value data.
 # It always resolves dependencies from the immutable release that was already
@@ -66,6 +72,18 @@ if [[ "$ACTION" != '--dry-run' ]]; then
   # gate has passed and immediately before the mutable migration runner. The
   # helper never accepts a caller-controlled destination and exposes only a
   # SHA-256 attestation, not the dump path or its contents.
+  source "$SCRIPT_ROOT/scripts/runtime/global-coordination-native.sh"
+  native_coordination_init deploy:atendimento:staging atendimento "$RELEASE_SHA" "$COORDINATION_CLOSURE" mutation
+  cleanup_coordination() {
+    if [[ "$coordination_acquired" == '1' ]]; then
+      native_coordination_cleanup || true
+      coordination_acquired=0
+    fi
+  }
+  trap cleanup_coordination EXIT INT TERM
+  native_coordination_acquire "mini-pc:deploy:atendimento:staging:migration:$RELEASE_SHA:$$" >/dev/null
+  coordination_acquired=1
+  native_coordination_check
   backup_report="$(run_sudo_clean /usr/bin/bash -p "$BACKUP_SCRIPT")"
   [[ "$backup_report" =~ ^backup_created=true\ database=skincos_staging\ sha256=[0-9a-f]{64}\ private=true\ unique=true$ ]] || {
     echo 'Staging migration backup did not satisfy the private unique artifact contract.' >&2
@@ -90,6 +108,10 @@ seal_staging_runtime_grants() {
   trap '' HUP INT TERM
   if [[ "$LOCKDOWN_REQUIRED" == '1' ]]; then
     set +e
+    if ! native_coordination_check; then
+      echo 'Global coordination proof was unavailable before staging grant lockdown; the isolated service remains ineligible.' >&2
+      exit 70
+    fi
     run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --apply
     local lockdown_status=$?
     set -e
@@ -97,6 +119,8 @@ seal_staging_runtime_grants() {
       echo 'Staging runtime grant lockdown failed; keeping the isolated service ineligible.' >&2
       exit 70
     fi
+    native_coordination_cleanup || true
+    coordination_acquired=0
   fi
   exit "$exit_status"
 }
@@ -111,4 +135,5 @@ fi
 # The runner persists only sanitized migration-evidence rows. Bind each
 # mutable invocation to the already-validated immutable release; no caller
 # supplied path or environment is retained.
+native_coordination_check
 run_sudo_clean /usr/bin/node "$RUNNER" "$ACTION" --release-sha "$RELEASE_SHA"

@@ -98,6 +98,8 @@ test("child dispatch keeps an immutable release valid across unrelated main chan
 test("Ponto child mutations expose the canonical global resource and conflict scope", () => {
   assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "staging" }), "deploy:timekeeping:staging");
   assert.equal(globalResourceFor("cloudflare-pages-sync-ponto.yml", { target: "staging" }), "cloudflare:ponto-pages:staging");
+  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "api", target: "staging" }), "deploy:core-api:staging");
+  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "all", target: "staging" }), "deploy:core-all:staging");
   assert.equal(globalResourceFor("module-availability.yml", { module: "timekeeping", target: "production" }), "release:ponto");
   assert.equal(globalResourceFor("ponto-production-baseline.yml", { orchestrator_stage: "pilot" }), "release:ponto");
   assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "general", unit: "api", target: "production" }), "");

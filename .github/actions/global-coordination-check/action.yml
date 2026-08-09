@@ -1,0 +1,68 @@
+name: Check global coordination lease
+description: Renew and authorize the remote lease immediately before a governed mutation
+inputs:
+  required:
+    description: Whether the caller must present a remote lease
+    required: true
+  proof_b64:
+    description: Base64 encoded proof emitted by the coordination job
+    required: false
+  proof_file:
+    description: Absolute runner-temporary path containing the lease proof
+    required: false
+  resource:
+    description: Canonical resource key expected by the mutation
+    required: true
+  module:
+    description: Release-closure module used for the observed source
+    required: true
+  source_sha:
+    description: Exact source commit whose dependency closure is observed
+    required: true
+  enabled:
+    description: Repository-level activation switch
+    required: true
+  coordinator_url:
+    description: HTTPS global coordinator endpoint
+    required: true
+  shared_secret:
+    description: Shared custody secret passed only in process environment
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Renew and authorize remote custody
+      if: ${{ inputs.required == 'true' }}
+      shell: bash
+      env:
+        SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
+        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
+        GLOBAL_PROOF_B64: ${{ inputs.proof_b64 }}
+        GLOBAL_PROOF_FILE_INPUT: ${{ inputs.proof_file }}
+        GLOBAL_RESOURCE: ${{ inputs.resource }}
+        GLOBAL_MODULE: ${{ inputs.module }}
+        GLOBAL_SOURCE_SHA: ${{ inputs.source_sha }}
+        GLOBAL_PROOF_FILE: ${{ runner.temp }}/skincos-global-coordination-proof-check.json
+      run: |
+        set -euo pipefail
+        [[ "${{ inputs.enabled }}" == true ]] || { echo 'Global coordination is not active'; exit 1; }
+        [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" && -n "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" ]] || { echo 'Global coordination custody is unavailable'; exit 1; }
+        [[ "$GLOBAL_SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Global coordination source SHA is invalid'; exit 1; }
+        if [[ -n "${GLOBAL_PROOF_FILE_INPUT:-}" ]]; then
+          GLOBAL_PROOF_FILE="$GLOBAL_PROOF_FILE_INPUT"
+        else
+          [[ -n "$GLOBAL_PROOF_B64" ]] || { echo 'Global coordination proof is missing'; exit 1; }
+          printf '%s' "$GLOBAL_PROOF_B64" | base64 -d > "$GLOBAL_PROOF_FILE"
+        fi
+        [[ -f "$GLOBAL_PROOF_FILE" ]] || { echo 'Global coordination proof file is missing'; exit 1; }
+        SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
+        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+          node scripts/codex-global-coordination-workflow.mjs renew \
+            --proof-file "$GLOBAL_PROOF_FILE"
+        SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
+        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+          node scripts/codex-global-coordination-workflow.mjs check \
+            --proof-file "$GLOBAL_PROOF_FILE" \
+            --resource "$GLOBAL_RESOURCE" \
+            --module "$GLOBAL_MODULE" \
+            --source "$GLOBAL_SOURCE_SHA"

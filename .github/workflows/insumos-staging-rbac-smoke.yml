@@ -88,6 +88,30 @@ jobs:
         run: npx --yes playwright install --with-deps chromium
         working-directory: crm/console
 
+      - name: Acquire staging D1 coordination lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-staging-d1-insumos.json
+
+      - name: Check staging D1 lease before synthetic identity provisioning
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-staging-d1-insumos.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Generate private synthetic staging identities
         id: fixture
         env:
@@ -109,6 +133,18 @@ jobs:
           [[ "$STAGING_D1_DATABASE" == 'skincos-db-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
           npx --yes wrangler@3 d1 execute "$STAGING_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$SQL_FILE" >/dev/null
 
+      - name: Check staging D1 lease before authenticated journey
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-staging-d1-insumos.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Execute authenticated unit-scope journey
         env:
           INSUMOS_STAGING_CRM_URL: ${{ inputs.pages_url }}
@@ -117,8 +153,22 @@ jobs:
           NODE_PATH: crm/console/node_modules
         run: node crm/console/scripts/insumos-staging-rbac-smoke.cjs
 
-      - name: Tear down only this run's synthetic staging identities
+      - name: Check staging D1 lease before synthetic identity teardown
+        id: check_teardown
         if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-staging-d1-insumos.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Tear down only this run's synthetic staging identities
+        if: ${{ always() && steps.check_teardown.outcome == 'success' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -131,6 +181,15 @@ jobs:
           node inventory/scripts/insumosStagingRbacFixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$FIXTURES" --sql "$SQL_FILE"
           npx --yes wrangler@3 d1 execute "$STAGING_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$SQL_FILE" >/dev/null
           rm -f "$FIXTURES" "$SQL_FILE"
+
+      - name: Release staging D1 coordination lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-staging-d1-insumos.json
 
       - name: Upload sanitised journey evidence
         if: ${{ always() }}

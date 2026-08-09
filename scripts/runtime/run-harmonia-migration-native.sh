@@ -45,8 +45,48 @@ case "$ACTION" in
   *) echo 'HARMONIA_MIGRATION_ACTION must be dry-run or apply.' >&2; exit 64 ;;
 esac
 
+COORDINATION_SOURCE_SHA="${SKINCOS_RELEASE_ID:-}"
+COORDINATION_CLOSURE=''
+COORDINATION_RESOURCE=''
+coordination_acquired=0
+
 checkpoint=''
 if [[ "$ACTION" == 'apply' ]]; then
+  [[ "$COORDINATION_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+    echo 'SKINCOS_RELEASE_ID must be a full lowercase immutable SHA for apply.' >&2
+    exit 78
+  }
+  [[ "$ROOT_DIR" =~ ^/opt/skincos/releases/([0-9a-f]{40})/source$ ]] || {
+    echo 'Harmonia apply must run from an immutable native release, never a checkout.' >&2
+    exit 78
+  }
+  [[ "${BASH_REMATCH[1]}" == "$COORDINATION_SOURCE_SHA" ]] || {
+    echo 'SKINCOS_RELEASE_ID does not match the immutable native release path.' >&2
+    exit 78
+  }
+  COORDINATION_CLOSURE="$ROOT_DIR/.skincos-global-coordination-atendimento.json"
+  [[ -f "$COORDINATION_CLOSURE" ]] || {
+    echo 'Atendimento dependency-closure attestation is unavailable in the immutable release.' >&2
+    exit 78
+  }
+  if [[ "$TARGET" == 'staging' ]]; then
+    COORDINATION_RESOURCE='deploy:atendimento:staging'
+  else
+    COORDINATION_RESOURCE='deploy:atendimento:production'
+  fi
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/runtime/global-coordination-native.sh"
+  native_coordination_init "$COORDINATION_RESOURCE" atendimento "$COORDINATION_SOURCE_SHA" "$COORDINATION_CLOSURE" mutation
+  cleanup_coordination() {
+    if [[ "$coordination_acquired" == '1' ]]; then
+      native_coordination_cleanup || echo 'Unable to release the Harmonia migration lease; it will expire fail-closed.' >&2
+      coordination_acquired=0
+    fi
+  }
+  trap cleanup_coordination EXIT INT TERM
+  native_coordination_acquire "mini-pc:${COORDINATION_RESOURCE}:harmonia:$COORDINATION_SOURCE_SHA:$$" >/dev/null
+  coordination_acquired=1
+  native_coordination_check
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   checkpoint="$BACKUP_ROOT/harmonia-${TARGET}-${stamp}.json"
   [[ -d "$BACKUP_ROOT" && -w "$BACKUP_ROOT" ]] || {
@@ -58,4 +98,11 @@ fi
 args=("--target" "$TARGET")
 if [[ "$ACTION" == 'apply' ]]; then args+=(--apply --checkpoint "$checkpoint"); else args+=(--dry-run); fi
 if [[ -n "${SKINCOS_RELEASE_ID:-}" ]]; then args+=(--release-sha "$SKINCOS_RELEASE_ID"); fi
-exec node "$ROOT_DIR/crm/api/scripts/migrate-harmonia-schema.mjs" "${args[@]}"
+if node "$ROOT_DIR/crm/api/scripts/migrate-harmonia-schema.mjs" "${args[@]}"; then
+  if [[ "$ACTION" == 'apply' ]]; then
+    native_coordination_check
+  fi
+else
+  status=$?
+  exit "$status"
+fi

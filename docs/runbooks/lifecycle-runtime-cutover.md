@@ -28,27 +28,55 @@ through `\\wsl.localhost`; WSL never recursively walks `/mnt/c`.
    ```powershell
    & scripts/runtime/verify-native-source-release-lineage.ps1 -ReleaseSha <sha> -ParentReleaseSha <current-release-sha>
    ```
-3. From WSL, validate and promote source:
+3. From the reviewed Git tree in WSL, materialize one closure attestation for
+   each native module that will mutate. The output is private operator evidence
+   and is bound to the exact source SHA/tree; it is not a substitute for the
+   lease acquired during promotion:
+
+   ```bash
+   node scripts/codex-global-coordination-workflow.mjs closure \
+     --module orb --source <sha> \
+     --result-file /home/admin/skincos-native-release/<sha>/orb-closure.json
+   node scripts/codex-global-coordination-workflow.mjs closure \
+      --module atendimento --source <sha> \
+      --result-file /home/admin/skincos-native-release/<sha>/atendimento-closure.json
+   node scripts/codex-global-coordination-workflow.mjs closure \
+      --module native-runtime --source <sha> \
+      --result-file /home/admin/skincos-native-release/<sha>/native-runtime-closure.json
+   ```
+
+4. From WSL, validate and stage source. Every applied native release must carry
+   the closures used by its mutators:
 
    ```bash
    scripts/runtime/prepare-native-source-release.sh \
-     --archive /home/admin/skincos-native-release/<sha>/source.tar \
-     --sha256 <sha256> --lineage /home/admin/skincos-native-release/<sha>/lineage.json \
-     --lineage-sha256 <lineage-sha256> --apply --stage-only
+      --archive /home/admin/skincos-native-release/<sha>/source.tar \
+      --sha256 <sha256> --lineage /home/admin/skincos-native-release/<sha>/lineage.json \
+      --lineage-sha256 <lineage-sha256> \
+      --coordination-closure /home/admin/skincos-native-release/<sha>/orb-closure.json \
+      --coordination-closure /home/admin/skincos-native-release/<sha>/atendimento-closure.json \
+      --coordination-closure /home/admin/skincos-native-release/<sha>/native-runtime-closure.json \
+      --apply --stage-only
    ```
 
-4. Build and promote WhatsApp from the same source release:
+5. Build and promote WhatsApp from the same source release, reusing the exact
+   Orb closure and lease family:
 
    ```bash
    scripts/runtime/prepare-messaging-whatsapp-release.sh \
-     --source-root /opt/skincos/releases/<sha>/source \
-     --release-sha <sha> --apply
+      --source-root /opt/skincos/releases/<sha>/source \
+      --release-sha <sha> \
+      --coordination-closure /home/admin/skincos-native-release/<sha>/orb-closure.json \
+      --apply
    ```
 
-5. Render/install only final units and restart them:
+6. Render/install only final units and restart them:
 
    ```bash
-   scripts/runtime/prepare-lifecycle-layout.sh --apply
+   scripts/runtime/prepare-lifecycle-layout.sh \
+      --source-sha <sha> \
+      --coordination-closure /home/admin/skincos-native-release/<sha>/native-runtime-closure.json \
+      --apply
    scripts/runtime/install-lifecycle-units.sh --apply
    scripts/runtime/manage-native-runtime.sh restart
    scripts/runtime/manage-native-runtime.sh validate
