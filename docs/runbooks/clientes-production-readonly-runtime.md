@@ -110,10 +110,16 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
      --source-root /opt/skincos/releases/<sha-main>/source
    ```
 
-   Antes de qualquer `--apply` da migration, prove o plano de migrations
-   aditivas de fontes, clusters, operações, analytics e aprovação clínica. Se
-   elas ainda não existirem no staging, readiness deve continuar `503`; não
-   contorne isso com grants, schema automático ou flag. O preparador recusa um
+   O primeiro item do runner é `20260808_atendimento_core_schema_v1`: ele
+   reconcilia, de forma idempotente e transacional, o schema-base oficial de
+   `crm_atendimento` e o registra no journal. O `--dry-run` lista as relações
+   ausentes em `coreSchema.missing`; nenhuma relação é criada nessa etapa.
+   Antes de qualquer `--apply` das migrations, prove também o plano de
+   migrations aditivas de fontes, clusters, operações, analytics e aprovação
+   clínica. Se elas ainda não existirem no staging, readiness deve continuar
+   `503`; não contorne isso com grants, bootstrap automático do processo da
+   aplicação ou flag. O schema-base só pode ser aplicado pelo runner fixo, com
+   o login migrador/owner e sob o backup/selagem descritos acima. O preparador recusa um
    SHA que não seja exatamente o `origin/main` buscado e grava a linhagem
    imutável com o predecessor confirmado. Não há túnel nem DNS de staging nesta tranche. A prova de liveness de
    staging é feita somente pelo validador nativo, no listener loopback fixo;

@@ -60,8 +60,12 @@ estar inativa; o runner obtém lock advisory no banco durante todo o fluxo.
 
 ## Gaps que bloqueiam ativação
 
-1. Staging precisa ter as migrations aditivas de fontes e aprovação clínica
-   aplicadas e validadas. Até isso ocorrer, `readiness` deve responder `503`.
+1. Staging precisa ter o schema-base `20260808_atendimento_core_schema_v1` e as
+   migrations aditivas de fontes, operações e aprovação clínica aplicadas e
+   validadas pelo runner fixo. O schema-base é derivado de
+   `migrateAtendimento`, executado somente pelo login migrador/owner; o processo
+   da aplicação nunca faz bootstrap de DDL. Até todos esses itens ocorrerem,
+   `readiness` deve responder `503`.
 2. O banco de produção dedicado e os roles separados precisam de backup,
    provisionamento e prova de grants mínimos; o app não pode ter DDL nem acesso
    a contato bruto de Harmonia/Caixa.

@@ -67,6 +67,13 @@ import {
     rollbackIdentityClusterWorkspaceMigration,
 } from '../server/atendimento/identityClusterWorkspaceMigration.js'
 import {
+    applyAtendimentoCoreSchemaMigration,
+    rollbackAtendimentoCoreSchemaMigration,
+    ATENDIMENTO_CORE_SCHEMA_MIGRATION_ID,
+    atendimentoCoreSchemaMigrationPlan,
+    inspectAtendimentoCoreSchema,
+} from '../server/atendimento/coreSchemaMigration.js'
+import {
     applyCommercialOperationsMigration,
     rollbackCommercialOperationsMigration,
 } from '../server/atendimento/commercialOperationsMigration.js'
@@ -89,6 +96,7 @@ export const ATENDIMENTO_STAGING_MIGRATION_TARGET = ATENDIMENTO_MIGRATION_TARGET
 export const ATENDIMENTO_STAGING_MIGRATION_LOCK_KEY = ATENDIMENTO_STAGING_MUTATION_LOCK_KEY
 export { ATENDIMENTO_STAGING_MIGRATOR_CONNECTION_LIMIT, ATENDIMENTO_STAGING_MIGRATION_POOL_MAX }
 export const ATENDIMENTO_STAGING_MIGRATIONS = Object.freeze([
+    { id: ATENDIMENTO_CORE_SCHEMA_MIGRATION_ID, apply: applyAtendimentoCoreSchemaMigration, rollback: rollbackAtendimentoCoreSchemaMigration },
     { id: '20260718_atendimento_professional_identity_v1', apply: applyProfessionalIdentityMigration, rollback: rollbackProfessionalIdentityMigration },
     { id: '20260718_atendimento_write_safety_v1', apply: applyAtendimentoWriteSafetyMigration, rollback: rollbackAtendimentoWriteSafetyMigration },
     { id: '20260804_commercial_contact_controls_v1', apply: applyCommercialContactMigration, rollback: rollbackCommercialContactMigration },
@@ -161,9 +169,19 @@ export async function runAtendimentoStagingMigration({
                     from crm_atendimento.schema_migrations
                     order by id`)
                 : { rows: [] }
+            const coreSchema = await inspectAtendimentoCoreSchema(client)
             await client.query('commit')
             if (action === 'dry-run') {
-                return { runId, action, target, identity, registryPresent: Boolean(registryExists.rows[0]?.registry), migrations: registry.rows }
+                return {
+                    runId,
+                    action,
+                    target,
+                    identity,
+                    registryPresent: Boolean(registryExists.rows[0]?.registry),
+                    coreSchema,
+                    coreSchemaPlan: atendimentoCoreSchemaMigrationPlan(),
+                    migrations: registry.rows,
+                }
             }
         } catch (error) {
             try { await client.query('rollback') } catch { /* preserve original error */ }

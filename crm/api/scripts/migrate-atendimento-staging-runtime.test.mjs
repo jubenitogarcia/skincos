@@ -60,6 +60,7 @@ test('staging migration runner takes a dedicated advisory lock before inspecting
       calls.push({ sql })
       if (sql === 'begin' || sql === 'commit') return { rows: [] }
       if (sql.includes("to_regclass('crm_atendimento.schema_migrations')")) return { rows: [{ registry: null }] }
+      if (sql.includes('from unnest($1::text[])')) return { rows: [] }
       throw new Error(`unexpected identity query: ${sql}`)
     },
     release() {},
@@ -215,6 +216,7 @@ test('an active two-client migration lets one Harmonia contender observe the sha
     async query(sql) {
       if (sql === 'begin' || sql === 'commit') return { rows: [] }
       if (sql.includes("to_regclass('crm_atendimento.schema_migrations')")) return { rows: [{ registry: null }] }
+      if (sql.includes('from unnest($1::text[])')) return { rows: [] }
       throw new Error(`unexpected primary identity query: ${sql}`)
     },
   }
@@ -283,6 +285,7 @@ test('an active two-client migration lets one Harmonia contender observe the sha
 
 test('staging migration includes every Clientes schema domain in dependency order', () => {
   const ids = ATENDIMENTO_STAGING_MIGRATIONS.map((migration) => migration.id)
+  assert.equal(ids[0], '20260808_atendimento_core_schema_v1')
   const source = ids.indexOf('20260807_clientes_source_operations_v2')
   const clusters = ids.indexOf('20260807_identity_cluster_workspace_v2')
   const operations = ids.indexOf('20260807_commercial_operations_v2')
