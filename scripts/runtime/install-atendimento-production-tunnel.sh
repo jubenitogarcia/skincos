@@ -53,8 +53,8 @@ sudo -n test ! -L "$CREDENTIALS_FILE" || { echo 'Dedicated tunnel credentials mu
 [[ "$(sudo -n stat -c '%U:%G' "$CREDENTIALS_FILE")" == 'root:skincos' ]] || { echo 'Dedicated tunnel credentials must be root:skincos.' >&2; exit 1; }
 sudo -n -u skincos test -r "$CREDENTIALS_FILE" || { echo 'Dedicated tunnel service account cannot read its credentials.' >&2; exit 1; }
 
-tmp_config="$(mktemp)"
-tmp_unit="$(mktemp)"
+tmp_config="$(mktemp /tmp/atendimento-production-tunnel-config.XXXXXX.yml)"
+tmp_unit="$(mktemp /tmp/atendimento-production-tunnel-unit.XXXXXX)"
 trap 'rm -f "$tmp_config" "$tmp_unit"' EXIT
 printf '%s\n' \
   "tunnel: $TUNNEL_ID" \
