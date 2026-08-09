@@ -52,6 +52,20 @@ function incomingCount(name) {
 }
 
 function compileCode(code) {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  return new AsyncFunction(
+    '$input',
+    '$json',
+    '$execution',
+    '$getWorkflowStaticData',
+    '$items',
+    '$',
+    '$now',
+    `"use strict";\n${code}`,
+  );
+}
+
+function compileRuntimeCode(code) {
   return new Function(
     '$input',
     '$json',
@@ -65,7 +79,7 @@ function compileCode(code) {
 }
 
 function runCode(code, env = {}) {
-  return compileCode(code)(
+  return compileRuntimeCode(code)(
     env.$input || { all: () => [] },
     env.$json || {},
     env.$execution || { id: 'exec-test' },
@@ -204,7 +218,14 @@ function validateStructure() {
     assert(connectionExists('Build Livia Group Evidence', 'Livia'), 'The editorial agent must receive the full evidence group');
     assert(connectionExists('Livia', 'Merge Livia Output and Visual Contract'), 'Editorial output must rejoin the validated evidence contract');
     assert(connectionExists('Merge Livia Output and Visual Contract', 'Assert Livia Visual Analysis'), 'Editorial output must be checked against visual evidence');
-    assert(connectionExists('Assert Livia Visual Analysis', 'Hydrate Publish Context'), 'Only validated editorial output may enter publication context');
+    const hasReelCoverLane = names.has('Attach Livia Reel Cover Context');
+    assert(
+      connectionExists('Assert Livia Visual Analysis', 'Hydrate Publish Context') ||
+        (hasReelCoverLane &&
+          connectionExists('Assert Livia Visual Analysis', 'Prepare Livia Reel Cover Jobs') &&
+          connectionExists('Attach Livia Reel Cover Context', 'Hydrate Publish Context')),
+      'Only validated editorial output may enter publication context',
+    );
   } else {
     assert(connectionExists('Attach Uploaded Main Media Metadata', 'Livia'), 'Attach Uploaded Main Media Metadata must feed Livia');
     assert(connectionExists('Livia', 'Hydrate Publish Context'), 'Livia must feed Hydrate Publish Context');
