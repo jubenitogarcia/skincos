@@ -230,6 +230,25 @@ test('default gateway reaches Inventory through the explicit service binding', a
     assert.equal(response.headers.get('x-request-id'), 'inventory-binding-1');
 });
 
+test('default gateway tolerates stateful Inventory binding latency beyond the public probe budget', async () => {
+    resetBoundServiceResilienceForTest();
+    const response = await handleGatewayRequest(
+        new Request('https://api.skincos.com.br/inventory/auth/me'),
+        {
+            INVENTORY: {
+                fetch: async () => {
+                    await new Promise((resolve) => setTimeout(resolve, 1_000));
+                    return new Response('inventory-auth-result', { status: 401 });
+                },
+            },
+        },
+        {},
+    );
+    assert.equal(response.status, 401);
+    assert.equal(await response.text(), 'inventory-auth-result');
+    assert.equal(response.headers.get('x-skincos-dependency-status'), 'live');
+});
+
 test('an unavailable optional Inventory binding degrades only its route and leaves gateway health operational', async () => {
     resetBoundServiceResilienceForTest();
     const inventory = await handleGatewayRequest(new Request('https://api.skincos.com.br/inventory/insumos'), {}, {});
