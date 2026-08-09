@@ -260,6 +260,14 @@ test('unified team rollout is explicit, staging-only and fail-closed by default'
   assert.match(workflow, /--var "UNIFIED_TEAM_ENABLED:\$unified_team_var"/);
 });
 
+test('team and onboarding routes do not inherit the default unit gate', async () => {
+  const worker = await readFile(new URL('../src/worker.js', import.meta.url), 'utf8');
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  assert.match(worker, /const requireRoles = async \(allowedRoles, options = \{\}\)/);
+  assert.match(worker, /if \(!options\.skipUnit && !hasUnitAccess\(u, unidade\)\)/);
+  assert.match(admin, /const auth = await requireRoles\(ROLE_ADMIN, \{ skipUnit: isTeamRoute \|\| isOnboardingRoute \}\)/);
+});
+
 test('unified team maps dependency outages to retryable 503 responses', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   assert.match(admin, /function isOnboardingDependencyError\(value\)/);
