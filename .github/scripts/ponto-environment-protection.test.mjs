@@ -19,15 +19,19 @@ const setup = () => ({
     can_admins_bypass: false,
   },
   branchPolicies: {
-    total_count: 1,
-    branch_policies: [{ id: 44, name: "main", type: "branch" }],
+    total_count: 2,
+    branch_policies: [
+      { id: 44, name: "main", type: "branch" },
+      { id: 45, name: "skincos/release/ponto/*", type: "tag" },
+    ],
   },
 });
 
-test("accepts an exact main-only protected environment under single-operator Codex", () => {
+test("accepts the root branch plus immutable release-tag environment under single-operator Codex", () => {
   const report = validatePontoEnvironmentProtection(setup());
   assert.equal(report.passed, true);
   assert.equal(report.mainOnly, true);
+  assert.equal(report.customBranchPolicyCount, 2);
   assert.equal(report.authorizationModel, "single-operator-codex");
   assert.equal(report.requiredReviewerRuleCount, 0);
   assert.equal(report.credentialsIncluded, false);

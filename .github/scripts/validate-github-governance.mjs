@@ -46,6 +46,7 @@ for (const requiredRule of ["deletion", "non_fast_forward", "pull_request", "req
 }
 
 const environmentBranchPolicy = readJson(".github/governance/environments/main-branch-policy.json");
+const environmentReleaseTagPolicy = readJson(".github/governance/environments/ponto-release-tag-policy.json");
 const progressiveReleasePolicy = readJson(".github/governance/progressive-release-policy.json");
 const governance = progressiveReleasePolicy.governance;
 
@@ -69,8 +70,9 @@ for (const environmentName of ["staging", "production"]) {
     || expected.protectedBranches !== false
     || expected.customBranchPolicies !== true
     || expected.requiredBranch !== "main"
+    || expected.releaseTagPolicy !== "skincos/release/ponto/*"
   ) {
-    fail(`${environmentName} must be declared as a main-only zero-reviewer single-operator environment`);
+    fail(`${environmentName} must be declared as a main-root plus immutable release-tag zero-reviewer single-operator environment`);
     continue;
   }
   if (
@@ -95,8 +97,10 @@ for (const environmentName of ["staging", "production"]) {
   if (
     environmentBranchPolicy.name !== expected.requiredBranch
     || environmentBranchPolicy.type !== "branch"
+    || environmentReleaseTagPolicy.name !== expected.releaseTagPolicy
+    || environmentReleaseTagPolicy.type !== "tag"
   ) {
-    fail(`${environmentName} must select only ${expected.requiredBranch} through the versioned branch policy`);
+    fail(`${environmentName} must select ${expected.requiredBranch} and the immutable release-tag namespace through versioned policies`);
   }
 }
 

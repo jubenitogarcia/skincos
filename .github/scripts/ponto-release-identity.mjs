@@ -83,7 +83,9 @@ function normalizeArtifactBindings(bindings = []) {
     const result = { name };
     for (const key of [...allowed].filter((candidate) => candidate !== "name")) {
       if (binding[key] === undefined || binding[key] === null || text(binding[key]) === "") continue;
-      result[key] = normalizedSafeId(binding[key], `artifact binding ${key}`);
+      result[key] = ["digest", "artifactDigest"].includes(key)
+        ? normalizedDigest(String(binding[key]).replace(/^sha256:/i, ""), `artifact binding ${key}`)
+        : normalizedSafeId(binding[key], `artifact binding ${key}`);
     }
     if (!result.digest && !result.artifactDigest && !result.versionId && !result.deploymentId && !result.artifactId) {
       throw new Error(`artifact binding ${name} has no immutable identity`);
@@ -124,11 +126,15 @@ export function buildReleaseIdentity({
   predecessor = null,
   artifactBindings = [],
   rollbackIncumbents = [],
+  sourceIdentityDigest = "",
 }) {
   const normalizedModuleName = normalizedModule(module);
   const commit = normalizedSha(sourceCommit, "release source");
   const tree = normalizedSha(sourceTree, "release source tree");
   const closure = normalizedDigest(dependencyClosureDigest, "dependency closure");
+  const sourceDigest = sourceIdentityDigest
+    ? normalizedDigest(sourceIdentityDigest, "source release identity digest")
+    : "";
   const releaseTag = releaseTagFor(normalizedModuleName, commit);
   const unsigned = {
     schemaVersion: 1,
@@ -142,6 +148,7 @@ export function buildReleaseIdentity({
     artifactManifestSchemaVersion: 1,
     artifactBindings: normalizeArtifactBindings(artifactBindings),
     rollbackIncumbents: normalizeIncumbents(rollbackIncumbents),
+    ...(sourceDigest ? { sourceIdentityDigest: sourceDigest } : {}),
     ...(normalizePredecessor(predecessor) ? { predecessor: normalizePredecessor(predecessor) } : {}),
     ...(repository || workflow || runId ? {
       issuer: {
@@ -175,6 +182,7 @@ export function verifyReleaseIdentity(identity, {
     predecessor: identity.predecessor || null,
     artifactBindings: identity.artifactBindings || [],
     rollbackIncumbents: identity.rollbackIncumbents || [],
+    sourceIdentityDigest: identity.sourceIdentityDigest || "",
   });
   if (identity.releaseIdentityDigest !== expected.releaseIdentityDigest) throw new Error("release identity digest differs");
   for (const [key, expectedValue] of Object.entries(expected)) {
@@ -186,6 +194,95 @@ export function verifyReleaseIdentity(identity, {
     throw new Error("release tag does not point to the immutable release SHA");
   }
   return expected;
+}
+
+function immutableSurfaceIdentity(surface, module, sourceCommit, sourceTree) {
+  const releaseTag = releaseTagFor(module, sourceCommit);
+  const releaseRef = releaseRefFor(module, sourceCommit);
+  return {
+    sourceCommit,
+    sourceTree,
+    releaseTag,
+    releaseRef,
+    ...(String(surface?.runId || "").trim() ? { runId: String(surface.runId).trim() } : {}),
+  };
+}
+
+export function artifactBindingsFromSurfaces({
+  module,
+  sourceCommit,
+  sourceTree,
+  surfaces,
+}) {
+  const commit = normalizedSha(sourceCommit, "release source");
+  const tree = normalizedSha(sourceTree, "release source tree");
+  if (!surfaces || typeof surfaces !== "object" || Array.isArray(surfaces)) {
+    throw new Error("release surfaces are required to finalize the artifact manifest");
+  }
+  const bindings = [];
+  for (const [unit, surface] of Object.entries(surfaces).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!surface || typeof surface !== "object" || Array.isArray(surface)) {
+      throw new Error(`release surface ${unit} is invalid`);
+    }
+    const common = immutableSurfaceIdentity(surface, module, commit, tree);
+    const surfaceDigest = sha256(canonicalJson(surface));
+    const candidateFields = {
+      ...common,
+      digest: surfaceDigest,
+      ...(surface.candidateVersionId ? { versionId: surface.candidateVersionId } : {}),
+      ...(surface.deploymentId ? { deploymentId: surface.deploymentId } : {}),
+      ...(unit === "crmPages" && surface.deploymentId ? { pagesDeploymentId: surface.deploymentId } : {}),
+    };
+    bindings.push({ name: `surface/${unit}/candidate`, ...candidateFields });
+
+    if (surface.incumbentVersionId) {
+      bindings.push({
+        name: `surface/${unit}/incumbent`,
+        ...common,
+        versionId: surface.incumbentVersionId,
+        rollbackIncumbent: surface.incumbentVersionId,
+      });
+    }
+    if (surface.rollbackDeploymentId) {
+      bindings.push({
+        name: `surface/${unit}/rollback`,
+        ...common,
+        deploymentId: surface.rollbackDeploymentId,
+        pagesDeploymentId: surface.rollbackDeploymentId,
+        rollbackIncumbent: surface.rollbackDeploymentId,
+      });
+    }
+
+    const provenance = surface.rootCustody?.provenance;
+    if (provenance?.artifactId && provenance?.artifactDigest) {
+      bindings.push({
+        name: `artifact/${unit}/root-custody`,
+        ...common,
+        artifactId: provenance.artifactId,
+        artifactDigest: provenance.artifactDigest,
+        workflowRunId: provenance.workflowRunId || common.runId,
+      });
+    }
+  }
+  if (!bindings.length) throw new Error("release artifact manifest has no immutable bindings");
+  return normalizeArtifactBindings(bindings);
+}
+
+export function rollbackIncumbentsFromSurfaces({ surfaces, rollback = null }) {
+  const values = [];
+  for (const surface of Object.values(surfaces || {})) {
+    if (surface?.incumbentVersionId) values.push(String(surface.incumbentVersionId));
+    if (surface?.rollbackDeploymentId) values.push(String(surface.rollbackDeploymentId));
+  }
+  for (const value of [
+    rollback?.timekeepingVersionId,
+    rollback?.coreVersionId,
+    rollback?.identityVersionId,
+    rollback?.pagesDeploymentId,
+  ]) {
+    if (value) values.push(String(value));
+  }
+  return [...new Set(values)].sort();
 }
 
 function git(...args) {
@@ -282,6 +379,27 @@ function writeGitHubOutputs(file, identity) {
   }
 }
 
+function writeFinalGitHubOutputs(file, identity) {
+  if (process.env.GITHUB_OUTPUT) {
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, [
+      `release_identity_final_ref=${identity.releaseRef}`,
+      `release_identity_final_tag=${identity.releaseTag}`,
+      `release_identity_final_digest=${identity.releaseIdentityDigest}`,
+      `release_identity_source_digest=${identity.sourceIdentityDigest}`,
+      `release_identity_final_file=${file}`,
+      "",
+    ].join("\n"));
+  }
+  if (process.env.GITHUB_ENV) {
+    fs.appendFileSync(process.env.GITHUB_ENV, [
+      `PONTO_RELEASE_IDENTITY_FINAL_DIGEST=${identity.releaseIdentityDigest}`,
+      `PONTO_RELEASE_IDENTITY_FINAL_FILE=${file}`,
+      `PONTO_RELEASE_IDENTITY_SOURCE_DIGEST=${identity.sourceIdentityDigest}`,
+      "",
+    ].join("\n"));
+  }
+}
+
 export async function createReleaseIdentity({ module, sourceCommit, outputFile, token }) {
   const commit = normalizedSha(sourceCommit, "release source");
   const resolved = git("rev-parse", `${commit}^{commit}`).toLowerCase();
@@ -296,7 +414,10 @@ export async function createReleaseIdentity({ module, sourceCommit, outputFile, 
     dependencyClosureDigest: closure.digest,
     repository: process.env.GITHUB_REPOSITORY || "",
     workflow: process.env.GITHUB_WORKFLOW || "",
-    runId: process.env.GITHUB_RUN_ID || "",
+    // The source identity is reused by every progressive stage.  A run ID is
+    // evidence about the issuer, not part of the immutable release identity;
+    // stage-specific run IDs belong in the finalized artifact bindings.
+    runId: "",
   });
   await ensureRemoteTag(identity.releaseTag, identity.sourceCommit, token);
   // Make the exact remote ref available to all later checks in this runner;
@@ -305,6 +426,53 @@ export async function createReleaseIdentity({ module, sourceCommit, outputFile, 
   const file = writeOutputFile(outputFile, identity);
   writeGitHubOutputs(file, identity);
   return { identity, file };
+}
+
+export function finalizeReleaseIdentity({
+  module,
+  sourceIdentityFile,
+  surfacesFile,
+  rollbackFile,
+  outputFile,
+}) {
+  const sourceIdentity = JSON.parse(fs.readFileSync(sourceIdentityFile, "utf8"));
+  const source = verifyReleaseIdentity(sourceIdentity, {
+    module,
+    sourceCommit: sourceIdentity.sourceCommit,
+    sourceTree: sourceIdentity.sourceTree,
+    dependencyClosureDigest: sourceIdentity.dependencyClosureDigest,
+    expectedReleaseTag: releaseTagFor(module, sourceIdentity.sourceCommit),
+    expectedReleaseRef: releaseRefFor(module, sourceIdentity.sourceCommit),
+  });
+  assertLocalRef(source);
+  if (
+    source.artifactBindings.length !== 0
+    || source.rollbackIncumbents.length !== 0
+    || source.sourceIdentityDigest
+  ) throw new Error("source release identity is already finalized or contains artifact state");
+  const surfaces = JSON.parse(fs.readFileSync(surfacesFile, "utf8"));
+  const rollback = JSON.parse(fs.readFileSync(rollbackFile, "utf8"));
+  const identity = buildReleaseIdentity({
+    module: source.module,
+    sourceCommit: source.sourceCommit,
+    sourceTree: source.sourceTree,
+    dependencyClosureDigest: source.dependencyClosureDigest,
+    repository: source.issuer?.repository || "",
+    workflow: source.issuer?.workflow || "",
+    runId: source.issuer?.runId || "",
+    predecessor: source.predecessor || null,
+    artifactBindings: artifactBindingsFromSurfaces({
+      module: source.module,
+      sourceCommit: source.sourceCommit,
+      sourceTree: source.sourceTree,
+      surfaces,
+    }),
+    rollbackIncumbents: rollbackIncumbentsFromSurfaces({ surfaces, rollback }),
+    sourceIdentityDigest: source.releaseIdentityDigest,
+  });
+  const file = writeOutputFile(outputFile, identity);
+  writeFinalGitHubOutputs(file, identity);
+  return { identity, file, source };
 }
 
 export function readAndVerifyReleaseIdentity(file, options = {}) {
@@ -338,8 +506,22 @@ if (invokedAsScript) {
       });
       assertLocalRef(identity);
       process.stdout.write(`Immutable ${identity.module} release identity verified for ${identity.sourceCommit}; digest=${identity.releaseIdentityDigest}\n`);
+    } else if (command === "finalize" && module && sourceCommit && outputFile) {
+      const [sourceIdentityFile, surfacesFile, rollbackFile] = [sourceCommit, outputFile, process.argv[6]];
+      const finalFile = process.argv[7];
+      if (!sourceIdentityFile || !surfacesFile || !rollbackFile || !finalFile) {
+        throw new Error("usage: ponto-release-identity.mjs finalize <module> <source-identity-file> <surfaces-file> <rollback-file> <final-identity-file>");
+      }
+      const result = finalizeReleaseIdentity({
+        module,
+        sourceIdentityFile,
+        surfacesFile,
+        rollbackFile,
+        outputFile: finalFile,
+      });
+      process.stdout.write(`Immutable ${result.identity.module} artifact manifest finalized; digest=${result.identity.releaseIdentityDigest}\n`);
     } else {
-      throw new Error("usage: ponto-release-identity.mjs create|verify <module> <source-sha> <identity-file>");
+      throw new Error("usage: ponto-release-identity.mjs create|verify|finalize ...");
     }
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

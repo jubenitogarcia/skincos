@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { rootCustodyPayloadDigest } from "./ponto-root-custody.mjs";
+import { buildReleaseIdentity } from "./ponto-release-identity.mjs";
 
 const script = path.resolve(import.meta.dirname, "ponto-release-evidence.mjs");
 const sha = "a".repeat(40);
@@ -344,6 +345,49 @@ test("rejects a skipped stage and a different SHA", () => {
     PONTO_EXPECTED_REPOSITORY: "skincos/skincos",
   });
   assert.notEqual(result.status, 0);
+});
+
+test("accepts a finalized artifact identity only when it is linked to its immutable source identity", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-evidence-"));
+  const file = path.join(dir, "preview-final-identity.json");
+  const sourceIdentity = buildReleaseIdentity({
+    module: "ponto",
+    sourceCommit: sha,
+    sourceTree: tree,
+    dependencyClosureDigest: digest,
+  });
+  const finalIdentity = buildReleaseIdentity({
+    module: "ponto",
+    sourceCommit: sha,
+    sourceTree: tree,
+    dependencyClosureDigest: digest,
+    artifactBindings: [{ name: "pages", digest }],
+    sourceIdentityDigest: sourceIdentity.releaseIdentityDigest,
+  });
+  const written = run("write", file, {
+    PONTO_RELEASE_STAGE: "preview",
+    PONTO_RELEASE_SHA: sha,
+    PONTO_RELEASE_TREE: tree,
+    PONTO_RELEASE_IDENTITY_JSON: JSON.stringify(finalIdentity),
+    PONTO_RELEASE_IDENTITY_SOURCE_JSON: JSON.stringify(sourceIdentity),
+    PONTO_RELEASE_SURFACES_JSON: JSON.stringify(previewSurfaces),
+    GITHUB_RUN_ID: "400",
+    GITHUB_REPOSITORY: "skincos/skincos",
+  });
+  assert.equal(written.status, 0, written.stderr);
+  const evidence = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.equal(evidence.releaseIdentity.sourceIdentityDigest, sourceIdentity.releaseIdentityDigest);
+  assert.equal(evidence.releaseIdentitySource.releaseIdentityDigest, sourceIdentity.releaseIdentityDigest);
+  const tampered = path.join(dir, "tampered.json");
+  evidence.releaseIdentitySource.releaseIdentityDigest = "e".repeat(64);
+  fs.writeFileSync(tampered, JSON.stringify(evidence));
+  const rejected = run("verify", tampered, {
+    PONTO_EXPECTED_STAGE: "preview",
+    PONTO_EXPECTED_SHA: sha,
+    PONTO_EXPECTED_REPOSITORY: "skincos/skincos",
+  });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /release identity digest differs/);
 });
 
 test("rejects identity or network material in a sanitised artifact", () => {

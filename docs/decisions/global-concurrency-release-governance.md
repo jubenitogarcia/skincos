@@ -87,11 +87,18 @@ Uma identidade de release é formada por `sourceCommit`, `sourceTree`,
 `dependencyClosureDigest`, a ref/tag determinística protegida e a lista exata de
 artefatos/digests/version IDs. O workflow coordenador cria
 `skincos/release/<module>/<sourceCommit>` uma vez, aceita apenas o alvo exato e
-persiste `release-identity.json` com digest próprio. O build é uma operação
-anterior; promoção recebe e verifica a mesma identidade.
+persiste `release-identity.json` com digest próprio. Essa identidade de origem
+não inclui o ID transitório do run e permanece reutilizável entre staging,
+pilot, canary e produção. Depois das superfícies produzirem seus IDs reais, o
+coordenador gera `release-identity-final.json`: ele vincula Worker version IDs,
+Pages deployment IDs, digests, runs e incumbentes de rollback ao digest da
+identidade de origem. O build é uma operação anterior; promoção recebe e
+verifica o mesmo conjunto de artefatos.
 
 O dispatcher e os child workflows governados consomem a release tag/ref e o
-SHA exato; eles não são redespachados a partir da ponta viva de `main`. A
+SHA exato; eles não são redespachados a partir da ponta viva de `main`. Os
+environments GitHub admitem somente `main` para o emissor raiz e o namespace
+de tags imutáveis `skincos/release/ponto/*` para os filhos. A
 validação de `main` permanece apenas no coordenador raiz e nos predecessores
 que deliberadamente são emissores em `main`. Durante a migração, o dispatcher
 conserva `assertMainShaUnchanged` como compatibilidade exportada, mas a decisão
@@ -170,9 +177,10 @@ Os contratos são exercitados por
 `scripts/tests/codex-global-coordination.test.mjs` e
 `scripts/tests/codex-global-coordination-client.test.mjs`,
 `scripts/tests/codex-global-coordination-workflow.test.mjs`, além de
-`ops/cloudflare/global-coordinator/index.test.mjs` e do teste focado do
-dispatcher Ponto, da identidade de release, do matcher de dispatch, do lease
-do orquestrador e da reconciliação de children. As fases iniciais incluem
+`ops/cloudflare/global-coordinator/index.test.mjs` e dos testes focados do
+dispatcher Ponto, do manifesto final de artefatos, da identidade de release,
+do gate de environment, da atestação JIT, do matcher de dispatch, do lease do
+orquestrador e da reconciliação de children. As fases iniciais incluem
 propriedades de exclusividade, fencing após expiração, admission por closure,
 retries idempotentes, alias de superfície, indisponibilidade ambígua
 fail-closed e rejeição de ref/tag/SHA divergentes. O teste de

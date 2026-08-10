@@ -190,16 +190,19 @@ jobs:
           const fs = require("fs");
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const releaseTag = `skincos/release/ponto/${process.env.RELEASE_SHA}`;
+          const releaseRef = `refs/tags/${releaseTag}`;
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/ponto-production-baseline.yml"
             || workflow.name !== "Ponto production baseline"
             || run.workflow_id !== workflow.id
-            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
+            || ![workflow.path, `${workflow.path}@${releaseRef}`].includes(run.path)
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
-            || run.head_branch !== "main"
+            || run.head_branch !== releaseTag
+            || String(run.head_sha || "").toLowerCase() !== process.env.RELEASE_SHA.toLowerCase()
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
           ) throw new Error("production baseline run provenance is invalid");

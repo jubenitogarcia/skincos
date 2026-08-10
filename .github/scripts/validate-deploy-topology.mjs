@@ -492,7 +492,8 @@ if (
   || !environmentProtection.includes('reviewerRules.length !== 0')
   || !environmentProtection.includes('authorizationModel: "single-operator-codex"')
   || !environmentProtection.includes('environment?.can_admins_bypass !== false')
-  || !environmentProtection.includes('policies[0]?.name !== "main"')
+  || !environmentProtection.includes('releaseTagPolicy.type !== "tag"')
+  || !environmentProtection.includes('policy?.name === "skincos/release/ponto/*"')
 ) {
   fail('Ponto coordinator and capability consumers must attest exact live environment protection before authority is issued or consumed');
 }

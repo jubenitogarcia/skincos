@@ -21,12 +21,14 @@ test("policy declares single-operator Codex without human review", () => {
       protectedBranches: false,
       customBranchPolicies: true,
       requiredBranch: "main",
+      releaseTagPolicy: "skincos/release/ponto/*",
     });
   }
 });
 
 test("versioned target environments mirror the single-operator policy", () => {
   const mainBranchPolicy = readJson(".github/governance/environments/main-branch-policy.json");
+  const releaseTagPolicy = readJson(".github/governance/environments/ponto-release-tag-policy.json");
   for (const target of ["staging", "production"]) {
     const expected = governance.environmentProtection[target];
     const environment = readJson(`.github/governance/environments/${target}.json`);
@@ -40,10 +42,12 @@ test("versioned target environments mirror the single-operator policy", () => {
     });
     assert.equal(mainBranchPolicy.name, expected.requiredBranch);
     assert.equal(mainBranchPolicy.type, "branch");
+    assert.equal(releaseTagPolicy.name, expected.releaseTagPolicy);
+    assert.equal(releaseTagPolicy.type, "tag");
   }
 });
 
-test("environment attestation accepts only main-only no-review protection", () => {
+test("environment attestation accepts main plus immutable release tags without human review", () => {
   for (const target of ["staging", "production"]) {
     const report = validatePontoEnvironmentProtection({
       target,
@@ -56,8 +60,11 @@ test("environment attestation accepts only main-only no-review protection", () =
         protection_rules: [{ type: "branch_policy", id: 12345 }],
       },
       branchPolicies: {
-        total_count: 1,
-        branch_policies: [{ id: 12345, name: "main", type: "branch" }],
+        total_count: 2,
+        branch_policies: [
+          { id: 12345, name: "main", type: "branch" },
+          { id: 12346, name: "skincos/release/ponto/*", type: "tag" },
+        ],
       },
     });
     assert.equal(report.passed, true);
@@ -77,6 +84,12 @@ test("environment attestation rejects a required reviewer", () => {
       deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
       protection_rules: [{ type: "required_reviewers", prevent_self_review: true, reviewers: [{ type: "User", reviewer: { id: 1, login: governance.operatorLogin } }] }],
     },
-    branchPolicies: { total_count: 1, branch_policies: [{ id: 1, name: "main", type: "branch" }] },
+    branchPolicies: {
+      total_count: 2,
+      branch_policies: [
+        { id: 1, name: "main", type: "branch" },
+        { id: 2, name: "skincos/release/ponto/*", type: "tag" },
+      ],
+    },
   }), /must not require a human reviewer/);
 });

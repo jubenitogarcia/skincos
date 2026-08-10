@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { attestClinicRunner } from "./ponto-clinic-runner-attestation.mjs";
+import { releaseRefFor } from "./ponto-release-identity.mjs";
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -202,7 +203,9 @@ function readSecureFile(file, context) {
 }
 
 function validateRuntimeContext(env, expected, claims, now, rawBundle, rawDecryptKey) {
-  const expectedWorkflowRef = `${required(env, "GITHUB_REPOSITORY")}/.github/workflows/ponto-production-slo.yml@refs/heads/main`;
+  const releaseSha = required(env, "PONTO_RELEASE_SHA").toLowerCase();
+  const releaseRef = releaseRefFor("ponto", releaseSha);
+  const expectedWorkflowRef = `${required(env, "GITHUB_REPOSITORY")}/.github/workflows/ponto-production-slo.yml@${releaseRef}`;
   const expectedArtifactDigest = normalizeArtifactDigest(required(
     env,
     "PONTO_SLO_PREFLIGHT_ARTIFACT_DIGEST",
@@ -219,11 +222,11 @@ function validateRuntimeContext(env, expected, claims, now, rawBundle, rawDecryp
     && claims?.workflowRef === required(env, "GITHUB_WORKFLOW_REF")
     && claims?.workflowJob === "consultor-journey"
     && claims?.workflowJob === required(env, "GITHUB_JOB")
-    && claims?.ref === "refs/heads/main"
+    && claims?.ref === releaseRef
     && claims?.ref === required(env, "GITHUB_REF")
     && claims?.environment === "production"
     && FULL_SHA.test(String(claims?.releaseSha || ""))
-    && claims?.releaseSha === required(env, "PONTO_RELEASE_SHA").toLowerCase()
+    && claims?.releaseSha === releaseSha
     && claims?.releaseSha === required(env, "GITHUB_SHA").toLowerCase()
     && ["pilot", "canary", "production"].includes(claims?.stage)
     && claims?.stage === required(env, "PONTO_RELEASE_STAGE").toLowerCase()
