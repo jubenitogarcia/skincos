@@ -11,7 +11,7 @@ inputs:
     description: Shared custody secret passed only in process environment
     required: true
   key_id:
-    description: Optional active coordination key identifier; defaults to the repository variable
+    description: Optional active coordination key identifier supplied by the caller; empty preserves legacy coordination compatibility
     required: false
     default: ''
   proof_file:
@@ -28,7 +28,7 @@ runs:
       env:
         SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
         SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
-        SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id || vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+        SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id }}
         GLOBAL_PROOF_FILE: ${{ inputs.proof_file }}
       run: |
         set -euo pipefail
