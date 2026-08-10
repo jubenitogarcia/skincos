@@ -17,6 +17,7 @@ import {
   emptyState,
   evaluateLeaseAdmission,
   lockScopeFor,
+  migratePersistedState,
   normalizeReleaseIdentity,
   normalizeResourceKey,
   releaseLease,
@@ -26,7 +27,7 @@ import {
 } from "../ops/governance/global-coordination-core.mjs";
 import { matchesAny } from "./codex-autonomy-lib.mjs";
 
-export { acquireLease, authorizeMutation, buildIntent, buildLegacyIntentV1, canonicalJson, checkLease, compareDependencyClosure, emptyState, evaluateLeaseAdmission, lockScopeFor, normalizeReleaseIdentity, normalizeResourceKey, releaseLease, renewLease, revokeLease, consumeNonce };
+export { acquireLease, authorizeMutation, buildIntent, buildLegacyIntentV1, canonicalJson, checkLease, compareDependencyClosure, emptyState, evaluateLeaseAdmission, lockScopeFor, migratePersistedState, normalizeReleaseIdentity, normalizeResourceKey, releaseLease, renewLease, revokeLease, consumeNonce };
 export { CONTRACT_ID };
 
 export const ROOT = path.resolve(import.meta.dirname, "..");

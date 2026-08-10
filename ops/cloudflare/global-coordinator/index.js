@@ -10,6 +10,7 @@ import {
   emptyState,
   evaluateLeaseAdmission,
   lockScopeFor,
+  migratePersistedState,
   releaseLease,
   renewLease,
   revokeLease,
@@ -104,7 +105,7 @@ export class GlobalCoordinator extends DurableObject {
 
   coordinate(input) {
     const row = this.ctx.storage.sql.exec("SELECT state_json FROM coordinator_state WHERE id = 1").one();
-    const current = JSON.parse(row.state_json);
+    const current = migratePersistedState(JSON.parse(row.state_json));
     const nonce = consumeNonce(current, { nonce: input.nonce, digest: input.requestDigest, now: input.now, ttlMs: NONCE_TTL_MS });
     if (!nonce.accepted) return { accepted: false, valid: false, reason: nonce.reason };
     let result;
