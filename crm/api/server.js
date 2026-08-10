@@ -36,6 +36,7 @@ import { createCaixaRouter } from './server/caixa/routes.js'
 import { configuredCorsOrigins, isAllowedCrmCorsOrigin } from './server/corsPolicy.js'
 import { effectiveAllowedModules, normalizeCrmRole as normalizeRole } from './server/crmRolePolicy.js'
 import { resolveEvolutionMediaUrl } from './server/whatsappMediaUrl.js'
+import { normalizeLocalCrmAccountLink } from './localTeamIdentity.js'
 
 // Axios for facade requests to Unified System
 import axios from 'axios'
@@ -1310,6 +1311,7 @@ if (DEV_AUTH_ENABLED) {
         if (!member || typeof member !== 'object') return null
         const profile = String(member.profile || localProfileForTitle(member.jobTitle) || 'CONSULTOR').toUpperCase()
         const units = localNormalizeUnits(member.units)
+        const crmAccount = normalizeLocalCrmAccountLink(member)
         return {
             ...member,
             id: String(member.id || `local-team-${randomUUID()}`),
@@ -1324,9 +1326,9 @@ if (DEV_AUTH_ENABLED) {
             department: String(member.department || '').trim(),
             units,
             accountStatus: String(member.accountStatus || 'INVITED').trim().toUpperCase(),
-            crmAccountLinked: member.crmAccountLinked === undefined ? true : Boolean(member.crmAccountLinked),
-            crmAccountUsername: String(member.crmAccountUsername || '').trim() || null,
-            crmAccountReviewStatus: String(member.crmAccountReviewStatus || (member.crmAccountLinked === false ? '' : 'CONFIRMED')).trim().toUpperCase() || null,
+            crmAccountLinked: crmAccount.linked,
+            crmAccountUsername: crmAccount.username,
+            crmAccountReviewStatus: crmAccount.reviewStatus,
             crmAccountLinkId: String(member.crmAccountLinkId || '').trim() || null,
             inviteId: String(member.inviteId || '').trim() || null,
             provisioningState: String(member.provisioningState || 'COMPLETED').trim(),
@@ -2101,7 +2103,10 @@ if (DEV_AUTH_ENABLED) {
         const currentStatus = String(member.crmAccountReviewStatus || '').toUpperCase()
         if (currentStatus === 'CONFIRMED') {
             if (localNormalizeUsername(member.crmAccountUsername) === crmUsername) return res.status(200).json({ success: true, data: localPublicAccountLink(member), replayed: true })
-            return res.status(409).json({ success: false, error: 'O vínculo confirmado não pode ser substituído neste fluxo', code: 'CRM_ACCOUNT_LINK_CONFIRMED_IMMUTABLE' })
+            // A legacy preview row can retain CONFIRMED without the explicit
+            // username required by the invariant. Keep the state fail-closed,
+            // but allow a new exact proposal so an operator can repair it.
+            if (member.crmAccountUsername) return res.status(409).json({ success: false, error: 'O vínculo confirmado não pode ser substituído neste fluxo', code: 'CRM_ACCOUNT_LINK_CONFIRMED_IMMUTABLE' })
         }
         if (currentStatus === 'PENDING_REVIEW') {
             if (localNormalizeUsername(member.crmAccountUsername) === crmUsername) return res.status(200).json({ success: true, data: localPublicAccountLink(member), replayed: true })

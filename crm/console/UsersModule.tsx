@@ -136,6 +136,20 @@ function statusLabel(status: string) {
   return ({ INVITED: 'Convite enviado', ACTIVE: 'Ativo', SUSPENDED: 'Suspenso', TERMINATED: 'Desativado', PENDING_ACCESS: 'Aguardando acesso' } as Record<string, string>)[status] || status
 }
 
+function crmAccountLabel(row: Pick<UnifiedTeamMember, 'crmAccountLinked' | 'crmAccountUsername' | 'crmAccountReviewStatus'>) {
+  if (row.crmAccountLinked) return 'CRM vinculado'
+  if (row.crmAccountReviewStatus === 'CONFIRMED' && !row.crmAccountUsername) return 'CRM inconsistente'
+  if (row.crmAccountReviewStatus === 'REJECTED') return 'CRM rejeitado'
+  return 'CRM pendente'
+}
+
+function crmAccountBadgeVariant(row: Pick<UnifiedTeamMember, 'crmAccountLinked' | 'crmAccountUsername' | 'crmAccountReviewStatus'>): BadgeVariant {
+  if (row.crmAccountLinked) return 'success'
+  if (row.crmAccountReviewStatus === 'CONFIRMED' && !row.crmAccountUsername) return 'destructive'
+  if (row.crmAccountReviewStatus === 'REJECTED') return 'destructive'
+  return 'warning'
+}
+
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' | 'premium'
 
 function statusBadgeVariant(status: string): BadgeVariant {
@@ -864,7 +878,7 @@ export function UsersModule() {
                           )) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}
                         </div>
                       </td>
-                      <td className="p-3 align-middle"><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={row.crmAccountLinked ? 'success' : row.crmAccountReviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[11px]" title={row.crmAccountUsername ? `Conta ${row.crmAccountUsername}` : 'Conta ainda sem vínculo explícito'}>{row.crmAccountLinked ? 'CRM vinculado' : row.crmAccountReviewStatus === 'REJECTED' ? 'CRM rejeitado' : 'CRM pendente'}</Badge></div></td>
+                      <td className="p-3 align-middle"><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={crmAccountBadgeVariant(row)} className="px-2 py-1 text-[11px]" title={row.crmAccountUsername ? `Conta ${row.crmAccountUsername}` : 'Conta ainda sem vínculo explícito'}>{crmAccountLabel(row)}</Badge></div></td>
                       <td className="p-3 align-middle"><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></td>
                       <td className="p-3 text-right align-middle">
                         <TooltipButton label={`Editar ${row.fullName}`}>
@@ -904,7 +918,7 @@ export function UsersModule() {
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Cargo</p><Badge variant={titleBadgeVariant(row.jobTitle)} className="px-2 py-1 text-[11px]">{row.jobTitle}</Badge></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Departamento</p><p className="text-blue-100/80">{row.department || '—'}</p></div>
                     <div className="col-span-2"><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><div className="flex flex-wrap gap-1">{row.units.length ? row.units.map((unit) => <Badge key={unit} variant="outline" className="px-2 py-1 text-[11px]">{unitLabels[unit] || unit}</Badge>) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}</div></div>
-                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Conta</p><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={row.crmAccountLinked ? 'success' : row.crmAccountReviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[11px]">{row.crmAccountLinked ? 'CRM vinculado' : row.crmAccountReviewStatus === 'REJECTED' ? 'CRM rejeitado' : 'CRM pendente'}</Badge></div></div>
+                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Conta</p><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={crmAccountBadgeVariant(row)} className="px-2 py-1 text-[11px]">{crmAccountLabel(row)}</Badge></div></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Escala</p><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></div>
                   </div>
                 </article>
@@ -1001,11 +1015,12 @@ export function UsersModule() {
                       <div><h3 id="team-account-link-title" className="text-sm font-semibold text-white">Conta CRM vinculada</h3><p className="mt-1 text-xs text-blue-100/55">O vínculo usa somente o nome de usuário exato; nunca é resolvido por nome, e-mail ou semelhança.</p></div>
                     </div>
                     {editingRow && <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={editingRow.crmAccountLinked ? 'success' : editingRow.crmAccountReviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[10px]">{editingRow.crmAccountLinked ? 'Confirmada' : editingRow.crmAccountReviewStatus === 'REJECTED' ? 'Rejeitada' : editingRow.crmAccountReviewStatus === 'PENDING_REVIEW' ? 'Em revisão' : 'Sem vínculo'}</Badge>
+                      <Badge variant={crmAccountBadgeVariant(editingRow)} className="px-2 py-1 text-[10px]">{editingRow.crmAccountLinked ? 'Confirmada' : editingRow.crmAccountReviewStatus === 'CONFIRMED' && !editingRow.crmAccountUsername ? 'Inconsistente' : editingRow.crmAccountReviewStatus === 'REJECTED' ? 'Rejeitada' : editingRow.crmAccountReviewStatus === 'PENDING_REVIEW' ? 'Em revisão' : 'Sem vínculo'}</Badge>
                       {editingRow.crmAccountUsername && <span className="font-mono text-[11px] text-blue-100/65">{editingRow.crmAccountUsername}</span>}
                     </div>}
                   </div>
                   {editingRow?.crmAccountReviewStatus === 'PENDING_REVIEW' && canManage && <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/10 bg-amber-200/[0.04] px-3 py-2 text-xs text-amber-50/80"><span>Esta proposta aguarda confirmação humana antes de qualquer alteração de acesso.</span><div className="flex items-center gap-1"><TooltipButton label="Confirmar conta CRM"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-emerald-100 hover:bg-emerald-200/10" aria-label={`Confirmar conta CRM ${editingRow.crmAccountUsername || ''}`} disabled={crmLinkReviewing} onClick={() => void reviewCrmAccountLink('CONFIRMED')}><Check className="size-3.5" aria-hidden="true" /></Button></TooltipButton><TooltipButton label="Rejeitar conta CRM"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label={`Rejeitar conta CRM ${editingRow.crmAccountUsername || ''}`} disabled={crmLinkReviewing} onClick={() => void reviewCrmAccountLink('REJECTED')}><X className="size-3.5" aria-hidden="true" /></Button></TooltipButton></div></div>}
+                  {editingRow?.crmAccountReviewStatus === 'CONFIRMED' && !editingRow.crmAccountUsername && <div className="mb-3 rounded-xl border border-rose-200/15 bg-rose-300/[0.06] px-3 py-2 text-xs text-rose-50" role="alert">O vínculo CRM confirmado não possui um usuário explícito. O acesso permanece protegido; proponha novamente o nome exato da conta para corrigir este cadastro.</div>}
                   {canManage && editingId && !editingRow?.crmAccountLinked && <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="space-y-1 text-xs text-blue-100/75">Nome de usuário da conta CRM<Input value={crmUsernameInput} onChange={(event) => setCrmUsernameInput(event.target.value)} placeholder="exato, por exemplo anareibeiro" autoComplete="off" /></label><Button type="button" disabled={crmLinkSaving || !crmUsernameInput.trim() || editingRow?.crmAccountReviewStatus === 'PENDING_REVIEW'} onClick={() => void proposeCrmAccountLink()}><Link2 className="mr-2 size-4" aria-hidden="true" />{crmLinkSaving ? 'Registrando…' : 'Propor vínculo'}</Button></div>}
                   {!editingRow?.crmAccountUsername && <p className="text-xs text-blue-100/55">Nenhuma conta foi associada a este cadastro. Resolva a pendência antes de reativar ou desligar uma conta já operacional.</p>}
                 </section>
