@@ -27,6 +27,16 @@ jobs:
           # adapter while this runner stays on the trusted main tree.
           ref: main
           fetch-depth: 0
+      - name: Fetch the exact PR base tree used for closure admission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          base_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL_NUMBER" --jq '.base.sha')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'pull request base SHA is invalid'; exit 1; }
+          git fetch --no-tags origin "$base_sha"
+          git cat-file -e "${base_sha}^{commit}"
       - name: Evaluate global integration admission
         env:
           GH_TOKEN: ${{ github.token }}
