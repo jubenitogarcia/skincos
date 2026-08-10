@@ -31,6 +31,21 @@ and `references/evidence-model.md`. For `supervisor-cycle`, also read
 5. Execute continuously: scoped fixes, tests, commit, push, single-purpose PR, terminal CI, introduced-failure fixes, merge when technical gates permit, and the authorized environment verification. Do not stop after plan, commit, PR, running check, timeout, or first CI failure.
 6. Verify the relevant environment and persist only material queue, generated-state, blocker and evidence changes. After compaction, load the snapshot and continue without duplicating volatile state across historical documents.
 
+## Global concurrency authority
+
+Local session/target leases and GitHub `concurrency` are scheduling safeguards;
+neither is mutation authority. Before any shared operation, classify its
+canonical resource (`merge:main`, `release:<module>`,
+`deploy:<surface>:<environment>`, `cloudflare:<surface>:<environment>`, or
+`promotion:<module>:<environment>`), acquire the remote lease through
+`scripts/codex-global-coordination-workflow.mjs`, and keep the proof outside
+the checkout. Renew and call `check` with the observed dependency-closure
+digest immediately before each external mutation; release in an `always`
+cleanup path. A missing URL, custody secret, resource, closure, or proof is a
+fail-closed stop. The production coordinator URL is intentionally separate
+from staging, so an absent production authority must block pilot, canary,
+production, and rollback rather than reuse staging custody.
+
 ## Authorization
 
 Authorization comes from the current explicit mission under

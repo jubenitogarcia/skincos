@@ -7,12 +7,18 @@ SCRIPT="$ROOT_DIR/scripts/runtime/prepare-native-source-release.sh"
 bash -n "$SCRIPT"
 
 required=(
-  '--archive <native-tar> --sha256 <sha256> --lineage <json> --lineage-sha256 <sha256> [--apply --stage-only]'
+  '--archive <native-tar> --sha256 <sha256> --lineage <json> --lineage-sha256 <sha256> [--coordination-closure <json>]... [--apply --stage-only]'
   'Windows creates and transfers the archive first'
   '[[ "$RELEASE_ARCHIVE" != /mnt/* ]]'
   'actual_archive_sha256="$(sha256sum "$RELEASE_ARCHIVE"'
   'actual_lineage_sha256="$(sha256sum "$RELEASE_LINEAGE"'
   'value.verifiedAncestor !== true'
+  '--coordination-closure'
+  'At least one --coordination-closure attestation is required'
+  'coordination_native_runtime_closure'
+  'A native-runtime dependency-closure attestation is required'
+  '.skincos-global-coordination-'
+  'coordination closure identity or digest is invalid'
   '.skincos-release-lineage.json'
   'readonly ARCHIVE_PREFIX="skincos-$RELEASE_ID/"'
   'tar -tzf "$RELEASE_ARCHIVE"'

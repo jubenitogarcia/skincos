@@ -1,0 +1,112 @@
+name: Atendimento Cloudflare capability probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Create/reuse the dedicated tunnel and route the fixed production hostname
+        required: true
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET: ${{ secrets.ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET }}
+      APPLY: ${{ inputs.apply }}
+    steps:
+      - name: Probe or provision the fixed Atendimento edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+          api='https://api.cloudflare.com/client/v4'
+          hostname='crm-atendimento.skincos.com.br'
+          tunnel_name='skincos-atendimento-production'
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H 'Content-Type: application/json')
+
+          request() {
+            local method="$1" path="$2" body="${3:-}" out="$4"
+            if [[ -n "$body" ]]; then
+              curl --silent --show-error --retry 2 --retry-all-errors \
+                -X "$method" "${auth[@]}" -d "$body" -o "$out" -w '%{http_code}' "${api}${path}" >"$out.status" || true
+            else
+              curl --silent --show-error --retry 2 --retry-all-errors \
+                -X "$method" "${auth[@]}" -o "$out" -w '%{http_code}' "${api}${path}" >"$out.status" || true
+            fi
+          }
+
+          request GET "/accounts/${CLOUDFLARE_ACCOUNT_ID}" '' "$tmp/account.json"
+          request GET "/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel?is_deleted=false&per_page=100" '' "$tmp/tunnels.json"
+          request GET "/zones?name=skincos.com.br&status=active" '' "$tmp/zones.json"
+
+          account_http="$(cat "$tmp/account.json.status")"
+          tunnel_http="$(cat "$tmp/tunnels.json.status")"
+          zone_http="$(cat "$tmp/zones.json.status")"
+          account_ok="$(jq -r '.success // false' "$tmp/account.json")"
+          tunnel_ok="$(jq -r '.success // false' "$tmp/tunnels.json")"
+          zone_ok="$(jq -r '.success // false' "$tmp/zones.json")"
+          zone_count="$(jq 'if (.result | type) == "array" then (.result | length) else 0 end' "$tmp/zones.json")"
+          existing_id="$(jq -r --arg name "$tunnel_name" 'if (.result | type) == "array" then [.result[] | select(type == "object" and .name == $name and (.deleted_at == null or .deleted_at == "")) | .id][0] // empty else empty end' "$tmp/tunnels.json")"
+          existing_count="$(jq --arg name "$tunnel_name" 'if (.result | type) == "array" then [.result[] | select(type == "object" and .name == $name and (.deleted_at == null or .deleted_at == "")) | .id] | length else 0 end' "$tmp/tunnels.json")"
+          account_errors="$(jq -r '[.errors[]? | ((.code // "unknown") + ": " + (.message // ""))] | join("; ")' "$tmp/account.json")"
+          tunnel_errors="$(jq -r '[.errors[]? | ((.code // "unknown") + ": " + (.message // ""))] | join("; ")' "$tmp/tunnels.json")"
+          zone_errors="$(jq -r '[.errors[]? | ((.code // "unknown") + ": " + (.message // ""))] | join("; ")' "$tmp/zones.json")"
+          printf 'account_id=%s account_http=%s tunnel_list_http=%s zone_http=%s account_read=%s tunnel_list_read=%s zone_read=%s zone_count=%s existing_dedicated_tunnels=%s\n' \
+            "$CLOUDFLARE_ACCOUNT_ID" "$account_http" "$tunnel_http" "$zone_http" "$account_ok" "$tunnel_ok" "$zone_ok" "$zone_count" "$existing_count"
+          [[ -z "$account_errors" ]] || printf 'account_error=%s\n' "$account_errors"
+          [[ -z "$tunnel_errors" ]] || printf 'tunnel_list_error=%s\n' "$tunnel_errors"
+          [[ -z "$zone_errors" ]] || printf 'zone_error=%s\n' "$zone_errors"
+
+          [[ "$account_http" =~ ^2[0-9][0-9]$ && "$tunnel_http" =~ ^2[0-9][0-9]$ && "$zone_http" =~ ^2[0-9][0-9]$ && "$account_ok" == true && "$tunnel_ok" == true && "$zone_ok" == true ]] || {
+            echo 'Cloudflare capability probe failed closed.' >&2
+            exit 78
+          }
+          [[ "$zone_count" == 1 ]] || { echo 'Expected exactly one active skincos.com.br zone.' >&2; exit 78; }
+
+          if [[ "$APPLY" != true ]]; then
+            echo 'apply=false; no tunnel or DNS mutation was attempted.'
+            exit 0
+          fi
+
+          : "${ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET:?ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET is required for apply}"
+          [[ "$ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET" =~ ^[A-Za-z0-9+/]+=*$ ]] || { echo 'Tunnel secret format is invalid.' >&2; exit 64; }
+          if [[ -n "$existing_id" ]]; then
+            tunnel_id="$existing_id"
+            echo "Reusing existing dedicated tunnel id (name=$tunnel_name)."
+          else
+            create_body="$(jq -cn --arg name "$tunnel_name" --arg secret "$ATENDIMENTO_CLOUDFLARE_TUNNEL_SECRET" '{name:$name,config_src:"cloudflare",tunnel_secret:$secret}')"
+            request POST "/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel" "$create_body" "$tmp/create.json"
+            tunnel_id="$(jq -r '.result.id // empty' "$tmp/create.json")"
+            [[ "$tunnel_id" =~ ^[0-9a-f-]{36}$ ]] || { echo 'Tunnel creation returned no valid UUID.' >&2; exit 78; }
+            echo 'Created the fixed dedicated tunnel.'
+          fi
+
+          request GET "/zones?name=skincos.com.br&status=active" '' "$tmp/zones-final.json"
+          zone_id="$(jq -r '.result[0].id // empty' "$tmp/zones-final.json")"
+          [[ "$zone_id" =~ ^[0-9a-f]{32}$ ]] || { echo 'Zone lookup returned no valid id.' >&2; exit 78; }
+          request GET "/zones/${zone_id}/dns_records?type=CNAME&name=${hostname}&per_page=100" '' "$tmp/dns.json"
+          expected_content="${tunnel_id}.cfargotunnel.com"
+          dns_count="$(jq 'if (.result | type) == "array" then (.result | length) else 0 end' "$tmp/dns.json")"
+          matching_count="$(jq --arg content "$expected_content" 'if (.result | type) == "array" then [.result[] | select(type == "object" and .type == "CNAME" and .content == $content and (.data == null or .data == {})) | .id] | length else 0 end' "$tmp/dns.json")"
+          wrong_count="$(jq --arg content "$expected_content" 'if (.result | type) == "array" then [.result[] | select(type == "object" and (.type != "CNAME" or .content != $content or (.data != null and .data != {}))) | .id] | length else 0 end' "$tmp/dns.json")"
+          [[ "$wrong_count" == 0 ]] || { echo 'A conflicting DNS record exists; refusing to overwrite it.' >&2; exit 78; }
+          if [[ "$matching_count" == 0 ]]; then
+            dns_body="$(jq -cn --arg name "$hostname" --arg content "$expected_content" '{type:"CNAME",name:$name,content:$content,ttl:1,proxied:true}')"
+            request POST "/zones/${zone_id}/dns_records" "$dns_body" "$tmp/dns-create.json"
+            [[ "$(jq -r '.success // false' "$tmp/dns-create.json")" == true ]] || { echo 'DNS creation failed.' >&2; exit 78; }
+            echo 'Created the fixed dedicated DNS CNAME.'
+          else
+            echo 'Reused the existing correct dedicated DNS CNAME.'
+          fi
+          printf 'apply=true tunnel_id=%s hostname=%s dns_content=%s\n' "$tunnel_id" "$hostname" "$expected_content"

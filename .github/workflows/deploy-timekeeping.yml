@@ -81,8 +81,13 @@ jobs:
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
     with:
       required: ${{ inputs.target != 'preview' }}
+      global_lease_required: ${{ inputs.target != 'preview' }}
+      global_resource: deploy:timekeeping:${{ inputs.target }}
+      global_module: ponto
+      global_coordinator_url: ${{ contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
       lease_key: timekeeping
       stage: ${{ inputs.orchestrator_stage || inputs.target }}
       target: ${{ inputs.target == 'staging' && 'staging' || 'production' }}
@@ -213,6 +218,18 @@ jobs:
             "$ORCHESTRATOR_STAGE" \
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
+      - name: Authorize global Timekeeping surface mutation
+        if: ${{ inputs.target != 'preview' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
+          resource: deploy:timekeeping:${{ inputs.target }}
+          module: ponto
+          source_sha: ${{ inputs.release_sha || github.sha }}
       - name: Guard target resources and explicit production authorization
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -500,11 +517,12 @@ jobs:
           [[ "$TARGET" == pilot ]] && target=production
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ROOT_CUSTODY_RUN_ID" > "$RUNNER_TEMP/timekeeping-root-custody-run.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cloudflare-workers-sync-ponto-secrets.yml" > "$RUNNER_TEMP/timekeeping-root-custody-workflow.json"
-          node - \
+          node --input-type=module - \
             "$RUNNER_TEMP/timekeeping-root-custody-run.json" \
             "$RUNNER_TEMP/timekeeping-root-custody-workflow.json" \
             "$target" <<'NODE'
-          const fs = require("fs");
+          import fs from "node:fs";
+          import { pontoSourceClosureMatches } from "./.github/scripts/ponto-source-closure.mjs";
           const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           const target = process.argv[4];
@@ -523,7 +541,7 @@ jobs:
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
-            || run.head_sha !== process.env.RELEASE_SHA
+            || !pontoSourceClosureMatches(process.env.RELEASE_SHA, String(run.head_sha || "").toLowerCase())
             || !expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
@@ -558,10 +576,12 @@ jobs:
             "$artifact_metadata" \
             "$artifact_provenance" \
             "$artifact_name" \
-            "$artifact_id" <<'NODE'
+            "$artifact_id" \
+            "$RUNNER_TEMP/timekeeping-root-custody-run.json" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const artifact = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const run = JSON.parse(fs.readFileSync(process.argv[7], "utf8"));
           const outputFile = process.argv[4];
           const artifactName = process.argv[5];
           const artifactId = process.argv[6];
@@ -578,7 +598,7 @@ jobs:
             || expiresAt <= Date.now()
             || !/^sha256:[0-9a-f]{64}$/.test(digest)
             || artifact.workflow_run?.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
-            || artifact.workflow_run?.head_sha !== process.env.RELEASE_SHA
+            || artifact.workflow_run?.head_sha !== run.head_sha
             || String(listed[0].digest || "") !== digest
             || listed[0].workflow_run?.id !== artifact.workflow_run.id
             || listed[0].workflow_run?.head_sha !== artifact.workflow_run.head_sha
@@ -1141,3 +1161,13 @@ jobs:
           path: ${{ runner.temp }}/timekeeping-surface/surface.json
           retention-days: 90
           if-no-files-found: error
+  global-coordination-release:
+    needs: [coordination, promotion, progressive, preview, release]
+    if: ${{ always() && needs.coordination.outputs.global_lease_required == 'true' }}
+    uses: ./.github/workflows/global-coordination-release.yml
+    secrets:
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+    with:
+      required: true
+      proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
+      coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}

@@ -5,7 +5,7 @@ import {
     isStrictAtendimentoMigrationDestination,
 } from '../migrationDestination.js'
 
-test('migration target accepts only the local operator socket or staging loopback TLS URL', () => {
+test('migration target accepts local, staging, and dedicated production destinations', () => {
     assert.equal(isStrictAtendimentoMigrationDestination(
         'postgresql:///skincos_crm_local?host=/var/run/postgresql',
         ATENDIMENTO_MIGRATION_TARGETS.LOCAL,
@@ -13,6 +13,10 @@ test('migration target accepts only the local operator socket or staging loopbac
     assert.equal(isStrictAtendimentoMigrationDestination(
         'postgresql://skincos_staging_migrator_login:synthetic@127.0.0.1:5432/skincos_staging?sslmode=require&uselibpqcompat=true&application_name=atendimento-migration',
         ATENDIMENTO_MIGRATION_TARGETS.STAGING,
+    ), true)
+    assert.equal(isStrictAtendimentoMigrationDestination(
+        'postgresql://skincos_clientes_migrator_login:synthetic@127.0.0.1:5432/skincos_clientes_production?sslmode=require&uselibpqcompat=true&application_name=atendimento-migration',
+        ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION,
     ), true)
 })
 
@@ -24,4 +28,12 @@ test('migration target rejects remote, non-TLS, wrong-role and wrong-database de
         'postgresql://skincos_staging_migrator_login:synthetic@127.0.0.1:5432/skincos_crm_local?sslmode=require',
     ]
     for (const value of rejected) assert.equal(isStrictAtendimentoMigrationDestination(value, ATENDIMENTO_MIGRATION_TARGETS.STAGING), false, value)
+    assert.equal(isStrictAtendimentoMigrationDestination(
+        'postgresql://skincos_staging_migrator_login:synthetic@127.0.0.1:5432/skincos_clientes_production?sslmode=require&uselibpqcompat=true',
+        ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION,
+    ), false)
+    assert.equal(isStrictAtendimentoMigrationDestination(
+        'postgresql://skincos_clientes_migrator_login:synthetic@127.0.0.1:5432/skincos_staging?sslmode=require&uselibpqcompat=true',
+        ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION,
+    ), false)
 })

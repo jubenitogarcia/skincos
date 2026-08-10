@@ -64,6 +64,46 @@ jobs:
           node .github/scripts/validate-finance-canary-policy.mjs
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CONTROL_KV_ID CANARY_PASSWORD; do [[ -n "${!name:-}" ]] || { echo "Missing required staging-only value: $name"; exit 1; }; done
           [[ "$CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid Finance staging control KV id'; exit 1; }
+
+      - name: Acquire Finance release lease for synthetic canary
+        if: steps.prerequisites.outcome == 'success'
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:finance
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-canary.json
+
+      - name: Acquire shared staging D1 lease for synthetic canary
+        if: steps.prerequisites.outcome == 'success'
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: global:staging-d1
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json
+
+      - name: Check Finance release lease before synthetic grant mutation
+        if: steps.prerequisites.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-canary.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Capture reversible synthetic grant baseline
         id: baseline
         if: steps.prerequisites.outcome == 'success'
@@ -75,6 +115,33 @@ jobs:
           permission="$(npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "SELECT permission FROM finance_access_grants WHERE username='finance-staging-smoke' AND scope_id='finance-scope-novo-hamburgo' LIMIT 1;" --json | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const p=x[0]?.results?.[0]?.permission;if(!p)process.exit(1);process.stdout.write(p)")"
           [[ "$permission" =~ ^(viewer|operator|manager)$ ]] || { echo 'Synthetic grant is invalid'; exit 1; }
           echo "permission=$permission" >> "$GITHUB_OUTPUT"
+
+      - name: Check Finance release lease before opening synthetic canary
+        if: steps.baseline.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-canary.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Check shared staging D1 lease before opening synthetic canary
+        if: steps.baseline.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json
+          resource: global:staging-d1
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Open deterministic synthetic canary
         id: canary_open
         if: steps.baseline.outcome == 'success'
@@ -91,6 +158,18 @@ jobs:
           NODE
           npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$(cat "$RUNNER_TEMP/canary-control.json")" --namespace-id "$CONTROL_KV_ID" --remote
           npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','true',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='true',updated_at=CURRENT_TIMESTAMP; UPDATE finance_access_grants SET permission='operator' WHERE username='finance-staging-smoke' AND scope_id='finance-scope-novo-hamburgo';"
+      - name: Check shared staging D1 lease before authenticated canary
+        if: steps.canary_open.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json
+          resource: global:staging-d1
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Run authenticated synthetic canary journey
         id: journey
         if: steps.canary_open.outcome == 'success'
@@ -103,6 +182,33 @@ jobs:
           FINANCE_CANARY_SCOPE_ID: finance-scope-novo-hamburgo
           FINANCE_CANARY_RELEASE_SHA: ${{ inputs.release_sha }}
         run: node finance/scripts/staging-synthetic-canary.mjs --report "$RUNNER_TEMP/canary-report.json"
+
+      - name: Check Finance release lease before committed import journey
+        if: steps.canary_open.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-canary.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Check shared staging D1 lease before committed import journey
+        if: steps.canary_open.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json
+          resource: global:staging-d1
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Run complete import and compensation journey
         id: import
         if: steps.canary_open.outcome == 'success'
@@ -164,8 +270,35 @@ jobs:
           node finance/scripts/evaluate-canary.mjs --policy ops/module-governance/finance-staging-canary-policy.json --report "$RUNNER_TEMP/canary-report.json" --output "$RUNNER_TEMP/canary-decision.json"
           node - "$RUNNER_TEMP/canary-decision.json" >> "$GITHUB_OUTPUT" <<'NODE'
           const fs = require('fs'); const decision = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          console.log(`abort=${decision.ok ? 'false' : 'true'}`);
+            console.log(`abort=${decision.ok ? 'false' : 'true'}`);
           NODE
+
+      - name: Check Finance release lease before canary kill switch
+        if: always() && steps.baseline.outcome == 'success' && steps.decision.outputs.abort == 'true'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-canary.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Check shared staging D1 lease before canary kill switch
+        if: always() && steps.baseline.outcome == 'success' && steps.decision.outputs.abort == 'true'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json
+          resource: global:staging-d1
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Kill switch on any breached limit
         if: always() && steps.baseline.outcome == 'success' && steps.decision.outputs.abort == 'true'
         env:
@@ -177,6 +310,32 @@ jobs:
           payload="$(node -e "process.stdout.write(JSON.stringify({state:'disabled',message:'Synthetic canary stop limit breached.',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
           npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$payload" --namespace-id "$CONTROL_KV_ID" --remote
           npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','false',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='false',updated_at=CURRENT_TIMESTAMP;"
+      - name: Check Finance release lease before baseline restore
+        if: always() && steps.baseline.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-canary.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Check shared staging D1 lease before baseline restore
+        if: always() && steps.baseline.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json
+          resource: global:staging-d1
+          module: finance
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Restore non-enabled staging baseline and synthetic grant
         if: always() && steps.baseline.outcome == 'success'
         env:
@@ -189,7 +348,24 @@ jobs:
           [[ "$ORIGINAL_PERMISSION" =~ ^(viewer|operator|manager)$ ]] || { echo 'No safe grant baseline available'; exit 1; }
           payload="$(node -e "process.stdout.write(JSON.stringify({state:'active',message:'',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
           npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$payload" --namespace-id "$CONTROL_KV_ID" --remote
-          npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','false',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='false',updated_at=CURRENT_TIMESTAMP; UPDATE finance_access_grants SET permission='$ORIGINAL_PERMISSION' WHERE username='finance-staging-smoke' AND scope_id='finance-scope-novo-hamburgo';"
+            npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','false',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='false',updated_at=CURRENT_TIMESTAMP; UPDATE finance_access_grants SET permission='$ORIGINAL_PERMISSION' WHERE username='finance-staging-smoke' AND scope_id='finance-scope-novo-hamburgo';"
+
+      - name: Release Finance release lease for synthetic canary
+        if: ${{ always() && steps.prerequisites.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-canary.json
+      - name: Release shared staging D1 lease for synthetic canary
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance-staging-d1.json
       - name: Upload sanitized canary evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

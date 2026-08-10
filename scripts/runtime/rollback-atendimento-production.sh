@@ -35,6 +35,7 @@ readonly MANIFEST="$STATE_ROOT/release-manifests/$TARGET_SHA.json"
 readonly INSTALLER="$SOURCE_ROOT/scripts/runtime/install-atendimento-production-service.sh"
 readonly CONTROL_WRITER="$SOURCE_ROOT/scripts/set-atendimento-production-readonly-control.sh"
 readonly VALIDATOR="$SOURCE_ROOT/scripts/validate-atendimento-production-readonly.sh"
+readonly COORDINATION_CLOSURE="$SOURCE_ROOT/.skincos-global-coordination-atendimento.json"
 for command_name in sudo systemctl curl node; do
   command -v "$command_name" >/dev/null 2>&1 || { echo "Missing $command_name" >&2; exit 1; }
 done
@@ -60,15 +61,70 @@ if [[ "$APPLY" != '1' ]]; then
   exit 0
 fi
 
+sudo -n test -f "$COORDINATION_CLOSURE" || { echo 'Immutable Atendimento dependency-closure attestation is unavailable.' >&2; exit 78; }
+coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/release-atendimento-$TARGET_SHA-$$.json}"
+coordination_acquired=0
+coordination_run() {
+  "$SOURCE_ROOT/scripts/runtime/global-coordination-mini-pc.sh" "$@" --proof-file "$coordination_proof"
+}
+cleanup() {
+  if (( coordination_acquired == 1 )); then
+  coordination_run release >/dev/null 2>&1 || echo 'Unable to release the mini-PC Atendimento production surface lease; it will expire fail-closed.' >&2
+  fi
+}
+trap cleanup EXIT INT TERM
+coordination_run acquire \
+  --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" --operation mutation \
+  --idempotency-key "mini-pc:deploy:atendimento:production:rollback:$TARGET_SHA:$$" >/dev/null
+coordination_acquired=1
+
 protected_before="$(snapshot_protected_services)"
-sudo -n "$CONTROL_WRITER" --state maintenance --release-sha "$TARGET_SHA" --reason rollback-in-progress --apply
-if ! sudo -n "$INSTALLER" --source-root "$SOURCE_ROOT" --apply; then
-  sudo -n "$CONTROL_WRITER" --state maintenance --release-sha "$TARGET_SHA" --reason rollback-install-failed --apply || true
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
+sudo -n "$CONTROL_WRITER" \
+  --state maintenance --release-sha "$TARGET_SHA" \
+  --coordination-closure "$COORDINATION_CLOSURE" \
+  --coordination-proof-file "$coordination_proof" --coordination-reuse \
+  --reason rollback-in-progress --apply
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
+if ! sudo -n "$INSTALLER" \
+  --source-root "$SOURCE_ROOT" \
+  --coordination-proof-file "$coordination_proof" --coordination-reuse \
+  --apply; then
+  coordination_run check \
+    --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
+    --closure-file "$COORDINATION_CLOSURE" >/dev/null
+  sudo -n "$CONTROL_WRITER" \
+    --state maintenance --release-sha "$TARGET_SHA" \
+    --coordination-closure "$COORDINATION_CLOSURE" \
+    --coordination-proof-file "$coordination_proof" --coordination-reuse \
+    --reason rollback-install-failed --apply || true
   exit 1
 fi
-sudo -n "$CONTROL_WRITER" --state active --release-sha "$TARGET_SHA" --reason rollback-active --apply
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
+sudo -n "$CONTROL_WRITER" \
+  --state active --release-sha "$TARGET_SHA" \
+  --coordination-closure "$COORDINATION_CLOSURE" \
+  --coordination-proof-file "$coordination_proof" --coordination-reuse \
+  --reason rollback-active --apply
+coordination_run check \
+  --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 if ! sudo -n "$VALIDATOR" --expected-release-sha "$TARGET_SHA"; then
-  sudo -n "$CONTROL_WRITER" --state maintenance --release-sha "$TARGET_SHA" --reason rollback-validation-failed --apply || true
+  coordination_run check \
+    --resource deploy:atendimento:production --module atendimento --source "$TARGET_SHA" \
+    --closure-file "$COORDINATION_CLOSURE" >/dev/null
+  sudo -n "$CONTROL_WRITER" \
+    --state maintenance --release-sha "$TARGET_SHA" \
+    --coordination-closure "$COORDINATION_CLOSURE" \
+    --coordination-proof-file "$coordination_proof" --coordination-reuse \
+    --reason rollback-validation-failed --apply || true
   exit 1
 fi
 protected_after="$(snapshot_protected_services)"

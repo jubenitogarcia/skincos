@@ -13,7 +13,7 @@ desligadas e sem canário.
 | Processo | `crm-atendimento-{staging,production}.service` executa somente `crm/api/server/atendimentoRuntime.js`; ele não importa `server.js` nem workers Harmonia. |
 | Bind | Loopback apenas: staging `127.0.0.1:8111`, produção `127.0.0.1:8110`. |
 | Liveness | `GET /health` e `GET /api/atendimento/health` respondem `200` sem consultar PostgreSQL e sem PII. |
-| Readiness | `GET /internal/readiness` requer loopback e `x-atendimento-readiness-token`; responde `503` se controle, replay, banco, role, schema, fonte ou aprovação clínica falharem. |
+| Readiness | `GET /internal/readiness` requer loopback e `x-atendimento-readiness-token`; produção pode responder `200` com o journal de deferências íntegro quando apenas fontes comerciais ainda não foram espelhadas. Controle, replay, banco, role, schema-base, política e aprovação clínica continuam obrigatórios; `/commercial/*` permanece `503`. |
 | Dados | Produção usa `skincos_clientes_production`, `skincos_clientes_ro` (somente leitura) e `skincos_clientes_migrator_login` (migration separada). O app não recebe grant de contatos brutos Harmonia/Caixa. |
 | Escritas | O gateway e o processo aceitam somente `GET`, `HEAD` e `OPTIONS`; qualquer outro método retorna `405 READ_ONLY_RUNTIME`. |
 | Controle | O JSON local exige `readOnly:true`, `commercialContactWritesEnabled:false`, `syntheticOnly:true` e SHA exato antes de ficar `active` ou `canary`. |
@@ -31,6 +31,7 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
 | `CRM_ATENDIMENTO_READ_ONLY` | `true` (fixado na unidade) |
 | `CRM_ATENDIMENTO_CLIENTES_ONLY` | `true` (fixado na unidade) |
 | `CRM_ATENDIMENTO_COMMERCIAL_WRITES_ENABLED` | `false` (fixado na unidade) |
+| `CRM_ATENDIMENTO_COMMERCIAL_SOURCE_DEFERRED` | `true` somente na unidade de produção enquanto as fontes Caixa/Harmonia não forem provisionadas; não libera nenhuma rota Comercial |
 | `HARMONIA_WORKER_ENABLED` | `false` (fixado na unidade) |
 | `WA_BOOTSTRAP_SYNC_ENABLED` | `false` (fixado na unidade) |
 | `commercialContactWritesEnabled` | `false` (arquivo de controle) |
@@ -88,6 +89,11 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    `harmonia.contacts`; a instalação e a validação recusam prosseguir se a
    prova efetiva de grants falhar.
 
+   Toda mutação de provisionamento, controle, migration, refresh ou unidade
+   apresenta a mesma closure `atendimento` ao coordenador remoto. O operador
+   deve manter esse JSON fora do checkout, por exemplo em
+   `/home/admin/skincos-native-release/<sha>/atendimento-closure.json`.
+
    Há uma exceção estreita, exclusiva do runner de **staging**, para três
    migrations comerciais condicionais: Operations
    (`20260807_commercial_operations_v2`), Analytics
@@ -120,6 +126,21 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    o runtime read-only `active`, a readiness geral ainda pode ser válida pelas
    suas próprias fundações; isso não muda o `503` fixo da rota Comercial.
 
+Produção mantém uma regra ainda mais estreita e explícita para o banco
+dedicado: somente migrations cujo contrato revisado declara dependência de
+espelho ausente (Caixa/Harmonia ou identidade materializada) podem ser
+registradas como `deferred`. O runner consulta novamente as relações
+declaradas, exige que não exista marker ativo para aquele `migration_id`,
+grava o evento somente em
+`crm_atendimento.production_migration_deferrals` (sem grant ao app) e
+continua apenas com as fundações independentes, incluindo aprovação clínica.
+Um marker ativo, uma relação que reapareça, erro de lock, privilégio,
+destino, SQL ou qualquer código não listado aborta fechado; não há `--skip`
+genérico nem criação manual de espelho. O relatório expõe o código e as
+relações ausentes, mantendo `commercialWritesEnabled:false`; até um
+provisionamento separado e auditado do espelho, o runtime continua em
+`maintenance`/comercial `503`.
+
 3. Antes de instalar a unidade isolada de staging, prepare a release imutável e
    grave explicitamente o SHA no controle ainda em `maintenance`. O instalador
    valida esse JSON pelo mesmo parser do runtime e se recusa a iniciar caso o
@@ -129,10 +150,16 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    `crm.service`:
 
    ```bash
+   scripts/provision-atendimento-staging.sh --apply \
+     --source-sha <sha-main> \
+     --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
    scripts/runtime/prepare-atendimento-staging-release.sh \
-     --release-sha <sha-main> --predecessor-sha <sha-staging-anterior>
+     --release-sha <sha-main> --predecessor-sha <sha-staging-anterior> \
+     --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
    scripts/set-atendimento-staging-control.sh \
      --state maintenance --release-sha <sha-main> \
+     --source-sha <sha-main> \
+     --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json \
      --reason release-preflight --apply
    scripts/run-atendimento-staging-migration.sh \
      --dry-run --release-sha <sha-main>
@@ -185,7 +212,9 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
 
    ```bash
    scripts/set-atendimento-production-readonly-control.sh \
-     --state active --release-sha <sha-main> --reason read-only-validated --apply
+     --state active --release-sha <sha-main> --source-sha <sha-main> \
+     --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json \
+     --reason read-only-validated --apply
    scripts/validate-atendimento-production-readonly.sh \
      --expected-release-sha <sha-main>
    ```
@@ -195,12 +224,19 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    com `--apply`. Nenhum deles reutiliza `cloudflare-runtime.service`.
 
    ```bash
-   scripts/runtime/install-atendimento-production-tunnel.sh \
-     --source-root /opt/skincos/releases/<sha-main>/source \
-     --tunnel-id <uuid-minusculo>
-   scripts/runtime/route-atendimento-production-dns.sh \
-     --tunnel-id <uuid-minusculo>
+    scripts/runtime/install-atendimento-production-tunnel.sh \
+      --source-root /opt/skincos/releases/<sha-main>/source \
+      --tunnel-id <uuid-minusculo> \
+      --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
+    scripts/runtime/route-atendimento-production-dns.sh \
+      --tunnel-id <uuid-minusculo> --source-sha <sha-main> \
+      --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
    ```
+
+   Use `--apply` only on the mutating invocation. Both the tunnel installer and
+   DNS route acquire the dedicated `cloudflare:atendimento:production` lease;
+   they fail closed when the private coordinator custody or closure attestation
+   is unavailable.
 
 O Pages proxy exige `ATENDIMENTO_API_TARGET` e
 `ATENDIMENTO_ACTOR_HMAC_KEY` dedicados, assina HMAC v2 e não tem fallback para

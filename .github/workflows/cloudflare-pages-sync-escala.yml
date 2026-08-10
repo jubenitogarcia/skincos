@@ -42,8 +42,31 @@ jobs:
           node-version: "22.12.0"
 
       - name: Checkout (for worker wrangler config)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Acquire Escala API release lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:escala-api
+          module: escala-api
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
+
+      - name: Check Escala API release lease before Pages-secret mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
+          resource: release:escala-api
+          module: escala-api
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
 
       - name: Sync Pages secret (Escala) by environment
         env:
@@ -58,6 +81,18 @@ jobs:
             echo "Synced ESCALA_ACTOR_HMAC_KEY for env=$env_name"
           done
 
+      - name: Check Escala API release lease before duplicate-binding cleanup
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
+          resource: release:escala-api
+          module: escala-api
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Cleanup duplicate production secret binding (Escala target)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -69,6 +104,19 @@ jobs:
           # Keep dashboard free of duplicate secret bindings for this key.
           npx --yes wrangler@4 pages secret delete ESCALA_API_TARGET --project-name "$PROJECT" --env production >/dev/null || true
           echo "Ensured no duplicate secret binding for ESCALA_API_TARGET in production."
+
+      - name: Check Escala API release lease before Worker-secret mutation
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json
+          resource: release:escala-api
+          module: escala-api
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
 
       - name: Sync Worker secret (Escala API) by environment
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -113,3 +161,12 @@ jobs:
             raise SystemExit(f"Escala env vars ausentes em: {', '.join(missing)}")
           print("ESCALA_ACTOR_HMAC_KEY presente em production/preview.")
           PY
+
+      - name: Release Escala API release lease
+        if: ${{ always() && steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api-sync.json

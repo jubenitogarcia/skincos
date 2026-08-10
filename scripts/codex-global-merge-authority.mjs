@@ -1,0 +1,185 @@
+#!/usr/bin/env node
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  acquireGlobalLease,
+  checkGlobalLease,
+  proofForLease,
+  releaseGlobalLease,
+} from "./codex-global-coordination-client.mjs";
+import { buildWorkflowLeaseRequest } from "./codex-global-coordination-workflow.mjs";
+
+const FULL_SHA = /^[0-9a-f]{40}$/i;
+function requiredEnv(name) {
+  const value = String(process.env[name] || "").trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function requiredArgument(args, name) {
+  const index = args.indexOf(name);
+  const value = index === -1 ? "" : String(args[index + 1] || "").trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function apiUrl(repository, suffix = "") {
+  return `https://api.github.com/repos/${repository}${suffix}`;
+}
+
+async function githubJson(repository, suffix, options = {}) {
+  const token = requiredEnv("GH_TOKEN");
+  const response = await fetch(apiUrl(repository, suffix), {
+    ...options,
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const raw = await response.text();
+  let body;
+  try { body = raw ? JSON.parse(raw) : null; } catch { throw new Error(`GitHub API returned invalid JSON (${response.status})`); }
+  if (!response.ok) throw new Error(`GitHub API request failed (${response.status}): ${String(body?.message || "unknown error")}`);
+  return body;
+}
+
+function assertSha(value, label) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!FULL_SHA.test(normalized)) throw new Error(`${label} must be a full SHA`);
+  return normalized;
+}
+
+const MERGE_METHODS = new Set(["squash", "merge", "rebase"]);
+
+async function setMergeAuthorityStatus(repository, headSha, state, description) {
+  return githubJson(repository, `/statuses/${headSha}`, {
+    method: "POST",
+    body: JSON.stringify({
+      state,
+      context: "global-merge-authority",
+      description: String(description).slice(0, 140),
+      target_url: `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${repository}/actions/workflows/global-merge-authority.yml`,
+    }),
+  });
+}
+
+export async function mergePullRequest({ repository, pullNumber, expectedHeadSha, mergeMethod = "squash" }) {
+  if (String(process.env.SKINCOS_GLOBAL_COORDINATION_REQUIRED || "").trim().toLowerCase() !== "true") {
+    throw new Error("SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true for merge:main");
+  }
+  const url = requiredEnv("SKINCOS_GLOBAL_COORDINATOR_URL");
+  requiredEnv("SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET");
+  if (!MERGE_METHODS.has(mergeMethod)) throw new Error(`unsupported merge method: ${mergeMethod}`);
+  const initial = await githubJson(repository, `/pulls/${pullNumber}`);
+  const headSha = assertSha(expectedHeadSha, "expected head SHA");
+  if (initial.state !== "open" || initial.base?.ref !== "main") throw new Error("pull request is not an open main integration candidate");
+  if (initial.head?.repo?.full_name !== repository) throw new Error("pull request head repository is outside the governed repository");
+  if (assertSha(initial.head?.sha, "pull request head SHA") !== headSha) throw new Error("pull request head advanced before lease acquisition");
+  // A required global-merge-authority status makes the PR appear blocked until
+  // this authority posts its success status. GitHub's merge API remains the
+  // final enforcement point for every other required check or review.
+  if (initial.draft === true || initial.mergeable_state === "dirty") {
+    throw new Error("pull request is not mergeable by its current GitHub state");
+  }
+  const baseSha = assertSha(initial.base?.sha, "pull request base SHA");
+  const resource = "merge:main";
+  const { request, closure } = buildWorkflowLeaseRequest({
+    resource,
+    module: "merge",
+    source: baseSha,
+    operation: "mutation",
+    idempotencyKey: `merge:${repository}:${pullNumber}:${headSha}`,
+    inputs: { pullNumber: String(pullNumber), expectedHeadSha: headSha, baseSha },
+  });
+  const result = await acquireGlobalLease({ request, url });
+  if (result.passed !== true || !result.lease) throw new Error(`merge:main lease acquisition failed: ${result.reason || "unknown"}`);
+  const proof = proofForLease(result.lease);
+  let merged;
+  let mergeSucceeded = false;
+  try {
+    const [currentMain, currentPull] = await Promise.all([
+      githubJson(repository, "/commits/main"),
+      githubJson(repository, `/pulls/${pullNumber}`),
+    ]);
+    if (assertSha(currentMain?.sha, "current main SHA") !== baseSha) throw new Error("main advanced while merge:main was being acquired");
+    if (
+      currentPull.state !== "open"
+      || currentPull.base?.ref !== "main"
+      || assertSha(currentPull.base?.sha, "current pull request base SHA") !== baseSha
+      || assertSha(currentPull.head?.sha, "current pull request head SHA") !== headSha
+    ) throw new Error("pull request base or head changed before merge mutation");
+    const checked = await checkGlobalLease({
+      proof,
+      url,
+      authorization: {
+        expectedResource: resource,
+        expectedIntentDigest: proof.intentDigest,
+        observedDependencyClosureDigest: closure.digest,
+      },
+    });
+    if (checked.passed !== true) throw new Error(`merge:main mutation authorization failed: ${checked.reason || "unknown"}`);
+    await setMergeAuthorityStatus(repository, headSha, "success", "merge:main lease and dependency closure authorized");
+    const [finalMain, finalPull] = await Promise.all([
+      githubJson(repository, "/commits/main"),
+      githubJson(repository, `/pulls/${pullNumber}`),
+    ]);
+    if (assertSha(finalMain?.sha, "final main SHA") !== baseSha) throw new Error("main advanced after merge authorization status");
+    if (
+      finalPull.state !== "open"
+      || finalPull.base?.ref !== "main"
+      || assertSha(finalPull.base?.sha, "final pull request base SHA") !== baseSha
+      || assertSha(finalPull.head?.sha, "final pull request head SHA") !== headSha
+    ) throw new Error("pull request base or head changed after merge authorization status");
+    merged = await githubJson(repository, `/pulls/${pullNumber}/merge`, {
+      method: "PUT",
+      body: JSON.stringify({ sha: headSha, merge_method: mergeMethod }),
+    });
+    if (merged?.merged !== true) throw new Error(`GitHub did not merge the pull request: ${String(merged?.message || "unknown result")}`);
+    mergeSucceeded = true;
+    return {
+      merged: true,
+      pullNumber: String(pullNumber),
+      mergeCommitSha: String(merged.sha || ""),
+      resource,
+      fencingToken: proof.fencingToken,
+    };
+  } catch (error) {
+    if (!mergeSucceeded) {
+      try {
+        await setMergeAuthorityStatus(repository, headSha, "failure", "merge:main authorization did not complete");
+      } catch {
+        // Preserve the original failure; the lease release below remains mandatory.
+      }
+    }
+    throw error;
+  } finally {
+    const released = await releaseGlobalLease({ proof, url });
+    if (released.passed !== true) throw new Error(`merge:main lease release failed: ${released.reason || "unknown"}`);
+  }
+}
+
+async function main(args) {
+  const repository = requiredEnv("GITHUB_REPOSITORY");
+  const pullNumber = requiredArgument(args, "--pull-number");
+  if (!/^[1-9][0-9]*$/.test(pullNumber)) throw new Error("--pull-number must be numeric");
+  const result = await mergePullRequest({
+    repository,
+    pullNumber,
+    expectedHeadSha: requiredArgument(args, "--expected-head-sha"),
+    mergeMethod: requiredArgument(args, "--merge-method"),
+  });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+const invokedAsScript = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (invokedAsScript) {
+  try {
+    await main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
+}

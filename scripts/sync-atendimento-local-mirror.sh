@@ -2,11 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT_DIR/scripts/runtime/global-coordination-native.sh"
 RUNTIME_HOME="${CRM_RUNTIME_HOME:-/mnt/c/CodexRuntime/operator/admin/skincos/runtime/atendimento-mirror}"
 RUNTIME_ENV_FILE="${SKINCOS_CRM_API_ENV_FILE:-/etc/skincos/crm.env}"
 SOURCE_ENV_FILE="${ATENDIMENTO_SOURCE_ENV_FILE:-/etc/skincos/atendimento-source.env}"
 OPERATOR_ENV_FILE="${SKINCOS_ATENDIMENTO_OPERATOR_ENV_FILE:-/mnt/c/CodexRuntime/operator/admin/skincos/private/atendimento-mirror.env}"
 MODE="${1:---dry-run}"
+COORDINATION_SOURCE_SHA="${SKINCOS_GLOBAL_COORDINATION_SOURCE_SHA:-}"
+COORDINATION_CLOSURE="${SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE:-}"
+coordination_acquired=0
 
 usage() {
   cat <<EOF
@@ -16,6 +20,10 @@ Uso: ./scripts/sync-atendimento-local-mirror.sh [--status|--preflight|--dry-run|
   --preflight Valida a origem somente leitura e retorna evidências sanitizadas, sem alterar bancos.
   --dry-run  Valida a origem somente leitura e mostra o resumo da cópia.
   --apply    Faz backup, substitui o clone local após confirmação e valida o CRM.
+
+Para --apply, SKINCOS_GLOBAL_COORDINATION_SOURCE_SHA e
+SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE devem apontar para a prova imutável
+do mesmo SHA que está sendo sincronizado.
 
 Arquivos privados esperados:
   $OPERATOR_ENV_FILE  Overlay do operador (preferido; fora do repositório)
@@ -110,12 +118,34 @@ case "$SOURCE_MODE" in
 esac
 
 if [[ "$MODE" == "--apply" ]]; then
+  [[ "$COORDINATION_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "[atendimento-mirror] SKINCOS_GLOBAL_COORDINATION_SOURCE_SHA deve ser um SHA completo." >&2
+    exit 78
+  }
+  [[ -n "$COORDINATION_CLOSURE" && -f "$COORDINATION_CLOSURE" ]] || {
+    echo "[atendimento-mirror] SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE deve apontar para uma prova existente." >&2
+    exit 78
+  }
   echo "[atendimento-mirror] A atualizacao substituira as simulacoes locais apos gerar backup."
   read -r -p "Digite SINCRONIZAR para continuar: " confirmation
   if [[ "$confirmation" != "SINCRONIZAR" ]]; then
     echo "[atendimento-mirror] Atualizacao cancelada."
     exit 0
   fi
+fi
+
+if [[ "$MODE" == "--apply" ]]; then
+  native_coordination_init deploy:atendimento:local atendimento "$COORDINATION_SOURCE_SHA" "$COORDINATION_CLOSURE" mutation
+  cleanup_coordination() {
+    if [[ "$coordination_acquired" == '1' ]]; then
+      native_coordination_cleanup || true
+      coordination_acquired=0
+    fi
+  }
+  trap cleanup_coordination EXIT INT TERM
+  native_coordination_acquire "mini-pc:deploy:atendimento:local:mirror:$COORDINATION_SOURCE_SHA:$$" >/dev/null
+  coordination_acquired=1
+  native_coordination_check
 fi
 
 node_args=("$ROOT_DIR/crm/api/scripts/sync-atendimento-local-mirror.mjs" "$MODE")
@@ -136,14 +166,19 @@ else
 fi
 # O operador admin lê os arquivos privados e acessa o banco local por peer.
 # O usuário skincos é reservado ao serviço e não deve ser usado como launcher.
+if [[ "$MODE" == "--apply" ]]; then
+  native_coordination_check
+fi
 env "${env_args[@]}" node "${node_args[@]}"
 
 if [[ "$MODE" != "--apply" ]]; then
   exit 0
 fi
 
+native_coordination_check
 sudo -n systemctl restart crm.service
 for _ in $(seq 1 120); do
+  native_coordination_renew_if_due
   if curl -fsS http://127.0.0.1:8099/health >/dev/null 2>&1; then
     break
   fi
@@ -151,4 +186,5 @@ for _ in $(seq 1 120); do
 done
 curl -fsS http://127.0.0.1:8099/health >/dev/null
 
+native_coordination_check
 CRM_BUILD_BEFORE_START=0 bash "$ROOT_DIR/scripts/run-local-crm.sh" --skip-build --exit-after-smoke

@@ -1536,7 +1536,7 @@ export default {
             return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para módulo', code: 'RBAC_MODULE_DENIED', module: required }), { status: 403 }, appOrigin);
         };
 
-        const requireRoles = async (allowedRoles) => {
+        const requireRoles = async (allowedRoles, options = {}) => {
             // Local read requests intentionally have no session cookie. Reuse the
             // dev actor only after the localhost-only bypass has allowed the path.
             const u = devBypassActive && readBypassActive && methodUpper === 'GET'
@@ -1562,7 +1562,7 @@ export default {
                     )
                 };
             }
-            if (!hasUnitAccess(u, unidade)) {
+            if (!options.skipUnit && !hasUnitAccess(u, unidade)) {
                 return {
                     ok: false,
                     response: withCORS(

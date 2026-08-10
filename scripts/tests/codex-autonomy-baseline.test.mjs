@@ -49,6 +49,8 @@ test("release input digest ignores unrelated documentation but invalidates relev
   const documentationOnly = buildReleaseManifest({ ...base, sourceCommit: "d".repeat(40), sourceTree: "e".repeat(40), inputs: [...base.inputs] });
   const relevantChange = buildReleaseManifest({ ...base, inputs: [{ path: "workforce/timekeeping/index.ts", blob: "2".repeat(40) }] });
   assert.equal(documentationOnly.releaseInputDigest, original.releaseInputDigest);
+  assert.equal(documentationOnly.dependencyClosureDigest, original.dependencyClosureDigest);
+  assert.notEqual(documentationOnly.releaseIdentityDigest, original.releaseIdentityDigest);
   assert.notEqual(relevantChange.releaseInputDigest, original.releaseInputDigest);
 });
 

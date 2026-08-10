@@ -18,6 +18,7 @@ const reusable = findReusableEvidence(records, manifest);
 const result = {
   schemaVersion: 1,
   releaseInputDigest: manifest.releaseInputDigest,
+  dependencyClosureDigest: manifest.dependencyClosureDigest || manifest.releaseInputDigest,
   reused: Boolean(reusable),
   evidence: reusable ? { name: reusable.name ?? null, artifactDigest: reusable.artifactDigest ?? null } : null
 };
@@ -25,4 +26,5 @@ process.stdout.write(`${JSON.stringify(result)}\n`);
 if (process.env.GITHUB_OUTPUT) {
   fs.appendFileSync(process.env.GITHUB_OUTPUT, `reused=${result.reused}\n`);
   fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_input_digest=${result.releaseInputDigest}\n`);
+  fs.appendFileSync(process.env.GITHUB_OUTPUT, `dependency_closure_digest=${result.dependencyClosureDigest}\n`);
 }

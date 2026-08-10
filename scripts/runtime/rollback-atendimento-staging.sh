@@ -14,6 +14,7 @@ run_sudo_clean() {
 }
 
 readonly RELEASE_BASE='/opt/skincos/releases'
+readonly SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 readonly UNIT_DEST='/etc/systemd/system'
 readonly CONFIG_ROOT='/etc/skincos'
 readonly CONTROL_FILE="$CONFIG_ROOT/atendimento-staging/module-control.json"
@@ -66,6 +67,7 @@ readonly CONTROL_BACKUP_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendim
 readonly RUNTIME_GRANT_LOCKDOWN="$SOURCE_ROOT/scripts/lockdown-atendimento-staging-runtime.sh"
 readonly STAGING_VALIDATOR="$SOURCE_ROOT/scripts/validate-atendimento-staging-readonly.sh"
 readonly UNIT_TEMPLATE="$SOURCE_ROOT/ops/runtime/units/$SERVICE"
+readonly COORDINATION_CLOSURE="$SOURCE_ROOT/.skincos-global-coordination-atendimento.json"
 
 [[ "$SOURCE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || { echo 'Rollback release root is invalid.' >&2; exit 64; }
 for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/node /usr/bin/bash /usr/bin/test /usr/bin/stat /usr/bin/sed /usr/bin/mktemp /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/cmp /usr/bin/install /usr/bin/systemctl /usr/bin/systemd-analyze; do
@@ -73,7 +75,7 @@ for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/node /usr/bin/bash /usr/
 done
 /usr/bin/sudo -n /usr/bin/true
 
-for path in "$RELEASE_VALIDATOR" "$CONTROL_VALIDATOR" "$CONTROL_BACKUP_VALIDATOR" "$RUNTIME_GRANT_LOCKDOWN" "$STAGING_VALIDATOR" "$UNIT_TEMPLATE"; do
+for path in "$RELEASE_VALIDATOR" "$CONTROL_VALIDATOR" "$CONTROL_BACKUP_VALIDATOR" "$RUNTIME_GRANT_LOCKDOWN" "$STAGING_VALIDATOR" "$UNIT_TEMPLATE" "$COORDINATION_CLOSURE"; do
   run_sudo_clean /usr/bin/test -f "$path" || { echo "Required immutable rollback artifact is unavailable: $path" >&2; exit 78; }
 done
 run_sudo_clean /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN"
@@ -106,7 +108,15 @@ umask 0077
 render_dir="$(/usr/bin/mktemp -d /tmp/atendimento-staging-rollback.XXXXXX)"
 /usr/bin/test -d "$render_dir" -a -O "$render_dir"
 rendered="$render_dir/$SERVICE"
-trap '/usr/bin/rm -f "$rendered"; /usr/bin/rmdir "$render_dir" 2>/dev/null || true' EXIT
+cleanup_render() {
+  /usr/bin/rm -f "$rendered"
+  /usr/bin/rmdir "$render_dir" 2>/dev/null || true
+  if [[ "${coordination_acquired:-0}" == '1' ]]; then
+    native_coordination_cleanup || true
+    coordination_acquired=0
+  fi
+}
+trap cleanup_render EXIT INT TERM
 /usr/bin/sed \
   -e "s|__REPO_ROOT__|$SOURCE_ROOT|g" \
   -e 's|__STATE_ROOT__|/var/lib/skincos-runtime|g' \
@@ -133,12 +143,21 @@ if [[ "$APPLY" != '1' ]]; then
 fi
 
 protected_before="$(snapshot_protected_services)"
+source "$SCRIPT_ROOT/scripts/runtime/global-coordination-native.sh"
+native_coordination_init deploy:atendimento:staging atendimento "$TARGET_SHA" "$COORDINATION_CLOSURE" mutation
+coordination_acquired=0
+native_coordination_acquire "mini-pc:deploy:atendimento:staging:rollback:$TARGET_SHA:$$" >/dev/null
+coordination_acquired=1
+native_coordination_check
 # Install maintenance before changing the unit. A still-running newer process
 # then fails closed on its next request because its expected SHA no longer
 # matches the restored control.
 run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$CONTROL_BACKUP" "$CONTROL_FILE"
+native_coordination_check
 run_sudo_clean /usr/bin/install -m 0644 -o root -g root "$UNIT_BACKUP" "$UNIT_FILE"
+native_coordination_check
 run_sudo_clean /usr/bin/systemctl daemon-reload
+native_coordination_check
 run_sudo_clean /usr/bin/systemctl restart "$SERVICE"
 run_sudo_clean /usr/bin/systemctl is-active --quiet "$SERVICE"
 run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$TARGET_SHA" >/dev/null

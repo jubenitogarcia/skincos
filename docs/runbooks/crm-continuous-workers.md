@@ -133,11 +133,13 @@ Harmonia schema migration is explicit and target-bound:
 ```sh
 HARMONIA_MIGRATION_TARGET=staging \
 HARMONIA_MIGRATION_ACTION=dry-run \
-scripts/runtime/run-harmonia-migration-native.sh
+SKINCOS_RELEASE_ID=<sha-main> \
+/opt/skincos/releases/<sha-main>/source/scripts/runtime/run-harmonia-migration-native.sh
 
 HARMONIA_MIGRATION_TARGET=staging \
 HARMONIA_MIGRATION_ACTION=apply \
-scripts/runtime/run-harmonia-migration-native.sh
+SKINCOS_RELEASE_ID=<sha-main> \
+/opt/skincos/releases/<sha-main>/source/scripts/runtime/run-harmonia-migration-native.sh
 ```
 
 The native launcher loads only the private target environment, rejects a
@@ -157,12 +159,16 @@ group write for that service identity, then run the native launcher as
 sudo install -d -o root -g skincos -m 0770 /var/backups/skincos/clientes
 sudo setfacl -m u:skincos:--x /var/backups/skincos
 sudo -u skincos env \
+  SKINCOS_RELEASE_ID=<sha-main> \
   HARMONIA_MIGRATION_TARGET=production \
   HARMONIA_MIGRATION_ACTION=dry-run \
-  /opt/skincos/current/source/scripts/runtime/run-harmonia-migration-native.sh
+  /opt/skincos/releases/<sha-main>/source/scripts/runtime/run-harmonia-migration-native.sh
 ```
 
 An apply follows the same command with `HARMONIA_MIGRATION_ACTION=apply`.
+Applied migrations require the exact immutable release SHA and the detached
+Atendimento closure installed beside that release; the native wrapper acquires
+`deploy:atendimento:<target>` before the checkpoint or database mutation.
 Staging uses its dedicated migrator environment and the separate
 `/var/backups/skincos/clientes/staging` checkpoint root.
 

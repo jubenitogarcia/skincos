@@ -563,11 +563,11 @@ export async function handleAdminRoutes({
     }
   }
 
-  const auth = await requireRoles(ROLE_ADMIN);
-  if (!auth.ok) return auth.response;
-
   const isTeamRoute = url.pathname === '/admin/team' || url.pathname.startsWith('/admin/team/');
   const isOnboardingRoute = url.pathname === '/admin/onboarding' || url.pathname.startsWith('/admin/onboarding/');
+  const auth = await requireRoles(ROLE_ADMIN, { skipUnit: isTeamRoute || isOnboardingRoute });
+  if (!auth.ok) return auth.response;
+
   if (isTeamRoute && !teamRoleAllowed(auth)) {
     return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para administrar a equipe', code: 'TEAM_ROLE_DENIED' }), { status: 403 }, appOrigin);
   }

@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import {
-  assertMainShaUnchanged,
+  assertPontoDependencyClosureUnchanged,
   dispatchTimeoutMsFor,
+  globalResourceFor,
   governedLeaseKeyFor,
   isBodylessResponseStatus,
   readGitHubResponse,
@@ -75,13 +76,23 @@ test("preview dispatches never require a capability while every governed mutatio
   }), "");
 });
 
-test("child dispatch refuses a coordinator SHA after main advances", () => {
-  const sha = "a".repeat(40);
-  assert.equal(assertMainShaUnchanged(sha, sha.toUpperCase()), sha);
+test("child dispatch keeps an immutable release valid across unrelated main changes", () => {
+  const digest = "c".repeat(64);
+  assert.equal(assertPontoDependencyClosureUnchanged(digest, digest).valid, true);
   assert.throws(
-    () => assertMainShaUnchanged(sha, "b".repeat(40)),
-    /main advanced after the immutable Ponto coordinator was selected/,
+    () => assertPontoDependencyClosureUnchanged(digest, "d".repeat(64)),
+    /relevant dependency-closure input changed/,
   );
+});
+
+test("Ponto child mutations expose the canonical global resource and conflict scope", () => {
+  assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "staging" }), "deploy:timekeeping:staging");
+  assert.equal(globalResourceFor("cloudflare-pages-sync-ponto.yml", { target: "staging" }), "cloudflare:ponto-pages:staging");
+  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "api", target: "staging" }), "deploy:core-api:staging");
+  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "all", target: "staging" }), "deploy:core-all:staging");
+  assert.equal(globalResourceFor("module-availability.yml", { module: "timekeeping", target: "production" }), "release:ponto");
+  assert.equal(globalResourceFor("ponto-production-baseline.yml", { orchestrator_stage: "pilot" }), "release:ponto");
+  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "general", unit: "api", target: "production" }), "");
 });
 
 test("governed success requires one exact Ed25519-consumed capability check", () => {

@@ -4,6 +4,7 @@ set -euo pipefail
 # The only supported source-pointer promotion.  It holds a fail-closed Livia
 # maintenance window, requires every active workflow to be free of mutable
 # helper paths, and starts Orb only after the pointer changed.
+readonly SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 readonly RELEASE_BASE="${SKINCOS_RELEASE_BASE:-/opt/skincos/releases}"
 readonly CURRENT_LINK="${SKINCOS_SOURCE_CURRENT_LINK:-/opt/skincos/current/source}"
 readonly SERVICE='orb.service'
@@ -47,6 +48,10 @@ target="$RELEASE_BASE/$release_id/source"
 [[ -d "$target/orb/engine" ]] || { echo "Staged release is missing: $target" >&2; exit 1; }
 lineage_file="$target/.skincos-release-lineage.json"
 [[ -f "$lineage_file" ]] || { echo 'Staged release has no immutable lineage manifest.' >&2; exit 1; }
+coordination_closure="$target/.skincos-global-coordination-native-runtime.json"
+[[ -f "$coordination_closure" ]] || { echo 'Staged release has no native-runtime dependency-closure attestation.' >&2; exit 1; }
+release_identity="$target/.skincos-release-identity-native-runtime.json"
+[[ -f "$release_identity" ]] || { echo 'Staged release has no exact native-runtime artifact identity.' >&2; exit 1; }
 current_target="$(readlink -f "$CURRENT_LINK")"
 current_release="$(basename "$(dirname "$current_target")")"
 [[ "$current_release" = "$expected_current" ]] || { echo "Current release changed: expected $expected_current, found $current_release." >&2; exit 1; }
@@ -67,8 +72,65 @@ fi
 
 fence_template="$target/ops/runtime/units/$FENCE_SERVICE"
 [[ -f "$fence_template" ]] || { echo "Staged release is missing $FENCE_SERVICE template." >&2; exit 1; }
+
+coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-$RUNTIME_HOME/global-coordination/release-orb-$release_id-$$.json}"
+coordination_acquired=0
+coordination_last_renew="$(date +%s)"
+coordination_run() {
+  "$SCRIPT_ROOT/scripts/runtime/global-coordination-mini-pc.sh" "$@" --proof-file "$coordination_proof"
+}
+coordination_acquire() {
+  coordination_run acquire \
+    --resource release:native-runtime --module native-runtime --source "$release_id" --closure-file "$coordination_closure" \
+    --operation promotion --release-identity-file "$release_identity" \
+    --idempotency-key "mini-pc:release:native-runtime:$release_id:$$"
+}
+coordination_check() {
+  coordination_run check \
+    --resource release:native-runtime --module native-runtime --source "$release_id" --closure-file "$coordination_closure"
+}
+coordination_renew_if_due() {
+  local now
+  now="$(date +%s)"
+  if (( now - coordination_last_renew >= 60 )); then
+    coordination_run renew
+    coordination_last_renew="$now"
+  fi
+}
+coordination_release() {
+  coordination_run release
+}
+
+promoted=0
+started=0
+sidecars_started=0
+cleanup() {
+  if (( promoted == 1 && (started == 0 || sidecars_started == 0) )); then
+    if coordination_check >/dev/null 2>&1; then
+      sudo -n systemctl start "$FENCE_SERVICE" || true
+      sudo -n ln -sfn "$current_target" "$CURRENT_LINK" || true
+      sudo -n systemctl stop "$FENCE_SERVICE" || true
+      sudo -n systemctl start "$SERVICE" || true
+      for sidecar in "${SOURCE_SERVICES[@]}"; do sudo -n systemctl restart "$sidecar" || true; done
+    else
+      echo 'Global coordination proof was unavailable during native rollback; shared runtime remains fail-closed.' >&2
+    fi
+  fi
+  sudo -n -u skincos rm -f "$LOCK_FILE" 2>/dev/null || true
+  sudo -n -u skincos rmdir "$LOCK_DIR" 2>/dev/null || true
+  if (( coordination_acquired == 1 )); then
+    coordination_release >/dev/null 2>&1 || echo 'Unable to release the mini-PC global coordination lease; it will expire fail-closed.' >&2
+    coordination_acquired=0
+  fi
+}
+trap cleanup EXIT INT TERM
+coordination_acquire >/dev/null
+coordination_acquired=1
+
 if ! systemctl cat "$FENCE_SERVICE" >/dev/null 2>&1; then
+  coordination_check >/dev/null
   sudo -n install -m 0644 "$fence_template" "/etc/systemd/system/$FENCE_SERVICE"
+  coordination_check >/dev/null
   sudo -n systemctl daemon-reload
 fi
 
@@ -86,21 +148,6 @@ if ! sudo -n -u skincos mkdir "$LOCK_DIR" 2>/dev/null; then
   echo "Release promotion refused: Livia maintenance window already active ($LOCK_FILE)." >&2
   exit 1
 fi
-promoted=0
-started=0
-sidecars_started=0
-cleanup() {
-  if (( promoted == 1 && (started == 0 || sidecars_started == 0) )); then
-    sudo -n systemctl start "$FENCE_SERVICE" || true
-    sudo -n ln -sfn "$current_target" "$CURRENT_LINK" || true
-    sudo -n systemctl stop "$FENCE_SERVICE" || true
-    sudo -n systemctl start "$SERVICE" || true
-    for sidecar in "${SOURCE_SERVICES[@]}"; do sudo -n systemctl restart "$sidecar" || true; done
-  fi
-  sudo -n -u skincos rm -f "$LOCK_FILE" 2>/dev/null || true
-  sudo -n -u skincos rmdir "$LOCK_DIR" 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
 sudo -n -u skincos bash -c 'umask 027; printf "reason=controlled_native_release_promotion\nstarted_at=%s\n" "$1" >"$2"' bash "$(date --iso-8601=seconds)" "$LOCK_FILE"
 
 deadline=$(( $(date +%s) + timeout_seconds ))
@@ -109,18 +156,23 @@ while true; do
   [[ "$active" =~ ^[0-9]+$ ]] || { echo 'Unable to determine active Livia executions.' >&2; exit 1; }
   (( active == 0 )) && break
   (( $(date +%s) < deadline )) || { echo "Release promotion refused: $active Livia execution(s) still active." >&2; exit 1; }
+  coordination_renew_if_due
   sleep 5
 done
 
+coordination_check >/dev/null
 sudo -n systemctl start "$FENCE_SERVICE"
 if sudo -n systemctl --quiet is-active "$SERVICE"; then
   echo 'Release promotion fence did not stop Orb.' >&2
   sudo -n systemctl stop "$FENCE_SERVICE" || true
   exit 1
 fi
+coordination_check >/dev/null
 sudo -n ln -sfn "$target" "$CURRENT_LINK"
 promoted=1
+coordination_check >/dev/null
 sudo -n systemctl stop "$FENCE_SERVICE"
+coordination_check >/dev/null
 sudo -n systemctl start "$SERVICE"
 sudo -n systemctl --quiet is-active "$SERVICE"
 new_pid="$(systemctl show "$SERVICE" -p MainPID --value)"
@@ -128,6 +180,7 @@ new_root="$(readlink -f "/proc/$new_pid/cwd")"
 [[ "$new_root" = "$target/orb/engine" ]] || { echo "Orb restarted from unexpected root: $new_root" >&2; exit 1; }
 started=1
 for sidecar in "${SOURCE_SERVICES[@]}"; do
+  coordination_check >/dev/null
   sudo -n systemctl restart "$sidecar"
   sudo -n systemctl --quiet is-active "$sidecar"
   sidecar_pid="$(systemctl show "$sidecar" -p MainPID --value)"

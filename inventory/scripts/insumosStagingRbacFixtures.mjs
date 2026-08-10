@@ -29,10 +29,26 @@ const definitions = [
   { id: 'both', role: 'GESTOR', allowedUnits: ['novo-hamburgo', 'barra-shopping-sul'], expectedUnits: ['novo-hamburgo', 'barra-shopping-sul'] },
   { id: 'empty', role: 'GESTOR', allowedUnits: [], expectedUnits: [] },
   { id: 'admin', role: 'ADMIN', allowedUnits: [], expectedUnits: [] },
+  { id: 'consultor', role: 'CONSULTOR', allowedUnits: ['novo-hamburgo'], expectedUnits: ['novo-hamburgo'] },
   // This intentionally persists only a recognized legacy alias. The auth boundary
   // must normalize it, without widening it to an unrelated scope.
   { id: 'alias', role: 'GESTOR', allowedUnits: ['NH'], expectedUnits: ['novo-hamburgo'] },
 ];
+const teamMemberDefinitions = [
+  { id: 'nh', units: ['novo-hamburgo'] },
+  { id: 'bss', units: ['barra-shopping-sul'] },
+  { id: 'both', units: ['novo-hamburgo', 'barra-shopping-sul'] },
+];
+
+function syntheticTeamMembers() {
+  return teamMemberDefinitions.map((definition) => ({
+    ...definition,
+    onboardingId: `${prefix}-onboarding-${definition.id}`,
+    workforceEmployeeId: `${prefix}-employee-${definition.id}`,
+    username: `${prefix}-team-${definition.id}`,
+    corporateEmail: `${prefix}-team-${definition.id}@staging.invalid`,
+  }));
+}
 
 function privateFixtures() {
   return {
@@ -47,6 +63,7 @@ function privateFixtures() {
       email: `${prefix}-${definition.id}@staging.invalid`,
       password: password(),
     })),
+    teamMembers: syntheticTeamMembers(),
   };
 }
 
@@ -68,6 +85,15 @@ if (action === 'provision') {
     statements.push(`INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at, session_version) VALUES (${sql(scenario.username)}, ${sql(scenario.email)}, ${sql(`Synthetic Insumos RBAC ${scenario.id}`)}, ${sql(passwordHash(scenario.password))}, ${sql(scenario.role)}, '', ${sql(JSON.stringify(scenario.allowedUnits))}, ${sql(JSON.stringify(['insumos']))}, 1, ${sql(now)}, ${sql(now)}, 0);`);
     statements.push(audit('STAGING_SYNTHETIC_IDENTITY_PROVISIONED', scenario.username, { runId, scope: scenario.allowedUnits, role: scenario.role }));
   }
+  for (const member of fixtures.teamMembers || []) {
+    statements.push(`DELETE FROM crm_employee_account_links WHERE onboarding_id = ${sql(member.onboardingId)};`);
+    statements.push(`DELETE FROM crm_employee_identity_links WHERE workforce_employee_id = ${sql(member.workforceEmployeeId)};`);
+    statements.push(`DELETE FROM crm_employee_team WHERE onboarding_id = ${sql(member.onboardingId)};`);
+    statements.push(`DELETE FROM crm_employee_onboarding WHERE id = ${sql(member.onboardingId)};`);
+    statements.push(`INSERT INTO crm_employee_onboarding (id, full_name, corporate_email, personal_email_encrypted, personal_email_hash, mobile_phone_encrypted, mobile_phone_hash, profile, job_title, department_name, units_json, account_status, invite_id, workforce_employee_id, idempotency_key, created_by, created_at, updated_at, requested_username) VALUES (${sql(member.onboardingId)}, ${sql(`Synthetic Team ${member.id}`)}, ${sql(member.corporateEmail)}, 'synthetic-encrypted', ${sql(`synthetic-email-${member.id}`)}, 'synthetic-encrypted', ${sql(`synthetic-phone-${member.id}`)}, 'CONSULTOR', 'Consultor', 'Staging QA', ${sql(JSON.stringify(member.units))}, 'ACTIVE', NULL, ${sql(member.workforceEmployeeId)}, NULL, 'system:staging-rbac', ${sql(now)}, ${sql(now)}, ${sql(member.username)});`);
+    statements.push(`INSERT INTO crm_employee_team (workforce_employee_id, onboarding_id, schedule_professional_id, schedule_status, schedule_role, schedule_shift, schedule_nickname, schedule_instagram, schedule_color, units_json, created_by, created_at, updated_at) VALUES (${sql(member.workforceEmployeeId)}, ${sql(member.onboardingId)}, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ${sql(JSON.stringify(member.units))}, 'system:staging-rbac', ${sql(now)}, ${sql(now)});`);
+    statements.push(audit('STAGING_SYNTHETIC_TEAM_PROVISIONED', member.onboardingId, { runId, scope: member.units, workforceEmployeeId: member.workforceEmployeeId }));
+  }
   writeFileSync(sqlPath, `${statements.join('\n')}\n`, { mode: 0o600 });
   console.log(JSON.stringify({ action, environment: 'staging', scenarioCount: fixtures.scenarios.length, credentialsWrittenToPrivateFile: true }));
 } else {
@@ -83,6 +109,16 @@ if (action === 'provision') {
     statements.push(`DELETE FROM auth_attempts WHERE username = ${sql(username)};`);
     statements.push(`DELETE FROM crm_user_prefs WHERE username = ${sql(username)};`);
     statements.push(`DELETE FROM crm_users WHERE username = ${sql(username)};`);
+  }
+  for (const member of fixtures.teamMembers || []) {
+    if (!String(member.onboardingId || '').startsWith(`${prefix}-`) || !String(member.workforceEmployeeId || '').startsWith(`${prefix}-`)) {
+      throw new Error('fixture team member escaped controlled prefix');
+    }
+    statements.push(audit('STAGING_SYNTHETIC_TEAM_TORN_DOWN', member.onboardingId, { runId, result: 'deleted' }));
+    statements.push(`DELETE FROM crm_employee_account_links WHERE onboarding_id = ${sql(member.onboardingId)};`);
+    statements.push(`DELETE FROM crm_employee_identity_links WHERE workforce_employee_id = ${sql(member.workforceEmployeeId)};`);
+    statements.push(`DELETE FROM crm_employee_team WHERE onboarding_id = ${sql(member.onboardingId)};`);
+    statements.push(`DELETE FROM crm_employee_onboarding WHERE id = ${sql(member.onboardingId)};`);
   }
   writeFileSync(sqlPath, `${statements.join('\n')}\n`, { mode: 0o600 });
   console.log(JSON.stringify({ action, environment: 'staging', scenarioCount: fixtures.scenarios.length, identitiesRemoved: true }));

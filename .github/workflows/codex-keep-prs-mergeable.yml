@@ -17,7 +17,34 @@ permissions:
 jobs:
   keep_mergeable:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Acquire merge:main for branch maintenance
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: merge:main
+          module: merge
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-merge-maintenance.json
+      - name: Check merge:main before PR branch maintenance
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-merge-maintenance.json
+          resource: merge:main
+          module: merge
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Keep codex PRs up-to-date (update-branch) + label conflicts
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
@@ -45,7 +72,7 @@ jobs:
               enabled: {
                 name: "automerge/enabled",
                 color: "1D76DB",
-                description: "Auto-merge is enabled; GitHub will merge only after the aggregate required gate is green.",
+                description: "Legacy marker; merge authority must be acquired before integration.",
               },
             };
 
@@ -110,24 +137,21 @@ jobs:
               });
             }
 
-            async function enableAutoMerge(pr) {
-              if (pr.draft || !pr.node_id || pr.auto_merge) return;
+            async function disableUncoordinatedAutoMerge(pr) {
+              if (!pr.node_id || !pr.auto_merge) return;
               try {
                 await github.graphql(
-                  `mutation EnableAutoMerge($pullRequestId: ID!) {
-                    enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: SQUASH}) {
-                      pullRequest { autoMergeRequest { enabledAt } }
+                  `mutation DisableAutoMerge($pullRequestId: ID!) {
+                    disablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId}) {
+                      pullRequest { id }
                     }
                   }`,
                   { pullRequestId: pr.node_id },
                 );
-                await addLabel(pr.number, LABELS.enabled.name);
-                core.info(`Enabled auto-merge for PR #${pr.number}`);
+                await removeLabel(pr.number, LABELS.enabled.name);
+                core.warning(`Disabled uncoordinated auto-merge for PR #${pr.number}; use global-merge-authority.yml`);
               } catch (err) {
-                // Protected checks, merge queues, or a newly pushed commit may
-                // make auto-merge temporarily unavailable. The next bounded
-                // reconcile cycle retries without forcing a merge.
-                core.warning(`enable auto-merge failed for #${pr.number}: ${err?.message || err}`);
+                core.warning(`disable auto-merge failed for #${pr.number}: ${err?.message || err}`);
               }
             }
 
@@ -170,6 +194,8 @@ jobs:
               const mergeableState = full.mergeable_state; // behind | dirty | clean | unknown | blocked | unstable | ...
               const headSha = full.head?.sha || "";
               core.info(`PR #${prNumber}: mergeable_state=${mergeableState} head=${headSha.slice(0, 7)}`);
+
+              await disableUncoordinatedAutoMerge(full);
 
               // GitHub may return null while computing mergeability.
               if (!mergeableState || mergeableState === "unknown") {
@@ -216,6 +242,13 @@ jobs:
               // Keep conflict label unless it is clearly clean.
               if (mergeableState === "clean") {
                 await removeLabel(prNumber, LABELS.conflict.name);
-                await enableAutoMerge(full);
               }
             }
+      - name: Release merge:main after branch maintenance
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-merge-maintenance.json

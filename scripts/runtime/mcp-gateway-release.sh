@@ -13,6 +13,15 @@ UNIT_DEST=${MCP_GATEWAY_UNIT_DEST:-/etc/systemd/system/skincos-orb-mcp-readonly.
 CHECKPOINT_ROOT=${MCP_GATEWAY_CHECKPOINT_ROOT:-/var/lib/skincos-runtime/orb-mcp-readonly/release-unit-checkpoints}
 SYSTEMCTL_BIN=${MCP_GATEWAY_SYSTEMCTL_BIN:-/usr/bin/systemctl}
 SYSTEMD_ANALYZE_BIN=${MCP_GATEWAY_SYSTEMD_ANALYZE_BIN:-/usr/bin/systemd-analyze}
+readonly COORDINATION_RESOURCE='promotion:orb-mcp:local'
+coordination_acquired=0
+
+# The gateway is a native release consumer. Its pointer and unit mutations use
+# the same mini-PC adapter as the rest of the immutable runtime.
+NATIVE_COORDINATION_SCRIPT_ROOT="${NATIVE_COORDINATION_SCRIPT_ROOT:-$SCRIPT_ROOT}"
+export NATIVE_COORDINATION_SCRIPT_ROOT
+# shellcheck disable=SC1091
+source "$SCRIPT_ROOT/scripts/runtime/global-coordination-native.sh"
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 need_apply() {
@@ -20,13 +29,42 @@ need_apply() {
   [[ "$TEST_MODE" == YES || "$(id -u)" == 0 ]] || die 'refused: run the applied lifecycle as root.'
 }
 release_root() { printf '%s/%s/source/orb/engine/mcp-readonly-gateway\n' "$RELEASE_BASE" "$1"; }
+release_source_root() { printf '%s/%s/source\n' "$RELEASE_BASE" "$1"; }
 systemd() { "$SYSTEMCTL_BIN" "$@"; }
 
+coordination_cleanup() {
+  if [[ "${coordination_acquired:-0}" == '1' ]]; then
+    native_coordination_cleanup || printf 'WARNING: gateway coordination lease will expire fail-closed.\n' >&2
+    coordination_acquired=0
+  fi
+}
+trap coordination_cleanup EXIT INT TERM
+
+coordination_begin() {
+  local sha=$1 root
+  root=$(release_source_root "$sha")
+  native_coordination_init \
+    "$COORDINATION_RESOURCE" orb "$sha" \
+    "$root/.skincos-global-coordination-orb.json" promotion \
+    "$root/.skincos-release-identity-orb.json"
+  native_coordination_acquire "mini-pc:${COORDINATION_RESOURCE}:$sha:$$"
+  coordination_acquired=1
+  native_coordination_check
+}
+
+coordination_check() {
+  [[ "${coordination_acquired:-0}" == '1' ]] || die 'gateway mutation is missing its global coordination lease.'
+  native_coordination_check
+}
+
 validate_release() {
-  local sha=$1 root lineage realbase
+  local sha=$1 root source_root lineage realbase
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || die 'release must be a full lowercase SHA.'
   root=$(release_root "$sha")
   [[ -d "$root" && -f "$root/server.mjs" ]] || die "gateway artifact missing for $sha"
+  source_root=$(release_source_root "$sha")
+  [[ -f "$source_root/.skincos-global-coordination-orb.json" ]] || die "gateway coordination closure missing for $sha"
+  [[ -f "$source_root/.skincos-release-identity-orb.json" ]] || die "gateway release identity missing for $sha"
   lineage="$RELEASE_BASE/$sha/source/.skincos-release-lineage.json"
   [[ -f "$lineage" ]] || die "release lineage missing for $sha"
   node --input-type=module - "$lineage" "$sha" <<'NODE'
@@ -54,9 +92,12 @@ select_release() {
   local sha=$1 target tmp
   validate_release "$sha"; target=$(release_root "$sha")
   need_apply
+  coordination_check
   install -d -m 0750 "$(dirname "$LINK")"
+  coordination_check
   tmp="${LINK}.next.$$"
   ln -s "$target" "$tmp"
+  coordination_check
   mv -Tf "$tmp" "$LINK"
   printf 'selected_release=%s\n' "$sha"
 }
@@ -100,13 +141,18 @@ capture_unit_checkpoint() {
   local checkpoint timestamp
   timestamp=$(date -u +%Y%m%dT%H%M%SZ)
   checkpoint="$CHECKPOINT_ROOT/$timestamp-$$"
+  coordination_check
   install -d -m 0700 "$checkpoint"
   if [[ -f "$UNIT_DEST" ]]; then
+    coordination_check
     install -m 0600 "$UNIT_DEST" "$checkpoint/unit.previous.service"
+    coordination_check
     sha256sum "$checkpoint/unit.previous.service" >"$checkpoint/unit.previous.sha256"
   else
+    coordination_check
     printf 'absent\n' >"$checkpoint/unit.previous.absent"
   fi
+  coordination_check
   printf 'service=%s\nunit_destination=%s\n' "$SERVICE" "$UNIT_DEST" >"$checkpoint/metadata"
   printf '%s\n' "$checkpoint"
 }
@@ -114,15 +160,19 @@ capture_unit_checkpoint() {
 restore_unit_checkpoint() {
   local checkpoint=$1 tmp
   [[ "$checkpoint" == "$CHECKPOINT_ROOT"/* && -d "$checkpoint" ]] || die 'checkpoint is outside the gateway checkpoint root.'
+  coordination_check
   if [[ -f "$checkpoint/unit.previous.service" ]]; then
     tmp="${UNIT_DEST}.restore.$$"
     install -m 0644 "$checkpoint/unit.previous.service" "$tmp"
+    coordination_check
     mv -Tf "$tmp" "$UNIT_DEST"
   elif [[ -f "$checkpoint/unit.previous.absent" ]]; then
+    coordination_check
     rm -f -- "$UNIT_DEST"
   else
     die 'checkpoint does not contain a prior unit state.'
   fi
+  coordination_check
   systemd daemon-reload
 }
 
@@ -141,12 +191,27 @@ provision() {
   local target=$1 unit checkpoint tmp
   need_apply
   validate_release "$target"
+  coordination_begin "$target"
   unit=$(unit_source)
   verify_unit "$unit"
   checkpoint=$(capture_unit_checkpoint)
+  coordination_check
   install -d -m 0755 "$(dirname "$UNIT_DEST")"
   tmp="${UNIT_DEST}.next.$$"
-  if ! install -m 0644 "$unit" "$tmp" || ! mv -Tf "$tmp" "$UNIT_DEST" || ! systemd daemon-reload || ! verify_loaded_unit; then
+  coordination_check
+  if ! install -m 0644 "$unit" "$tmp"; then
+    rm -f -- "$tmp"
+    restore_unit_checkpoint "$checkpoint" || true
+    die 'gateway unit provisioning failed and the prior unit was restored.'
+  fi
+  coordination_check
+  if ! mv -Tf "$tmp" "$UNIT_DEST"; then
+    rm -f -- "$tmp"
+    restore_unit_checkpoint "$checkpoint" || true
+    die 'gateway unit provisioning failed and the prior unit was restored.'
+  fi
+  coordination_check
+  if ! systemd daemon-reload || ! verify_loaded_unit; then
     rm -f -- "$tmp"
     restore_unit_checkpoint "$checkpoint" || true
     die 'gateway unit provisioning failed and the prior unit was restored.'
@@ -155,6 +220,7 @@ provision() {
     restore_unit_checkpoint "$checkpoint" || true
     die 'gateway pointer selection failed and the prior unit was restored.'
   fi
+  coordination_check
   printf 'control_release=%s\nunit_checkpoint=%s\n' "$(control_source_root)" "$checkpoint"
 }
 
@@ -165,6 +231,7 @@ health_ok() {
 restart_controlled() {
   local attempt
   need_apply
+  coordination_check
   systemd restart "$SERVICE"
   for attempt in {1..10}; do
     if systemd is-active --quiet "$SERVICE" && health_ok; then return 0; fi
@@ -204,10 +271,36 @@ usage() { echo 'usage: mcp-gateway-release.sh preflight <sha>|provision <sha>|se
 case "${1:-}" in
   preflight) [[ $# -eq 2 ]] || { usage >&2; exit 2; }; validate_release "$2"; echo "preflight_release=$2" ;;
   provision) [[ $# -eq 2 ]] || { usage >&2; exit 2; }; provision "$2" ;;
-  select) [[ $# -eq 2 ]] || { usage >&2; exit 2; }; select_release "$2" ;;
-  restart) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; restart_controlled || die 'gateway restart or health check failed.' ;;
-  promote) [[ $# -eq 3 ]] || { usage >&2; exit 2; }; promote "$2" "$3" ;;
-  rollback) [[ $# -eq 2 ]] || { usage >&2; exit 2; }; select_release "$2"; restart_controlled || die 'gateway rollback restart or health check failed.' ;;
+  select)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    need_apply
+    validate_release "$2"
+    coordination_begin "$2"
+    select_release "$2"
+    ;;
+  restart)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    configured=$(configured_release || true)
+    [[ "$configured" =~ ^[0-9a-f]{40}$ ]] || die 'gateway restart requires a configured immutable release.'
+    coordination_begin "$configured"
+    restart_controlled || die 'gateway restart or health check failed.'
+    ;;
+  promote)
+    [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+    need_apply
+    validate_release "$2"
+    validate_release "$3"
+    coordination_begin "$2"
+    promote "$2" "$3"
+    ;;
+  rollback)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    need_apply
+    validate_release "$2"
+    coordination_begin "$2"
+    select_release "$2"
+    restart_controlled || die 'gateway rollback restart or health check failed.'
+    ;;
   status) [[ $# -eq 1 ]] || { usage >&2; exit 2; }; status ;;
   *) usage >&2; exit 2 ;;
 esac

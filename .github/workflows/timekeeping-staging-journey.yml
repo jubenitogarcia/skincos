@@ -71,8 +71,13 @@ jobs:
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
     with:
       required: true
+      global_lease_required: true
+      global_resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
+      global_module: ponto
+      global_coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
       lease_key: staging-journey
       stage: ${{ inputs.orchestrator_stage }}
       target: staging
@@ -168,6 +173,42 @@ jobs:
             "$ORCHESTRATOR_STAGE" \
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
+      - name: Authorize global Ponto staging-journey mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
+          resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+
+      - name: Acquire shared staging D1 lease for Ponto journey
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-timekeeping-staging-d1.json
+
+      - name: Check shared staging D1 lease before synthetic staging provisioning
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-timekeeping-staging-d1.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Provision only run-scoped synthetic staging records
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -196,6 +237,18 @@ jobs:
             }
           }
           NODE
+
+      - name: Check shared staging D1 lease before PIN attestation query
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-timekeeping-staging-d1.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
 
       - name: Attest the exact synthetic PIN credential in staging D1
         env:
@@ -442,6 +495,18 @@ jobs:
           fs.writeFileSync(process.argv[3], `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
           NODE
 
+      - name: Check shared staging D1 lease before authenticated Ponto journey
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-timekeeping-staging-d1.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Execute authenticated Ponto journey
         env:
           PONTO_STAGING_CRM_URL: ${{ inputs.pages_url }}
@@ -452,8 +517,22 @@ jobs:
           NODE_PATH: crm/console/node_modules
         run: node crm/console/scripts/ponto-staging-journey.cjs
 
-      - name: Tear down only this run's synthetic staging records
+      - name: Check shared staging D1 lease before synthetic teardown
+        id: check_staging_d1_teardown
         if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-timekeeping-staging-d1.json
+          resource: global:staging-d1
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Tear down only this run's synthetic staging records
+        if: ${{ always() && steps.check_staging_d1_teardown.outcome == 'success' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -534,6 +613,15 @@ jobs:
           NODE
           rm -f "$FIXTURES" "$CORE_SQL" "$TIMEKEEPING_SQL" "$CORE_ATTESTATION_SQL" "$TIMEKEEPING_ATTESTATION_SQL" "$CORE_RAW" "$TIMEKEEPING_RAW" "$CORE_ATTESTATION_RAW" "$TIMEKEEPING_ATTESTATION_RAW" "$CORE_RESULT" "$TIMEKEEPING_RESULT" "$CORE_ATTESTATION_RESULT" "$TIMEKEEPING_ATTESTATION_RESULT" "$PIN_SQL" "$PIN_RAW" "$PIN_RESULT" "$PIN_VERIFY_ERROR"
 
+      - name: Release shared staging D1 lease for Ponto journey
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-timekeeping-staging-d1.json
+
       - name: Upload sanitised journey evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -546,3 +634,13 @@ jobs:
             ${{ runner.temp }}/ponto-staging-teardown-report.json
           retention-days: 30
           if-no-files-found: warn
+  global-coordination-release:
+    needs: [coordination, journey]
+    if: ${{ always() && needs.coordination.outputs.global_lease_required == 'true' }}
+    uses: ./.github/workflows/global-coordination-release.yml
+    secrets:
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+    with:
+      required: true
+      proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
+      coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}

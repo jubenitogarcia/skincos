@@ -132,7 +132,9 @@ async function assertLocalDestination(client, databaseUrl, target = ATENDIMENTO_
     } catch {
         throw migrationError('ATENDIMENTO_MIGRATION_DESTINATION_UNSAFE', target === ATENDIMENTO_MIGRATION_TARGETS.STAGING
             ? 'O destino precisa ser o banco staging gravável.'
-            : 'O destino precisa ser o banco local gravável skincos_crm_local.')
+            : target === ATENDIMENTO_MIGRATION_TARGETS.PRODUCTION
+                ? 'O destino precisa ser o banco production dedicado gravável pelo migrator.'
+                : 'O destino precisa ser o banco local gravável skincos_crm_local.')
     }
 }
 

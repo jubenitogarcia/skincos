@@ -105,15 +105,26 @@ export function releaseInputDigest({ surfaces, inputs, policyPaths }) {
 
 export function buildReleaseManifest({ sourceCommit, sourceTree, surfaces, inputs, policyPaths, artifacts = [], migrations = [], evidence = [], predecessor = null }) {
   const releaseInput = releaseInputDigest({ surfaces, inputs, policyPaths });
+  const normalizedArtifacts = artifacts.map((artifact) => ({ name: artifact.name, digest: artifact.digest })).sort((left, right) => left.name.localeCompare(right.name));
+  const releaseIdentity = {
+    schemaVersion: 1,
+    sourceCommit,
+    sourceTree,
+    dependencyClosureDigest: releaseInput.digest,
+    artifacts: normalizedArtifacts,
+  };
   return {
     schemaVersion: 1,
     sourceCommit,
     sourceTree,
     releaseInputDigest: releaseInput.digest,
+    dependencyClosureDigest: releaseInput.digest,
     releaseInputs: releaseInput.material.inputs,
     surfaces: releaseInput.material.surfaces,
     policiesConsumed: releaseInput.material.policyPaths,
-    artifacts: artifacts.map((artifact) => ({ name: artifact.name, digest: artifact.digest })).sort((left, right) => left.name.localeCompare(right.name)),
+    artifacts: normalizedArtifacts,
+    releaseIdentity,
+    releaseIdentityDigest: sha256(canonicalJson(releaseIdentity)),
     migrations: [...new Set(migrations)].sort(),
     evidence: evidence.map((entry) => ({ name: entry.name, digest: entry.digest })).sort((left, right) => left.name.localeCompare(right.name)),
     predecessor: predecessor ? { sourceCommit: predecessor.sourceCommit, releaseInputDigest: predecessor.releaseInputDigest, artifactDigests: [...(predecessor.artifactDigests ?? [])].sort() } : null,

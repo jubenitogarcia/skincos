@@ -36,3 +36,10 @@ test("matches only a run created for the current dispatch", () => {
     path: ".github/workflows/other.yml",
   }, expected), false);
 });
+
+test("allows a current main head when the caller supplies a closure validator", () => {
+  assert.equal(matchesDispatchedRun({ ...current, head_sha: "b".repeat(40) }, {
+    ...expected,
+    headShaMatches: (headSha) => headSha === "b".repeat(40),
+  }), true);
+});

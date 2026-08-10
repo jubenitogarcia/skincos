@@ -64,6 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           node --test scripts/tests/codex-autonomy-baseline.test.mjs
+          node --test scripts/tests/codex-global-coordination.test.mjs scripts/tests/codex-global-coordination-client.test.mjs ops/cloudflare/global-coordinator/index.test.mjs
       - name: GitHub governance contract
         if: ${{ contains(needs.classify.outputs.surfaces, 'github-governance') }}
         run: |

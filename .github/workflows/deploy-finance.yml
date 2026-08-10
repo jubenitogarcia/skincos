@@ -124,6 +124,28 @@ jobs:
           else
             sed -i "s/__CONFIGURE_FINANCE_STAGING_D1_ID__/$D1_ID/;s/__CONFIGURE_MODULE_CONTROL_STAGING_KV_ID__/$CONTROL_KV_ID/;s/__RELEASE_SHA__/$RELEASE_SHA/g" finance/wrangler.toml
           fi
+      - name: Acquire Finance release lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:finance
+          module: finance
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance.json
+      - name: Check Finance release lease before service-secret mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Provision or attest Finance service secret before D1 checkpoint
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -166,6 +188,18 @@ jobs:
           path: ${{ env.CHECKPOINT }}
           retention-days: 30
           if-no-files-found: error
+      - name: Check Finance release lease before migrations
+        if: inputs.operation == 'deploy'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Apply additive Finance migrations
         if: inputs.operation == 'deploy'
         env:
@@ -187,6 +221,18 @@ jobs:
             { cat "$migration"; printf "\nINSERT INTO d1_migrations(name) VALUES ('%s');\n" "$name"; } > "$batch"
             npx --yes wrangler@4.114.0 d1 execute "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}" --file "$batch"
           done
+      - name: Check Finance release lease before version upload
+        if: inputs.operation == 'deploy'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Upload immutable Finance version
         if: inputs.operation == 'deploy'
         env:
@@ -215,6 +261,17 @@ jobs:
           FINANCE_VERSION_ID="$(npx --yes wrangler@4.112.0 versions list --config finance/wrangler.toml "${ENV_ARGS[@]}" --json | node -e "const fs=require('fs');const versions=JSON.parse(fs.readFileSync(0,'utf8'));const expected='finance:deploy:'+process.env.RELEASE_SHA;const found=versions.find(x=>(x.message||x.annotations?.['workers/message'])===expected);if(!found?.id)process.exit(1);process.stdout.write(found.id)")"
           [[ -n "$FINANCE_VERSION_ID" ]] || { echo 'No prior Finance version for requested SHA'; exit 1; }
           echo "FINANCE_VERSION_ID=$FINANCE_VERSION_ID" >> "$GITHUB_ENV"
+      - name: Check Finance release lease before version deployment
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance.json
+          resource: release:finance
+          module: finance
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Deploy only the selected Finance version
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -257,3 +314,11 @@ jobs:
           name: promotion-evidence-finance
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
           retention-days: 14
+      - name: Release Finance release lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-finance.json

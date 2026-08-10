@@ -16,6 +16,7 @@ run_sudo_clean() {
 readonly RELEASE_BASE='/opt/skincos/releases'
 readonly STATE_ROOT='/var/lib/skincos-runtime/crm-atendimento-production'
 readonly BACKUP_ROOT='/var/backups/skincos/clientes/production-readonly'
+readonly SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 
 RELEASE_SHA=''
 PREDECESSOR_SHA=''
@@ -35,11 +36,15 @@ done
 [[ "$RELEASE_SHA" != "$PREDECESSOR_SHA" ]] || { echo 'Release and predecessor must differ.' >&2; exit 64; }
 readonly SOURCE_ROOT="$RELEASE_BASE/$RELEASE_SHA/source"
 readonly VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-release.mjs"
+readonly COORDINATION_CLOSURE="$SOURCE_ROOT/.skincos-global-coordination-atendimento.json"
+readonly MANIFEST_DIR="$STATE_ROOT/release-manifests"
+readonly MANIFEST="$MANIFEST_DIR/$RELEASE_SHA.json"
 for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/node /usr/bin/install /usr/bin/date /usr/bin/mktemp /usr/bin/test /usr/bin/rm /usr/bin/printf; do
   [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
 done
 /usr/bin/sudo -n true
 run_sudo_clean /usr/bin/test -f "$VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
+run_sudo_clean /usr/bin/test -f "$COORDINATION_CLOSURE" || { echo 'Immutable Atendimento coordination closure is unavailable.' >&2; exit 78; }
 run_sudo_clean /usr/bin/node "$VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" --predecessor-sha "$PREDECESSOR_SHA" >/dev/null
 
 if [[ "$APPLY" != '1' ]]; then
@@ -47,20 +52,39 @@ if [[ "$APPLY" != '1' ]]; then
   exit 0
 fi
 
-stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
-manifest_dir="$STATE_ROOT/release-manifests"
-manifest="$manifest_dir/$RELEASE_SHA.json"
-run_sudo_clean /usr/bin/install -d -m 0750 -o root -g skincos "$manifest_dir"
-run_sudo_clean /usr/bin/install -d -m 0750 -o root -g postgres "$BACKUP_ROOT"
-if run_sudo_clean /usr/bin/test -f "$manifest"; then
+source "$SCRIPT_ROOT/scripts/runtime/global-coordination-native.sh"
+native_coordination_init release:atendimento atendimento "$RELEASE_SHA" "$COORDINATION_CLOSURE" mutation
+coordination_acquired=0
+manifest_exists=0
+if run_sudo_clean /usr/bin/test -f "$MANIFEST"; then
+  manifest_exists=1
+fi
+if [[ "$manifest_exists" == '1' ]]; then
   echo 'Release manifest already exists; immutable release registration is idempotent.'
   exit 0
 fi
 
+cleanup() {
+  /usr/bin/rm -f "${tmp:-}"
+  if [[ "$coordination_acquired" == '1' ]]; then
+    native_coordination_cleanup || true
+    coordination_acquired=0
+  fi
+}
+trap cleanup EXIT INT TERM
+native_coordination_acquire "mini-pc:release:atendimento:register:$RELEASE_SHA:$$" >/dev/null
+coordination_acquired=1
+native_coordination_check
+stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
+native_coordination_check
+run_sudo_clean /usr/bin/install -d -m 0750 -o root -g skincos "$MANIFEST_DIR"
+native_coordination_check
+run_sudo_clean /usr/bin/install -d -m 0750 -o root -g postgres "$BACKUP_ROOT"
+
 umask 0077
 tmp="$(/usr/bin/mktemp /tmp/atendimento-production-manifest.XXXXXX)"
 /usr/bin/test -f "$tmp" -a -O "$tmp"
-trap '/usr/bin/rm -f "$tmp"' EXIT
 /usr/bin/printf '%s\n' "{\"schemaVersion\":1,\"releaseSha\":\"$RELEASE_SHA\",\"predecessorSha\":\"$PREDECESSOR_SHA\",\"preparedAt\":\"$stamp\",\"readOnly\":true,\"syntheticOnly\":true}" >"$tmp"
-run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp" "$manifest"
+native_coordination_check
+run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp" "$MANIFEST"
 printf 'prepared=true release_sha=%s predecessor_sha=%s manifest_registered=true shared_restart=false\n' "$RELEASE_SHA" "$PREDECESSOR_SHA"

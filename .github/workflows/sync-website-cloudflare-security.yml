@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: website-cf-security
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -43,6 +43,32 @@ jobs:
         working-directory: website
         run: npm ci
 
+      - name: Acquire Website release lease for security sync
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-security.json
+
+      - name: Check Website release lease before security-settings mutation
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-security.json
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Sync Cloudflare security settings
         if: ${{ steps.guard.outputs.skip != 'true' }}
         working-directory: website
@@ -58,3 +84,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SECURITY_API_TOKEN != '' && secrets.CLOUDFLARE_SECURITY_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           CF_ZONE_NAME: espacofacial.com
+
+      - name: Release Website release lease for security sync
+        if: ${{ always() && steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website-security.json

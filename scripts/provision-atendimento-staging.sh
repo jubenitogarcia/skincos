@@ -7,6 +7,9 @@ unset BASH_ENV ENV CDPATH GLOBIGNORE TMPDIR TMP TEMP \
   HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy \
   OPENSSL_CONF RANDFILE
 
+readonly SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$SCRIPT_ROOT/scripts/runtime/global-coordination-native.sh"
+
 run_postgres_clean() {
   /usr/bin/sudo -n -u postgres /usr/bin/env -i \
     "PATH=$SAFE_PATH" 'HOME=/var/lib/postgresql' 'LANG=C' /usr/bin/psql "$@"
@@ -20,10 +23,29 @@ random_hex() {
 # generated in memory and written only to the private native configuration
 # file; no value is printed or committed.
 
-ACTION="${1:-}"
-if [[ "$ACTION" != "--dry-run" && "$ACTION" != "--apply" ]]; then
-  echo "Usage: $0 --dry-run|--apply" >&2
-  exit 1
+ACTION=''
+COORDINATION_SOURCE_SHA="${SKINCOS_GLOBAL_COORDINATION_SOURCE_SHA:-}"
+COORDINATION_CLOSURE="${SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE:-}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run|--apply)
+      [[ -z "$ACTION" ]] || { echo 'Exactly one provisioning action is required.' >&2; exit 64; }
+      ACTION="$1"
+      ;;
+    --source-sha) shift; COORDINATION_SOURCE_SHA="${1:-}" ;;
+    --coordination-closure) shift; COORDINATION_CLOSURE="${1:-}" ;;
+    *) echo "Usage: $0 --dry-run|--apply [--source-sha <full-sha>] [--coordination-closure <json>]" >&2; exit 64 ;;
+  esac
+  shift
+done
+
+[[ "$ACTION" == '--dry-run' || "$ACTION" == '--apply' ]] || {
+  echo 'Exactly one provisioning action is required.' >&2
+  exit 64
+}
+if [[ "$ACTION" == '--apply' ]]; then
+  [[ "$COORDINATION_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--source-sha must be a full lowercase SHA for apply.' >&2; exit 78; }
+  [[ -n "$COORDINATION_CLOSURE" && -f "$COORDINATION_CLOSURE" ]] || { echo '--coordination-closure must identify an existing Atendimento attestation for apply.' >&2; exit 78; }
 fi
 
 readonly DB_NAME='skincos_staging'
@@ -59,6 +81,25 @@ SQL
   exit 0
 fi
 
+native_coordination_init deploy:atendimento:staging atendimento "$COORDINATION_SOURCE_SHA" "$COORDINATION_CLOSURE" mutation
+coordination_acquired=0
+tmp_env=''
+tmp_migrator=''
+tmp_control=''
+cleanup_coordination() {
+  [[ -z "$tmp_env" ]] || /usr/bin/rm -f -- "$tmp_env"
+  [[ -z "$tmp_migrator" ]] || /usr/bin/rm -f -- "$tmp_migrator"
+  [[ -z "$tmp_control" ]] || /usr/bin/rm -f -- "$tmp_control"
+  if [[ "$coordination_acquired" == '1' ]]; then
+    native_coordination_cleanup || true
+    coordination_acquired=0
+  fi
+}
+trap cleanup_coordination EXIT INT TERM
+native_coordination_acquire "mini-pc:deploy:atendimento:staging:provision:$COORDINATION_SOURCE_SHA:$$" >/dev/null
+coordination_acquired=1
+native_coordination_check
+
 # Rotating the isolated app credentials or grants while the legacy process is
 # running would create a mixed security state. The orchestrator stops only
 # this dedicated service before apply; no shared CRM, jobs, Orb or tunnel unit
@@ -69,12 +110,16 @@ if /usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE"; then
 fi
 
 stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
+native_coordination_check
 /usr/bin/sudo -n /usr/bin/install -d -m 0750 -o root -g skincos "$CONFIG_DIR" "$CONTROL_DIR"
+native_coordination_check
 /usr/bin/sudo -n /usr/bin/install -d -m 0750 -o skincos -g skincos "$STATE_ROOT" "$STATE_ROOT/var" "$LOG_ROOT"
+native_coordination_check
 /usr/bin/sudo -n /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
 
 for path in "$ATENDIMENTO_CONFIG" "$MIGRATOR_CONFIG" "$CONTROL_FILE"; do
   if /usr/bin/sudo -n /usr/bin/test -f "$path"; then
+    native_coordination_check
     /usr/bin/sudo -n /usr/bin/cp -p "$path" "$BACKUP_ROOT/${stamp}-$(/usr/bin/basename "$path")"
   fi
 done
@@ -84,6 +129,7 @@ migrator_password="$(random_hex)"
 actor_key="$(random_hex)"
 readiness_token="$(random_hex)"
 
+native_coordination_check
 run_postgres_clean --dbname=postgres --set=ON_ERROR_STOP=1 <<SQL
 \set app_password '$app_password'
 \set migrator_password '$migrator_password'
@@ -137,7 +183,6 @@ tmp_control="$(/usr/bin/mktemp /tmp/atendimento-staging-control.XXXXXX)"
 /usr/bin/test -f "$tmp_env" -a -O "$tmp_env"
 /usr/bin/test -f "$tmp_migrator" -a -O "$tmp_migrator"
 /usr/bin/test -f "$tmp_control" -a -O "$tmp_control"
-trap '/usr/bin/rm -f "$tmp_env" "$tmp_migrator" "$tmp_control"' EXIT
 /usr/bin/cat >"$tmp_env" <<EOF
 NODE_ENV=production
 CRM_DOMAIN=atendimento
@@ -165,8 +210,11 @@ EOF
 /usr/bin/cat >"$tmp_control" <<EOF
 {"schemaVersion":1,"module":"atendimento","state":"maintenance","releaseSha":null,"readOnly":true,"commercialContactWritesEnabled":false,"syntheticOnly":true,"reason":"clientes-staging-read-only-pending-release","updatedAt":"$stamp"}
 EOF
+native_coordination_check
 /usr/bin/sudo -n /usr/bin/install -m 0640 -o root -g skincos "$tmp_env" "$ATENDIMENTO_CONFIG"
+native_coordination_check
 /usr/bin/sudo -n /usr/bin/install -m 0600 -o root -g root "$tmp_migrator" "$MIGRATOR_CONFIG"
+native_coordination_check
 /usr/bin/sudo -n /usr/bin/install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"
 
 echo "Atendimento staging database contract provisioned: database=$DB_NAME app_role=$APP_ROLE migrator_role=$MIGRATOR_ROLE control_file=$CONTROL_FILE control_state=maintenance commercial_writes=false"
