@@ -59,3 +59,63 @@ test("glob matching stays bounded for recursive and segment wildcards", () => {
   assert.deepEqual(result.errors, []);
   assert.equal(result.reports[0].selectedFileCount, 2);
 });
+
+test("dependency closure follows reusable local actions and shared helpers", () => {
+  const files = [
+    ".github/workflows/demo.yml",
+    ".github/actions/demo/action.yml",
+    ".github/scripts/demo.mjs",
+    "shared/common.mjs",
+    "docs/independent.md",
+  ];
+  const contents = {
+    ".github/workflows/demo.yml": 'uses: "./.github/actions/demo"',
+    ".github/actions/demo/action.yml": "run: node .github/scripts/demo.mjs",
+    ".github/scripts/demo.mjs": 'import "../../shared/common.mjs";',
+    "shared/common.mjs": "export const ok = true;",
+    "docs/independent.md": "documentation only",
+  };
+  const result = validateDependencyClosures({
+    policy: {
+      sharedInputs: [],
+      releaseClosures: { demo: { patterns: [".github/**", "shared/**"], sharedInputs: false } },
+    },
+    files,
+    readFile: (file) => contents[file],
+    modules: ["demo"],
+  });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.reports[0].reachableFileCount, 4);
+});
+
+test("unrelated documentation stays outside the observed dependency closure", () => {
+  const base = fixture();
+  const first = validateDependencyClosures({ ...base, modules: ["demo"] });
+  const second = validateDependencyClosures({
+    ...base,
+    files: [...base.files, "docs/independent.md"],
+    readFile: (file) => file === "docs/independent.md" ? "changed docs" : base.readFile(file),
+    modules: ["demo"],
+  });
+  assert.deepEqual(second.errors, first.errors);
+  assert.equal(second.reports[0].dependencyClosureDigest, first.reports[0].dependencyClosureDigest);
+  assert.equal(second.reports[0].reachableFileCount, first.reports[0].reachableFileCount);
+});
+
+test("dependency closure resolves npm scripts to their package helpers", () => {
+  const files = [".github/workflows/demo.yml", "package.json", ".github/scripts/demo.mjs", "shared/common.mjs"];
+  const contents = {
+    ".github/workflows/demo.yml": "run: npm run demo:check",
+    "package.json": JSON.stringify({ scripts: { "demo:check": "node ./.github/scripts/demo.mjs" } }),
+    ".github/scripts/demo.mjs": 'import "../../shared/common.mjs";',
+    "shared/common.mjs": "export const ok = true;",
+  };
+  const result = validateDependencyClosures({
+    policy: { sharedInputs: [], releaseClosures: { demo: { patterns: [".github/**", "shared/**", "package.json"], sharedInputs: false } } },
+    files,
+    readFile: (file) => contents[file],
+    modules: ["demo"],
+  });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.reports[0].reachableFileCount, 4);
+});

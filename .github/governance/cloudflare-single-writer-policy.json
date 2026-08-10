@@ -12,6 +12,16 @@
   "retiredWorkflows": [
     ".github/workflows/ponto-core-baseline-publisher.yml"
   ],
+  "nonPublishingWorkflows": [
+    {
+      "workflow": ".github/workflows/timekeeping-ci.yml",
+      "reason": "CI exercises local D1 and Wrangler dry-runs only; it has no publishing authority.",
+      "requiredMarkers": [
+        "--local",
+        "--dry-run"
+      ]
+    }
+  ],
   "coordinationGroups": [
     {
       "id": "crm-cloudflare-writer",
@@ -22,6 +32,11 @@
       "id": "ponto-workers-writer",
       "resource": "global:ponto-workers-writer",
       "purpose": "Serializes Ponto timekeeping, identity and core Worker publication/custody workflows."
+    },
+    {
+      "id": "ponto-release-writer",
+      "resource": "release:ponto",
+      "purpose": "Serializes Ponto release-control, module-control, rollback and emergency Cloudflare mutations under the composite release authority."
     },
     {
       "id": "website-writer",
@@ -192,6 +207,21 @@
       "mutationWorkflows": [
         ".github/workflows/insumos-staging-rbac-smoke.yml",
         ".github/workflows/timekeeping-staging-journey.yml"
+      ]
+    },
+    {
+      "id": "ponto-release-control-plane",
+      "platform": "cloudflare-ponto-release-control",
+      "canonicalDeployWorkflow": ".github/workflows/ponto-progressive-release.yml",
+      "coordinationGroup": "ponto-release-writer",
+      "mutationWorkflows": [
+        ".github/workflows/ponto-progressive-release.yml",
+        ".github/workflows/ponto-release-watchdog.yml",
+        ".github/workflows/ponto-emergency-close.yml",
+        ".github/workflows/ponto-emergency-latch-reset.yml",
+        ".github/workflows/module-availability.yml",
+        ".github/workflows/ponto-staging-recovery-rollback.yml",
+        ".github/workflows/ponto-staging-rollback-drill.yml"
       ]
     }
   ],

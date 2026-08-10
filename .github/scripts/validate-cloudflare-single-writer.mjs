@@ -10,7 +10,9 @@ const SOURCE_EXTENSIONS = ["", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".y
 const REPO_ROOT_PREFIX = /^(?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|booking|crm|finance|inventory|workforce|website|orb|integration|identity)\//;
 
 const MUTATION_PATTERNS = [
-  /\bwrangler(?:@[A-Za-z0-9._-]+)?\b[^\r\n]*(?:\bpages\b[^\r\n]*\bdeploy\b|\bversions\b[^\r\n]*(?:\bupload\b|\bdeploy\b)|\bdeploy\b|\bsecret\b[^\r\n]*(?:\bput\b|\bbulk\b|\bdelete\b)|\bd1\b[^\r\n]*(?:\bexecute\b|\bmigrations\b[^\r\n]*\bapply\b)|\br2\b[^\r\n]*\bobject\b[^\r\n]*(?:\bput\b|\bdelete\b))/i,
+  /\bwrangler(?:@[A-Za-z0-9._-]+)?\b[^\r\n]*(?:\bpages\b[^\r\n]*\bdeploy\b|\bversions\b[^\r\n]*(?:\bupload\b|\bdeploy\b)|\bdeploy\b|\brollback\b|\bsecret\b[^\r\n]*(?:\bput\b|\bbulk\b|\bdelete\b)|\bkv\b[^\r\n]*\bkey\b[^\r\n]*(?:\bput\b|\bdelete\b)|\bd1\b[^\r\n]*(?:\bexecute\b|\bmigrations\b[^\r\n]*\bapply\b)|\br2\b[^\r\n]*\bobject\b[^\r\n]*(?:\bput\b|\bdelete\b))/i,
+  /\b(?:terraform|tofu)\b[^\r\n]*(?:\bapply\b|\bdestroy\b|\bimport\b|\bstate\s+(?:mv|rm|push)\b)/i,
+  /\bpulumi\b[^\r\n]*(?:\bup\b|\bdestroy\b|\bimport\b|\bstate\s+(?:rename|delete|repair)\b)/i,
   /\bpages\s+deploy\b/i,
   /\b(?:POST|PUT|PATCH|DELETE)\b[^\r\n]*(?:api\.cloudflare\.com|cloudflare\.com\/client\/v4)/i,
   /(?:api\.cloudflare\.com|cloudflare\.com\/client\/v4)[^\r\n]*(?:method\s*[:=]\s*["']?(?:POST|PUT|PATCH|DELETE)\b|\bcurl\b[^\r\n]*\s-X\s*(?:POST|PUT|PATCH|DELETE)\b)/i,
@@ -126,10 +128,114 @@ function lineIsMutation(line) {
   return MUTATION_PATTERNS.some((pattern) => pattern.test(line));
 }
 
+function callBlocks(source, pattern) {
+  const blocks = [];
+  for (const match of source.matchAll(pattern)) {
+    const opening = match.index + match[0].lastIndexOf("(");
+    let depth = 0;
+    let quote = "";
+    let escaped = false;
+    let lineComment = false;
+    let blockComment = false;
+    for (let index = opening; index < source.length; index += 1) {
+      const character = source[index];
+      const next = source[index + 1];
+      if (lineComment) {
+        if (character === "\n") lineComment = false;
+        continue;
+      }
+      if (blockComment) {
+        if (character === "*" && next === "/") {
+          blockComment = false;
+          index += 1;
+        }
+        continue;
+      }
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === "\\") {
+          escaped = true;
+        } else if (character === quote) {
+          quote = "";
+        }
+        continue;
+      }
+      if (character === "/" && next === "/") {
+        lineComment = true;
+        index += 1;
+        continue;
+      }
+      if (character === "/" && next === "*") {
+        blockComment = true;
+        index += 1;
+        continue;
+      }
+      if (character === "'" || character === '"' || character === "`") {
+        quote = character;
+        continue;
+      }
+      if (character === "(") depth += 1;
+      if (character === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          blocks.push(source.slice(match.index, index + 1));
+          break;
+        }
+      }
+    }
+  }
+  return blocks;
+}
+
+function cloudflareApiMutationEvidence(source) {
+  const endpointPattern = /(?:api\.cloudflare\.com|cloudflare\.com\/client\/v4)/i;
+  const methodPattern = /\bmethod\s*:\s*["']?(?:POST|PUT|PATCH|DELETE)\b/i;
+  const aliases = new Set();
+  for (const match of source.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*["'`]https:\/\/(?:api\.cloudflare\.com|cloudflare\.com\/client\/v4)/gi)) {
+    aliases.add(match[1]);
+  }
+  for (const match of source.matchAll(/\b([A-Za-z_$][\w$]*)\s*:\s*["'`]https:\/\/(?:api\.cloudflare\.com|cloudflare\.com\/client\/v4)/gi)) {
+    aliases.add(match[1]);
+  }
+  const endpointIn = (block) => endpointPattern.test(block)
+    // A literal containment check is intentionally conservative for this
+    // source scanner and avoids compiling input-derived regular expressions.
+    || [...aliases].some((alias) => block.includes(alias));
+  const fetchBlocks = callBlocks(source, /\b(?:fetch|fetchImpl)\s*\(/g);
+  if (fetchBlocks.some((block) => endpointIn(block) && methodPattern.test(block))) return true;
+
+  const wrapperNames = new Set();
+  const definitionPatterns = [
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/g,
+    /\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/g,
+  ];
+  for (const pattern of definitionPatterns) {
+    for (const match of source.matchAll(pattern)) {
+      const body = source.slice(match.index, match.index + 6000);
+      if (endpointIn(body) && /\bfetch(?:Impl)?\s*\(/.test(body) && /\.\.\.\s*init\b/.test(body)) wrapperNames.add(match[1]);
+    }
+  }
+  for (const wrapper of wrapperNames) {
+    const wrapperCalls = callBlocks(source, /\b[A-Za-z_$][\w$]*\s*\(/g)
+      .filter((block) => {
+        const trimmed = block.trimStart();
+        return trimmed.startsWith(`${wrapper}(`) || trimmed.startsWith(`${wrapper} (`);
+      });
+    if (wrapperCalls.some((block) => methodPattern.test(block))) return true;
+  }
+
+  const curlMutation = /\bcurl\b[\s\S]{0,900}(?:api\.cloudflare\.com|cloudflare\.com\/client\/v4)[\s\S]{0,900}(?:-X|--request)\s*(?:POST|PUT|PATCH|DELETE)\b|\bcurl\b[\s\S]{0,900}(?:-X|--request)\s*(?:POST|PUT|PATCH|DELETE)\b[\s\S]{0,900}(?:api\.cloudflare\.com|cloudflare\.com\/client\/v4)/i;
+  return curlMutation.test(source);
+}
+
 export function mutationEvidence(graph) {
   const evidence = [];
   for (const [file, source] of graph.texts) {
     for (const line of source.split(/\r?\n/)) if (lineIsMutation(line)) evidence.push({ file, line: line.trim().slice(0, 240) });
+    if (cloudflareApiMutationEvidence(source) && !evidence.some((item) => item.file === file && item.line.includes("Cloudflare API"))) {
+      evidence.push({ file, line: "transitive Cloudflare API mutation detected across source lines" });
+    }
   }
   return evidence;
 }
@@ -166,6 +272,29 @@ export function validatePolicy(policy = loadPolicy()) {
   }
 
   const covered = new Set();
+  const nonPublishing = new Map();
+  for (const entry of policy.nonPublishingWorkflows || []) {
+    if (!entry?.workflow || nonPublishing.has(entry.workflow)) {
+      errors.push("non-publishing workflow exceptions require unique workflow paths");
+      continue;
+    }
+    const absolute = path.join(ROOT, entry.workflow);
+    if (!fs.existsSync(absolute)) {
+      errors.push(`non-publishing exception references missing workflow ${entry.workflow}`);
+      continue;
+    }
+    if (!Array.isArray(entry.requiredMarkers) || entry.requiredMarkers.length === 0) {
+      errors.push(`non-publishing exception ${entry.workflow} requires static safety markers`);
+      continue;
+    }
+    const graph = traceMutationGraph({ sourcePath: entry.workflow });
+    const text = [...graph.texts.values()].join("\n");
+    for (const marker of entry.requiredMarkers) {
+      if (!text.includes(marker)) errors.push(`${entry.workflow} is missing non-publishing safety marker ${marker}`);
+    }
+    if (graph.missing.length) errors.push(`${entry.workflow} references missing local files: ${graph.missing.join(", ")}`);
+    nonPublishing.set(entry.workflow, entry);
+  }
   for (const surface of policy.surfaces || []) {
     if (!surface?.id || !surface.canonicalDeployWorkflow || !surface.coordinationGroup) {
       errors.push("every Cloudflare surface requires id, canonicalDeployWorkflow and coordinationGroup");
@@ -204,7 +333,7 @@ export function validatePolicy(policy = loadPolicy()) {
     const workflow = `.github/workflows/${entry}`;
     const graph = traceMutationGraph({ sourcePath: workflow });
     const evidence = mutationEvidence(graph);
-    if (evidence.length && !covered.has(workflow) && !retired.has(workflow)) {
+    if (evidence.length && !covered.has(workflow) && !retired.has(workflow) && !nonPublishing.has(workflow)) {
       errors.push(`${workflow} contains a transitive Cloudflare mutation but is not classified in the single-writer policy: ${evidence.slice(0, 2).map((item) => `${item.file}:${item.line}`).join(" | ")}`);
     }
   }
