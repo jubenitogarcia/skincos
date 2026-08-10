@@ -23,6 +23,13 @@ describe('CRM API proxy mount', () => {
       .toBe('https://api.example.test/base/inventory/auth/me?status=active')
   })
 
+  it('keeps the local adapter route unmounted while preserving its base path', () => {
+    expect(buildCrmTargetUrl('http://127.0.0.1:25054', '/admin/team', '?mode=config'))
+      .toBe('http://127.0.0.1:25054/admin/team?mode=config')
+    expect(buildCrmTargetUrl('http://localhost:25054/base/', '/auth/me', '?status=active'))
+      .toBe('http://localhost:25054/base/auth/me?status=active')
+  })
+
   it('uses the canonical mount when the Pages handler proxies a request', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"success":true}', {
       status: 200,
@@ -39,5 +46,27 @@ describe('CRM API proxy mount', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect((fetchMock.mock.calls[0][0] as Request).url)
       .toBe('https://api-staging.skincos.com.br/inventory/admin/team?mode=config')
+  })
+
+  it('uses the explicit local CRM target before the hosted inventory fallback', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"success":true}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await onRequest(createContext(
+      'http://localhost:25050/api/crm/admin/team?mode=config',
+      {
+        CRM_API_TARGET: 'http://127.0.0.1:25054',
+        INSUMOS_API_TARGET: 'https://api-staging.skincos.com.br',
+        LOCAL_AUTH_BYPASS: 'true',
+      },
+    ))
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect((fetchMock.mock.calls[0][0] as Request).url)
+      .toBe('http://127.0.0.1:25054/admin/team?mode=config')
   })
 })

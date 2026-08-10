@@ -99,7 +99,14 @@ add_binding "LOCAL_AUTH_ALLOWED_UNITS" "$local_auth_allowed_units"
 add_optional_binding "LOCAL_AUTH_ALLOWED_HOSTS" "$local_auth_allowed_hosts"
 add_optional_binding "AUTH_API_TARGET" "${AUTH_API_TARGET:-}"
 add_binding "AUTH_PATH_PREFIX" "$auth_path_prefix"
-add_optional_binding "CRM_API_TARGET" "${CRM_API_TARGET:-}"
+if [[ -n "${LOCAL_WA_ORCHESTRATOR_API_TARGET:-}" ]]; then
+  # The local adapter owns CRM identity/team routes directly. Keep this
+  # binding separate from the hosted Inventory mount so the Pages proxy can
+  # select the loopback contract without changing hosted routing.
+  add_binding "CRM_API_TARGET" "$LOCAL_WA_ORCHESTRATOR_API_TARGET"
+else
+  add_optional_binding "CRM_API_TARGET" "${CRM_API_TARGET:-}"
+fi
 add_optional_binding "CAIXA_API_TARGET" "${CAIXA_API_TARGET:-}"
 add_optional_binding "TRACKING_API_TARGET" "${TRACKING_API_TARGET:-}"
 add_optional_binding "UNIT_MONITOR_API_TARGET" "${UNIT_MONITOR_API_TARGET:-}"
