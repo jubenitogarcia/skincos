@@ -71,6 +71,10 @@ jobs:
           # GitHub emits the normal post-merge workflow events. GITHUB_TOKEN
           # events are intentionally suppressed by GitHub.
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          # Required status checks are bound to the GitHub Actions integration;
+          # keep status publication on that token while GH_TOKEN performs the
+          # merge mutation and preserves post-merge workflow events.
+          SKINCOS_STATUS_TOKEN: ${{ github.token }}
           SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}

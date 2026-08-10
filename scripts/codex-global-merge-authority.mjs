@@ -27,8 +27,9 @@ function apiUrl(repository, suffix = "") {
   return `https://api.github.com/repos/${repository}${suffix}`;
 }
 
-async function githubJson(repository, suffix, options = {}) {
-  const token = requiredEnv("GH_TOKEN");
+async function githubJson(repository, suffix, options = {}, tokenName = "GH_TOKEN") {
+  const token = String(process.env[tokenName] || process.env.GH_TOKEN || "").trim();
+  if (!token) throw new Error(`${tokenName} is required`);
   const response = await fetch(apiUrl(repository, suffix), {
     ...options,
     headers: {
@@ -63,7 +64,7 @@ async function setMergeAuthorityStatus(repository, headSha, state, description) 
       description: String(description).slice(0, 140),
       target_url: `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${repository}/actions/workflows/global-merge-authority.yml`,
     }),
-  });
+  }, "SKINCOS_STATUS_TOKEN");
 }
 
 function waitableLeaseReason(reason) {
