@@ -1,4 +1,8 @@
 import fs from 'node:fs';
+import {
+  COORDINATION_OBSERVABILITY_EVENTS,
+  COORDINATION_OBSERVABILITY_FIELDS,
+} from '../../ops/cloudflare/global-coordinator/observability-contract.mjs';
 
 const catalog = JSON.parse(fs.readFileSync(new URL('../../ops/observability/catalog.json', import.meta.url), 'utf8'));
 const errors = [];
@@ -14,6 +18,14 @@ if (!Number.isInteger(notificationPolicy?.recoverAfterConsecutiveHealthyRuns) ||
 if (!Number.isInteger(notificationPolicy?.desktopAlertCooldownSeconds) || notificationPolicy.desktopAlertCooldownSeconds < 60) errors.push('notification policy must define a safe desktop alert cooldown');
 if (!Number.isInteger(notificationPolicy?.desktopMessageTimeoutSeconds) || notificationPolicy.desktopMessageTimeoutSeconds < 10 || notificationPolicy.desktopMessageTimeoutSeconds > 120) errors.push('notification policy must define a desktop message timeout between 10 and 120 seconds');
 if (notificationPolicy?.desktopNotifyRecovery !== false) errors.push('notification policy must keep desktop recovery notifications disabled');
+const runtimeEventContract = catalog.contract?.runtimeEventContract;
+const sameItems = (left, right) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+if (!runtimeEventContract || !Array.isArray(runtimeEventContract.events) || !Array.isArray(runtimeEventContract.fields)) {
+  errors.push('contract.runtimeEventContract must declare events and fields');
+} else {
+  if (!sameItems(runtimeEventContract.events, COORDINATION_OBSERVABILITY_EVENTS)) errors.push('coordination runtime event catalog drifted from the Worker contract');
+  if (!sameItems(runtimeEventContract.fields, COORDINATION_OBSERVABILITY_FIELDS)) errors.push('coordination runtime field catalog drifted from the Worker contract');
+}
 if (!Array.isArray(catalog.units) || catalog.units.length === 0) errors.push('units must not be empty');
 for (const unit of catalog.units || []) {
   for (const field of required) if (unit[field] === undefined || unit[field] === '') errors.push(`${unit.id || '<unknown>'}: missing ${field}`);

@@ -17,6 +17,7 @@ import {
   revokeLease,
 } from "../../governance/global-coordination-core.mjs";
 import { keyCandidatesForRequest, keyId, keyRingFor } from "./key-ring.mjs";
+import { COORDINATION_OBSERVABILITY_FIELDS } from "./observability-contract.mjs";
 
 const CONTRACT_ID = "skincos/global-coordination/v1";
 const MAX_SKEW_MS = 30_000;
@@ -47,18 +48,7 @@ const jsonResponse = (payload, status = 200, headers = {}) => new Response(JSON.
   headers: { "content-type": "application/json", "cache-control": "no-store", ...headers },
 });
 const bad = (message, status = 401, extra = {}) => jsonResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed: false, ...extra, error: message }, status);
-const OBSERVABILITY_FIELDS = new Set([
-  "route",
-  "action",
-  "status",
-  "result",
-  "reason",
-  "coordinationPlane",
-  "authorityEpoch",
-  "keyId",
-  "resourceClass",
-  "durationMs",
-]);
+const OBSERVABILITY_FIELDS = new Set(COORDINATION_OBSERVABILITY_FIELDS);
 function logEvent(event, fields = {}) {
   const record = { schemaVersion: 1, contractId: CONTRACT_ID, event, timestamp: new Date().toISOString() };
   for (const [name, value] of Object.entries(fields)) {
