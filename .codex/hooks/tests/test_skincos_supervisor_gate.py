@@ -218,6 +218,33 @@ class GateFixture(unittest.TestCase):
         self.assertTrue(missing_resource["continue"])
         self.assertIn("concrete resource", missing_resource["stopReason"])
 
+        noncanonical = self.run_gate(
+            self.payload(
+                self.contract(
+                    next_item={"resource": "website", "mutates_global": True},
+                    resource_declaration={"writes": ["website"], "leases": ["website"]},
+                ),
+                turn_id="turn-noncanonical-resource",
+            )
+        )
+        self.assertTrue(noncanonical["continue"])
+        self.assertIn("canonical resource name", noncanonical["stopReason"])
+
+        missing_one_of_two = self.run_gate(
+            self.payload(
+                self.contract(
+                    next_item={"resource": "deploy:site:staging", "operation": "deploy"},
+                    resource_declaration={
+                        "writes": ["deploy:site:staging", "deploy:crm:production"],
+                        "leases": ["deploy:site:staging"],
+                    },
+                ),
+                turn_id="turn-missing-second-lease",
+            )
+        )
+        self.assertTrue(missing_one_of_two["continue"])
+        self.assertIn("deploy:crm:production", missing_one_of_two["stopReason"])
+
     def test_merge_main_resource_names_are_case_insensitive_but_still_require_the_gate(self) -> None:
         result = self.run_gate(
             self.payload(
@@ -292,6 +319,36 @@ class GateFixture(unittest.TestCase):
         self.assertEqual(snapshot["valid_evidence_refs"], ["artifact:baseline", "ci:baseline-green"])
         self.assertIn("issue:942-user-mission", result["reason"])
         self.assertIn("remote:main-16cace3", result["reason"])
+
+    def test_task_identity_rejects_mismatched_branch_worktree_or_slug(self) -> None:
+        mismatch = self.run_gate(
+            self.payload(
+                self.contract(
+                    branch_worktree={
+                        "branch": "codex/admin/task-one",
+                        "worktree": "C:/CodexShared/Worktrees/skincos/admin/task-two",
+                    }
+                ),
+                turn_id="turn-mismatched-worktree",
+            )
+        )
+        self.assertTrue(mismatch["continue"])
+        self.assertIn("same task", mismatch["stopReason"])
+
+        mismatch_slug = self.run_gate(
+            self.payload(
+                self.contract(
+                    branch_worktree={
+                        "branch": "codex/admin/task-one",
+                        "worktree": "C:/CodexShared/Worktrees/skincos/admin/task-one",
+                    },
+                    task_slug="task-two",
+                ),
+                turn_id="turn-mismatched-slug",
+            )
+        )
+        self.assertTrue(mismatch_slug["continue"])
+        self.assertIn("task_slug", mismatch_slug["stopReason"])
 
     def test_continued_snapshot_preserves_omitted_context_after_measurable_progress(self) -> None:
         self.write_config(cooldown_seconds=0)

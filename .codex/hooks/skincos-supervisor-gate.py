@@ -289,6 +289,8 @@ def validate_contract(contract: dict[str, Any], event_session: str) -> str | Non
             if not isinstance(resource_value, str) or not resource_value.strip():
                 return "global next_item requires a concrete resource"
             resource = resource_value.strip()
+            if next_item.get("mutates_global") is True and not is_global_resource_name(resource):
+                return "global next_item requires a canonical resource name"
             if is_global_resource_name(resource):
                 resource = resource.lower()
             if resource not in declaration["writes"]:
@@ -364,8 +366,9 @@ def normalize_resource_declaration(
         normalized[field] = sorted(items)
 
     global_writes = [item for item in normalized["writes"] if is_global_resource_name(item)]
-    if global_writes and not normalized["leases"]:
-        return None, "global writes require an explicit lease declaration"
+    missing_leases = [item for item in global_writes if item not in normalized["leases"]]
+    if missing_leases:
+        return None, f"global writes require an explicit lease declaration for each resource: {', '.join(missing_leases)}"
     if "merge:main" in global_writes:
         if "merge:main" not in normalized["leases"]:
             return None, "merge:main writes require the merge:main lease"
@@ -446,15 +449,30 @@ def contract_resource_declaration(contract: dict[str, Any]) -> tuple[Any, str | 
     return declared.get("resource_declaration"), None
 
 
-def derive_task_slug(branch_worktree: dict[str, str | None]) -> str | None:
-    for field in ("branch", "worktree"):
-        value = branch_worktree.get(field)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        segments = [segment for segment in re.split(r"[\\/]+", value.strip()) if segment]
-        if segments:
-            return segments[-1]
-    return None
+def task_identity_component(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    segments = [segment for segment in re.split(r"[\\/]+", value.strip()) if segment]
+    return segments[-1] if segments else None
+
+
+def normalize_task_identity(
+    branch_worktree: dict[str, str | None],
+    task_slug: str | None,
+) -> tuple[str | None, str | None]:
+    components = {
+        component
+        for component in (
+            task_identity_component(branch_worktree.get("branch")),
+            task_identity_component(branch_worktree.get("worktree")),
+        )
+        if component is not None
+    }
+    if len(components) > 1:
+        return None, "branch, worktree, and task_slug must identify the same task"
+    if task_slug is not None and components and task_slug not in components:
+        return None, "task_slug does not match the branch/worktree task identity"
+    return task_slug or next(iter(components), None), None
 
 
 def normalize_branch_worktree(
@@ -563,8 +581,10 @@ def build_session_snapshot(
         return None, field_error
     context["branch_worktree"] = branch_worktree
 
-    if context["task_slug"] is None:
-        context["task_slug"] = derive_task_slug(branch_worktree)
+    task_slug, identity_error = normalize_task_identity(branch_worktree, context["task_slug"])
+    if identity_error:
+        return None, identity_error
+    context["task_slug"] = task_slug
 
     if "valid_evidence_refs" in declared:
         references, field_error = normalize_snapshot_refs(declared["valid_evidence_refs"], "valid_evidence_refs")
@@ -636,6 +656,9 @@ def validate_stored_snapshot(
         _, error = normalize_snapshot_string(snapshot.get(field), field)
         if error:
             return error
+    task_slug, error = normalize_snapshot_string(snapshot.get("task_slug"), "task_slug")
+    if error:
+        return error
     _, error = normalize_snapshot_string(snapshot.get("issue"), "issue", allow_integer=True)
     if error:
         return error
@@ -643,6 +666,9 @@ def validate_stored_snapshot(
     if not isinstance(branch_worktree, dict) or set(branch_worktree) != {"branch", "worktree"}:
         return "session snapshot branch_worktree is invalid"
     _, error = normalize_branch_worktree({}, branch_worktree)
+    if error:
+        return error
+    _, error = normalize_task_identity(branch_worktree, task_slug)
     if error:
         return error
     _, error = normalize_snapshot_refs(snapshot.get("valid_evidence_refs"), "valid_evidence_refs")
