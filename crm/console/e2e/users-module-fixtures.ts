@@ -43,7 +43,7 @@ function cloneRows() {
   return syntheticTeam.map((row) => ({ ...row, units: [...row.units], schedule: { ...row.schedule, units: [...row.schedule.units] }, scheduleSync: row.scheduleSync ? { ...row.scheduleSync } : undefined, identityLinks: row.identityLinks.map((link) => ({ ...link })) }))
 }
 
-type MockUsersOptions = { failedActivationFor?: string; paginated?: boolean }
+type MockUsersOptions = { degraded?: boolean; failedActivationFor?: string; paginated?: boolean }
 
 export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUsersOptions = {}) {
   const rows = cloneRows()
@@ -74,6 +74,7 @@ export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUse
 
     if (path.endsWith('/api/auth/me')) return send({ ok: true, success: true, user: { username: 'users-e2e', email: 'users-e2e@staging.invalid', role, allowedUnits: ['novo-hamburgo', 'barra-shopping-sul'], allowedModules: ['atendimento'] }, csrfToken: 'users-e2e-csrf' })
     if (path.endsWith('/api/escala/professionals') && ['POST', 'PUT'].includes(request.method())) return send({ ok: true, data: { professionalId: 'e2e-escala-carla' } })
+    if (options.degraded && path.endsWith('/api/crm/admin/team') && request.method() === 'GET' && url.searchParams.get('mode') === 'config') return send({ success: false, error: 'domain_service_degraded', message: 'A integração operacional está temporariamente indisponível.' }, 503)
     if (path.endsWith('/api/crm/admin/team') && request.method() === 'GET' && url.searchParams.get('mode') === 'config') return send({ success: true, data: { enabled: true, legacyEscalaEditor: false } })
     if (path.endsWith('/api/crm/admin/team') && request.method() === 'GET') {
       const status = (url.searchParams.get('status') || 'ACTIVE').toUpperCase()
