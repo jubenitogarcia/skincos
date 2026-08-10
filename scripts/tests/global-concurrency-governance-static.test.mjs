@@ -31,6 +31,18 @@ test("Cloudflare mutators have one fail-closed writer group and no unclassified 
   assert.match(read(".github/workflows/deploy-crm-pages.yml"), /resource: global:crm-cloudflare-writer/);
   assert.match(read(".github/workflows/cloudflare-pages-sync-ponto.yml"), /global_resource: global:crm-cloudflare-writer/);
   assert.match(read(".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"), /global_resource: global:ponto-workers-writer/);
+  const coordinator = read(".github/workflows/deploy-global-coordinator.yml");
+  assert.match(coordinator, /global-coordinator-deployment-guard\.mjs/);
+  assert.match(coordinator, /global:global-coordinator-writer/);
+  assert.match(coordinator, /wrangler@4\.120\.0/);
+  assert.match(coordinator, /COORDINATION_SHARED_SECRET/);
+  assert.match(coordinator, /COORDINATION_ADMIN_SECRET/);
+  assert.match(coordinator, /SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL/);
+  assert.match(coordinator, /versions deploy/);
+  assert.match(coordinator, /environment: \$\{\{ inputs\.target \}\}/);
+  const coordinatorSurface = policy.surfaces.find((surface) => surface.id === "global-coordination-plane");
+  assert.equal(coordinatorSurface.canonicalDeployWorkflow, ".github/workflows/deploy-global-coordinator.yml");
+  assert.equal(coordinatorSurface.coordinationGroup, "global-coordinator-writer");
 });
 
 test("direct Ponto recovery jobs use remote custody at every governed boundary", () => {

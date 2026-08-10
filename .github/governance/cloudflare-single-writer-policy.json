@@ -52,6 +52,11 @@
       "id": "staging-d1-writer",
       "resource": "global:staging-d1",
       "purpose": "Shared synthetic/staging D1 mutation authority."
+    },
+    {
+      "id": "global-coordinator-writer",
+      "resource": "global:global-coordinator-writer",
+      "purpose": "Canonical bootstrap/update writer for the coordination plane itself; the one-time production bootstrap is allowed only before that endpoint exists, and every later update requires its remote lease."
     }
   ],
   "surfaces": [
@@ -166,6 +171,17 @@
       "canonicalDeployWorkflow": ".github/workflows/cloudflare-alerting-apply.yml",
       "coordinationGroup": "cloudflare-alerting-writer",
       "mutationWorkflows": [".github/workflows/cloudflare-alerting-apply.yml"]
+    },
+    {
+      "id": "global-coordination-plane",
+      "platform": "cloudflare-worker-durable-object",
+      "canonicalDeployWorkflow": ".github/workflows/deploy-global-coordinator.yml",
+      "coordinationGroup": "global-coordinator-writer",
+      "mutationWorkflows": [".github/workflows/deploy-global-coordinator.yml"],
+      "bootstrap": {
+        "target": "production",
+        "requires": ["main", "production-environment", "cloudflare-custody", "no-existing-production-endpoint"]
+      }
     },
     {
       "id": "staging-d1-fixtures",

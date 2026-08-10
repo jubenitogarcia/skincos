@@ -52,7 +52,16 @@ for (const unit of catalog.units ?? []) {
   if (!/^concurrency:/m.test(source) || !source.includes(unit.concurrencyPrefix)) fail(`${unit.id} must serialize by unit and environment`);
   if (!/^\s+environment:/m.test(source)) fail(`${unit.id} must select a GitHub environment`);
   if (!/^permissions:\r?\n\s+actions:\s+read\r?\n\s+contents:\s+read/m.test(source)) fail(`${unit.id} must grant the promotion gate actions: read and contents: read`);
-  if (unit.promotion.bootstrapOnly === true) {
+  if (unit.promotion.publisherType === 'coordination-plane') {
+    for (const required of [
+      'global-coordinator-deployment-guard.mjs',
+      'global:global-coordinator-writer',
+      'allow_production_bootstrap',
+      'environment: ${{ inputs.target }}',
+    ]) {
+      if (!source.includes(required)) fail(`${unit.id} coordination publisher is missing: ${required}`);
+    }
+  } else if (unit.promotion.bootstrapOnly === true) {
     for (const required of [
       'baseline_sha',
       'confirm_staging',

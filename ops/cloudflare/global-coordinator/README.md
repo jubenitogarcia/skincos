@@ -7,10 +7,15 @@ fenced independently, so unrelated modules proceed in parallel while the
 authority can also arbitrate cross-scope conflicts such as `merge:main` versus
 an active `release:<module>` lease.
 
-The production Worker is intentionally not routed by this change. The isolated
-`staging` environment is the activation target for synthetic contract tests;
-production remains disabled until the same version, custody, route, rollback,
-and live readback gates are recorded. It requires separately managed
+The isolated `staging` and `production` environments are published only by
+`.github/workflows/deploy-global-coordinator.yml`. The first production
+bootstrap is allowed only when the workflow is dispatched from `main` with the
+explicit bootstrap input, the deterministic production endpoint variable is
+absent, and the exact production Worker existence probe returns “does not
+exist”. Every later update requires the remote fenced lease
+`global:global-coordinator-writer`; the workflow reads back the active version,
+performs a signed read-only gate, and can restore the incumbent version when
+post-deploy validation fails. It requires separately managed
 `COORDINATION_SHARED_SECRET` and `COORDINATION_ADMIN_SECRET` bindings. Missing
 custody returns HTTP 503; it never falls back to an in-memory or local lock.
 
