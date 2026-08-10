@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 export const RECOVERY_PROTOCOL = "epoch-fence-v1";
 export const RECOVERY_CONFIRMATION = "RECOVER-KNOWN-COORDINATOR-VERSION";
 const FULL_SHA = /^[0-9a-f]{40}$/i;
+const TREE_SHA = /^[0-9a-f]{40}$/i;
+const DIGEST = /^[0-9a-f]{64}$/i;
 const VERSION_ID = /^[0-9a-f-]{16,128}$/i;
+const WORKFLOW_RUN_ID = /^[1-9][0-9]{5,}$/;
 
 function text(value) {
   return String(value ?? "").trim();
@@ -17,13 +20,37 @@ function requireText(value, label) {
   return normalized;
 }
 
-export function loadRecoveryRegistry(registryPath = path.resolve(import.meta.dirname, "../../ops/cloudflare/global-coordinator/recovery-incumbents.json")) {
-  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+export function validateRecoveryRegistry(registry) {
   if (registry.schemaVersion !== 1 || registry.workerName !== "skincos-global-coordinator") {
     throw new Error("global coordinator recovery registry contract is invalid");
   }
   if (!Array.isArray(registry.knownVersions)) throw new Error("global coordinator recovery registry must declare knownVersions");
+  const seen = new Set();
+  for (const entry of registry.knownVersions) {
+    const id = text(entry?.versionId);
+    if (!VERSION_ID.test(id)) throw new Error("global coordinator recovery registry contains an invalid version id");
+    if (seen.has(id)) throw new Error(`global coordinator recovery registry contains duplicate version ${id}`);
+    seen.add(id);
+    if (text(entry?.environment) !== "production") throw new Error(`global coordinator recovery registry version ${id} is not production`);
+    if (!FULL_SHA.test(text(entry?.sourceSha))) throw new Error(`global coordinator recovery registry version ${id} has an invalid source SHA`);
+    if (entry.sourceTree !== undefined && !TREE_SHA.test(text(entry.sourceTree))) {
+      throw new Error(`global coordinator recovery registry version ${id} has an invalid source tree`);
+    }
+    if (entry.dependencyClosureDigest !== undefined && !DIGEST.test(text(entry.dependencyClosureDigest))) {
+      throw new Error(`global coordinator recovery registry version ${id} has an invalid dependency closure digest`);
+    }
+    if (entry.recoveryEligible === true) {
+      if (text(entry.protocol) !== RECOVERY_PROTOCOL) throw new Error(`global coordinator recovery registry version ${id} is eligible without epoch fencing`);
+      if (!WORKFLOW_RUN_ID.test(text(entry.registeredFromWorkflowRun))) {
+        throw new Error(`global coordinator recovery registry version ${id} has no successful deployment run identity`);
+      }
+    }
+  }
   return registry;
+}
+
+export function loadRecoveryRegistry(registryPath = path.resolve(import.meta.dirname, "../../ops/cloudflare/global-coordinator/recovery-incumbents.json")) {
+  return validateRecoveryRegistry(JSON.parse(fs.readFileSync(registryPath, "utf8")));
 }
 
 export function classifyRecoveryProbe({ status, body, error } = {}) {

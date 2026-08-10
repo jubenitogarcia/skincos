@@ -19,6 +19,17 @@ post-deploy validation fails. It requires separately managed
 `COORDINATION_SHARED_SECRET` and `COORDINATION_ADMIN_SECRET` bindings. Missing
 custody returns HTTP 503; it never falls back to an in-memory or local lock.
 
+Break-glass recovery is a separate, production-only path in
+`.github/workflows/recover-global-coordinator.yml`. It can restore only an
+exact `versionId` recorded in `recovery-incumbents.json`, after the normal
+readiness probe proves a degraded (not healthy or ambiguous) plane. The
+workflow then reads back modern readiness and advances `authorityEpoch` through
+the separate `COORDINATION_RECOVERY_SECRET`; it does not acquire normal leases,
+upload source, or accept a staging target. A successful normal production
+deployment must add its exact version, source SHA/tree, closure digest and run
+ID to the registry before that version is considered recovery eligible. The
+registry validator rejects duplicate or malformed incumbents.
+
 Clients must send the signed request envelope described by the contract and
 must present the returned `leaseId`, `fencingToken`, owner and `intentDigest`
 before every mutation. A release operation also carries its immutable source
