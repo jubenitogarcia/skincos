@@ -38,6 +38,7 @@ function inferPlacement(slugPath: string, destinationHost: string | null): strin
     if (host === "www.google.com") return "maps";
     if (host === "www.facebook.com" || host === "www.instagram.com") return "social";
     if (host === "payment-link-v3.stone.com.br") return "payment";
+    if (host === "asaas.com" || host === "www.asaas.com") return "payment";
     if (host === "auto.bsbank.com.br") return "campaign";
     if (
         host === "espacofacial.com" ||

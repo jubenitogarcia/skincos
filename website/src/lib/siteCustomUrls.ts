@@ -64,6 +64,7 @@ const ALLOWED_DESTINATION_HOSTS = new Set([
     "www.instagram.com",
     "chat.whatsapp.com",
     "auto.bsbank.com.br",
+    "www.asaas.com",
 ]);
 
 function textOrNull(value: unknown, max = 160): string | null {
