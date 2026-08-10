@@ -6,6 +6,7 @@ import {
   buildLegacyLeaseRequest,
   buildRecoveryFenceRequest,
   buildLeaseRequest,
+  coordinationActiveSecret,
   lockScopeForResource,
   newRequestNonce,
   probeCoordinatorProtocol,
@@ -16,6 +17,31 @@ import { canonicalJson, CONTRACT_ID } from "../../ops/governance/global-coordina
 
 const secret = "test-coordination-secret";
 const nonce = "n".repeat(32);
+
+test("the active coordination custody is selected only when its key id is also pinned", () => {
+  const saved = {
+    active: process.env.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY,
+    keyId: process.env.SKINCOS_GLOBAL_COORDINATION_KEY_ID,
+    shared: process.env.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET,
+  };
+  try {
+    process.env.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY = "active-secret";
+    process.env.SKINCOS_GLOBAL_COORDINATION_KEY_ID = "active-v2";
+    process.env.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET = "shared-secret";
+    assert.equal(coordinationActiveSecret(), "active-secret");
+    delete process.env.SKINCOS_GLOBAL_COORDINATION_KEY_ID;
+    assert.equal(coordinationActiveSecret(), "shared-secret");
+  } finally {
+    for (const [name, value] of [
+      ["SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY", saved.active],
+      ["SKINCOS_GLOBAL_COORDINATION_KEY_ID", saved.keyId],
+      ["SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET", saved.shared],
+    ]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
 
 test("legacy lease adapter is explicit and preserves the same resource identity", () => {
   const args = {

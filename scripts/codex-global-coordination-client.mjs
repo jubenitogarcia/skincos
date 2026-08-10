@@ -17,6 +17,14 @@ const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const LEGACY_KEY_ID = "legacy-v1";
 const COORDINATION_PROTOCOL = "epoch-fence-v1";
 
+export function coordinationActiveSecret() {
+  const activeKey = String(process.env.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || "").trim();
+  const activeKeyId = String(process.env.SKINCOS_GLOBAL_COORDINATION_KEY_ID || "").trim();
+  return activeKey && activeKeyId
+    ? activeKey
+    : process.env.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET || "";
+}
+
 export function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -127,7 +135,7 @@ function envelopeFor({ action, request, proof, authorization, ttlMs, reason, non
 
 export function buildAuthenticatedRequest({
   url = process.env.SKINCOS_GLOBAL_COORDINATOR_URL,
-  secret,
+  secret = coordinationActiveSecret(),
   adminSecret,
   keyId = process.env.SKINCOS_GLOBAL_COORDINATION_KEY_ID,
   action,
@@ -297,7 +305,7 @@ export function buildRecoveryFenceRequest({
 
 export async function coordinate({
   url = process.env.SKINCOS_GLOBAL_COORDINATOR_URL,
-  secret = process.env.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET,
+  secret = coordinationActiveSecret(),
   keyId = process.env.SKINCOS_GLOBAL_COORDINATION_KEY_ID,
   previousKeyId = process.env.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY_ID,
   previousSecret = process.env.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY,

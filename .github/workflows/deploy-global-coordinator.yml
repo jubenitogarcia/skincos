@@ -39,6 +39,7 @@ jobs:
       COORDINATION_ACTIVE_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
       COORDINATION_PREVIOUS_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY_ID }}
       COORDINATION_PREVIOUS_KEY_EXPIRES_AT: ${{ vars.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY_EXPIRES_AT }}
+      COORDINATION_ALLOW_LEGACY_KEY: ${{ vars.SKINCOS_GLOBAL_COORDINATION_ALLOW_LEGACY_KEY || 'true' }}
       COORDINATION_ADMIN_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ADMIN_SECRET }}
       COORDINATION_ACTIVE_KEY: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
       COORDINATION_PREVIOUS_KEY: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY }}
@@ -164,7 +165,12 @@ jobs:
         working-directory: ops/cloudflare/global-coordinator
         run: |
           set -euo pipefail
+          if [[ -n "${COORDINATION_ACTIVE_KEY:-}" ]]; then
+            [[ "$COORDINATION_ACTIVE_KEY_ID" != legacy-v1 ]] || { echo 'an explicit active key cannot retain the legacy key id' >&2; exit 1; }
+            [[ -n "${COORDINATION_PREVIOUS_KEY_ID:-}" && -n "${COORDINATION_PREVIOUS_KEY_EXPIRES_AT:-}" ]] || { echo 'active key rotation requires a previous key id and expiry' >&2; exit 1; }
+          fi
           wrangler_vars=(--var "COORDINATION_ACTIVE_KEY_ID:${COORDINATION_ACTIVE_KEY_ID}")
+          wrangler_vars+=(--var "COORDINATION_ALLOW_LEGACY_KEY:${COORDINATION_ALLOW_LEGACY_KEY}")
           if [[ -n "${COORDINATION_PREVIOUS_KEY_ID:-}" ]]; then
             wrangler_vars+=(--var "COORDINATION_PREVIOUS_KEY_ID:${COORDINATION_PREVIOUS_KEY_ID}")
             wrangler_vars+=(--var "COORDINATION_PREVIOUS_KEY_EXPIRES_AT:${COORDINATION_PREVIOUS_KEY_EXPIRES_AT}")
@@ -178,7 +184,12 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$COORDINATION_SHARED_SECRET" && -n "$COORDINATION_ADMIN_SECRET" ]] || { echo 'coordination Worker custody is unavailable' >&2; exit 1; }
+          if [[ -n "${COORDINATION_ACTIVE_KEY:-}" ]]; then
+            [[ "$COORDINATION_ACTIVE_KEY_ID" != legacy-v1 ]] || { echo 'an explicit active key cannot retain the legacy key id' >&2; exit 1; }
+            [[ -n "${COORDINATION_PREVIOUS_KEY_ID:-}" && -n "${COORDINATION_PREVIOUS_KEY_EXPIRES_AT:-}" ]] || { echo 'active key rotation requires a previous key id and expiry' >&2; exit 1; }
+          fi
           wrangler_vars=(--var "COORDINATION_ACTIVE_KEY_ID:${COORDINATION_ACTIVE_KEY_ID}")
+          wrangler_vars+=(--var "COORDINATION_ALLOW_LEGACY_KEY:${COORDINATION_ALLOW_LEGACY_KEY}")
           if [[ -n "${COORDINATION_PREVIOUS_KEY_ID:-}" ]]; then
             wrangler_vars+=(--var "COORDINATION_PREVIOUS_KEY_ID:${COORDINATION_PREVIOUS_KEY_ID}")
             wrangler_vars+=(--var "COORDINATION_PREVIOUS_KEY_EXPIRES_AT:${COORDINATION_PREVIOUS_KEY_EXPIRES_AT}")
@@ -270,10 +281,10 @@ jobs:
               result = await evaluateGlobalGate({
                 request,
                 url: process.env.COORDINATOR_URL,
-                secret: process.env.COORDINATION_SHARED_SECRET,
+                secret: process.env.COORDINATION_ACTIVE_KEY || process.env.COORDINATION_SHARED_SECRET,
                 keyId: process.env.COORDINATION_ACTIVE_KEY_ID,
                 previousKeyId: process.env.COORDINATION_PREVIOUS_KEY_ID,
-                previousSecret: process.env.COORDINATION_PREVIOUS_KEY,
+                previousSecret: process.env.COORDINATION_PREVIOUS_KEY || (process.env.COORDINATION_ACTIVE_KEY ? process.env.COORDINATION_SHARED_SECRET : ''),
                 previousKeyExpiresAt: process.env.COORDINATION_PREVIOUS_KEY_EXPIRES_AT,
               });
               if (result.passed !== true) throw new Error(`signed coordination gate denied: ${result.reason || 'unknown'}`);
