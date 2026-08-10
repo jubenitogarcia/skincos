@@ -67,6 +67,7 @@ SNAPSHOT_INPUT_FIELDS = {
     "blocker_fingerprint",
     "valid_evidence_refs",
     "resource_declaration",
+    "task_slug",
 }
 SNAPSHOT_TOP_LEVEL_FIELDS = SNAPSHOT_INPUT_FIELDS - {"schema_version"}
 SNAPSHOT_STRING_FIELDS = (
@@ -74,6 +75,7 @@ SNAPSHOT_STRING_FIELDS = (
     "checkpoint",
     "remote_fingerprint",
     "blocker_fingerprint",
+    "task_slug",
 )
 RESOURCE_DECLARATION_SCHEMA_VERSION = 1
 RESOURCE_DECLARATION_FIELDS = {
@@ -259,7 +261,10 @@ def validate_contract(contract: dict[str, Any], event_session: str) -> str | Non
     evidence = contract.get("evidence_refs")
     if not isinstance(evidence, list) or any(not isinstance(item, str) for item in evidence):
         return "supervisor state evidence_refs must be a list of strings"
-    _, declaration_error = normalize_resource_declaration(contract.get("resource_declaration"))
+    raw_declaration, extraction_error = contract_resource_declaration(contract)
+    if extraction_error:
+        return extraction_error
+    declaration, declaration_error = normalize_resource_declaration(raw_declaration)
     if declaration_error:
         return declaration_error
     next_item = contract.get("next_item")
@@ -277,8 +282,19 @@ def validate_contract(contract: dict[str, Any], event_session: str) -> str | Non
             return "continue cannot carry a human or credential blocker"
         if contract.get("production_authorization_required"):
             return "continue cannot require production authorization"
-        if next_item_is_global and contract.get("resource_declaration") is None:
+        if next_item_is_global and raw_declaration is None:
             return "global next_item requires reads/writes/requires/leases resource_declaration"
+        if next_item_is_global:
+            resource_value = next_item.get("resource")
+            if not isinstance(resource_value, str) or not resource_value.strip():
+                return "global next_item requires a concrete resource"
+            resource = resource_value.strip()
+            if is_global_resource_name(resource):
+                resource = resource.lower()
+            if resource not in declaration["writes"]:
+                return f"global next_item resource {resource} must be declared in resource_declaration.writes"
+            if resource not in declaration["leases"]:
+                return f"global next_item resource {resource} must be declared in resource_declaration.leases"
     elif status == "complete":
         if contract.get("objective_status") != "complete":
             return "complete requires objective_status=complete"
@@ -342,6 +358,8 @@ def normalize_resource_declaration(
                 return None, f"resource_declaration {field} contains an oversized item"
             if "\n" in candidate or "\r" in candidate:
                 return None, f"resource_declaration {field} cannot contain line breaks"
+            if field in ("writes", "leases") and is_global_resource_name(candidate):
+                candidate = candidate.lower()
             items.add(candidate)
         normalized[field] = sorted(items)
 
@@ -421,6 +439,24 @@ def extract_snapshot_declaration(contract: dict[str, Any]) -> tuple[dict[str, An
     return declared, None
 
 
+def contract_resource_declaration(contract: dict[str, Any]) -> tuple[Any, str | None]:
+    declared, error = extract_snapshot_declaration(contract)
+    if error or declared is None:
+        return None, error
+    return declared.get("resource_declaration"), None
+
+
+def derive_task_slug(branch_worktree: dict[str, str | None]) -> str | None:
+    for field in ("branch", "worktree"):
+        value = branch_worktree.get(field)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        segments = [segment for segment in re.split(r"[\\/]+", value.strip()) if segment]
+        if segments:
+            return segments[-1]
+    return None
+
+
 def normalize_branch_worktree(
     declared: dict[str, Any],
     existing: dict[str, Any],
@@ -477,6 +513,7 @@ def build_session_snapshot(
         "authorization_source": None,
         "issue": None,
         "branch_worktree": {"branch": None, "worktree": None},
+        "task_slug": None,
         "checkpoint": None,
         "remote_fingerprint": None,
         "blocker_fingerprint": None,
@@ -488,15 +525,15 @@ def build_session_snapshot(
             "authorization_source",
             "issue",
             "branch_worktree",
+            "task_slug",
             "checkpoint",
             "remote_fingerprint",
             "blocker_fingerprint",
             "valid_evidence_refs",
-            "resource_declaration",
         ):
             context[field] = previous.get(field)
 
-    raw_declaration = contract.get("resource_declaration")
+    raw_declaration = declared.get("resource_declaration")
     if raw_declaration is not None:
         declaration, declaration_error = normalize_resource_declaration(raw_declaration)
         if declaration_error or declaration is None:
@@ -526,6 +563,9 @@ def build_session_snapshot(
         return None, field_error
     context["branch_worktree"] = branch_worktree
 
+    if context["task_slug"] is None:
+        context["task_slug"] = derive_task_slug(branch_worktree)
+
     if "valid_evidence_refs" in declared:
         references, field_error = normalize_snapshot_refs(declared["valid_evidence_refs"], "valid_evidence_refs")
         if field_error or references is None:
@@ -552,6 +592,7 @@ def build_session_snapshot(
         "checkpoint": context["checkpoint"],
         "remote_fingerprint": context["remote_fingerprint"],
         "valid_evidence_refs": context["valid_evidence_refs"],
+        "task_slug": context["task_slug"],
         "resource_declaration": context["resource_declaration"],
     }
     serialized, field_error = canonical_json(progress_material)
@@ -567,6 +608,7 @@ def build_session_snapshot(
         "authorization_source": context["authorization_source"],
         "issue": context["issue"],
         "branch_worktree": context["branch_worktree"],
+        "task_slug": context["task_slug"],
         "checkpoint": context["checkpoint"],
         "remote_fingerprint": context["remote_fingerprint"],
         "blocker_fingerprint": context["blocker_fingerprint"],
@@ -883,6 +925,7 @@ def continuation_prompt(
             "remote_fingerprint": snapshot["remote_fingerprint"],
             "blocker_fingerprint": snapshot["blocker_fingerprint"],
             "valid_evidence_refs": snapshot["valid_evidence_refs"],
+            "task_slug": snapshot["task_slug"],
             "resource_declaration": snapshot["resource_declaration"],
         },
     }
@@ -1100,6 +1143,7 @@ def process(
 
         mission["resource_declaration"] = snapshot["resource_declaration"]
         mission["branch_worktree"] = snapshot["branch_worktree"]
+        mission["task_slug"] = snapshot["task_slug"]
 
         status = str(contract["orchestration_status"])
         if status != "continue":

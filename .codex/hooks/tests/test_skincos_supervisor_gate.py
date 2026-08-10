@@ -172,6 +172,67 @@ class GateFixture(unittest.TestCase):
         self.assertEqual(snapshot["resource_declaration"]["leases"], ["merge:main"])
         self.assertIn('"resource_declaration"', result["reason"])
 
+    def test_nested_resource_declaration_is_accepted_and_persisted(self) -> None:
+        result = self.run_gate(
+            self.payload(
+                self.contract(
+                    next_item={"resource": "deploy:site:staging", "operation": "deploy"},
+                    session_snapshot={
+                        "resource_declaration": {
+                            "writes": ["deploy:site:staging"],
+                            "leases": ["deploy:site:staging"],
+                        }
+                    },
+                )
+            )
+        )
+        self.assertEqual(result["decision"], "block")
+        snapshot = self.read_snapshot()
+        self.assertEqual(snapshot["resource_declaration"]["writes"], ["deploy:site:staging"])
+        self.assertEqual(snapshot["resource_declaration"]["leases"], ["deploy:site:staging"])
+
+    def test_global_next_item_must_bind_to_the_declared_write_and_lease(self) -> None:
+        result = self.run_gate(
+            self.payload(
+                self.contract(
+                    next_item={"resource": "deploy:site:staging", "operation": "deploy"},
+                    resource_declaration={
+                        "writes": ["deploy:other:staging"],
+                        "leases": ["deploy:other:staging"],
+                    },
+                )
+            )
+        )
+        self.assertTrue(result["continue"])
+        self.assertIn("must be declared in resource_declaration.writes", result["stopReason"])
+
+        missing_resource = self.run_gate(
+            self.payload(
+                self.contract(
+                    next_item={"mutates_global": True, "operation": "deploy"},
+                    resource_declaration={},
+                ),
+                turn_id="turn-missing-resource",
+            )
+        )
+        self.assertTrue(missing_resource["continue"])
+        self.assertIn("concrete resource", missing_resource["stopReason"])
+
+    def test_merge_main_resource_names_are_case_insensitive_but_still_require_the_gate(self) -> None:
+        result = self.run_gate(
+            self.payload(
+                self.contract(
+                    next_item={"resource": "Merge:Main", "operation": "merge"},
+                    resource_declaration={
+                        "writes": ["Merge:Main"],
+                        "leases": ["MERGE:MAIN"],
+                    },
+                )
+            )
+        )
+        self.assertTrue(result["continue"])
+        self.assertIn("skincos-integration-gate", result["stopReason"])
+
     def test_merge_main_declaration_requires_gate_and_lease(self) -> None:
         result = self.run_gate(
             self.payload(
@@ -225,6 +286,7 @@ class GateFixture(unittest.TestCase):
                 "worktree": "C:/CodexShared/Worktrees/skincos/admin/codex-autonomy-baseline",
             },
         )
+        self.assertEqual(snapshot["task_slug"], "codex-autonomy-baseline")
         self.assertEqual(snapshot["checkpoint"], "checkpoint:before-supervisor-change")
         self.assertEqual(snapshot["remote_fingerprint"], "remote:main-16cace3")
         self.assertEqual(snapshot["valid_evidence_refs"], ["artifact:baseline", "ci:baseline-green"])
@@ -262,6 +324,33 @@ class GateFixture(unittest.TestCase):
         self.assertEqual(snapshot["checkpoint"], "checkpoint:before-change")
         self.assertEqual(snapshot["remote_fingerprint"], "remote:main-before")
         self.assertEqual(snapshot["valid_evidence_refs"], ["artifact:before"])
+
+    def test_omitted_local_milestone_does_not_inherit_a_global_resource_declaration(self) -> None:
+        self.write_config(cooldown_seconds=0)
+        initial = self.contract(
+            next_item={"resource": "deploy:site:staging", "operation": "deploy"},
+            resource_declaration={
+                "writes": ["deploy:site:staging"],
+                "leases": ["deploy:site:staging"],
+            },
+        )
+        first = self.run_gate(self.payload(initial, turn_id="root-global"))
+        self.assertEqual(first["decision"], "block")
+
+        local = self.contract(
+            completed_item="deploy:site:staging",
+            next_item={"operation": "inspect-local-artifact"},
+            evidence_refs=["local:artifact-inspected"],
+        )
+        second = self.run_gate(
+            self.payload(local, turn_id="auto-local", stop_hook_active=True),
+            now=self.now + 10,
+        )
+        self.assertEqual(second["decision"], "block")
+        self.assertEqual(
+            self.read_snapshot()["resource_declaration"],
+            gate.default_resource_declaration(),
+        )
 
     def test_claimed_progress_without_changed_fingerprint_does_not_repeat_work(self) -> None:
         self.write_config(cooldown_seconds=0)

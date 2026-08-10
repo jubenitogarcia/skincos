@@ -73,6 +73,7 @@ jobs:
           source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-merge-maintenance.json
       - name: Check merge:main before PR branch maintenance
+        id: check_branch_maintenance
         if: ${{ steps.acquire_branch_maintenance.outcome == 'success' }}
         uses: ./.github/actions/global-coordination-check
         with:
@@ -85,13 +86,16 @@ jobs:
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Keep codex PRs up-to-date (update-branch) + label conflicts
-        if: ${{ steps.acquire_branch_maintenance.outcome == 'success' }}
+        if: ${{ always() }}
+        env:
+          ALLOW_BRANCH_UPDATES: ${{ steps.check_branch_maintenance.outcome == 'success' && 'true' || 'false' }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           github-token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || github.token }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+            const allowBranchUpdates = process.env.ALLOW_BRANCH_UPDATES === "true";
 
             const LABELS = {
               updated: {
@@ -244,6 +248,11 @@ jobs:
               }
 
               if (mergeableState === "behind") {
+                if (!allowBranchUpdates) {
+                  await addLabel(prNumber, LABELS.pending.name);
+                  core.warning(`PR #${prNumber} is behind but branch maintenance lease is not held; leaving it unchanged.`);
+                  continue;
+                }
                 // Keep strict up-to-date requirement satisfied.
                 try {
                   await github.rest.pulls.updateBranch({
