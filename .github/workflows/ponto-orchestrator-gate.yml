@@ -66,11 +66,11 @@ jobs:
   consume:
     runs-on: ubuntu-latest
     outputs:
-      global_lease_required: ${{ steps.global-enabled.outputs.required || steps.global-disabled.outputs.required }}
-      global_resource: ${{ steps.global-enabled.outputs.resource || steps.global-disabled.outputs.resource }}
-      global_proof_b64: ${{ steps.global-enabled.outputs.proof_b64 || steps.global-disabled.outputs.proof_b64 }}
-      global_intent_digest: ${{ steps.global-enabled.outputs.intent_digest || steps.global-disabled.outputs.intent_digest }}
-      global_coordinator_url: ${{ steps.global-enabled.outputs.url || steps.global-disabled.outputs.url }}
+      global_lease_required: ${{ steps.global_enabled.outputs.required || steps.global_disabled.outputs.required }}
+      global_resource: ${{ steps.global_enabled.outputs.resource || steps.global_disabled.outputs.resource }}
+      global_proof_b64: ${{ steps.global_enabled.outputs.proof_b64 || steps.global_disabled.outputs.proof_b64 }}
+      global_intent_digest: ${{ steps.global_enabled.outputs.intent_digest || steps.global_disabled.outputs.intent_digest }}
+      global_coordinator_url: ${{ steps.global_enabled.outputs.url || steps.global_disabled.outputs.url }}
     steps:
       - name: Refuse replayed governed invocation
         if: ${{ inputs.required }}
@@ -156,7 +156,7 @@ jobs:
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
       - name: Acquire the canonical global mutation lease
-        id: global-enabled
+        id: global_enabled
         if: ${{ inputs.global_lease_required }}
         env:
           GLOBAL_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
@@ -211,7 +211,7 @@ jobs:
           echo "intent_digest=$intent_digest" >> "$GITHUB_OUTPUT"
           echo "url=$GLOBAL_URL" >> "$GITHUB_OUTPUT"
       - name: Keep the preactivation path explicit
-        id: global-disabled
+        id: global_disabled
         if: ${{ !inputs.global_lease_required }}
         run: |
           echo 'required=false' >> "$GITHUB_OUTPUT"
