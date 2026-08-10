@@ -127,10 +127,14 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(integrationGate, /pull_request_target/);
   assert.match(integrationGate, /ref: main/);
   assert.doesNotMatch(integrationGate, /ref: \$\{\{ github\.event\.pull_request\./);
+  const integrationRecheck = read(".github/workflows/skincos-integration-gate-recheck.yml");
+  assert.match(integrationRecheck, /schedule:/);
+  assert.match(integrationRecheck, /--max-wait-ms 15000/);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
   assert.match(workflow, /pull_request_target/);
   assert.match(workflow, /state=failure/);
   assert.match(workflow, /run-name: Merge PR #\$\{\{ inputs\.pull_number \}\} through merge:main/);
+  assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.GH_TOKEN \}\}/);
   assert.doesNotMatch(scheduler, /enablePullRequestAutoMerge/);
   assert.match(scheduler, /disablePullRequestAutoMerge/);
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-acquire/);

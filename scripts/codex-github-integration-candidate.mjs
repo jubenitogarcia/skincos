@@ -1,6 +1,7 @@
 import { buildWorkflowLeaseRequest } from "./codex-global-coordination-workflow.mjs";
 
 const FULL_SHA = /^[0-9a-f]{40}$/i;
+const MAX_COORDINATION_REQUEST_BYTES = 48 * 1024;
 
 function requiredToken(token = process.env.GH_TOKEN) {
   const value = String(token || "").trim();
@@ -56,6 +57,14 @@ export async function pullRequestFiles({ repository, pullNumber, token = process
   return changedPaths;
 }
 
+export function assertCoordinationPayloadSize(request) {
+  const bytes = Buffer.byteLength(JSON.stringify(request), "utf8");
+  if (bytes > MAX_COORDINATION_REQUEST_BYTES) {
+    throw new Error(`pull request coordination attestation exceeds the ${MAX_COORDINATION_REQUEST_BYTES}-byte payload budget`);
+  }
+  return bytes;
+}
+
 export async function loadMergeCandidate({ repository, pullNumber, expectedHeadSha = null, token = process.env.GH_TOKEN }) {
   if (!repository || !/^[^/]+\/[^/]+$/.test(repository)) throw new Error("repository is invalid");
   if (!/^[1-9][0-9]*$/.test(String(pullNumber))) throw new Error("pull number is invalid");
@@ -77,5 +86,6 @@ export async function loadMergeCandidate({ repository, pullNumber, expectedHeadS
     idempotencyKey: `merge:${repository}:${pullNumber}:${headSha}`,
     inputs: { pullNumber: String(pullNumber), expectedHeadSha: headSha, baseSha, changedPaths },
   });
+  assertCoordinationPayloadSize(request);
   return { pull, headSha, baseSha, changedPaths, request, closure };
 }

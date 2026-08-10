@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { assertCoordinationPayloadSize } from "../codex-github-integration-candidate.mjs";
 import { buildWorkflowLeaseRequest, closureFromFile } from "../codex-global-coordination-workflow.mjs";
 import { dependencyClosureForSource } from "../codex-global-coordinator.mjs";
 
@@ -84,4 +85,10 @@ test("merge admission carries only changed paths, not the full repository closur
   assert.equal(request.intent.dependencyClosurePaths, undefined);
   assert.deepEqual(request.intent.dependencyClosurePatterns, ["**"]);
   assert.ok(Buffer.byteLength(JSON.stringify(request), "utf8") < 64 * 1024);
+});
+
+test("merge admission rejects a changed-file payload before remote coordination", () => {
+  assert.throws(() => assertCoordinationPayloadSize({
+    inputs: { changedPaths: Array.from({ length: 2_000 }, (_, index) => `website/${"x".repeat(48)}/${index}.tsx`) },
+  }), /payload budget/);
 });

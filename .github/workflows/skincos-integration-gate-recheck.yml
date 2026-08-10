@@ -1,0 +1,48 @@
+name: SKINCOS integration gate recheck
+run-name: Recheck pending global integration gates
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: skincos-integration-gate-recheck
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  recheck:
+    if: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Recheck every open main PR from trusted main
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+        run: |
+          set -euo pipefail
+          failures=0
+          while IFS=$'\t' read -r pull_number head_sha; do
+            [[ -n "$pull_number" && -n "$head_sha" ]] || continue
+            if ! node scripts/codex-global-integration-gate.mjs \
+              --pull-number "$pull_number" \
+              --expected-head-sha "$head_sha" \
+              --max-wait-ms 15000 \
+              --poll-ms 5000; then
+              failures=1
+            fi
+          done < <(gh pr list --repo "$GITHUB_REPOSITORY" --state open --base main --limit 50 --json number,headRefOid --jq '.[] | [.number, .headRefOid] | @tsv')
+          exit "$failures"

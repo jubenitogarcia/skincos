@@ -53,7 +53,16 @@ export async function runIntegrationGate({ repository, pullNumber, expectedHeadS
     if (Date.now() + pollMs > deadline) break;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  throw new Error(`global integration gate remained pending on ${lastReason || "an active global lease"}`);
+  // Keep the commit status pending. A scheduled recheck workflow will call
+  // this same trusted-main script again after the competing lease can expire
+  // or be released; turning this ordinary wait into failure would strand the
+  // PR until a new pull_request event occurs.
+  return {
+    passed: false,
+    pending: true,
+    reason: lastReason || "active-global-lease",
+    changedPaths: candidate.changedPaths,
+  };
 }
 
 async function main(args) {
