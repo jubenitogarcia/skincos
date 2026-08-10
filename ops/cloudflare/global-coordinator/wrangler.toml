@@ -25,7 +25,7 @@ preview_urls = false
 [env.staging.vars]
 COORDINATION_CONTRACT_ID = "skincos/global-coordination/v1"
 COORDINATION_PLANE_NAME = "global"
-COORDINATION_PLANE_MODE = "legacy-drain"
+COORDINATION_PLANE_MODE = "global"
 
 [env.staging.durable_objects]
 bindings = [
