@@ -145,7 +145,10 @@ jobs:
           retention-days: 90
           if-no-files-found: error
   deploy:
-    needs: promotion
+    # The deploy job reads lease outputs from the reusable coordination job.
+    # `promotion` depends on it transitively, but GitHub only exposes `needs`
+    # outputs from direct dependencies.
+    needs: [coordination, promotion]
     if: ${{ inputs.target != 'preview' && (inputs.release_scope != 'ponto' || github.run_attempt == 1) && (inputs.release_scope != 'ponto' || inputs.target == 'staging') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
