@@ -5,6 +5,7 @@ import test from "node:test";
 
 const source = fs.readFileSync(path.join(import.meta.dirname, "index.js"), "utf8");
 const config = fs.readFileSync(path.join(import.meta.dirname, "wrangler.toml"), "utf8");
+const stagingConfig = config.match(/\[env\.staging\.vars\][\s\S]*?(?=\n\[|$)/)?.[0] ?? "";
 
 test("Cloudflare adapter uses one globally serialized SQLite Durable Object coordination plane", () => {
   assert.match(source, /class GlobalCoordinator extends DurableObject/);
@@ -17,7 +18,7 @@ test("Cloudflare adapter uses one globally serialized SQLite Durable Object coor
   assert.match(source, /evaluateLeaseAdmission/);
   assert.match(config, /new_sqlite_classes = \["GlobalCoordinator"\]/);
   assert.match(config, /COORDINATION_PLANE_NAME = "global"/);
-  assert.match(config, /COORDINATION_PLANE_MODE = "global"/);
+  assert.match(stagingConfig, /COORDINATION_PLANE_MODE = "global"/);
 });
 
 test("remote custody is mandatory and the adapter has no local fallback", () => {
