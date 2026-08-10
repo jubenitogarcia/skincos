@@ -188,10 +188,6 @@ function callBlocks(source, pattern) {
   return blocks;
 }
 
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function cloudflareApiMutationEvidence(source) {
   const endpointPattern = /(?:api\.cloudflare\.com|cloudflare\.com\/client\/v4)/i;
   const methodPattern = /\bmethod\s*:\s*["']?(?:POST|PUT|PATCH|DELETE)\b/i;
@@ -203,7 +199,9 @@ function cloudflareApiMutationEvidence(source) {
     aliases.add(match[1]);
   }
   const endpointIn = (block) => endpointPattern.test(block)
-    || [...aliases].some((alias) => new RegExp(`\\b${escapeRegExp(alias)}\\b`).test(block));
+    // A literal containment check is intentionally conservative for this
+    // source scanner and avoids compiling input-derived regular expressions.
+    || [...aliases].some((alias) => block.includes(alias));
   const fetchBlocks = callBlocks(source, /\b(?:fetch|fetchImpl)\s*\(/g);
   if (fetchBlocks.some((block) => endpointIn(block) && methodPattern.test(block))) return true;
 
@@ -219,7 +217,11 @@ function cloudflareApiMutationEvidence(source) {
     }
   }
   for (const wrapper of wrapperNames) {
-    const wrapperCalls = callBlocks(source, new RegExp(`\\b${escapeRegExp(wrapper)}\\s*\\(`, "g"));
+    const wrapperCalls = callBlocks(source, /\b[A-Za-z_$][\w$]*\s*\(/g)
+      .filter((block) => {
+        const trimmed = block.trimStart();
+        return trimmed.startsWith(`${wrapper}(`) || trimmed.startsWith(`${wrapper} (`);
+      });
     if (wrapperCalls.some((block) => methodPattern.test(block))) return true;
   }
 
