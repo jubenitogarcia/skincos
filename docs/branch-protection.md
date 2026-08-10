@@ -15,13 +15,32 @@ autoridade global de integração.
   - `skincos-integration-gate`
 - Require branches to be up to date before merging: `true`
 - Ruleset: `.github/governance/rulesets/main-enterprise-baseline.json`
-  - update rule denies uncoordinated ref updates;
+  - the versioned target includes an `update` rule that denies uncoordinated ref
+    updates;
   - only the GitHub Actions integration used by `global-merge-authority` is the
-    versioned bypass actor for the update rule;
+    versioned bypass actor for that rule;
   - squash is the only allowed merge method;
   - no human or administrator bypass is part of the contract.
 - Allow force pushes: `false`
 - Allow deletions: `false`
+
+## Estado live verificado
+
+Em 2026-08-10, o ruleset ativo `main-enterprise-baseline` (ID `19631459`)
+foi lido no GitHub e contém `deletion`, `non_fast_forward`, `pull_request`
+com somente `squash` e os três checks obrigatórios. Ele não contém ainda a
+regra live `update` nem bypass actors. A tentativa de aplicar a configuração
+versionada foi recusada pelo GitHub porque este repositório pessoal não pode
+usar a integração GitHub Actions como actor de bypass de ruleset.
+
+Assim, o arquivo versionado é o estado-alvo, não uma afirmação de que a regra
+`update` já está ativa. Até a transferência para uma organização ou instalação
+de uma GitHub App/integração que o GitHub aceite como owner do ruleset, a única
+autoridade suportada para integrar `main` continua sendo
+`global-merge-authority.yml`, protegida pelos checks obrigatórios e pela
+revalidação do lease. Não adicionar bypass humano para compensar a limitação.
+Depois de provisionar a autoridade compatível, reaplicar o ruleset completo e
+confirmar o readback antes de remover este blocker.
 
 ## Observações
 
