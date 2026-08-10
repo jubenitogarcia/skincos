@@ -114,12 +114,34 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(script, /const resource = "merge:main"/);
   assert.match(script, /expectedHeadSha/);
   assert.match(script, /checkGlobalLease/);
+  assert.match(script, /acquireMergeLease/);
+  assert.match(script, /incompatible-release-lease/);
+  assert.match(script, /merge:main lease remained unavailable/);
   assert.match(script, /global-merge-authority/);
   assert.match(script, /setMergeAuthorityStatus/);
+  assert.match(script, /loadMergeCandidate/);
+  assert.match(read("scripts/codex-github-integration-candidate.mjs"), /changedPaths/);
+  assert.match(read("scripts/codex-github-integration-candidate.mjs"), /previous_filename/);
+  assert.match(read("scripts/codex-global-integration-gate.mjs"), /skincos-integration-gate/);
+  assert.match(read("scripts/codex-global-integration-gate.mjs"), /loadMergeCandidateIdentity/);
+  assert.match(read("scripts/codex-global-integration-gate.mjs"), /pathToFileURL/);
+  const integrationGate = read(".github/workflows/skincos-integration-gate.yml");
+  assert.match(integrationGate, /pull_request_target/);
+  assert.match(integrationGate, /ref: main/);
+  assert.match(integrationGate, /Fetch the exact PR base tree used for closure admission/);
+  assert.doesNotMatch(integrationGate, /ref: \$\{\{ github\.event\.pull_request\./);
+  const integrationRecheck = read(".github/workflows/skincos-integration-gate-recheck.yml");
+  assert.match(integrationRecheck, /schedule:/);
+  assert.match(integrationRecheck, /--max-wait-ms 15000/);
+  assert.match(integrationRecheck, /gh api --paginate/);
+  assert.match(integrationRecheck, /gate_state/);
+  assert.match(read("ops/cloudflare/global-coordinator/index.js"), /buildLegacyIntentV1/);
+  assert.match(read("scripts/codex-global-coordination-workflow.mjs"), /admission paths are not bound/);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
   assert.match(workflow, /pull_request_target/);
   assert.match(workflow, /state=failure/);
   assert.match(workflow, /run-name: Merge PR #\$\{\{ inputs\.pull_number \}\} through merge:main/);
+  assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.GH_TOKEN \}\}/);
   assert.doesNotMatch(scheduler, /enablePullRequestAutoMerge/);
   assert.match(scheduler, /disablePullRequestAutoMerge/);
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
@@ -127,6 +149,12 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-release/);
   assert.match(scheduler, /resource: merge:main/);
   assert.deepEqual(policy.releaseClosures.merge.patterns, ["**"]);
+  assert.match(policy.resourceClasses.mutate, /^\^mutate:/);
+  assert.equal(policy.admission.coordinationPlane, "global");
+  const ruleset = JSON.parse(read(".github/governance/rulesets/main-enterprise-baseline.json"));
+  const requiredContexts = ruleset.rules.find((rule) => rule.type === "required_status_checks").parameters.required_status_checks.map((entry) => entry.context);
+  assert.deepEqual(requiredContexts, ["codex-autonomy-gate", "global-merge-authority", "skincos-integration-gate"]);
+  assert.ok(ruleset.rules.find((rule) => rule.type === "required_status_checks").parameters.required_status_checks.every((entry) => entry.integration_id === 15368));
 });
 
 test("native mini-PC mutations use the common coordinator and detached closure proof", () => {

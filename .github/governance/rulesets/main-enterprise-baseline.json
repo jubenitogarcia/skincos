@@ -29,7 +29,9 @@
         "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          { "context": "codex-autonomy-gate" }
+          { "context": "codex-autonomy-gate", "integration_id": 15368 },
+          { "context": "global-merge-authority", "integration_id": 15368 },
+          { "context": "skincos-integration-gate", "integration_id": 15368 }
         ]
       }
     }

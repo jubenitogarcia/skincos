@@ -67,7 +67,10 @@ jobs:
       - name: Acquire merge:main, revalidate base/head, and merge exactly once
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Use repository GitHub App/PAT custody for the merge mutation so
+          # GitHub emits the normal post-merge workflow events. GITHUB_TOKEN
+          # events are intentionally suppressed by GitHub.
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}

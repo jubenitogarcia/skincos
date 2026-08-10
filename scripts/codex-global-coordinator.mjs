@@ -9,11 +9,13 @@ import {
   acquireLease,
   authorizeMutation,
   buildIntent,
+  buildLegacyIntentV1,
   canonicalJson,
   checkLease,
   compareDependencyClosure,
   CONTRACT_ID,
   emptyState,
+  evaluateLeaseAdmission,
   lockScopeFor,
   normalizeReleaseIdentity,
   normalizeResourceKey,
@@ -24,7 +26,7 @@ import {
 } from "../ops/governance/global-coordination-core.mjs";
 import { matchesAny } from "./codex-autonomy-lib.mjs";
 
-export { acquireLease, authorizeMutation, buildIntent, canonicalJson, checkLease, compareDependencyClosure, emptyState, lockScopeFor, normalizeReleaseIdentity, normalizeResourceKey, releaseLease, renewLease, revokeLease, consumeNonce };
+export { acquireLease, authorizeMutation, buildIntent, buildLegacyIntentV1, canonicalJson, checkLease, compareDependencyClosure, emptyState, evaluateLeaseAdmission, lockScopeFor, normalizeReleaseIdentity, normalizeResourceKey, releaseLease, renewLease, revokeLease, consumeNonce };
 export { CONTRACT_ID };
 
 export const ROOT = path.resolve(import.meta.dirname, "..");
@@ -70,6 +72,9 @@ export function dependencyClosureFromTree({ module, sourceCommit, sourceTree, en
   if (!closure || (closure.requiresExplicitClosure && !policy.releaseClosures?.[normalizedModule])) throw new Error(`release dependency closure is not defined for ${normalizedModule || "module"}`);
   if (!FULL_SHA.test(String(sourceCommit || "")) || !FULL_SHA.test(String(sourceTree || ""))) throw new Error("release closure source identity is invalid");
   const paths = new Set((closure.patterns || []).map((value) => String(value).replaceAll("\\", "/")));
+  const sharedInputPaths = closure.sharedInputs
+    ? [...(policy.sharedInputs || [])].map((value) => String(value).replaceAll("\\", "/"))
+    : [];
   const selected = (entries || []).filter((entry) => {
     const file = String(entry.path || "").replaceAll("\\", "/");
     return (closure.patterns || []).some((pattern) => matchesAny(file, [pattern]))
@@ -81,13 +86,24 @@ export function dependencyClosureFromTree({ module, sourceCommit, sourceTree, en
   // deliberately excluded from the closure digest. Otherwise an unrelated
   // documentation change would invalidate a release whose selected inputs are
   // unchanged.
-  const material = { schemaVersion: 1, module: normalizedModule, inputs };
+  const material = {
+    schemaVersion: 1,
+    module: normalizedModule,
+    inputs,
+    dependencyClosurePatterns: [...(closure.patterns || [])],
+    dependencyClosureSharedInputPaths: sharedInputPaths,
+    dependencyClosureSharedInputs: closure.sharedInputs === true,
+  };
   return {
     schemaVersion: 1,
     module: normalizedModule,
     sourceCommit: sourceCommit.toLowerCase(),
     sourceTree: sourceTree.toLowerCase(),
     inputs,
+    dependencyClosurePaths: inputs.map((entry) => entry.path),
+    dependencyClosurePatterns: [...(closure.patterns || [])],
+    dependencyClosureSharedInputPaths: sharedInputPaths,
+    dependencyClosureSharedInputs: closure.sharedInputs === true,
     digest: sha256(canonicalJson(material)),
     material,
   };

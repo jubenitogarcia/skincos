@@ -82,12 +82,38 @@ export function closureFromFile(args, { module, source }) {
   if (sha256(canonicalJson(closure.material)) !== digest) {
     throw new Error("global coordination closure digest does not match its material");
   }
+  const materialInputs = closure.material.inputs
+    .map((entry) => ({
+      path: String(entry?.path || "").trim().replaceAll("\\", "/"),
+      blob: String(entry?.blob || "").trim().toLowerCase(),
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  if (materialInputs.some((entry) => !entry.path || !FULL_SHA.test(entry.blob))) {
+    throw new Error("global coordination closure material inputs are invalid");
+  }
+  const materialPaths = materialInputs.map((entry) => entry.path);
+  const declaredPaths = Array.isArray(closure.dependencyClosurePaths)
+    ? [...new Set(closure.dependencyClosurePaths.map((entry) => String(entry || "").trim().replaceAll("\\", "/")))].sort()
+    : materialPaths;
+  if (canonicalJson([...new Set(declaredPaths)].sort()) !== canonicalJson([...new Set(materialPaths)].sort())) {
+    throw new Error("global coordination closure admission paths are not bound to the verified material");
+  }
+  const verifiedPatterns = Array.isArray(closure.material.dependencyClosurePatterns)
+    ? closure.material.dependencyClosurePatterns
+    : [];
+  const verifiedSharedInputPaths = Array.isArray(closure.material.dependencyClosureSharedInputPaths)
+    ? closure.material.dependencyClosureSharedInputPaths
+    : [];
   return {
     schemaVersion: 1,
     module: expectedModule,
     sourceCommit,
     sourceTree,
-    inputs: closure.inputs || closure.material.inputs,
+    inputs: materialInputs,
+    dependencyClosurePaths: materialPaths,
+    dependencyClosurePatterns: verifiedPatterns,
+    dependencyClosureSharedInputPaths: verifiedSharedInputPaths,
+    dependencyClosureSharedInputs: closure.material.dependencyClosureSharedInputs === true,
     digest,
     material: closure.material,
   };
@@ -139,6 +165,11 @@ export function buildWorkflowLeaseRequest({
       throw new Error("release identity does not match the observed dependency closure");
     }
   }
+  const exactClosurePaths = closure.dependencyClosurePaths || closure.inputs.map((entry) => entry.path);
+  const closurePatterns = [...new Set([
+    ...(closure.dependencyClosurePatterns || []),
+    ...(closure.dependencyClosureSharedInputPaths || []),
+  ])].sort();
   const intent = {
     module: String(module || "").trim().toLowerCase(),
     workflow: String(process.env.GITHUB_WORKFLOW || "codex-local-workflow").trim(),
@@ -146,6 +177,11 @@ export function buildWorkflowLeaseRequest({
     sourceCommit: closure.sourceCommit,
     sourceTree: closure.sourceTree,
     dependencyClosureDigest: closure.digest,
+    ...(String(module || "").trim().toLowerCase() !== "merge" && exactClosurePaths.length <= 1024
+      ? { dependencyClosurePaths: exactClosurePaths }
+      : {}),
+    dependencyClosurePatterns: closurePatterns,
+    dependencyClosureSharedInputs: closure.dependencyClosureSharedInputs === true,
     ...(inputs ? { inputs } : {}),
     ...(["release", "promotion"].includes(normalizedOperation)
       ? { releaseIdentity }

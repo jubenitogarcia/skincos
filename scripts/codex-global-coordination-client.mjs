@@ -58,7 +58,7 @@ function envelopeFor({ action, request, proof, authorization, ttlMs, reason, non
     requestNonce: nonce,
     requestedAt,
   };
-  if (action === "acquire") body.request = request;
+  if (["acquire", "gate"].includes(action)) body.request = request;
   else body.proof = proof;
   if (authorization !== undefined) body.authorization = authorization;
   if (action === "renew") body.ttlMs = ttlMs;
@@ -139,6 +139,7 @@ export function proofForLease(lease) {
     fencingToken: lease.fencingToken,
     intentDigest: String(lease.intentDigest || ""),
     owner: lease.owner,
+    ...(lease.holder ? { holder: lease.holder } : {}),
   };
 }
 
@@ -172,6 +173,10 @@ export async function coordinate({
 
 export async function acquireGlobalLease({ request, ...options }) {
   return coordinate({ ...options, action: "acquire", request });
+}
+
+export async function evaluateGlobalGate({ request, ...options }) {
+  return coordinate({ ...options, action: "gate", request });
 }
 
 export async function checkGlobalLease({ proof, authorization, ...options }) {

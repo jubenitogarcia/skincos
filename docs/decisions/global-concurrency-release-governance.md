@@ -1,7 +1,8 @@
 # Governança global de concorrência e release
 
-**Status:** contrato implementado; autoridade Cloudflare staging provisionada e
-ativada; autoridade de produção permanece ausente e fail-closed
+**Status:** Fase 1 implementada em PR de follow-up; autoridade Cloudflare
+staging provisionada e ativada; autoridade de produção permanece ausente e
+fail-closed
 
 ## Problema
 
@@ -11,6 +12,13 @@ corretamente ancorada em um SHA, porém um avanço independente de `main` fazia 
 dispatcher abortar antes da próxima mutação. Esse abort preservava o fail-closed,
 mas confundia mudança de ponta do repositório com mudança da dependency closure
 da release.
+
+O contrato agora separa cinco decisões: a missão pode estar autorizada; a
+operação precisa ser tecnicamente elegível; o recurso global precisa ter
+ownership temporário; a integração em `main` pertence à autoridade única; e a
+release promove uma identidade/artefato imutável. Autorização não concede
+ownership instantâneo. A falta temporária do lease é um estado de espera ou
+blocker técnico, não uma solicitação de nova autorização.
 
 ## Contrato
 
@@ -23,15 +31,19 @@ o nome superficial da ferramenta:
 | `merge:main` | `repository:main` | Serializa integração em `main`. |
 | `release:<module>` | `release:<module>` | Serializa a cadeia governada do módulo. |
 | `deploy:<surface>:<environment>` | `surface:<surface>:<environment>` | Serializa publicação da superfície. |
-| `cloudflare:<surface>:<environment>` | o mesmo escopo da publicação | Impede mutação paralela via caminho Cloudflare. |
+| `mutate:<surface>:<environment>` | `surface:<surface>:<environment>` | Nome canônico para qualquer mutação da superfície. |
+| `cloudflare:<surface>:<environment>` | o mesmo escopo da publicação | Alias de compatibilidade para mutação Cloudflare. |
 | `promotion:<module>:<environment>` | `promotion:<module>:<environment>` | Reserva promoção de artefato. |
 | `global:<operation>` | `global:<operation>` | Operações explicitamente incompatíveis. |
 
-Um lease contém owner (`missionId`, `threadId`, `actor`, `provider`), recurso,
-intent digest, tempo de expiração, `leaseId` e fencing token monotônico. O
-token anterior nunca autoriza uma mutação depois de expirar, ser liberado ou
-revogado. Idempotência só reaproveita o lease quando owner, idempotency key e
-intent digest são exatamente iguais.
+Um lease contém `resource`, `missionId`, `holder/session`, `run/workflow`,
+`acquiredAt`, `updatedAt`, `heartbeatAt`, `ttlMs`, estado, `leaseId`, intent
+digest e fencing token monotônico. O token anterior nunca autoriza uma mutação
+depois de expirar, ser liberado ou revogado. Idempotência só reaproveita o lease
+quando owner, idempotency key e intent digest são exatamente iguais; liberação e
+revogação repetidas da mesma prova também são idempotentes. Expiração é
+observada pelo coordenador antes de uma nova aquisição, permitindo recuperação
+segura de lease órfão com nova geração.
 
 O núcleo determinístico está em
 `ops/governance/global-coordination-core.mjs`; o adaptador local está em
@@ -46,11 +58,41 @@ O cliente remoto comum está em
 compartilhada para operações e uma custódia administrativa distinta para
 revogação; o arquivo de prova também precisa ficar fora do checkout.
 
+O Durable Object Cloudflare é uma única coordination plane nomeada (`global`),
+com SQLite serializado e lock scopes lógicos dentro do mesmo estado. Isso é
+necessário para arbitrar conflitos entre `merge:main` e `release:<module>`;
+`deploy`, `mutate` e o alias `cloudflare` compartilham o mesmo scope de
+superfície. A análise de admission cruza merge com release por caminhos: uma
+mudança disjunta é compatível, uma interseção aguarda, e closure ausente ou
+ambígua falha fechada.
+
+A transição para esse nome único não pode abandonar objetos antigos: a primeira
+versão usa `COORDINATION_PLANE_MODE=legacy-drain`, recusa aquisição/admission/
+renovação e roteia check/release/revoke para o scope legado. Depois do TTL
+máximo, a mesma versão é promovida com `COORDINATION_PLANE_MODE=global`.
+
+## Autoridade única de integração
+
+Threads podem criar worktrees, testar, commitar, fazer push e deixar uma PR
+`READY_TO_MERGE`. A integração passa pelo `skincos-integration-gate` e pela
+workflow `global-merge-authority`: o primeiro consulta a admission global e
+permanece pending em conflito compatível com espera; a segunda adquire
+`merge:main`, revalida base/head/lease e chama a API de merge uma única vez.
+Actions `concurrency` é apenas scheduler. A prova remota, o status obrigatório e
+a revalidação imediatamente antes da mutação são a autoridade técnica.
+
 ## Release imutável sem congelar `main`
 
 Uma identidade de release é formada por `sourceCommit`, `sourceTree`,
 `dependencyClosureDigest` e a lista exata de artefatos/digests/version IDs. O
 build é uma operação anterior; promoção recebe e verifica a mesma identidade.
+
+Durante a migração, o dispatcher Ponto ainda conserva compatibilidade com
+`assertMainShaUnchanged`, mas a decisão operacional usa closure. Mudança
+independente em `main` não cancela a release; uma mudança relevante na closure
+é detectada antes do próximo dispatch ou mutação e interrompe a cadeia. A
+próxima fase consolidará a identidade em manifest/ref imutável consumido por
+todos os child workflows, incluindo IDs de artefato, versão e rollback.
 
 Antes de cada mutação, `authorizeMutation` exige:
 
@@ -79,7 +121,8 @@ lease ao final.
   `codex-keep-prs-mergeable.yml` não habilita mais auto-merge sem lease e
   também adquire `merge:main` antes de atualizar branches de PR.
 - Cloudflare usa `ops/cloudflare/global-coordinator/index.js`, com uma classe
-  SQLite-backed Durable Object por `lockScope`. A requisição exige nonce,
+  SQLite-backed Durable Object global nomeada `global`; os `lockScope` ficam no
+  estado para fencing e admission. A requisição exige nonce,
   timestamp, digest e HMAC; revogação exige custódia administrativa separada.
 - Codex App e mini-PC podem consumir o mesmo envelope/lease, sem compartilhar
   cookies, tokens ou estado do checkout. O cliente e o CLI são os pontos
@@ -122,7 +165,11 @@ Os contratos são exercitados por
 `scripts/tests/codex-global-coordination-client.test.mjs`,
 `scripts/tests/codex-global-coordination-workflow.test.mjs`, além de
 `ops/cloudflare/global-coordinator/index.test.mjs` e do teste focado do
-dispatcher Ponto. A validação remota do staging comprovou a versão implantada;
+dispatcher Ponto. A Fase 1 inclui propriedades de exclusividade, fencing após
+expiração, admission por closure, retries idempotentes, alias de superfície e
+indisponibilidade ambígua fail-closed; o teste de caos/concorrência completo e
+a aceitação multi-thread permanecem nas fases seguintes. A validação remota do
+staging comprovou a versão implantada;
 rollback é a restauração de uma versão anterior do Worker ou a remoção
 controlada do ambiente staging, sem tocar uma rota de produção. A existência
 do código, um build ou um endpoint 200 não constitui prova de autoridade global

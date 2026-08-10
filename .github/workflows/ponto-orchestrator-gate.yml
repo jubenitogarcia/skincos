@@ -179,7 +179,7 @@ jobs:
             GLOBAL_URL="$GLOBAL_INPUT_URL"
           fi
           [[ -n "$GLOBAL_URL" && -n "$GLOBAL_SECRET" ]] || { echo 'Global coordination URL and shared custody are required'; exit 1; }
-          [[ "$GLOBAL_RESOURCE" =~ ^(deploy|cloudflare|release):[a-z0-9][a-z0-9._/-]{0,127}:(preview|staging|pilot|canary|production|rollback)$ || "$GLOBAL_RESOURCE" =~ ^release:[a-z0-9][a-z0-9._/-]{0,127}$ ]] || {
+          [[ "$GLOBAL_RESOURCE" =~ ^(deploy|mutate|cloudflare|release):[a-z0-9][a-z0-9._/-]{0,127}:(preview|staging|pilot|canary|production|rollback)$ || "$GLOBAL_RESOURCE" =~ ^release:[a-z0-9][a-z0-9._/-]{0,127}$ ]] || {
             echo 'Global coordination resource is invalid'; exit 1;
           }
           source_sha="${RELEASE_SHA:-$GITHUB_SHA}"
