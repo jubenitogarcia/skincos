@@ -63,13 +63,13 @@ export function globalResourceFor(workflow, inputs) {
   const lifecycle = target || stage;
   const environment = target || stage;
   if (!["preview", "staging", "pilot", "canary", "production", "rollback"].includes(lifecycle)) return "";
-  if (workflow === "deploy-timekeeping.yml" && inputs.release_scope === "ponto") return normalizeResourceKey(`deploy:timekeeping:${environment}`);
+  if (workflow === "deploy-timekeeping.yml" && inputs.release_scope === "ponto") return normalizeResourceKey("global:ponto-workers-writer");
   if (workflow === "deploy-core-workers.yml" && inputs.release_scope === "ponto" && ["api", "inventory", "all"].includes(inputs.unit)) {
-    return normalizeResourceKey(`deploy:core-${inputs.unit}:${environment}`);
+    return normalizeResourceKey("global:ponto-workers-writer");
   }
-  if (workflow === "deploy-crm-pages.yml" && inputs.release_scope === "ponto") return normalizeResourceKey(`deploy:crm-pages:${environment}`);
-  if (workflow === "cloudflare-workers-sync-ponto-secrets.yml") return normalizeResourceKey(`cloudflare:ponto-workers:${environment}`);
-  if (workflow === "cloudflare-pages-sync-ponto.yml") return normalizeResourceKey(`cloudflare:ponto-pages:${environment}`);
+  if (workflow === "deploy-crm-pages.yml" && inputs.release_scope === "ponto") return normalizeResourceKey("global:crm-cloudflare-writer");
+  if (workflow === "cloudflare-workers-sync-ponto-secrets.yml") return normalizeResourceKey("global:ponto-workers-writer");
+  if (workflow === "cloudflare-pages-sync-ponto.yml") return normalizeResourceKey("global:crm-cloudflare-writer");
   if (["timekeeping-staging-journey.yml", "ponto-staging-rollback-drill.yml", "ponto-production-baseline.yml", "ponto-production-slo.yml"].includes(workflow)) {
     return normalizeResourceKey(`release:ponto`);
   }

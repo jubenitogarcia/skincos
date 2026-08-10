@@ -84,7 +84,7 @@ jobs:
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-          resource: release:escala-api
+          resource: global:crm-cloudflare-writer
           module: escala-api
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
@@ -95,7 +95,7 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
-          resource: release:escala-api
+          resource: global:crm-cloudflare-writer
           module: escala-api
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -119,7 +119,7 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
-          resource: release:escala-api
+          resource: global:crm-cloudflare-writer
           module: escala-api
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -141,7 +141,7 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
-          resource: release:escala-api
+          resource: global:crm-cloudflare-writer
           module: escala-api
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -174,7 +174,7 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
-          resource: release:escala-api
+          resource: global:crm-cloudflare-writer
           module: escala-api
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -196,7 +196,7 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-escala-api.json
-          resource: release:escala-api
+          resource: global:crm-cloudflare-writer
           module: escala-api
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}

@@ -1,8 +1,9 @@
 # Governança global de concorrência e release
 
-**Status:** Fases 1–3 implementadas em PRs ordenadas; autoridade Cloudflare
+**Status:** Fases 1–4 implementadas em PRs ordenadas; autoridade Cloudflare
 staging provisionada e ativada; autoridade de produção permanece ausente e
-fail-closed
+fail-closed. O contrato single-writer Cloudflare está versionado, e a topologia
+live de Pages governada foi auditada sem mutação de produção.
 
 ## Problema
 
@@ -125,6 +126,31 @@ mas não é mais a condição que invalida uma release;
 O lease do dispatcher cobre somente a chamada de dispatch; o workflow filho
 adquire e renova seu próprio recurso de superfície antes da mutação e libera o
 lease ao final.
+
+## Cloudflare single-writer
+
+`.github/governance/cloudflare-single-writer-policy.json` é a autoridade
+declarativa para Workers, Pages, D1, WAF e R2
+governados. Cada superfície tem um workflow de deploy canônico, seus mutadores
+de configuração/segredo explicitamente listados e um grupo de coordenação. Um
+workflow combinado que toca Pages e Worker usa o grupo composto correspondente;
+assim uma pipeline independente não pode publicar a mesma superfície ou alterar
+suas credenciais em paralelo.
+
+O verificador
+`.github/scripts/validate-cloudflare-single-writer.mjs` falha fechado quando um
+workflow com comando mutador Cloudflare não está classificado, não declara a
+prova de coordenação ou usa outro recurso que o grupo canônico. O grupo global é
+uma compatibilidade conservadora para mutações compostas; ele não substitui os
+leases de release, promotion ou deploy existentes e pode ser dividido somente
+quando a prova multi-recurso equivalente estiver implementada.
+
+Na auditoria live de 2026-08-10, `skincos-staging` não tinha Git provider e
+`skincos` estava conectado ao GitHub, mas com `deployments_enabled=false`,
+`production_deployments_enabled=false` e `preview_deployment_setting=none`.
+Logo, GitHub Actions permanece o único writer de publicação e nenhuma alteração
+cega de produção foi necessária. Se essas flags forem desconhecidas ou mudarem,
+o contrato exige fail-closed antes de nova promoção.
 
 ## Adaptadores
 

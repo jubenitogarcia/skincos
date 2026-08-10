@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { loadPolicy, validatePolicy } from "../../.github/scripts/validate-cloudflare-single-writer.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 
@@ -16,6 +17,21 @@ function jobBlock(workflow, jobName) {
   const next = remainder.search(/\n  [A-Za-z0-9_-]+:/);
   return next === -1 ? remainder : remainder.slice(0, next);
 }
+
+test("Cloudflare mutators have one fail-closed writer group and no unclassified workflow", () => {
+  const policy = loadPolicy();
+  assert.deepEqual(validatePolicy(policy), []);
+  assert.equal(policy.authority.coordinationPlane, "global");
+  assert.equal(policy.authority.mode, "fail-closed");
+  assert.equal(policy.pagesGitIntegration.automaticDeploymentsMustBeDisabled, true);
+  const crm = policy.coordinationGroups.find((group) => group.id === "crm-cloudflare-writer");
+  assert.equal(crm.resource, "global:crm-cloudflare-writer");
+  const pontoWorkers = policy.coordinationGroups.find((group) => group.id === "ponto-workers-writer");
+  assert.equal(pontoWorkers.resource, "global:ponto-workers-writer");
+  assert.match(read(".github/workflows/deploy-crm-pages.yml"), /resource: global:crm-cloudflare-writer/);
+  assert.match(read(".github/workflows/cloudflare-pages-sync-ponto.yml"), /global_resource: global:crm-cloudflare-writer/);
+  assert.match(read(".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"), /global_resource: global:ponto-workers-writer/);
+});
 
 test("direct Ponto recovery jobs use remote custody at every governed boundary", () => {
   const workflow = read(".github/workflows/ponto-progressive-release.yml");
@@ -51,7 +67,7 @@ test("legacy recovery and WAF mutators are fail-closed through the same authorit
   assert.ok(watchdogRollback.indexOf("Check global Ponto recovery lease immediately before watchdog rollback") < watchdogRollback.indexOf("node .github/scripts/ponto-automatic-rollback.mjs"));
 
   const coreRecovery = jobBlock(read(".github/workflows/ponto-staging-core-provenance-recovery.yml"), "rollback");
-  assert.match(coreRecovery, /resource: deploy:core-api:staging/);
+  assert.match(coreRecovery, /resource: global:ponto-workers-writer/);
   assert.match(coreRecovery, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
   assert.match(coreRecovery, /uses: \.\/\.github\/actions\/global-coordination-check/);
   assert.match(coreRecovery, /uses: \.\/\.github\/actions\/global-coordination-release/);
