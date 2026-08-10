@@ -47,6 +47,27 @@ test("coordinator and consumer attest live environment protection before authori
   assert.match(gate, /deployments: read/);
 });
 
+test("coordinator initializes runner-only custody paths inside a step", () => {
+  const coordinator = workflow("ponto-progressive-release.yml");
+  const orchestrateStart = coordinator.indexOf("\n  orchestrate:");
+  const stepsStart = coordinator.indexOf("\n    steps:", orchestrateStart);
+  const initializationStart = coordinator.indexOf(
+    "\n      - name: Initialize private release artifact directory",
+    stepsStart,
+  );
+  const initializationEnd = coordinator.indexOf("\n      - name:", initializationStart + 1);
+  const jobEnvironment = coordinator.slice(orchestrateStart, stepsStart);
+  const initialization = coordinator.slice(
+    initializationStart,
+    initializationEnd === -1 ? coordinator.length : initializationEnd,
+  );
+  assert.doesNotMatch(jobEnvironment, /\$\{\{\s*runner\./);
+  assert.match(
+    initialization,
+    /echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=\$RUNNER_TEMP\/ponto-release\/global-coordination-release-ponto\.json" >> "\$GITHUB_ENV"/,
+  );
+});
+
 test("every governed caller grants read-only deployment metadata to the gate", () => {
   const callers = [
     "cloudflare-pages-sync-ponto.yml",
