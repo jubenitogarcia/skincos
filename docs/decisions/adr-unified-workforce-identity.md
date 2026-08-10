@@ -1,6 +1,6 @@
 # ADR: identidade canônica da equipe por workforce_employee_id
 
-- Status: proposta para validação em staging
+- Status: aprovada para rollout controlado após validação em staging
 - Escopo: CRM, onboarding/convites, Escala, Atendimento e Ponto
 - Flag de rollout: UNIFIED_TEAM_ENABLED
 
@@ -52,7 +52,22 @@ pendência/conflito; nenhum deles gera vínculo confirmado automaticamente.
              └── explicit source link ──> Atendimento professional      └── units/hierarchy/audit
 
     read-only snapshots -> sanitized inventory -> human review
-                              -> dry-run links -> staging flag -> controlled rollout
+                             -> dry-run links -> staging flag -> controlled rollout
+
+## Gate de rollout controlado
+
+A flag continua desligada por padrão. A ativação em produção só é elegível
+quando o release exato tiver evidência de staging, migrations e dependências
+prontas, smoke autenticado de configuração/listagem e rollback identificado.
+Além disso, o workflow exige simultaneamente:
+
+1. `production_unified_team_authorized=true` no dispatch do release; e
+2. `ENABLE_UNIFIED_TEAM_PRODUCTION=true` no ambiente `production`.
+
+O segundo item é uma autorização temporária do pipeline, não substitui a flag
+de runtime e deve voltar a `false` depois da promoção. O runtime permanece
+`UNIFIED_TEAM_ENABLED=true` somente no release de produção explicitamente
+promovido; o rollback desliga essa flag através do fluxo governado.
 
 ## Contrato do inventário
 
@@ -69,7 +84,8 @@ retorna nomes, e-mails, telefones, IDs brutos ou conteúdo operacional privado.
 ## Rollback e operação
 
 Antes de qualquer apply, manter backup verificável, registrar o fingerprint e
-manter a flag desligada fora do ambiente autorizado. O rollback desliga a flag e
+manter a flag desligada fora do ambiente autorizado. Em produção, o ambiente
+autorizado é criado apenas pelo gate de rollout controlado acima. O rollback desliga a flag e
 restaura apenas vínculos novos identificados pelo fingerprint, sem apagar agenda,
 ponto, nomes históricos ou auditoria. Falha de backup, conflito, divergência de
 unidade ou revisão incompleta interrompe a operação.
