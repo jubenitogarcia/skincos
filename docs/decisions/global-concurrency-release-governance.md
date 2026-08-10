@@ -3,9 +3,12 @@
 **Status:** Fundação das Fases 1–5 implementada; esta hardening final adiciona
 fencing de autoridade, recovery fail-closed, gate de merge com rechecagem final,
 closure automática e rastreamento transitive de writers. O coordination plane
-foi validado em staging no SHA `64993934c371dba5a06381a98056c5f5eabc419d` em
-2026-08-10; produção permanece sem promoção. A existência do código não é
-confundida com o estado live.
+foi validado em staging no SHA `64993934c371dba5a06381a98056c5f5eabc419d` e a
+implantação canônica de produção foi concluída pelo run `31427360586`, com
+readback assinado `ready:true`, `protocol:epoch-fence-v1` e `authorityEpoch:1`
+em 2026-08-10. Isso prova somente a disponibilidade da autoridade publicada;
+as mutações continuam exigindo lease, custody, closure e gates aplicáveis. A
+existência do código não é confundida com o estado live.
 
 ## Problema
 
