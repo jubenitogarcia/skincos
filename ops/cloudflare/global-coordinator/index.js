@@ -46,7 +46,7 @@ const jsonResponse = (payload, status = 200, headers = {}) => new Response(JSON.
   status,
   headers: { "content-type": "application/json", "cache-control": "no-store", ...headers },
 });
-const bad = (message, status = 401) => jsonResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed: false, error: message }, status);
+const bad = (message, status = 401, extra = {}) => jsonResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed: false, ...extra, error: message }, status);
 const OBSERVABILITY_FIELDS = new Set([
   "route",
   "action",
@@ -65,6 +65,15 @@ function logEvent(event, fields = {}) {
     if (OBSERVABILITY_FIELDS.has(name) && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) record[name] = value;
   }
   try { console.log(JSON.stringify(record)); } catch { /* logging must never change the mutation decision */ }
+}
+
+function processingErrorCode(error) {
+  const message = String(error?.message || "");
+  if (message.includes("coordinator state")) return "coordinator-state-invalid";
+  if (message.includes("request nonce")) return "coordination-nonce-invalid";
+  if (message.includes("lease")) return "coordination-lease-invalid";
+  if (message.includes("intent")) return "coordination-intent-invalid";
+  return "coordination-processing-error";
 }
 
 function bindingFor(request, url, nonce, requestedAt, requestDigest, keyId) {
@@ -363,9 +372,10 @@ export default {
         resourceClass: lockScope || "global",
       });
       return jsonResponse(payload, status);
-    } catch {
-      emit("coordination.request_failed", { action: body?.action || "unknown", status: 400, result: "processing_error" });
-      return bad("coordination request could not be processed", 400);
+    } catch (error) {
+      const errorCode = processingErrorCode(error);
+      emit("coordination.request_failed", { action: body?.action || "unknown", status: 400, result: errorCode });
+      return bad("coordination request could not be processed", 400, { errorCode });
     }
   },
 };

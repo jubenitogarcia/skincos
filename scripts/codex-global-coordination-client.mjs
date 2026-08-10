@@ -2,6 +2,7 @@
 import crypto from "node:crypto";
 import {
   buildIntent,
+  buildLegacyIntentV1,
   canonicalJson,
   CONTRACT_ID,
   lockScopeFor,
@@ -38,6 +39,19 @@ export function buildLeaseRequest({ operation, resource, owner, intent, idempote
   };
 }
 
+// Transitional adapter for a coordinator Worker that predates the explicit
+// owner.sessionId digest field. It changes only the request canonicalization;
+// the remote coordinator still owns the lease, fencing token, and mutation
+// decision. Remove this adapter after every governed plane reports epoch-fence-v1.
+export function buildLegacyLeaseRequest({ operation, resource, owner, intent, idempotencyKey, ttlMs }) {
+  const normalized = buildLegacyIntentV1({ operation, resource, owner, intent, idempotencyKey });
+  return {
+    ...normalized,
+    ttlMs,
+    intentDigest: sha256(canonicalJson(normalized)),
+  };
+}
+
 function endpointFor(value) {
   let endpoint;
   try {
@@ -51,6 +65,47 @@ function endpointFor(value) {
   endpoint.search = "";
   endpoint.hash = "";
   return endpoint;
+}
+
+function readinessEndpointFor(value) {
+  let endpoint;
+  try {
+    endpoint = new URL(String(value || ""));
+  } catch {
+    throw new Error("global coordinator URL is invalid");
+  }
+  if (endpoint.protocol !== "https:") throw new Error("global coordinator URL must use HTTPS");
+  endpoint.pathname = "/v1/readyz";
+  endpoint.search = "";
+  endpoint.hash = "";
+  return endpoint;
+}
+
+export async function probeCoordinatorProtocol({ url = process.env.SKINCOS_GLOBAL_COORDINATOR_URL, fetchImpl = globalThis.fetch } = {}) {
+  if (typeof fetchImpl !== "function") throw new Error("global coordinator readiness probe is unavailable");
+  const endpoint = readinessEndpointFor(url);
+  const response = await fetchImpl(endpoint, { method: "GET", headers: { accept: "application/json" } });
+  if (response.status === 404) {
+    return { protocol: "legacy-v1", readiness: "not-supported", httpStatus: 404 };
+  }
+  const raw = await response.text();
+  let payload;
+  try { payload = JSON.parse(raw); } catch { throw new Error("global coordinator readiness response JSON is invalid"); }
+  if (!response.ok) throw new Error(`global coordinator readiness probe failed closed: HTTP ${response.status}`);
+  if (
+    payload?.contractId !== CONTRACT_ID
+    || payload?.protocol !== COORDINATION_PROTOCOL
+    || payload?.ready !== true
+    || payload?.coordinationPlane !== "global"
+    || !Number.isSafeInteger(payload?.authorityEpoch)
+    || payload.authorityEpoch < 1
+  ) throw new Error("global coordinator readiness contract is invalid");
+  return {
+    protocol: COORDINATION_PROTOCOL,
+    readiness: "ready",
+    authorityEpoch: payload.authorityEpoch,
+    httpStatus: response.status,
+  };
 }
 
 function envelopeFor({ action, request, proof, authorization, ttlMs, reason, nonce, requestedAt }) {
@@ -269,7 +324,9 @@ export async function coordinate({
     return { ...verified, httpStatus: response.status };
   }
   const error = String(payload?.error || payload?.reason || `HTTP ${response.status}`);
-  throw new Error(`global coordinator request failed: ${error}`);
+  const errorCode = String(payload?.errorCode || "").trim();
+  const suffix = errorCode ? ` [${errorCode}]` : "";
+  throw new Error(`global coordinator ${action} request failed: ${error}${suffix}`);
 }
 
 export async function acquireGlobalLease({ request, ...options }) {
