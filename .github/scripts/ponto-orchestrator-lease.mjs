@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { assertPontoSourceClosureUnchanged, pontoSourceClosureMatches } from "./ponto-source-closure.mjs";
 
 const apiBase = String(process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
 const repository = String(process.env.GITHUB_REPOSITORY || "").trim();
@@ -616,7 +617,15 @@ const assertFirstAttempt = () => {
   }
 };
 
-const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage, currentHeadSha }) => {
+function assertObservedPontoSource(releaseSha, observedSha) {
+  try {
+    return assertPontoSourceClosureUnchanged(releaseSha, observedSha);
+  } catch {
+    throw new Error("Ponto execution source is outside the immutable release dependency closure");
+  }
+}
+
+const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage }) => {
   for (let refresh = 0; ; refresh += 1) {
     let snapshotWasRetried = false;
     const markSnapshotRetry = () => {
@@ -651,7 +660,6 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage, cur
       || run?.conclusion != null
       || run?.event !== "workflow_dispatch"
       || run?.head_branch !== "main"
-      || run?.head_sha !== currentHeadSha
       || run?.head_sha !== releaseSha
       || run?.name !== `Ponto ${stage} ${releaseSha} orchestrator=${orchestratorRunId}`
       || run?.repository?.full_name !== repository
@@ -702,7 +710,7 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     || !GOVERNED_STAGES.includes(stage || "")
     || !TARGETS.includes(target || "")
     || !FULL_SHA.test(releaseSha)
-    || currentHeadSha !== releaseSha
+    || !FULL_SHA.test(currentHeadSha)
     || !/^[1-9][0-9]*$/.test(orchestratorRunId || "")
     || !/^[1-9][0-9]*$/.test(childRunId)
     || !token
@@ -711,9 +719,10 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     || !capabilityPublicKeysJson
     || !eventPath
   ) throw new Error("invalid Ponto check capability consume request");
+  assertObservedPontoSource(releaseSha, currentHeadSha);
   const verifier = resolveCapabilityVerifier(capabilityPublicKeysJson, target);
 
-  const parent = await canonicalOrchestrator({ orchestratorRunId, releaseSha, stage, currentHeadSha });
+  const parent = await canonicalOrchestrator({ orchestratorRunId, releaseSha, stage });
   const event = JSON.parse(fs.readFileSync(eventPath, "utf8"));
   let child;
   let childWorkflowPath = "";
@@ -740,7 +749,7 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
       || !acceptsWorkflowRunPath(childWorkflowPath, child?.path)
       || child?.event !== "workflow_dispatch"
       || child?.head_branch !== "main"
-      || child?.head_sha !== releaseSha
+      || child?.head_sha !== currentHeadSha
       || child?.repository?.full_name !== repository
       || String(child?.repository?.id || "") !== repositoryId
       || child?.head_repository?.full_name !== repository
@@ -778,7 +787,9 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     || issuer?.conclusion != null
     || issuer?.event !== "workflow_dispatch"
     || issuer?.head_branch !== "main"
-    || issuer?.head_sha !== releaseSha
+    || (delegatedIssuer
+      ? !pontoSourceClosureMatches(releaseSha, issuer?.head_sha)
+      : issuer?.head_sha !== releaseSha)
     || issuer?.repository?.full_name !== repository
     || String(issuer?.repository?.id || "") !== repositoryId
     || issuer?.head_repository?.full_name !== repository
@@ -909,13 +920,14 @@ async function assertActive([stage, releaseShaRaw, orchestratorRunId]) {
   if (
     !GOVERNED_STAGES.includes(stage || "")
     || !FULL_SHA.test(releaseSha)
-    || currentHeadSha !== releaseSha
+    || !FULL_SHA.test(currentHeadSha)
     || !/^[1-9][0-9]*$/.test(orchestratorRunId || "")
     || !token
     || !repository.includes("/")
     || !/^[1-9][0-9]*$/.test(repositoryId)
   ) throw new Error("invalid active orchestrator assertion request");
-  await canonicalOrchestrator({ orchestratorRunId, releaseSha, stage, currentHeadSha });
+  assertObservedPontoSource(releaseSha, currentHeadSha);
+  await canonicalOrchestrator({ orchestratorRunId, releaseSha, stage });
   process.stdout.write(`Confirmed active first-attempt Ponto coordinator ${orchestratorRunId}.\n`);
 }
 

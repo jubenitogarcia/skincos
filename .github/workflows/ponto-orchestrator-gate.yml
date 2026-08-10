@@ -21,8 +21,40 @@ on:
       orchestrator_run_id:
         required: false
         type: string
+      global_lease_required:
+        required: false
+        default: false
+        type: boolean
+      global_resource:
+        required: false
+        type: string
+      global_module:
+        required: false
+        default: ponto
+        type: string
+      global_coordinator_url:
+        required: false
+        type: string
+    outputs:
+      global_lease_required:
+        description: Global coordination was acquired for this invocation
+        value: ${{ jobs.consume.outputs.global_lease_required }}
+      global_resource:
+        description: Canonical resource protected by the global lease
+        value: ${{ jobs.consume.outputs.global_resource }}
+      global_proof_b64:
+        description: Base64 encoded lease proof, never a custody secret
+        value: ${{ jobs.consume.outputs.global_proof_b64 }}
+      global_intent_digest:
+        description: Intent digest bound to the global lease
+        value: ${{ jobs.consume.outputs.global_intent_digest }}
+      global_coordinator_url:
+        description: Authority endpoint used by the lease
+        value: ${{ jobs.consume.outputs.global_coordinator_url }}
     secrets:
       GH_TOKEN:
+        required: false
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:
         required: false
 permissions:
   actions: read
@@ -33,6 +65,12 @@ permissions:
 jobs:
   consume:
     runs-on: ubuntu-latest
+    outputs:
+      global_lease_required: ${{ steps.global-enabled.outputs.required || steps.global-disabled.outputs.required }}
+      global_resource: ${{ steps.global-enabled.outputs.resource || steps.global-disabled.outputs.resource }}
+      global_proof_b64: ${{ steps.global-enabled.outputs.proof_b64 || steps.global-disabled.outputs.proof_b64 }}
+      global_intent_digest: ${{ steps.global-enabled.outputs.intent_digest || steps.global-disabled.outputs.intent_digest }}
+      global_coordinator_url: ${{ steps.global-enabled.outputs.url || steps.global-disabled.outputs.url }}
     steps:
       - name: Refuse replayed governed invocation
         if: ${{ inputs.required }}
@@ -43,10 +81,10 @@ jobs:
         if: ${{ !inputs.required }}
         run: echo "Single-use Ponto orchestrator capability is not required for this invocation."
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
-        if: ${{ inputs.required }}
+        if: ${{ inputs.required || inputs.global_lease_required }}
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
       - name: Refuse candidate-controlled gate code
         if: ${{ inputs.required }}
         env:
@@ -55,7 +93,15 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto release SHA is invalid'; exit 1; }
           [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto gate must execute from main'; exit 1; }
-          [[ "$GITHUB_SHA" == "$RELEASE_SHA" ]] || { echo 'Ponto gate source differs from the coordinator SHA'; exit 1; }
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto gate observed source SHA is invalid'; exit 1; }
+          if ! git cat-file -e "$RELEASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "$RELEASE_SHA"
+          fi
+          git cat-file -e "$RELEASE_SHA^{commit}" || { echo 'Ponto release source cannot be attested locally'; exit 1; }
+          PONTO_RELEASE_SHA="$RELEASE_SHA" PONTO_OBSERVED_SHA="$GITHUB_SHA" node --input-type=module <<'NODE'
+          import { assertPontoSourceClosureUnchanged } from "./.github/scripts/ponto-source-closure.mjs";
+          assertPontoSourceClosureUnchanged(process.env.PONTO_RELEASE_SHA, process.env.PONTO_OBSERVED_SHA);
+          NODE
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Ponto gate checkout is not the trusted workflow revision'; exit 1; }
       - name: Revalidate protected target environment before consuming authority
         if: ${{ inputs.required }}
@@ -109,3 +155,67 @@ jobs:
             "$ORCHESTRATOR_TARGET" \
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
+      - name: Acquire the canonical global mutation lease
+        id: global-enabled
+        if: ${{ inputs.global_lease_required }}
+        env:
+          GLOBAL_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          GLOBAL_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          GLOBAL_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          GLOBAL_RESOURCE: ${{ inputs.global_resource }}
+          GLOBAL_MODULE: ${{ inputs.global_module }}
+          GLOBAL_INPUT_URL: ${{ inputs.global_coordinator_url }}
+          GLOBAL_TARGET: ${{ inputs.target }}
+          GLOBAL_STAGE: ${{ inputs.stage }}
+          GLOBAL_LEASE_KEY: ${{ inputs.lease_key }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          GLOBAL_INPUTS_FILE: ${{ runner.temp }}/skincos-global-coordination-inputs.json
+          GLOBAL_PROOF_FILE: ${{ runner.temp }}/skincos-global-coordination-proof.json
+          GLOBAL_RESULT_FILE: ${{ runner.temp }}/skincos-global-coordination-acquire.json
+        run: |
+          set -euo pipefail
+          [[ "$GLOBAL_REQUIRED" == true ]] || { echo 'SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true for a governed global lease'; exit 1; }
+          if [[ -n "$GLOBAL_INPUT_URL" ]]; then
+            GLOBAL_URL="$GLOBAL_INPUT_URL"
+          fi
+          [[ -n "$GLOBAL_URL" && -n "$GLOBAL_SECRET" ]] || { echo 'Global coordination URL and shared custody are required'; exit 1; }
+          [[ "$GLOBAL_RESOURCE" =~ ^(deploy|cloudflare|release):[a-z0-9][a-z0-9._/-]{0,127}:(preview|staging|pilot|canary|production|rollback)$ || "$GLOBAL_RESOURCE" =~ ^release:[a-z0-9][a-z0-9._/-]{0,127}$ ]] || {
+            echo 'Global coordination resource is invalid'; exit 1;
+          }
+          source_sha="${RELEASE_SHA:-$GITHUB_SHA}"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Global coordination source SHA is invalid'; exit 1; }
+          if ! git cat-file -e "$source_sha^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "$source_sha"
+          fi
+          git cat-file -e "$source_sha^{commit}" || { echo 'Global coordination source SHA is unavailable'; exit 1; }
+          node - "$GLOBAL_INPUTS_FILE" "$GLOBAL_TARGET" "$GLOBAL_STAGE" "$GLOBAL_LEASE_KEY" <<'NODE'
+          const fs = require('node:fs');
+          const [output, target, stage, leaseKey] = process.argv.slice(2);
+          fs.writeFileSync(output, JSON.stringify({ target, stage, leaseKey }));
+          NODE
+          SKINCOS_GLOBAL_COORDINATOR_URL="$GLOBAL_URL" \
+          SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$GLOBAL_SECRET" \
+            node scripts/codex-global-coordination-workflow.mjs acquire \
+              --resource "$GLOBAL_RESOURCE" \
+              --module "$GLOBAL_MODULE" \
+              --source "$source_sha" \
+              --inputs-file "$GLOBAL_INPUTS_FILE" \
+              --proof-file "$GLOBAL_PROOF_FILE" \
+              --result-file "$GLOBAL_RESULT_FILE" \
+              --idempotency-key "github:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GLOBAL_RESOURCE}:${GITHUB_RUN_ATTEMPT}"
+          proof_b64="$(base64 -w0 "$GLOBAL_PROOF_FILE")"
+          intent_digest="$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).intentDigest)' "$GLOBAL_PROOF_FILE")"
+          echo "required=true" >> "$GITHUB_OUTPUT"
+          echo "resource=$GLOBAL_RESOURCE" >> "$GITHUB_OUTPUT"
+          echo "proof_b64=$proof_b64" >> "$GITHUB_OUTPUT"
+          echo "intent_digest=$intent_digest" >> "$GITHUB_OUTPUT"
+          echo "url=$GLOBAL_URL" >> "$GITHUB_OUTPUT"
+      - name: Keep the preactivation path explicit
+        id: global-disabled
+        if: ${{ !inputs.global_lease_required }}
+        run: |
+          echo 'required=false' >> "$GITHUB_OUTPUT"
+          echo 'resource=' >> "$GITHUB_OUTPUT"
+          echo 'proof_b64=' >> "$GITHUB_OUTPUT"
+          echo 'intent_digest=' >> "$GITHUB_OUTPUT"
+          echo 'url=' >> "$GITHUB_OUTPUT"

@@ -63,7 +63,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-
       - name: Validate current source and exact failed-run provenance before fresh close
         env:
           GH_TOKEN: ${{ github.token }}
@@ -297,6 +296,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: Acquire global Ponto recovery lease for staging rollback
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-staging-rollback.json
 
       - name: Validate current source and exact failed-run provenance
         env:
@@ -475,6 +485,17 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
 
+      - name: Check global Ponto recovery lease immediately before staging materialization
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-staging-rollback.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Materialize the exact fresh broker close under the staging surface mutex
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -491,9 +512,9 @@ jobs:
           PONTO_MATERIALIZE_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close/materialized-readback.json
           PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/resource-identity.json
         run: |
+          set -euo pipefail
           node .github/scripts/ponto-cloudflare-resource-identity.mjs
           node .github/scripts/ponto-module-control-materialize.mjs
-
       - name: Read back the exact staging module control from Cloudflare KV
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -601,6 +622,17 @@ jobs:
             "$RUNNER_TEMP/ponto-staging-recovery-rollback" \
             "$RUNNER_TEMP/ponto-staging-recovery-rollback/fresh-close/direct-readback.json"
 
+      - name: Check global Ponto recovery lease immediately before staging rollback
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-staging-rollback.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Restore the exact Timekeeping incumbent under the existing latch
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -715,3 +747,11 @@ jobs:
           path: ${{ runner.temp }}/ponto-staging-recovery-rollback
           retention-days: 90
           if-no-files-found: warn
+      - name: Release global Ponto recovery lease after staging rollback
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-staging-rollback.json

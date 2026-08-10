@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT_DIR/scripts/runtime/global-coordination-native.sh"
 UNIT_SRC="$ROOT_DIR/ops/runtime/units"
 UNIT_DEST="${UNIT_DEST:-/etc/systemd/system}"
 # Code and durable recovery artifacts may remain on the Windows volume, but
@@ -16,6 +17,7 @@ TMP_ROOT="${TMP_ROOT:-/var/tmp/skincos}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-$STATE_ROOT/artifacts}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/skincos}"
 APPLY=0
+coordination_acquired=0
 
 usage() {
   cat <<'EOF'
@@ -58,11 +60,27 @@ require_cmd() {
 
 require_cmd sed
 require_cmd systemd-analyze
+require_cmd readlink
 VERIFY_WITH_SUDO=0
+coordination_source_sha=''
+coordination_closure=''
 if [[ "$APPLY" == "1" || "$SOURCE_ROOT" == /opt/skincos/* ]]; then
   require_cmd sudo
   sudo -n true
   VERIFY_WITH_SUDO=1
+fi
+if [[ "$APPLY" == "1" ]]; then
+  resolved_source_root="$(readlink -f "$SOURCE_ROOT")"
+  [[ "$resolved_source_root" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || {
+    echo "Applied lifecycle units require an immutable /opt/skincos/releases/<sha>/source target: $resolved_source_root" >&2
+    exit 78
+  }
+  coordination_source_sha="$(basename "$(dirname "$resolved_source_root")")"
+  coordination_closure="$resolved_source_root/.skincos-global-coordination-native-runtime.json"
+  [[ -f "$coordination_closure" ]] || {
+    echo "Native-runtime coordination closure is unavailable: $coordination_closure" >&2
+    exit 78
+  }
 fi
 
 sed_escape() { printf '%s' "$1" | sed 's/[&|]/\\&/g'; }
@@ -88,7 +106,14 @@ units=(
 )
 
 render_dir="$(mktemp -d)"
-trap 'rm -rf "$render_dir"' EXIT
+cleanup() {
+  rm -rf "$render_dir"
+  if [[ "$coordination_acquired" == '1' ]]; then
+    native_coordination_cleanup || true
+    coordination_acquired=0
+  fi
+}
+trap cleanup EXIT INT TERM
 rendered=()
 for unit in "${units[@]}"; do
   source_file="$UNIT_SRC/$unit"
@@ -117,11 +142,18 @@ printf '  %s\n' "${units[@]}"
 
 if [[ "$APPLY" == "1" ]]; then
   [[ -d "$SOURCE_ROOT" ]] || { echo "Native source release is unavailable: $SOURCE_ROOT" >&2; exit 1; }
+  native_coordination_init global:native-runtime native-runtime "$coordination_source_sha" "$coordination_closure" mutation
+  native_coordination_acquire "mini-pc:global:native-runtime:units:$coordination_source_sha:$$" >/dev/null
+  coordination_acquired=1
+  native_coordination_check
   sudo -n mkdir -p "$UNIT_DEST"
   for index in "${!units[@]}"; do
+    native_coordination_check
     sudo -n install -m 0644 "${rendered[$index]}" "$UNIT_DEST/${units[$index]}"
   done
+  native_coordination_check
   sudo -n systemctl daemon-reload
+  native_coordination_check
   sudo -n systemctl enable "${units[@]}" >/dev/null
   echo "Lifecycle units installed. Windows Task Scheduler exclusively owns the Orb backup schedule."
 fi

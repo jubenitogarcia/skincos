@@ -162,6 +162,28 @@ jobs:
           path: ${{ runner.temp }}/ponto-manual-emergency-close
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
+      - name: Acquire Ponto release lease for close materialization
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-emergency-close.json
+      - name: Check Ponto release lease before close materialization
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-emergency-close.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Materialize the exact broker close under the surface mutex
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -236,3 +258,11 @@ jobs:
           path: ${{ runner.temp }}/ponto-manual-emergency-close
           retention-days: 90
           if-no-files-found: error
+      - name: Release Ponto release lease for close materialization
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-emergency-close.json

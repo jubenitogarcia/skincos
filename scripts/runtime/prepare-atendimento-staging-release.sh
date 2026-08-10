@@ -24,13 +24,15 @@ run_skincos_npm() {
 
 RELEASE_SHA=""
 PREDECESSOR_SHA=""
+COORDINATION_CLOSURE=""
 APPLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --release-sha) shift; RELEASE_SHA="${1:-}" ;;
     --predecessor-sha) shift; PREDECESSOR_SHA="${1:-}" ;;
+    --coordination-closure) shift; COORDINATION_CLOSURE="${1:-}" ;;
     --apply) APPLY=1 ;;
-    -h|--help) echo "Usage: $0 --release-sha <full-main-sha> --predecessor-sha <full-previous-sha> [--apply]"; exit 0 ;;
+    -h|--help) echo "Usage: $0 --release-sha <full-main-sha> --predecessor-sha <full-previous-sha> [--coordination-closure <json>] [--apply]"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
   shift
@@ -38,6 +40,16 @@ done
 
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "--release-sha must be a full lowercase SHA." >&2; exit 1; }
 [[ "$PREDECESSOR_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "--predecessor-sha must be a full lowercase SHA." >&2; exit 1; }
+if [[ "$APPLY" = "1" ]]; then
+  [[ -n "$COORDINATION_CLOSURE" && -f "$COORDINATION_CLOSURE" ]] || {
+    echo '--coordination-closure is required for an applied Atendimento release.' >&2
+    exit 78
+  }
+  [[ "$COORDINATION_CLOSURE" != /mnt/* ]] || {
+    echo '--coordination-closure must already be on native Linux storage.' >&2
+    exit 78
+  }
+fi
 ROOT_DIR="$(cd -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")/../.." && /usr/bin/pwd -P)"
 readonly DESTINATION="$RELEASE_BASE/$RELEASE_SHA/source"
 readonly STAGING="$RELEASE_BASE/.atendimento-staging-$RELEASE_SHA-$$"
@@ -128,6 +140,9 @@ if [[ "$APPLY" != "1" ]]; then
 fi
 
 /usr/bin/sudo -n /usr/bin/true
+source "$ROOT_DIR/scripts/runtime/global-coordination-native.sh"
+native_coordination_init release:atendimento atendimento "$RELEASE_SHA" "$COORDINATION_CLOSURE" mutation
+coordination_acquired=0
 umask 0077
 lineage_file="$(/usr/bin/mktemp /tmp/atendimento-staging-lineage.XXXXXX)"
 printf '{"releaseId":"%s","parentReleaseId":"%s","verifiedAncestor":true,"sourceTree":"%s","target":"staging"}\n' \
@@ -138,26 +153,59 @@ cleanup() {
   # delete.  The validation is deliberately repeated at the sink.
   if [[ "$STAGING" =~ ^/opt/skincos/releases/\.atendimento-staging-[0-9a-f]{40}-[0-9]+$ ]] && \
     [[ "$(dirname "$STAGING")" == "$RELEASE_BASE" ]]; then
-    run_sudo_clean /usr/bin/rm -rf -- "$STAGING" || true
+    if [[ "$coordination_acquired" == '1' ]]; then
+      if native_coordination_check >/dev/null 2>&1; then
+        run_sudo_clean /usr/bin/rm -rf -- "$STAGING" || true
+      else
+        echo 'Global coordination proof was unavailable while cleaning Atendimento staging; staging was left untouched.' >&2
+      fi
+    else
+      run_sudo_clean /usr/bin/rm -rf -- "$STAGING" || true
+    fi
+  fi
+  if [[ "$coordination_acquired" == '1' ]]; then
+    native_coordination_cleanup || true
+    coordination_acquired=0
   fi
 }
 trap cleanup EXIT INT TERM
+native_coordination_acquire "mini-pc:release:atendimento:stage:$RELEASE_SHA:$$" >/dev/null
+coordination_acquired=1
+native_coordination_check
 run_sudo_clean /usr/bin/install -d -o root -g skincos -m 0750 "$STAGING" "$RELEASE_BASE" "$RELEASE_BASE/$RELEASE_SHA" "$NPM_CACHE"
+native_coordination_check
 git_clean archive --format=tar "$RELEASE_SHA" | run_sudo_clean /usr/bin/tar -xf - -C "$STAGING"
+native_coordination_check
 run_sudo_clean /usr/bin/chown -R root:skincos "$STAGING"
+native_coordination_check
 run_sudo_clean /usr/bin/find "$STAGING" -type d -exec /usr/bin/chmod 0750 {} +
+native_coordination_check
 run_sudo_clean /usr/bin/find "$STAGING" -type f -exec /usr/bin/chmod 0640 {} +
+native_coordination_check
 run_sudo_clean /usr/bin/find "$STAGING" -type f \( -path '*/scripts/*.sh' -o -path '*/scripts/*/*.sh' \) -exec /usr/bin/chmod 0750 {} +
 run_sudo_clean /usr/bin/test -f "$STAGING/crm/api/package-lock.json" || { echo "CRM lockfile missing" >&2; exit 1; }
+native_coordination_check
 run_sudo_clean /usr/bin/chown -R skincos:skincos "$STAGING/crm/api"
+native_coordination_check
 run_skincos_npm --prefix "$STAGING/crm/api" ci --omit=dev --ignore-scripts
+native_coordination_check
 run_sudo_clean /usr/bin/chown -R root:skincos "$STAGING/crm/api"
+native_coordination_check
 run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$lineage_file" "$STAGING/.skincos-release-lineage.json"
+native_coordination_check
+run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$COORDINATION_CLOSURE" "$STAGING/.skincos-global-coordination-atendimento.json"
+native_coordination_check
 run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos /dev/stdin "$STAGING/.skincos-atendimento-release.json" <<EOF
 {"releaseSha":"$RELEASE_SHA","sourceTree":"$tree_sha","target":"staging","domain":"atendimento","syntheticOnly":true}
 EOF
+native_coordination_check
 run_sudo_clean /usr/bin/mv -- "$STAGING" "$DESTINATION"
 /usr/bin/rm -f -- "$lineage_file"
+# Release the remote custody before disabling the EXIT trap.  The successful
+# move is the final mutation; keeping the lease until process exit would hold
+# release:atendimento for the remainder of the native command timeout.
+native_coordination_cleanup
+coordination_acquired=0
 trap - EXIT INT TERM
 echo "release_sha=$RELEASE_SHA"
 echo "source_tree=$tree_sha"

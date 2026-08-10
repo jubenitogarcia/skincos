@@ -89,6 +89,11 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
    `harmonia.contacts`; a instalação e a validação recusam prosseguir se a
    prova efetiva de grants falhar.
 
+   Toda mutação de provisionamento, controle, migration, refresh ou unidade
+   apresenta a mesma closure `atendimento` ao coordenador remoto. O operador
+   deve manter esse JSON fora do checkout, por exemplo em
+   `/home/admin/skincos-native-release/<sha>/atendimento-closure.json`.
+
    Há uma exceção estreita, exclusiva do runner de **staging**, para três
    migrations comerciais condicionais: Operations
    (`20260807_commercial_operations_v2`), Analytics
@@ -145,10 +150,16 @@ provisionamento separado e auditado do espelho, o runtime continua em
    `crm.service`:
 
    ```bash
+   scripts/provision-atendimento-staging.sh --apply \
+     --source-sha <sha-main> \
+     --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
    scripts/runtime/prepare-atendimento-staging-release.sh \
-     --release-sha <sha-main> --predecessor-sha <sha-staging-anterior>
+     --release-sha <sha-main> --predecessor-sha <sha-staging-anterior> \
+     --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
    scripts/set-atendimento-staging-control.sh \
      --state maintenance --release-sha <sha-main> \
+     --source-sha <sha-main> \
+     --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json \
      --reason release-preflight --apply
    scripts/run-atendimento-staging-migration.sh \
      --dry-run --release-sha <sha-main>
@@ -201,7 +212,9 @@ provisionamento separado e auditado do espelho, o runtime continua em
 
    ```bash
    scripts/set-atendimento-production-readonly-control.sh \
-     --state active --release-sha <sha-main> --reason read-only-validated --apply
+     --state active --release-sha <sha-main> --source-sha <sha-main> \
+     --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json \
+     --reason read-only-validated --apply
    scripts/validate-atendimento-production-readonly.sh \
      --expected-release-sha <sha-main>
    ```
@@ -211,12 +224,19 @@ provisionamento separado e auditado do espelho, o runtime continua em
    com `--apply`. Nenhum deles reutiliza `cloudflare-runtime.service`.
 
    ```bash
-   scripts/runtime/install-atendimento-production-tunnel.sh \
-     --source-root /opt/skincos/releases/<sha-main>/source \
-     --tunnel-id <uuid-minusculo>
-   scripts/runtime/route-atendimento-production-dns.sh \
-     --tunnel-id <uuid-minusculo>
+    scripts/runtime/install-atendimento-production-tunnel.sh \
+      --source-root /opt/skincos/releases/<sha-main>/source \
+      --tunnel-id <uuid-minusculo> \
+      --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
+    scripts/runtime/route-atendimento-production-dns.sh \
+      --tunnel-id <uuid-minusculo> --source-sha <sha-main> \
+      --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
    ```
+
+   Use `--apply` only on the mutating invocation. Both the tunnel installer and
+   DNS route acquire the dedicated `cloudflare:atendimento:production` lease;
+   they fail closed when the private coordinator custody or closure attestation
+   is unavailable.
 
 O Pages proxy exige `ATENDIMENTO_API_TARGET` e
 `ATENDIMENTO_ACTOR_HMAC_KEY` dedicados, assina HMAC v2 e não tem fallback para

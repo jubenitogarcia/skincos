@@ -44,6 +44,9 @@ readonly RUNTIME_ENTRYPOINT="$SOURCE_ROOT/crm/api/server/atendimentoRuntime.js"
 readonly RELEASE_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-release.mjs"
 readonly CONTROL_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-staging-control.mjs"
 readonly RUNTIME_GRANT_LOCKDOWN="$SOURCE_ROOT/scripts/lockdown-atendimento-staging-runtime.sh"
+readonly COORDINATION_CLOSURE="$SOURCE_ROOT/.skincos-global-coordination-atendimento.json"
+coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/atendimento-staging-$RELEASE_SHA-$$.json}"
+coordination_acquired=0
 
 for command_path in /usr/bin/sudo /usr/bin/sed /usr/bin/systemd-analyze /usr/bin/mktemp /usr/bin/install /usr/bin/node /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/date /usr/bin/cp /usr/bin/cmp /usr/bin/stat /usr/bin/systemctl /usr/bin/test; do
   [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
@@ -88,7 +91,34 @@ if [[ "$APPLY" != '1' ]]; then
   exit 0
 fi
 
+[[ -f "$COORDINATION_CLOSURE" ]] || { echo 'Atendimento dependency-closure attestation is required for staging service mutation.' >&2; exit 78; }
+coordination_run() {
+  "$SOURCE_ROOT/scripts/runtime/global-coordination-mini-pc.sh" "$@" --proof-file "$coordination_proof"
+}
+cleanup_coordination() {
+  if (( coordination_acquired == 1 )); then
+    coordination_run release >/dev/null 2>&1 || echo 'Unable to release the Atendimento staging surface lease; it will expire fail-closed.' >&2
+  fi
+  /usr/bin/rm -f "$rendered"
+  /usr/bin/rmdir "$render_dir" 2>/dev/null || true
+  if [[ "$unit_backup_committed" != '1' && "$unit_backup_path" =~ ^/var/backups/skincos/clientes/staging/[0-9]{8}T[0-9]{6}Z-crm-atendimento-staging\.[A-Za-z0-9]{6}\.service$ ]]; then
+    run_sudo_clean /usr/bin/rm -f -- "$unit_backup_path" || true
+  fi
+}
+trap cleanup_coordination EXIT INT TERM
+coordination_run acquire \
+  --resource deploy:atendimento:staging --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" --operation mutation \
+  --idempotency-key "mini-pc:deploy:atendimento:staging:install:$RELEASE_SHA:$$" >/dev/null
+coordination_acquired=1
+coordination_run check \
+  --resource deploy:atendimento:staging --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
+
 stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
+coordination_run check \
+  --resource deploy:atendimento:staging --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 /usr/bin/sudo -n /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
 unit_backup='none'
 if /usr/bin/sudo -n /usr/bin/test -f "$UNIT_DEST/$SERVICE"; then
@@ -103,6 +133,9 @@ if /usr/bin/sudo -n /usr/bin/test -f "$UNIT_DEST/$SERVICE"; then
   run_sudo_clean /usr/bin/test -f "$unit_backup_path"
   run_sudo_clean /usr/bin/test -O "$unit_backup_path"
   unit_backup="${unit_backup_path##*/}"
+  coordination_run check \
+    --resource deploy:atendimento:staging --module atendimento --source "$RELEASE_SHA" \
+    --closure-file "$COORDINATION_CLOSURE" >/dev/null
   run_sudo_clean /usr/bin/cp -p "$UNIT_DEST/$SERVICE" "$unit_backup_path"
   unit_backup_metadata="$(run_sudo_clean /usr/bin/stat -c '%U:%G:%a' "$unit_backup_path")"
   [[ "$unit_backup_metadata" == 'root:root:644' ]] || {
@@ -115,12 +148,25 @@ if /usr/bin/sudo -n /usr/bin/test -f "$UNIT_DEST/$SERVICE"; then
   }
   unit_backup_committed=1
 fi
+coordination_run check \
+  --resource deploy:atendimento:staging --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 /usr/bin/sudo -n /usr/bin/install -m 0644 "$rendered" "$UNIT_DEST/$SERVICE"
+coordination_run check \
+  --resource deploy:atendimento:staging --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 /usr/bin/sudo -n /usr/bin/systemctl daemon-reload
 # `enable --now` does not replace an already active legacy instance. Restart
 # only this dedicated staging unit after the immutable unit file is installed;
 # no shared CRM, worker, Orb or tunnel unit is touched.
+coordination_run check \
+  --resource deploy:atendimento:staging --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 /usr/bin/sudo -n /usr/bin/systemctl enable "$SERVICE" >/dev/null
+/usr/bin/sudo -n /usr/bin/true
+coordination_run check \
+  --resource deploy:atendimento:staging --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 /usr/bin/sudo -n /usr/bin/systemctl restart "$SERVICE"
 /usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE"
 printf 'installed=true service=%s release_sha=%s unit_backup=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$unit_backup"

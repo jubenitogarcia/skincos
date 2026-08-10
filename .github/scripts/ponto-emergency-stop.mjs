@@ -9,10 +9,12 @@ import {
   verifyCapabilityDocument,
 } from "./ponto-orchestrator-lease.mjs";
 import { attestTerminalPreMutationGateFailure } from "./ponto-child-mutation-attestation.mjs";
+import { pontoSourceClosureMatches } from "./ponto-source-closure.mjs";
 
 const COORDINATOR_TITLE = /^Ponto (staging|pilot|canary|production|rollback) ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/;
 const CAPABILITY_CHECK_NAME =
   /^ponto-lease\/([a-z][a-z0-9-]{1,63})\/([1-9][0-9]*)\/([0-9a-f]{32})$/;
+const FULL_SHA = /^[0-9a-f]{40}$/i;
 export const NON_TERMINAL_STATUSES = ["queued", "in_progress", "waiting", "pending", "requested"];
 const NON_TERMINAL = new Set(NON_TERMINAL_STATUSES);
 const ALLOWED_HIGH_RISK_EVENTS = new Set(["workflow_dispatch", "schedule"]);
@@ -327,11 +329,13 @@ if (invokedAsScript) {
     record.capabilityInventoryScans = (record.capabilityInventoryScans || 0) + 1;
     const run = record.live;
     try {
+      const releaseSha = String(record.releaseSha || "").trim().toLowerCase();
+      if (!FULL_SHA.test(releaseSha)) throw new Error("child release identity is unavailable");
       const checks = [];
       let exhausted = false;
       for (let page = 1; page <= 20; page += 1) {
         const payload = await request(
-          `/repos/${repository}/commits/${run.head_sha}/check-runs?filter=all&per_page=100&page=${page}`,
+          `/repos/${repository}/commits/${releaseSha}/check-runs?filter=all&per_page=100&page=${page}`,
         );
         const rows = payload?.check_runs || [];
         checks.push(...rows);
@@ -344,7 +348,7 @@ if (invokedAsScript) {
       const candidates = checks.filter((check) => {
         const match = CAPABILITY_CHECK_NAME.exec(String(check?.name || ""));
         return match?.[2] === record.runId
-          && check?.head_sha === run.head_sha
+          && check?.head_sha === releaseSha
           && check?.app?.slug === "github-actions"
           && Number.isInteger(check?.id);
       });
@@ -404,7 +408,8 @@ if (invokedAsScript) {
         || claims.leaseKey !== match[1]
         || match[2] !== record.runId
         || claims.dispatchNonce !== match[3]
-        || claims.releaseSha !== run.head_sha
+        || claims.releaseSha !== releaseSha
+        || !pontoSourceClosureMatches(releaseSha, String(run.head_sha || "").trim().toLowerCase())
         || claims.target !== target
         || claims.keyId !== capabilityVerifier.keyId
         || !allowedStage
@@ -460,7 +465,7 @@ if (invokedAsScript) {
         leaseKey: claims.leaseKey,
         stage: claims.stage,
         target,
-        releaseSha: run.head_sha,
+        releaseSha,
         dispatchNonce: claims.dispatchNonce,
         intentDigest: claims.intentDigest,
         state: capabilityState,
@@ -521,7 +526,7 @@ if (invokedAsScript) {
         leaseKey: claims.leaseKey,
         stage: claims.stage,
         target,
-        releaseSha: run.head_sha,
+        releaseSha,
         dispatchNonce: claims.dispatchNonce,
         intentDigest: claims.intentDigest,
         state: "invalidated",
@@ -672,6 +677,7 @@ if (invokedAsScript) {
           firstObservedAt: new Date().toISOString(),
         };
         record.orchestratorRunId = coordinator.runId;
+        record.releaseSha = coordinator.releaseSha;
         record.live = run;
         record.status = run.status;
         record.conclusion = run.conclusion || null;

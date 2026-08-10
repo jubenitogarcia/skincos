@@ -246,7 +246,7 @@ test("baseline workflow, reusable gate, and coordinator retain every exported Wo
     coordinator.indexOf("Download the exact production baseline evidence"),
   );
   for (const required of [
-    "run.head_sha === process.env.RELEASE_SHA",
+    "pontoSourceClosureMatches(process.env.RELEASE_SHA, String(run.head_sha || \"\").toLowerCase())",
     "run.run_attempt === 1",
     "String(run.repository?.id || \"\") === process.env.GITHUB_REPOSITORY_ID",
     "String(run.head_repository?.id || \"\") === process.env.GITHUB_REPOSITORY_ID",

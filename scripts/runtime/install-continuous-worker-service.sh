@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT_DIR/scripts/runtime/global-coordination-native.sh"
 UNIT_SRC="$ROOT_DIR/ops/runtime/units/crm-jobs.service"
 UNIT_DEST="/etc/systemd/system"
 SOURCE_ROOT="$ROOT_DIR"
@@ -11,6 +12,7 @@ LOG_ROOT="/var/log/skincos"
 BACKUP_ROOT="/var/backups/skincos"
 APPLY=0
 ENABLE=0
+coordination_acquired=0
 
 usage() {
   cat <<'EOF'
@@ -59,6 +61,16 @@ if [[ "$APPLY" == "1" ]]; then
     echo "Immutable source release is unavailable: $SOURCE_ROOT" >&2
     exit 1
   }
+  coordination_source_sha="$(basename "$(dirname "$SOURCE_ROOT")")"
+  [[ "$coordination_source_sha" =~ ^[0-9a-f]{40}$ ]] || {
+    echo 'Immutable source release SHA is invalid.' >&2
+    exit 78
+  }
+  COORDINATION_CLOSURE="${SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE:-$SOURCE_ROOT/.skincos-global-coordination-orb.json}"
+  [[ -f "$COORDINATION_CLOSURE" ]] || {
+    echo "Immutable Orb coordination closure is unavailable: $COORDINATION_CLOSURE" >&2
+    exit 78
+  }
 elif [[ "$SOURCE_ROOT" != "$ROOT_DIR" && ! "$SOURCE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]]; then
   echo "--source-root must be an immutable release path" >&2
   exit 64
@@ -74,7 +86,14 @@ fi
 
 escape() { printf '%s' "$1" | sed 's/[&|]/\\&/g'; }
 render_dir="$(mktemp -d)"
-trap 'rm -rf "$render_dir"' EXIT
+cleanup() {
+  rm -rf "$render_dir"
+  if [[ "$coordination_acquired" == '1' ]]; then
+    native_coordination_cleanup || true
+    coordination_acquired=0
+  fi
+}
+trap cleanup EXIT INT TERM
 rendered="$render_dir/crm-jobs.service"
 sed \
   -e "s|__REPO_ROOT__|$(escape "$SOURCE_ROOT")|g" \
@@ -86,14 +105,23 @@ sed \
 systemd-analyze verify "$rendered"
 
 if [[ "$APPLY" == "1" ]]; then
+  native_coordination_init release:orb orb "$coordination_source_sha" "$COORDINATION_CLOSURE" mutation
+  native_coordination_acquire "mini-pc:release:orb:continuous-worker:$coordination_source_sha:$$" >/dev/null
+  coordination_acquired=1
+  native_coordination_check
   if sudo -n test -f "$UNIT_DEST/crm-jobs.service"; then
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    native_coordination_check
     sudo -n install -d -m 0750 "$BACKUP_ROOT"
+    native_coordination_check
     sudo -n cp -p "$UNIT_DEST/crm-jobs.service" "$BACKUP_ROOT/crm-jobs.service.$stamp"
   fi
+  native_coordination_check
   sudo -n install -m 0644 "$rendered" "$UNIT_DEST/crm-jobs.service"
+  native_coordination_check
   sudo -n systemctl daemon-reload
   if [[ "$ENABLE" == "1" ]]; then
+    native_coordination_check
     sudo -n systemctl enable crm-jobs.service >/dev/null
   fi
   echo "CRM continuous-worker unit installed; no service start was requested."

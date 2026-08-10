@@ -81,6 +81,32 @@ jobs:
         working-directory: website
         run: npm run lint
 
+      - name: Acquire Website release lease
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: release:website
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+
+      - name: Check Website release lease before worker-secret mutation
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Sync worker secrets (optional)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
         continue-on-error: true
@@ -157,6 +183,19 @@ jobs:
           BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL: ${{ secrets.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL }}
           INSTAGRAM_SYNC_TOKEN: ${{ secrets.INSTAGRAM_SYNC_TOKEN }}
 
+      - name: Check Website release lease before website deployment
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Deploy website (OpenNext -> Workers)
         if: ${{ steps.guard.outputs.skip != 'true' }}
         working-directory: website
@@ -177,6 +216,19 @@ jobs:
           NEXT_PUBLIC_BUILD_TIME: ${{ github.run_id }}
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ inputs.target == 'production' && secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '' }}
 
+      - name: Check Website release lease before legal-hub deployment
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Deploy SKINCOS legal hub (OpenNext -> Workers)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
         working-directory: website
@@ -188,6 +240,19 @@ jobs:
           NEXT_PUBLIC_BUILD_SHA: ${{ needs.promotion.outputs.source_sha }}
           NEXT_PUBLIC_BUILD_TIME: ${{ github.run_id }}
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+
+      - name: Check Website release lease before security-settings mutation
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
 
       - name: Sync Cloudflare security settings (optional)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
@@ -205,6 +270,19 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SECURITY_API_TOKEN != '' && secrets.CLOUDFLARE_SECURITY_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           CF_ZONE_NAME: espacofacial.com
 
+      - name: Check Website release lease before redirects-worker deployment
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
       - name: Deploy redirects worker (esfa.co)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
         working-directory: website
@@ -212,6 +290,19 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Check Website release lease before redirects-D1 mutation
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
 
       - name: Sync esfa.co managed redirects (D1)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
@@ -263,3 +354,12 @@ jobs:
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
           retention-days: 14
           if-no-files-found: error
+
+      - name: Release Website release lease
+        if: ${{ always() && steps.guard.outputs.skip != 'true' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
