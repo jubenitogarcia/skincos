@@ -47,3 +47,15 @@ test("empty or undeclared closure fails closed", () => {
   });
   assert.match(missing.errors[0], /closure is not declared for demo/);
 });
+
+test("glob matching stays bounded for recursive and segment wildcards", () => {
+  const result = validateDependencyClosures({
+    ...fixture({
+      releaseClosures: { demo: { patterns: ["src/**", "src/entry.???"], sharedInputs: false } },
+      closureExceptions: [{ module: "demo", sourcePattern: "src/entry.???", dependencyPattern: "outside.mjs" }],
+    }),
+    modules: ["demo"],
+  });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.reports[0].selectedFileCount, 2);
+});

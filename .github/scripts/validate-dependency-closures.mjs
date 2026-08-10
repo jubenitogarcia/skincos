@@ -17,18 +17,31 @@ function normalize(value) {
   return String(value || "").replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
-function globRegex(pattern) {
-  let source = "";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const char = pattern[index];
-    if (char === "*" && pattern[index + 1] === "*") {
-      source += ".*";
-      index += 1;
-    } else if (char === "*") source += "[^/]*";
-    else if (char === "?") source += "[^/]";
-    else source += char.replace(/[|\\{}()[\]^$+*?.-]/g, "\\$&");
+function globMatches(value, pattern) {
+  const text = normalize(value);
+  const glob = normalize(pattern);
+  let next = new Uint8Array(text.length + 1);
+  next[text.length] = 1;
+
+  // Evaluate the glob from right to left. This keeps matching linear in the
+  // number of pattern/text cells and avoids constructing a dynamic RegExp.
+  for (let patternIndex = glob.length - 1; patternIndex >= 0; patternIndex -= 1) {
+    const current = new Uint8Array(text.length + 1);
+    const char = glob[patternIndex];
+    for (let textIndex = text.length; textIndex >= 0; textIndex -= 1) {
+      if (char === "*" && glob[patternIndex + 1] === "*") {
+        current[textIndex] = next[textIndex]
+          || (textIndex < text.length && current[textIndex + 1] ? 1 : 0);
+      } else if (char === "*") {
+        current[textIndex] = next[textIndex]
+          || (textIndex < text.length && text[textIndex] !== "/" && current[textIndex + 1] ? 1 : 0);
+      } else if (textIndex < text.length && (char === "?" || char === text[textIndex])) {
+        current[textIndex] = next[textIndex + 1];
+      }
+    }
+    next = current;
   }
-  return new RegExp(`^${source}$`);
+  return Boolean(next[0]);
 }
 
 const matchCache = new Map();
@@ -37,7 +50,7 @@ function matches(file, patterns) {
   return (patterns || []).some((pattern) => {
     const normalizedPattern = normalize(pattern);
     const key = `${normalizedPattern}\0${normalized}`;
-    if (!matchCache.has(key)) matchCache.set(key, globRegex(normalizedPattern).test(normalized));
+    if (!matchCache.has(key)) matchCache.set(key, globMatches(normalized, normalizedPattern));
     return matchCache.get(key);
   });
 }
