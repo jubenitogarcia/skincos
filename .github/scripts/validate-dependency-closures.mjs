@@ -81,10 +81,29 @@ function resolveLocal(source, request, files) {
     if (candidate.includes("/node_modules/")) continue;
     if (files.has(candidate)) return candidate;
   }
+  for (const entrypoint of ["action.yml", "action.yaml"]) {
+    const candidate = normalize(path.posix.join(base, entrypoint));
+    if (candidate.includes("/node_modules/")) continue;
+    if (files.has(candidate)) return candidate;
+  }
   return base;
 }
 
-function referencesFrom(sourcePath, source, files) {
+function packageScriptRequests(source, files, readFile) {
+  const references = new Set();
+  for (const match of source.matchAll(/\bnpm(?:\s+--prefix\s+["']?([^\s"']+)["']?)?\s+run\s+([A-Za-z0-9:_-]+)/g)) {
+    const prefix = normalize(match[1] || "").replace(/\/$/, "");
+    const packagePath = prefix && prefix !== "." ? `${prefix}/package.json` : "package.json";
+    if (!files.has(packagePath)) continue;
+    let packageJson;
+    try { packageJson = JSON.parse(readFile(packagePath)); } catch { continue; }
+    const command = packageJson?.scripts?.[match[2]];
+    if (typeof command === "string") references.add(`${packagePath}\0${match[2]}\0${command}`);
+  }
+  return references;
+}
+
+function referencesFrom(sourcePath, source, files, readFile, packageScriptStack = new Set()) {
   const references = new Set();
   const add = (request) => {
     const resolved = resolveLocal(sourcePath, request, files);
@@ -97,17 +116,28 @@ function referencesFrom(sourcePath, source, files) {
   ]) {
     for (const match of source.matchAll(pattern)) add(match[1]);
   }
-  for (const match of source.matchAll(/\buses:\s*(\.[^\s@#]+)/g)) {
+  for (const match of source.matchAll(/\buses:\s*["']?(\.[^\s"'@#]+)/g)) {
     const candidate = normalize(match[1]).replace(/^\.\//, "");
     if (!candidate.includes("/node_modules/") && files.has(candidate)) references.add(candidate);
   }
-  for (const match of source.matchAll(/\b(?:node|bash|sh|python3?)\s+((?:\.github|scripts|ops|platform|shared|api|booking|crm|finance|inventory|workforce|website|orb|integration)\/[A-Za-z0-9_./-]+)/g)) {
+  for (const match of source.matchAll(/\b(?:node|bash|sh|python3?)\s+((?:\.\/)?(?:\.github|scripts|ops|platform|shared|api|booking|crm|finance|inventory|workforce|website|orb|integration)\/[A-Za-z0-9_./-]+)/g)) {
     const candidate = normalize(match[1]).replace(/^\.\//, "");
     if (!candidate.includes("/node_modules/") && files.has(candidate)) references.add(candidate);
   }
   for (const match of source.matchAll(/(?:--config|--wrangler-config|CONFIG_FILE=)\s*["']?([^\s"']+wrangler\.toml)/g)) {
     const candidate = normalize(match[1]).replace(/^\.\//, "");
     if (!candidate.includes("/node_modules/") && files.has(candidate)) references.add(candidate);
+  }
+  if (!sourcePath.endsWith("/package.json") && sourcePath !== "package.json") {
+    for (const request of packageScriptRequests(source, files, readFile)) {
+      const [packagePath, scriptName, command] = request.split("\0");
+      references.add(packagePath);
+      const key = `${packagePath}\0${scriptName}`;
+      if (packageScriptStack.has(key)) continue;
+      for (const dependency of referencesFrom(packagePath, command, files, readFile, new Set([...packageScriptStack, key]))) {
+        references.add(dependency);
+      }
+    }
   }
   return [...references].sort();
 }
@@ -166,7 +196,6 @@ export function validateDependencyClosures({
       const source = pending.pop();
       if (visited.has(source) || !fileSet.has(source)) continue;
       visited.add(source);
-      if (source === "package.json" || source.endsWith("/package.json")) continue;
       let sourceText = localSourceCache.get(source);
       try {
         if (sourceText === undefined) {
@@ -174,7 +203,8 @@ export function validateDependencyClosures({
           localSourceCache.set(source, sourceText);
         }
       } catch { errors.push(`${module}: cannot read ${source}`); continue; }
-      const references = localReferenceCache.get(source) || referencesFrom(source, sourceText, fileSet);
+      if (source === "package.json" || source.endsWith("/package.json")) continue;
+      const references = localReferenceCache.get(source) || referencesFrom(source, sourceText, fileSet, readFile);
       localReferenceCache.set(source, references);
       for (const dependency of references) {
         edges.push({ source, dependency });
