@@ -279,3 +279,14 @@ test("shared staging D1 custody serializes synthetic mutators before every write
   assert.match(timekeepingJourney, /id: check_staging_d1_teardown/);
   assert.match(timekeepingJourney, /steps\.check_staging_d1_teardown\.outcome == 'success'/);
 });
+
+test("general CRM Pages checks out trusted local coordination actions before using them", () => {
+  const workflow = read(".github/workflows/deploy-crm-pages.yml");
+  const checkout = workflow.indexOf("Checkout trusted general coordination actions");
+  const authorization = workflow.indexOf("uses: ./.github/actions/global-coordination-check", checkout);
+
+  assert.ok(checkout >= 0, "general Pages deploy must prepare the local coordination action");
+  assert.ok(authorization > checkout, "the coordination action must be available before authorization");
+  assert.match(workflow.slice(checkout, authorization), /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(workflow.slice(checkout, authorization), /inputs\.release_scope == 'general'/);
+});

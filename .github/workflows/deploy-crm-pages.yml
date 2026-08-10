@@ -179,6 +179,15 @@ jobs:
             "$ORCHESTRATOR_STAGE" \
             "$PONTO_RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
+      - name: Checkout trusted general coordination actions
+        if: ${{ inputs.release_scope == 'general' && inputs.target != 'preview' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          # The local coordination action runs before the candidate checkout.
+          # Keep this gate on the immutable workflow dispatch revision so a
+          # candidate cannot replace the action that authorizes the mutation.
+          ref: ${{ github.sha }}
+          fetch-depth: 1
       - name: Authorize global CRM Pages surface mutation
         if: ${{ inputs.target != 'preview' }}
         uses: ./.github/actions/global-coordination-check
