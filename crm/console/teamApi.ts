@@ -1,6 +1,12 @@
 export type UnifiedTeamConfig = {
   enabled: boolean
   legacyEscalaEditor: boolean
+  readiness?: {
+    ready: boolean
+    state: 'DISABLED' | 'MIGRATION_REQUIRED' | 'DEPENDENCY_DEGRADED' | 'READY' | string
+    checks?: Record<string, boolean>
+    missing?: string[]
+  }
 }
 
 export type UnifiedTeamMember = {

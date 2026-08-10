@@ -49,6 +49,44 @@ class RequestError extends Error {
   }
 }
 
+function requestErrorMessage(error: any, fallback: string) {
+  const code = String(error?.code || '').trim().toUpperCase()
+  const message = String(error?.message || '').trim()
+  const normalized = `${code} ${message.toUpperCase()}`
+  if (['DOMAIN_SERVICE_DEGRADED', 'SERVICE_DEGRADED', 'WORKFORCE_SERVICE_DEGRADED', 'MODULE_MAINTENANCE'].some((value) => normalized.includes(value))) {
+    return 'A integração operacional está temporariamente em manutenção. Nenhum acesso foi liberado; tente novamente após a normalização do serviço.'
+  }
+  if (['TEAM_LOCAL_PERSISTENCE_PENDING', 'LOCAL_TEAM_CREATE_PENDING'].some((value) => code === value || message.toUpperCase().includes(value))) {
+    return 'A identidade foi sincronizada, mas a projeção da equipe ficou pendente de compensação. Atualize a lista e tente novamente.'
+  }
+  if (['TEAM_MIGRATION_REQUIRED', 'ONBOARDING_MIGRATION_REQUIRED'].includes(code)) {
+    return 'A estrutura do cadastro unificado ainda não foi aplicada neste ambiente.'
+  }
+  return message || fallback
+}
+
+const readinessLabels: Record<string, string> = {
+  UNIFIED_TEAM_ENABLED: 'liberação da centralização',
+  TEAM_SCHEMA: 'estrutura do cadastro unificado',
+  ONBOARDING_USERNAME: 'coluna de usuário do onboarding',
+  ONBOARDING_REQUEST_FINGERPRINT: 'fingerprint de idempotência',
+  INVITE_USERNAME: 'usuário do convite',
+  INVITE_CORPORATE_EMAIL: 'identidade corporativa do convite',
+  ONBOARDING_SAGA: 'estado transacional do onboarding',
+  TEAM_LINK_LEDGER: 'ledger de vínculos da equipe',
+  WORKFORCE_BINDING: 'vínculo com Workforce',
+  IDENTITY_PII_KEY: 'chave privada de identidade',
+  INVITE_MAILER: 'mailer de convites',
+}
+
+function readinessMessage(readiness?: UnifiedTeamConfig['readiness']) {
+  if (!readiness || readiness.ready) return ''
+  const missing = (readiness.missing || []).map((item) => readinessLabels[item] || item).join(', ')
+  if (readiness.state === 'MIGRATION_REQUIRED') return `A centralização está bloqueada até concluir ${missing || 'as migrações do cadastro unificado'}.`
+  if (readiness.state === 'DEPENDENCY_DEGRADED') return `A centralização está em modo protegido porque falta configurar ${missing || 'uma dependência operacional'}.`
+  return 'A centralização da equipe está desligada neste ambiente.'
+}
+
 const unitLabels: Record<string, string> = { 'novo-hamburgo': 'Novo Hamburgo', 'barra-shopping-sul': 'Barra Shopping Sul' }
 const titleOptions = ['Gestor', 'Gerente', 'Coordenador', 'Responsável Técnico', 'Injetor', 'Consultor']
 const creatableTitlesByRole: Record<string, string[]> = {
@@ -118,6 +156,20 @@ function emptyTeamForm(row?: UnifiedTeamMember) {
 
 function statusLabel(status: string) {
   return ({ INVITED: 'Convite enviado', ACTIVE: 'Ativo', SUSPENDED: 'Suspenso', TERMINATED: 'Desativado', PENDING_ACCESS: 'Aguardando acesso' } as Record<string, string>)[status] || status
+}
+
+function crmAccountLabel(row: Pick<UnifiedTeamMember, 'crmAccountLinked' | 'crmAccountUsername' | 'crmAccountReviewStatus'>) {
+  if (row.crmAccountLinked) return 'CRM vinculado'
+  if (row.crmAccountReviewStatus === 'CONFIRMED' && !row.crmAccountUsername) return 'CRM inconsistente'
+  if (row.crmAccountReviewStatus === 'REJECTED') return 'CRM rejeitado'
+  return 'CRM pendente'
+}
+
+function crmAccountBadgeVariant(row: Pick<UnifiedTeamMember, 'crmAccountLinked' | 'crmAccountUsername' | 'crmAccountReviewStatus'>): BadgeVariant {
+  if (row.crmAccountLinked) return 'success'
+  if (row.crmAccountReviewStatus === 'CONFIRMED' && !row.crmAccountUsername) return 'destructive'
+  if (row.crmAccountReviewStatus === 'REJECTED') return 'destructive'
+  return 'warning'
 }
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' | 'premium'
@@ -385,7 +437,7 @@ export function UsersModule() {
       })
       return true
     } catch (error: any) {
-      toast.warning(`Cadastro salvo, mas o vínculo com a Escala ficou pendente: ${error?.message || 'tente novamente'}.`)
+      toast.warning(`Cadastro salvo, mas o vínculo com a Escala ficou pendente: ${requestErrorMessage(error, 'tente novamente')}.`)
       return false
     }
   }
@@ -401,7 +453,7 @@ export function UsersModule() {
       })
       return true
     } catch (error: any) {
-      toast.warning(`A Escala foi processada, mas o estado não pôde ser registrado: ${error?.message || 'tente atualizar a lista'}.`)
+      toast.warning(`A Escala foi processada, mas o estado não pôde ser registrado: ${requestErrorMessage(error, 'tente atualizar a lista')}.`)
       return false
     }
   }
@@ -425,7 +477,7 @@ export function UsersModule() {
       toast.success('Vínculo registrado para revisão.')
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'Não foi possível registrar o vínculo.')
+      toast.error(requestErrorMessage(error, 'Não foi possível registrar o vínculo.'))
     } finally {
       setLinkSaving(false)
     }
@@ -451,7 +503,7 @@ export function UsersModule() {
       toast.success(reviewStatus === 'CONFIRMED' ? 'Vínculo confirmado.' : 'Vínculo rejeitado.')
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'Não foi possível atualizar a revisão do vínculo.')
+      toast.error(requestErrorMessage(error, 'Não foi possível atualizar a revisão do vínculo.'))
     } finally {
       setLinkReviewingId(null)
     }
@@ -470,7 +522,7 @@ export function UsersModule() {
       toast.success('Conta CRM registrada para revisão explícita.')
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'Não foi possível registrar o vínculo da conta CRM.')
+      toast.error(requestErrorMessage(error, 'Não foi possível registrar o vínculo da conta CRM.'))
     } finally {
       setCrmLinkSaving(false)
     }
@@ -496,7 +548,7 @@ export function UsersModule() {
       toast.success(reviewStatus === 'CONFIRMED' ? 'Conta CRM confirmada.' : 'Vínculo da conta CRM rejeitado.')
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'Não foi possível atualizar a revisão da conta CRM.')
+      toast.error(requestErrorMessage(error, 'Não foi possível atualizar a revisão da conta CRM.'))
     } finally {
       setCrmLinkReviewing(false)
     }
@@ -607,7 +659,7 @@ export function UsersModule() {
       } else if (error instanceof RequestError && error.code === 'USERNAME_TAKEN') {
         toast.error('Esse nome de usuário já está reservado. Escolha outro.')
       } else {
-        toast.error(error?.message || 'Não foi possível concluir o cadastro.')
+        toast.error(requestErrorMessage(error, 'Não foi possível concluir o cadastro.'))
       }
     } finally {
       setSaving(false)
@@ -632,7 +684,7 @@ export function UsersModule() {
       setEditingId(null)
       await load()
     } catch (error: any) {
-      toast.error(error?.message || `Não foi possível ${activating ? 'ativar' : 'desativar'} o membro.`)
+      toast.error(requestErrorMessage(error, `Não foi possível ${activating ? 'ativar' : 'desativar'} o membro.`))
     }
   }
 
@@ -647,7 +699,7 @@ export function UsersModule() {
       setEditingId(null)
       await load()
     } catch (error: any) {
-      toast.error(error?.message || `Não foi possível ${action === 'resend' ? 'reenviar' : 'revogar'} o convite.`)
+      toast.error(requestErrorMessage(error, `Não foi possível ${action === 'resend' ? 'reenviar' : 'revogar'} o convite.`))
     }
   }
 
@@ -660,7 +712,7 @@ export function UsersModule() {
       toast.success('Acesso ativado e Workforce reconciliado.')
       await load()
     } catch (error: any) {
-      toast.error(error?.code === 'INVITE_REGISTRATION_REQUIRED' ? 'O funcionário ainda não criou a senha pelo convite.' : error?.message || 'Não foi possível concluir a ativação.')
+      toast.error(error?.code === 'INVITE_REGISTRATION_REQUIRED' ? 'O funcionário ainda não criou a senha pelo convite.' : requestErrorMessage(error, 'Não foi possível concluir a ativação.'))
     } finally {
       setActivationRetryingId(null)
     }
@@ -688,7 +740,7 @@ export function UsersModule() {
       toast.success(`${ids.length} membro${ids.length === 1 ? '' : 's'} ${nextStatus === 'ACTIVE' ? 'ativado' : 'suspenso'}${ids.length === 1 ? '' : 's'}.`)
       await load()
     } catch (error: any) {
-      toast.error(error?.message || 'A ação em lote ficou pendente de sincronização.')
+      toast.error(requestErrorMessage(error, 'A ação em lote ficou pendente de sincronização.'))
       await load()
     } finally {
       setBulkSaving(false)
@@ -730,6 +782,11 @@ export function UsersModule() {
               <CircleAlert className="mt-0.5 size-4 shrink-0 text-rose-200" aria-hidden="true" />
               <div className="min-w-0 flex-1"><p>{loadError}</p><p className="mt-1 text-xs text-rose-100/65">Os dados exibidos podem estar desatualizados.</p></div>
               <TooltipButton label="Tentar carregar novamente"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label="Tentar carregar novamente" onClick={() => void load()}><RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" /></Button></TooltipButton>
+            </div>}
+            {teamConfig.enabled && teamConfig.readiness && !teamConfig.readiness.ready && <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-200/20 bg-amber-300/[0.06] px-3 py-3 text-sm text-amber-50" role="status">
+              <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-200" aria-hidden="true" />
+              <div className="min-w-0 flex-1"><p>{readinessMessage(teamConfig.readiness)}</p><p className="mt-1 text-xs text-amber-100/60">As ações de escrita continuam protegidas até o ambiente ficar pronto.</p></div>
+              <TooltipButton label="Atualizar prontidão"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full text-amber-100 hover:bg-amber-200/10" aria-label="Atualizar prontidão" onClick={() => void load()}><RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" /></Button></TooltipButton>
             </div>}
             {canRead && (
               <div className="mb-4 space-y-3">
@@ -848,7 +905,7 @@ export function UsersModule() {
                           )) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}
                         </div>
                       </td>
-                      <td className="p-3 align-middle"><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={row.crmAccountLinked ? 'success' : row.crmAccountReviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[11px]" title={row.crmAccountUsername ? `Conta ${row.crmAccountUsername}` : 'Conta ainda sem vínculo explícito'}>{row.crmAccountLinked ? 'CRM vinculado' : row.crmAccountReviewStatus === 'REJECTED' ? 'CRM rejeitado' : 'CRM pendente'}</Badge></div></td>
+                      <td className="p-3 align-middle"><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={crmAccountBadgeVariant(row)} className="px-2 py-1 text-[11px]" title={row.crmAccountUsername ? `Conta ${row.crmAccountUsername}` : 'Conta ainda sem vínculo explícito'}>{crmAccountLabel(row)}</Badge></div></td>
                       <td className="p-3 align-middle"><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></td>
                       <td className="p-3 text-right align-middle">
                         <TooltipButton label={`Editar ${row.fullName}`}>
@@ -888,7 +945,7 @@ export function UsersModule() {
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Cargo</p><Badge variant={titleBadgeVariant(row.jobTitle)} className="px-2 py-1 text-[11px]">{row.jobTitle}</Badge></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Departamento</p><p className="text-blue-100/80">{row.department || '—'}</p></div>
                     <div className="col-span-2"><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><div className="flex flex-wrap gap-1">{row.units.length ? row.units.map((unit) => <Badge key={unit} variant="outline" className="px-2 py-1 text-[11px]">{unitLabels[unit] || unit}</Badge>) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}</div></div>
-                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Conta</p><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={row.crmAccountLinked ? 'success' : row.crmAccountReviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[11px]">{row.crmAccountLinked ? 'CRM vinculado' : row.crmAccountReviewStatus === 'REJECTED' ? 'CRM rejeitado' : 'CRM pendente'}</Badge></div></div>
+                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Conta</p><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={crmAccountBadgeVariant(row)} className="px-2 py-1 text-[11px]">{crmAccountLabel(row)}</Badge></div></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Escala</p><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></div>
                   </div>
                 </article>
@@ -985,11 +1042,12 @@ export function UsersModule() {
                       <div><h3 id="team-account-link-title" className="text-sm font-semibold text-white">Conta CRM vinculada</h3><p className="mt-1 text-xs text-blue-100/55">O vínculo usa somente o nome de usuário exato; nunca é resolvido por nome, e-mail ou semelhança.</p></div>
                     </div>
                     {editingRow && <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={editingRow.crmAccountLinked ? 'success' : editingRow.crmAccountReviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[10px]">{editingRow.crmAccountLinked ? 'Confirmada' : editingRow.crmAccountReviewStatus === 'REJECTED' ? 'Rejeitada' : editingRow.crmAccountReviewStatus === 'PENDING_REVIEW' ? 'Em revisão' : 'Sem vínculo'}</Badge>
+                      <Badge variant={crmAccountBadgeVariant(editingRow)} className="px-2 py-1 text-[10px]">{editingRow.crmAccountLinked ? 'Confirmada' : editingRow.crmAccountReviewStatus === 'CONFIRMED' && !editingRow.crmAccountUsername ? 'Inconsistente' : editingRow.crmAccountReviewStatus === 'REJECTED' ? 'Rejeitada' : editingRow.crmAccountReviewStatus === 'PENDING_REVIEW' ? 'Em revisão' : 'Sem vínculo'}</Badge>
                       {editingRow.crmAccountUsername && <span className="font-mono text-[11px] text-blue-100/65">{editingRow.crmAccountUsername}</span>}
                     </div>}
                   </div>
                   {editingRow?.crmAccountReviewStatus === 'PENDING_REVIEW' && canManage && <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/10 bg-amber-200/[0.04] px-3 py-2 text-xs text-amber-50/80"><span>Esta proposta aguarda confirmação humana antes de qualquer alteração de acesso.</span><div className="flex items-center gap-1"><TooltipButton label="Confirmar conta CRM"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-emerald-100 hover:bg-emerald-200/10" aria-label={`Confirmar conta CRM ${editingRow.crmAccountUsername || ''}`} disabled={crmLinkReviewing} onClick={() => void reviewCrmAccountLink('CONFIRMED')}><Check className="size-3.5" aria-hidden="true" /></Button></TooltipButton><TooltipButton label="Rejeitar conta CRM"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label={`Rejeitar conta CRM ${editingRow.crmAccountUsername || ''}`} disabled={crmLinkReviewing} onClick={() => void reviewCrmAccountLink('REJECTED')}><X className="size-3.5" aria-hidden="true" /></Button></TooltipButton></div></div>}
+                  {editingRow?.crmAccountReviewStatus === 'CONFIRMED' && !editingRow.crmAccountUsername && <div className="mb-3 rounded-xl border border-rose-200/15 bg-rose-300/[0.06] px-3 py-2 text-xs text-rose-50" role="alert">O vínculo CRM confirmado não possui um usuário explícito. O acesso permanece protegido; proponha novamente o nome exato da conta para corrigir este cadastro.</div>}
                   {canManage && editingId && !editingRow?.crmAccountLinked && <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="space-y-1 text-xs text-blue-100/75">Nome de usuário da conta CRM<Input value={crmUsernameInput} onChange={(event) => setCrmUsernameInput(event.target.value)} placeholder="exato, por exemplo anareibeiro" autoComplete="off" /></label><Button type="button" disabled={crmLinkSaving || !crmUsernameInput.trim() || editingRow?.crmAccountReviewStatus === 'PENDING_REVIEW'} onClick={() => void proposeCrmAccountLink()}><Link2 className="mr-2 size-4" aria-hidden="true" />{crmLinkSaving ? 'Registrando…' : 'Propor vínculo'}</Button></div>}
                   {!editingRow?.crmAccountUsername && <p className="text-xs text-blue-100/55">Nenhuma conta foi associada a este cadastro. Resolva a pendência antes de reativar ou desligar uma conta já operacional.</p>}
                 </section>
