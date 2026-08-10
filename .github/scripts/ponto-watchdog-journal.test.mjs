@@ -13,6 +13,8 @@ import {
 const repository = "owner/repo";
 const repositoryId = "42";
 const sha = "a".repeat(40);
+const releaseTag = `skincos/release/ponto/${sha}`;
+const releaseRef = `refs/tags/${releaseTag}`;
 const stagingPair = crypto.generateKeyPairSync("ed25519");
 const productionPair = crypto.generateKeyPairSync("ed25519");
 const stagingPrivateKey = stagingPair.privateKey.export({ type: "pkcs8", format: "pem" });
@@ -33,10 +35,10 @@ const run = (id, pathName, title) => ({
     : pathName === "deploy-crm-pages.yml"
       ? 503
       : 502,
-  path: `.github/workflows/${pathName}@refs/heads/main`,
+  path: `.github/workflows/${pathName}@${releaseRef}`,
   display_title: title,
   event: "workflow_dispatch",
-  head_branch: "main",
+  head_branch: releaseTag,
   head_sha: sha,
   status: "completed",
   conclusion: "success",

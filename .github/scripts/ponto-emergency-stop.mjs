@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isCorrelatedChild, isTerminalRun } from "./ponto-reconcile-children.mjs";
+import { releaseTagFor } from "./ponto-release-identity.mjs";
 import {
   capabilityExternalId,
   resolveCapabilityVerifier,
@@ -78,15 +79,19 @@ export function classifyHighRiskRun(run, {
   workflowsById,
   target,
   currentEmergencyRunId = "",
+  releaseSha = "",
 }) {
   const specification = workflowsById.get(run?.workflow_id);
   const workflowPath = String(run?.path || "").split("@")[0];
   const runId = String(run?.id || "");
+  const expectedBranch = /^[0-9a-f]{40}$/i.test(String(releaseSha || ""))
+    ? releaseTagFor("ponto", releaseSha)
+    : "main";
   if (
     !specification
     || workflowPath !== specification.path
     || !ALLOWED_HIGH_RISK_EVENTS.has(run?.event)
-    || run?.head_branch !== "main"
+    || run?.head_branch !== expectedBranch
     || run?.repository?.full_name !== repository
     || run?.head_repository?.full_name !== repository
     || !/^[1-9][0-9]*$/.test(runId)
@@ -659,6 +664,7 @@ if (invokedAsScript) {
           workflowsById: highRiskWorkflows,
           target,
           currentEmergencyRunId,
+          releaseSha: coordinator.releaseSha,
         });
         if (
           !specification

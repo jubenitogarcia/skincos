@@ -84,7 +84,7 @@
     "codex:context:online": "bash ./scripts/codex-context.sh --online",
     "codex:autonomy:test": "node --test scripts/tests/codex-autonomy-baseline.test.mjs",
     "codex:deploy-topology:test": "node .github/scripts/validate-deploy-topology.mjs",
-    "codex:global-coordination:test": "node --test scripts/tests/codex-global-coordination.test.mjs scripts/tests/codex-global-coordination-client.test.mjs scripts/tests/codex-global-coordination-workflow.test.mjs scripts/tests/global-concurrency-governance-static.test.mjs ops/cloudflare/global-coordinator/index.test.mjs .github/scripts/ponto-release-identity.test.mjs .github/scripts/ponto-dispatch-run-match.test.mjs .github/scripts/ponto-dispatch-workflow.test.mjs .github/scripts/ponto-orchestrator-lease.test.mjs .github/scripts/ponto-reconcile-children.test.mjs",
+    "codex:global-coordination:test": "node --test scripts/tests/codex-global-coordination.test.mjs scripts/tests/codex-global-coordination-client.test.mjs scripts/tests/codex-global-coordination-workflow.test.mjs scripts/tests/global-concurrency-governance-static.test.mjs ops/cloudflare/global-coordinator/index.test.mjs .github/scripts/ponto-release-identity.test.mjs .github/scripts/ponto-dispatch-run-match.test.mjs .github/scripts/ponto-dispatch-workflow.test.mjs .github/scripts/ponto-orchestrator-lease.test.mjs .github/scripts/ponto-reconcile-children.test.mjs .github/scripts/ponto-emergency-stop.test.mjs .github/scripts/ponto-watchdog-journal.test.mjs",
     "codex:global-coordination:lease": "node scripts/codex-global-coordination-lease.mjs",
     "codex:risk": "node ./scripts/codex-risk-classifier.mjs",
     "codex:release-manifest": "node ./scripts/codex-release-manifest.mjs",
