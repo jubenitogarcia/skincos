@@ -66,6 +66,26 @@ async function setMergeAuthorityStatus(repository, headSha, state, description) 
   });
 }
 
+function waitableLeaseReason(reason) {
+  return ["resource-lease-held", "incompatible-release-lease"].includes(String(reason || ""));
+}
+
+export async function acquireMergeLease({ request, url, maxWaitMs = 15 * 60_000, pollMs = 15_000, acquireImpl = acquireGlobalLease }) {
+  const deadline = Date.now() + maxWaitMs;
+  let lastReason = "";
+  while (Date.now() <= deadline) {
+    const result = await acquireImpl({ request, url });
+    if (result.passed === true && result.lease) return result;
+    lastReason = String(result.reason || "unknown");
+    if (!waitableLeaseReason(lastReason)) {
+      throw new Error(`merge:main lease acquisition failed closed: ${lastReason}`);
+    }
+    if (Date.now() + pollMs > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error(`merge:main lease remained unavailable: ${lastReason || "unknown"}`);
+}
+
 export async function mergePullRequest({ repository, pullNumber, expectedHeadSha, mergeMethod = "squash" }) {
   if (String(process.env.SKINCOS_GLOBAL_COORDINATION_REQUIRED || "").trim().toLowerCase() !== "true") {
     throw new Error("SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true for merge:main");
@@ -83,7 +103,7 @@ export async function mergePullRequest({ repository, pullNumber, expectedHeadSha
     throw new Error("pull request is not mergeable by its current GitHub state");
   }
   const resource = "merge:main";
-  const result = await acquireGlobalLease({ request, url });
+  const result = await acquireMergeLease({ request, url });
   if (result.passed !== true || !result.lease) throw new Error(`merge:main lease acquisition failed: ${result.reason || "unknown"}`);
   const proof = proofForLease(result.lease);
   let merged;

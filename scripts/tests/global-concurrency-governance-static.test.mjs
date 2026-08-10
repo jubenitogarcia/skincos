@@ -114,6 +114,9 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(script, /const resource = "merge:main"/);
   assert.match(script, /expectedHeadSha/);
   assert.match(script, /checkGlobalLease/);
+  assert.match(script, /acquireMergeLease/);
+  assert.match(script, /incompatible-release-lease/);
+  assert.match(script, /merge:main lease remained unavailable/);
   assert.match(script, /global-merge-authority/);
   assert.match(script, /setMergeAuthorityStatus/);
   assert.match(script, /loadMergeCandidate/);

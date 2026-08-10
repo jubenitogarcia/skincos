@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { acquireMergeLease } from "../codex-global-merge-authority.mjs";
 import {
   acquireLease,
   authorizeMutation,
@@ -298,6 +299,31 @@ test("shared exact closure inputs still fence a merge when module patterns do no
   const admission = evaluateLeaseAdmission(held.state, merge, { now: 2_000 });
   assert.equal(admission.allowed, false);
   assert.equal(admission.reason, "incompatible-release-lease");
+});
+
+test("merge authority retries only known transient lease conflicts", async () => {
+  let calls = 0;
+  const result = await acquireMergeLease({
+    request: {},
+    url: "https://coordination.example.test",
+    maxWaitMs: 100,
+    pollMs: 0,
+    acquireImpl: async () => {
+      calls += 1;
+      return calls < 3
+        ? { passed: false, reason: "resource-lease-held" }
+        : { passed: true, lease: { leaseId: "lease-1" } };
+    },
+  });
+  assert.equal(calls, 3);
+  assert.equal(result.lease.leaseId, "lease-1");
+  await assert.rejects(() => acquireMergeLease({
+    request: {},
+    url: "https://coordination.example.test",
+    maxWaitMs: 100,
+    pollMs: 0,
+    acquireImpl: async () => ({ passed: false, reason: "coordination-dependency-closure-ambiguous" }),
+  }), /failed closed/);
 });
 
 test("the policy and current Ponto source produce a deterministic dependency closure", () => {
