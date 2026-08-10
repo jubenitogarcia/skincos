@@ -154,6 +154,10 @@ function buildPlan(existingRows: ExistingRedirectRow[], seeds: EsfaManagedUrlSee
             plan.conflicts.push({ existing, seed });
             continue;
         }
+        if (!seed.active && existing.source !== ESFA_MIGRATED_SOURCE) {
+            plan.conflicts.push({ existing, seed });
+            continue;
+        }
         if (seedMatchesExisting(existing, seed)) {
             plan.skips.push({ existing, seed });
             continue;

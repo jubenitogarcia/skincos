@@ -1,5 +1,6 @@
 import {
     buildEsfaRedirectLabel,
+    ESFA_RETIRED_REDIRECTS,
     listEsfaRedirects,
     normalizeEsfaRedirectPath,
 } from "@/lib/esfaRedirects";
@@ -63,6 +64,7 @@ export function buildEsfaManagedRedirectSeed(params: {
     slugPath: string;
     destinationUrl: string;
     now?: number;
+    active?: boolean;
 }): EsfaManagedUrlSeed {
     const normalizedSlugPath = normalizeEsfaRedirectPath(params.slugPath);
     const now = params.now ?? Date.now();
@@ -75,7 +77,7 @@ export function buildEsfaManagedRedirectSeed(params: {
         source: ESFA_MIGRATED_SOURCE,
         placement: inferPlacement(normalizedSlugPath, null),
         unitSlug: inferUnitSlug(normalizedSlugPath),
-        active: true,
+        active: params.active ?? true,
     });
     return {
         ...normalized,
@@ -88,13 +90,22 @@ export function buildEsfaManagedRedirectSeed(params: {
 }
 
 export function listEsfaManagedRedirectSeeds(now = Date.now()): EsfaManagedUrlSeed[] {
-    return listEsfaRedirects().map((entry) =>
+    const activeSeeds = listEsfaRedirects().map((entry) =>
         buildEsfaManagedRedirectSeed({
             slugPath: entry.slugPath,
             destinationUrl: entry.destinationUrl,
             now,
         }),
     );
+    const retiredSeeds = Object.entries(ESFA_RETIRED_REDIRECTS).map(([slugPath, destinationUrl]) =>
+        buildEsfaManagedRedirectSeed({
+            slugPath,
+            destinationUrl,
+            now,
+            active: false,
+        }),
+    );
+    return [...activeSeeds, ...retiredSeeds];
 }
 
 export function listEsfaFallbackRedirects(identities: ManagedUrlIdentity[]) {
