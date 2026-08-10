@@ -31,3 +31,18 @@ COORDINATION_PLANE_MODE = "global"
 bindings = [
   { name = "GLOBAL_COORDINATOR", class_name = "GlobalCoordinator" }
 ]
+
+[env.production]
+name = "skincos-global-coordinator-production"
+workers_dev = true
+preview_urls = false
+
+[env.production.vars]
+COORDINATION_CONTRACT_ID = "skincos/global-coordination/v1"
+COORDINATION_PLANE_NAME = "global"
+COORDINATION_PLANE_MODE = "global"
+
+[env.production.durable_objects]
+bindings = [
+  { name = "GLOBAL_COORDINATOR", class_name = "GlobalCoordinator" }
+]

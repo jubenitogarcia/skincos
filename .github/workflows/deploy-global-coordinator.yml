@@ -1,0 +1,278 @@
+name: Deploy global coordination plane
+run-name: Global coordinator ${{ inputs.target }} sha=${{ github.sha }} bootstrap=${{ inputs.allow_production_bootstrap }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Target coordination environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      allow_production_bootstrap:
+        description: Allow the one-time production bootstrap only when no Worker exists
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: global-coordinator-writer-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.target }}
+    env:
+      TARGET: ${{ inputs.target }}
+      ALLOW_PRODUCTION_BOOTSTRAP: ${{ inputs.allow_production_bootstrap }}
+      CONFIGURED_PRODUCTION_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      COORDINATION_ADMIN_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ADMIN_SECRET }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify immutable main source identity
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'global coordinator deployment must run from main' >&2; exit 1; }
+          [[ "$GITHUB_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'global coordinator deployment SHA is invalid' >&2; exit 1; }
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "$actual_sha" == "$GITHUB_SHA" ]] || { echo 'checked-out coordinator source differs from workflow SHA' >&2; exit 1; }
+          source_tree="$(git rev-parse HEAD^{tree})"
+          echo "source_sha=$actual_sha" >> "$GITHUB_OUTPUT"
+          echo "source_tree=$source_tree" >> "$GITHUB_OUTPUT"
+
+      - name: Capture the incumbent coordination Worker
+        id: incumbent
+        shell: bash
+        env:
+          EXPECTED_PRODUCTION_URL: https://skincos-global-coordinator-production.skincos.workers.dev
+          STATUS_FILE: ${{ runner.temp }}/skincos-global-coordinator-incumbent.json
+          STATUS_ERROR_FILE: ${{ runner.temp }}/skincos-global-coordinator-incumbent.err
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == staging ]]; then
+            expected_url='https://skincos-global-coordinator-staging.skincos.workers.dev'
+            coordinator_url="$expected_url"
+          else
+            expected_url="$EXPECTED_PRODUCTION_URL"
+            coordinator_url="${CONFIGURED_PRODUCTION_URL:-}"
+          fi
+
+          if (cd ops/cloudflare/global-coordinator && npx --yes wrangler@4.120.0 deployments status --config wrangler.toml --env "$TARGET" --json > "$STATUS_FILE" 2> "$STATUS_ERROR_FILE"); then
+            worker_exists=true
+            previous_version_id="$(node - "$STATUS_FILE" <<'NODE'
+          const fs = require('node:fs');
+          const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const active = (status.versions || []).find((version) => Number(version.percentage) === 100);
+          if (!active?.version_id) throw new Error('coordination Worker has no active 100% version');
+          process.stdout.write(String(active.version_id));
+          NODE
+          )"
+          else
+            if [[ "$TARGET" == production && -z "$coordinator_url" ]] && grep -Eqi '10007|does not exist' "$STATUS_ERROR_FILE"; then
+              worker_exists=false
+              previous_version_id=''
+            else
+              cat "$STATUS_ERROR_FILE" >&2
+              echo 'coordination Worker existence probe failed closed' >&2
+              exit 1
+            fi
+          fi
+
+          echo "worker_exists=$worker_exists" >> "$GITHUB_OUTPUT"
+          echo "previous_version_id=$previous_version_id" >> "$GITHUB_OUTPUT"
+          echo "expected_url=$expected_url" >> "$GITHUB_OUTPUT"
+          echo "coordinator_url=$coordinator_url" >> "$GITHUB_OUTPUT"
+
+      - name: Apply immutable deployment intent guard
+        id: guard
+        shell: bash
+        env:
+          EXPECTED_URL: ${{ steps.incumbent.outputs.expected_url }}
+          EXISTING_URL: ${{ steps.incumbent.outputs.coordinator_url }}
+          WORKER_EXISTS: ${{ steps.incumbent.outputs.worker_exists }}
+          GUARD_FILE: ${{ runner.temp }}/skincos-global-coordinator-deployment-guard.json
+        run: |
+          set -euo pipefail
+          node .github/scripts/global-coordinator-deployment-guard.mjs \
+            --target "$TARGET" \
+            --ref "$GITHUB_REF" \
+            --sha "$GITHUB_SHA" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --coordinator-url "$EXISTING_URL" \
+            --expected-coordinator-url "$EXPECTED_URL" \
+            --worker-exists "$WORKER_EXISTS" \
+            --allow-bootstrap "$ALLOW_PRODUCTION_BOOTSTRAP" \
+            --output-file "$GUARD_FILE"
+          bootstrap="$(node -e 'process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).bootstrap))' "$GUARD_FILE")"
+          remote_lease_required="$(node -e 'process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).remoteLeaseRequired))' "$GUARD_FILE")"
+          echo "bootstrap=$bootstrap" >> "$GITHUB_OUTPUT"
+          echo "remote_lease_required=$remote_lease_required" >> "$GITHUB_OUTPUT"
+          echo "coordinator_url=$EXISTING_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Acquire the coordination-plane writer lease
+        if: ${{ steps.guard.outputs.remote_lease_required == 'true' }}
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: true
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ steps.guard.outputs.coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: global:global-coordinator-writer
+          module: merge
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordinator-writer-lease.json
+          inputs_json: >-
+            {"target":"${{ inputs.target }}","operation":"coordinator-deploy","sourceSha":"${{ github.sha }}"}
+
+      - name: Validate the exact Wrangler environment
+        shell: bash
+        working-directory: ops/cloudflare/global-coordinator
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.120.0 deploy --dry-run --config wrangler.toml --env "$TARGET" --message "global-coordinator:${TARGET}:${GITHUB_SHA}"
+
+      - name: Publish the coordinator and synchronize custody secrets
+        id: publish
+        shell: bash
+        working-directory: ops/cloudflare/global-coordinator
+        run: |
+          set -euo pipefail
+          [[ -n "$COORDINATION_SHARED_SECRET" && -n "$COORDINATION_ADMIN_SECRET" ]] || { echo 'coordination Worker custody is unavailable' >&2; exit 1; }
+          npx --yes wrangler@4.120.0 deploy \
+            --config wrangler.toml \
+            --env "$TARGET" \
+            --message "global-coordinator:${TARGET}:${GITHUB_SHA}"
+          printf '%s' "$COORDINATION_SHARED_SECRET" | npx --yes wrangler@4.120.0 secret put COORDINATION_SHARED_SECRET --config wrangler.toml --env "$TARGET" >/dev/null
+          printf '%s' "$COORDINATION_ADMIN_SECRET" | npx --yes wrangler@4.120.0 secret put COORDINATION_ADMIN_SECRET --config wrangler.toml --env "$TARGET" >/dev/null
+
+      - name: Read back the active version and verify the signed live gate
+        id: postdeploy
+        shell: bash
+        env:
+          COORDINATOR_URL: ${{ steps.incumbent.outputs.expected_url }}
+          PREVIOUS_VERSION_ID: ${{ steps.incumbent.outputs.previous_version_id }}
+          GITHUB_WRITE_TOKEN: ${{ secrets.GH_TOKEN }}
+          CURRENT_STATUS_FILE: ${{ runner.temp }}/skincos-global-coordinator-current.json
+          EVIDENCE_DIR: ${{ runner.temp }}/skincos-global-coordinator-evidence
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          (cd ops/cloudflare/global-coordinator && npx --yes wrangler@4.120.0 deployments status --config wrangler.toml --env "$TARGET" --json > "$CURRENT_STATUS_FILE")
+          current_version_id="$(node - "$CURRENT_STATUS_FILE" <<'NODE'
+          const fs = require('node:fs');
+          const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const active = (status.versions || []).find((version) => Number(version.percentage) === 100);
+          if (!active?.version_id) throw new Error('deployed coordination Worker has no active 100% version');
+          process.stdout.write(String(active.version_id));
+          NODE
+          )"
+          export CURRENT_VERSION_ID="$current_version_id"
+          echo "current_version_id=$current_version_id" >> "$GITHUB_OUTPUT"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { buildLeaseRequest, evaluateGlobalGate } from './scripts/codex-global-coordination-client.mjs';
+          import { dependencyClosureForSource } from './scripts/codex-global-coordinator.mjs';
+
+          const sourceCommit = String(process.env.GITHUB_SHA).trim().toLowerCase();
+          const closure = dependencyClosureForSource({ module: 'merge', sourceCommit });
+          const request = buildLeaseRequest({
+            operation: 'mutation',
+            resource: 'global:global-coordinator-readiness',
+            owner: {
+              provider: 'github',
+              missionId: `github:${process.env.GITHUB_REPOSITORY}:${process.env.GITHUB_RUN_ID}`,
+              threadId: `${process.env.GITHUB_WORKFLOW}:${process.env.GITHUB_RUN_ID}:global-coordinator-readiness`,
+              actor: process.env.GITHUB_ACTOR,
+              runId: process.env.GITHUB_RUN_ID,
+              workflow: process.env.GITHUB_WORKFLOW,
+            },
+            intent: {
+              module: 'merge',
+              workflow: process.env.GITHUB_WORKFLOW,
+              event: 'workflow_dispatch',
+              sourceCommit,
+              sourceTree: closure.sourceTree,
+              dependencyClosureDigest: closure.digest,
+              dependencyClosurePatterns: closure.dependencyClosurePatterns,
+              dependencyClosureSharedInputs: closure.dependencyClosureSharedInputs,
+              inputs: { target: process.env.TARGET, operation: 'coordinator-readiness' },
+            },
+            idempotencyKey: `global-coordinator-readiness:${process.env.GITHUB_RUN_ID}:${process.env.TARGET}`,
+            ttlMs: 30_000,
+          });
+          const result = await evaluateGlobalGate({
+            request,
+            url: process.env.COORDINATOR_URL,
+            secret: process.env.COORDINATION_SHARED_SECRET,
+          });
+          if (result.passed !== true) throw new Error(`signed coordination gate denied: ${result.reason || 'unknown'}`);
+          fs.writeFileSync(process.env.EVIDENCE_DIR + '/summary.json', `${JSON.stringify({
+            schemaVersion: 1,
+            target: process.env.TARGET,
+            sourceSha: sourceCommit,
+            sourceTree: closure.sourceTree,
+            dependencyClosureDigest: closure.digest,
+            coordinatorUrl: process.env.COORDINATOR_URL,
+            bootstrap: process.env.ALLOW_PRODUCTION_BOOTSTRAP === 'true',
+            previousVersionId: process.env.PREVIOUS_VERSION_ID || null,
+            currentVersionId: process.env.CURRENT_VERSION_ID,
+            signedGate: { passed: result.passed, reason: result.reason, httpStatus: result.httpStatus },
+            workflow: process.env.GITHUB_WORKFLOW,
+            runId: process.env.GITHUB_RUN_ID,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+          if [[ "$TARGET" == production ]]; then
+            GH_TOKEN="$GITHUB_WRITE_TOKEN" gh variable set SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL --repo "$GITHUB_REPOSITORY" --body "$COORDINATOR_URL"
+            published_url="$(GH_TOKEN="$GITHUB_WRITE_TOKEN" gh variable list --repo "$GITHUB_REPOSITORY" --json name,value --jq '.[] | select(.name == "SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL") | .value')"
+            [[ "$published_url" == "$COORDINATOR_URL" ]] || { echo 'production coordinator URL variable readback mismatched' >&2; exit 1; }
+          fi
+
+      - name: Roll back to the incumbent coordinator version after failed readback
+        if: ${{ failure() && steps.publish.outcome == 'success' && steps.postdeploy.outcome == 'failure' && steps.incumbent.outputs.previous_version_id != '' }}
+        shell: bash
+        working-directory: ops/cloudflare/global-coordinator
+        env:
+          PREVIOUS_VERSION_ID: ${{ steps.incumbent.outputs.previous_version_id }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.120.0 versions deploy "${PREVIOUS_VERSION_ID}@100%" --config wrangler.toml --env "$TARGET" --yes --message "rollback:global-coordinator:${PREVIOUS_VERSION_ID}"
+
+      - name: Upload non-sensitive coordinator release evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: global-coordinator-${{ inputs.target }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/skincos-global-coordinator-evidence
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Release the coordination-plane writer lease
+        if: ${{ always() && steps.guard.outputs.remote_lease_required == 'true' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: true
+          coordinator_url: ${{ steps.guard.outputs.coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordinator-writer-lease.json

@@ -1,9 +1,11 @@
 # Governança global de concorrência e release
 
-**Status:** Fases 1–4 implementadas em PRs ordenadas; autoridade Cloudflare
-staging provisionada e ativada; autoridade de produção permanece ausente e
-fail-closed. O contrato single-writer Cloudflare está versionado, e a topologia
-live de Pages governada foi auditada sem mutação de produção.
+**Status:** Fases 1–4 implementadas em PRs ordenadas; o coordination plane
+Cloudflare tem deployment canônico para staging e produção, com bootstrap de
+produção explicitamente limitado, lease remoto para atualizações, readback
+assinado e rollback do incumbent. O contrato single-writer Cloudflare está
+versionado, e a topologia live de Pages governada foi auditada sem mutação de
+produção.
 
 ## Problema
 
@@ -145,6 +147,18 @@ uma compatibilidade conservadora para mutações compostas; ele não substitui o
 leases de release, promotion ou deploy existentes e pode ser dividido somente
 quando a prova multi-recurso equivalente estiver implementada.
 
+O próprio coordination plane tem uma única autoridade de publicação:
+`.github/workflows/deploy-global-coordinator.yml`. O workflow só aceita `main`,
+faz checkout do SHA do dispatch e seleciona o ambiente Wrangler explicitamente.
+O primeiro bootstrap de produção exige simultaneamente a entrada booleana
+explícita, a ausência de endpoint configurado e a prova remota de que não existe
+Worker; qualquer outro estado é rejeitado. Depois do bootstrap, o endpoint
+determinístico `https://skincos-global-coordinator-production.skincos.workers.dev`
+é publicado na variável do repositório e toda atualização exige
+`global:global-coordinator-writer`, usando a mesma custódia GitHub dos demais
+mutadores. O workflow lê de volta a versão ativa, executa um gate assinado
+read-only contra o Worker publicado e conserva a versão incumbent para rollback.
+
 Na auditoria live de 2026-08-10, `skincos-staging` não tinha Git provider e
 `skincos` estava conectado ao GitHub, mas com `deployments_enabled=false`,
 `production_deployments_enabled=false` e `preview_deployment_setting=none`.
@@ -169,12 +183,14 @@ o contrato exige fail-closed antes de nova promoção.
   No mini-PC, `scripts/runtime/global-coordination-mini-pc.sh` força o provider
   `mini-pc`, exige owner explícito e mantém provas fora da árvore imutável.
 
-O ambiente dedicado `staging` do Worker foi provisionado sem rota de produção,
-com Durable Object SQLite, secrets separados e `preview_urls = false`. O smoke
-remoto comprovou aquisição, conflito, autorização, drift de closure, renovação
-e liberação. `SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL` permanece ausente, de
-modo que pilot/canary/production falham antes de qualquer mutação. O estado de
-produção não é inferido do endpoint staging.
+Os ambientes dedicados `staging` e `production` do Worker usam Durable Object
+SQLite, secrets separados e `preview_urls = false`; nenhum deploy automático de
+Pages participa dessa autoridade. O smoke remoto de staging comprovou
+aquisição, conflito, autorização, drift de closure, renovação e liberação. O
+bootstrap de produção não infere estado a partir de staging: ele consulta o
+Worker exato do ambiente, e apenas depois do readback assinado publica
+`SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL`. Falha, ausência de custody,
+endpoint divergente ou estado ambíguo continuam fail-closed.
 
 Os workflows GitHub Ponto passam pela mesma prova: o gate reutilizável adquire
 o lease, cada job mutador renova e autoriza imediatamente antes da mutação, e
