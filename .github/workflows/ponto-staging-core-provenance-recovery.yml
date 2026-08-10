@@ -236,7 +236,7 @@ jobs:
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-          resource: deploy:core-api:staging
+          resource: global:ponto-workers-writer
           module: ponto
           source_sha: ${{ inputs.release_sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
@@ -275,7 +275,7 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
-          resource: deploy:core-api:staging
+          resource: global:ponto-workers-writer
           module: ponto
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -407,7 +407,7 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
-          resource: deploy:core-api:staging
+          resource: global:ponto-workers-writer
           module: ponto
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}

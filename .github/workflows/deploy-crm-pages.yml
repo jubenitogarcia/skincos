@@ -56,7 +56,7 @@ jobs:
     with:
       required: ${{ inputs.release_scope == 'ponto' && inputs.target != 'preview' }}
       global_lease_required: ${{ inputs.target != 'preview' }}
-      global_resource: deploy:crm-pages:${{ inputs.target }}
+      global_resource: global:crm-cloudflare-writer
       global_module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'crm-pages' }}
       global_coordinator_url: ${{ contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
       lease_key: pages
@@ -200,7 +200,7 @@ jobs:
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
-          resource: deploy:crm-pages:${{ inputs.target }}
+          resource: global:crm-cloudflare-writer
           module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'crm-pages' }}
           source_sha: ${{ inputs.release_sha || github.sha }}
       - name: Guard Cloudflare Pages deploy
@@ -1102,7 +1102,7 @@ jobs:
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
-          resource: deploy:crm-pages:${{ inputs.target }}
+          resource: global:crm-cloudflare-writer
           module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'crm-pages' }}
           source_sha: ${{ inputs.release_sha || github.sha }}
       - name: Guard canonical Ponto Pages release
