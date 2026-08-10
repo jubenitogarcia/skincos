@@ -116,6 +116,10 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(script, /checkGlobalLease/);
   assert.match(script, /global-merge-authority/);
   assert.match(script, /setMergeAuthorityStatus/);
+  assert.match(script, /loadMergeCandidate/);
+  assert.match(read("scripts/codex-github-integration-candidate.mjs"), /changedPaths/);
+  assert.match(read("scripts/codex-global-integration-gate.mjs"), /skincos-integration-gate/);
+  assert.match(read(".github/workflows/skincos-integration-gate.yml"), /pull_request_target/);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
   assert.match(workflow, /pull_request_target/);
   assert.match(workflow, /state=failure/);
@@ -127,6 +131,8 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-release/);
   assert.match(scheduler, /resource: merge:main/);
   assert.deepEqual(policy.releaseClosures.merge.patterns, ["**"]);
+  assert.match(policy.resourceClasses.mutate, /^\^mutate:/);
+  assert.equal(policy.admission.coordinationPlane, "global");
 });
 
 test("native mini-PC mutations use the common coordinator and detached closure proof", () => {

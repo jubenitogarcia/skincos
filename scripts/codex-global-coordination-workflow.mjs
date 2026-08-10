@@ -146,6 +146,9 @@ export function buildWorkflowLeaseRequest({
     sourceCommit: closure.sourceCommit,
     sourceTree: closure.sourceTree,
     dependencyClosureDigest: closure.digest,
+    dependencyClosurePaths: closure.dependencyClosurePaths || closure.inputs.map((entry) => entry.path),
+    dependencyClosurePatterns: closure.dependencyClosurePatterns || [],
+    dependencyClosureSharedInputs: closure.dependencyClosureSharedInputs === true,
     ...(inputs ? { inputs } : {}),
     ...(["release", "promotion"].includes(normalizedOperation)
       ? { releaseIdentity }

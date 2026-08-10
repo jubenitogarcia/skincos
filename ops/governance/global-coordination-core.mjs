@@ -4,6 +4,11 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const OWNER_PROVIDER = new Set(["codex", "github", "cloudflare", "mini-pc", "system"]);
 const ACTIVE_STATES = new Set(["held"]);
 const TERMINAL_STATES = new Set(["released", "revoked", "expired"]);
+const RESOURCE_KINDS = new Set(["merge", "release", "deploy", "mutate", "cloudflare", "promotion", "global"]);
+const ENVIRONMENTS = new Set(["preview", "staging", "pilot", "canary", "production", "rollback", "local"]);
+// Release closures can legitimately contain several hundred tracked inputs.
+// Keep the admission payload bounded without truncating a verified closure.
+const MAX_RESOURCE_LIST_ITEMS = 4096;
 
 export const CONTRACT_ID = "skincos/global-coordination/v1";
 export const SCHEMA_VERSION = 1;
@@ -33,7 +38,7 @@ export function resourceClass(resource) {
   if (!normalized || normalized.includes(" ") || normalized.includes("\\")) throw new Error("resource key is invalid");
   const separator = normalized.indexOf(":");
   const kind = separator > 0 ? normalized.slice(0, separator) : "";
-  if (!["merge", "release", "deploy", "cloudflare", "promotion", "global"].includes(kind)) {
+  if (!RESOURCE_KINDS.has(kind)) {
     throw new Error("resource class is unsupported");
   }
   const parts = normalized.split(":");
@@ -42,7 +47,7 @@ export function resourceClass(resource) {
     return kind;
   }
   if (parts.length !== 3 || !/^[a-z0-9][a-z0-9._/-]{0,127}$/.test(parts[1])) throw new Error("resource key is invalid");
-  if (!["preview", "staging", "pilot", "canary", "production", "rollback", "local"].includes(parts[2])) throw new Error("resource environment is invalid");
+  if (!ENVIRONMENTS.has(parts[2])) throw new Error("resource environment is invalid");
   return kind;
 }
 
@@ -58,7 +63,7 @@ export function lockScopeFor(resource) {
   if (kind === "merge") return `repository:${name}`;
   if (kind === "release") return `release:${name}`;
   if (kind === "global") return `global:${name}`;
-  if (kind === "deploy" || kind === "cloudflare") return `surface:${name}:${environment}`;
+  if (kind === "deploy" || kind === "mutate" || kind === "cloudflare") return `surface:${name}:${environment}`;
   return `promotion:${name}:${environment}`;
 }
 
@@ -70,10 +75,22 @@ export function normalizeOwner(owner) {
     provider,
     missionId: requireId(owner.missionId, "lease owner missionId"),
     threadId: requireId(owner.threadId, "lease owner threadId"),
+    sessionId: requireId(owner.sessionId || owner.threadId, "lease owner sessionId"),
     actor: requireId(owner.actor, "lease owner actor"),
   };
   if (owner.runId !== undefined && owner.runId !== null && text(owner.runId)) normalized.runId = requireId(owner.runId, "lease owner runId");
+  if (owner.workflow !== undefined && owner.workflow !== null && text(owner.workflow)) normalized.workflow = requireId(owner.workflow, "lease owner workflow");
   return normalized;
+}
+
+function normalizeStringList(value, label) {
+  if (!Array.isArray(value) || value.length > MAX_RESOURCE_LIST_ITEMS) throw new Error(`${label} must be a bounded array`);
+  const normalized = value.map((entry) => {
+    const item = text(entry).replaceAll("\\", "/");
+    if (!item || item.length > 512) throw new Error(`${label} contains an invalid item`);
+    return item;
+  });
+  return [...new Set(normalized)].sort();
 }
 
 export function normalizeArtifacts(artifacts = []) {
@@ -125,6 +142,12 @@ export function normalizeIntent(intent, { operation = "mutation" } = {}) {
   if (normalized.dependencyClosureDigest !== undefined) {
     normalized.dependencyClosureDigest = lower(normalized.dependencyClosureDigest);
     if (!DIGEST.test(normalized.dependencyClosureDigest)) throw new Error("intent dependency closure digest is invalid");
+  }
+  if (normalized.dependencyClosurePaths !== undefined) {
+    normalized.dependencyClosurePaths = normalizeStringList(normalized.dependencyClosurePaths, "intent dependency closure paths");
+  }
+  if (normalized.dependencyClosurePatterns !== undefined) {
+    normalized.dependencyClosurePatterns = normalizeStringList(normalized.dependencyClosurePatterns, "intent dependency closure patterns");
   }
   return normalized;
 }
@@ -184,8 +207,162 @@ function expireCurrent(state, scope, now) {
   if (current && current.state === "held" && current.expiresAt <= now) {
     current.state = "expired";
     current.expiredAt = now;
+    current.updatedAt = now;
   }
   return current;
+}
+
+function expireLeases(state, now) {
+  for (const scope of Object.keys(state.leases)) expireCurrent(state, scope, now);
+  return state;
+}
+
+function globMatch(value, pattern) {
+  const memo = new Map();
+  function match(valueIndex, patternIndex) {
+    const key = `${valueIndex}:${patternIndex}`;
+    if (memo.has(key)) return memo.get(key);
+    let result;
+    if (patternIndex === pattern.length) {
+      result = valueIndex === value.length;
+    } else if (pattern[patternIndex] === "*" && pattern[patternIndex + 1] === "*") {
+      const afterGlob = patternIndex + 2 + (pattern[patternIndex + 2] === "/" ? 1 : 0);
+      result = match(valueIndex, afterGlob)
+        || (valueIndex < value.length && match(valueIndex + 1, patternIndex));
+    } else if (pattern[patternIndex] === "*") {
+      result = match(valueIndex, patternIndex + 1)
+        || (valueIndex < value.length && value[valueIndex] !== "/" && match(valueIndex + 1, patternIndex));
+    } else if (pattern[patternIndex] === "?") {
+      result = valueIndex < value.length && value[valueIndex] !== "/" && match(valueIndex + 1, patternIndex + 1);
+    } else {
+      result = valueIndex < value.length
+        && value[valueIndex] === pattern[patternIndex]
+        && match(valueIndex + 1, patternIndex + 1);
+    }
+    memo.set(key, result);
+    return result;
+  }
+  return match(0, 0);
+}
+
+function changedPathsFor(intent) {
+  const value = intent?.inputs?.changedPaths ?? intent?.changedPaths;
+  if (!Array.isArray(value)) return null;
+  return normalizeStringList(value, "merge changed paths");
+}
+
+function releaseClosureFor(lease) {
+  const patterns = lease?.intent?.dependencyClosurePatterns;
+  if (Array.isArray(patterns) && patterns.length) return normalizeStringList(patterns, "lease dependency closure patterns");
+  const paths = lease?.intent?.dependencyClosurePaths;
+  if (Array.isArray(paths) && paths.length) return normalizeStringList(paths, "lease dependency closure paths");
+  return null;
+}
+
+function pathsOverlap(changedPaths, closurePatterns) {
+  if (!Array.isArray(changedPaths) || !changedPaths.length || !Array.isArray(closurePatterns) || !closurePatterns.length) return null;
+  return changedPaths.some((changedPath) => closurePatterns.some((pattern) => globMatch(changedPath, pattern)));
+}
+
+function holderSummary(lease) {
+  return {
+    provider: lease.owner.provider,
+    missionId: lease.owner.missionId,
+    threadId: lease.owner.threadId,
+    sessionId: lease.owner.sessionId,
+    actor: lease.owner.actor,
+    ...(lease.owner.runId ? { runId: lease.owner.runId } : {}),
+    ...(lease.owner.workflow ? { workflow: lease.owner.workflow } : {}),
+  };
+}
+
+function leaseProofMatches(lease, proof) {
+  return Boolean(
+    lease
+      && proof
+      && lease.leaseId === proof.leaseId
+      && lease.fencingToken === proof.fencingToken
+      && lease.intentDigest === lower(proof.intentDigest)
+      && canonicalJson(normalizeOwner(lease.owner)) === canonicalJson(normalizeOwner(proof.owner)),
+  );
+}
+
+function intentResourceKind(intent) {
+  return resourceClass(intent.resource);
+}
+
+function conflictForIntent(state, candidateIntent, { now, ignoreScope = null } = {}) {
+  const next = stateOrEmpty(state);
+  assertTime(now);
+  expireLeases(next, now);
+  const candidateKind = intentResourceKind(candidateIntent);
+  const candidateScope = candidateIntent.lockScope;
+  const candidateChangedPaths = changedPathsFor(candidateIntent.intent);
+  for (const lease of Object.values(next.leases)) {
+    if (!lease || lease.state !== "held" || lease.lockScope === ignoreScope) continue;
+    if (lease.lockScope === candidateScope) {
+      return {
+        conflict: true,
+        failClosed: false,
+        reason: "resource-lease-held",
+        resource: candidateIntent.resource,
+        lockScope: candidateScope,
+        holder: holderSummary(lease),
+        state: next,
+      };
+    }
+    const leaseKind = intentResourceKind(lease);
+    const mergeReleasePair = (candidateKind === "merge" && leaseKind === "release")
+      || (candidateKind === "release" && leaseKind === "merge");
+    if (!mergeReleasePair) continue;
+    const mergeLease = candidateKind === "merge" ? candidateIntent : lease;
+    const changedPaths = candidateKind === "merge" ? candidateChangedPaths : changedPathsFor(mergeLease.intent);
+    const closurePatterns = candidateKind === "release"
+      ? releaseClosureFor(candidateIntent)
+      : releaseClosureFor(lease);
+    const overlap = pathsOverlap(changedPaths, closurePatterns);
+    if (overlap === null) {
+      return {
+        conflict: true,
+        failClosed: true,
+        reason: "coordination-dependency-closure-ambiguous",
+        resource: candidateIntent.resource,
+        lockScope: candidateScope,
+        holder: holderSummary(lease),
+        state: next,
+      };
+    }
+    if (overlap) {
+      return {
+        conflict: true,
+        failClosed: false,
+        reason: "incompatible-release-lease",
+        resource: candidateIntent.resource,
+        lockScope: candidateScope,
+        conflictingResource: lease.resource,
+        holder: holderSummary(lease),
+        state: next,
+      };
+    }
+    // A documented disjoint closure is compatible with this release. Keep
+    // checking other active leases before admitting the candidate.
+  }
+  return { conflict: false, failClosed: false, reason: "coordination-admission-allowed", state: next };
+}
+
+export function evaluateLeaseAdmission(state, request, { now } = {}) {
+  const intent = buildIntent(request);
+  const result = conflictForIntent(state, intent, { now });
+  return {
+    allowed: !result.conflict,
+    failClosed: result.failClosed,
+    reason: result.reason,
+    ...(result.resource ? { resource: result.resource } : {}),
+    ...(result.lockScope ? { lockScope: result.lockScope } : {}),
+    ...(result.conflictingResource ? { conflictingResource: result.conflictingResource } : {}),
+    ...(result.holder ? { holder: result.holder } : {}),
+    state: result.state,
+  };
 }
 
 export function consumeNonce(state, { nonce, digest, now, ttlMs = 900_000 }) {
@@ -216,7 +393,7 @@ export function acquireLease(state, request, { now, leaseId }) {
   if (current?.state === "held") {
     if (
       current.idempotencyKey === intent.idempotencyKey
-      && canonicalJson(current.owner) === canonicalJson(intent.owner)
+      && canonicalJson(normalizeOwner(current.owner)) === canonicalJson(normalizeOwner(intent.owner))
       && current.intentDigest === intentDigest
     ) return { accepted: true, idempotent: true, lease: clone(current), state: next };
     return {
@@ -224,8 +401,21 @@ export function acquireLease(state, request, { now, leaseId }) {
       reason: "resource-lease-held",
       resource: intent.resource,
       lockScope: scope,
-      holder: { provider: current.owner.provider, missionId: current.owner.missionId, threadId: current.owner.threadId },
+      holder: holderSummary(current),
       state: next,
+    };
+  }
+  const admission = conflictForIntent(next, intent, { now, ignoreScope: scope });
+  if (admission.conflict) {
+    return {
+      accepted: false,
+      reason: admission.reason,
+      failClosed: admission.failClosed,
+      resource: intent.resource,
+      lockScope: scope,
+      ...(admission.conflictingResource ? { conflictingResource: admission.conflictingResource } : {}),
+      ...(admission.holder ? { holder: admission.holder } : {}),
+      state: admission.state,
     };
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,199}$/.test(String(leaseId || ""))) throw new Error("leaseId is invalid");
@@ -243,7 +433,11 @@ export function acquireLease(state, request, { now, leaseId }) {
     intentDigest,
     intent: intent.intent,
     state: "held",
+    holder: holderSummary({ owner: intent.owner }),
     acquiredAt: now,
+    updatedAt: now,
+    heartbeatAt: now,
+    ttlMs,
     expiresAt: now + ttlMs,
   };
   next.leases[scope] = lease;
@@ -260,7 +454,7 @@ function matchingLease(state, proof, now) {
     current.leaseId !== proof.leaseId
     || current.fencingToken !== proof.fencingToken
     || current.intentDigest !== lower(proof.intentDigest)
-    || canonicalJson(current.owner) !== canonicalJson(normalizeOwner(proof.owner))
+    || canonicalJson(normalizeOwner(current.owner)) !== canonicalJson(normalizeOwner(proof.owner))
   ) return { valid: false, reason: "lease-fence-mismatch", state: next };
   return { valid: true, lease: clone(current), state: next };
 }
@@ -275,23 +469,40 @@ export function renewLease(state, proof, { now, ttlMs }) {
   assertTtl(ttlMs);
   result.lease.expiresAt = now + ttlMs;
   result.lease.renewedAt = now;
+  result.lease.updatedAt = now;
+  result.lease.heartbeatAt = now;
+  result.lease.ttlMs = ttlMs;
   result.state.leases[result.lease.lockScope] = result.lease;
   return { ...result, renewed: true };
 }
 
 export function releaseLease(state, proof, { now }) {
+  const next = stateOrEmpty(state);
+  assertTime(now);
+  const scope = lockScopeFor(proof?.resource || "");
+  const current = expireCurrent(next, scope, now);
+  if (current?.state === "released" && leaseProofMatches(current, proof)) {
+    return { valid: true, released: true, idempotent: true, lease: clone(current), state: next };
+  }
   const result = matchingLease(state, proof, now);
   if (!result.valid) return result;
-  const released = { ...result.lease, state: "released", releasedAt: now };
+  const released = { ...result.lease, state: "released", releasedAt: now, updatedAt: now };
   result.state.leases[released.lockScope] = released;
   return { valid: true, released: true, lease: clone(released), state: result.state };
 }
 
 export function revokeLease(state, proof, { now, reason }) {
+  const next = stateOrEmpty(state);
+  assertTime(now);
+  const scope = lockScopeFor(proof?.resource || "");
+  const current = expireCurrent(next, scope, now);
+  if (current?.state === "revoked" && leaseProofMatches(current, proof)) {
+    return { valid: true, revoked: true, idempotent: true, lease: clone(current), state: next };
+  }
   const result = matchingLease(state, proof, now);
   if (!result.valid) return result;
   const revokeReason = requireId(reason, "lease revocation reason");
-  const revoked = { ...result.lease, state: "revoked", revokedAt: now, revocationReason: revokeReason };
+  const revoked = { ...result.lease, state: "revoked", revokedAt: now, updatedAt: now, revocationReason: revokeReason };
   result.state.leases[revoked.lockScope] = revoked;
   return { valid: true, revoked: true, lease: clone(revoked), state: result.state };
 }

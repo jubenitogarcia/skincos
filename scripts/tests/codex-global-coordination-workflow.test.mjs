@@ -20,6 +20,7 @@ test("workflow adapter binds the lease to source closure, owner, and selected re
   assert.equal(request.intent.sourceCommit, closure.sourceCommit);
   assert.equal(request.intent.sourceTree, closure.sourceTree);
   assert.equal(request.intent.dependencyClosureDigest, closure.digest);
+  assert.ok(request.intent.dependencyClosurePatterns.length > 0);
   assert.equal(request.owner.provider, "github");
   assert.match(request.intentDigest, /^[0-9a-f]{64}$/);
 });

@@ -7,6 +7,7 @@ import {
   checkLease,
   consumeNonce,
   emptyState,
+  evaluateLeaseAdmission,
   lockScopeFor,
   releaseLease,
   renewLease,
@@ -72,7 +73,7 @@ async function authenticatedBody(request, env, url, rawBody) {
     || body.contractId !== CONTRACT_ID
     || body.requestNonce !== nonce
     || body.requestedAt !== requestedAt
-    || !["acquire", "check", "renew", "release", "revoke"].includes(body.action)
+    || !["acquire", "gate", "check", "renew", "release", "revoke"].includes(body.action)
   ) throw new Error("coordination request envelope is invalid");
   if (body.action === "revoke" && request.headers.get("authorization") !== `Bearer ${env.COORDINATION_ADMIN_SECRET || ""}`) throw new Error("coordination revocation authority is unavailable");
   return { body, nonce, requestDigest };
@@ -106,6 +107,7 @@ export class GlobalCoordinator extends DurableObject {
     if (!nonce.accepted) return { accepted: false, valid: false, reason: nonce.reason };
     let result;
     if (input.action === "acquire") result = acquireLease(nonce.state, input.request, { now: input.now, leaseId: input.leaseId });
+    else if (input.action === "gate") result = evaluateLeaseAdmission(nonce.state, input.request, { now: input.now });
     else if (input.action === "check") {
       result = input.authorization
         ? authorizeMutation(nonce.state, input.request, { now: input.now, ...input.authorization })
@@ -137,29 +139,35 @@ export default {
     const { body, nonce, requestDigest } = authenticated;
     let resource;
     try {
-      resource = body.action === "revoke" ? body.proof?.resource : body.action === "acquire" ? body.request?.resource : body.proof?.resource;
-      const scope = lockScopeFor(resource);
-      if (body.action === "acquire") {
+      resource = ["acquire", "gate"].includes(body.action) ? body.request?.resource : body.proof?.resource;
+      lockScopeFor(resource);
+      if (["acquire", "gate"].includes(body.action)) {
         const normalizedIntent = buildIntent(body.request);
         const expectedDigest = await sha256(canonicalJson(normalizedIntent));
         if (body.request.intentDigest !== expectedDigest) return bad("coordination intent digest mismatch", 403);
       }
-      const stub = env.GLOBAL_COORDINATOR.getByName(scope);
+      // One globally named Durable Object is the coordination plane. The
+      // logical lockScope remains part of the lease and fencing proof, while
+      // one serialized state machine can arbitrate cross-resource conflicts
+      // such as merge:main versus release:<module>.
+      const stub = env.GLOBAL_COORDINATOR.getByName(env.COORDINATION_PLANE_NAME || "global");
       const result = stub.coordinate({
         action: body.action,
         nonce,
         requestDigest,
         now: Date.now(),
         leaseId: crypto.randomUUID(),
-        request: body.action === "acquire" ? body.request : undefined,
-        ...(body.action !== "acquire" ? { request: body.proof } : {}),
+         request: ["acquire", "gate"].includes(body.action) ? body.request : body.proof,
         authorization: body.authorization,
         ttlMs: body.ttlMs,
         reason: body.reason,
       });
       const resolved = await result;
-      const payload = await signResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed: resolved.accepted !== false && resolved.valid !== false, ...resolved }, env.COORDINATION_SHARED_SECRET);
-      const status = resolved.accepted === false && resolved.reason === "resource-lease-held" ? 409 : resolved.valid === false ? 409 : resolved.accepted === false ? 409 : 200;
+      const passed = body.action === "gate"
+        ? resolved.allowed === true
+        : resolved.accepted !== false && resolved.valid !== false;
+      const payload = await signResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed, ...resolved }, env.COORDINATION_SHARED_SECRET);
+      const status = resolved.allowed === false || resolved.accepted === false || resolved.valid === false ? 409 : 200;
       return jsonResponse(payload, status);
     } catch {
       return bad("coordination request could not be processed", 400);

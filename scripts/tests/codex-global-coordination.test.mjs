@@ -12,6 +12,7 @@ import {
   dependencyClosureFromTree,
   dependencyClosureForSource,
   emptyState,
+  evaluateLeaseAdmission,
   loadGlobalPolicy,
   lockScopeFor,
   normalizeResourceKey,
@@ -49,6 +50,8 @@ test("resource keys normalize and shared surface scopes collide across deploy an
   assert.equal(lockScopeFor("cloudflare:website:staging"), "surface:website:staging");
   assert.equal(lockScopeFor("release:website"), "release:website");
   assert.equal(lockScopeFor("merge:main"), "repository:main");
+  assert.equal(normalizeResourceKey("MUTATE:Website:Staging"), "mutate:website:staging");
+  assert.equal(lockScopeFor("mutate:website:staging"), "surface:website:staging");
   assert.throws(() => normalizeResourceKey("deploy:website:unknown"), /resource environment is invalid/);
   assert.throws(() => normalizeResourceKey("surface:website:staging"), /resource class is unsupported/);
 });
@@ -189,7 +192,85 @@ test("renewal and nonce replay are explicit state transitions", () => {
   const replay = consumeNonce(firstNonce.state, { nonce: "nonce-0000000000000001", digest: digest("a"), now: 20_001, ttlMs: 60_000 });
   assert.equal(replay.accepted, false);
   assert.equal(replay.reason, "request-nonce-replayed");
+  assert.equal(renewed.lease.updatedAt, 20_000);
+  assert.equal(renewed.lease.heartbeatAt, 20_000);
   assert.equal(fs.existsSync(new URL("../../ops/governance/global-concurrency-policy.json", import.meta.url)), true);
+});
+
+test("global admission allows an unrelated merge while fencing a closure-overlapping merge", () => {
+  const releaseRequest = buildLeaseRequest({
+    operation: "mutation",
+    resource: "release:website",
+    owner,
+    idempotencyKey: "release-website-1",
+    ttlMs: 60_000,
+    intent: {
+      module: "website",
+      dependencyClosureDigest: digest("c"),
+      dependencyClosurePatterns: ["website/**", "package.json"],
+      dependencyClosurePaths: ["website/src/index.ts", "package.json"],
+    },
+  });
+  const held = acquireLease(emptyState(), releaseRequest, { now: 1_000, leaseId: "lease-0000000000000011" });
+  assert.equal(held.accepted, true);
+
+  const unrelated = buildLeaseRequest({
+    operation: "mutation",
+    resource: "merge:main",
+    owner: { ...owner, threadId: "merge-thread" },
+    idempotencyKey: "merge-unrelated-1",
+    ttlMs: 60_000,
+    intent: { module: "merge", dependencyClosureDigest: digest("d"), inputs: { changedPaths: ["docs/readme.md"] } },
+  });
+  const allowed = evaluateLeaseAdmission(held.state, unrelated, { now: 2_000 });
+  assert.equal(allowed.allowed, true);
+  const acquired = acquireLease(held.state, unrelated, { now: 2_000, leaseId: "lease-0000000000000012" });
+  assert.equal(acquired.accepted, true);
+
+  const relevant = buildLeaseRequest({
+    ...unrelated,
+    idempotencyKey: "merge-relevant-1",
+    intent: { module: "merge", dependencyClosureDigest: digest("d"), inputs: { changedPaths: ["website/src/index.ts"] } },
+  });
+  const blocked = evaluateLeaseAdmission(held.state, relevant, { now: 2_000 });
+  assert.equal(blocked.allowed, false);
+  assert.equal(blocked.reason, "incompatible-release-lease");
+});
+
+test("ambiguous cross-scope admission fails closed and release retries are idempotent", () => {
+  const held = acquireLease(emptyState(), buildLeaseRequest({
+    operation: "mutation",
+    resource: "release:website",
+    owner,
+    idempotencyKey: "release-retry",
+    ttlMs: 60_000,
+    intent: { module: "website", dependencyClosureDigest: digest("c") },
+  }), { now: 1_000, leaseId: "lease-0000000000000013" });
+  const merge = buildLeaseRequest({
+    operation: "mutation",
+    resource: "merge:main",
+    owner: { ...owner, threadId: "merge-ambiguous" },
+    idempotencyKey: "merge-ambiguous-1",
+    ttlMs: 60_000,
+    intent: { module: "merge", dependencyClosureDigest: digest("d") },
+  });
+  const ambiguous = evaluateLeaseAdmission(held.state, merge, { now: 2_000 });
+  assert.equal(ambiguous.allowed, false);
+  assert.equal(ambiguous.failClosed, true);
+  assert.equal(ambiguous.reason, "coordination-dependency-closure-ambiguous");
+
+  const proof = {
+    resource: held.lease.resource,
+    leaseId: held.lease.leaseId,
+    fencingToken: held.lease.fencingToken,
+    intentDigest: held.lease.intentDigest,
+    owner: held.lease.owner,
+  };
+  const first = releaseLease(held.state, proof, { now: 3_000 });
+  const retry = releaseLease(first.state, proof, { now: 3_001 });
+  assert.equal(first.released, true);
+  assert.equal(retry.released, true);
+  assert.equal(retry.idempotent, true);
 });
 
 test("the policy and current Ponto source produce a deterministic dependency closure", () => {

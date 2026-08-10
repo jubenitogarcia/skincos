@@ -14,6 +14,7 @@ import {
   compareDependencyClosure,
   CONTRACT_ID,
   emptyState,
+  evaluateLeaseAdmission,
   lockScopeFor,
   normalizeReleaseIdentity,
   normalizeResourceKey,
@@ -24,7 +25,7 @@ import {
 } from "../ops/governance/global-coordination-core.mjs";
 import { matchesAny } from "./codex-autonomy-lib.mjs";
 
-export { acquireLease, authorizeMutation, buildIntent, canonicalJson, checkLease, compareDependencyClosure, emptyState, lockScopeFor, normalizeReleaseIdentity, normalizeResourceKey, releaseLease, renewLease, revokeLease, consumeNonce };
+export { acquireLease, authorizeMutation, buildIntent, canonicalJson, checkLease, compareDependencyClosure, emptyState, evaluateLeaseAdmission, lockScopeFor, normalizeReleaseIdentity, normalizeResourceKey, releaseLease, renewLease, revokeLease, consumeNonce };
 export { CONTRACT_ID };
 
 export const ROOT = path.resolve(import.meta.dirname, "..");
@@ -88,6 +89,9 @@ export function dependencyClosureFromTree({ module, sourceCommit, sourceTree, en
     sourceCommit: sourceCommit.toLowerCase(),
     sourceTree: sourceTree.toLowerCase(),
     inputs,
+    dependencyClosurePaths: inputs.map((entry) => entry.path),
+    dependencyClosurePatterns: [...(closure.patterns || [])],
+    dependencyClosureSharedInputs: closure.sharedInputs === true,
     digest: sha256(canonicalJson(material)),
     material,
   };

@@ -16,6 +16,7 @@
     "merge": "^merge:[a-z0-9][a-z0-9._/-]{0,127}$",
     "release": "^release:[a-z0-9][a-z0-9._/-]{0,127}$",
     "deploy": "^deploy:[a-z0-9][a-z0-9._/-]{0,127}:(?:preview|staging|pilot|canary|production|rollback|local)$",
+    "mutate": "^mutate:[a-z0-9][a-z0-9._/-]{0,127}:(?:preview|staging|pilot|canary|production|rollback|local)$",
     "cloudflare": "^cloudflare:[a-z0-9][a-z0-9._/-]{0,127}:(?:preview|staging|pilot|canary|production|rollback|local)$",
     "promotion": "^promotion:[a-z0-9][a-z0-9._/-]{0,127}:(?:preview|staging|pilot|canary|production|rollback|local)$",
     "global": "^global:[a-z0-9][a-z0-9._/-]{0,127}$"
@@ -159,7 +160,13 @@
   "adapters": {
     "codex": "private state adapter must use the same transition contract and fail closed on an unknown lock",
     "github": "Actions concurrency is a scheduling hint; mutation authority requires a lease proof",
-    "cloudflare": "one SQLite-backed Durable Object instance per lock scope",
+    "cloudflare": "one globally named SQLite-backed Durable Object coordination plane; logical lock scopes remain fenced in state",
     "mini-pc": "runtime client must present the lease proof before a service or workflow mutation"
+  },
+  "admission": {
+    "crossScope": "merge:main conflicts with an active release lease only when changed paths intersect the release dependency closure",
+    "unknownClosure": "missing merge paths or release closure patterns fail closed",
+    "surfaceAliases": ["deploy", "mutate", "cloudflare"],
+    "coordinationPlane": "global"
   }
 }
