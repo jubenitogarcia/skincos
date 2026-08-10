@@ -247,6 +247,60 @@ function teamUnitsVisible(auth, units) {
   return actorUnits.length > 0 && targetUnits.length > 0 && targetUnits.every((unit) => actorUnits.includes(unit));
 }
 
+function parseTeamPage(value, fallback = 1) {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, 10000);
+}
+
+function parseTeamPageSize(value, fallback = 50) {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, 100);
+}
+
+function teamListSqlFilters(auth, requestedStatus, query) {
+  const clauses = [];
+  const params = [];
+  if (requestedStatus === 'ACTIVE') {
+    clauses.push(`AND o.account_status IN ('INVITED', 'ACTIVE')`);
+  } else if (requestedStatus !== 'ALL') {
+    clauses.push('AND o.account_status = ?');
+    params.push(requestedStatus);
+  }
+
+  if (normalizeRole(auth?.user?.role) !== 'ADMIN') {
+    const actorUnits = normalizeAllowedUnits(auth?.user?.allowedUnits);
+    if (!actorUnits.length) {
+      clauses.push('AND 0=1');
+    } else {
+      clauses.push(`AND json_valid(o.units_json)=1
+        AND json_array_length(o.units_json)>0
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(o.units_json) AS target_unit
+          WHERE lower(CAST(target_unit.value AS TEXT)) NOT IN (${actorUnits.map(() => '?').join(', ')})
+        )`);
+      params.push(...actorUnits);
+    }
+  }
+
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  if (normalizedQuery) {
+    const like = `%${normalizedQuery}%`;
+    clauses.push(`AND (
+      lower(COALESCE(o.full_name, '')) LIKE ?
+      OR lower(COALESCE(o.requested_username, '')) LIKE ?
+      OR lower(COALESCE(o.corporate_email, '')) LIKE ?
+      OR lower(COALESCE(o.department_name, '')) LIKE ?
+      OR lower(COALESCE(o.job_title, '')) LIKE ?
+      OR lower(COALESCE(t.schedule_role, '')) LIKE ?
+      OR lower(COALESCE(o.units_json, '')) LIKE ?
+    )`);
+    params.push(like, like, like, like, like, like, like);
+  }
+  return { clauses, params };
+}
+
 function teamPendingItems(rows) {
   const items = [];
   for (const row of rows || []) {
@@ -1787,16 +1841,29 @@ export async function handleAdminRoutes({
     try {
       const requestedStatus = String(url.searchParams.get('status') || 'active').trim().toUpperCase();
       const query = String(url.searchParams.get('q') || '').trim().toLowerCase();
-      const statusClause = requestedStatus === 'ALL'
-        ? ''
-        : requestedStatus === 'ACTIVE'
-          ? `AND o.account_status IN ('INVITED', 'ACTIVE')`
-          : `AND o.account_status = ?`;
-      const params = requestedStatus === 'ALL' || requestedStatus === 'ACTIVE' ? [] : [requestedStatus];
-      const rows = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.units_json AS schedule_units_json, a.id AS crm_account_link_id, a.crm_username AS crm_account_username, a.review_status AS crm_account_review_status
-        FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id
+      const page = parseTeamPage(url.searchParams.get('page'));
+      const limit = parseTeamPageSize(url.searchParams.get('limit'));
+      const filters = teamListSqlFilters(auth, requestedStatus, query);
+      const fromSql = `FROM crm_employee_onboarding o
+        LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id
         LEFT JOIN crm_employee_account_links a ON a.onboarding_id=o.id
-        WHERE 1=1 ${statusClause} ORDER BY o.created_at DESC LIMIT 500`).bind(...params).all();
+        WHERE 1=1 ${filters.clauses.join(' ')}`;
+      const summaryRow = await env.DB.prepare(`SELECT
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN o.account_status='INVITED' THEN 1 ELSE 0 END), 0) AS pending_invites,
+        COALESCE(SUM(CASE WHEN o.provisioning_state IN ('PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED') THEN 1 ELSE 0 END), 0) AS pending_provisioning,
+        COALESCE(SUM(CASE WHEN o.account_status IN ('ACTIVE', 'SUSPENDED', 'TERMINATED')
+          AND NOT (UPPER(COALESCE(a.review_status, ''))='CONFIRMED' AND TRIM(COALESCE(a.crm_username, '')) <> '')
+          THEN 1 ELSE 0 END), 0) AS pending_account_links,
+        COALESCE(SUM((SELECT COUNT(*) FROM crm_employee_identity_links l
+          WHERE l.workforce_employee_id=o.workforce_employee_id AND l.review_status='PENDING_REVIEW')), 0) AS pending_links
+        ${fromSql}`).bind(...filters.params).first();
+      const total = Number(summaryRow?.total || 0);
+      const pages = Math.max(1, Math.ceil(total / limit));
+      const effectivePage = Math.min(page, pages);
+      const offset = (effectivePage - 1) * limit;
+      const rows = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json, a.id AS crm_account_link_id, a.crm_username AS crm_account_username, a.review_status AS crm_account_review_status
+        ${fromSql} ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?`).bind(...filters.params, limit, offset).all();
       const visible = (rows?.results || [])
         .filter((row) => teamUnitsVisible(auth, row.units_json))
         .filter((row) => !query || [row.full_name, row.requested_username, row.corporate_email, row.department_name, row.job_title, ...normalizeAllowedUnits(row.units_json)]
@@ -1812,10 +1879,18 @@ export async function handleAdminRoutes({
         list.push(publicIdentityLink(link));
         linksByEmployee.set(key, list);
       }
-      const operations = await env.DB.prepare(`SELECT operation_key, operation_type, member_ids_json, result_json, created_at
-        FROM crm_team_operations
-        WHERE operation_type='ESCALA_SYNC'
-        ORDER BY created_at DESC LIMIT 2000`).all();
+      const onboardingIds = visible.map((row) => String(row.id || '').trim()).filter(Boolean);
+      const operations = onboardingIds.length
+        ? await env.DB.prepare(`SELECT operation_key, operation_type, member_ids_json, result_json, created_at
+          FROM crm_team_operations
+          WHERE operation_type='ESCALA_SYNC'
+            AND json_valid(member_ids_json)=1
+            AND EXISTS (
+              SELECT 1 FROM json_each(member_ids_json) AS member_id
+              WHERE member_id.value IN (${onboardingIds.map(() => '?').join(', ')})
+            )
+          ORDER BY created_at DESC LIMIT ?`).bind(...onboardingIds, Math.min(onboardingIds.length * 10, 1000)).all()
+        : { results: [] };
       const latestScheduleSync = latestScheduleSyncByMember(operations?.results || []);
       const data = visible.map((row) => publicTeamMember(
         row,
@@ -1831,7 +1906,18 @@ export async function handleAdminRoutes({
         data,
         activeOnly: requestedStatus !== 'ALL',
         status: requestedStatus,
-        summary: { members: data.length, pendingLinks, pendingProvisioning, pendingInvites, pendingAccountLinks },
+        pagination: { page: effectivePage, limit, total, pages, hasMore: effectivePage < pages },
+        summary: {
+          members: total,
+          pendingLinks: Number(summaryRow?.pending_links || 0),
+          pendingProvisioning: Number(summaryRow?.pending_provisioning || 0),
+          pendingInvites: Number(summaryRow?.pending_invites || 0),
+          pendingAccountLinks: Number(summaryRow?.pending_account_links || 0),
+          pagePendingLinks: pendingLinks,
+          pagePendingProvisioning: pendingProvisioning,
+          pagePendingInvites: pendingInvites,
+          pagePendingAccountLinks: pendingAccountLinks,
+        },
         pendingItems: teamPendingItems(data),
       }), { status: 200 }, appOrigin);
     } catch {

@@ -21,6 +21,17 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByRole('table').getByText('Ana Ribeiro', { exact: true })).toHaveCount(0)
   })
 
+  test('navigates a server-paginated roster without losing the total count', async ({ page }) => {
+    await mockUsersApi(page, 'GESTOR', { paginated: true })
+    await page.goto('/?module=users')
+    await expect(page.getByRole('navigation', { name: 'Paginação da equipe' })).toBeVisible()
+    await expect(page.getByText('Página 1 de 2', { exact: true })).toBeVisible()
+    await expect(page.getByText('Exibindo 1–50 de 54', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Próxima página' }).click()
+    await expect(page.getByText('Página 2 de 2', { exact: true })).toBeVisible()
+    await expect(page.getByText('Exibindo 51–54 de 54', { exact: true })).toBeVisible()
+  })
+
   test('keeps identity, operation, invite and read-only editing in one auditable flow', async ({ page }) => {
     await mockUsersApi(page)
     await page.goto('/?module=users')
