@@ -224,6 +224,8 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   const integrationGate = read(".github/workflows/skincos-integration-gate.yml");
   assert.match(integrationGate, /pull_request_target/);
   assert.match(integrationGate, /ref: main/);
+  assert.match(integrationGate, /SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY/);
+  assert.match(integrationGate, /SKINCOS_GLOBAL_COORDINATION_KEY_ID/);
   assert.match(integrationGate, /Fetch the exact PR base tree used for closure admission/);
   assert.doesNotMatch(integrationGate, /ref: \$\{\{ github\.event\.pull_request\./);
   const integrationRecheck = read(".github/workflows/skincos-integration-gate-recheck.yml");

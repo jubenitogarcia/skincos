@@ -5,6 +5,7 @@ import {
   acquireGlobalLease,
   buildLegacyLeaseRequest,
   checkGlobalLease,
+  coordinationActiveSecret,
   probeCoordinatorProtocol,
   proofForLease,
   releaseGlobalLease,
@@ -126,7 +127,9 @@ async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, m
     throw new Error("SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true for merge:main");
   }
   const url = requiredEnv("SKINCOS_GLOBAL_COORDINATOR_URL");
-  requiredEnv("SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET");
+  if (!coordinationActiveSecret()) {
+    throw new Error("SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET or a pinned active coordination key is required");
+  }
   if (!MERGE_METHODS.has(mergeMethod)) throw new Error(`unsupported merge method: ${mergeMethod}`);
   const candidate = await loadMergeCandidate({ repository, pullNumber, expectedHeadSha });
   const initial = candidate.pull;
