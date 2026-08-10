@@ -9,10 +9,11 @@ const FINANCE_PROBE_TIMEOUT_MS = 3_000;
 const FINANCE_READ_TIMEOUT_MS = 3_000;
 const FINANCE_WRITE_TIMEOUT_MS = 5_000;
 // Inventory's authenticated routes traverse the service's rate-limiter
-// Durable Object before reaching D1. Keep this bounded, but above the public
-// probe budget so normal cold-start latency is not turned into a fabricated
-// 503 by the Core gateway.
+// Durable Object before reaching D1. Keep the normal budget bounded, but give
+// the unified team route a separate budget because its readiness/config read
+// intentionally checks several D1 tables before returning.
 const INVENTORY_READ_TIMEOUT_MS = 3_000;
+const INVENTORY_TEAM_TIMEOUT_MS = 8_000;
 const CLOUDFLARE_VERSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NETWORK_CONTEXT_RE = /^v1:[A-Za-z0-9_-]{43}$/;
 const B64URL_SHA256_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -80,6 +81,13 @@ function financeServiceTimeout(request) {
     return ['GET', 'HEAD'].includes(request.method) ? FINANCE_READ_TIMEOUT_MS : FINANCE_WRITE_TIMEOUT_MS;
 }
 
+function inventoryServiceTimeout(request) {
+    const pathname = new URL(request.url).pathname;
+    return pathname === '/admin/team' || pathname.startsWith('/admin/team/')
+        ? INVENTORY_TEAM_TIMEOUT_MS
+        : INVENTORY_READ_TIMEOUT_MS;
+}
+
 export async function forwardFinanceProbe(request, env) {
     // This route is read-only and is itself evaluated by the external monitor's
     // latency budget. Keep the service-binding deadline above that budget so a
@@ -139,7 +147,7 @@ export function createApiGateway({ inventoryHandler, timekeepingHandler, finance
 export { createGatewayHandler } from './router.js';
 
 export const handleGatewayRequest = createApiGateway({
-    inventoryHandler: (request, env) => fetchBoundService(request, env, 'INVENTORY', { timeoutMs: INVENTORY_READ_TIMEOUT_MS }),
+    inventoryHandler: (request, env) => fetchBoundService(request, env, 'INVENTORY', { timeoutMs: inventoryServiceTimeout(request) }),
     timekeepingHandler: (request, env) => fetchBoundService(request, env, 'TIMEKEEPING', { timeoutMs: 800 }),
     financeDomainHandler: forwardFinanceToService,
 });
