@@ -177,7 +177,7 @@
     "codex": "private state adapter must use the same transition contract and fail closed on an unknown lock",
     "github": "Actions concurrency is a scheduling hint; mutation authority requires a lease proof",
     "cloudflare": "one globally named SQLite-backed Durable Object coordination plane; logical lock scopes remain fenced in state",
-    "mini-pc": "runtime client must present the lease proof before a service or workflow mutation"
+    "mini-pc": "runtime client must present the lease proof before a service or workflow mutation; routine coordination custody is reconciled by the trusted dispatch-only native runner"
   },
   "admission": {
     "crossScope": "merge:main conflicts with an active release lease only when changed paths intersect the release dependency closure",

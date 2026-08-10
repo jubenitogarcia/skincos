@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "module": "livia-reel-covers",
+  "modes": ["off", "shadow", "active"],
+  "activation": {
+    "minEvaluated": 1,
+    "minAiSuccesses": 1,
+    "maxFallbackRate": 0.5,
+    "maxProviderErrors": 0,
+    "maxQualityFailures": 0,
+    "maxIdentityMismatches": 0,
+    "requireFunctionalSmoke": true,
+    "requireRollbackAvailable": true
+  },
+  "activeGuard": {
+    "maxFailureRate": 0.25,
+    "maxProviderErrors": 0,
+    "maxQualityFailures": 0,
+    "maxIdentityMismatches": 0,
+    "requireFunctionalSmoke": true,
+    "requireRollbackAvailable": true
+  },
+  "failureMode": "shadow"
+}

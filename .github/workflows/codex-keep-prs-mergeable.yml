@@ -10,6 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
   issues: write
@@ -181,6 +182,47 @@ jobs:
               });
             }
 
+            async function dispatchMergeAuthorityIfEligible(pr) {
+              const labels = new Set((pr.labels || []).map((label) => String(label?.name || '')));
+              if (pr.draft === true || pr.mergeable_state !== 'clean' || !labels.has(LABELS.enabled.name)) return;
+              const activeStatuses = new Set(['queued', 'in_progress', 'waiting', 'requested']);
+              let runs = [];
+              try {
+                runs = await github.paginate(github.rest.actions.listWorkflowRunsForWorkflow, {
+                  owner,
+                  repo,
+                  workflow_id: 'global-merge-authority.yml',
+                  event: 'workflow_dispatch',
+                  per_page: 100,
+                });
+              } catch (err) {
+                core.warning(`Could not inspect global merge authority runs for #${pr.number}: ${err?.message || err}`);
+                return;
+              }
+              const alreadyRunning = runs.some((run) => {
+                if (!activeStatuses.has(String(run.status || ''))) return false;
+                const title = String(run.display_title || run.name || '');
+                return title.includes(`PR #${pr.number}`);
+              });
+              if (alreadyRunning) return;
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner,
+                  repo,
+                  workflow_id: 'global-merge-authority.yml',
+                  ref: 'main',
+                  inputs: {
+                    pull_number: String(pr.number),
+                    expected_head_sha: String(pr.head?.sha || ''),
+                    merge_method: 'squash',
+                  },
+                });
+                core.info(`Dispatched the official global merge authority for eligible PR #${pr.number}`);
+              } catch (err) {
+                core.warning(`Could not dispatch global merge authority for #${pr.number}: ${err?.message || err}`);
+              }
+            }
+
             async function disableUncoordinatedAutoMerge(pr) {
               if (!pr.node_id || !pr.auto_merge) return;
               try {
@@ -291,6 +333,7 @@ jobs:
               // Keep conflict label unless it is clearly clean.
               if (mergeableState === "clean") {
                 await removeLabel(prNumber, LABELS.conflict.name);
+                await dispatchMergeAuthorityIfEligible(full);
               }
             }
       - name: Release merge:main after branch maintenance
