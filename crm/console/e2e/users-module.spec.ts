@@ -32,6 +32,19 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByText('Exibindo 51–54 de 54', { exact: true })).toBeVisible()
   })
 
+  test('does not represent a degraded team service as an empty roster or expose writes', async ({ page }) => {
+    await mockUsersApi(page, 'GESTOR', { degraded: true })
+    await page.goto('/?module=users')
+
+    await expect(page.getByRole('alert')).toContainText('domain_service_degraded')
+    await expect(page.getByText('Indisponível', { exact: true })).toHaveCount(7)
+    await expect(page.getByText('Nenhum integrante ativo.', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('Dados indisponíveis. Tente novamente.', { exact: true })).toHaveCount(2)
+
+    await page.getByRole('button', { name: 'Cadastrar funcionário' }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  })
+
   test('keeps identity, operation, invite and read-only editing in one auditable flow', async ({ page }) => {
     await mockUsersApi(page)
     await page.goto('/?module=users')

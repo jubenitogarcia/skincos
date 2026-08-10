@@ -5,6 +5,7 @@ import {
   acquireGlobalLease,
   buildLegacyLeaseRequest,
   checkGlobalLease,
+  coordinationActiveSecret,
   probeCoordinatorProtocol,
   proofForLease,
   releaseGlobalLease,
@@ -57,6 +58,38 @@ function assertSha(value, label) {
 
 const MERGE_METHODS = new Set(["squash"]);
 
+export function assertMergeReadback({
+  pull,
+  main,
+  mergeCommit,
+  mergeResponseSha,
+  expectedHeadSha,
+  expectedBaseSha,
+  mergeMethod = "squash",
+}) {
+  if (mergeMethod !== "squash") throw new Error(`unsupported merge method: ${mergeMethod}`);
+  const expectedHead = assertSha(expectedHeadSha, "expected merged pull request head SHA");
+  const expectedBase = assertSha(expectedBaseSha, "expected merged pull request base SHA");
+  const mergeSha = assertSha(mergeResponseSha, "GitHub merge commit SHA");
+  if (pull?.state !== "closed" || pull?.merged !== true || !pull?.merged_at) {
+    throw new Error("merge:main post-mutation pull request readback is not merged");
+  }
+  if (assertSha(pull?.head?.sha, "merged pull request head SHA") !== expectedHead) {
+    throw new Error("merge:main post-mutation pull request head readback changed");
+  }
+  if (assertSha(pull?.merge_commit_sha, "merged pull request commit SHA") !== mergeSha) {
+    throw new Error("merge:main post-mutation merge commit readback changed");
+  }
+  if (assertSha(main?.sha, "post-mutation main SHA") !== mergeSha) {
+    throw new Error("merge:main post-mutation main readback does not point at the merge commit");
+  }
+  const parents = Array.isArray(mergeCommit?.parents) ? mergeCommit.parents : [];
+  if (parents.length !== 1 || assertSha(parents[0]?.sha, "squash merge parent SHA") !== expectedBase) {
+    throw new Error("merge:main post-mutation base readback failed");
+  }
+  return { mergeCommitSha: mergeSha, expectedHeadSha: expectedHead, expectedBaseSha: expectedBase };
+}
+
 async function setMergeAuthorityStatus(repository, headSha, state, description) {
   return githubJson(repository, `/statuses/${headSha}`, {
     method: "POST",
@@ -94,7 +127,9 @@ async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, m
     throw new Error("SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true for merge:main");
   }
   const url = requiredEnv("SKINCOS_GLOBAL_COORDINATOR_URL");
-  requiredEnv("SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET");
+  if (!coordinationActiveSecret()) {
+    throw new Error("SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET or a pinned active coordination key is required");
+  }
   if (!MERGE_METHODS.has(mergeMethod)) throw new Error(`unsupported merge method: ${mergeMethod}`);
   const candidate = await loadMergeCandidate({ repository, pullNumber, expectedHeadSha });
   const initial = candidate.pull;
@@ -116,6 +151,7 @@ async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, m
   if (result.passed !== true || !result.lease) throw new Error(`merge:main lease acquisition failed: ${result.reason || "unknown"}`);
   const proof = proofForLease(result.lease);
   let merged;
+  let mergeMutated = false;
   let mergeSucceeded = false;
   try {
     const [currentMain, currentPull] = await Promise.all([
@@ -168,18 +204,39 @@ async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, m
       body: JSON.stringify({ sha: headSha, merge_method: mergeMethod }),
     });
     if (merged?.merged !== true) throw new Error(`GitHub did not merge the pull request: ${String(merged?.message || "unknown result")}`);
+    mergeMutated = true;
+    const mergeCommitSha = assertSha(merged.sha, "GitHub merge commit SHA");
+    const [postMergePull, postMergeMain, postMergeCommit] = await Promise.all([
+      githubJson(repository, `/pulls/${pullNumber}`),
+      githubJson(repository, "/commits/main"),
+      githubJson(repository, `/commits/${mergeCommitSha}`),
+    ]);
+    assertMergeReadback({
+      pull: postMergePull,
+      main: postMergeMain,
+      mergeCommit: postMergeCommit,
+      mergeResponseSha: mergeCommitSha,
+      expectedHeadSha: headSha,
+      expectedBaseSha: baseSha,
+      mergeMethod,
+    });
     mergeSucceeded = true;
     return {
       merged: true,
       pullNumber: String(pullNumber),
-      mergeCommitSha: String(merged.sha || ""),
+      mergeCommitSha,
       resource,
       fencingToken: proof.fencingToken,
     };
   } catch (error) {
     if (!mergeSucceeded) {
       try {
-        await setMergeAuthorityStatus(repository, headSha, "failure", "merge:main authorization did not complete");
+        await setMergeAuthorityStatus(
+          repository,
+          headSha,
+          "failure",
+          mergeMutated ? "merge:main mutation occurred but post-mutation readback failed" : "merge:main authorization did not complete",
+        );
       } catch {
         // Preserve the original failure; the lease release below remains mandatory.
       }

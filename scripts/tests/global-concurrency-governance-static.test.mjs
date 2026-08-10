@@ -205,6 +205,10 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(script, /checkGlobalLease/);
   assert.match(script, /finalLease = await checkGlobalLease/);
   assert.match(script, /expectedMainSha: baseSha/);
+  assert.match(script, /assertMergeReadback/);
+  assert.match(script, /post-mutation base readback failed/);
+  assert.match(script, /\/commits\/\$\{mergeCommitSha\}/);
+  assert.match(script, /merge:main mutation occurred but post-mutation readback failed/);
   assert.match(read("ops/governance/global-coordination-core.mjs"), /merge-base-intent-mismatch/);
   assert.match(script, /acquireMergeLease/);
   assert.match(script, /incompatible-release-lease/);
@@ -220,6 +224,8 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   const integrationGate = read(".github/workflows/skincos-integration-gate.yml");
   assert.match(integrationGate, /pull_request_target/);
   assert.match(integrationGate, /ref: main/);
+  assert.match(integrationGate, /SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY/);
+  assert.match(integrationGate, /SKINCOS_GLOBAL_COORDINATION_KEY_ID/);
   assert.match(integrationGate, /Fetch the exact PR base tree used for closure admission/);
   assert.doesNotMatch(integrationGate, /ref: \$\{\{ github\.event\.pull_request\./);
   const integrationRecheck = read(".github/workflows/skincos-integration-gate-recheck.yml");
@@ -230,6 +236,11 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(integrationRecheck, /--jq '\[\.\[\] \| select\(\.context == "skincos-integration-gate"\)\]\[0\]\.state \/\/ ""'/);
   assert.doesNotMatch(integrationRecheck, /--jq '[^\n]*\/\/ ""\)"/);
   assert.match(read("ops/cloudflare/global-coordinator/index.js"), /buildLegacyIntentV1/);
+  assert.match(read("ops/cloudflare/global-coordinator/index.js"), /keyCandidatesForRequest/);
+  assert.match(read("ops/cloudflare/global-coordinator/key-ring.mjs"), /PREVIOUS_KEY_EXPIRES_AT/);
+  assert.match(read("ops/cloudflare/global-coordinator/key-ring.mjs"), /allowUnpinnedKeyDuringGrace/);
+  assert.match(read(".github/workflows/deploy-global-coordinator.yml"), /explicit active key cannot retain the legacy key id/);
+  assert.match(read(".github/workflows/deploy-global-coordinator.yml"), /COORDINATION_ACTIVE_KEY \|\| process\.env\.COORDINATION_SHARED_SECRET/);
   assert.match(read("scripts/codex-global-coordination-workflow.mjs"), /admission paths are not bound/);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
   assert.match(workflow, /pull_request_target/);

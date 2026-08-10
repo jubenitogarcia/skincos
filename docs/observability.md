@@ -75,6 +75,12 @@ além dos metadados do contrato. Não são registrados body, digest de request,
 recovery ID, token, segredo, autorização, cookie ou PII. O `keyId` é somente o
 identificador público de versão da chave, nunca a chave.
 
+O contrato de eventos e campos é compartilhado pelo Worker em
+`ops/cloudflare/global-coordinator/observability-contract.mjs` e pelo catálogo
+`ops/observability/catalog.json`. `scripts/observability/validate-catalog.mjs`
+compara os dois contratos; uma divergência falha a validação de arquitetura em
+vez de depender de documentação manual.
+
 Eventos mínimos do coordinator: `coordination.readiness`,
 `coordination.request_processed`, `coordination.request_rejected` e
 `coordination.request_failed`. Para diagnóstico, correlacione janela temporal,

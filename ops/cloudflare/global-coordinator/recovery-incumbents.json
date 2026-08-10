@@ -5,6 +5,18 @@
   "authority": "github-actions-normal-deployment-plus-cloudflare-version-restore",
   "knownVersions": [
     {
+      "versionId": "cc747d37-f7c3-487a-8301-12e72558e60d",
+      "environment": "production",
+      "sourceSha": "4b870ea953d5e3703bc8a874dc20e84cfe2d98a7",
+      "sourceTree": "2d335e0ff8b18b011d3db76e41dd05d8f7534e5b",
+      "dependencyClosureDigest": "de9f482a88d997b96685aeb4e4892246f334ab1dfa5dc6f5d66d16c7417af0b8",
+      "protocol": "epoch-fence-v1",
+      "recoveryEligible": true,
+      "registeredFromWorkflowRun": "31427360586",
+      "registeredAt": "2026-08-10T20:06:05Z",
+      "reason": "successful normal production deployment with modern readiness, signed gate, and sanitized readback"
+    },
+    {
       "versionId": "7e7575c7-6094-4695-a588-c25921b053d6",
       "environment": "production",
       "sourceSha": "7ab35c2fd090b7d367ec4c66e969871f8e826f36",

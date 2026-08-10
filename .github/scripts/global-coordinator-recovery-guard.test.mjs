@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
-import { RECOVERY_CONFIRMATION, RECOVERY_PROTOCOL, classifyRecoveryProbe, evaluateRecoveryIntent } from "./global-coordinator-recovery-guard.mjs";
+import { RECOVERY_CONFIRMATION, RECOVERY_PROTOCOL, classifyRecoveryProbe, evaluateRecoveryIntent, loadRecoveryRegistry, validateRecoveryRegistry } from "./global-coordinator-recovery-guard.mjs";
 
 const candidate = {
   versionId: "11111111-2222-3333-4444-555555555555",
@@ -48,4 +50,30 @@ test("the probe classifier distinguishes healthy readiness from degraded transpo
   assert.equal(classifyRecoveryProbe({ error: "timeout" }), "timeout");
   assert.equal(classifyRecoveryProbe({ status: 404, body: {} }), "ambiguous");
   assert.equal(classifyRecoveryProbe({ status: 200, body: { ready: true } }), "malformed");
+});
+
+test("the versioned production registry contains a modern recovery incumbent with deployment provenance", () => {
+  const registry = loadRecoveryRegistry();
+  const eligible = registry.knownVersions.filter((entry) => entry.recoveryEligible === true);
+  assert.ok(eligible.length >= 1);
+  assert.ok(eligible.every((entry) => entry.protocol === RECOVERY_PROTOCOL));
+  assert.ok(eligible.every((entry) => /^[0-9a-f]{40}$/i.test(entry.sourceSha)));
+  assert.ok(eligible.every((entry) => /^[1-9][0-9]{5,}$/.test(String(entry.registeredFromWorkflowRun))));
+});
+
+test("the registry rejects duplicate or malformed eligible incumbents before recovery", () => {
+  assert.throws(() => validateRecoveryRegistry({
+    schemaVersion: 1,
+    workerName: "skincos-global-coordinator",
+    knownVersions: [{ ...candidate, registeredFromWorkflowRun: "31427360586" }, { ...candidate, registeredFromWorkflowRun: "31427360587" }],
+  }), /duplicate version/);
+});
+
+test("the recovery workflow keeps production custody and restore scope narrow", () => {
+  const workflow = fs.readFileSync(path.resolve(import.meta.dirname, "../workflows/recover-global-coordinator.yml"), "utf8");
+  assert.match(workflow, /environment: production/);
+  assert.match(workflow, /SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET/);
+  assert.match(workflow, /versions deploy \"\$\{VERSION_ID\}@100%\"/);
+  assert.match(workflow, /recovery-incumbents\.json/);
+  assert.doesNotMatch(workflow, /global-coordination-acquire/);
 });

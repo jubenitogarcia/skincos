@@ -16,13 +16,14 @@ import {
   renewLease,
   revokeLease,
 } from "../../governance/global-coordination-core.mjs";
+import { keyCandidatesForRequest, keyId, keyRingFor } from "./key-ring.mjs";
+import { COORDINATION_OBSERVABILITY_FIELDS } from "./observability-contract.mjs";
 
 const CONTRACT_ID = "skincos/global-coordination/v1";
 const MAX_SKEW_MS = 30_000;
 const NONCE_TTL_MS = 15 * 60_000;
 const MAX_BODY_BYTES = 64 * 1024;
 const COORDINATION_MODES = new Set(["legacy-drain", "global"]);
-const LEGACY_KEY_ID = "legacy-v1";
 const RECOVERY_PROTOCOL = "epoch-fence-v1";
 
 const encoder = new TextEncoder();
@@ -47,18 +48,7 @@ const jsonResponse = (payload, status = 200, headers = {}) => new Response(JSON.
   headers: { "content-type": "application/json", "cache-control": "no-store", ...headers },
 });
 const bad = (message, status = 401, extra = {}) => jsonResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed: false, ...extra, error: message }, status);
-const OBSERVABILITY_FIELDS = new Set([
-  "route",
-  "action",
-  "status",
-  "result",
-  "reason",
-  "coordinationPlane",
-  "authorityEpoch",
-  "keyId",
-  "resourceClass",
-  "durationMs",
-]);
+const OBSERVABILITY_FIELDS = new Set(COORDINATION_OBSERVABILITY_FIELDS);
 function logEvent(event, fields = {}) {
   const record = { schemaVersion: 1, contractId: CONTRACT_ID, event, timestamp: new Date().toISOString() };
   for (const [name, value] of Object.entries(fields)) {
@@ -89,45 +79,6 @@ function bindingFor(request, url, nonce, requestedAt, requestDigest, keyId) {
   };
 }
 
-function keyId(value, label = "coordination key id") {
-  const normalized = String(value || "").trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(normalized)) throw new Error(`${label} is invalid`);
-  return normalized;
-}
-
-function keyRingFor(env, { recovery = false, now = Date.now() } = {}) {
-  const prefix = recovery ? "COORDINATION_RECOVERY" : "COORDINATION";
-  // The normal client contract keeps COORDINATION_SHARED_SECRET as the
-  // canonical active custody value while key IDs provide explicit rotation
-  // and fencing semantics. COORDINATION_ACTIVE_KEY is accepted only as a
-  // bootstrap alias when the canonical value is absent.
-  const activeSecret = String(
-    recovery
-      ? env[`${prefix}_ACTIVE_KEY`] || env[`${prefix}_SECRET`]
-      : env.COORDINATION_SHARED_SECRET || env[`${prefix}_ACTIVE_KEY`],
-  ).trim();
-  const activeId = String(env[`${prefix}_ACTIVE_KEY_ID`] || (recovery ? env.COORDINATION_RECOVERY_KEY_ID || "recovery-v1" : LEGACY_KEY_ID)).trim();
-  if (!activeSecret || !activeId) return null;
-  const active = { id: keyId(activeId), secret: activeSecret };
-  const previousSecret = String(env[`${prefix}_PREVIOUS_KEY`] || "").trim();
-  const previousId = String(env[`${prefix}_PREVIOUS_KEY_ID`] || "").trim();
-  const previousExpiresAt = Date.parse(String(env[`${prefix}_PREVIOUS_KEY_EXPIRES_AT`] || ""));
-  const previous = previousSecret && previousId && Number.isFinite(previousExpiresAt) && previousExpiresAt > now
-    ? { id: keyId(previousId), secret: previousSecret }
-    : null;
-  return { active, previous, allowLegacyWithoutKeyId: !recovery && active.id === LEGACY_KEY_ID && String(env.COORDINATION_ALLOW_LEGACY_KEY || "true").toLowerCase() === "true" };
-}
-
-function keyForRequest(ring, requestedKeyId) {
-  if (!ring) return null;
-  const normalized = String(requestedKeyId || "").trim();
-  if (!normalized) return ring.allowLegacyWithoutKeyId ? ring.active : null;
-  const candidateId = keyId(normalized);
-  if (candidateId === ring.active.id) return ring.active;
-  if (ring.previous?.id === candidateId) return ring.previous;
-  return null;
-}
-
 async function authenticatedBody(request, env, url, rawBody, { recovery = false } = {}) {
   if (env.COORDINATION_CONTRACT_ID !== CONTRACT_ID) return { custodyUnavailable: true };
   const ring = keyRingFor(env, { recovery });
@@ -139,11 +90,17 @@ async function authenticatedBody(request, env, url, rawBody, { recovery = false 
   const requestDigest = await sha256(rawBody);
   if (request.headers.get("x-skincos-coordination-request-digest") !== requestDigest) throw new Error("coordination request digest mismatch");
   const requestedKeyId = request.headers.get(recovery ? "x-skincos-coordination-recovery-key-id" : "x-skincos-coordination-key-id");
-  const selectedKey = keyForRequest(ring, requestedKeyId);
-  if (!selectedKey) throw new Error("coordination key is not active");
   const binding = bindingFor(request, url, nonce, requestedAt, requestDigest, requestedKeyId ? keyId(requestedKeyId) : "");
-  const expected = await hmac(selectedKey.secret, canonicalJson(binding));
-  if (!timingSafeEqual(expected, request.headers.get("x-skincos-coordination-request-signature") || "")) throw new Error("coordination request signature mismatch");
+  const signature = request.headers.get("x-skincos-coordination-request-signature") || "";
+  let selectedKey = null;
+  for (const candidate of keyCandidatesForRequest(ring, requestedKeyId)) {
+    const expected = await hmac(candidate.secret, canonicalJson(binding));
+    if (timingSafeEqual(expected, signature)) {
+      selectedKey = candidate;
+      break;
+    }
+  }
+  if (!selectedKey) throw new Error("coordination request signature mismatch or key is not active");
   let body;
   try { body = JSON.parse(rawBody); } catch { throw new Error("coordination request JSON is invalid"); }
   if (
