@@ -130,6 +130,12 @@ test.describe('Usuários e Equipe', () => {
       const dimensions = await page.evaluate(() => ({ viewport: window.innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }))
       expect(dimensions.document, `document overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
       expect(dimensions.body, `body overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
+      if (width >= 768) {
+        const overflowingCells = await page.locator('table tbody tr').first().locator('td').evaluateAll((cells) => cells
+          .filter((cell) => cell.scrollWidth > cell.clientWidth + 1)
+          .map((cell) => ({ width: cell.clientWidth, scrollWidth: cell.scrollWidth })))
+        expect(overflowingCells, `table cell content overflow at ${width}px`).toEqual([])
+      }
     }
   })
 })
