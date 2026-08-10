@@ -37,3 +37,60 @@ test("local and dry-run operations remain non-mutating", () => {
   });
   assert.deepEqual(mutationEvidence(local), []);
 });
+
+test("single-writer graph detects indirect Cloudflare API, Terraform and Pulumi mutations", () => {
+  const mutationFiles = [
+    ".github/workflows/demo.yml",
+    ".github/actions/demo/action.yml",
+    ".github/scripts/demo-deploy.mjs",
+  ];
+  const mutationContents = {
+    ".github/workflows/demo.yml": "uses: ./.github/actions/demo",
+    ".github/actions/demo/action.yml": "run: node .github/scripts/demo-deploy.mjs",
+    ".github/scripts/demo-deploy.mjs": [
+      "await fetch('https://api.cloudflare.com/client/v4/accounts/demo/workers', {",
+      "  method: 'POST',",
+      "});",
+      "terraform -chdir=ops/cloudflare apply -auto-approve",
+      "pulumi up --yes",
+    ].join("\n"),
+  };
+  const graph = traceMutationGraph({ sourcePath: ".github/workflows/demo.yml", files: mutationFiles, readFile: (file) => mutationContents[file] });
+  const evidence = mutationEvidence(graph);
+  assert.ok(evidence.some((item) => item.line.includes("Cloudflare API")));
+  assert.ok(evidence.some((item) => item.line.includes("terraform")));
+  assert.ok(evidence.some((item) => item.line.includes("pulumi")));
+});
+
+test("Terraform plan and Pulumi preview remain read-only", () => {
+  const graph = traceMutationGraph({
+    sourcePath: ".github/scripts/demo-read.mjs",
+    files: [".github/scripts/demo-read.mjs"],
+    readFile: () => "terraform plan\npulumi preview\nfetch('https://api.cloudflare.com/client/v4/accounts/demo')",
+  });
+  assert.deepEqual(mutationEvidence(graph), []);
+});
+
+test("a Cloudflare read is not tainted by an unrelated external POST", () => {
+  const graph = traceMutationGraph({
+    sourcePath: ".github/scripts/demo-read.mjs",
+    files: [".github/scripts/demo-read.mjs"],
+    readFile: () => [
+      "await fetch('https://api.cloudflare.com/client/v4/accounts/demo', { headers: auth });",
+      "await fetch('https://synthetic.example.test/probe', { method: 'POST' });",
+    ].join("\n"),
+  });
+  assert.deepEqual(mutationEvidence(graph), []);
+});
+
+test("a local Cloudflare wrapper is classified when a caller supplies a mutating method", () => {
+  const graph = traceMutationGraph({
+    sourcePath: ".github/scripts/demo-deploy.mjs",
+    files: [".github/scripts/demo-deploy.mjs"],
+    readFile: () => [
+      "const cloudflare = async (pathname, init = {}) => fetch(`https://api.cloudflare.com/client/v4${pathname}`, { ...init });",
+      "await cloudflare('/accounts/demo/pages/projects/demo/deployments/id/rollback', { method: 'POST' });",
+    ].join("\n"),
+  });
+  assert.ok(mutationEvidence(graph).some((item) => item.line.includes("Cloudflare API")));
+});
