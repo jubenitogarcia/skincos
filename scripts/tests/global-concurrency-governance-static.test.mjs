@@ -81,6 +81,21 @@ test("the reusable check action accepts either an external proof file or an enco
   assert.match(read(".github/actions/global-coordination-release/action.yml"), /github\.event\.inputs\.target == 'production'/);
   assert.match(action, /GLOBAL_PROOF_FILE_INPUT/);
   assert.match(action, /base64 -d/);
+  assert.match(action, /coordination_max_attempts=3/);
+  assert.match(action, /Global coordination revalidation failed after/);
+});
+
+test("the staging RBAC journey recovers synthetic teardown under a fresh lease", () => {
+  const workflow = read(".github/workflows/insumos-staging-rbac-smoke.yml");
+  const release = workflow.indexOf("Release staging D1 coordination lease");
+  const recoveryAcquire = workflow.indexOf("Reacquire cleanup lease for an orphaned synthetic teardown");
+  const recoveryCheck = workflow.indexOf("Revalidate cleanup lease before orphaned teardown");
+  const recoveryTeardown = workflow.indexOf("Tear down orphaned synthetic staging identities under recovery lease");
+  assert.ok(release >= 0 && recoveryAcquire > release && recoveryCheck > recoveryAcquire && recoveryTeardown > recoveryCheck);
+  assert.match(workflow, /steps\.fixture\.outcome == 'success' && steps\.teardown\.outcome != 'success'/);
+  assert.match(workflow, /steps\.recovery_check\.outcome == 'success'/);
+  assert.match(workflow, /skincos-global-coordination-staging-d1-insumos-cleanup\.json/);
+  assert.match(workflow, /refusing a non-staging D1 target/);
 });
 
 test("the Ponto composite lease starts before candidate mutation, selects the correct authority, and spans the orchestrator", () => {
