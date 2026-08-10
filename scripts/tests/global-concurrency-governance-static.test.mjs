@@ -99,6 +99,7 @@ test("the reusable check action accepts either an external proof file or an enco
   const action = read(".github/actions/global-coordination-check/action.yml");
   assert.match(action, /proof_b64:[\s\S]*?required: false/);
   assert.match(action, /proof_file:[\s\S]*?required: false/);
+  assert.match(action, /key_id:[\s\S]*?supplied by the caller/);
   assert.match(action, /observed_source_sha:[\s\S]*?required: false/);
   assert.match(action, /git fetch --no-tags --force origin main:refs\/remotes\/origin\/main/);
   assert.match(action, /git fetch --no-tags origin "\$GLOBAL_SOURCE_SHA"/);
@@ -111,6 +112,15 @@ test("the reusable check action accepts either an external proof file or an enco
   assert.match(action, /base64 -d/);
   assert.match(action, /coordination_max_attempts=3/);
   assert.match(action, /Global coordination revalidation failed after/);
+  for (const file of [
+    ".github/actions/global-coordination-acquire/action.yml",
+    ".github/actions/global-coordination-check/action.yml",
+    ".github/actions/global-coordination-release/action.yml",
+  ]) {
+    const reusableAction = read(file);
+    assert.match(reusableAction, /SKINCOS_GLOBAL_COORDINATION_KEY_ID:\s+\$\{\{\s*inputs\.key_id\s*\}\}/);
+    assert.doesNotMatch(reusableAction, /\bvars\./);
+  }
 });
 
 test("the staging RBAC journey recovers synthetic teardown under a fresh lease", () => {
@@ -189,6 +199,9 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(script, /const resource = "merge:main"/);
   assert.match(script, /expectedHeadSha/);
   assert.match(script, /checkGlobalLease/);
+  assert.match(script, /finalLease = await checkGlobalLease/);
+  assert.match(script, /expectedMainSha: baseSha/);
+  assert.match(read("ops/governance/global-coordination-core.mjs"), /merge-base-intent-mismatch/);
   assert.match(script, /acquireMergeLease/);
   assert.match(script, /incompatible-release-lease/);
   assert.match(script, /merge:main lease remained unavailable/);
@@ -219,9 +232,10 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(workflow, /ref: \$\{\{ github\.ref \}\}/);
   assert.match(workflow, /state=failure/);
   assert.match(workflow, /run-name: Merge PR #\$\{\{ inputs\.pull_number \}\} through merge:main/);
-  assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.GH_TOKEN \}\}/);
+  assert.match(workflow, /GH_TOKEN: \$\{\{ github\.token \}\}/);
   assert.match(workflow, /SKINCOS_STATUS_TOKEN: \$\{\{ github\.token \}\}/);
   assert.match(script, /SKINCOS_STATUS_TOKEN/);
+  assert.doesNotMatch(script, /SKINCOS_POST_MERGE_TOKEN|skincos-main-integrated/);
   assert.doesNotMatch(scheduler, /enablePullRequestAutoMerge/);
   assert.match(scheduler, /disablePullRequestAutoMerge/);
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
@@ -241,6 +255,9 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(policy.resourceClasses.mutate, /^\^mutate:/);
   assert.equal(policy.admission.coordinationPlane, "global");
   const ruleset = JSON.parse(read(".github/governance/rulesets/main-enterprise-baseline.json"));
+  assert.ok(ruleset.rules.some((rule) => rule.type === "update"));
+  assert.deepEqual(ruleset.bypass_actors, [{ actor_id: 15368, actor_type: "Integration", bypass_mode: "always" }]);
+  assert.deepEqual(ruleset.rules.find((rule) => rule.type === "pull_request").parameters.allowed_merge_methods, ["squash"]);
   const requiredContexts = ruleset.rules.find((rule) => rule.type === "required_status_checks").parameters.required_status_checks.map((entry) => entry.context);
   assert.deepEqual(requiredContexts, ["codex-autonomy-gate", "global-merge-authority", "skincos-integration-gate"]);
   assert.ok(ruleset.rules.find((rule) => rule.type === "required_status_checks").parameters.required_status_checks.every((entry) => entry.integration_id === 15368));

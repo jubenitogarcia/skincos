@@ -44,6 +44,7 @@
         "workforce/timekeeping/**",
         "crm/console/**",
         "api/**",
+        "inventory/**",
         ".github/governance/progressive-release-policy.json",
         ".github/workflows/ponto-*.yml",
         ".github/workflows/deploy-timekeeping.yml",
@@ -54,7 +55,8 @@
         ".github/workflows/promotion-gate.yml",
         ".github/workflows/ponto-orchestrator-gate.yml",
         ".github/scripts/ponto-*.mjs",
-        ".github/scripts/validate-progressive-release.mjs"
+        ".github/scripts/validate-progressive-release.mjs",
+        ".github/scripts/workers_smoke.py"
       ],
       "sharedInputs": true
     },
@@ -63,16 +65,22 @@
         "api/**",
         "inventory/**",
         ".github/workflows/deploy-core-workers.yml",
+        ".github/workflows/ponto-release-gate.yml",
+        ".github/workflows/ponto-orchestrator-gate.yml",
         ".github/scripts/core-*.mjs",
-        ".github/scripts/ponto-*.mjs"
+        ".github/scripts/ponto-*.mjs",
+        ".github/scripts/workers_smoke.py"
       ],
       "sharedInputs": true
     },
     "crm-pages": {
       "patterns": [
         "crm/console/**",
+        "inventory/**",
         ".github/workflows/deploy-crm-pages.yml",
+        ".github/workflows/ponto-release-gate.yml",
         ".github/workflows/cloudflare-pages-sync-ponto.yml",
+        ".github/workflows/ponto-orchestrator-gate.yml",
         ".github/scripts/promotion-*.mjs",
         ".github/scripts/ponto-*.mjs"
       ],
@@ -87,6 +95,7 @@
         "crm/console/**",
         "crm/api/**",
         "api/**",
+        "inventory/**",
         "ops/runtime/**",
         "scripts/runtime/**",
         ".github/workflows/atendimento-*.yml",
@@ -95,11 +104,11 @@
       "sharedInputs": true
     },
     "finance": {
-      "patterns": ["finance/**", ".github/workflows/deploy-finance*.yml", ".github/workflows/finance-staging-*.yml", ".github/scripts/finance-*.mjs"],
+      "patterns": ["finance/**", ".github/workflows/deploy-finance*.yml", ".github/workflows/finance-staging-*.yml", ".github/scripts/finance-*.mjs", ".github/scripts/validate-finance-canary-policy.mjs"],
       "sharedInputs": true
     },
     "finance-ui": {
-      "patterns": ["crm/console/**", ".github/workflows/deploy-finance-ui.yml", ".github/workflows/promotion-gate.yml", ".github/scripts/promotion-*.mjs"],
+      "patterns": ["crm/console/**", "inventory/**", ".github/workflows/deploy-finance-ui.yml", ".github/workflows/promotion-gate.yml", ".github/scripts/promotion-*.mjs"],
       "sharedInputs": true
     },
     "website": {
@@ -107,7 +116,7 @@
       "sharedInputs": true
     },
     "escala-api": {
-      "patterns": ["workforce/schedule/**", ".github/workflows/deploy-escala-api.yml", ".github/workflows/cloudflare-pages-sync-escala.yml", ".github/scripts/promotion-*.mjs"],
+      "patterns": ["workforce/schedule/**", "inventory/**", ".github/workflows/deploy-escala-api.yml", ".github/workflows/cloudflare-pages-sync-escala.yml", ".github/scripts/promotion-*.mjs"],
       "sharedInputs": true
     },
     "meta-ads-report": {
@@ -155,7 +164,14 @@
     "ops/governance/global-coordination-core.mjs",
     "scripts/codex-global-coordinator.mjs",
     "scripts/codex-global-coordination-client.mjs",
-    "scripts/codex-global-coordination-workflow.mjs"
+    "scripts/codex-global-coordination-workflow.mjs",
+    "scripts/codex-autonomy-lib.mjs",
+    ".github/actions/**",
+    ".github/scripts/promotion-*.mjs",
+    ".github/workflows/promotion-gate.yml",
+    ".github/workflows/global-coordination-release.yml",
+    "shared/**",
+    "identity/**"
   ],
   "adapters": {
     "codex": "private state adapter must use the same transition contract and fail closed on an unknown lock",

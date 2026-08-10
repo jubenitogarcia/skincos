@@ -19,7 +19,7 @@ on:
         required: true
         default: squash
         type: choice
-        options: [squash, merge, rebase]
+        options: [squash]
 
 concurrency:
   group: merge-main-authority
@@ -71,17 +71,14 @@ jobs:
       - name: Acquire merge:main, revalidate base/head, and merge exactly once
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
-          # Use repository GitHub App/PAT custody for the merge mutation so
-          # GitHub emits the normal post-merge workflow events. GITHUB_TOKEN
-          # events are intentionally suppressed by GitHub.
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          # Required status checks are bound to the GitHub Actions integration;
-          # keep status publication on that token while GH_TOKEN performs the
-          # merge mutation and preserves post-merge workflow events.
+          # The ruleset's update restriction admits only the GitHub Actions
+          # integration. A user PAT is intentionally not accepted here.
+          GH_TOKEN: ${{ github.token }}
           SKINCOS_STATUS_TOKEN: ${{ github.token }}
           SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}

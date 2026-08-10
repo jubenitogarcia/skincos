@@ -1,11 +1,10 @@
 # Governança global de concorrência e release
 
-**Status:** Fases 1–4 implementadas em PRs ordenadas; o coordination plane
-Cloudflare tem deployment canônico para staging e produção, com bootstrap de
-produção explicitamente limitado, lease remoto para atualizações, readback
-assinado e rollback do incumbent. O contrato single-writer Cloudflare está
-versionado, e a topologia live de Pages governada foi auditada sem mutação de
-produção.
+**Status:** Fundação das Fases 1–5 implementada; esta hardening final adiciona
+fencing de autoridade, recovery fail-closed, gate de merge com rechecagem final,
+closure automática e rastreamento transitive de writers. O rollout remoto da
+versão desta branch ainda exige CI, staging e a promoção normal protegida; a
+existência do código não é confundida com o estado live.
 
 ## Problema
 
@@ -74,6 +73,14 @@ versão usa `COORDINATION_PLANE_MODE=legacy-drain`, recusa aquisição/admission
 renovação e roteia check/release/revoke para o scope legado. Depois do TTL
 máximo, a mesma versão é promovida com `COORDINATION_PLANE_MODE=global`.
 
+O estado persistido também possui `authorityEpoch` monotônico e cada lease novo
+carrega `authorityEpoch` e `authorityKeyId`. O endpoint normal aceita somente
+a chave ativa ou a chave anterior dentro de sua janela explícita. O endpoint
+separado `/v1/recovery` aceita somente a custódia de recovery e uma intenção de
+fencing idempotente; o fencing revoga todos os leases ativos antes de avançar o
+epoch. Provas antigas não atravessam a recuperação mesmo quando o Worker
+restaurado reutiliza o mesmo estado SQLite.
+
 ## Autoridade única de integração
 
 Threads podem criar worktrees, testar, commitar, fazer push e deixar uma PR
@@ -83,6 +90,14 @@ permanece pending em conflito compatível com espera; a segunda adquire
 `merge:main`, revalida base/head/lease e chama a API de merge uma única vez.
 Actions `concurrency` é apenas scheduler. A prova remota, o status obrigatório e
 a revalidação imediatamente antes da mutação são a autoridade técnica.
+
+O ruleset versionado acrescenta a regra `update`, limita o merge a `squash` e
+declara o GitHub Actions integration actor como único bypass técnico do update
+rule. O validador rejeita qualquer workflow adicional que contenha uma mutação
+de merge ou atualização direta de `main`. A janela residual entre a última
+leitura REST e o `PUT /merge` é fechada pelo update rule da plataforma, pela
+concurrency do workflow e pelo `sha` esperado enviado à API; se a plataforma
+não comprovar o actor dedicado, o rollout permanece fail-closed.
 
 ## Release imutável sem congelar `main`
 
@@ -119,6 +134,12 @@ Antes de cada mutação, `authorizeMutation` exige:
 Uma mudança em `main` fora da closure mantém o candidato válido. Uma mudança
 dentro da closure interrompe a cadeia antes da próxima mutação. Ausência de
 digest observável não é tratada como “sem mudança”.
+
+O validador `.github/scripts/validate-dependency-closures.mjs` percorre imports
+locais, actions, scripts chamados por workflows, configurações Wrangler e
+`sharedInputs`. Ele produz um digest determinístico da árvore alcançável por
+módulo e falha quando encontra uma borda fora da closure declarada. A prova de
+drift deixa de depender somente de listas manuais mantidas por um agente.
 
 O dispatcher Ponto busca a ponta atual de `main` antes de cada dispatch e
 compara a closure Ponto, mas despacha o workflow filho na identidade imutável.
@@ -158,6 +179,14 @@ determinístico `https://skincos-global-coordinator-production.skincos.workers.d
 `global:global-coordinator-writer`, usando a mesma custódia GitHub dos demais
 mutadores. O workflow lê de volta a versão ativa, executa um gate assinado
 read-only contra o Worker publicado e conserva a versão incumbent para rollback.
+
+O workflow `recover-global-coordinator.yml` é uma via de disaster recovery
+limitada: exige `main`, primeira tentativa, endpoint degradado não ambíguo,
+versão registrada com protocolo epoch-fence, confirmação literal e custódia
+separada. Ele restaura somente `version_id@100%`, faz readiness readback e
+fenceia o novo epoch antes de permitir nova aquisição. Um incumbent histórico
+que ainda não suporte epoch-fence fica explicitamente inelegível, em vez de
+ser tratado como recovery seguro por suposição.
 
 Na auditoria live de 2026-08-10, `skincos-staging` não tinha Git provider e
 `skincos` estava conectado ao GitHub, mas com `deployments_enabled=false`,
@@ -226,8 +255,12 @@ orquestrador e da reconciliação de children. As fases iniciais incluem
 propriedades de exclusividade, fencing após expiração, admission por closure,
 retries idempotentes, alias de superfície, indisponibilidade ambígua
 fail-closed e rejeição de ref/tag/SHA divergentes. O teste de
-caos/concorrência completo e a aceitação multi-thread permanecem nas fases
-seguintes. A validação remota do staging comprovou a versão implantada;
+caos/concorrência focal reproduz o incidente original: integração independente
+fora da closure é admitida, integração sobreposta é bloqueada e drift de
+closure invalida a próxima mutação. Há ainda testes de fencing de epoch, retry
+idempotente, recovery guard, identidade de promotion e writer graph transitive.
+A validação remota do staging deve comprovar a versão implantada antes de
+registrar um incumbent de recovery;
 rollback é a restauração de uma versão anterior do Worker ou a remoção
 controlada do ambiente staging, sem tocar uma rota de produção. A existência
 do código, um build ou um endpoint 200 não constitui prova de autoridade global

@@ -25,7 +25,11 @@ function Normalize-Actor {
 
 function Normalize-Slug {
     param([string]$Value)
-    return ($Value.Trim().ToLowerInvariant() -replace '[^a-z0-9._-]', '-')
+    $normalized = ($Value.Trim().ToLowerInvariant() -replace '[^a-z0-9._-]', '-')
+    if ($normalized -notmatch '^[a-z0-9][a-z0-9._-]{0,95}$') {
+        throw "TaskSlug must normalize to ^[a-z0-9][a-z0-9._-]{0,95}$."
+    }
+    return $normalized
 }
 
 function Ensure-Directory {
@@ -51,6 +55,11 @@ $normalizedTask = Normalize-Slug -Value $TaskSlug
 
 if (-not $BranchName) {
     $BranchName = "codex/$normalizedActor/$normalizedTask"
+}
+
+$expectedBranchName = "codex/$normalizedActor/$normalizedTask"
+if ($BranchName -ne $expectedBranchName) {
+    throw "BranchName must preserve the task identity and equal '$expectedBranchName'."
 }
 
 $actorRoot = Join-Path $WorktreeRoot $normalizedActor
@@ -82,6 +91,7 @@ $result = [pscustomobject]@{
     baseRef = $BaseRef
     projectRoot = $ProjectRoot
     worktreePath = $worktreePath
+    validationCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-skincos-worktree.ps1 -ProjectRoot '$worktreePath' -TaskSlug '$normalizedTask' -Mode edit"
 }
 
 $result | ConvertTo-Json -Depth 4

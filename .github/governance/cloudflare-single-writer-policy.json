@@ -177,7 +177,8 @@
       "platform": "cloudflare-worker-durable-object",
       "canonicalDeployWorkflow": ".github/workflows/deploy-global-coordinator.yml",
       "coordinationGroup": "global-coordinator-writer",
-      "mutationWorkflows": [".github/workflows/deploy-global-coordinator.yml"],
+      "mutationWorkflows": [".github/workflows/deploy-global-coordinator.yml", ".github/workflows/recover-global-coordinator.yml"],
+      "exceptionalMutationWorkflows": [".github/workflows/recover-global-coordinator.yml"],
       "bootstrap": {
         "target": "production",
         "requires": ["main", "production-environment", "cloudflare-custody", "no-existing-production-endpoint"]

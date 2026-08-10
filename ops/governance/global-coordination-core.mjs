@@ -185,9 +185,11 @@ export function emptyState() {
   return {
     schemaVersion: SCHEMA_VERSION,
     contractId: CONTRACT_ID,
+    authorityEpoch: 1,
     fencingCounters: {},
     leases: {},
     nonces: {},
+    recoveryFences: {},
   };
 }
 
@@ -202,9 +204,14 @@ function stateOrEmpty(state) {
 // state remains fail-closed instead of being silently repaired.
 export function migratePersistedState(state) {
   const next = stateOrEmpty(state);
+  if (next.authorityEpoch === undefined) next.authorityEpoch = 1;
+  if (!Number.isSafeInteger(next.authorityEpoch) || next.authorityEpoch < 1) {
+    throw new Error("coordinator authority epoch is invalid");
+  }
   for (const [key, value] of Object.entries({
     fencingCounters: next.fencingCounters,
     leases: next.leases,
+    recoveryFences: next.recoveryFences === undefined ? {} : next.recoveryFences,
   })) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new Error(`coordinator state ${key} is invalid`);
@@ -214,6 +221,7 @@ export function migratePersistedState(state) {
   if (!next.nonces || typeof next.nonces !== "object" || Array.isArray(next.nonces)) {
     throw new Error("coordinator state nonces are invalid");
   }
+  if (next.recoveryFences === undefined) next.recoveryFences = {};
   return next;
 }
 
@@ -312,13 +320,24 @@ function holderSummary(lease) {
 }
 
 function leaseProofMatches(lease, proof) {
+  const leaseEpoch = lease?.authorityEpoch === undefined ? 1 : lease.authorityEpoch;
+  const proofEpochMatches = proof?.authorityEpoch === undefined
+    ? leaseEpoch === 1
+    : Number(proof.authorityEpoch) === leaseEpoch;
+  const proofKeyMatches = lease?.authorityKeyId === undefined
+    ? proof?.authorityKeyId === undefined
+    : proof?.authorityKeyId === undefined
+      ? lease.authorityKeyId === "legacy-v1" && leaseEpoch === 1
+    : lease.authorityKeyId === proof?.authorityKeyId;
   return Boolean(
     lease
       && proof
       && lease.leaseId === proof.leaseId
       && lease.fencingToken === proof.fencingToken
       && lease.intentDigest === lower(proof.intentDigest)
-      && canonicalJson(normalizeOwner(lease.owner)) === canonicalJson(normalizeOwner(proof.owner)),
+      && canonicalJson(normalizeOwner(lease.owner)) === canonicalJson(normalizeOwner(proof.owner))
+      && proofEpochMatches
+      && proofKeyMatches,
   );
 }
 
@@ -415,7 +434,7 @@ export function consumeNonce(state, { nonce, digest, now, ttlMs = 900_000 }) {
   return { accepted: true, state: next };
 }
 
-export function acquireLease(state, request, { now, leaseId }) {
+export function acquireLease(state, request, { now, leaseId, authorityKeyId } = {}) {
   const next = stateOrEmpty(state);
   assertTime(now);
   const ttlMs = request?.ttlMs;
@@ -466,6 +485,8 @@ export function acquireLease(state, request, { now, leaseId }) {
     operation: intent.operation,
     idempotencyKey: intent.idempotencyKey,
     intentDigest,
+    authorityEpoch: next.authorityEpoch,
+    ...(authorityKeyId ? { authorityKeyId: requireId(authorityKeyId, "authority key id") } : {}),
     intent: intent.intent,
     state: "held",
     holder: holderSummary({ owner: intent.owner }),
@@ -491,6 +512,21 @@ function matchingLease(state, proof, now) {
     || current.intentDigest !== lower(proof.intentDigest)
     || canonicalJson(normalizeOwner(current.owner)) !== canonicalJson(normalizeOwner(proof.owner))
   ) return { valid: false, reason: "lease-fence-mismatch", state: next };
+  const leaseEpoch = current.authorityEpoch === undefined ? 1 : current.authorityEpoch;
+  if (proof.authorityEpoch === undefined && leaseEpoch !== 1) {
+    return { valid: false, reason: "authority-epoch-stale", state: next };
+  }
+  if (proof.authorityEpoch !== undefined && Number(proof.authorityEpoch) !== leaseEpoch) {
+    return { valid: false, reason: "authority-epoch-stale", state: next };
+  }
+  if (
+    current.authorityKeyId !== undefined
+    && (proof.authorityKeyId === undefined
+      ? !(current.authorityKeyId === "legacy-v1" && leaseEpoch === 1)
+      : current.authorityKeyId !== proof.authorityKeyId)
+  ) {
+    return { valid: false, reason: "authority-key-stale", state: next };
+  }
   return { valid: true, lease: clone(current), state: next };
 }
 
@@ -542,6 +578,55 @@ export function revokeLease(state, proof, { now, reason }) {
   return { valid: true, revoked: true, lease: clone(revoked), state: result.state };
 }
 
+export function fenceAuthorityEpoch(state, { now, expectedEpoch, recoveryId, requestDigest, intentDigest = requestDigest, reason = "coordinator-recovery" } = {}) {
+  const next = migratePersistedState(state);
+  assertTime(now);
+  const id = requireId(recoveryId, "recovery id");
+  const digest = lower(intentDigest);
+  if (!DIGEST.test(digest)) throw new Error("recovery request digest is invalid");
+  const previous = next.recoveryFences[id];
+  if (previous) {
+    if (previous.requestDigest !== digest) {
+      return { accepted: false, valid: false, reason: "recovery-id-replayed", state: next };
+    }
+    return {
+      accepted: true,
+      valid: true,
+      idempotent: true,
+      authorityEpoch: previous.authorityEpoch,
+      previousAuthorityEpoch: previous.previousAuthorityEpoch,
+      fencedLeases: previous.fencedLeases,
+      state: next,
+    };
+  }
+  if (expectedEpoch !== undefined && Number(expectedEpoch) !== next.authorityEpoch) {
+    return { accepted: false, valid: false, reason: "authority-epoch-mismatch", authorityEpoch: next.authorityEpoch, state: next };
+  }
+  const previousAuthorityEpoch = next.authorityEpoch;
+  const authorityEpoch = previousAuthorityEpoch + 1;
+  if (!Number.isSafeInteger(authorityEpoch)) throw new Error("coordinator authority epoch exhausted");
+  const fencedLeases = [];
+  for (const lease of Object.values(next.leases)) {
+    if (!lease || lease.state !== "held") continue;
+    lease.state = "revoked";
+    lease.revokedAt = now;
+    lease.updatedAt = now;
+    lease.revocationReason = requireId(reason, "recovery fence reason");
+    fencedLeases.push({ resource: lease.resource, leaseId: lease.leaseId, fencingToken: lease.fencingToken });
+  }
+  next.authorityEpoch = authorityEpoch;
+  next.recoveryFences[id] = {
+    recoveryId: id,
+    requestDigest: digest,
+    previousAuthorityEpoch,
+    authorityEpoch,
+    fencedLeases,
+    fencedAt: now,
+    reason: requireId(reason, "recovery fence reason"),
+  };
+  return { accepted: true, valid: true, idempotent: false, authorityEpoch, previousAuthorityEpoch, fencedLeases, state: next };
+}
+
 export function compareDependencyClosure(expectedDigest, observedDigest) {
   const expected = lower(expectedDigest);
   const observed = lower(observedDigest);
@@ -550,11 +635,17 @@ export function compareDependencyClosure(expectedDigest, observedDigest) {
   return { valid: true, failClosed: false, reason: "dependency-closure-unchanged" };
 }
 
-export function authorizeMutation(state, proof, { now, expectedResource, expectedIntentDigest, observedDependencyClosureDigest, expectedArtifacts = null } = {}) {
+export function authorizeMutation(state, proof, { now, expectedResource, expectedIntentDigest, observedDependencyClosureDigest, expectedArtifacts = null, expectedMainSha } = {}) {
   const checked = checkLease(state, proof, { now });
   if (!checked.valid) return checked;
   if (expectedResource && normalizeResourceKey(expectedResource) !== checked.lease.resource) return { valid: false, failClosed: true, reason: "resource-mismatch", state: checked.state };
   if (expectedIntentDigest && lower(expectedIntentDigest) !== checked.lease.intentDigest) return { valid: false, failClosed: true, reason: "intent-digest-mismatch", state: checked.state };
+  if (expectedMainSha !== undefined && expectedMainSha !== null) {
+    const intentMainSha = String(checked.lease.intent?.inputs?.baseSha || "").trim().toLowerCase();
+    if (!FULL_SHA.test(String(expectedMainSha).trim().toLowerCase()) || intentMainSha !== String(expectedMainSha).trim().toLowerCase()) {
+      return { valid: false, failClosed: true, reason: "merge-base-intent-mismatch", state: checked.state };
+    }
+  }
   if (observedDependencyClosureDigest !== undefined && observedDependencyClosureDigest !== null) {
     const expectedIntentClosure = checked.lease.intent?.dependencyClosureDigest
       || checked.lease.intent?.releaseIdentity?.dependencyClosureDigest;

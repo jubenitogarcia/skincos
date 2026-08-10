@@ -37,3 +37,31 @@ test("revocation uses separate administrative custody", () => {
   assert.match(source, /body\.action === "revoke"/);
   assert.match(source, /coordination revocation authority is unavailable/);
 });
+
+test("authority epoch and recovery custody are part of the signed contract", () => {
+  assert.match(source, /authorityEpoch: state\.authorityEpoch/);
+  assert.match(source, /RECOVERY_PROTOCOL = "epoch-fence-v1"/);
+  assert.match(source, /COORDINATION_RECOVERY_KEY_ID/);
+  assert.match(source, /COORDINATION_RECOVERY/);
+  assert.match(source, /fenceAuthorityEpoch/);
+  assert.match(source, /authorityEpoch: result\.authorityEpoch \?\? result\.state\?\.authorityEpoch \?\? nonce\.state\.authorityEpoch/);
+  assert.match(source, /authorityEpoch,[\s\S]*?responseDigest/);
+});
+
+test("recovery endpoint is separate from the normal lease endpoint and requires the global plane", () => {
+  assert.match(source, /url\.pathname === "\/v1\/recovery"/);
+  assert.match(source, /recovery fence requires the global plane|coordination recovery requires the global plane/);
+  assert.match(source, /isRecovery && coordinationMode !== "global"/);
+  assert.match(source, /COORDINATION_RECOVERY_KEY_ID/);
+});
+
+test("coordinator observability is structured and excludes request custody", () => {
+  assert.match(source, /function logEvent\(event, fields = \{\}\)/);
+  assert.match(source, /coordination\.readiness/);
+  assert.match(source, /coordination\.request_processed/);
+  assert.match(source, /coordination\.request_rejected/);
+  assert.match(source, /coordination\.request_failed/);
+  assert.match(source, /OBSERVABILITY_FIELDS/);
+  assert.doesNotMatch(source, /console\.log\(JSON\.stringify\(rawBody/);
+  assert.doesNotMatch(source, /console\.log\(JSON\.stringify\(.*secret/);
+});

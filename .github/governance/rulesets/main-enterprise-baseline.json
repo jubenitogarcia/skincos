@@ -8,9 +8,22 @@
       "exclude": []
     }
   },
+  "bypass_actors": [
+    {
+      "actor_id": 15368,
+      "actor_type": "Integration",
+      "bypass_mode": "always"
+    }
+  ],
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },
+    {
+      "type": "update",
+      "parameters": {
+        "update_allows_fetch_and_merge": false
+      }
+    },
     {
       "type": "pull_request",
       "parameters": {
@@ -20,7 +33,7 @@
         "require_code_owner_review": false,
         "require_last_push_approval": false,
         "required_review_thread_resolution": true,
-        "allowed_merge_methods": ["merge", "squash", "rebase"]
+        "allowed_merge_methods": ["squash"]
       }
     },
     {

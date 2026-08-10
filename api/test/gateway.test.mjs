@@ -249,6 +249,26 @@ test('default gateway tolerates stateful Inventory binding latency beyond the pu
     assert.equal(response.headers.get('x-skincos-dependency-status'), 'live');
 });
 
+test('default gateway gives unified team reads a bounded readiness budget', async () => {
+    resetBoundServiceResilienceForTest();
+    const response = await handleGatewayRequest(
+        new Request('https://api.skincos.com.br/inventory/admin/team?mode=config'),
+        {
+            INVENTORY: {
+                fetch: async (request) => {
+                    assert.equal(new URL(request.url).pathname, '/admin/team');
+                    await new Promise((resolve) => setTimeout(resolve, 3_200));
+                    return new Response('team-config-result');
+                },
+            },
+        },
+        {},
+    );
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'team-config-result');
+    assert.equal(response.headers.get('x-skincos-dependency-status'), 'live');
+});
+
 test('an unavailable optional Inventory binding degrades only its route and leaves gateway health operational', async () => {
     resetBoundServiceResilienceForTest();
     const inventory = await handleGatewayRequest(new Request('https://api.skincos.com.br/inventory/insumos'), {}, {});

@@ -13,6 +13,10 @@ inputs:
   shared_secret:
     description: Shared custody secret passed only in process environment
     required: true
+  key_id:
+    description: Optional active coordination key identifier supplied by the caller; empty preserves legacy coordination compatibility
+    required: false
+    default: ''
   resource:
     description: Canonical resource key to acquire
     required: true
@@ -40,6 +44,7 @@ runs:
       env:
         SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
         SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
+        SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id }}
         GLOBAL_ENABLED: ${{ inputs.enabled }}
         GLOBAL_RESOURCE: ${{ inputs.resource }}
         GLOBAL_MODULE: ${{ inputs.module }}
@@ -63,6 +68,7 @@ runs:
         git cat-file -e "${GLOBAL_SOURCE_SHA}^{commit}"
         SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
         SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+        SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
           node scripts/codex-global-coordination-workflow.mjs acquire \
             --resource "$GLOBAL_RESOURCE" \
             --module "$GLOBAL_MODULE" \

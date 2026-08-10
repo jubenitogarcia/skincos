@@ -47,6 +47,10 @@ jobs:
         run: node .github/scripts/validate-github-repository-transfer.mjs
       - run: node .github/scripts/validate-deploy-topology.mjs
       - run: node .github/scripts/validate-cloudflare-single-writer.mjs
+      - name: Validate dependency closures
+        run: node .github/scripts/validate-dependency-closures.mjs
+      - name: Test dependency closure validator
+        run: node --test .github/scripts/validate-dependency-closures.test.mjs
       - run: node .github/scripts/validate-progressive-release.mjs
       - name: Test private Ponto Core baseline publisher
         run: node --test .github/scripts/ponto-core-baseline-publisher.test.mjs
