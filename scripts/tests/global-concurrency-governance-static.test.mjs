@@ -379,6 +379,7 @@ test("general CRM Pages checks out trusted local coordination actions before usi
 test("the reusable orchestrator gate exposes global lease outputs to callers", () => {
   const workflow = read(".github/workflows/ponto-orchestrator-gate.yml");
 
+  assert.match(workflow, /GLOBAL_RESOURCE.*\^global:\[a-z0-9\]/s);
   assert.match(workflow, /steps\.global_enabled\.outputs\.proof_b64/);
   assert.match(workflow, /steps\.global_enabled\.outputs\.url/);
   assert.match(workflow, /id: global_enabled/);
