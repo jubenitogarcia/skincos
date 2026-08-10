@@ -15,7 +15,7 @@ esta em `operator-run-key`, mas nao ha Scheduled Task nem processo ativo
 tratar qualquer modulo como monitorado continuamente, restabeleca o supervisor
 fora do GitHub, execute um alerta controlado e registre nova evidencia sanitizada.
 
-Este documento define os SLOs mínimos, a rota de alerta e a disciplina operacional para CRM, Website e Workers.
+Este documento define os SLOs mínimos, a rota de alerta e a disciplina operacional para CRM, Website, Workers e o coordination plane global.
 
 ## Princípios
 
@@ -58,6 +58,28 @@ Uma jornada sintética autenticada exige ator exclusivo de staging, segredo fora
   - 5xx ≥ 1% em 5m → alerta
   - Rate limit ≥ 5% em 5m → alerta
   - D1/R2 error rate ≥ 1% em 5m → alerta
+
+### Coordination plane
+
+O catálogo também monitora `/v1/readyz` do Durable Object global em staging e
+produção. O objetivo operacional é disponibilidade mensal de 99,95% e p95 de
+até 500ms. Um timeout, resposta 5xx, contrato divergente, `protocol` ausente
+ou `authorityEpoch` inválido é indisponibilidade: não se transforma em
+“saudável” por retry local. Workflows e o mini-PC devem aguardar ou falhar
+fechados enquanto o endpoint estiver indisponível ou ambíguo.
+
+O Worker emite eventos JSON sanitizados para a telemetria do runtime. Os campos
+permitidos são `event`, `route`, `action`, `status`, `result`, `reason`,
+`coordinationPlane`, `authorityEpoch`, `keyId`, `resourceClass` e `durationMs`,
+além dos metadados do contrato. Não são registrados body, digest de request,
+recovery ID, token, segredo, autorização, cookie ou PII. O `keyId` é somente o
+identificador público de versão da chave, nunca a chave.
+
+Eventos mínimos do coordinator: `coordination.readiness`,
+`coordination.request_processed`, `coordination.request_rejected` e
+`coordination.request_failed`. Para diagnóstico, correlacione janela temporal,
+`action`, recurso lógico, epoch e resultado; nunca copie o envelope assinado
+para logs ou tickets.
 
 ## Owners de alerta
 
