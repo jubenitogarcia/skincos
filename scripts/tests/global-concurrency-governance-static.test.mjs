@@ -40,6 +40,8 @@ test("Cloudflare mutators have one fail-closed writer group and no unclassified 
   assert.match(coordinator, /SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL/);
   assert.match(coordinator, /versions deploy/);
   assert.match(coordinator, /environment: \$\{\{ inputs\.target \}\}/);
+  assert.equal((coordinator.match(/^\s+COORDINATION_PREVIOUS_KEY_ID:/gm) || []).length, 1);
+  assert.equal((coordinator.match(/^\s+COORDINATION_PREVIOUS_KEY_EXPIRES_AT:/gm) || []).length, 1);
   const coordinatorSurface = policy.surfaces.find((surface) => surface.id === "global-coordination-plane");
   assert.equal(coordinatorSurface.canonicalDeployWorkflow, ".github/workflows/deploy-global-coordinator.yml");
   assert.equal(coordinatorSurface.coordinationGroup, "global-coordinator-writer");
