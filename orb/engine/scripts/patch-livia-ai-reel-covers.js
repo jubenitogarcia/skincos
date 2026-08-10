@@ -67,6 +67,10 @@ function node(id, name, type, typeVersion, position, parameters, extra = {}) {
   };
 }
 
+function codeParameters(mode, jsCode) {
+  return { mode, language: 'javaScript', jsCode };
+}
+
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -387,7 +391,7 @@ if (!/^https:\/\//i.test(rawUrl)) {
 return { json: { ...context, coverGenerationStatus: 'outcome', coverResult: fallback('cloudinary_upload_failed') }, pairedItem: $input.item?.pairedItem };
 }
 const deliveryUrl = rawUrl.includes('/image/upload/')
-  ? rawUrl.replace('/image/upload/', '/image/upload/c_fill,ar_9:16,g_auto,q_auto:good,l_text:Arial_24_bold:Espa%C3%A7o%20Facial,co_rgb:ffffff,g_south_east,x_36,y_40/fl_layer_apply/')
+  ? rawUrl.replace('/image/upload/', '/image/upload/c_fill,ar_9:16,g_auto,q_auto:good/l_text:Arial_24_bold:Espa%C3%A7o%20Facial,co_rgb:ffffff/fl_layer_apply,g_south_east,x_36,y_40/')
   : rawUrl;
 const storedResult = { schema: 'livia.reel-cover.v1', mediaId: context.id || '', groupKey: context.groupKey || '', groupOrder: Number(context.groupOrder || 0), coverArtifactKey: artifactKey, coverIdentity: context.coverIdentity || artifactKey, coverStatus: 'ai', coverSource: 'ai', coverUrl: deliveryUrl, coverAssetUrl: rawUrl, reason: '', brandStyleVersion: 'espaco-facial-editorial-v1' };
 try {
@@ -500,7 +504,7 @@ function patchValidateGraphCode(code) {
 
 function buildNodes() {
   return [
-    node(NODE_IDS.prepare, 'Prepare Livia Reel Cover Jobs', 'n8n-nodes-base.code', 2.2, [920, 720], { mode: 'runOnceForAllItems', jsCode: PREPARE_CODE }),
+    node(NODE_IDS.prepare, 'Prepare Livia Reel Cover Jobs', 'n8n-nodes-base.code', 2, [920, 720], codeParameters('runOnceForAllItems', PREPARE_CODE)),
     node(NODE_IDS.route, 'Switch Livia Reel Cover Jobs', 'n8n-nodes-base.switch', 3.4, [1160, 720], {
       mode: 'expression',
       numberOutputs: 4,
@@ -530,10 +534,10 @@ function buildNodes() {
       onError: 'continueRegularOutput',
       alwaysOutputData: true,
     }),
-    node(NODE_IDS.normalizeOpenai, 'Normalize Livia Reel Cover OpenAI', 'n8n-nodes-base.code', 2.2, [1660, 580], { mode: 'runOnceForEachItem', jsCode: NORMALIZE_OPENAI_CODE }),
-    node(NODE_IDS.normalizeCachedBinary, 'Normalize Livia Reel Cover Cached Binary', 'n8n-nodes-base.code', 2.2, [1660, 700], { mode: 'runOnceForEachItem', jsCode: NORMALIZE_CACHED_BINARY_CODE }),
-    node(NODE_IDS.normalizeCachedResult, 'Normalize Livia Reel Cover Cached Result', 'n8n-nodes-base.code', 2.2, [1660, 820], { mode: 'runOnceForEachItem', jsCode: NORMALIZE_CACHED_RESULT_CODE }),
-    node(NODE_IDS.normalizeFallback, 'Normalize Livia Reel Cover Fallback', 'n8n-nodes-base.code', 2.2, [1660, 940], { mode: 'runOnceForEachItem', jsCode: NORMALIZE_FALLBACK_CODE }),
+    node(NODE_IDS.normalizeOpenai, 'Normalize Livia Reel Cover OpenAI', 'n8n-nodes-base.code', 2, [1660, 580], codeParameters('runOnceForEachItem', NORMALIZE_OPENAI_CODE)),
+    node(NODE_IDS.normalizeCachedBinary, 'Normalize Livia Reel Cover Cached Binary', 'n8n-nodes-base.code', 2, [1660, 700], codeParameters('runOnceForEachItem', NORMALIZE_CACHED_BINARY_CODE)),
+    node(NODE_IDS.normalizeCachedResult, 'Normalize Livia Reel Cover Cached Result', 'n8n-nodes-base.code', 2, [1660, 820], codeParameters('runOnceForEachItem', NORMALIZE_CACHED_RESULT_CODE)),
+    node(NODE_IDS.normalizeFallback, 'Normalize Livia Reel Cover Fallback', 'n8n-nodes-base.code', 2, [1660, 940], codeParameters('runOnceForEachItem', NORMALIZE_FALLBACK_CODE)),
     node(NODE_IDS.uploadRoute, 'Switch Livia Reel Cover Upload Route', 'n8n-nodes-base.switch', 3.4, [1900, 640], {
       mode: 'expression',
       numberOutputs: 2,
@@ -558,11 +562,11 @@ function buildNodes() {
       onError: 'continueRegularOutput',
       alwaysOutputData: true,
     }),
-    node(NODE_IDS.normalizeUpload, 'Normalize Livia Reel Cover Upload', 'n8n-nodes-base.code', 2.2, [2380, 540], { mode: 'runOnceForEachItem', jsCode: NORMALIZE_UPLOAD_CODE }),
+    node(NODE_IDS.normalizeUpload, 'Normalize Livia Reel Cover Upload', 'n8n-nodes-base.code', 2, [2380, 540], codeParameters('runOnceForEachItem', NORMALIZE_UPLOAD_CODE)),
     node(NODE_IDS.outcomes, 'Merge Livia Reel Cover Outcomes', 'n8n-nodes-base.merge', 3.2, [2620, 720], { mode: 'append', options: {} }),
-    node(NODE_IDS.aggregate, 'Aggregate Livia Reel Cover Outcomes', 'n8n-nodes-base.code', 2.2, [2860, 720], { mode: 'runOnceForAllItems', jsCode: AGGREGATE_CODE }),
+    node(NODE_IDS.aggregate, 'Aggregate Livia Reel Cover Outcomes', 'n8n-nodes-base.code', 2, [2860, 720], codeParameters('runOnceForAllItems', AGGREGATE_CODE)),
     node(NODE_IDS.context, 'Merge Livia Reel Cover Context', 'n8n-nodes-base.merge', 3.2, [3100, 720], { mode: 'append', options: {} }),
-    node(NODE_IDS.attach, 'Attach Livia Reel Cover Context', 'n8n-nodes-base.code', 2.2, [3340, 720], { mode: 'runOnceForAllItems', jsCode: ATTACH_CONTEXT_CODE }),
+    node(NODE_IDS.attach, 'Attach Livia Reel Cover Context', 'n8n-nodes-base.code', 2, [3340, 720], codeParameters('runOnceForAllItems', ATTACH_CONTEXT_CODE)),
   ];
 }
 
@@ -683,6 +687,7 @@ module.exports = {
   codes: {
     prepare: PREPARE_CODE,
     normalizeOpenai: NORMALIZE_OPENAI_CODE,
+    normalizeUpload: NORMALIZE_UPLOAD_CODE,
   },
   patchBuildContextCode,
   patchHydrateCode,

@@ -182,8 +182,8 @@ function buildDeliveryCoverUrl(rawUrl) {
   const marker = '/image/upload/';
   if (!source.includes(marker)) return source;
   const [prefix, suffix] = source.split(marker);
-  const overlay = 'l_text:Arial_24_bold:Espa%C3%A7o%20Facial,co_rgb:ffffff,g_south_east,x_36,y_40/fl_layer_apply';
-  return `${prefix}${marker}c_fill,ar_9:16,g_auto,q_auto:good,${overlay}/${suffix}`;
+  const overlay = 'l_text:Arial_24_bold:Espa%C3%A7o%20Facial,co_rgb:ffffff/fl_layer_apply,g_south_east,x_36,y_40';
+  return `${prefix}${marker}c_fill,ar_9:16,g_auto,q_auto:good/${overlay}/${suffix}`;
 }
 
 module.exports = {

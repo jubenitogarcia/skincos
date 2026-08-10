@@ -142,8 +142,10 @@ test('prompt and artifact validation enforce editorial safety and portrait quali
   assert.equal(validateCoverArtifact({ buffer: fixturePng(), mimeType: 'image/png', width: 1024, height: 1536 }).valid, true);
   assert.equal(validateCoverArtifact({ buffer: fixturePng(), mimeType: 'image/png' }).valid, true);
   assert.equal(validateCoverArtifact({ buffer: Buffer.alloc(200), mimeType: 'image/png', width: 1536, height: 1024 }).valid, false);
-  assert.match(buildDeliveryCoverUrl('https://res.cloudinary.com/espacofacial/image/upload/v1/reel-cover.png'), /c_fill,ar_9:16/);
-  assert.match(buildDeliveryCoverUrl('https://res.cloudinary.com/espacofacial/image/upload/v1/reel-cover.png'), /Espa%C3%A7o%20Facial/);
+  const deliveryUrl = buildDeliveryCoverUrl('https://res.cloudinary.com/espacofacial/image/upload/v1/reel-cover.png');
+  assert.match(deliveryUrl, /c_fill,ar_9:16/);
+  assert.match(deliveryUrl, /Espa%C3%A7o%20Facial/);
+  assert.match(deliveryUrl, /good\/l_text:Arial_24_bold:Espa%C3%A7o%20Facial,co_rgb:ffffff\/fl_layer_apply,g_south_east,x_36,y_40/);
 });
 
 test('candidate adds the provider request and deterministic Cloudinary upload without changing the default rollout', () => {
@@ -213,6 +215,14 @@ test('provider failure is converted to a cached frame fallback and retry reuses 
     assert.equal(retried[0].json.coverGenerationStatus, 'cached_result');
     assert.equal(retried[0].json.coverResult.coverStatus, 'fallback_frame');
     assert.equal(retried[0].json.coverResult.coverArtifactKey, plan.artifactKey);
+
+    const uploaded = await runCodeNode(codes.normalizeUpload, {
+      inputItems: [{ json: {}, pairedItem: { item: 0 } }],
+      json: { secure_url: 'https://res.cloudinary.com/espacofacial/image/upload/v1/reel-cover.png' },
+      vars: { LIVIA_REEL_COVER_CACHE_ROOT: tempRoot },
+      nodeJson: { ...context, coverMode: 'active' },
+    });
+    assert.match(uploaded[0].json.coverResult.coverUrl, /good\/l_text:Arial_24_bold:Espa%C3%A7o%20Facial,co_rgb:ffffff\/fl_layer_apply,g_south_east,x_36,y_40/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
