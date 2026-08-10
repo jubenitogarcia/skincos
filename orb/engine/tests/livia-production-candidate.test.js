@@ -26,6 +26,8 @@ test('production candidate builder applies every Livia fail-closed patch as one 
     'today-first-due-selection',
     'schedule-cadence',
     'job-graph-payload-file',
+    'notification-contract',
+    'ai-reel-cover-generation',
     'runtime-isolation',
   ]);
   assert.equal(nodes.has('Merge Drive Result and Context'), false);
@@ -47,6 +49,28 @@ test('production candidate builder applies every Livia fail-closed patch as one 
   assert.doesNotMatch(nodes.get('Assert Livia Publication Window').parameters.jsCode, /process\.pid/);
   assert.match(nodes.get('BQ - Build Platform Job Graph').parameters.command, /--payload-file/);
   assert.doesNotMatch(nodes.get('BQ - Build Platform Job Graph').parameters.command, /JSON\.stringify\(payload\)/);
+  assert.match(nodes.get('Cleanup Temp Files').parameters.command, /env -u NODE_OPTIONS node <<'NODE'/);
+  assert.equal(nodes.get('OpenAI Livia Reel Cover Edit').parameters.url, 'https://api.openai.com/v1/images/edits');
+  assert.equal(nodes.get('OpenAI Livia Reel Cover Edit').parameters.contentType, 'multipart-form-data');
+  assert.equal(nodes.get('OpenAI Livia Reel Cover Edit').retryOnFail, true);
+  assert.equal(nodes.get('OpenAI Livia Reel Cover Edit').maxTries, 2);
+  assert.equal(nodes.get('Upload Livia Reel Cover').retryOnFail, true);
+  for (const name of ['Normalize Livia Reel Cover OpenAI', 'Normalize Livia Reel Cover Cached Binary', 'Normalize Livia Reel Cover Cached Result', 'Normalize Livia Reel Cover Fallback', 'Normalize Livia Reel Cover Upload']) {
+    assert.equal(nodes.get(name).parameters.mode, 'runOnceForEachItem');
+  }
+  for (const name of ['Prepare Livia Reel Cover Jobs', 'Normalize Livia Reel Cover OpenAI', 'Normalize Livia Reel Cover Cached Binary', 'Normalize Livia Reel Cover Cached Result', 'Normalize Livia Reel Cover Fallback', 'Normalize Livia Reel Cover Upload', 'Aggregate Livia Reel Cover Outcomes', 'Attach Livia Reel Cover Context']) {
+    assert.equal(nodes.get(name).typeVersion, 2);
+    assert.equal(nodes.get(name).parameters.language, 'javaScript');
+  }
+  assert.equal(nodes.get('Upload Livia Reel Cover').parameters.additionalFieldsFile.public_id, '={{ $json.coverPublicId }}');
+  assert.equal(nodes.get('Upload Livia Reel Cover').parameters.additionalFieldsFile.overwrite, true);
+  assert.match(nodes.get('Prepare Livia Reel Cover Jobs').parameters.jsCode, /LIVIA_REEL_COVER_MODE/);
+  assert.match(nodes.get('Prepare Livia Reel Cover Jobs').parameters.jsCode, /cover_mode_off/);
+  assert.match(nodes.get('BQ - Validate Job Graph').parameters.jsCode, /coverStatus === "ai"/);
+  assert.match(nodes.get('Assert Livia Visual Analysis').parameters.jsCode, /binary: \$input\.item\.binary/);
+  assert.equal(nodes.has('Inform Success (1)'), true);
+  assert.equal(nodes.has('Inform Success (2)'), true);
+  assert.ok(workflow.connections['Assert Drive Published'].main[0].some((edge) => edge.node === 'Inform Success (2)'));
 
   for (const node of workflow.nodes.filter((node) => node.type === 'n8n-nodes-base.executeCommand')) {
     const command = String(node.parameters?.command || '');

@@ -13,6 +13,7 @@ const REQUIRED_NODES = new Set([
   'Verify Published Artifacts',
   'Record Publish Progress',
   'Validate Publish Token Health',
+  'Cleanup Temp Files',
 ]);
 const RELEASE_ROOT_RE = /^\/opt\/skincos\/releases\/[0-9a-f]{7,64}\/source\/orb\/engine$/;
 const PINNED_ROOT_RE = /\/opt\/skincos\/releases\/[0-9a-f]{7,64}\/source\/orb\/engine/g;
@@ -33,6 +34,17 @@ function directVerifierCommand(releaseRoot) {
   }
   return "set -a; . /etc/skincos/orb-business.env; set +a; printf %s " + sh(JSON.stringify({ final })) + " | node " + sh("${releaseRoot}/scripts/livia/verify-published-artifacts.js") + " --payload -";
 })() }}`;
+}
+
+function disableInheritedNodeOptions(command) {
+  const normalized = String(command || '');
+  const safeMarker = "return `env -u NODE_OPTIONS node <<'NODE'\n";
+  if (normalized.includes(safeMarker)) return normalized;
+  const marker = "return `node <<'NODE'\n";
+  if (!normalized.includes(marker)) {
+    fail('Cleanup Temp Files must invoke its heredoc child without inherited NODE_OPTIONS.');
+  }
+  return normalized.replace(marker, safeMarker);
 }
 
 function patchResumeIdentity(workflow) {
@@ -123,6 +135,11 @@ function validate(workflow, releaseRoot) {
     if (!REQUIRED_NODES.has(node?.name)) continue;
     if (node.type !== 'n8n-nodes-base.executeCommand') fail(`${node.name} must remain an Execute Command node.`);
     const command = String(node.parameters?.command || '');
+    if (node.name === 'Cleanup Temp Files') {
+      node.parameters.command = disableInheritedNodeOptions(command);
+      touched.push(node.name);
+      continue;
+    }
     const hasMutableRoot = command.includes('/opt/skincos/current/source/orb/engine');
     const hasPinnedRoot = PINNED_ROOT_RE.test(command);
     PINNED_ROOT_RE.lastIndex = 0;
@@ -165,5 +182,6 @@ module.exports = {
   WORKFLOW_ID,
   MUTABLE_RUNTIME_RE,
   patchResumeIdentity,
+  disableInheritedNodeOptions,
   validate,
 };
