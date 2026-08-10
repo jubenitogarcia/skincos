@@ -21,9 +21,19 @@ for (const ownerPath of requiredOwnerPaths) {
 }
 
 const workflowDirectory = path.join(root, ".github/workflows");
+const mergeAuthorityWorkflow = ".github/workflows/global-merge-authority.yml";
+let mergeMutationWorkflowCount = 0;
 for (const filename of fs.readdirSync(workflowDirectory).filter((name) => /\.ya?ml$/i.test(name))) {
   const relativePath = path.posix.join(".github/workflows", filename);
-  for (const [index, line] of read(relativePath).split(/\r?\n/).entries()) {
+  const workflowSource = read(relativePath);
+  const hasMergeMutation = /pulls\/\$\{?[^\n]+\/merge|merge_method\s*:/i.test(workflowSource);
+  const hasDirectMainUpdate = /git\s+push[^\n]*(?:refs\/heads\/main|\bmain\b)|git\/refs\/heads\/main/i.test(workflowSource);
+  if (hasMergeMutation) {
+    mergeMutationWorkflowCount += 1;
+    if (relativePath !== mergeAuthorityWorkflow) fail(`${relativePath} contains a merge mutation outside the single integration authority`);
+  }
+  if (hasDirectMainUpdate) fail(`${relativePath} contains a direct main ref update outside the integration authority`);
+  for (const [index, line] of workflowSource.split(/\r?\n/).entries()) {
     const match = line.match(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/);
     if (!match) continue;
     const reference = match[1];
@@ -33,6 +43,10 @@ for (const filename of fs.readdirSync(workflowDirectory).filter((name) => /\.ya?
     }
   }
 }
+if (mergeMutationWorkflowCount !== 1) fail("exactly one workflow may contain the main merge mutation");
+const mergeAuthoritySource = read(mergeAuthorityWorkflow);
+if (!/scripts\/codex-global-merge-authority\.mjs/.test(mergeAuthoritySource)) fail("global merge authority workflow must invoke the canonical merge authority implementation");
+if (!/GH_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/.test(mergeAuthoritySource)) fail("global merge authority must use the Actions token for its protected merge mutation");
 
 const ruleset = readJson(".github/governance/rulesets/main-enterprise-baseline.json");
 if (ruleset.name !== "main-enterprise-baseline" || ruleset.target !== "branch") {
@@ -41,8 +55,17 @@ if (ruleset.name !== "main-enterprise-baseline" || ruleset.target !== "branch") 
 if (ruleset.enforcement !== "active" || !ruleset.conditions?.ref_name?.include?.includes("~DEFAULT_BRANCH")) {
   fail("main ruleset must actively target the default branch");
 }
-for (const requiredRule of ["deletion", "non_fast_forward", "pull_request", "required_status_checks"]) {
+for (const requiredRule of ["deletion", "non_fast_forward", "update", "pull_request", "required_status_checks"]) {
   if (!ruleset.rules?.some((rule) => rule.type === requiredRule)) fail(`main ruleset is missing ${requiredRule}`);
+}
+const updateRule = ruleset.rules?.find((rule) => rule.type === "update");
+if (updateRule?.parameters?.update_allows_fetch_and_merge !== false) fail("main update rule must deny uncoordinated ref updates");
+if (JSON.stringify(ruleset.bypass_actors || []) !== JSON.stringify([{ actor_id: 15368, actor_type: "Integration", bypass_mode: "always" }])) {
+  fail("main update rule must be bypassed only by the GitHub Actions integration");
+}
+const pullRequestRule = ruleset.rules?.find((rule) => rule.type === "pull_request");
+if (JSON.stringify(pullRequestRule?.parameters?.allowed_merge_methods || []) !== JSON.stringify(["squash"])) {
+  fail("main pull request rule must allow only squash merges");
 }
 
 const environmentBranchPolicy = readJson(".github/governance/environments/main-branch-policy.json");

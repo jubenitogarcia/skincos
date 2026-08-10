@@ -7,6 +7,9 @@ workers_dev = false
 COORDINATION_CONTRACT_ID = "skincos/global-coordination/v1"
 COORDINATION_PLANE_NAME = "global"
 COORDINATION_PLANE_MODE = "global"
+COORDINATION_ACTIVE_KEY_ID = "legacy-v1"
+COORDINATION_ALLOW_LEGACY_KEY = "true"
+COORDINATION_RECOVERY_KEY_ID = "recovery-v1"
 
 [durable_objects]
 bindings = [
@@ -26,6 +29,9 @@ preview_urls = false
 COORDINATION_CONTRACT_ID = "skincos/global-coordination/v1"
 COORDINATION_PLANE_NAME = "global"
 COORDINATION_PLANE_MODE = "global"
+COORDINATION_ACTIVE_KEY_ID = "legacy-v1"
+COORDINATION_ALLOW_LEGACY_KEY = "true"
+COORDINATION_RECOVERY_KEY_ID = "recovery-v1"
 
 [env.staging.durable_objects]
 bindings = [
@@ -41,6 +47,9 @@ preview_urls = false
 COORDINATION_CONTRACT_ID = "skincos/global-coordination/v1"
 COORDINATION_PLANE_NAME = "global"
 COORDINATION_PLANE_MODE = "global"
+COORDINATION_ACTIVE_KEY_ID = "legacy-v1"
+COORDINATION_ALLOW_LEGACY_KEY = "true"
+COORDINATION_RECOVERY_KEY_ID = "recovery-v1"
 
 [env.production.durable_objects]
 bindings = [

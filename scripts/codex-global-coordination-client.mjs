@@ -11,6 +11,10 @@ import {
 const COORDINATION_PATH = "/v1/leases";
 const REQUEST_SCHEMA_VERSION = 1;
 const NONCE_RE = /^[A-Za-z0-9_-]{32,}$/;
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
+const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+const LEGACY_KEY_ID = "legacy-v1";
+const COORDINATION_PROTOCOL = "epoch-fence-v1";
 
 export function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -70,6 +74,7 @@ export function buildAuthenticatedRequest({
   url = process.env.SKINCOS_GLOBAL_COORDINATOR_URL,
   secret,
   adminSecret,
+  keyId = process.env.SKINCOS_GLOBAL_COORDINATION_KEY_ID,
   action,
   request,
   proof,
@@ -91,6 +96,7 @@ export function buildAuthenticatedRequest({
     nonce,
     requestedAt,
     requestDigest,
+    ...(String(keyId || "").trim() ? { keyId: String(keyId).trim() } : {}),
   };
   const headers = {
     accept: "application/json",
@@ -100,6 +106,7 @@ export function buildAuthenticatedRequest({
     "x-skincos-coordination-request-digest": requestDigest,
     "x-skincos-coordination-request-signature": hmac(secret, canonicalJson(binding)),
   };
+  if (String(keyId || "").trim()) headers["x-skincos-coordination-key-id"] = String(keyId).trim();
   if (action === "revoke") {
     if (!String(adminSecret || "").trim()) throw new Error("global coordination administrative custody is unavailable");
     headers.authorization = `Bearer ${adminSecret}`;
@@ -113,7 +120,22 @@ export function buildAuthenticatedRequest({
   };
 }
 
-export function verifyCoordinatorResponse(payload, secret) {
+function responseSecretFor(authority, secretOrOptions) {
+  if (typeof secretOrOptions === "string") return secretOrOptions;
+  const options = secretOrOptions || {};
+  const keyId = String(authority.keyId || options.keyId || "").trim();
+  if (keyId && !String(options.keyId || "").trim() && options.secret) return options.secret;
+  if (keyId && keyId === String(options.keyId || "").trim()) return options.secret;
+  if (keyId && keyId === String(options.previousKeyId || "").trim()) {
+    const expiresAt = Date.parse(String(options.previousKeyExpiresAt || ""));
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) throw new Error("global coordinator response key grace period expired");
+    return options.previousSecret;
+  }
+  if (!keyId) return options.secret;
+  throw new Error("global coordinator response key id is unknown");
+}
+
+export function verifyCoordinatorResponse(payload, secretOrOptions) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("global coordinator response is invalid");
   const { authority, responseSignature, ...unsigned } = payload;
   if (
@@ -123,8 +145,20 @@ export function verifyCoordinatorResponse(payload, secret) {
     || !/^[0-9a-f]{64}$/.test(String(authority.responseDigest || ""))
     || !String(responseSignature || "")
   ) throw new Error("global coordinator response authority is invalid");
+  if (authority.protocol !== undefined && (
+    authority.protocol !== COORDINATION_PROTOCOL
+    || !KEY_ID.test(String(authority.keyId || ""))
+    || !Number.isSafeInteger(authority.authorityEpoch)
+    || authority.authorityEpoch < 1
+  )) throw new Error("global coordinator response epoch contract is invalid");
+  if (authority.protocol === COORDINATION_PROTOCOL) {
+    const expectedKeyId = typeof secretOrOptions === "string"
+      ? ""
+      : String(secretOrOptions?.keyId || "").trim();
+    if (!expectedKeyId && authority.keyId !== LEGACY_KEY_ID) throw new Error("global coordinator response key id is not pinned");
+  }
   if (sha256(canonicalJson(unsigned)) !== authority.responseDigest) throw new Error("global coordinator response digest mismatch");
-  const expected = hmac(secret, canonicalJson({ ...unsigned, authority }));
+  const expected = hmac(responseSecretFor(authority, secretOrOptions), canonicalJson({ ...unsigned, authority }));
   const actual = Buffer.from(String(responseSignature), "base64url");
   const expectedBytes = Buffer.from(expected, "base64url");
   if (actual.length !== expectedBytes.length || !crypto.timingSafeEqual(actual, expectedBytes)) throw new Error("global coordinator response signature mismatch");
@@ -138,14 +172,81 @@ export function proofForLease(lease) {
     leaseId: String(lease.leaseId || ""),
     fencingToken: lease.fencingToken,
     intentDigest: String(lease.intentDigest || ""),
+    ...(lease.authorityEpoch !== undefined ? { authorityEpoch: lease.authorityEpoch } : {}),
+    ...(lease.authorityKeyId ? { authorityKeyId: lease.authorityKeyId } : {}),
     owner: lease.owner,
     ...(lease.holder ? { holder: lease.holder } : {}),
+  };
+}
+
+export function buildRecoveryFenceRequest({
+  url,
+  recoverySecret,
+  recoveryKeyId = "recovery-v1",
+  recoveryId,
+  expectedAuthorityEpoch,
+  reason = "coordinator-recovery",
+  nonce = newRequestNonce(),
+  requestedAt = new Date().toISOString(),
+}) {
+  if (!String(recoverySecret || "").trim()) throw new Error("global coordination recovery custody is unavailable");
+  const normalizedKeyId = String(recoveryKeyId || "").trim();
+  const normalizedRecoveryId = String(recoveryId || "").trim();
+  if (!KEY_ID.test(normalizedKeyId)) throw new Error("global coordination recovery key id is invalid");
+  if (!SAFE_ID.test(normalizedRecoveryId)) throw new Error("global coordination recovery id is invalid");
+  if (!Number.isSafeInteger(expectedAuthorityEpoch) || expectedAuthorityEpoch < 1) {
+    throw new Error("global coordination recovery authority epoch is invalid");
+  }
+  if (!NONCE_RE.test(String(nonce || ""))) throw new Error("coordination request nonce is invalid");
+  const endpoint = new URL(String(url || ""));
+  if (endpoint.protocol !== "https:") throw new Error("global coordinator URL must use HTTPS");
+  endpoint.pathname = "/v1/recovery";
+  endpoint.search = "";
+  endpoint.hash = "";
+  const body = {
+    schemaVersion: REQUEST_SCHEMA_VERSION,
+    contractId: CONTRACT_ID,
+    action: "fence",
+    requestNonce: nonce,
+    requestedAt,
+    request: { recoveryId: normalizedRecoveryId, expectedAuthorityEpoch, reason: String(reason || "") },
+  };
+  const rawBody = canonicalJson(body);
+  const requestDigest = sha256(rawBody);
+  const binding = {
+    schemaVersion: REQUEST_SCHEMA_VERSION,
+    contractId: CONTRACT_ID,
+    method: "POST",
+    path: endpoint.pathname,
+    nonce,
+    requestedAt,
+    requestDigest,
+    keyId: normalizedKeyId,
+  };
+  return {
+    endpoint,
+    body,
+    rawBody,
+    requestDigest,
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "x-skincos-coordination-nonce": nonce,
+      "x-skincos-coordination-requested-at": requestedAt,
+      "x-skincos-coordination-request-digest": requestDigest,
+      "x-skincos-coordination-recovery-key-id": normalizedKeyId,
+      "x-skincos-coordination-request-signature": hmac(recoverySecret, canonicalJson(binding)),
+    },
   };
 }
 
 export async function coordinate({
   url = process.env.SKINCOS_GLOBAL_COORDINATOR_URL,
   secret = process.env.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET,
+  keyId = process.env.SKINCOS_GLOBAL_COORDINATION_KEY_ID,
+  previousKeyId = process.env.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY_ID,
+  previousSecret = process.env.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY,
+  previousKeyExpiresAt = process.env.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY_EXPIRES_AT,
   adminSecret = process.env.SKINCOS_GLOBAL_COORDINATION_ADMIN_SECRET,
   fetchImpl = globalThis.fetch,
   action,
@@ -158,13 +259,13 @@ export async function coordinate({
   requestedAt,
 }) {
   if (typeof fetchImpl !== "function") throw new Error("global coordinator fetch is unavailable");
-  const signed = buildAuthenticatedRequest({ url, secret, adminSecret, action, request, proof, authorization, ttlMs, reason, nonce, requestedAt });
+  const signed = buildAuthenticatedRequest({ url, secret, adminSecret, keyId, action, request, proof, authorization, ttlMs, reason, nonce, requestedAt });
   const response = await fetchImpl(signed.endpoint, { method: "POST", headers: signed.headers, body: signed.rawBody });
   const raw = await response.text();
   let payload;
   try { payload = JSON.parse(raw); } catch { throw new Error("global coordinator response JSON is invalid"); }
   if ((response.status >= 200 && response.status < 300) || response.status === 409) {
-    const verified = verifyCoordinatorResponse(payload, secret);
+    const verified = verifyCoordinatorResponse(payload, { secret, keyId, previousKeyId, previousSecret, previousKeyExpiresAt });
     return { ...verified, httpStatus: response.status };
   }
   const error = String(payload?.error || payload?.reason || `HTTP ${response.status}`);

@@ -1,0 +1,143 @@
+name: Recover global coordination plane
+run-name: Recover global coordinator version ${{ inputs.version_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_id:
+        description: Exact previously registered production Worker version to restore
+        required: true
+        type: string
+      confirmation:
+        description: Type RECOVER-KNOWN-COORDINATOR-VERSION to arm break-glass
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: global-coordinator-recovery-production
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      TARGET: production
+      COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET }}
+      VERSION_ID: ${{ inputs.version_id }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+
+      - name: Verify recovery custody and source ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'recovery must be dispatched from main' >&2; exit 1; }
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'Cloudflare recovery custody is unavailable' >&2; exit 1; }
+          [[ -n "${SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET:-}" ]] || { echo 'separate recovery custody is unavailable' >&2; exit 1; }
+
+      - name: Capture the active incumbent version
+        id: incumbent
+        shell: bash
+        working-directory: ops/cloudflare/global-coordinator
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.120.0 deployments status --config wrangler.toml --env production --json > "$RUNNER_TEMP/coordinator-recovery-incumbent.json"
+          active_version_id="$(node - "$RUNNER_TEMP/coordinator-recovery-incumbent.json" <<'NODE'
+          const fs = require('node:fs');
+          const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const active = (status.versions || []).find((entry) => Number(entry.percentage) === 100);
+          if (!active?.version_id) throw new Error('active production coordinator version is unavailable');
+          process.stdout.write(active.version_id);
+          NODE
+          )"
+          echo "active_version_id=$active_version_id" >> "$GITHUB_OUTPUT"
+
+      - name: Prove the normal plane is degraded
+        run: node scripts/codex-global-coordinator-recovery.mjs probe --url "$COORDINATOR_URL" --output "$RUNNER_TEMP/coordinator-recovery-before.json"
+
+      - name: Arm exact known-version recovery guard
+        shell: bash
+        env:
+          ACTIVE_VERSION_ID: ${{ steps.incumbent.outputs.active_version_id }}
+          PLANE_STATE_FILE: ${{ runner.temp }}/coordinator-recovery-before.json
+        run: |
+          set -euo pipefail
+          plane_state="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).state)' "$PLANE_STATE_FILE")"
+          node .github/scripts/global-coordinator-recovery-guard.mjs \
+            --target "$TARGET" \
+            --ref "$GITHUB_REF" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --version-id "$VERSION_ID" \
+            --active-version-id "$ACTIVE_VERSION_ID" \
+            --plane-state "$plane_state" \
+            --confirmation "$CONFIRMATION" \
+            --registry ops/cloudflare/global-coordinator/recovery-incumbents.json
+
+      - name: Restore the exact registered Worker version
+        working-directory: ops/cloudflare/global-coordinator
+        run: npx --yes wrangler@4.120.0 versions deploy "${VERSION_ID}@100%" --config wrangler.toml --env production --yes --message "break-glass:global-coordinator:${VERSION_ID}"
+
+      - name: Readiness readback after version restore
+        run: |
+          set -euo pipefail
+          node scripts/codex-global-coordinator-recovery.mjs probe --url "$COORDINATOR_URL" --output "$RUNNER_TEMP/coordinator-recovery-after-restore.json"
+          node - "$RUNNER_TEMP/coordinator-recovery-after-restore.json" <<'NODE'
+          const fs = require('node:fs');
+          const result = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (result.state !== 'healthy' || !Number.isSafeInteger(result.authorityEpoch)) throw new Error('restored coordinator is not ready for fencing');
+          NODE
+
+      - name: Fence the restored authority epoch
+        env:
+          EXPECTED_EPOCH_FILE: ${{ runner.temp }}/coordinator-recovery-after-restore.json
+        run: |
+          set -euo pipefail
+          expected_epoch="$(node -e 'process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).authorityEpoch))' "$EXPECTED_EPOCH_FILE")"
+          SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET="$SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET" \
+            node scripts/codex-global-coordinator-recovery.mjs fence \
+              --url "$COORDINATOR_URL" \
+              --recovery-id "github:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:attempt-${GITHUB_RUN_ATTEMPT}" \
+              --expected-authority-epoch "$expected_epoch" \
+              --output "$RUNNER_TEMP/coordinator-recovery-fence.json"
+
+      - name: Verify post-fence readiness and epoch advancement
+        env:
+          BEFORE_FILE: ${{ runner.temp }}/coordinator-recovery-after-restore.json
+        run: |
+          set -euo pipefail
+          node scripts/codex-global-coordinator-recovery.mjs probe --url "$COORDINATOR_URL" --output "$RUNNER_TEMP/coordinator-recovery-after-fence.json"
+          node - "$BEFORE_FILE" "$RUNNER_TEMP/coordinator-recovery-after-fence.json" "$RUNNER_TEMP/coordinator-recovery-fence.json" <<'NODE'
+          const fs = require('node:fs');
+          const before = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const after = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+          const fence = JSON.parse(fs.readFileSync(process.argv[4], 'utf8'));
+          if (after.state !== 'healthy' || after.authorityEpoch !== fence.authorityEpoch || after.authorityEpoch <= before.authorityEpoch) {
+            throw new Error('coordinator epoch did not advance after recovery fence');
+          }
+          NODE
+
+      - name: Upload sanitized recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: global-coordinator-recovery-${{ github.run_id }}
+          path: ${{ runner.temp }}/coordinator-recovery-*.json
+          retention-days: 90
+          if-no-files-found: warn

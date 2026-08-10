@@ -10,6 +10,10 @@ inputs:
   shared_secret:
     description: Shared custody secret passed only in process environment
     required: true
+  key_id:
+    description: Optional active coordination key identifier; defaults to the repository variable
+    required: false
+    default: ''
   proof_file:
     description: Absolute runner-temporary path containing the lease proof
     required: true
@@ -24,6 +28,7 @@ runs:
       env:
         SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
         SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
+        SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id || vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
         GLOBAL_PROOF_FILE: ${{ inputs.proof_file }}
       run: |
         set -euo pipefail
@@ -37,6 +42,7 @@ runs:
         while true; do
           if SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+          SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
             node scripts/codex-global-coordination-workflow.mjs release \
               --proof-file "$GLOBAL_PROOF_FILE"; then
             exit 0

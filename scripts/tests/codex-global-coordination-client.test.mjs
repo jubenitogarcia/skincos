@@ -3,6 +3,7 @@ import test from "node:test";
 import crypto from "node:crypto";
 import {
   buildAuthenticatedRequest,
+  buildRecoveryFenceRequest,
   lockScopeForResource,
   newRequestNonce,
   proofForLease,
@@ -80,6 +81,68 @@ test("response signatures cover the authority envelope and tampering fails close
     .digest("base64url");
   assert.deepEqual(verifyCoordinatorResponse({ ...unsigned, authority, responseSignature }, secret), unsigned);
   assert.throws(() => verifyCoordinatorResponse({ ...unsigned, accepted: false, authority, responseSignature }, secret), /digest mismatch/);
+});
+
+test("key identifiers bind requests and response verification honors the previous-key grace window", () => {
+  const keyRequest = buildAuthenticatedRequest({
+    url: "https://coordination.example.test",
+    secret,
+    keyId: "active-v2",
+    action: "gate",
+    request: { operation: "mutation" },
+    nonce: "k".repeat(32),
+    requestedAt: "2026-08-09T18:00:00.000Z",
+  });
+  assert.equal(keyRequest.headers["x-skincos-coordination-key-id"], "active-v2");
+  assert.match(keyRequest.headers["x-skincos-coordination-request-signature"], /^[A-Za-z0-9_-]+$/);
+
+  const unsigned = { schemaVersion: 1, contractId: CONTRACT_ID, passed: true, authorityEpoch: 3 };
+  const responseDigest = crypto.createHash("sha256").update(canonicalJson(unsigned)).digest("hex");
+  const authority = { contractId: CONTRACT_ID, provider: "cloudflare", protocol: "epoch-fence-v1", keyId: "previous-v1", authorityEpoch: 3, responseDigest };
+  const responseSignature = crypto.createHmac("sha256", secret).update(canonicalJson({ ...unsigned, authority })).digest("base64url");
+  assert.deepEqual(verifyCoordinatorResponse({ ...unsigned, authority, responseSignature }, {
+    secret: "new-secret",
+    keyId: "active-v2",
+    previousKeyId: "previous-v1",
+    previousSecret: secret,
+    previousKeyExpiresAt: "2099-01-01T00:00:00.000Z",
+  }), unsigned);
+  assert.throws(() => verifyCoordinatorResponse({ ...unsigned, authority, responseSignature }, {
+    secret: "new-secret",
+    keyId: "active-v2",
+    previousKeyId: "previous-v1",
+    previousSecret: secret,
+    previousKeyExpiresAt: "2020-01-01T00:00:00.000Z",
+  }), /grace period expired/);
+  assert.throws(() => verifyCoordinatorResponse({
+    ...unsigned,
+    authority: { ...authority, authorityEpoch: 0 },
+    responseSignature,
+  }, { secret, keyId: "previous-v1" }), /epoch contract is invalid/);
+  assert.throws(() => verifyCoordinatorResponse({ ...unsigned, authority, responseSignature }, { secret }), /key id is not pinned/);
+});
+
+test("break-glass fence requests use a separate endpoint, key header, and bounded intent", () => {
+  const request = buildRecoveryFenceRequest({
+    url: "https://coordination.example.test",
+    recoverySecret: "recovery-secret",
+    recoveryKeyId: "recovery-v1",
+    recoveryId: "github:repo:run-1",
+    expectedAuthorityEpoch: 7,
+    nonce: "r".repeat(32),
+    requestedAt: "2026-08-09T18:00:00.000Z",
+  });
+  assert.equal(request.endpoint.pathname, "/v1/recovery");
+  assert.equal(request.body.action, "fence");
+  assert.equal(request.body.request.expectedAuthorityEpoch, 7);
+  assert.equal(request.headers["x-skincos-coordination-recovery-key-id"], "recovery-v1");
+  assert.throws(() => buildRecoveryFenceRequest({ url: "https://coordination.example.test", recoveryId: "x" }), /recovery custody/);
+  assert.throws(() => buildRecoveryFenceRequest({
+    url: "https://coordination.example.test",
+    recoverySecret: "recovery-secret",
+    recoveryId: "github:repo:run-1",
+    expectedAuthorityEpoch: 0,
+  }), /authority epoch is invalid/);
 });
 
 test("lease proofs and conflict scopes remain normalized across adapters", () => {
