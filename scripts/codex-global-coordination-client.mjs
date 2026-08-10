@@ -326,7 +326,7 @@ export async function coordinate({
   const error = String(payload?.error || payload?.reason || `HTTP ${response.status}`);
   const errorCode = String(payload?.errorCode || "").trim();
   const suffix = errorCode ? ` [${errorCode}]` : "";
-  throw new Error(`global coordinator request failed: ${error}${suffix}`);
+  throw new Error(`global coordinator ${action} request failed: ${error}${suffix}`);
 }
 
 export async function acquireGlobalLease({ request, ...options }) {
