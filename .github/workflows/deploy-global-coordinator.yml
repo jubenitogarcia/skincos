@@ -42,8 +42,6 @@ jobs:
       COORDINATION_ADMIN_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ADMIN_SECRET }}
       COORDINATION_ACTIVE_KEY: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
       COORDINATION_PREVIOUS_KEY: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY }}
-      COORDINATION_PREVIOUS_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY_ID }}
-      COORDINATION_PREVIOUS_KEY_EXPIRES_AT: ${{ vars.SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY_EXPIRES_AT }}
       COORDINATION_RECOVERY_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
@@ -265,16 +263,29 @@ jobs:
             idempotencyKey: `global-coordinator-readiness:${runId}:${targetId}`,
             ttlMs: 30_000,
           });
-          const result = await evaluateGlobalGate({
-            request,
-            url: process.env.COORDINATOR_URL,
-            secret: process.env.COORDINATION_SHARED_SECRET,
-            keyId: process.env.COORDINATION_ACTIVE_KEY_ID,
-            previousKeyId: process.env.COORDINATION_PREVIOUS_KEY_ID,
-            previousSecret: process.env.COORDINATION_PREVIOUS_KEY,
-            previousKeyExpiresAt: process.env.COORDINATION_PREVIOUS_KEY_EXPIRES_AT,
-          });
-          if (result.passed !== true) throw new Error(`signed coordination gate denied: ${result.reason || 'unknown'}`);
+          let result;
+          let gateAttempts = 0;
+          for (gateAttempts = 1; gateAttempts <= 6; gateAttempts += 1) {
+            try {
+              result = await evaluateGlobalGate({
+                request,
+                url: process.env.COORDINATOR_URL,
+                secret: process.env.COORDINATION_SHARED_SECRET,
+                keyId: process.env.COORDINATION_ACTIVE_KEY_ID,
+                previousKeyId: process.env.COORDINATION_PREVIOUS_KEY_ID,
+                previousSecret: process.env.COORDINATION_PREVIOUS_KEY,
+                previousKeyExpiresAt: process.env.COORDINATION_PREVIOUS_KEY_EXPIRES_AT,
+              });
+              if (result.passed !== true) throw new Error(`signed coordination gate denied: ${result.reason || 'unknown'}`);
+              break;
+            } catch (error) {
+              // A policy denial is final. Transport/custody rejection may be
+              // eventual immediately after a Worker version or secret update.
+              if (String(error?.message || '').startsWith('signed coordination gate denied:') || gateAttempts === 6) throw error;
+              console.log(`signed coordination gate retry ${gateAttempts}/5 after bounded propagation delay`);
+              await new Promise((resolve) => setTimeout(resolve, 5_000));
+            }
+          }
           fs.writeFileSync(process.env.EVIDENCE_DIR + '/summary.json', `${JSON.stringify({
             schemaVersion: 1,
             target: process.env.TARGET,
@@ -285,7 +296,7 @@ jobs:
             bootstrap: process.env.ALLOW_PRODUCTION_BOOTSTRAP === 'true',
             previousVersionId: process.env.PREVIOUS_VERSION_ID || null,
             currentVersionId: process.env.CURRENT_VERSION_ID,
-            signedGate: { passed: result.passed, reason: result.reason, httpStatus: result.httpStatus },
+            signedGate: { passed: result.passed, reason: result.reason, httpStatus: result.httpStatus, attempts: gateAttempts },
             workflow: process.env.GITHUB_WORKFLOW,
             runId: process.env.GITHUB_RUN_ID,
           }, null, 2)}\n`, { mode: 0o600 });

@@ -37,15 +37,19 @@ confirmação automática.
    deve ser convertido em `CONFIRMED`.
 4. Antes de qualquer aplicação controlada, obter backup verificável dos bancos
    envolvidos, registrar o fingerprint aprovado e confirmar que a flag
-   `UNIFIED_TEAM_ENABLED` permanece desligada fora do ambiente de validação.
+   `UNIFIED_TEAM_ENABLED` permanece desligada fora do ambiente autorizado. A
+   produção só pode ser autorizada pelo gate temporário
+   `ENABLE_UNIFIED_TEAM_PRODUCTION=true` combinado ao input explícito
+   `production_unified_team_authorized=true` do workflow.
 5. Aplicar apenas os statements gerados para os itens `ready`, em uma sessão
    com rollback operacional documentado. O SQL usa `INSERT OR IGNORE`, portanto
    a reaplicação do mesmo plano não cria duplicidade; conflitos existentes não
    são sobrescritos.
 6. Reexecutar o plano depois da aplicação. O resultado esperado é `noop` para
    os vínculos aplicados, sem aumento de `conflicts` ou `pending`.
-7. Somente depois da validação de staging, ativar a flag no preview/ambiente
-   autorizado e então coletar os dados faltantes para convites. Convites devem
+7. Somente depois da validação de staging, ativar a flag no preview ou ambiente
+   de produção autorizado pelo gate, e então coletar os dados faltantes para
+   convites. Convites devem
    ser enviados apenas pelo fluxo de onboarding hospedado e após confirmação
    explícita do relatório.
 
@@ -167,3 +171,18 @@ Qualquer ausência de binding, release, destinatário de teste ou evidência de
 backup mantém a flag desligada e a Escala em contingência. O relatório deve
 separar claramente `local`, `staging` e `produção`; sucesso de um ambiente não
 é evidência de publicação ou convite nos demais.
+
+## Ativação controlada em produção
+
+Para o rollout do módulo Usuários/Equipe, o release governado deve publicar
+somente o Worker `inventory` com `UNIFIED_TEAM_ENABLED=true`, referenciar o
+`staging_run_id` exato e informar `production_unified_team_authorized=true`.
+Antes do dispatch, `ENABLE_UNIFIED_TEAM_PRODUCTION` precisa estar explicitamente
+`true` no ambiente `production`; depois da promoção, essa autorização do
+pipeline volta a `false`, sem alterar a flag de runtime publicada.
+
+O smoke pós-promoção confirma `/health` pronto, configuração autenticada com
+`enabled=true` e `readiness.ready=true`, listagem paginada HTTP 200 e a jornada
+do console em `?module=users`. Se qualquer uma dessas condições falhar, o
+rollback governado retorna ao Worker/deployment incumbente identificado no
+checkpoint e repete o smoke sem dados reais adicionais.

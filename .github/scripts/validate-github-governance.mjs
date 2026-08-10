@@ -26,7 +26,12 @@ let mergeMutationWorkflowCount = 0;
 for (const filename of fs.readdirSync(workflowDirectory).filter((name) => /\.ya?ml$/i.test(name))) {
   const relativePath = path.posix.join(".github/workflows", filename);
   const workflowSource = read(relativePath);
-  const hasMergeMutation = /pulls\/\$\{?[^\n]+\/merge|merge_method\s*:/i.test(workflowSource);
+  // A maintenance workflow may dispatch the single merge authority, but it
+  // must not itself contain the protected merge API mutation. The dispatch
+  // input includes the merge method name as data, not as a second mutation.
+  const dispatchesOfficialMergeAuthority = /createWorkflowDispatch[\s\S]*global-merge-authority\.yml|global-merge-authority\.yml[\s\S]*createWorkflowDispatch/i.test(workflowSource);
+  const hasMergeMutation = /pulls\/\$\{?[^\n]+\/merge/i.test(workflowSource)
+    || (/merge_method\s*:/i.test(workflowSource) && !dispatchesOfficialMergeAuthority);
   const hasDirectMainUpdate = /git\s+push[^\n]*(?:refs\/heads\/main|\bmain\b)|git\/refs\/heads\/main/i.test(workflowSource);
   if (hasMergeMutation) {
     mergeMutationWorkflowCount += 1;

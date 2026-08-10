@@ -314,7 +314,7 @@ sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$CURRENT_LINK")"
 # traversal to its immutable scripts and only manifest-directory writes; no
 # workflow sidecar or source tree becomes generally readable or writable.
 coordination_check
-for acl_dir in "$RELEASE_BASE" "$RELEASE_BASE/$RELEASE_ID" "$DESTINATION" "$DESTINATION/orb" "$DESTINATION/orb/engine" "$DESTINATION/orb/engine/scripts" "$DESTINATION/orb/engine/scripts/livia" "$DESTINATION/orb/engine/scripts/lib" "$DESTINATION/orb/engine/workflow-src" "$DESTINATION/orb/engine/workflow-src/meta-ads-publish" "$DESTINATION/orb/engine/workflows" "$CURRENT_LINK"; do
+for acl_dir in "$RELEASE_BASE" "$RELEASE_BASE/$RELEASE_ID" "$DESTINATION" "$DESTINATION/orb" "$DESTINATION/orb/engine" "$DESTINATION/orb/engine/scripts" "$DESTINATION/orb/engine/scripts/livia" "$DESTINATION/orb/engine/scripts/lib" "$DESTINATION/orb/engine/workflow-src" "$DESTINATION/orb/engine/workflow-src/meta-ads-publish" "$DESTINATION/orb/engine/workflows" "$DESTINATION/ops" "$DESTINATION/ops/governance" "$CURRENT_LINK"; do
   coordination_check
   sudo -n setfacl -m u:postgres:--x "$acl_dir"
 done
@@ -337,7 +337,10 @@ sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/patch-livia-facebook-carousel-contract.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-today-first-selection.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-job-graph-payload-file.js" \
-  "$DESTINATION/orb/engine/scripts/patch-livia-runtime-isolation.js"
+  "$DESTINATION/orb/engine/scripts/patch-livia-runtime-isolation.js" \
+  "$DESTINATION/orb/engine/scripts/livia/rollout-policy.js" \
+  "$DESTINATION/orb/engine/scripts/livia/set-rollout-mode.js" \
+  "$DESTINATION/ops/governance/livia-rollout-policy.json"
 # The workflow-version writer runs as postgres.  It hashes the exact Livia
 # sidecar entrypoints before committing a workflow version, so it needs read
 # access to those files only (directory traversal is granted above).  Without

@@ -3,7 +3,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   acquireGlobalLease,
+  buildLegacyLeaseRequest,
   checkGlobalLease,
+  probeCoordinatorProtocol,
   proofForLease,
   releaseGlobalLease,
 } from "./codex-global-coordination-client.mjs";
@@ -87,7 +89,7 @@ export async function acquireMergeLease({ request, url, maxWaitMs = 15 * 60_000,
   throw new Error(`merge:main lease remained unavailable: ${lastReason || "unknown"}`);
 }
 
-export async function mergePullRequest({ repository, pullNumber, expectedHeadSha, mergeMethod = "squash" }) {
+async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, mergeMethod = "squash" }) {
   if (String(process.env.SKINCOS_GLOBAL_COORDINATION_REQUIRED || "").trim().toLowerCase() !== "true") {
     throw new Error("SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true for merge:main");
   }
@@ -97,6 +99,12 @@ export async function mergePullRequest({ repository, pullNumber, expectedHeadSha
   const candidate = await loadMergeCandidate({ repository, pullNumber, expectedHeadSha });
   const initial = candidate.pull;
   const { headSha, baseSha, request, closure } = candidate;
+  const coordinatorProtocol = await probeCoordinatorProtocol({ url });
+  // A 404 is the explicit compatibility signal from the pre-readiness Worker;
+  // any other unavailable or malformed response fails closed in the probe.
+  const coordinationRequest = coordinatorProtocol.protocol === "legacy-v1"
+    ? buildLegacyLeaseRequest(request)
+    : request;
   // A required global-merge-authority status makes the PR appear blocked until
   // this authority posts its success status. GitHub's merge API remains the
   // final enforcement point for every other required check or review.
@@ -104,7 +112,7 @@ export async function mergePullRequest({ repository, pullNumber, expectedHeadSha
     throw new Error("pull request is not mergeable by its current GitHub state");
   }
   const resource = "merge:main";
-  const result = await acquireMergeLease({ request, url });
+  const result = await acquireMergeLease({ request: coordinationRequest, url });
   if (result.passed !== true || !result.lease) throw new Error(`merge:main lease acquisition failed: ${result.reason || "unknown"}`);
   const proof = proofForLease(result.lease);
   let merged;
@@ -181,6 +189,44 @@ export async function mergePullRequest({ repository, pullNumber, expectedHeadSha
     const released = await releaseGlobalLease({ proof, url });
     if (released.passed !== true) throw new Error(`merge:main lease release failed: ${released.reason || "unknown"}`);
   }
+}
+
+function retryableMergeDrift(error) {
+  const message = String(error?.message || error || "");
+  return [
+    "main advanced while merge:main was being acquired",
+    "main advanced after merge authorization status",
+    "pull request base or head changed before merge mutation",
+    "pull request base or head changed after merge authorization status",
+  ].includes(message);
+}
+
+export async function mergePullRequest({
+  repository,
+  pullNumber,
+  expectedHeadSha,
+  mergeMethod = "squash",
+  maxAttempts = 3,
+  retryDelayMs = 5000,
+}) {
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 5) {
+    throw new Error("maxAttempts must be an integer between 1 and 5");
+  }
+  if (!Number.isSafeInteger(retryDelayMs) || retryDelayMs < 0 || retryDelayMs > 60_000) {
+    throw new Error("retryDelayMs must be an integer between 0 and 60000");
+  }
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, mergeMethod });
+    } catch (error) {
+      lastError = error;
+      if (!retryableMergeDrift(error) || attempt === maxAttempts) throw error;
+      process.stderr.write(`merge:main observed concurrent base drift; retrying official authority attempt ${attempt + 1}/${maxAttempts}\n`);
+      if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+  throw lastError || new Error("merge:main authority exhausted without a result");
 }
 
 async function main(args) {

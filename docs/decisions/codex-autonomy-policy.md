@@ -129,3 +129,24 @@ prossiga quando o gate estiver satisfeito.
   mudam; evidências com os mesmos inputs válidos são reutilizadas.
 - Relatórios distinguem claramente: autorizado, tecnicamente elegível,
   executado, validado, bloqueado e não comprovado.
+
+### 6.1 Custódia e fila de entrega
+
+O caminho canônico para custódia GitHub -> mini-PC é o runner confiável
+`skincos-native-custody` e o workflow dispatch-only
+`.github/workflows/provision-native-global-coordination-custody.yml`. O runner
+usa um usuário de serviço sem login e pode chamar somente o helper root que
+escreve o arquivo privado de coordenação por stdin, atomicamente e sem emitir o
+valor. A ausência de custódia no mini-PC é, portanto, uma recuperação técnica
+executável; não é uma espera humana recorrente. Somente a criação inicial de
+uma credencial inexistente, MFA/reautenticação ou confiança de plataforma fora
+do alcance continua sendo exceção humana.
+
+PRs Codex com o marcador persistente `automerge/enabled` entram na fila oficial
+quando a API reporta estado `clean`. A fila pode atualizar a branch sob o lease
+`merge:main` e redisparar a autoridade; o workflow oficial ainda revalida
+SHA/base/head, closure, checks e fencing imediatamente antes do merge. A fila
+não concede bypass nem transforma `concurrency` em autoridade.
+
+O resumo executável e os caminhos de recuperação estão em
+[`autonomous-delivery-standard.md`](../operations/autonomous-delivery-standard.md).

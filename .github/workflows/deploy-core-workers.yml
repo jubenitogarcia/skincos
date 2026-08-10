@@ -22,7 +22,12 @@ on:
         default: false
         type: boolean
       unified_team_enabled:
-        description: "Enable unified team routes for isolated staging validation only"
+        description: "Enable unified team routes for the selected governed release"
+        required: true
+        default: false
+        type: boolean
+      production_unified_team_authorized:
+        description: "Explicit production authorization for unified team routes; requires the production environment gate"
         required: true
         default: false
         type: boolean
@@ -758,6 +763,8 @@ jobs:
           TARGET: ${{ inputs.target }}
           UNIT: ${{ inputs.unit }}
           UNIFIED_TEAM_ENABLED: ${{ inputs.unified_team_enabled }}
+          PRODUCTION_UNIFIED_TEAM_AUTHORIZED: ${{ inputs.production_unified_team_authorized }}
+          UNIFIED_TEAM_PRODUCTION_GATE: ${{ vars.ENABLE_UNIFIED_TEAM_PRODUCTION }}
           BOOTSTRAP_FINANCE_CONTEXT: ${{ inputs.bootstrap_finance_context }}
           RELEASE_SCOPE: ${{ inputs.release_scope }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -774,8 +781,16 @@ jobs:
             inventory_d1_name=skincos-db
           fi
           if [[ "$UNIFIED_TEAM_ENABLED" == "true" ]]; then
-            [[ "$TARGET" == "staging" ]] || { echo 'Unified team routes can only be enabled in staging.'; exit 1; }
             [[ "$UNIT" == "inventory" || "$UNIT" == "all" ]] || { echo 'Unified team routes require the inventory unit.'; exit 1; }
+            if [[ "$TARGET" == "production" ]]; then
+              [[ "$UNIT" == "inventory" ]] || { echo 'Production unified team rollout is inventory-only.'; exit 1; }
+              [[ "$RELEASE_SCOPE" == "general" ]] || { echo 'Production unified team rollout is limited to the general CRM surface.'; exit 1; }
+              [[ "$PRODUCTION_UNIFIED_TEAM_AUTHORIZED" == "true" ]] || { echo 'Production unified team rollout requires explicit dispatch authorization.'; exit 1; }
+              [[ "$UNIFIED_TEAM_PRODUCTION_GATE" == "true" ]] || { echo 'Production unified team rollout requires ENABLE_UNIFIED_TEAM_PRODUCTION=true.'; exit 1; }
+            elif [[ "$TARGET" != "staging" ]]; then
+              echo 'Unified team routes can only be enabled in staging or an explicitly authorized production rollout.'
+              exit 1
+            fi
           fi
           if [[ "$UNIT" == "inventory" || "$UNIT" == "all" ]]; then
             # D1 migrations must precede the Worker that requires them. They
