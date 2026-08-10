@@ -6,14 +6,17 @@
 - `.github/governance/rulesets/main-enterprise-baseline.json` é o payload canônico da ruleset da `main`.
 - `.github/governance/environments/{staging,production}.json` são os payloads dos environments; `.github/governance/environments/main-branch-policy.json` é a policy customizada aplicada aos dois environments; segredos não são versionados.
 
-Os arquivos representam a baseline de 2026-07-31: bloqueio de force-push e
-exclusão, PR obrigatória, resolução de conversas e o check agregado
-`codex-autonomy-gate`. Os checks de domínio continuam executando dentro desse
+Os arquivos representam a baseline de coordenação global: bloqueio de
+force-push e exclusão, PR obrigatória, resolução de conversas, o check
+`codex-autonomy-gate`, o `global-merge-authority` e o
+`skincos-integration-gate`. O update rule impede mutações diretas de `main` e
+o único bypass versionado é o GitHub Actions integration actor da autoridade
+de merge. Os checks de domínio continuam executando dentro desse
 gate; mudanças que não atingem uma superfície não precisam acordar suítes
 globais sem perder a validação proporcional. A aprovação obrigatória por
 CODEOWNER permanece desativada porque há apenas um operador autorizado; o
-controle equivalente é o gate técnico, a trilha de evidências e o auto-merge
-condicionado a checks verdes. Os environments de staging e produção usam
+controle equivalente é o gate técnico e a trilha de evidências; auto-merge não
+é usado como autoridade concorrente. Os environments de staging e produção usam
 `reviewers: []`, `prevent_self_review: false`, `can_admins_bypass: false` e
 política de branch customizada somente para `main`, conforme a governança de
 operador único registrada no issue #943.

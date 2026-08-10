@@ -167,6 +167,7 @@
 - Shared workspace validation: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-shared-codex-workspace.ps1`
 - Shared workspace status: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\show-shared-codex-status.ps1`
 - Shared worktree creation: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\new-shared-worktree.ps1 -TaskSlug <slug>`
+- Worktree identity validation: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-skincos-worktree.ps1 -ProjectRoot (Get-Location).Path -TaskSlug <slug> -Mode edit`
 - New thread bootstrap prompt: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\print-codex-thread-bootstrap.ps1 -TaskSlug <slug> -TaskBrief "<tarefa>"`
 - Autonomy/deploy preflight: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:preflight`
 - Site fast check: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:site:check`
