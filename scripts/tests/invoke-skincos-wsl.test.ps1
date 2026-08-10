@@ -83,7 +83,7 @@ Assert-True -Condition ($processArguments[3] -eq "admin") -Message "the admin op
 Assert-True -Condition ($processArguments[4] -eq "--") -Message "WSL options must end before bash argv"
 $encodedMatch = [regex]::Match(
     $processArguments[7],
-    '^printf %s (?<payload>[A-Za-z0-9+/=]+) \| base64 --decode \| bash$'
+    '^bash <\(printf %s (?<payload>[A-Za-z0-9+/=]+) \| base64 --decode\)$'
 )
 Assert-True -Condition $encodedMatch.Success -Message "bash program must use the quote-safe base64 transport"
 $decodedProgram = [Text.Encoding]::UTF8.GetString(
@@ -96,10 +96,25 @@ Assert-Contains `
     -Expected ("node -e " + (Convert-ToBashLiteral -Value $npmProbeSource)) `
     -Message "the effective npm preflight must preserve JavaScript string quotes"
 
+$stdinGateway = & $gatewayPath `
+    -ProjectRoot "C:\CodexShared\Projetos\skincos" `
+    -Executable /usr/bin/bash `
+    -ArgumentList @("-c", 'IFS= read -r line; printf ''received=%s\n'' "$line"') `
+    -StandardInputText "stdin-round-trip" `
+    -SkipBootstrapCheck `
+    -SkipRepoCheck `
+    -SkipNodeCheck `
+    -SkipNpmCheck
+Assert-True `
+    -Condition ([string]($stdinGateway | Select-Object -Last 1) -eq "received=stdin-round-trip") `
+    -Message "explicit standard input must reach WSL without becoming an argv value"
+
+# Use an intentionally unregistered path; a real shared worktree is approved
+# by the gateway and must not be treated as an unsafe fixture.
 $governedWorktree = New-SkincosWslInvocation `
     -Mode Executable `
     -Target "node" `
-    -ProjectRoot "C:\CodexShared\Worktrees\skincos\admin\ponto-progressive-release" `
+    -ProjectRoot "C:\Users\admin\Desktop\skincos-unregistered-gateway-test" `
     -Argument @("--version")
 Assert-Contains `
     -Value $governedWorktree.BashCommand `

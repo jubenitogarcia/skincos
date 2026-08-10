@@ -64,6 +64,9 @@ const candidate = read(".github/workflows/prepare-release-candidate.yml");
 for (const required of ["branches: [main]", "git merge-base --is-ancestor", "git archive --format=tar.gz", "sourceArchiveSha256", "release-source-${{ steps.release.outputs.source_sha }}"]) {
   if (!candidate.includes(required)) fail(`release candidate workflow is missing ${required}`);
 }
+for (const required of ["workflow_run:", "workflows: [Global merge authority]", "github.event.workflow_run.conclusion == 'success'", "gh api \"repos/$REPOSITORY/commits/main\""]) {
+  if (!candidate.includes(required)) fail(`release candidate workflow is missing automatic post-merge custody: ${required}`);
+}
 const gate = read(".github/workflows/promotion-gate.yml");
 if (!gate.includes("fetch-depth: 0")) fail("promotion gate must fetch complete main history before validating an immutable rollback SHA");
 for (const required of ["release_sha", "Verify predecessor evidence", "promotion-evidence.mjs verify", "source_sha"]) if (!gate.includes(required)) fail(`immutable promotion gate is missing ${required}`);
