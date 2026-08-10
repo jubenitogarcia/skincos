@@ -80,6 +80,14 @@ jobs:
 
           if (cd ops/cloudflare/global-coordinator && npx --yes wrangler@4.120.0 deployments status --config wrangler.toml --env "$TARGET" --json > "$STATUS_FILE" 2> "$STATUS_ERROR_FILE"); then
             worker_exists=true
+            # A failed first bootstrap can leave the exact Worker published
+            # while the repository URL variable was not yet written. The
+            # Workers.dev name is deterministic from this environment config,
+            # so recover through the normal remote lease instead of treating
+            # the already-created Worker as a second bootstrap.
+            if [[ "$TARGET" == production && -z "$coordinator_url" ]]; then
+              coordinator_url="$expected_url"
+            fi
             previous_version_id="$(node - "$STATUS_FILE" <<'NODE'
           const fs = require('node:fs');
           const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -195,17 +203,25 @@ jobs:
           import { dependencyClosureForSource } from './scripts/codex-global-coordinator.mjs';
 
           const sourceCommit = String(process.env.GITHUB_SHA).trim().toLowerCase();
+          const safeId = (value, fallback = 'unknown') => {
+            const normalized = String(value || fallback).trim().replace(/[^A-Za-z0-9._:/-]+/g, '-');
+            if (!normalized) throw new Error('coordination smoke owner identity is unavailable');
+            return normalized.slice(0, 200);
+          };
+          const runId = safeId(process.env.GITHUB_RUN_ID);
+          const workflowId = safeId(process.env.GITHUB_WORKFLOW);
+          const targetId = safeId(process.env.TARGET);
           const closure = dependencyClosureForSource({ module: 'merge', sourceCommit });
           const request = buildLeaseRequest({
             operation: 'mutation',
             resource: 'global:global-coordinator-readiness',
             owner: {
               provider: 'github',
-              missionId: `github:${process.env.GITHUB_REPOSITORY}:${process.env.GITHUB_RUN_ID}`,
-              threadId: `${process.env.GITHUB_WORKFLOW}:${process.env.GITHUB_RUN_ID}:global-coordinator-readiness`,
-              actor: process.env.GITHUB_ACTOR,
-              runId: process.env.GITHUB_RUN_ID,
-              workflow: process.env.GITHUB_WORKFLOW,
+              missionId: `github:${process.env.GITHUB_REPOSITORY}:${runId}`,
+              threadId: `global-coordinator-readiness:${runId}:${targetId}`,
+              actor: safeId(process.env.GITHUB_ACTOR),
+              runId,
+              workflow: workflowId,
             },
             intent: {
               module: 'merge',
@@ -218,7 +234,7 @@ jobs:
               dependencyClosureSharedInputs: closure.dependencyClosureSharedInputs,
               inputs: { target: process.env.TARGET, operation: 'coordinator-readiness' },
             },
-            idempotencyKey: `global-coordinator-readiness:${process.env.GITHUB_RUN_ID}:${process.env.TARGET}`,
+            idempotencyKey: `global-coordinator-readiness:${runId}:${targetId}`,
             ttlMs: 30_000,
           });
           const result = await evaluateGlobalGate({
