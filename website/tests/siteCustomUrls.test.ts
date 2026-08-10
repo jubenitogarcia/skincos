@@ -59,11 +59,11 @@ test("normalizeSiteCustomUrlInput accepts Asaas payment links", () => {
     const input = normalizeSiteCustomUrlInput({
         siteHost: "esfa.co",
         name: "Clube Botox 40U",
-        slugPath: "/ClubeBotox40U",
+        slugPath: "/nh/ClubeBotox40U",
         destinationUrl: "https://www.asaas.com/c/85kw6n2otrtdhjqe",
     });
 
-    assert.equal(input.slugPath, "/clubebotox40u");
+    assert.equal(input.slugPath, "/nh/clubebotox40u");
     assert.equal(input.destinationHost, "www.asaas.com");
     assert.equal(input.destinationUrl, "https://www.asaas.com/c/85kw6n2otrtdhjqe");
 });

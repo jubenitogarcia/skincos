@@ -2,6 +2,18 @@ import { ANIVERSARIO_7_ESFA_REDIRECTS } from "@/lib/aniversario7Redirects";
 
 export const ESFA_PRESERVE_QUERYSTRING = true;
 
+export const CLUBE_BOTOX_ASAAS_REDIRECTS: Record<string, string> = {
+  "/nh/clubebotox40u": "https://www.asaas.com/c/85kw6n2otrtdhjqe",
+  "/nh/clubebotox50u": "https://www.asaas.com/c/93fcmgkhgcin2igk",
+  "/nh/clubebotox60u": "https://www.asaas.com/c/hqown86982e9y7f4",
+};
+
+export const ESFA_RETIRED_REDIRECTS: Record<string, string> = {
+  "/clubebotox40u": "https://www.asaas.com/c/85kw6n2otrtdhjqe",
+  "/clubebotox50u": "https://www.asaas.com/c/93fcmgkhgcin2igk",
+  "/clubebotox60u": "https://www.asaas.com/c/hqown86982e9y7f4",
+};
+
 export const ESFA_REDIRECTS: Record<string, string> = {
   // BarraShoppingSul
   "/bss/comochegar": "https://www.google.com/maps/place/Espaço+Facial/@-30.0846697,-51.2458384,17z/data=!3m1!4b1!4m6!3m5!1s0x9519795c306ed865:0xb5f05aac9b865daa!8m2!3d-30.0846697!4d-51.2458384!16s%2Fg%2F11vywknzbf?entry=ttu&g_ep=EgoyMDI1MDMxMS4wIKXMDSoASAFQAw%3D%3D",
@@ -41,10 +53,8 @@ export const ESFA_REDIRECTS: Record<string, string> = {
 
   // Campanhas
   ...ANIVERSARIO_7_ESFA_REDIRECTS,
-  // Clube Botox
-  "/clubebotox40u": "https://www.asaas.com/c/85kw6n2otrtdhjqe",
-  "/clubebotox50u": "https://www.asaas.com/c/93fcmgkhgcin2igk",
-  "/clubebotox60u": "https://www.asaas.com/c/hqown86982e9y7f4",
+  // Clube Botox — Novo Hamburgo
+  ...CLUBE_BOTOX_ASAAS_REDIRECTS,
   "/bebadessafonte": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+da+HealthBodyRun+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
 
   // Interno

@@ -6,7 +6,11 @@ import {
     listEsfaFallbackRedirects,
     listEsfaManagedRedirectSeeds,
 } from "../src/lib/esfaManagedRedirects";
-import { ESFA_REDIRECTS, normalizeEsfaRedirectPath } from "../src/lib/esfaRedirects";
+import {
+    ESFA_REDIRECTS,
+    ESFA_RETIRED_REDIRECTS,
+    normalizeEsfaRedirectPath,
+} from "../src/lib/esfaRedirects";
 import { ANIVERSARIO_7_ESFA_REDIRECTS, ANIVERSARIO_7_LEGACY_REDIRECTS } from "../src/lib/aniversario7Redirects";
 
 test("buildEsfaManagedRedirectSeed infers metadata for migrated esfa redirects", () => {
@@ -27,9 +31,9 @@ test("buildEsfaManagedRedirectSeed infers metadata for migrated esfa redirects",
 
 test("Clube Botox U aliases resolve to the requested Asaas payment links", () => {
     const redirects = {
-        "/ClubeBotox40U": "https://www.asaas.com/c/85kw6n2otrtdhjqe",
-        "/ClubeBotox50U": "https://www.asaas.com/c/93fcmgkhgcin2igk",
-        "/ClubeBotox60U": "https://www.asaas.com/c/hqown86982e9y7f4",
+        "/nh/ClubeBotox40U": "https://www.asaas.com/c/85kw6n2otrtdhjqe",
+        "/nh/ClubeBotox50U": "https://www.asaas.com/c/93fcmgkhgcin2igk",
+        "/nh/ClubeBotox60U": "https://www.asaas.com/c/hqown86982e9y7f4",
     };
 
     for (const [requestedPath, destinationUrl] of Object.entries(redirects)) {
@@ -39,15 +43,30 @@ test("Clube Botox U aliases resolve to the requested Asaas payment links", () =>
         const seed = buildEsfaManagedRedirectSeed({ slugPath, destinationUrl, now: 789 });
         assert.equal(seed.destinationHost, "www.asaas.com");
         assert.equal(seed.placement, "payment");
+        assert.equal(seed.unitSlug, "novo-hamburgo");
     }
 });
 
-test("listEsfaManagedRedirectSeeds covers the full static catalog", () => {
+test("listEsfaManagedRedirectSeeds covers the active and retired catalog", () => {
     const seeds = listEsfaManagedRedirectSeeds(456);
 
-    assert.equal(seeds.length, Object.keys(ESFA_REDIRECTS).length);
+    assert.equal(seeds.length, Object.keys(ESFA_REDIRECTS).length + Object.keys(ESFA_RETIRED_REDIRECTS).length);
     assert.equal(new Set(seeds.map((seed) => seed.slugPath)).size, seeds.length);
     assert.equal(seeds.every((seed) => seed.siteHost === "esfa.co"), true);
+});
+
+test("generic Clube Botox aliases are retired when the NH catalog is promoted", () => {
+    const seeds = listEsfaManagedRedirectSeeds(789);
+    const retired = seeds.filter((seed) => Object.hasOwn(ESFA_RETIRED_REDIRECTS, seed.slugPath));
+
+    assert.equal(retired.length, 3);
+    assert.equal(retired.every((seed) => seed.active === false), true);
+    assert.deepEqual(
+        retired.map((seed) => seed.slugPath).sort(),
+        Object.keys(ESFA_RETIRED_REDIRECTS).sort(),
+    );
+    assert.equal(ESFA_REDIRECTS["/clubebotox40u"], undefined);
+    assert.equal(ESFA_REDIRECTS["/nh/clubebotox40u"], "https://www.asaas.com/c/85kw6n2otrtdhjqe");
 });
 
 test("aniversario 7 campaign aliases converge to the canonical short links", () => {
