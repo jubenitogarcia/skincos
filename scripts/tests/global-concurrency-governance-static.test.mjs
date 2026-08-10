@@ -305,3 +305,9 @@ test("the reusable orchestrator gate exposes global lease outputs to callers", (
   assert.match(workflow, /id: global_disabled/);
   assert.doesNotMatch(workflow, /steps\.global-(?:enabled|disabled)\.outputs/);
 });
+
+test("CRM Pages deploy declares coordination as a direct dependency for lease outputs", () => {
+  const workflow = read(".github/workflows/deploy-crm-pages.yml");
+
+  assert.match(workflow, /\n  deploy:\n    # The deploy job reads lease outputs from the reusable coordination job\.[\s\S]*?\n    needs: \[coordination, promotion\]/);
+});
