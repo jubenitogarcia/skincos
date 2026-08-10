@@ -88,6 +88,10 @@ export function closureFromFile(args, { module, source }) {
     sourceCommit,
     sourceTree,
     inputs: closure.inputs || closure.material.inputs,
+    ...(Array.isArray(closure.dependencyClosurePaths) ? { dependencyClosurePaths: closure.dependencyClosurePaths } : {}),
+    ...(Array.isArray(closure.dependencyClosurePatterns) ? { dependencyClosurePatterns: closure.dependencyClosurePatterns } : {}),
+    ...(Array.isArray(closure.dependencyClosureSharedInputPaths) ? { dependencyClosureSharedInputPaths: closure.dependencyClosureSharedInputPaths } : {}),
+    dependencyClosureSharedInputs: closure.dependencyClosureSharedInputs === true,
     digest,
     material: closure.material,
   };
@@ -139,6 +143,11 @@ export function buildWorkflowLeaseRequest({
       throw new Error("release identity does not match the observed dependency closure");
     }
   }
+  const exactClosurePaths = closure.dependencyClosurePaths || closure.inputs.map((entry) => entry.path);
+  const closurePatterns = [...new Set([
+    ...(closure.dependencyClosurePatterns || []),
+    ...(closure.dependencyClosureSharedInputPaths || []),
+  ])].sort();
   const intent = {
     module: String(module || "").trim().toLowerCase(),
     workflow: String(process.env.GITHUB_WORKFLOW || "codex-local-workflow").trim(),
@@ -146,8 +155,10 @@ export function buildWorkflowLeaseRequest({
     sourceCommit: closure.sourceCommit,
     sourceTree: closure.sourceTree,
     dependencyClosureDigest: closure.digest,
-    dependencyClosurePaths: closure.dependencyClosurePaths || closure.inputs.map((entry) => entry.path),
-    dependencyClosurePatterns: closure.dependencyClosurePatterns || [],
+    ...(String(module || "").trim().toLowerCase() !== "merge" && exactClosurePaths.length <= 1024
+      ? { dependencyClosurePaths: exactClosurePaths }
+      : {}),
+    dependencyClosurePatterns: closurePatterns,
     dependencyClosureSharedInputs: closure.dependencyClosureSharedInputs === true,
     ...(inputs ? { inputs } : {}),
     ...(["release", "promotion"].includes(normalizedOperation)

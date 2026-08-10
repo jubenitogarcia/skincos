@@ -10,10 +10,14 @@ test("Cloudflare adapter uses one globally serialized SQLite Durable Object coor
   assert.match(source, /class GlobalCoordinator extends DurableObject/);
   assert.match(source, /blockConcurrencyWhile/);
   assert.match(source, /storage\.sql\.exec/);
-  assert.match(source, /getByName\(env\.COORDINATION_PLANE_NAME \|\| "global"\)/);
+  assert.match(source, /env\.COORDINATION_PLANE_NAME \|\| "global"/);
+  assert.match(source, /COORDINATION_PLANE_MODE/);
+  assert.match(source, /coordinationMode === "legacy-drain"/);
+  assert.match(source, /getByName\(planeName\)/);
   assert.match(source, /evaluateLeaseAdmission/);
   assert.match(config, /new_sqlite_classes = \["GlobalCoordinator"\]/);
   assert.match(config, /COORDINATION_PLANE_NAME = "global"/);
+  assert.match(config, /COORDINATION_PLANE_MODE = "legacy-drain"/);
 });
 
 test("remote custody is mandatory and the adapter has no local fallback", () => {

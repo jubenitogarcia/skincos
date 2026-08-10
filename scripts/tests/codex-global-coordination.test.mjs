@@ -273,6 +273,33 @@ test("ambiguous cross-scope admission fails closed and release retries are idemp
   assert.equal(retry.idempotent, true);
 });
 
+test("shared exact closure inputs still fence a merge when module patterns do not match", () => {
+  const held = acquireLease(emptyState(), buildLeaseRequest({
+    operation: "mutation",
+    resource: "release:website",
+    owner,
+    idempotencyKey: "release-shared-input",
+    ttlMs: 60_000,
+    intent: {
+      module: "website",
+      dependencyClosureDigest: digest("c"),
+      dependencyClosurePatterns: ["website/**"],
+      dependencyClosurePaths: ["package.json"],
+    },
+  }), { now: 1_000, leaseId: "lease-0000000000000014" });
+  const merge = buildLeaseRequest({
+    operation: "mutation",
+    resource: "merge:main",
+    owner: { ...owner, threadId: "merge-shared-input" },
+    idempotencyKey: "merge-shared-input",
+    ttlMs: 60_000,
+    intent: { module: "merge", dependencyClosureDigest: digest("d"), inputs: { changedPaths: ["package.json"] } },
+  });
+  const admission = evaluateLeaseAdmission(held.state, merge, { now: 2_000 });
+  assert.equal(admission.allowed, false);
+  assert.equal(admission.reason, "incompatible-release-lease");
+});
+
 test("the policy and current Ponto source produce a deterministic dependency closure", () => {
   const policy = loadGlobalPolicy();
   assert.equal(policy.contractId, "skincos/global-coordination/v1");

@@ -49,7 +49,9 @@ export async function pullRequestFiles({ repository, pullNumber, token = process
     if (batch.length < 100) break;
     if (files.length >= 2_000) throw new Error("pull request changed-file set is too large to attest safely");
   }
-  const changedPaths = [...new Set(files.map((entry) => String(entry?.filename || "").trim().replaceAll("\\", "/")).filter(Boolean))].sort();
+  const changedPaths = [...new Set(files.flatMap((entry) => [entry?.filename, entry?.previous_filename]
+    .map((value) => String(value || "").trim().replaceAll("\\", "/"))
+    .filter(Boolean)))].sort();
   if (!changedPaths.length) throw new Error("pull request changed-file set is unavailable");
   return changedPaths;
 }

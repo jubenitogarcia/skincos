@@ -118,6 +118,7 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(script, /setMergeAuthorityStatus/);
   assert.match(script, /loadMergeCandidate/);
   assert.match(read("scripts/codex-github-integration-candidate.mjs"), /changedPaths/);
+  assert.match(read("scripts/codex-github-integration-candidate.mjs"), /previous_filename/);
   assert.match(read("scripts/codex-global-integration-gate.mjs"), /skincos-integration-gate/);
   const integrationGate = read(".github/workflows/skincos-integration-gate.yml");
   assert.match(integrationGate, /pull_request_target/);
@@ -136,6 +137,9 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.deepEqual(policy.releaseClosures.merge.patterns, ["**"]);
   assert.match(policy.resourceClasses.mutate, /^\^mutate:/);
   assert.equal(policy.admission.coordinationPlane, "global");
+  const ruleset = JSON.parse(read(".github/governance/rulesets/main-enterprise-baseline.json"));
+  const requiredContexts = ruleset.rules.find((rule) => rule.type === "required_status_checks").parameters.required_status_checks.map((entry) => entry.context);
+  assert.deepEqual(requiredContexts, ["codex-autonomy-gate", "global-merge-authority", "skincos-integration-gate"]);
 });
 
 test("native mini-PC mutations use the common coordinator and detached closure proof", () => {

@@ -66,6 +66,11 @@ superfície. A análise de admission cruza merge com release por caminhos: uma
 mudança disjunta é compatível, uma interseção aguarda, e closure ausente ou
 ambígua falha fechada.
 
+A transição para esse nome único não pode abandonar objetos antigos: a primeira
+versão usa `COORDINATION_PLANE_MODE=legacy-drain`, recusa aquisição/admission/
+renovação e roteia check/release/revoke para o scope legado. Depois do TTL
+máximo, a mesma versão é promovida com `COORDINATION_PLANE_MODE=global`.
+
 ## Autoridade única de integração
 
 Threads podem criar worktrees, testar, commitar, fazer push e deixar uma PR

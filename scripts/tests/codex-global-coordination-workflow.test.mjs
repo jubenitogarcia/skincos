@@ -73,3 +73,15 @@ test("workflow adapter carries exact release identity for promotion operations",
     releaseIdentity: { ...releaseIdentity, dependencyClosureDigest: "e".repeat(64) },
   }), /release identity does not match/);
 });
+
+test("merge admission carries only changed paths, not the full repository closure", () => {
+  const { request } = buildWorkflowLeaseRequest({
+    resource: "merge:main",
+    module: "merge",
+    source: "HEAD",
+    inputs: { changedPaths: ["docs/readme.md"] },
+  });
+  assert.equal(request.intent.dependencyClosurePaths, undefined);
+  assert.deepEqual(request.intent.dependencyClosurePatterns, ["**"]);
+  assert.ok(Buffer.byteLength(JSON.stringify(request), "utf8") < 64 * 1024);
+});

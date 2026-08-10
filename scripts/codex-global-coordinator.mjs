@@ -71,6 +71,9 @@ export function dependencyClosureFromTree({ module, sourceCommit, sourceTree, en
   if (!closure || (closure.requiresExplicitClosure && !policy.releaseClosures?.[normalizedModule])) throw new Error(`release dependency closure is not defined for ${normalizedModule || "module"}`);
   if (!FULL_SHA.test(String(sourceCommit || "")) || !FULL_SHA.test(String(sourceTree || ""))) throw new Error("release closure source identity is invalid");
   const paths = new Set((closure.patterns || []).map((value) => String(value).replaceAll("\\", "/")));
+  const sharedInputPaths = closure.sharedInputs
+    ? [...(policy.sharedInputs || [])].map((value) => String(value).replaceAll("\\", "/"))
+    : [];
   const selected = (entries || []).filter((entry) => {
     const file = String(entry.path || "").replaceAll("\\", "/");
     return (closure.patterns || []).some((pattern) => matchesAny(file, [pattern]))
@@ -91,6 +94,7 @@ export function dependencyClosureFromTree({ module, sourceCommit, sourceTree, en
     inputs,
     dependencyClosurePaths: inputs.map((entry) => entry.path),
     dependencyClosurePatterns: [...(closure.patterns || [])],
+    dependencyClosureSharedInputPaths: sharedInputPaths,
     dependencyClosureSharedInputs: closure.sharedInputs === true,
     digest: sha256(canonicalJson(material)),
     material,

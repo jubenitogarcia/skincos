@@ -22,3 +22,14 @@ The `gate` action is read-only admission: it returns success only when the
 candidate is compatible with all active leases. The merge authority acquires
 `merge:main` and revalidates immediately before the GitHub merge, so a status
 check can never substitute for ownership.
+
+## Coordination-plane migration
+
+The first deployment that changes from the historical per-`lockScope` Durable
+Objects to the single `global` object must use
+`COORDINATION_PLANE_MODE = "legacy-drain"`. In that mode new acquisitions,
+admission checks and renewals fail closed; check, release and revoke requests
+are routed to the old logical scope so active proofs can finish without being
+silently discarded. After the maximum lease TTL has elapsed, deploy the same
+code with `COORDINATION_PLANE_MODE = "global"`. A direct cutover is not safe:
+it could strand an active legacy lease outside the new fencing domain.

@@ -18,6 +18,7 @@ const CONTRACT_ID = "skincos/global-coordination/v1";
 const MAX_SKEW_MS = 30_000;
 const NONCE_TTL_MS = 15 * 60_000;
 const MAX_BODY_BYTES = 64 * 1024;
+const COORDINATION_MODES = new Set(["legacy-drain", "global"]);
 
 const encoder = new TextEncoder();
 const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)))
@@ -140,17 +141,25 @@ export default {
     let resource;
     try {
       resource = ["acquire", "gate"].includes(body.action) ? body.request?.resource : body.proof?.resource;
-      lockScopeFor(resource);
+      const lockScope = lockScopeFor(resource);
       if (["acquire", "gate"].includes(body.action)) {
         const normalizedIntent = buildIntent(body.request);
         const expectedDigest = await sha256(canonicalJson(normalizedIntent));
         if (body.request.intentDigest !== expectedDigest) return bad("coordination intent digest mismatch", 403);
       }
+      const coordinationMode = String(env.COORDINATION_PLANE_MODE || "global").trim().toLowerCase();
+      if (!COORDINATION_MODES.has(coordinationMode)) return bad("coordination plane mode is invalid", 503);
+      if (coordinationMode === "legacy-drain" && ["acquire", "gate", "renew"].includes(body.action)) {
+        return bad("coordination plane is draining legacy lock scopes", 503);
+      }
       // One globally named Durable Object is the coordination plane. The
       // logical lockScope remains part of the lease and fencing proof, while
       // one serialized state machine can arbitrate cross-resource conflicts
       // such as merge:main versus release:<module>.
-      const stub = env.GLOBAL_COORDINATOR.getByName(env.COORDINATION_PLANE_NAME || "global");
+      const planeName = coordinationMode === "legacy-drain"
+        ? lockScope
+        : (env.COORDINATION_PLANE_NAME || "global");
+      const stub = env.GLOBAL_COORDINATOR.getByName(planeName);
       const result = stub.coordinate({
         action: body.action,
         nonce,

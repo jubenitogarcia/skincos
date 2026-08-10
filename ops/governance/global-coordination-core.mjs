@@ -253,10 +253,15 @@ function changedPathsFor(intent) {
 
 function releaseClosureFor(lease) {
   const patterns = lease?.intent?.dependencyClosurePatterns;
-  if (Array.isArray(patterns) && patterns.length) return normalizeStringList(patterns, "lease dependency closure patterns");
   const paths = lease?.intent?.dependencyClosurePaths;
-  if (Array.isArray(paths) && paths.length) return normalizeStringList(paths, "lease dependency closure paths");
-  return null;
+  const normalizedPatterns = Array.isArray(patterns)
+    ? normalizeStringList(patterns, "lease dependency closure patterns")
+    : [];
+  const normalizedPaths = Array.isArray(paths)
+    ? normalizeStringList(paths, "lease dependency closure paths")
+    : [];
+  const combined = [...new Set([...normalizedPatterns, ...normalizedPaths])].sort();
+  return combined.length ? combined : null;
 }
 
 function pathsOverlap(changedPaths, closurePatterns) {
