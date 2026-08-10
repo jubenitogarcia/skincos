@@ -44,5 +44,5 @@ jobs:
               --poll-ms 5000; then
               failures=1
             fi
-          done < <(gh pr list --repo "$GITHUB_REPOSITORY" --state open --base main --limit 50 --json number,headRefOid --jq '.[] | [.number, .headRefOid] | @tsv')
+          done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" --jq '.[] | [.number, .head.sha] | @tsv')
           exit "$failures"

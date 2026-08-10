@@ -9,6 +9,7 @@ import {
   acquireLease,
   authorizeMutation,
   buildIntent,
+  buildLegacyIntentV1,
   canonicalJson,
   checkLease,
   compareDependencyClosure,
@@ -25,7 +26,7 @@ import {
 } from "../ops/governance/global-coordination-core.mjs";
 import { matchesAny } from "./codex-autonomy-lib.mjs";
 
-export { acquireLease, authorizeMutation, buildIntent, canonicalJson, checkLease, compareDependencyClosure, emptyState, evaluateLeaseAdmission, lockScopeFor, normalizeReleaseIdentity, normalizeResourceKey, releaseLease, renewLease, revokeLease, consumeNonce };
+export { acquireLease, authorizeMutation, buildIntent, buildLegacyIntentV1, canonicalJson, checkLease, compareDependencyClosure, emptyState, evaluateLeaseAdmission, lockScopeFor, normalizeReleaseIdentity, normalizeResourceKey, releaseLease, renewLease, revokeLease, consumeNonce };
 export { CONTRACT_ID };
 
 export const ROOT = path.resolve(import.meta.dirname, "..");
@@ -85,7 +86,14 @@ export function dependencyClosureFromTree({ module, sourceCommit, sourceTree, en
   // deliberately excluded from the closure digest. Otherwise an unrelated
   // documentation change would invalidate a release whose selected inputs are
   // unchanged.
-  const material = { schemaVersion: 1, module: normalizedModule, inputs };
+  const material = {
+    schemaVersion: 1,
+    module: normalizedModule,
+    inputs,
+    dependencyClosurePatterns: [...(closure.patterns || [])],
+    dependencyClosureSharedInputPaths: sharedInputPaths,
+    dependencyClosureSharedInputs: closure.sharedInputs === true,
+  };
   return {
     schemaVersion: 1,
     module: normalizedModule,

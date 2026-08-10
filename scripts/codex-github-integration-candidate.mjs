@@ -65,7 +65,7 @@ export function assertCoordinationPayloadSize(request) {
   return bytes;
 }
 
-export async function loadMergeCandidate({ repository, pullNumber, expectedHeadSha = null, token = process.env.GH_TOKEN }) {
+export async function loadMergeCandidateIdentity({ repository, pullNumber, expectedHeadSha = null, token = process.env.GH_TOKEN }) {
   if (!repository || !/^[^/]+\/[^/]+$/.test(repository)) throw new Error("repository is invalid");
   if (!/^[1-9][0-9]*$/.test(String(pullNumber))) throw new Error("pull number is invalid");
   const pull = await githubJson(repository, `/pulls/${pullNumber}`, {}, token);
@@ -77,6 +77,18 @@ export async function loadMergeCandidate({ repository, pullNumber, expectedHeadS
     || pull.head?.repo?.full_name !== repository
     || (expectedHeadSha && headSha !== assertSha(expectedHeadSha, "expected head SHA"))
   ) throw new Error("pull request is not an open same-repository main integration candidate");
+  return { pull, headSha, baseSha };
+}
+
+export async function loadMergeCandidate({
+  repository,
+  pullNumber,
+  expectedHeadSha = null,
+  token = process.env.GH_TOKEN,
+  identity = null,
+}) {
+  const candidateIdentity = identity || await loadMergeCandidateIdentity({ repository, pullNumber, expectedHeadSha, token });
+  const { pull, headSha, baseSha } = candidateIdentity;
   const changedPaths = await pullRequestFiles({ repository, pullNumber, token });
   const { request, closure } = buildWorkflowLeaseRequest({
     resource: "merge:main",

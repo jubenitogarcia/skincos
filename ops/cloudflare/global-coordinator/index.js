@@ -3,6 +3,7 @@ import {
   acquireLease,
   authorizeMutation,
   buildIntent,
+  buildLegacyIntentV1,
   canonicalJson,
   checkLease,
   consumeNonce,
@@ -145,7 +146,17 @@ export default {
       if (["acquire", "gate"].includes(body.action)) {
         const normalizedIntent = buildIntent(body.request);
         const expectedDigest = await sha256(canonicalJson(normalizedIntent));
-        if (body.request.intentDigest !== expectedDigest) return bad("coordination intent digest mismatch", 403);
+        let intentDigestValid = body.request.intentDigest === expectedDigest;
+        // During the distributed rollout, already-running v1 clients may not
+        // include the newly explicit owner.sessionId field. Accept that exact
+        // legacy canonicalization only when the field is absent; a request that
+        // includes sessionId must use the new digest.
+        if (!intentDigestValid && !body.request.owner?.sessionId) {
+          const legacyIntent = buildLegacyIntentV1(body.request);
+          const legacyDigest = await sha256(canonicalJson(legacyIntent));
+          intentDigestValid = body.request.intentDigest === legacyDigest;
+        }
+        if (!intentDigestValid) return bad("coordination intent digest mismatch", 403);
       }
       const coordinationMode = String(env.COORDINATION_PLANE_MODE || "global").trim().toLowerCase();
       if (!COORDINATION_MODES.has(coordinationMode)) return bad("coordination plane mode is invalid", 503);

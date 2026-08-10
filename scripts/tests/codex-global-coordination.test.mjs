@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import test from "node:test";
 import { acquireMergeLease } from "../codex-global-merge-authority.mjs";
@@ -6,6 +7,7 @@ import {
   acquireLease,
   authorizeMutation,
   buildIntent,
+  buildLegacyIntentV1,
   buildLeaseRequest,
   checkLease,
   compareDependencyClosure,
@@ -19,6 +21,7 @@ import {
   normalizeResourceKey,
   releaseLease,
   renewLease,
+  canonicalJson,
 } from "../codex-global-coordinator.mjs";
 
 const owner = {
@@ -35,6 +38,22 @@ const identity = () => ({
   sourceTree: sha("b"),
   dependencyClosureDigest: digest("c"),
   artifacts: [{ name: "pages", id: "deployment-1", digest: digest("d"), versionId: "version-1" }],
+});
+
+test("v1 owner expansion keeps an exact legacy digest compatibility path", () => {
+  const request = {
+    operation: "mutation",
+    resource: "merge:main",
+    owner,
+    intent: { module: "merge", dependencyClosureDigest: digest("a") },
+    idempotencyKey: "legacy-owner-compatibility",
+  };
+  const modern = buildIntent(request);
+  const legacy = buildLegacyIntentV1(request);
+  const digestFor = (value) => crypto.createHash("sha256").update(canonicalJson(value)).digest("hex");
+  assert.equal(modern.owner.sessionId, owner.threadId);
+  assert.equal(legacy.owner.sessionId, undefined);
+  assert.notEqual(digestFor(modern), digestFor(legacy));
 });
 const releaseRequest = (idempotencyKey = "intent-1") => buildLeaseRequest({
   operation: "promotion",

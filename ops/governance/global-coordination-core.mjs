@@ -67,7 +67,7 @@ export function lockScopeFor(resource) {
   return `promotion:${name}:${environment}`;
 }
 
-export function normalizeOwner(owner) {
+export function normalizeOwner(owner, { includeSessionId = true } = {}) {
   if (!owner || typeof owner !== "object" || Array.isArray(owner)) throw new Error("lease owner is required");
   const provider = lower(owner.provider);
   if (!OWNER_PROVIDER.has(provider)) throw new Error("lease owner provider is invalid");
@@ -75,9 +75,9 @@ export function normalizeOwner(owner) {
     provider,
     missionId: requireId(owner.missionId, "lease owner missionId"),
     threadId: requireId(owner.threadId, "lease owner threadId"),
-    sessionId: requireId(owner.sessionId || owner.threadId, "lease owner sessionId"),
     actor: requireId(owner.actor, "lease owner actor"),
   };
+  if (includeSessionId) normalized.sessionId = requireId(owner.sessionId || owner.threadId, "lease owner sessionId");
   if (owner.runId !== undefined && owner.runId !== null && text(owner.runId)) normalized.runId = requireId(owner.runId, "lease owner runId");
   if (owner.workflow !== undefined && owner.workflow !== null && text(owner.workflow)) normalized.workflow = requireId(owner.workflow, "lease owner workflow");
   return normalized;
@@ -152,11 +152,11 @@ export function normalizeIntent(intent, { operation = "mutation" } = {}) {
   return normalized;
 }
 
-export function buildIntent({ operation, resource, owner, intent, idempotencyKey }) {
+function buildIntentWithOwnerMode({ operation, resource, owner, intent, idempotencyKey }, { includeSessionId }) {
   const normalizedOperation = lower(operation);
   if (!["mutation", "release", "promotion", "revalidate", "revoke"].includes(normalizedOperation)) throw new Error("lease operation is invalid");
   const normalizedResource = normalizeResourceKey(resource);
-  const normalizedOwner = normalizeOwner(owner);
+  const normalizedOwner = normalizeOwner(owner, { includeSessionId });
   const normalizedIntent = normalizeIntent(intent, { operation: normalizedOperation });
   const key = requireId(idempotencyKey, "lease idempotencyKey");
   return {
@@ -169,6 +169,16 @@ export function buildIntent({ operation, resource, owner, intent, idempotencyKey
     idempotencyKey: key,
     intent: normalizedIntent,
   };
+}
+
+export function buildIntent(request) {
+  return buildIntentWithOwnerMode(request, { includeSessionId: true });
+}
+
+// Compatibility adapter for v1 clients deployed before sessionId became an
+// explicit owner field. It is used only to validate an old request digest.
+export function buildLegacyIntentV1(request) {
+  return buildIntentWithOwnerMode(request, { includeSessionId: false });
 }
 
 export function emptyState() {

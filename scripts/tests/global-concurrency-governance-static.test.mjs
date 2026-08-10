@@ -123,6 +123,8 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(read("scripts/codex-github-integration-candidate.mjs"), /changedPaths/);
   assert.match(read("scripts/codex-github-integration-candidate.mjs"), /previous_filename/);
   assert.match(read("scripts/codex-global-integration-gate.mjs"), /skincos-integration-gate/);
+  assert.match(read("scripts/codex-global-integration-gate.mjs"), /loadMergeCandidateIdentity/);
+  assert.match(read("scripts/codex-global-integration-gate.mjs"), /pathToFileURL/);
   const integrationGate = read(".github/workflows/skincos-integration-gate.yml");
   assert.match(integrationGate, /pull_request_target/);
   assert.match(integrationGate, /ref: main/);
@@ -130,6 +132,9 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   const integrationRecheck = read(".github/workflows/skincos-integration-gate-recheck.yml");
   assert.match(integrationRecheck, /schedule:/);
   assert.match(integrationRecheck, /--max-wait-ms 15000/);
+  assert.match(integrationRecheck, /gh api --paginate/);
+  assert.match(read("ops/cloudflare/global-coordinator/index.js"), /buildLegacyIntentV1/);
+  assert.match(read("scripts/codex-global-coordination-workflow.mjs"), /admission paths are not bound/);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
   assert.match(workflow, /pull_request_target/);
   assert.match(workflow, /state=failure/);

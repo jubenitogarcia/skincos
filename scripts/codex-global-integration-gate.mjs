@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { loadMergeCandidate, githubJson } from "./codex-github-integration-candidate.mjs";
+import { loadMergeCandidate, loadMergeCandidateIdentity, githubJson } from "./codex-github-integration-candidate.mjs";
 import { evaluateGlobalGate } from "./codex-global-coordination-client.mjs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 function requiredEnv(name) {
   const value = String(process.env[name] || "").trim();
@@ -33,7 +35,14 @@ export async function runIntegrationGate({ repository, pullNumber, expectedHeadS
   if (String(process.env.SKINCOS_GLOBAL_COORDINATION_REQUIRED || "").trim().toLowerCase() !== "true") {
     throw new Error("SKINCOS_GLOBAL_COORDINATION_REQUIRED must be true for the integration gate");
   }
-  const candidate = await loadMergeCandidate({ repository, pullNumber, expectedHeadSha });
+  const identity = await loadMergeCandidateIdentity({ repository, pullNumber, expectedHeadSha });
+  let candidate;
+  try {
+    candidate = await loadMergeCandidate({ repository, pullNumber, expectedHeadSha, identity });
+  } catch (error) {
+    await setStatus(repository, identity.headSha, "failure", error instanceof Error ? error.message : String(error));
+    throw error;
+  }
   await setStatus(repository, candidate.headSha, "pending", "Waiting for compatible global resource ownership before main integration.");
   const deadline = Date.now() + maxWaitMs;
   let lastReason = "";
@@ -89,7 +98,9 @@ async function main(args) {
   }
 }
 
-if (process.argv[1] && new URL(`file://${process.argv[1]}`).href === import.meta.url) {
+const invokedAsScript = process.argv[1]
+  && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (invokedAsScript) {
   try {
     await main(process.argv.slice(2));
   } catch (error) {
