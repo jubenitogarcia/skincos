@@ -31,6 +31,14 @@ and `references/evidence-model.md`. For `supervisor-cycle`, also read
 5. Execute continuously: scoped fixes, tests, commit, push, single-purpose PR, terminal CI, introduced-failure fixes, merge when technical gates permit, and the authorized environment verification. Do not stop after plan, commit, PR, running check, timeout, or first CI failure.
 6. Verify the relevant environment and persist only material queue, generated-state, blocker and evidence changes. After compaction, load the snapshot and continue without duplicating volatile state across historical documents.
 
+When a native release or coordination operation reports missing custody, first
+run the canonical guarded recovery path in
+`docs/operations/autonomous-delivery-standard.md` and
+`.github/workflows/provision-native-global-coordination-custody.yml`. Do not
+turn an existing GitHub secret, a branch update, staging, rollback, shadow, or
+active promotion into a repeated human wait. Stop only at the explicit
+platform/bootstrap exceptions in the autonomy policy.
+
 ## Global concurrency authority
 
 Local session/target leases and GitHub `concurrency` are scheduling safeguards;

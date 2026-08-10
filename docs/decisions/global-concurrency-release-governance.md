@@ -183,6 +183,13 @@ o contrato exige fail-closed antes de nova promoção.
   No mini-PC, `scripts/runtime/global-coordination-mini-pc.sh` força o provider
   `mini-pc`, exige owner explícito e mantém provas fora da árvore imutável.
 
+  A custódia de rotina chega ao mini-PC pelo runner confiável
+  `skincos-native-custody`, instalado por
+  `scripts/runtime/install-native-custody-runner.sh`. O runner aceita somente
+  workflows dispatch-only da `main` e possui um único sudoers command para o
+  helper atômico de `/etc/skincos/global-coordination/orb-backup.env`; não há
+  mais ponte manual GitHub -> WSL para o secret existente.
+
 Os ambientes dedicados `staging` e `production` do Worker usam Durable Object
 SQLite, secrets separados e `preview_urls = false`; nenhum deploy automático de
 Pages participa dessa autoridade. O smoke remoto de staging comprovou
@@ -212,6 +219,11 @@ mutações. O atestado é rejeitado se o SHA, source tree, módulo, material ou
 digest não coincidirem. O publicador Windows do backup só inicia a unidade
 nativa através do wrapper coordenado; ausência de custody ou closure interrompe
 a operação antes da geração do artefato.
+
+A fila `codex-keep-prs-mergeable` dispara a autoridade oficial para PRs
+`automerge/enabled` que estejam `clean`. Isso elimina redispatch manual após
+atualização/rebase sem relaxar a ruleset: a autoridade ainda é a única
+mutação de `main` e pode permanecer bloqueada por checks ou por drift real.
 
 ## Validação e rollout
 

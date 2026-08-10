@@ -13,6 +13,9 @@
   contexto e os dados remotos necessários; use `CODEX_CONTEXT.md`, `TASKS.md`
   e `DECISIONS.md` como contexto durável/histórico, não como cópias
   obrigatórias de estado volátil.
+- O fluxo executável de autonomia, custody nativa, fila de merge e recuperação
+  está em `docs/operations/autonomous-delivery-standard.md`; use os workflows e
+  helpers canônicos apontados nele em vez de criar pontes manuais por tarefa.
 - Use branches in the format `codex/admin/<task-slug>`.
 - For every non-trivial or potentially concurrent mission, a dedicated
   worktree under `C:\CodexShared\Worktrees\skincos\admin\<task-slug>` is

@@ -64,6 +64,7 @@
         "livia:qa:retry": "node scripts/livia/qa-runner.js retry",
         "livia:qa:restore-progress": "node scripts/livia/qa-runner.js restore-progress",
         "livia:qa:latest": "node scripts/livia/qa-runner.js latest",
+        "livia:rollout:test": "node --test tests/livia-rollout-policy.test.js",
         "livia:secrets:scan": "node scripts/livia/sanitize-workflow-exports.js",
         "livia:secrets:sanitize": "node scripts/livia/sanitize-workflow-exports.js --apply"
     },
