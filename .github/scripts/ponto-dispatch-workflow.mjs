@@ -28,6 +28,12 @@ import {
   verifyCapabilityDocument,
 } from "./ponto-orchestrator-lease.mjs";
 import { assertPontoSourceClosureUnchanged } from "./ponto-source-closure.mjs";
+import {
+  readAndVerifyReleaseIdentity,
+  releaseRefFor,
+  releaseTagApiPath,
+  releaseTagFor,
+} from "./ponto-release-identity.mjs";
 
 export const isBodylessResponseStatus = (status) => status === 202 || status === 204;
 export const readGitHubResponse = (response) => (
@@ -57,13 +63,13 @@ export function globalResourceFor(workflow, inputs) {
   const lifecycle = target || stage;
   const environment = target || stage;
   if (!["preview", "staging", "pilot", "canary", "production", "rollback"].includes(lifecycle)) return "";
-  if (workflow === "deploy-timekeeping.yml" && inputs.release_scope === "ponto") return normalizeResourceKey(`deploy:timekeeping:${environment}`);
+  if (workflow === "deploy-timekeeping.yml" && inputs.release_scope === "ponto") return normalizeResourceKey("global:ponto-workers-writer");
   if (workflow === "deploy-core-workers.yml" && inputs.release_scope === "ponto" && ["api", "inventory", "all"].includes(inputs.unit)) {
-    return normalizeResourceKey(`deploy:core-${inputs.unit}:${environment}`);
+    return normalizeResourceKey("global:ponto-workers-writer");
   }
-  if (workflow === "deploy-crm-pages.yml" && inputs.release_scope === "ponto") return normalizeResourceKey(`deploy:crm-pages:${environment}`);
-  if (workflow === "cloudflare-workers-sync-ponto-secrets.yml") return normalizeResourceKey(`cloudflare:ponto-workers:${environment}`);
-  if (workflow === "cloudflare-pages-sync-ponto.yml") return normalizeResourceKey(`cloudflare:ponto-pages:${environment}`);
+  if (workflow === "deploy-crm-pages.yml" && inputs.release_scope === "ponto") return normalizeResourceKey("global:crm-cloudflare-writer");
+  if (workflow === "cloudflare-workers-sync-ponto-secrets.yml") return normalizeResourceKey("global:ponto-workers-writer");
+  if (workflow === "cloudflare-pages-sync-ponto.yml") return normalizeResourceKey("global:crm-cloudflare-writer");
   if (["timekeeping-staging-journey.yml", "ponto-staging-rollback-drill.yml", "ponto-production-baseline.yml", "ponto-production-slo.yml"].includes(workflow)) {
     return normalizeResourceKey(`release:ponto`);
   }
@@ -342,6 +348,55 @@ const request = async (pathname, init = {}) => {
   return readGitHubResponse(response);
 };
 
+function immutablePontoReleaseIdentity(sourceCommit) {
+  const file = String(process.env.PONTO_RELEASE_IDENTITY_FILE || "").trim();
+  if (!file) throw new Error("Ponto child dispatch requires the immutable release identity file");
+  const releaseTag = releaseTagFor("ponto", sourceCommit);
+  const releaseRef = releaseRefFor("ponto", sourceCommit);
+  let tagTarget;
+  try {
+    tagTarget = execFileSync("git", ["rev-parse", `${releaseRef}^{commit}`], {
+      cwd: path.resolve(import.meta.dirname, "../.."),
+      encoding: "utf8",
+    }).trim().toLowerCase();
+  } catch {
+    throw new Error("immutable Ponto release ref is unavailable in the coordinator checkout");
+  }
+  const identity = readAndVerifyReleaseIdentity(file, {
+    module: "ponto",
+    sourceCommit,
+    sourceTree: sourceTreeForCommit(sourceCommit),
+    dependencyClosureDigest: pontoDependencyClosureDigest(sourceCommit),
+    expectedReleaseTag: releaseTag,
+    expectedReleaseRef: releaseRef,
+    tagTarget,
+  });
+  const expectedDigest = String(process.env.PONTO_RELEASE_IDENTITY_DIGEST || "").trim().toLowerCase();
+  if (!expectedDigest || expectedDigest !== identity.releaseIdentityDigest) {
+    throw new Error("Ponto release identity digest is absent or differs from the immutable identity");
+  }
+  return { identity, releaseTag, releaseRef, file };
+}
+
+async function verifyRemotePontoReleaseRef({ repository, releaseTag, sourceCommit, request }) {
+  const remote = await request(releaseTagApiPath(repository, releaseTag));
+  if (
+    remote?.ref !== `refs/tags/${releaseTag}`
+    || remote?.object?.type !== "commit"
+    || String(remote?.object?.sha || "").trim().toLowerCase() !== sourceCommit
+  ) {
+    throw new Error("remote immutable Ponto release ref does not point to the release SHA");
+  }
+}
+
+const releaseIdentity = immutablePontoReleaseIdentity(orchestratorHeadSha);
+await verifyRemotePontoReleaseRef({
+  repository,
+  releaseTag: releaseIdentity.releaseTag,
+  sourceCommit: orchestratorHeadSha,
+  request,
+});
+
 const cancelActiveChildBestEffort = async (candidate) => {
   if (!candidate || candidate.status === "completed") return;
   try {
@@ -409,7 +464,8 @@ if (leaseKey) {
 }
 const workflowMetadata = await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}`);
 const expectedPath = `.github/workflows/${workflow}`;
-const pathMatchesMainRef = (actual, expected) => actual === expected || actual === `${expected}@refs/heads/main`;
+const pathMatchesRef = (actual, expected, ref) => actual === expected || actual === `${expected}@${ref}`;
+const pathMatchesMainRef = (actual, expected) => pathMatchesRef(actual, expected, "refs/heads/main");
 if (
   workflowMetadata?.state !== "active"
   || workflowMetadata?.path !== expectedPath
@@ -471,7 +527,7 @@ fs.writeFileSync(outputFile, `${JSON.stringify({
   status: "dispatch-requested",
   conclusion: "unknown",
   event: "workflow_dispatch",
-  headBranch: "main",
+  headBranch: releaseIdentity.releaseTag,
   headSha: "",
   repository,
   url: "",
@@ -490,6 +546,9 @@ fs.writeFileSync(outputFile, `${JSON.stringify({
     lockScope: lockScopeFor(globalResourceKey),
     fencingToken: globalDispatchLease.proof.fencingToken,
   } : { required: false },
+  releaseRef: releaseIdentity.releaseRef,
+  releaseTag: releaseIdentity.releaseTag,
+  releaseIdentityDigest: releaseIdentity.identity.releaseIdentityDigest,
 }, null, 2)}\n`, { mode: 0o600 });
 const dispatchMain = await request(`/repos/${repository}/commits/main`);
 const dispatchMainSha = String(dispatchMain?.sha || "").trim().toLowerCase();
@@ -506,11 +565,17 @@ await revalidateGlobalDispatchLease(globalDispatchLease, {
   resourceKey: globalResourceKey,
   observedDependencyClosureDigest: dispatchClosureDigest,
 });
+await verifyRemotePontoReleaseRef({
+  repository,
+  releaseTag: releaseIdentity.releaseTag,
+  sourceCommit: orchestratorHeadSha,
+  request,
+});
 await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({
-    ref: "main",
+    ref: releaseIdentity.releaseTag,
     inputs: Object.fromEntries(Object.entries(normalizedIntent || inputs).map(([name, value]) => [
       name,
       typeof value === "boolean" ? (value ? "true" : "false") : String(value),
@@ -540,11 +605,12 @@ while (Date.now() - startedAt < timeoutMs) {
       throw coordinationError;
     }
   }
-  const payload = await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}/runs?event=workflow_dispatch&branch=main&per_page=50`);
+  const payload = await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}/runs?event=workflow_dispatch&per_page=100`);
   const matches = (payload.workflow_runs || [])
     .filter((item) => matchesDispatchedRun(item, {
       workflowId: workflowMetadata.id,
       expectedPath,
+      expectedHeadBranch: releaseIdentity.releaseTag,
       orchestratorHeadSha,
       correlation,
       dispatchRequestedAt,
@@ -552,10 +618,9 @@ while (Date.now() - startedAt < timeoutMs) {
         ? expectedGovernedRunName(expectedPath, normalizedIntent)
         : undefined,
       dispatchNonce: leaseKey ? dispatchNonce : undefined,
-      // The immutable release SHA remains the artifact identity. The run is
-      // dispatched from main, so its head may advance independently while its
-      // Ponto dependency closure remains unchanged.
-      headShaMatches: () => true,
+      // The run must be created from the immutable tag and resolve to the
+      // exact release SHA. Main drift is evaluated separately by closure.
+      headShaMatches: (headSha) => String(headSha || "").trim().toLowerCase() === orchestratorHeadSha,
     }));
   if (matches.length > 1) {
     throw new Error(`dispatched ${workflow} correlation is ambiguous`);
@@ -573,12 +638,12 @@ while (Date.now() - startedAt < timeoutMs) {
     }
     if (
       run.workflow_id !== workflowMetadata.id
-      || !pathMatchesMainRef(run.path, expectedPath)
+      || !pathMatchesRef(run.path, expectedPath, releaseIdentity.releaseRef)
       || run.run_attempt !== 1
       || run.status === "completed"
       || run.conclusion != null
       || run.event !== "workflow_dispatch"
-      || run.head_branch !== "main"
+      || run.head_branch !== releaseIdentity.releaseTag
       || run.name !== expectedDisplayTitle
       || run.display_title !== expectedDisplayTitle
       || String(run?.repository?.id || "") !== repositoryId
@@ -686,6 +751,9 @@ while (Date.now() - startedAt < timeoutMs) {
       headSha: run.head_sha,
       repository,
       url: run.html_url,
+      releaseRef: releaseIdentity.releaseRef,
+      releaseTag: releaseIdentity.releaseTag,
+      releaseIdentityDigest: releaseIdentity.identity.releaseIdentityDigest,
     }, null, 2)}\n`, { mode: 0o600 });
   }
   if (run?.status === "completed") break;
@@ -716,6 +784,9 @@ if (run.status !== "completed") {
       headSha: run.head_sha,
       repository,
       url: run.html_url,
+      releaseRef: releaseIdentity.releaseRef,
+      releaseTag: releaseIdentity.releaseTag,
+      releaseIdentityDigest: releaseIdentity.identity.releaseIdentityDigest,
       cancellationRequested: true,
       cancellationError,
     }, null, 2)}\n`, { mode: 0o600 });
@@ -728,10 +799,11 @@ if (run.status !== "completed") {
 }
 if (
   run.workflow_id !== workflowMetadata.id
-  || !pathMatchesMainRef(run.path, expectedPath)
+  || !pathMatchesRef(run.path, expectedPath, releaseIdentity.releaseRef)
   || run.run_attempt !== 1
   || run.event !== "workflow_dispatch"
-  || run.head_branch !== "main"
+  || run.head_branch !== releaseIdentity.releaseTag
+  || String(run.head_sha || "").trim().toLowerCase() !== orchestratorHeadSha
   || run.repository?.full_name !== repository
   || run.head_repository?.full_name !== repository
 ) {
@@ -813,6 +885,9 @@ const sanitized = {
   headSha: run.head_sha,
   repository,
   url: run.html_url,
+  releaseRef: releaseIdentity.releaseRef,
+  releaseTag: releaseIdentity.releaseTag,
+  releaseIdentityDigest: releaseIdentity.identity.releaseIdentityDigest,
   resourceKey: globalResourceKey,
   lockScope: globalResourceKey ? lockScopeFor(globalResourceKey) : "",
   globalCoordination: globalDispatchLease ? {

@@ -324,7 +324,7 @@ export async function reconstructWatchdogJournal({
     let exhausted = false;
     for (let page = 1; page <= 20; page += 1) {
       const payload = await request(
-        `/repos/${repository}/actions/workflows/${metadata.id}/runs?event=workflow_dispatch&branch=main&created=${encodeURIComponent(createdRange)}&per_page=100&page=${page}`,
+        `/repos/${repository}/actions/workflows/${metadata.id}/runs?event=workflow_dispatch&created=${encodeURIComponent(createdRange)}&per_page=100&page=${page}`,
       );
       const rows = payload?.workflow_runs || [];
       for (const run of rows) {

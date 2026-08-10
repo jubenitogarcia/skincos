@@ -63,6 +63,7 @@ export function validatePontoEnvironmentProtection({
     || environmentPolicy.protectedBranches !== false
     || environmentPolicy.customBranchPolicies !== true
     || environmentPolicy.requiredBranch !== "main"
+    || environmentPolicy.releaseTagPolicy !== "skincos/release/ponto/*"
   ) {
     throw new Error("Ponto environment governance does not declare the reviewed single-operator contract");
   }
@@ -73,21 +74,24 @@ export function validatePontoEnvironmentProtection({
     || environment?.can_admins_bypass !== false
   ) {
     throw new Error(
-      "Ponto environment must be main-only and forbid administrator bypass",
+      "Ponto environment must use the governed root and immutable release namespace, and forbid administrator bypass",
     );
   }
 
   const policies = branchPolicies?.branch_policies;
-  if (
-    !Array.isArray(policies)
-    || branchPolicies?.total_count !== 1
-    || policies.length !== 1
-    || policies[0]?.name !== "main"
-    || !["", "branch"].includes(String(policies[0]?.type || ""))
-    || !isPositiveId(policies[0]?.id)
-  ) {
-    throw new Error("Ponto environment must allow exactly the main branch");
+  if (!Array.isArray(policies) || branchPolicies?.total_count !== 2 || policies.length !== 2) {
+    throw new Error("Ponto environment must allow exactly main and the immutable Ponto release tag namespace");
   }
+  const mainPolicy = policies.find((policy) => policy?.name === "main");
+  const releaseTagPolicy = policies.find((policy) => policy?.name === "skincos/release/ponto/*");
+  if (
+    !mainPolicy
+    || !["", "branch"].includes(String(mainPolicy.type || ""))
+    || !isPositiveId(mainPolicy.id)
+    || !releaseTagPolicy
+    || releaseTagPolicy.type !== "tag"
+    || !isPositiveId(releaseTagPolicy.id)
+  ) throw new Error("Ponto environment branch policies are not the governed main plus immutable release namespace");
 
   const reviewerRules = (environment?.protection_rules || [])
     .filter((rule) => rule?.type === "required_reviewers");
@@ -104,7 +108,8 @@ export function validatePontoEnvironmentProtection({
     schemaVersion: 1,
     target: selectedTarget,
     mainOnly: true,
-    customBranchPolicyCount: 1,
+    customBranchPolicyCount: 2,
+    releaseTagPolicy: "skincos/release/ponto/*",
     administratorBypassDisabled: true,
     authorizationModel: "single-operator-codex",
     operatorLogin: triggeringActor,

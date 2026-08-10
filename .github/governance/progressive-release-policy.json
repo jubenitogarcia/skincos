@@ -23,19 +23,21 @@
         "preventSelfReview": false,
         "protectedBranches": false,
         "customBranchPolicies": true,
-        "requiredBranch": "main"
+        "requiredBranch": "main",
+        "releaseTagPolicy": "skincos/release/ponto/*"
       },
       "production": {
         "requiredReviewers": 0,
         "preventSelfReview": false,
         "protectedBranches": false,
         "customBranchPolicies": true,
-        "requiredBranch": "main"
+        "requiredBranch": "main",
+        "releaseTagPolicy": "skincos/release/ponto/*"
       }
     },
     "attestation": {
       "codexWorkflow": ".github/workflows/ponto-progressive-release.yml",
-      "immutableSource": "release_sha equals the current main commit and is ancestor-reachable",
+      "immutableSource": "release_sha is captured once in the deterministic immutable release ref/tag and is ancestor-reachable from main; later main advances are evaluated by dependency closure",
       "targetBoundCapabilities": true,
       "splitCustody": true,
       "sanitizedArtifacts": true,
@@ -54,7 +56,7 @@
     }
   },
   "controls": {
-    "immutableSource": "release-source-<sha> artifact and source SHA reachable from main",
+    "immutableSource": "release-source-<sha> identity plus finalized artifact manifest; source SHA is reachable from main at identity creation",
     "featureFlag": "module-specific flag remains disabled until the approved stage",
     "killSwitch": "a documented per-unit switch must stop new promotion and the module fallback must remain available",
     "rollback": "restore the exact previous attested Worker versions and Pages deployment through canonical publishers; migrations remain additive",

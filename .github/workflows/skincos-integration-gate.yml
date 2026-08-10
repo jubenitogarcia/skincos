@@ -1,0 +1,51 @@
+name: SKINCOS integration gate
+run-name: Integration gate PR #${{ github.event.pull_request.number }}
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: skincos-integration-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  gate:
+    if: ${{ github.event.pull_request.base.ref == 'main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          # Never execute or checkout the incoming PR from pull_request_target.
+          # The exact base SHA is fetched/attested by the read-only GitHub API
+          # adapter while this runner stays on the trusted main tree.
+          ref: main
+          fetch-depth: 0
+      - name: Fetch the exact PR base tree used for closure admission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          base_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL_NUMBER" --jq '.base.sha')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'pull request base SHA is invalid'; exit 1; }
+          git fetch --no-tags origin "$base_sha"
+          git cat-file -e "${base_sha}^{commit}"
+      - name: Evaluate global integration admission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+        run: |
+          set -euo pipefail
+          node scripts/codex-global-integration-gate.mjs \
+            --pull-number "${{ github.event.pull_request.number }}" \
+            --expected-head-sha "${{ github.event.pull_request.head.sha }}"

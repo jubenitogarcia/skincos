@@ -33,7 +33,16 @@ evidence judgment remains here.
    another session.
 6. Persist durable queue, blocker and evidence changes when facts materially
    changed. Keep transient hook state outside Git.
-7. Choose exactly one terminal or continuing orchestration status. Automatic
+7. Before selecting a `next_item`, emit its compact `resource_declaration`.
+   Use `reads` for source observations, `writes` for intended mutations,
+   `requires` for technical gates, and `leases` for canonical global resources.
+   A global mutation is not eligible merely because the mission is authorized:
+   the orchestrator must present the current remote proof and run the shared
+   `check` immediately before the mutation. A missing or temporarily held lease
+   is a technical wait/blocker and never a request for duplicate authorization.
+   The Stop hook validates and persists this declaration; it does not decide
+   business compatibility or call the coordination plane.
+8. Choose exactly one terminal or continuing orchestration status. Automatic
    continuation is allowed only when real progress occurred and a concrete,
    technically safe next item remains within the active mission. Production may
    continue when the mission covers it and every applicable technical gate is
@@ -58,6 +67,13 @@ SKINCOS_SUPERVISOR_STATE_BEGIN
   "human_blocker": null,
   "credential_blocker": null,
   "production_authorization_required": false,
+  "resource_declaration": {
+    "schema_version": 1,
+    "reads": ["origin/main", "pr:1261"],
+    "writes": ["merge:main"],
+    "requires": ["skincos-integration-gate"],
+    "leases": ["merge:main"]
+  },
   "evidence_refs": []
 }
 SKINCOS_SUPERVISOR_STATE_END
@@ -65,6 +81,13 @@ SKINCOS_SUPERVISOR_STATE_END
 
 The minimum fields shown above are mandatory; `mission_id` is optional on the
 first root turn and must be preserved when the gate supplies it.
+
+`resource_declaration` is optional for local-only milestones and mandatory when
+`next_item` declares a global resource or `mutates_global=true`. Its four lists
+are bounded, normalized and persisted with the mission snapshot. The hook does
+not treat a declaration as ownership: the orchestrator must acquire the remote
+lease, retain the fencing proof outside the checkout and re-check it before
+each protected mutation.
 
 Allowed `orchestration_status` values:
 

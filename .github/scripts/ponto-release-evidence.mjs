@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { validateRootCustody } from "./ponto-root-custody.mjs";
+import { verifyReleaseIdentity } from "./ponto-release-identity.mjs";
 
 const STAGES = ["preview", "staging", "pilot", "canary", "production", "rollback"];
 const PREDECESSOR = { staging: "preview", pilot: "staging", canary: "pilot", production: "canary" };
@@ -225,6 +226,41 @@ function validateEvidence(evidence) {
   assert(/^[0-9]+$/.test(String(evidence.runId || "")), "invalid runId");
   assert(typeof evidence.repository === "string" && evidence.repository.includes("/"), "invalid repository");
   assert(evidence.decision === "pass", "release decision is not pass");
+  let releaseIdentity = null;
+  if (evidence.releaseIdentity !== null && evidence.releaseIdentity !== undefined) {
+    releaseIdentity = verifyReleaseIdentity(evidence.releaseIdentity, {
+      module: "ponto",
+      sourceCommit: evidence.sourceSha,
+      sourceTree: evidence.sourceTree,
+      dependencyClosureDigest: evidence.releaseIdentity.dependencyClosureDigest,
+      expectedReleaseTag: `skincos/release/ponto/${evidence.sourceSha}`,
+      expectedReleaseRef: `refs/tags/skincos/release/ponto/${evidence.sourceSha}`,
+    });
+    if (releaseIdentity.sourceIdentityDigest) {
+      assert(
+        evidence.releaseIdentitySource && typeof evidence.releaseIdentitySource === "object",
+        "final release identity requires its immutable source identity",
+      );
+      const sourceIdentity = verifyReleaseIdentity(evidence.releaseIdentitySource, {
+        module: "ponto",
+        sourceCommit: evidence.sourceSha,
+        sourceTree: evidence.sourceTree,
+        dependencyClosureDigest: releaseIdentity.dependencyClosureDigest,
+        expectedReleaseTag: releaseIdentity.releaseTag,
+        expectedReleaseRef: releaseIdentity.releaseRef,
+      });
+      assert(sourceIdentity.artifactBindings.length === 0, "source release identity must not contain artifact bindings");
+      assert(sourceIdentity.rollbackIncumbents.length === 0, "source release identity must not contain rollback incumbents");
+      assert(
+        releaseIdentity.sourceIdentityDigest === sourceIdentity.releaseIdentityDigest,
+        "final release identity is not derived from the immutable source identity",
+      );
+      assert(releaseIdentity.artifactBindings.length > 0, "final release identity requires immutable artifact bindings");
+      if (evidence.stage !== "preview") {
+        assert(releaseIdentity.rollbackIncumbents.length > 0, "live release identity requires rollback incumbents");
+      }
+    }
+  }
   if (evidence.stage === "preview") {
     assert(evidence.predecessor === null, "preview cannot have a predecessor");
   } else {
@@ -324,6 +360,8 @@ if (mode === "write") {
     runId: required("GITHUB_RUN_ID"),
     repository: required("GITHUB_REPOSITORY"),
     createdAt: new Date().toISOString(),
+    releaseIdentity: optionalJson("PONTO_RELEASE_IDENTITY_JSON", null),
+    releaseIdentitySource: optionalJson("PONTO_RELEASE_IDENTITY_SOURCE_JSON", null),
     predecessor,
     surfaces: optionalJson("PONTO_RELEASE_SURFACES_JSON", {}),
     edgeGuard: optionalJson("PONTO_RELEASE_EDGE_GUARD_JSON", null),
@@ -353,6 +391,10 @@ if (mode === "write") {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, [
       `source_sha=${evidence.sourceSha}`,
       `source_tree=${evidence.sourceTree}`,
+      `release_ref=${evidence.releaseIdentity?.releaseRef || ""}`,
+      `release_tag=${evidence.releaseIdentity?.releaseTag || ""}`,
+      `release_identity_digest=${evidence.releaseIdentity?.releaseIdentityDigest || ""}`,
+      `release_identity_source_digest=${evidence.releaseIdentity?.sourceIdentityDigest || evidence.releaseIdentitySource?.releaseIdentityDigest || ""}`,
       `stage=${evidence.stage}`,
       `artifact_sha256=${digestFile(file)}`,
       `timekeeping_candidate_version_id=${evidence.surfaces.timekeeping.candidateVersionId || ""}`,

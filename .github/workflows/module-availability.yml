@@ -117,12 +117,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Refuse non-main module-control execution
+      - name: Refuse ungoverned module-control execution
         env:
           MODULE: ${{ inputs.module }}
+          RELEASE_SHA: ${{ inputs.orchestrator_release_sha || inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Module availability must execute from main'; exit 1; }
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            :
+          elif [[ "$GITHUB_REF" == refs/tags/skincos/release/ponto/* && -n "$ORCHESTRATOR_RUN_ID" && "$GITHUB_SHA" == "$RELEASE_SHA" ]]; then
+            :
+          else
+            echo 'Module availability must execute from main or the exact governed Ponto release ref'
+            exit 1
+          fi
           [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Module availability reruns are forbidden; dispatch an explicit new transition'; exit 1; }
   coordination:
     needs: source

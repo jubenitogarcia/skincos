@@ -7,7 +7,7 @@ import {
   proofForLease,
   releaseGlobalLease,
 } from "./codex-global-coordination-client.mjs";
-import { buildWorkflowLeaseRequest } from "./codex-global-coordination-workflow.mjs";
+import { loadMergeCandidate } from "./codex-github-integration-candidate.mjs";
 
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 function requiredEnv(name) {
@@ -27,8 +27,9 @@ function apiUrl(repository, suffix = "") {
   return `https://api.github.com/repos/${repository}${suffix}`;
 }
 
-async function githubJson(repository, suffix, options = {}) {
-  const token = requiredEnv("GH_TOKEN");
+async function githubJson(repository, suffix, options = {}, tokenName = "GH_TOKEN") {
+  const token = String(process.env[tokenName] || process.env.GH_TOKEN || "").trim();
+  if (!token) throw new Error(`${tokenName} is required`);
   const response = await fetch(apiUrl(repository, suffix), {
     ...options,
     headers: {
@@ -63,7 +64,27 @@ async function setMergeAuthorityStatus(repository, headSha, state, description) 
       description: String(description).slice(0, 140),
       target_url: `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${repository}/actions/workflows/global-merge-authority.yml`,
     }),
-  });
+  }, "SKINCOS_STATUS_TOKEN");
+}
+
+function waitableLeaseReason(reason) {
+  return ["resource-lease-held", "incompatible-release-lease"].includes(String(reason || ""));
+}
+
+export async function acquireMergeLease({ request, url, maxWaitMs = 15 * 60_000, pollMs = 15_000, acquireImpl = acquireGlobalLease }) {
+  const deadline = Date.now() + maxWaitMs;
+  let lastReason = "";
+  while (Date.now() <= deadline) {
+    const result = await acquireImpl({ request, url });
+    if (result.passed === true && result.lease) return result;
+    lastReason = String(result.reason || "unknown");
+    if (!waitableLeaseReason(lastReason)) {
+      throw new Error(`merge:main lease acquisition failed closed: ${lastReason}`);
+    }
+    if (Date.now() + pollMs > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error(`merge:main lease remained unavailable: ${lastReason || "unknown"}`);
 }
 
 export async function mergePullRequest({ repository, pullNumber, expectedHeadSha, mergeMethod = "squash" }) {
@@ -73,28 +94,17 @@ export async function mergePullRequest({ repository, pullNumber, expectedHeadSha
   const url = requiredEnv("SKINCOS_GLOBAL_COORDINATOR_URL");
   requiredEnv("SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET");
   if (!MERGE_METHODS.has(mergeMethod)) throw new Error(`unsupported merge method: ${mergeMethod}`);
-  const initial = await githubJson(repository, `/pulls/${pullNumber}`);
-  const headSha = assertSha(expectedHeadSha, "expected head SHA");
-  if (initial.state !== "open" || initial.base?.ref !== "main") throw new Error("pull request is not an open main integration candidate");
-  if (initial.head?.repo?.full_name !== repository) throw new Error("pull request head repository is outside the governed repository");
-  if (assertSha(initial.head?.sha, "pull request head SHA") !== headSha) throw new Error("pull request head advanced before lease acquisition");
+  const candidate = await loadMergeCandidate({ repository, pullNumber, expectedHeadSha });
+  const initial = candidate.pull;
+  const { headSha, baseSha, request, closure } = candidate;
   // A required global-merge-authority status makes the PR appear blocked until
   // this authority posts its success status. GitHub's merge API remains the
   // final enforcement point for every other required check or review.
   if (initial.draft === true || initial.mergeable_state === "dirty") {
     throw new Error("pull request is not mergeable by its current GitHub state");
   }
-  const baseSha = assertSha(initial.base?.sha, "pull request base SHA");
   const resource = "merge:main";
-  const { request, closure } = buildWorkflowLeaseRequest({
-    resource,
-    module: "merge",
-    source: baseSha,
-    operation: "mutation",
-    idempotencyKey: `merge:${repository}:${pullNumber}:${headSha}`,
-    inputs: { pullNumber: String(pullNumber), expectedHeadSha: headSha, baseSha },
-  });
-  const result = await acquireGlobalLease({ request, url });
+  const result = await acquireMergeLease({ request, url });
   if (result.passed !== true || !result.lease) throw new Error(`merge:main lease acquisition failed: ${result.reason || "unknown"}`);
   const proof = proofForLease(result.lease);
   let merged;

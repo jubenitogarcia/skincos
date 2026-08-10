@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { loadPolicy, validatePolicy } from "../../.github/scripts/validate-cloudflare-single-writer.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 
@@ -16,6 +17,21 @@ function jobBlock(workflow, jobName) {
   const next = remainder.search(/\n  [A-Za-z0-9_-]+:/);
   return next === -1 ? remainder : remainder.slice(0, next);
 }
+
+test("Cloudflare mutators have one fail-closed writer group and no unclassified workflow", () => {
+  const policy = loadPolicy();
+  assert.deepEqual(validatePolicy(policy), []);
+  assert.equal(policy.authority.coordinationPlane, "global");
+  assert.equal(policy.authority.mode, "fail-closed");
+  assert.equal(policy.pagesGitIntegration.automaticDeploymentsMustBeDisabled, true);
+  const crm = policy.coordinationGroups.find((group) => group.id === "crm-cloudflare-writer");
+  assert.equal(crm.resource, "global:crm-cloudflare-writer");
+  const pontoWorkers = policy.coordinationGroups.find((group) => group.id === "ponto-workers-writer");
+  assert.equal(pontoWorkers.resource, "global:ponto-workers-writer");
+  assert.match(read(".github/workflows/deploy-crm-pages.yml"), /resource: global:crm-cloudflare-writer/);
+  assert.match(read(".github/workflows/cloudflare-pages-sync-ponto.yml"), /global_resource: global:crm-cloudflare-writer/);
+  assert.match(read(".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"), /global_resource: global:ponto-workers-writer/);
+});
 
 test("direct Ponto recovery jobs use remote custody at every governed boundary", () => {
   const workflow = read(".github/workflows/ponto-progressive-release.yml");
@@ -51,7 +67,7 @@ test("legacy recovery and WAF mutators are fail-closed through the same authorit
   assert.ok(watchdogRollback.indexOf("Check global Ponto recovery lease immediately before watchdog rollback") < watchdogRollback.indexOf("node .github/scripts/ponto-automatic-rollback.mjs"));
 
   const coreRecovery = jobBlock(read(".github/workflows/ponto-staging-core-provenance-recovery.yml"), "rollback");
-  assert.match(coreRecovery, /resource: deploy:core-api:staging/);
+  assert.match(coreRecovery, /resource: global:ponto-workers-writer/);
   assert.match(coreRecovery, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
   assert.match(coreRecovery, /uses: \.\/\.github\/actions\/global-coordination-check/);
   assert.match(coreRecovery, /uses: \.\/\.github\/actions\/global-coordination-release/);
@@ -81,6 +97,21 @@ test("the reusable check action accepts either an external proof file or an enco
   assert.match(read(".github/actions/global-coordination-release/action.yml"), /github\.event\.inputs\.target == 'production'/);
   assert.match(action, /GLOBAL_PROOF_FILE_INPUT/);
   assert.match(action, /base64 -d/);
+  assert.match(action, /coordination_max_attempts=3/);
+  assert.match(action, /Global coordination revalidation failed after/);
+});
+
+test("the staging RBAC journey recovers synthetic teardown under a fresh lease", () => {
+  const workflow = read(".github/workflows/insumos-staging-rbac-smoke.yml");
+  const release = workflow.indexOf("Release staging D1 coordination lease");
+  const recoveryAcquire = workflow.indexOf("Reacquire cleanup lease for an orphaned synthetic teardown");
+  const recoveryCheck = workflow.indexOf("Revalidate cleanup lease before orphaned teardown");
+  const recoveryTeardown = workflow.indexOf("Tear down orphaned synthetic staging identities under recovery lease");
+  assert.ok(release >= 0 && recoveryAcquire > release && recoveryCheck > recoveryAcquire && recoveryTeardown > recoveryCheck);
+  assert.match(workflow, /steps\.fixture\.outcome == 'success' && steps\.teardown\.outcome != 'success'/);
+  assert.match(workflow, /steps\.recovery_check\.outcome == 'success'/);
+  assert.match(workflow, /skincos-global-coordination-staging-d1-insumos-cleanup\.json/);
+  assert.match(workflow, /refusing a non-staging D1 target/);
 });
 
 test("the Ponto composite lease starts before candidate mutation, selects the correct authority, and spans the orchestrator", () => {
@@ -106,6 +137,38 @@ test("the Ponto composite lease starts before candidate mutation, selects the co
   }
 });
 
+test("Ponto child dispatch is pinned to the immutable release identity", () => {
+  const workflow = read(".github/workflows/ponto-progressive-release.yml");
+  const dispatcher = read(".github/scripts/ponto-dispatch-workflow.mjs");
+  const identity = read(".github/scripts/ponto-release-identity.mjs");
+  const acquire = workflow.indexOf("Acquire the composite Ponto release lease before candidate mutation");
+  const establish = workflow.indexOf("Establish immutable Ponto release identity");
+  const dispatch = workflow.indexOf("node .github/scripts/ponto-dispatch-workflow.mjs");
+  assert.ok(acquire >= 0 && establish > acquire && dispatch > establish);
+  assert.match(workflow, /contents: write/);
+  assert.match(workflow, /ponto-release-identity\.mjs create/);
+  assert.match(workflow, /ponto-release-identity\.mjs finalize/);
+  assert.match(workflow, /release-identity\.json/);
+  assert.match(workflow, /release-identity-final\.json/);
+  assert.match(workflow, /PONTO_RELEASE_IDENTITY_SOURCE_JSON/);
+  assert.match(dispatcher, /PONTO_RELEASE_IDENTITY_FILE/);
+  assert.match(dispatcher, /verifyRemotePontoReleaseRef/);
+  assert.match(dispatcher, /ref: releaseIdentity\.releaseTag/);
+  assert.match(dispatcher, /expectedHeadBranch: releaseIdentity\.releaseTag/);
+  assert.match(dispatcher, /headShaMatches: \(headSha\) => String\(headSha/);
+  assert.match(dispatcher, /run\.head_branch !== releaseIdentity\.releaseTag/);
+  assert.match(dispatcher, /run\.head_sha \|\| \"\"\)\.trim\(\)\.toLowerCase\(\) !== orchestratorHeadSha/);
+  assert.doesNotMatch(dispatcher, /ref: \"main\"/);
+  assert.doesNotMatch(dispatcher, /runs\?event=workflow_dispatch&branch=main/);
+  assert.match(identity, /releaseRefFor/);
+  assert.match(identity, /RELEASE_TAG_PREFIX = "skincos\/release"/);
+  assert.match(identity, /releaseIdentityDigest/);
+  assert.match(identity, /sourceIdentityDigest/);
+  assert.match(identity, /artifactBindingsFromSurfaces/);
+  assert.match(identity, /finalizeReleaseIdentity/);
+  assert.match(identity, /git\/refs/);
+});
+
 test("merge:main is a fail-closed GitHub mutation authority", () => {
   const script = read("scripts/codex-global-merge-authority.mjs");
   const workflow = read(".github/workflows/global-merge-authority.yml");
@@ -114,19 +177,61 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(script, /const resource = "merge:main"/);
   assert.match(script, /expectedHeadSha/);
   assert.match(script, /checkGlobalLease/);
+  assert.match(script, /acquireMergeLease/);
+  assert.match(script, /incompatible-release-lease/);
+  assert.match(script, /merge:main lease remained unavailable/);
   assert.match(script, /global-merge-authority/);
   assert.match(script, /setMergeAuthorityStatus/);
+  assert.match(script, /loadMergeCandidate/);
+  assert.match(read("scripts/codex-github-integration-candidate.mjs"), /changedPaths/);
+  assert.match(read("scripts/codex-github-integration-candidate.mjs"), /previous_filename/);
+  assert.match(read("scripts/codex-global-integration-gate.mjs"), /skincos-integration-gate/);
+  assert.match(read("scripts/codex-global-integration-gate.mjs"), /loadMergeCandidateIdentity/);
+  assert.match(read("scripts/codex-global-integration-gate.mjs"), /pathToFileURL/);
+  const integrationGate = read(".github/workflows/skincos-integration-gate.yml");
+  assert.match(integrationGate, /pull_request_target/);
+  assert.match(integrationGate, /ref: main/);
+  assert.match(integrationGate, /Fetch the exact PR base tree used for closure admission/);
+  assert.doesNotMatch(integrationGate, /ref: \$\{\{ github\.event\.pull_request\./);
+  const integrationRecheck = read(".github/workflows/skincos-integration-gate-recheck.yml");
+  assert.match(integrationRecheck, /schedule:/);
+  assert.match(integrationRecheck, /--max-wait-ms 15000/);
+  assert.match(integrationRecheck, /gh api --paginate/);
+  assert.match(integrationRecheck, /gate_state/);
+  assert.match(integrationRecheck, /--jq '\[\.\[\] \| select\(\.context == "skincos-integration-gate"\)\]\[0\]\.state \/\/ ""'/);
+  assert.doesNotMatch(integrationRecheck, /--jq '[^\n]*\/\/ ""\)"/);
+  assert.match(read("ops/cloudflare/global-coordinator/index.js"), /buildLegacyIntentV1/);
+  assert.match(read("scripts/codex-global-coordination-workflow.mjs"), /admission paths are not bound/);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
   assert.match(workflow, /pull_request_target/);
+  assert.match(workflow, /ref: \$\{\{ github\.ref \}\}/);
   assert.match(workflow, /state=failure/);
   assert.match(workflow, /run-name: Merge PR #\$\{\{ inputs\.pull_number \}\} through merge:main/);
+  assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.GH_TOKEN \}\}/);
+  assert.match(workflow, /SKINCOS_STATUS_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(script, /SKINCOS_STATUS_TOKEN/);
   assert.doesNotMatch(scheduler, /enablePullRequestAutoMerge/);
   assert.match(scheduler, /disablePullRequestAutoMerge/);
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-check/);
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-release/);
   assert.match(scheduler, /resource: merge:main/);
+  assert.match(scheduler, /Detect whether branch maintenance needs merge:main/);
+  assert.match(scheduler, /steps\.maintenance_scan\.outputs\.needs_maintenance == 'true'/);
+  assert.match(scheduler, /steps\.acquire_branch_maintenance\.outcome == 'success'/);
+  assert.match(scheduler, /ALLOW_BRANCH_UPDATES/);
+  assert.match(scheduler, /always\(\)/);
+  assert.match(scheduler, /allowBranchUpdates/);
+  assert.match(read(".github/actions/global-coordination-release/action.yml"), /max_attempts=5/);
+  assert.match(read(".codex/hooks/skincos-supervisor-gate.py"), /resource_declaration/);
+  assert.match(read("skills/skincos-project-orchestrator/references/supervisor-cycle.md"), /technical wait\/blocker/);
   assert.deepEqual(policy.releaseClosures.merge.patterns, ["**"]);
+  assert.match(policy.resourceClasses.mutate, /^\^mutate:/);
+  assert.equal(policy.admission.coordinationPlane, "global");
+  const ruleset = JSON.parse(read(".github/governance/rulesets/main-enterprise-baseline.json"));
+  const requiredContexts = ruleset.rules.find((rule) => rule.type === "required_status_checks").parameters.required_status_checks.map((entry) => entry.context);
+  assert.deepEqual(requiredContexts, ["codex-autonomy-gate", "global-merge-authority", "skincos-integration-gate"]);
+  assert.ok(ruleset.rules.find((rule) => rule.type === "required_status_checks").parameters.required_status_checks.every((entry) => entry.integration_id === 15368));
 });
 
 test("native mini-PC mutations use the common coordinator and detached closure proof", () => {
@@ -258,4 +363,31 @@ test("shared staging D1 custody serializes synthetic mutators before every write
   assert.ok(timekeepingJourney.indexOf("Check shared staging D1 lease before authenticated Ponto journey") < timekeepingJourney.indexOf("Execute authenticated Ponto journey"));
   assert.match(timekeepingJourney, /id: check_staging_d1_teardown/);
   assert.match(timekeepingJourney, /steps\.check_staging_d1_teardown\.outcome == 'success'/);
+});
+
+test("general CRM Pages checks out trusted local coordination actions before using them", () => {
+  const workflow = read(".github/workflows/deploy-crm-pages.yml");
+  const checkout = workflow.indexOf("Checkout trusted general coordination actions");
+  const authorization = workflow.indexOf("uses: ./.github/actions/global-coordination-check", checkout);
+
+  assert.ok(checkout >= 0, "general Pages deploy must prepare the local coordination action");
+  assert.ok(authorization > checkout, "the coordination action must be available before authorization");
+  assert.match(workflow.slice(checkout, authorization), /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(workflow.slice(checkout, authorization), /inputs\.release_scope == 'general'/);
+});
+
+test("the reusable orchestrator gate exposes global lease outputs to callers", () => {
+  const workflow = read(".github/workflows/ponto-orchestrator-gate.yml");
+
+  assert.match(workflow, /steps\.global_enabled\.outputs\.proof_b64/);
+  assert.match(workflow, /steps\.global_enabled\.outputs\.url/);
+  assert.match(workflow, /id: global_enabled/);
+  assert.match(workflow, /id: global_disabled/);
+  assert.doesNotMatch(workflow, /steps\.global-(?:enabled|disabled)\.outputs/);
+});
+
+test("CRM Pages deploy declares coordination as a direct dependency for lease outputs", () => {
+  const workflow = read(".github/workflows/deploy-crm-pages.yml");
+
+  assert.match(workflow, /\n  deploy:\n    # The deploy job reads lease outputs from the reusable coordination job\.[\s\S]*?\n    needs: \[coordination, promotion\]/);
 });

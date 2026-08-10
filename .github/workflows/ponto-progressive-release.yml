@@ -103,7 +103,7 @@ jobs:
     permissions:
       actions: write
       checks: write
-      contents: read
+      contents: write
       deployments: read
     runs-on: ubuntu-latest
     environment: ${{ inputs.stage == 'preview' && 'preview' || inputs.stage == 'staging' && 'staging' || 'production' }}
@@ -125,7 +125,6 @@ jobs:
       SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
       SKINCOS_GLOBAL_COORDINATOR_URL: ${{ contains(fromJSON('["preview","staging"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_URL || contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || '' }}
       SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-      PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
@@ -134,6 +133,7 @@ jobs:
       - name: Initialize private release artifact directory
         run: |
           echo "PONTO_ARTIFACT_DIR=$RUNNER_TEMP/ponto-release" >> "$GITHUB_ENV"
+          echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=$RUNNER_TEMP/ponto-release/global-coordination-release-ponto.json" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/ponto-release"
       - name: Verify immutable source and ordered predecessor provenance
         id: source
@@ -805,6 +805,16 @@ jobs:
           module: ponto
           source_sha: ${{ inputs.release_sha }}
           proof_file: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
+      - name: Establish immutable Ponto release identity
+        id: release_identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-release-identity.mjs create \
+            ponto \
+            "$RELEASE_SHA" \
+            "$PONTO_ARTIFACT_DIR/release-identity.json"
       - name: Prove selected root separation before any candidate mutation
         if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
         env:
@@ -1646,6 +1656,22 @@ jobs:
             fs.copyFileSync(path.join(root, "slo/ponto-production-slo.json"), path.join(root, "slo-summary.json"));
           }
           NODE
+      - name: Finalize immutable release artifact manifest
+        if: success()
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-release-identity.mjs finalize \
+            ponto \
+            "$PONTO_ARTIFACT_DIR/release-identity.json" \
+            "$PONTO_ARTIFACT_DIR/surfaces.json" \
+            "$PONTO_ARTIFACT_DIR/rollback.json" \
+            "$PONTO_ARTIFACT_DIR/release-identity-final.json"
+      - name: Write immutable release evidence
+        if: success()
+        run: |
+          set -euo pipefail
+          export PONTO_RELEASE_IDENTITY_JSON="$(cat "$PONTO_ARTIFACT_DIR/release-identity-final.json")"
+          export PONTO_RELEASE_IDENTITY_SOURCE_JSON="$(cat "$PONTO_ARTIFACT_DIR/release-identity.json")"
           predecessor_args=()
           if [[ "$STAGE" != preview ]]; then
             predecessor_args=(
@@ -1719,6 +1745,8 @@ jobs:
           name: ponto-release-evidence-${{ inputs.stage }}-${{ inputs.release_sha }}
           path: |
             ${{ runner.temp }}/ponto-release/ponto-release-evidence.json
+            ${{ runner.temp }}/ponto-release/release-identity.json
+            ${{ runner.temp }}/ponto-release/release-identity-final.json
             ${{ runner.temp }}/ponto-release/staging-slo/ponto-staging-teardown-report.json
           retention-days: 90
           if-no-files-found: error

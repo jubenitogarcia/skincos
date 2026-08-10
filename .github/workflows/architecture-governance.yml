@@ -46,6 +46,7 @@ jobs:
       - name: Validate GitHub Organization transfer plan
         run: node .github/scripts/validate-github-repository-transfer.mjs
       - run: node .github/scripts/validate-deploy-topology.mjs
+      - run: node .github/scripts/validate-cloudflare-single-writer.mjs
       - run: node .github/scripts/validate-progressive-release.mjs
       - name: Test private Ponto Core baseline publisher
         run: node --test .github/scripts/ponto-core-baseline-publisher.test.mjs

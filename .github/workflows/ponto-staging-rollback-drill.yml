@@ -87,16 +87,19 @@ jobs:
           import { pontoSourceClosureMatches } from "./.github/scripts/ponto-source-closure.mjs";
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const releaseRef = `refs/tags/skincos/release/ponto/${process.env.RELEASE_SHA}`;
+          const releaseTag = releaseRef.slice("refs/tags/".length);
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/timekeeping-staging-journey.yml"
             || workflow.name !== "Timekeeping authenticated staging journey"
             || run.workflow_id !== workflow.id
-            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
+            || ![workflow.path, `${workflow.path}@${releaseRef}`].includes(run.path)
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
-            || run.head_branch !== "main"
+            || run.head_branch !== releaseTag
+            || String(run.head_sha || "").toLowerCase() !== process.env.RELEASE_SHA
             || !pontoSourceClosureMatches(process.env.RELEASE_SHA, String(run.head_sha || "").toLowerCase())
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY

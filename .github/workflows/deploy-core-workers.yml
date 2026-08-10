@@ -72,7 +72,7 @@ jobs:
     with:
       required: ${{ inputs.release_scope == 'ponto' && inputs.target != 'preview' }}
       global_lease_required: ${{ inputs.target != 'preview' }}
-      global_resource: ${{ format('deploy:core-{0}:{1}', inputs.unit, inputs.target) }}
+      global_resource: global:ponto-workers-writer
       global_module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'core' }}
       global_coordinator_url: ${{ contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
       lease_key: core-${{ inputs.unit }}
@@ -271,7 +271,7 @@ jobs:
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
-          resource: ${{ format('deploy:core-{0}:{1}', inputs.unit, inputs.target) }}
+          resource: global:ponto-workers-writer
           module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'core' }}
           source_sha: ${{ inputs.release_sha || github.sha }}
       - name: Guard canonical staging Identity release
@@ -1097,7 +1097,7 @@ jobs:
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
-          resource: ${{ format('deploy:core-{0}:{1}', inputs.unit, inputs.target) }}
+          resource: global:ponto-workers-writer
           module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'core' }}
           source_sha: ${{ inputs.release_sha || github.sha }}
       - name: Guard canonical Ponto Core release
@@ -1501,7 +1501,7 @@ jobs:
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
-          resource: ${{ format('deploy:core-{0}:{1}', inputs.unit, inputs.target) }}
+          resource: global:ponto-workers-writer
           module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'core' }}
           source_sha: ${{ inputs.release_sha || github.sha }}
       - name: Guard canonical Ponto Identity release

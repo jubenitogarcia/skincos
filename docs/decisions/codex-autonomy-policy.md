@@ -41,6 +41,12 @@ autorizar produção, por exemplo, enquanto uma política de domínio ainda impe
 promoção por falta de rollback ou de validação pré-produção. Isso é um
 **blocker técnico verificável**, não ausência de autorização.
 
+Autorização para executar uma operação não equivale a ownership instantâneo do
+recurso global necessário para executá-la. A missão pode continuar autorizada
+enquanto aguarda `merge:main`, `release:<module>` ou um lease de superfície; a
+falta temporária do lease é espera ou blocker técnico fail-closed, nunca motivo
+para pedir autorização duplicada.
+
 ## 3. Escopo autorizado e persistência
 
 Quando previstos pela missão, são ações dentro do escopo: criar worktree e

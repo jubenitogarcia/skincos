@@ -61,7 +61,7 @@ jobs:
       orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
   capture:
     needs: orchestrator
-    if: ${{ needs.orchestrator.result == 'success' && github.run_attempt == 1 && github.ref == 'refs/heads/main' }}
+    if: ${{ needs.orchestrator.result == 'success' && github.run_attempt == 1 && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/skincos/release/ponto/') && inputs.orchestrator_run_id != '' && github.sha == inputs.release_sha)) }}
     runs-on: ubuntu-latest
     environment: production
     outputs:

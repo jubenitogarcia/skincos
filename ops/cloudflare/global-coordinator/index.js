@@ -3,10 +3,12 @@ import {
   acquireLease,
   authorizeMutation,
   buildIntent,
+  buildLegacyIntentV1,
   canonicalJson,
   checkLease,
   consumeNonce,
   emptyState,
+  evaluateLeaseAdmission,
   lockScopeFor,
   releaseLease,
   renewLease,
@@ -17,6 +19,7 @@ const CONTRACT_ID = "skincos/global-coordination/v1";
 const MAX_SKEW_MS = 30_000;
 const NONCE_TTL_MS = 15 * 60_000;
 const MAX_BODY_BYTES = 64 * 1024;
+const COORDINATION_MODES = new Set(["legacy-drain", "global"]);
 
 const encoder = new TextEncoder();
 const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)))
@@ -72,7 +75,7 @@ async function authenticatedBody(request, env, url, rawBody) {
     || body.contractId !== CONTRACT_ID
     || body.requestNonce !== nonce
     || body.requestedAt !== requestedAt
-    || !["acquire", "check", "renew", "release", "revoke"].includes(body.action)
+    || !["acquire", "gate", "check", "renew", "release", "revoke"].includes(body.action)
   ) throw new Error("coordination request envelope is invalid");
   if (body.action === "revoke" && request.headers.get("authorization") !== `Bearer ${env.COORDINATION_ADMIN_SECRET || ""}`) throw new Error("coordination revocation authority is unavailable");
   return { body, nonce, requestDigest };
@@ -106,6 +109,7 @@ export class GlobalCoordinator extends DurableObject {
     if (!nonce.accepted) return { accepted: false, valid: false, reason: nonce.reason };
     let result;
     if (input.action === "acquire") result = acquireLease(nonce.state, input.request, { now: input.now, leaseId: input.leaseId });
+    else if (input.action === "gate") result = evaluateLeaseAdmission(nonce.state, input.request, { now: input.now });
     else if (input.action === "check") {
       result = input.authorization
         ? authorizeMutation(nonce.state, input.request, { now: input.now, ...input.authorization })
@@ -137,29 +141,53 @@ export default {
     const { body, nonce, requestDigest } = authenticated;
     let resource;
     try {
-      resource = body.action === "revoke" ? body.proof?.resource : body.action === "acquire" ? body.request?.resource : body.proof?.resource;
-      const scope = lockScopeFor(resource);
-      if (body.action === "acquire") {
+      resource = ["acquire", "gate"].includes(body.action) ? body.request?.resource : body.proof?.resource;
+      const lockScope = lockScopeFor(resource);
+      if (["acquire", "gate"].includes(body.action)) {
         const normalizedIntent = buildIntent(body.request);
         const expectedDigest = await sha256(canonicalJson(normalizedIntent));
-        if (body.request.intentDigest !== expectedDigest) return bad("coordination intent digest mismatch", 403);
+        let intentDigestValid = body.request.intentDigest === expectedDigest;
+        // During the distributed rollout, already-running v1 clients may not
+        // include the newly explicit owner.sessionId field. Accept that exact
+        // legacy canonicalization only when the field is absent; a request that
+        // includes sessionId must use the new digest.
+        if (!intentDigestValid && !body.request.owner?.sessionId) {
+          const legacyIntent = buildLegacyIntentV1(body.request);
+          const legacyDigest = await sha256(canonicalJson(legacyIntent));
+          intentDigestValid = body.request.intentDigest === legacyDigest;
+        }
+        if (!intentDigestValid) return bad("coordination intent digest mismatch", 403);
       }
-      const stub = env.GLOBAL_COORDINATOR.getByName(scope);
+      const coordinationMode = String(env.COORDINATION_PLANE_MODE || "global").trim().toLowerCase();
+      if (!COORDINATION_MODES.has(coordinationMode)) return bad("coordination plane mode is invalid", 503);
+      if (coordinationMode === "legacy-drain" && ["acquire", "gate", "renew"].includes(body.action)) {
+        return bad("coordination plane is draining legacy lock scopes", 503);
+      }
+      // One globally named Durable Object is the coordination plane. The
+      // logical lockScope remains part of the lease and fencing proof, while
+      // one serialized state machine can arbitrate cross-resource conflicts
+      // such as merge:main versus release:<module>.
+      const planeName = coordinationMode === "legacy-drain"
+        ? lockScope
+        : (env.COORDINATION_PLANE_NAME || "global");
+      const stub = env.GLOBAL_COORDINATOR.getByName(planeName);
       const result = stub.coordinate({
         action: body.action,
         nonce,
         requestDigest,
         now: Date.now(),
         leaseId: crypto.randomUUID(),
-        request: body.action === "acquire" ? body.request : undefined,
-        ...(body.action !== "acquire" ? { request: body.proof } : {}),
+         request: ["acquire", "gate"].includes(body.action) ? body.request : body.proof,
         authorization: body.authorization,
         ttlMs: body.ttlMs,
         reason: body.reason,
       });
       const resolved = await result;
-      const payload = await signResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed: resolved.accepted !== false && resolved.valid !== false, ...resolved }, env.COORDINATION_SHARED_SECRET);
-      const status = resolved.accepted === false && resolved.reason === "resource-lease-held" ? 409 : resolved.valid === false ? 409 : resolved.accepted === false ? 409 : 200;
+      const passed = body.action === "gate"
+        ? resolved.allowed === true
+        : resolved.accepted !== false && resolved.valid !== false;
+      const payload = await signResponse({ schemaVersion: 1, contractId: CONTRACT_ID, passed, ...resolved }, env.COORDINATION_SHARED_SECRET);
+      const status = resolved.allowed === false || resolved.accepted === false || resolved.valid === false ? 409 : 200;
       return jsonResponse(payload, status);
     } catch {
       return bad("coordination request could not be processed", 400);

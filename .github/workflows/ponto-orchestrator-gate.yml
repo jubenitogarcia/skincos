@@ -66,11 +66,11 @@ jobs:
   consume:
     runs-on: ubuntu-latest
     outputs:
-      global_lease_required: ${{ steps.global-enabled.outputs.required || steps.global-disabled.outputs.required }}
-      global_resource: ${{ steps.global-enabled.outputs.resource || steps.global-disabled.outputs.resource }}
-      global_proof_b64: ${{ steps.global-enabled.outputs.proof_b64 || steps.global-disabled.outputs.proof_b64 }}
-      global_intent_digest: ${{ steps.global-enabled.outputs.intent_digest || steps.global-disabled.outputs.intent_digest }}
-      global_coordinator_url: ${{ steps.global-enabled.outputs.url || steps.global-disabled.outputs.url }}
+      global_lease_required: ${{ steps.global_enabled.outputs.required || steps.global_disabled.outputs.required }}
+      global_resource: ${{ steps.global_enabled.outputs.resource || steps.global_disabled.outputs.resource }}
+      global_proof_b64: ${{ steps.global_enabled.outputs.proof_b64 || steps.global_disabled.outputs.proof_b64 }}
+      global_intent_digest: ${{ steps.global_enabled.outputs.intent_digest || steps.global_disabled.outputs.intent_digest }}
+      global_coordinator_url: ${{ steps.global_enabled.outputs.url || steps.global_disabled.outputs.url }}
     steps:
       - name: Refuse replayed governed invocation
         if: ${{ inputs.required }}
@@ -89,10 +89,18 @@ jobs:
         if: ${{ inputs.required }}
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto release SHA is invalid'; exit 1; }
-          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto gate must execute from main'; exit 1; }
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            :
+          elif [[ "$GITHUB_REF" == refs/tags/skincos/release/ponto/* && -n "$ORCHESTRATOR_RUN_ID" && "$GITHUB_SHA" == "$RELEASE_SHA" ]]; then
+            :
+          else
+            echo 'Ponto gate must execute from main or the exact governed Ponto release ref'
+            exit 1
+          fi
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto gate observed source SHA is invalid'; exit 1; }
           if ! git cat-file -e "$RELEASE_SHA^{commit}" 2>/dev/null; then
             git fetch --no-tags origin "$RELEASE_SHA"
@@ -156,7 +164,7 @@ jobs:
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
       - name: Acquire the canonical global mutation lease
-        id: global-enabled
+        id: global_enabled
         if: ${{ inputs.global_lease_required }}
         env:
           GLOBAL_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
@@ -179,7 +187,7 @@ jobs:
             GLOBAL_URL="$GLOBAL_INPUT_URL"
           fi
           [[ -n "$GLOBAL_URL" && -n "$GLOBAL_SECRET" ]] || { echo 'Global coordination URL and shared custody are required'; exit 1; }
-          [[ "$GLOBAL_RESOURCE" =~ ^(deploy|cloudflare|release):[a-z0-9][a-z0-9._/-]{0,127}:(preview|staging|pilot|canary|production|rollback)$ || "$GLOBAL_RESOURCE" =~ ^release:[a-z0-9][a-z0-9._/-]{0,127}$ ]] || {
+          [[ "$GLOBAL_RESOURCE" =~ ^(deploy|mutate|cloudflare|release):[a-z0-9][a-z0-9._/-]{0,127}:(preview|staging|pilot|canary|production|rollback)$ || "$GLOBAL_RESOURCE" =~ ^release:[a-z0-9][a-z0-9._/-]{0,127}$ ]] || {
             echo 'Global coordination resource is invalid'; exit 1;
           }
           source_sha="${RELEASE_SHA:-$GITHUB_SHA}"
@@ -211,7 +219,7 @@ jobs:
           echo "intent_digest=$intent_digest" >> "$GITHUB_OUTPUT"
           echo "url=$GLOBAL_URL" >> "$GITHUB_OUTPUT"
       - name: Keep the preactivation path explicit
-        id: global-disabled
+        id: global_disabled
         if: ${{ !inputs.global_lease_required }}
         run: |
           echo 'required=false' >> "$GITHUB_OUTPUT"

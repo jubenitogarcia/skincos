@@ -16,10 +16,14 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
   versiona os botões do topo do Codex App para o clone compartilhado e para os
   worktrees. Nenhum outro arquivo de `.codex` deve ser salvo aqui.
 - Usar branch no formato `codex/admin/<task-slug>`.
-- Se houver chance de trabalho concorrente, usar worktree dedicado em
-  `C:\CodexShared\Worktrees\skincos\<ator>\<task-slug>`.
-- O clone compartilhado deve ficar reservado para contexto, revisão, bootstrap
-  e tarefas curtas; mudanças longas ou paralelas devem migrar para worktree.
+- Para toda tarefa não trivial, usar obrigatoriamente worktree dedicado em
+  `C:\CodexShared\Worktrees\skincos\<ator>\<task-slug>`. O clone compartilhado
+  permanece reservado para contexto, revisão e bootstrap; não é superfície de
+  edição normal de agentes.
+- A identidade persistida da tarefa é `mission_id`, `task_slug`, branch e
+  caminho do worktree. Uma tarefa não altera o worktree de outra. Push direto
+  para `main` não faz parte do fluxo suportado: a proteção remota e a
+  autoridade de integração rejeitam essa operação.
 - Autenticação, perfis de browser, envs privados, PID e temporários do Codex
   ficam fora do repositório compartilhado, em `%LOCALAPPDATA%\Codex\skincos\`.
   Logs, relatórios, checkpoints, evidências e backups locais ficam no runtime
@@ -294,7 +298,8 @@ Exemplo de saída esperada:
 1. Rodar bootstrap, validação e instalação dos atalhos uma vez por usuário.
 2. Abrir `C:\CodexShared\Projetos\skincos` no Codex App para entender o contexto.
 3. Usar `Codex Context` ou rodar `bash ./scripts/codex-context.sh` via WSL.
-4. Para qualquer tarefa paralela ou mais longa, criar um worktree por usuário/tarefa.
+4. Para qualquer tarefa não trivial, criar um worktree por usuário/tarefa antes
+   de editar.
 5. Abrir o worktree no Codex App e trabalhar só nele.
 6. Rodar apps locais com perfil, autenticação, temporários e overrides em
    `%LOCALAPPDATA%\Codex\skincos\`; os artefatos duráveis vão para o runtime

@@ -7,6 +7,12 @@
 autonomia resolve autorização; esta política resolve elegibilidade técnica,
 validação e rollback.
 
+Autorização para executar uma operação não concede ownership instantâneo do
+recurso global necessário. Leases de `merge:main`, release, promoção e
+superfície são temporários, fenced e observados pela autoridade global; espera,
+expiração ou indisponibilidade do lease mantém a missão autorizada, mas torna a
+mutação tecnicamente inelegível até nova prova válida.
+
 ## 1. Unidade de trabalho: branch e PR curtos
 
 - Cada branch e PR deve ter **um objetivo operacional verificável** e responsável técnico claro.
