@@ -32,7 +32,7 @@ inputs:
     description: Shared custody secret passed only in process environment
     required: true
   key_id:
-    description: Optional active coordination key identifier; defaults to the repository variable
+    description: Optional active coordination key identifier; overrides the job environment when provided
     required: false
     default: ''
 runs:
@@ -46,7 +46,7 @@ runs:
       env:
         SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
         SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
-        SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id || vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+        GLOBAL_KEY_ID_INPUT: ${{ inputs.key_id }}
         GLOBAL_PROOF_B64: ${{ inputs.proof_b64 }}
         GLOBAL_PROOF_FILE_INPUT: ${{ inputs.proof_file }}
         GLOBAL_RESOURCE: ${{ inputs.resource }}
@@ -59,6 +59,11 @@ runs:
         set -euo pipefail
         [[ "$GLOBAL_ENABLED" == true ]] || { echo 'Global coordination is not active'; exit 1; }
         [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" && -n "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" ]] || { echo 'Global coordination custody is unavailable'; exit 1; }
+        coordination_key_id="${GLOBAL_KEY_ID_INPUT:-${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}}"
+        if [[ -n "$coordination_key_id" && ! "$coordination_key_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$ ]]; then
+          echo 'Global coordination key identifier is invalid'
+          exit 1
+        fi
         [[ "$GLOBAL_SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Global coordination source SHA is invalid'; exit 1; }
         if [[ -z "$GLOBAL_OBSERVED_SOURCE_SHA" ]]; then
           git fetch --no-tags --force origin main:refs/remotes/origin/main
@@ -82,12 +87,12 @@ runs:
         while (( coordination_attempt <= coordination_max_attempts )); do
           if SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
             SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
-            SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
+            SKINCOS_GLOBAL_COORDINATION_KEY_ID="$coordination_key_id" \
               node scripts/codex-global-coordination-workflow.mjs renew \
                 --proof-file "$GLOBAL_PROOF_FILE" && \
             SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
             SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
-            SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
+            SKINCOS_GLOBAL_COORDINATION_KEY_ID="$coordination_key_id" \
               node scripts/codex-global-coordination-workflow.mjs check \
                 --proof-file "$GLOBAL_PROOF_FILE" \
                 --resource "$GLOBAL_RESOURCE" \

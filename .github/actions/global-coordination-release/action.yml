@@ -11,7 +11,7 @@ inputs:
     description: Shared custody secret passed only in process environment
     required: true
   key_id:
-    description: Optional active coordination key identifier; defaults to the repository variable
+    description: Optional active coordination key identifier; overrides the job environment when provided
     required: false
     default: ''
   proof_file:
@@ -28,11 +28,16 @@ runs:
       env:
         SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
         SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
-        SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id || vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+        GLOBAL_KEY_ID_INPUT: ${{ inputs.key_id }}
         GLOBAL_PROOF_FILE: ${{ inputs.proof_file }}
       run: |
         set -euo pipefail
         [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" && -n "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" ]] || { echo 'Global coordination custody is unavailable'; exit 1; }
+        coordination_key_id="${GLOBAL_KEY_ID_INPUT:-${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}}"
+        if [[ -n "$coordination_key_id" && ! "$coordination_key_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$ ]]; then
+          echo 'Global coordination key identifier is invalid'
+          exit 1
+        fi
         if [[ ! -f "$GLOBAL_PROOF_FILE" ]]; then
           echo 'No global coordination proof was acquired; nothing to release'
           exit 0
@@ -42,7 +47,7 @@ runs:
         while true; do
           if SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
-          SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
+          SKINCOS_GLOBAL_COORDINATION_KEY_ID="$coordination_key_id" \
             node scripts/codex-global-coordination-workflow.mjs release \
               --proof-file "$GLOBAL_PROOF_FILE"; then
             exit 0

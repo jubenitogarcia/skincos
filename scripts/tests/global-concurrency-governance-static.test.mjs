@@ -99,7 +99,7 @@ test("the reusable check action accepts either an external proof file or an enco
   const action = read(".github/actions/global-coordination-check/action.yml");
   assert.match(action, /proof_b64:[\s\S]*?required: false/);
   assert.match(action, /proof_file:[\s\S]*?required: false/);
-  assert.match(action, /key_id:[\s\S]*?defaults to the repository variable/);
+  assert.match(action, /key_id:[\s\S]*?overrides the job environment when provided/);
   assert.match(action, /observed_source_sha:[\s\S]*?required: false/);
   assert.match(action, /git fetch --no-tags --force origin main:refs\/remotes\/origin\/main/);
   assert.match(action, /git fetch --no-tags origin "\$GLOBAL_SOURCE_SHA"/);
@@ -114,6 +114,17 @@ test("the reusable check action accepts either an external proof file or an enco
   assert.match(action, /Global coordination revalidation failed after/);
   assert.match(read(".github/actions/global-coordination-acquire/action.yml"), /SKINCOS_GLOBAL_COORDINATION_KEY_ID/);
   assert.match(read(".github/actions/global-coordination-release/action.yml"), /SKINCOS_GLOBAL_COORDINATION_KEY_ID/);
+  for (const actionPath of [
+    ".github/actions/global-coordination-acquire/action.yml",
+    ".github/actions/global-coordination-check/action.yml",
+    ".github/actions/global-coordination-release/action.yml",
+  ]) {
+    const source = read(actionPath);
+    assert.doesNotMatch(source, /\$\{\{[^\n}]*\bvars\./, `${actionPath} must not use the workflow-only vars context`);
+    assert.match(source, /GLOBAL_KEY_ID_INPUT: \$\{\{ inputs\.key_id \}\}/);
+    assert.match(source, /coordination_key_id="\$\{GLOBAL_KEY_ID_INPUT:-\$\{SKINCOS_GLOBAL_COORDINATION_KEY_ID:-\}\}"/);
+    assert.match(source, /Global coordination key identifier is invalid/);
+  }
 });
 
 test("the staging RBAC journey recovers synthetic teardown under a fresh lease", () => {
