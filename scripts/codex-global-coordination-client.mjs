@@ -35,7 +35,11 @@ export function hmac(secret, value) {
 }
 
 export function newRequestNonce() {
-  return crypto.randomBytes(24).toString("base64url");
+  // The coordinator's canonical SAFE_ID deliberately requires an
+  // alphanumeric first character. Hex preserves 192 bits of entropy while
+  // making every client-generated nonce valid for both current and legacy
+  // coordinator implementations.
+  return crypto.randomBytes(24).toString("hex");
 }
 
 export function buildLeaseRequest({ operation, resource, owner, intent, idempotencyKey, ttlMs }) {

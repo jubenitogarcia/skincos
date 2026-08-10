@@ -216,7 +216,8 @@ test("break-glass fence requests use a separate endpoint, key header, and bounde
 });
 
 test("lease proofs and conflict scopes remain normalized across adapters", () => {
-  assert.match(newRequestNonce(), /^[A-Za-z0-9_-]{32,}$/);
+  assert.match(newRequestNonce(), /^[A-Za-z0-9][A-Za-z0-9._:/-]{31,}$/);
+  for (let index = 0; index < 100; index += 1) assert.match(newRequestNonce(), /^[A-Za-z0-9][A-Za-z0-9._:/-]{31,}$/);
   assert.equal(lockScopeForResource("CLOUDFLARE:Website:Staging"), "surface:website:staging");
   assert.deepEqual(proofForLease({
     resource: "DEPLOY:Website:Staging",
