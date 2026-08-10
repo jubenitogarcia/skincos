@@ -121,6 +121,38 @@ test("the Ponto composite lease starts before candidate mutation, selects the co
   }
 });
 
+test("Ponto child dispatch is pinned to the immutable release identity", () => {
+  const workflow = read(".github/workflows/ponto-progressive-release.yml");
+  const dispatcher = read(".github/scripts/ponto-dispatch-workflow.mjs");
+  const identity = read(".github/scripts/ponto-release-identity.mjs");
+  const acquire = workflow.indexOf("Acquire the composite Ponto release lease before candidate mutation");
+  const establish = workflow.indexOf("Establish immutable Ponto release identity");
+  const dispatch = workflow.indexOf("node .github/scripts/ponto-dispatch-workflow.mjs");
+  assert.ok(acquire >= 0 && establish > acquire && dispatch > establish);
+  assert.match(workflow, /contents: write/);
+  assert.match(workflow, /ponto-release-identity\.mjs create/);
+  assert.match(workflow, /ponto-release-identity\.mjs finalize/);
+  assert.match(workflow, /release-identity\.json/);
+  assert.match(workflow, /release-identity-final\.json/);
+  assert.match(workflow, /PONTO_RELEASE_IDENTITY_SOURCE_JSON/);
+  assert.match(dispatcher, /PONTO_RELEASE_IDENTITY_FILE/);
+  assert.match(dispatcher, /verifyRemotePontoReleaseRef/);
+  assert.match(dispatcher, /ref: releaseIdentity\.releaseTag/);
+  assert.match(dispatcher, /expectedHeadBranch: releaseIdentity\.releaseTag/);
+  assert.match(dispatcher, /headShaMatches: \(headSha\) => String\(headSha/);
+  assert.match(dispatcher, /run\.head_branch !== releaseIdentity\.releaseTag/);
+  assert.match(dispatcher, /run\.head_sha \|\| \"\"\)\.trim\(\)\.toLowerCase\(\) !== orchestratorHeadSha/);
+  assert.doesNotMatch(dispatcher, /ref: \"main\"/);
+  assert.doesNotMatch(dispatcher, /runs\?event=workflow_dispatch&branch=main/);
+  assert.match(identity, /releaseRefFor/);
+  assert.match(identity, /RELEASE_TAG_PREFIX = "skincos\/release"/);
+  assert.match(identity, /releaseIdentityDigest/);
+  assert.match(identity, /sourceIdentityDigest/);
+  assert.match(identity, /artifactBindingsFromSurfaces/);
+  assert.match(identity, /finalizeReleaseIdentity/);
+  assert.match(identity, /git\/refs/);
+});
+
 test("merge:main is a fail-closed GitHub mutation authority", () => {
   const script = read("scripts/codex-global-merge-authority.mjs");
   const workflow = read(".github/workflows/global-merge-authority.yml");

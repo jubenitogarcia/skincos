@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isCorrelatedChild, isTerminalRun } from "./ponto-reconcile-children.mjs";
+import { releaseTagFor } from "./ponto-release-identity.mjs";
 import {
   capabilityExternalId,
   resolveCapabilityVerifier,
@@ -78,15 +79,19 @@ export function classifyHighRiskRun(run, {
   workflowsById,
   target,
   currentEmergencyRunId = "",
+  releaseSha = "",
 }) {
   const specification = workflowsById.get(run?.workflow_id);
   const workflowPath = String(run?.path || "").split("@")[0];
   const runId = String(run?.id || "");
+  const expectedBranch = /^[0-9a-f]{40}$/i.test(String(releaseSha || ""))
+    ? releaseTagFor("ponto", releaseSha)
+    : "main";
   if (
     !specification
     || workflowPath !== specification.path
     || !ALLOWED_HIGH_RISK_EVENTS.has(run?.event)
-    || run?.head_branch !== "main"
+    || run?.head_branch !== expectedBranch
     || run?.repository?.full_name !== repository
     || run?.head_repository?.full_name !== repository
     || !/^[1-9][0-9]*$/.test(runId)
@@ -241,7 +246,7 @@ if (invokedAsScript) {
     for (const status of NON_TERMINAL) {
       let exhausted = false;
       for (let page = 1; page <= 20; page += 1) {
-        const payload = await request(`/repos/${repository}/actions/runs?branch=main&status=${status}&per_page=100&page=${page}`);
+        const payload = await request(`/repos/${repository}/actions/runs?status=${status}&per_page=100&page=${page}`);
         const rows = payload?.workflow_runs || [];
         for (const run of rows) {
           if (ALLOWED_HIGH_RISK_EVENTS.has(run?.event)) found.set(String(run.id), run);
@@ -271,7 +276,7 @@ if (invokedAsScript) {
       let coordinatorInventoryExhausted = false;
       for (let page = 1; page <= 20; page += 1) {
         const payload = await request(
-          `/repos/${repository}/actions/workflows/${workflow.id}/runs?event=workflow_dispatch&branch=main&status=completed&created=${encodeURIComponent(`>=${recentSince}`)}&per_page=100&page=${page}`,
+          `/repos/${repository}/actions/workflows/${workflow.id}/runs?event=workflow_dispatch&status=completed&created=${encodeURIComponent(`>=${recentSince}`)}&per_page=100&page=${page}`,
         );
         const rows = payload?.workflow_runs || [];
         for (const row of rows) coordinatorCandidates.set(String(row.id), row);
@@ -305,7 +310,7 @@ if (invokedAsScript) {
         let exhausted = false;
         for (let page = 1; page <= 20; page += 1) {
           const payload = await request(
-            `/repos/${repository}/actions/workflows/${specification.id}/runs?event=workflow_dispatch&branch=main&status=completed&created=${encodeURIComponent(createdRange)}&per_page=100&page=${page}`,
+            `/repos/${repository}/actions/workflows/${specification.id}/runs?event=workflow_dispatch&status=completed&created=${encodeURIComponent(createdRange)}&per_page=100&page=${page}`,
           );
           const rows = payload?.workflow_runs || [];
           for (const row of rows) completedWindowRuns.set(String(row.id), row);
@@ -659,6 +664,7 @@ if (invokedAsScript) {
           workflowsById: highRiskWorkflows,
           target,
           currentEmergencyRunId,
+          releaseSha: coordinator.releaseSha,
         });
         if (
           !specification

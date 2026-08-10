@@ -64,3 +64,45 @@ test("green evidence is reused only for matching release and artifact digests", 
   assert.equal(findReusableEvidence([drifted, matching], manifest), matching);
   assert.equal(findReusableEvidence([drifted], manifest), null);
 });
+
+test("build-once manifests preserve exact platform identities and reject version drift", () => {
+  const base = {
+    sourceCommit: "a".repeat(40),
+    sourceTree: "b".repeat(40),
+    surfaces: ["website"],
+    policyPaths: [],
+    inputs: [{ path: "website/src/index.ts", blob: "c".repeat(40) }],
+    module: "website",
+    releaseRef: "refs/tags/skincos/release/website/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    releaseTag: "skincos/release/website/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    workflowRunId: "12345",
+    rollbackIncumbents: ["worker-version-incumbent"],
+    artifacts: [{
+      name: "worker",
+      digest: "d".repeat(64),
+      workerVersionId: "worker-version-1",
+      workflowRunId: "12345",
+      rollbackIncumbent: "worker-version-incumbent",
+    }],
+  };
+  const original = buildReleaseManifest(base);
+  const changedVersion = buildReleaseManifest({
+    ...base,
+    artifacts: [{ ...base.artifacts[0], workerVersionId: "worker-version-2" }],
+  });
+  assert.equal(original.artifactManifest.artifacts[0].workerVersionId, "worker-version-1");
+  assert.notEqual(original.releaseIdentityDigest, changedVersion.releaseIdentityDigest);
+  const matching = {
+    status: "green",
+    releaseInputDigest: original.releaseInputDigest,
+    releaseIdentityDigest: original.releaseIdentityDigest,
+    artifacts: original.artifacts,
+  };
+  const drifted = { ...matching, releaseIdentityDigest: changedVersion.releaseIdentityDigest, artifacts: changedVersion.artifacts };
+  assert.equal(findReusableEvidence([drifted, matching], original), matching);
+  assert.equal(findReusableEvidence([drifted], original), null);
+  assert.throws(
+    () => buildReleaseManifest({ ...base, artifacts: [{ ...base.artifacts[0], secretToken: "should-not-persist" }] }),
+    /field is not allowed/,
+  );
+});

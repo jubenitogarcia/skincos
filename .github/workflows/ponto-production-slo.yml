@@ -77,7 +77,7 @@ jobs:
       orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
   control-plane-preflight:
     needs: orchestrator
-    if: ${{ needs.orchestrator.result == 'success' && github.run_attempt == 1 && github.ref == 'refs/heads/main' && inputs.stage != 'rollback' }}
+    if: ${{ needs.orchestrator.result == 'success' && github.run_attempt == 1 && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/skincos/release/ponto/') && inputs.orchestrator_run_id != '' && github.sha == inputs.release_sha)) && inputs.stage != 'rollback' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
@@ -312,7 +312,7 @@ jobs:
           if-no-files-found: error
   consultor-journey:
     needs: [orchestrator, control-plane-preflight]
-    if: ${{ needs.orchestrator.result == 'success' && needs.control-plane-preflight.result == 'success' && github.run_attempt == 1 && github.ref == 'refs/heads/main' && inputs.stage != 'rollback' }}
+    if: ${{ needs.orchestrator.result == 'success' && needs.control-plane-preflight.result == 'success' && github.run_attempt == 1 && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/skincos/release/ponto/') && inputs.orchestrator_run_id != '' && github.sha == inputs.release_sha)) && inputs.stage != 'rollback' }}
     runs-on: ${{ fromJSON(needs.control-plane-preflight.outputs.runner_labels_json || '["ponto-unavailable"]') }}
     timeout-minutes: 30
     environment: production
@@ -438,7 +438,7 @@ jobs:
       coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}
   rollback-observation:
     needs: orchestrator
-    if: ${{ needs.orchestrator.result == 'success' && github.run_attempt == 1 && github.ref == 'refs/heads/main' && inputs.stage == 'rollback' }}
+    if: ${{ needs.orchestrator.result == 'success' && github.run_attempt == 1 && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/skincos/release/ponto/') && inputs.orchestrator_run_id != '' && github.sha == inputs.release_sha)) && inputs.stage == 'rollback' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production

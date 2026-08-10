@@ -21,6 +21,8 @@ import { createCapabilityCheck } from "./ponto-orchestrator-lease.mjs";
 const repository = "skincos/skincos";
 const workflowId = 123;
 const sha = "a".repeat(40);
+const releaseTag = `skincos/release/ponto/${sha}`;
+const releaseRef = `refs/tags/${releaseTag}`;
 const repositoryId = "42";
 const emergencyScript = fileURLToPath(new URL("./ponto-emergency-stop.mjs", import.meta.url));
 const stagingPair = crypto.generateKeyPairSync("ed25519");
@@ -192,9 +194,9 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
   const child = {
     id: childId,
     workflow_id: childWorkflowId,
-    path: ".github/workflows/deploy-timekeeping.yml@refs/heads/main",
+    path: `.github/workflows/deploy-timekeeping.yml@${releaseRef}`,
     event: "workflow_dispatch",
-    head_branch: "main",
+    head_branch: releaseTag,
     head_sha: sha,
     name: "Deploy Workforce Timekeeping",
     display_title: `Timekeeping staging ${sha} orchestrator=8001 nonce=${nonce}`,
@@ -211,7 +213,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
       ...child,
       id: 9101,
       workflow_id: 702,
-      path: ".github/workflows/deploy-core-workers.yml@refs/heads/main",
+      path: `.github/workflows/deploy-core-workers.yml@${releaseRef}`,
       name: "Deploy Core Workers",
       display_title: `Core api staging ${sha} orchestrator=8001 nonce=${"e".repeat(32)}`,
     },
@@ -219,7 +221,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
       ...child,
       id: 9102,
       workflow_id: 8102,
-      path: ".github/workflows/deploy-core-workers.yml@refs/heads/main",
+      path: `.github/workflows/deploy-core-workers.yml@${releaseRef}`,
       name: "Deploy Core Workers",
       display_title: `Core inventory staging ${sha} unrelated`,
     },
@@ -227,7 +229,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
       ...child,
       id: 9103,
       workflow_id: 8103,
-      path: ".github/workflows/module-availability.yml@refs/heads/main",
+      path: `.github/workflows/module-availability.yml@${releaseRef}`,
       name: "Set module availability",
       display_title: "Module finance staging maintenance orchestrator=",
     },
@@ -235,7 +237,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
       ...child,
       id: 9104,
       workflow_id: 8104,
-      path: ".github/workflows/module-availability.yml@refs/heads/main",
+      path: `.github/workflows/module-availability.yml@${releaseRef}`,
       name: "Set module availability",
       display_title: "Module timekeeping staging active orchestrator=",
     },

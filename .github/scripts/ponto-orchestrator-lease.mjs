@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { assertPontoSourceClosureUnchanged, pontoSourceClosureMatches } from "./ponto-source-closure.mjs";
+import { assertPontoSourceClosureUnchanged } from "./ponto-source-closure.mjs";
+import { releaseRefFor, releaseTagFor } from "./ponto-release-identity.mjs";
 
 const apiBase = String(process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
 const repository = String(process.env.GITHUB_REPOSITORY || "").trim();
@@ -157,10 +158,14 @@ const KEY_ID = /^[a-z][a-z0-9._-]{2,63}$/;
 const TARGETS = ["staging", "production"];
 const ED25519_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
 
-export function acceptsWorkflowRunPath(workflowPath, observedPath) {
+export function acceptsWorkflowRunPath(workflowPath, observedPath, releaseRef = "") {
   const canonicalPath = String(workflowPath || "").trim();
   const livePath = String(observedPath || "").trim();
-  return [canonicalPath, `${canonicalPath}@refs/heads/main`].includes(livePath);
+  return [
+    canonicalPath,
+    `${canonicalPath}@refs/heads/main`,
+    ...(releaseRef ? [`${canonicalPath}@${releaseRef}`] : []),
+  ].includes(livePath);
 }
 
 const canonicalClaims = claims => CLAIM_FIELDS.map((field) => {
@@ -704,6 +709,8 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
   const currentHeadSha = String(process.env.GITHUB_SHA || "").trim().toLowerCase();
   const childRunId = String(process.env.GITHUB_RUN_ID || "").trim();
   const eventPath = String(process.env.GITHUB_EVENT_PATH || "").trim();
+  const releaseRef = releaseRefFor("ponto", releaseSha);
+  const releaseTag = releaseTagFor("ponto", releaseSha);
   assertFirstAttempt();
   if (
     !UUIDISH_KEY.test(leaseKey || "")
@@ -746,9 +753,9 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     if (
       String(child?.id || "") !== childRunId
       || child?.run_attempt !== 1
-      || !acceptsWorkflowRunPath(childWorkflowPath, child?.path)
+      || !acceptsWorkflowRunPath(childWorkflowPath, child?.path, releaseRef)
       || child?.event !== "workflow_dispatch"
-      || child?.head_branch !== "main"
+      || child?.head_branch !== releaseTag
       || child?.head_sha !== currentHeadSha
       || child?.repository?.full_name !== repository
       || String(child?.repository?.id || "") !== repositoryId
@@ -762,7 +769,7 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
       || !/^[1-9][0-9]*$/.test(issuerRunId)
       || String(event?.repository?.id || "") !== repositoryId
       || event?.repository?.full_name !== repository
-      || !["main", "refs/heads/main"].includes(String(event?.ref || ""))
+      || ![releaseTag, releaseRef].includes(String(event?.ref || ""))
     ) throw new Error("current child run is not the exact active first-attempt capability subject");
     const retryDelay = childCapabilitySubjectWaitMs(child, attempt);
     if (retryDelay === 0) break;
@@ -781,15 +788,13 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     || issuer?.workflow_id !== issuerWorkflow?.id
     || issuerWorkflow?.state !== "active"
     || issuerWorkflow?.path !== issuerWorkflowPath
-    || !acceptsWorkflowRunPath(issuerWorkflowPath, issuer?.path)
+    || !acceptsWorkflowRunPath(issuerWorkflowPath, issuer?.path, delegatedIssuer ? releaseRef : "")
     || issuer?.run_attempt !== 1
     || issuer?.status !== "in_progress"
     || issuer?.conclusion != null
     || issuer?.event !== "workflow_dispatch"
-    || issuer?.head_branch !== "main"
-    || (delegatedIssuer
-      ? !pontoSourceClosureMatches(releaseSha, issuer?.head_sha)
-      : issuer?.head_sha !== releaseSha)
+    || issuer?.head_branch !== (delegatedIssuer ? releaseTag : "main")
+    || issuer?.head_sha !== releaseSha
     || issuer?.repository?.full_name !== repository
     || String(issuer?.repository?.id || "") !== repositoryId
     || issuer?.head_repository?.full_name !== repository

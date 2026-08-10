@@ -18,6 +18,14 @@ function parsePair(value, name) {
   return { name: value.slice(0, separator), digest: value.slice(separator + 1) };
 }
 
+function parseJson(value, name) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`${name} must contain valid JSON`);
+  }
+}
+
 function selectedSurfaces(policy, sourceCommit) {
   const explicit = repeated("--surface");
   if (explicit.length) return explicit;
@@ -60,7 +68,10 @@ const sourceTree = git("rev-parse", `${sourceCommit}^{tree}`);
 const policy = JSON.parse(fs.readFileSync(path.join(root, "ops/codex/risk-policy.json"), "utf8"));
 const surfaces = selectedSurfaces(policy, sourceCommit);
 const { inputs, policyPaths } = trackedInputs(policy, sourceCommit, surfaces);
-const artifacts = repeated("--artifact").map((value) => parsePair(value, "--artifact"));
+const artifacts = [
+  ...repeated("--artifact").map((value) => parsePair(value, "--artifact")),
+  ...repeated("--artifact-json").map((value) => parseJson(value, "--artifact-json")),
+];
 const evidence = repeated("--evidence").map((value) => parsePair(value, "--evidence"));
 const migrations = inputs.filter(({ path: file }) => /(?:^|\/)migrations?\//i.test(file) || /(?:^|\/)\d+[_-].*\.sql$/i.test(file)).map(({ path: file }) => file);
 const predecessorSourceCommit = argument("--predecessor-source");
@@ -70,7 +81,29 @@ const predecessor = predecessorSourceCommit || predecessorDigest ? {
   releaseInputDigest: predecessorDigest ?? "unknown",
   artifactDigests: repeated("--predecessor-artifact")
 } : null;
-const manifest = buildReleaseManifest({ sourceCommit: git("rev-parse", sourceCommit), sourceTree, surfaces, inputs, policyPaths, artifacts, migrations, evidence, predecessor });
+const manifest = buildReleaseManifest({
+  sourceCommit: git("rev-parse", sourceCommit),
+  sourceTree,
+  surfaces,
+  inputs,
+  policyPaths,
+  artifacts,
+  migrations,
+  evidence,
+  predecessor: predecessor ? {
+    ...predecessor,
+    releaseIdentityDigest: argument("--predecessor-release-identity-digest"),
+    releaseRef: argument("--predecessor-release-ref"),
+    releaseTag: argument("--predecessor-release-tag"),
+    workflowRunId: argument("--predecessor-workflow-run-id"),
+  } : null,
+  dependencyClosureDigest: argument("--dependency-closure-digest"),
+  module: argument("--module"),
+  releaseRef: argument("--release-ref"),
+  releaseTag: argument("--release-tag"),
+  workflowRunId: argument("--workflow-run-id"),
+  rollbackIncumbents: repeated("--rollback-incumbent"),
+});
 manifest.candidate = surfaces.length > 0;
 if (!manifest.candidate) manifest.reason = "No release-input surface changed; documentation and ledger changes reuse the prior eligible candidate.";
 const output = argument("--output");

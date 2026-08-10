@@ -287,6 +287,7 @@ test("workflow run provenance accepts both live GitHub REST path forms", () => {
   const workflowPath = ".github/workflows/deploy-timekeeping.yml";
   assert.equal(acceptsWorkflowRunPath(workflowPath, workflowPath), true);
   assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/heads/main`), true);
+  assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/tags/skincos/release/ponto/${"a".repeat(40)}`, "refs/tags/skincos/release/ponto/" + "a".repeat(40)), true);
   assert.equal(acceptsWorkflowRunPath(workflowPath, ".github/workflows/other.yml"), false);
   assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/heads/feature`), false);
 });
@@ -298,7 +299,7 @@ test("consume-check waits only for a queued child to become the active capabilit
   assert.equal(childCapabilitySubjectWaitMs({ status: "completed", conclusion: "failure" }, 0), -1);
 });
 
-test("Ponto workflow REST provenance gates accept both live path forms", () => {
+test("Ponto workflow REST provenance gates accept canonical parent or immutable release path forms", () => {
   const workflowNames = [
     "cloudflare-pages-sync-ponto.yml",
     "cloudflare-workers-sync-ponto-secrets.yml",
@@ -313,11 +314,11 @@ test("Ponto workflow REST provenance gates accept both live path forms", () => {
       path.join(repositoryRoot, ".github", "workflows", workflowName),
       "utf8",
     );
-    assert.match(
-      source,
-      /\[\s*(?:expectedPath|workflow\.path),\s*`\$\{(?:expectedPath|workflow\.path)\}@refs\/heads\/main`\s*\]\.includes\(run\.path\)/,
-      `${workflowName} must accept both GitHub REST workflow path forms`,
-    );
+    const acceptsMainPath = /\[\s*(?:expectedPath|workflow\.path),\s*`\$\{(?:expectedPath|workflow\.path)\}@refs\/heads\/main`\s*\]\.includes\(run\.path\)/.test(source);
+    const acceptsReleasePath = source.includes("refs/tags/skincos/release/ponto/")
+      && source.includes("run.head_branch")
+      && source.includes("run.head_sha");
+    assert.ok(acceptsMainPath || acceptsReleasePath, `${workflowName} must accept a canonical or immutable release REST path`);
     assert.doesNotMatch(
       source,
       /run\.path\s*!==\s*(?:expectedPath|workflow\.path)|run\.path\s*===\s*workflow\.path/,

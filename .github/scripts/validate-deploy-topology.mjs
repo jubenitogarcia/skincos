@@ -492,7 +492,8 @@ if (
   || !environmentProtection.includes('reviewerRules.length !== 0')
   || !environmentProtection.includes('authorizationModel: "single-operator-codex"')
   || !environmentProtection.includes('environment?.can_admins_bypass !== false')
-  || !environmentProtection.includes('policies[0]?.name !== "main"')
+  || !environmentProtection.includes('releaseTagPolicy.type !== "tag"')
+  || !environmentProtection.includes('policy?.name === "skincos/release/ponto/*"')
 ) {
   fail('Ponto coordinator and capability consumers must attest exact live environment protection before authority is issued or consumed');
 }
@@ -879,9 +880,9 @@ for (const required of [
 }
 if (
   emergencyStop.includes('for (const status of [...NON_TERMINAL, "completed"])')
-  || emergencyStop.includes('/actions/runs?branch=main&status=completed')
+  || emergencyStop.includes('/actions/runs?branch=main')
 ) {
-  fail('Ponto emergency reconciliation must never enumerate repository-wide completed history');
+  fail('Ponto emergency reconciliation must not use a main-branch history filter for child discovery');
 }
 for (const required of [
   '/actions/runs/${coordinatorRunId}',
@@ -893,8 +894,8 @@ for (const required of [
     fail(`Ponto watchdog journal discovery is not lifecycle/workflow bounded: ${required}`);
   }
 }
-if (watchdogJournal.includes('/actions/runs?event=workflow_dispatch&branch=main')) {
-  fail('Ponto watchdog journal must not enumerate global workflow-dispatch history');
+if (watchdogJournal.includes('branch=main')) {
+  fail('Ponto watchdog journal must not enumerate workflow-dispatch history by main branch');
 }
 if (
   emergencyStop.includes('/actions/artifacts/')

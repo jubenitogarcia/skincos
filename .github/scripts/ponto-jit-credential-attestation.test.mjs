@@ -9,6 +9,7 @@ import {
   cleanupJitFiles,
   consumeJitCredentials,
 } from "./ponto-jit-credential-attestation.mjs";
+import { releaseRefFor } from "./ponto-release-identity.mjs";
 
 const signingKeys = crypto.generateKeyPairSync("ed25519");
 const runnerKeys = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -17,6 +18,7 @@ const runnerFingerprint = crypto.createHash("sha256")
   .update(runnerKeys.publicKey.export({ type: "spki", format: "der" }))
   .digest("hex");
 const sha = "a".repeat(40);
+const releaseRef = releaseRefFor("ponto", sha);
 const uuid = "11111111-1111-4111-8111-111111111111";
 const artifactDigest = "c".repeat(64);
 
@@ -69,9 +71,9 @@ const fixture = (overrides = {}) => {
     RUNNER_TEMP: runnerTemp,
     GITHUB_REPOSITORY_ID: "12345",
     GITHUB_REPOSITORY: "owner/repo",
-    GITHUB_WORKFLOW_REF: "owner/repo/.github/workflows/ponto-production-slo.yml@refs/heads/main",
+    GITHUB_WORKFLOW_REF: `owner/repo/.github/workflows/ponto-production-slo.yml@${releaseRef}`,
     GITHUB_JOB: "consultor-journey",
-    GITHUB_REF: "refs/heads/main",
+    GITHUB_REF: releaseRef,
     GITHUB_SHA: sha,
     GITHUB_RUN_ID: "456",
     GITHUB_RUN_ATTEMPT: "1",
@@ -98,7 +100,7 @@ const fixture = (overrides = {}) => {
     workflowPath: ".github/workflows/ponto-production-slo.yml",
     workflowRef: env.GITHUB_WORKFLOW_REF,
     workflowJob: "consultor-journey",
-    ref: "refs/heads/main",
+    ref: releaseRef,
     environment: "production",
     releaseSha: sha,
     stage: "pilot",
@@ -176,7 +178,7 @@ test("rejects global runner secrets and claim swaps while still deleting all JIT
     { env: { PONTO_IDEMPOTENCY_KEY: "forbidden-root-on-runner" } },
     { claims: { workflowRunId: "999" } },
     { claims: { coordinatorDispatchNonce: "0".repeat(32) } },
-    { claims: { workflowRef: "owner/repo/.github/workflows/other.yml@refs/heads/main" } },
+    { claims: { workflowRef: `owner/repo/.github/workflows/other.yml@${releaseRef}` } },
     { claims: { preflightArtifactSha256: "e".repeat(64) } },
     { claims: { runnerName: "copied-label-runner" } },
   ]) {

@@ -156,26 +156,19 @@ test("Pages root derivation passes private paths through explicit environment va
   assert.match(step, /unset PONTO_ROOT_ATTESTATION_KEY_SHARED PONTO_IDEMPOTENCY_KEY/);
 });
 
-test("Ponto REST run provenance accepts both canonical path representations", () => {
-  const pages = workflow("cloudflare-pages-sync-ponto.yml");
-  assert.match(
-    pages,
-    /\[expectedPath, `\$\{expectedPath\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
-  );
+test("Ponto REST run provenance accepts canonical parent or immutable release path representations", () => {
   for (const name of [
     "cloudflare-pages-sync-ponto.yml",
     "deploy-timekeeping.yml",
     "ponto-production-baseline.yml",
   ]) {
     const source = workflow(name);
-    assert.match(
-      source,
-      /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
-      `${name} must accept the live REST path with or without the main-ref suffix`,
-    );
+    const acceptsMainPath = /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/.test(source)
+      || /\[expectedPath, `\$\{expectedPath\}@refs\/heads\/main`\]\.includes\(run\.path\)/.test(source);
+    const acceptsReleasePath = source.includes("refs/tags/skincos/release/ponto/")
+      && source.includes("run.head_branch")
+      && source.includes("run.head_sha");
+    assert.ok(acceptsMainPath || acceptsReleasePath, `${name} must accept a canonical or immutable release REST path`);
   }
-  assert.match(
-    workflow("ponto-progressive-release.yml"),
-    /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
-  );
+  assert.match(workflow("ponto-progressive-release.yml"), /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/);
 });

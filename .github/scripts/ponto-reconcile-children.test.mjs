@@ -18,7 +18,7 @@ const context = {
 const child = {
   id: 67890,
   event: "workflow_dispatch",
-  head_branch: "main",
+  head_branch: "skincos/release/ponto/" + "a".repeat(40),
   head_sha: "a".repeat(40),
   repository: { full_name: context.repository },
   display_title: "CRM Pages staging " + "a".repeat(40) + " orchestrator=12345",
@@ -26,10 +26,11 @@ const child = {
   status: "in_progress",
 };
 
-test("matches only the exact governed child correlation and main branch", () => {
+test("matches only the exact governed child correlation and immutable release ref", () => {
   assert.equal(isCorrelatedChild(child, context), true);
   assert.equal(isCorrelatedChild({ ...child, id: 12345 }, context), false);
-  assert.equal(isCorrelatedChild({ ...child, head_sha: "b".repeat(40) }, context), true);
+  assert.equal(isCorrelatedChild({ ...child, head_sha: "b".repeat(40) }, context), false);
+  assert.equal(isCorrelatedChild({ ...child, head_branch: "main" }, context), false);
   assert.equal(isCorrelatedChild({ ...child, display_title: "orchestrator=123450" }, context), false);
   assert.equal(isCorrelatedChild({ ...child, repository: { full_name: "other/repo" } }, context), false);
 });
