@@ -3,9 +3,12 @@ import test from "node:test";
 import crypto from "node:crypto";
 import {
   buildAuthenticatedRequest,
+  buildLegacyLeaseRequest,
   buildRecoveryFenceRequest,
+  buildLeaseRequest,
   lockScopeForResource,
   newRequestNonce,
+  probeCoordinatorProtocol,
   proofForLease,
   verifyCoordinatorResponse,
 } from "../codex-global-coordination-client.mjs";
@@ -13,6 +16,47 @@ import { canonicalJson, CONTRACT_ID } from "../../ops/governance/global-coordina
 
 const secret = "test-coordination-secret";
 const nonce = "n".repeat(32);
+
+test("legacy lease adapter is explicit and preserves the same resource identity", () => {
+  const args = {
+    operation: "mutation",
+    resource: "merge:main",
+    owner: { provider: "github", missionId: "mission-1", threadId: "thread-1", actor: "actions" },
+    intent: { module: "merge", dependencyClosureDigest: "a".repeat(64), inputs: { changedPaths: ["docs/readme.md"] } },
+    idempotencyKey: "legacy-lease-compatibility",
+    ttlMs: 60_000,
+  };
+  const modern = buildLeaseRequest(args);
+  const legacy = buildLegacyLeaseRequest(args);
+  assert.equal(legacy.resource, modern.resource);
+  assert.equal(legacy.lockScope, modern.lockScope);
+  assert.equal(legacy.owner.sessionId, undefined);
+  assert.notEqual(legacy.intentDigest, modern.intentDigest);
+});
+
+test("readiness probe selects only the explicit legacy 404 path and fails closed otherwise", async () => {
+  const legacy = await probeCoordinatorProtocol({
+    url: "https://coordination.example.test",
+    fetchImpl: async () => new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
+  });
+  assert.deepEqual(legacy, { protocol: "legacy-v1", readiness: "not-supported", httpStatus: 404 });
+  const modern = await probeCoordinatorProtocol({
+    url: "https://coordination.example.test",
+    fetchImpl: async () => new Response(JSON.stringify({
+      contractId: CONTRACT_ID,
+      protocol: "epoch-fence-v1",
+      ready: true,
+      coordinationPlane: "global",
+      authorityEpoch: 3,
+    }), { status: 200 }),
+  });
+  assert.equal(modern.protocol, "epoch-fence-v1");
+  assert.equal(modern.authorityEpoch, 3);
+  await assert.rejects(() => probeCoordinatorProtocol({
+    url: "https://coordination.example.test",
+    fetchImpl: async () => new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }),
+  }), /failed closed/);
+});
 
 test("GitHub and mini-PC clients produce the same signed envelope contract", () => {
   const request = buildAuthenticatedRequest({
