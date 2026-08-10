@@ -30,6 +30,12 @@ param(
     [AllowEmptyCollection()]
     [string[]]$Argument = @(),
 
+    # Optional in-memory stdin for one-shot native bootstrap flows. The value
+    # is written to the child process only; it is never put in WSL argv, the
+    # rendered bash program, a file, or command output.
+    [AllowEmptyString()]
+    [string]$StandardInputText,
+
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
 
     # The typed wrapper supplies this for process-control helpers.  Keep it
@@ -470,9 +476,11 @@ function New-SkincosWslProcessArgumentList {
     # (for example require('./package.json') becomes require(./package.json)).
     # Carry the rendered script as inert base64 and decode it inside the fixed
     # Ubuntu/admin boundary instead of relying on cross-platform quote rules.
+    # Process substitution keeps the child's stdin available for one-shot
+    # bootstrap tokens; a decode pipeline directly into bash would consume it.
     $bashBytes = [Text.Encoding]::UTF8.GetBytes($BashCommand)
     $bashBase64 = [Convert]::ToBase64String($bashBytes)
-    $bootstrapCommand = "printf %s $bashBase64 | base64 --decode | bash"
+    $bootstrapCommand = "bash <(printf %s $bashBase64 | base64 --decode)"
 
     return [string[]]@(
         "--distribution",
@@ -484,6 +492,76 @@ function New-SkincosWslProcessArgumentList {
         "-lc",
         $bootstrapCommand
     )
+}
+
+function Convert-ToWindowsProcessArguments {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Values
+    )
+
+    # New-SkincosWslProcessArgumentList emits a fixed argv shape and the only
+    # free-form value is base64. Quote every entry for ProcessStartInfo so the
+    # standard-input path cannot fall back to a shell or command-line parsing.
+    $quoted = foreach ($value in $Values) {
+        if ($value -notmatch '[\s"]') {
+            $value
+            continue
+        }
+        '"' + $value.Replace('\', '\\').Replace('"', '\"') + '"'
+    }
+    return ($quoted -join ' ')
+}
+
+function Invoke-SkincosWslWithStandardInput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FileName,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$InputText,
+        [Parameter(Mandatory = $true)]
+        [ref]$ExitCode
+    )
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FileName
+    $startInfo.Arguments = Convert-ToWindowsProcessArguments -Values $Arguments
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            throw "WSL process could not be started."
+        }
+
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        try {
+            $process.StandardInput.Write($InputText)
+        } finally {
+            $process.StandardInput.Close()
+        }
+        $process.WaitForExit()
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+        if (-not [string]::IsNullOrEmpty($stdout)) {
+            Write-Output $stdout.TrimEnd("`r", "`n")
+        }
+        if (-not [string]::IsNullOrEmpty($stderr)) {
+            [Console]::Error.Write($stderr)
+        }
+        $ExitCode.Value = $process.ExitCode
+    } finally {
+        $process.Dispose()
+    }
 }
 
 # Dot-sourcing is used only by the Windows-native unit test to exercise the
@@ -530,8 +608,20 @@ if (-not $wsl) {
 $wslArguments = New-SkincosWslProcessArgumentList -BashCommand $invocation.BashCommand
 
 Write-Host "Running as $script:SkincosWslOperator in $script:SkincosWslDistribution repo: $($invocation.RepoMountPath)"
-& $wsl.Source @wslArguments
-$wslExitCode = $LASTEXITCODE
+if ($PSBoundParameters.ContainsKey("StandardInputText")) {
+    if ($null -eq $StandardInputText -or $StandardInputText.Contains([char]0)) {
+        throw "StandardInputText must not contain NUL bytes."
+    }
+    $wslExitCode = 0
+    Invoke-SkincosWslWithStandardInput `
+        -FileName $wsl.Source `
+        -Arguments $wslArguments `
+        -InputText $StandardInputText `
+        -ExitCode ([ref]$wslExitCode)
+} else {
+    & $wsl.Source @wslArguments
+    $wslExitCode = $LASTEXITCODE
+}
 if ($wslExitCode -ne 0) {
     exit $wslExitCode
 }
