@@ -43,10 +43,23 @@ function cloneRows() {
   return syntheticTeam.map((row) => ({ ...row, units: [...row.units], schedule: { ...row.schedule, units: [...row.schedule.units] }, scheduleSync: row.scheduleSync ? { ...row.scheduleSync } : undefined, identityLinks: row.identityLinks.map((link) => ({ ...link })) }))
 }
 
-type MockUsersOptions = { failedActivationFor?: string }
+type MockUsersOptions = { failedActivationFor?: string; paginated?: boolean }
 
 export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUsersOptions = {}) {
   const rows = cloneRows()
+  if (options.paginated) {
+    for (let index = 0; index < 52; index += 1) {
+      rows.push({
+        ...rows[0],
+        id: `e2e-extra-${index}`,
+        fullName: `Membro Extra ${index + 1}`,
+        username: `membroextra${index + 1}`,
+        corporateEmail: `membroextra${index + 1}@espacofacial.com`,
+        workforceEmployeeId: `e2e-wf-extra-${index}`,
+        identityLinks: [],
+      })
+    }
+  }
   const failedActivationRow = rows.find((row) => row.id === options.failedActivationFor)
   if (failedActivationRow) {
     failedActivationRow.accountStatus = 'INVITED'
@@ -65,13 +78,16 @@ export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUse
     if (path.endsWith('/api/crm/admin/team') && request.method() === 'GET') {
       const status = (url.searchParams.get('status') || 'ACTIVE').toUpperCase()
       const query = (url.searchParams.get('q') || '').toLowerCase()
-      const data = rows.filter((row) => status === 'ALL' ? true : status === 'ACTIVE' ? ['ACTIVE', 'INVITED'].includes(row.accountStatus) : row.accountStatus === status).filter((row) => !query || [row.fullName, row.username, row.corporateEmail, row.department, row.jobTitle, ...row.units].some((value) => value.toLowerCase().includes(query)))
+      const filtered = rows.filter((row) => status === 'ALL' ? true : status === 'ACTIVE' ? ['ACTIVE', 'INVITED'].includes(row.accountStatus) : row.accountStatus === status).filter((row) => !query || [row.fullName, row.username, row.corporateEmail, row.department, row.jobTitle, ...row.units].some((value) => value.toLowerCase().includes(query)))
+      const page = Number(url.searchParams.get('page') || '1')
+      const limit = Number(url.searchParams.get('limit') || '50')
+      const data = options.paginated ? filtered.slice((page - 1) * limit, page * limit) : filtered
       const pendingItems = data.flatMap((row) => [
         ...(!row.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(row.accountStatus) ? [{ memberId: row.id, kind: 'CRM_ACCOUNT_LINK', status: row.crmAccountReviewStatus || 'PENDING' }] : []),
         ...row.identityLinks.filter((link) => link.reviewStatus === 'PENDING_REVIEW').map((link) => ({ memberId: row.id, kind: 'IDENTITY_LINK', source: link.source, status: link.reviewStatus })),
         ...(row.scheduleSync && ['PENDING', 'FAILED', 'BLOCKED'].includes(row.scheduleSync.state) ? [{ memberId: row.id, kind: 'ESCALA_SYNC', status: row.scheduleSync.state }] : []),
       ])
-      return send({ success: true, data, pendingItems, summary: { members: data.length, pendingInvites: data.filter((row) => row.accountStatus === 'INVITED').length, pendingLinks: pendingItems.length, pendingProvisioning: 0, pendingAccountLinks: data.filter((row) => !row.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(row.accountStatus)).length } })
+      return send({ success: true, data, pendingItems, summary: { members: filtered.length, pendingInvites: filtered.filter((row) => row.accountStatus === 'INVITED').length, pendingLinks: filtered.reduce((total, row) => total + row.identityLinks.filter((link) => link.reviewStatus === 'PENDING_REVIEW').length, 0), pendingProvisioning: 0, pendingAccountLinks: filtered.filter((row) => !row.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(row.accountStatus)).length }, ...(options.paginated ? { pagination: { page, limit, total: filtered.length, pages: Math.max(1, Math.ceil(filtered.length / limit)), hasMore: page < Math.max(1, Math.ceil(filtered.length / limit)) } } : {}) })
     }
     if (path.endsWith('/api/crm/admin/team/bulk-status') && request.method() === 'POST') {
       const body = await json()
