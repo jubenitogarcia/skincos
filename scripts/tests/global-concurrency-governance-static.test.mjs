@@ -119,7 +119,10 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(script, /loadMergeCandidate/);
   assert.match(read("scripts/codex-github-integration-candidate.mjs"), /changedPaths/);
   assert.match(read("scripts/codex-global-integration-gate.mjs"), /skincos-integration-gate/);
-  assert.match(read(".github/workflows/skincos-integration-gate.yml"), /pull_request_target/);
+  const integrationGate = read(".github/workflows/skincos-integration-gate.yml");
+  assert.match(integrationGate, /pull_request_target/);
+  assert.match(integrationGate, /ref: main/);
+  assert.doesNotMatch(integrationGate, /ref: \$\{\{ github\.event\.pull_request\./);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
   assert.match(workflow, /pull_request_target/);
   assert.match(workflow, /state=failure/);
