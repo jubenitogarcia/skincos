@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { getCsrfToken } from '@/csrf'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
-import { buildCorporateEmail, suggestUsername, type UnifiedTeamConfig, type UnifiedTeamMember } from '@/teamApi'
+import { buildCorporateEmail, suggestUsername, type UnifiedTeamConfig, type UnifiedTeamMember, type UnifiedTeamPagination } from '@/teamApi'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { TooltipButton } from '@/tooltip'
 
@@ -112,6 +112,8 @@ const initialForm = {
   scheduleInstagram: '',
   scheduleColor: '',
 }
+
+const TEAM_PAGE_SIZE = 50
 
 async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', ...(opts.headers || {}) }
@@ -286,7 +288,9 @@ export function UsersModule() {
   const [statusFilter, setStatusFilter] = React.useState('ACTIVE')
   const [searchQuery, setSearchQuery] = React.useState('')
   const [searchInput, setSearchInput] = React.useState('')
+  const [page, setPage] = React.useState(1)
   const [summary, setSummary] = React.useState<TeamSummary>({})
+  const [pagination, setPagination] = React.useState<UnifiedTeamPagination | null>(null)
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
   const [bulkSaving, setBulkSaving] = React.useState(false)
   const [formTab, setFormTab] = React.useState('identity')
@@ -314,6 +318,9 @@ export function UsersModule() {
   const editingRow = editingId ? teamRows.find((row) => row.id === editingId) || null : null
   const editingIsSuspended = editingRow?.accountStatus === 'SUSPENDED'
   const unitCount = new Set(teamRows.flatMap((row) => row.units)).size
+  const pageTotal = pagination?.total ?? summary.members ?? teamRows.length
+  const pageStart = pageTotal > 0 ? ((pagination?.page || page) - 1) * (pagination?.limit || TEAM_PAGE_SIZE) + 1 : 0
+  const pageEnd = pageTotal > 0 ? Math.min(pageTotal, pageStart + teamRows.length - 1) : 0
   const canRead = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)
   const formReadOnly = !canManage
   const editTitles = Array.from(new Set([editingRow?.jobTitle, ...selectableTitles].filter((value): value is string => Boolean(value))))
@@ -335,12 +342,15 @@ export function UsersModule() {
         const params = new URLSearchParams()
         if (statusFilter) params.set('status', statusFilter)
         if (searchQuery.trim()) params.set('q', searchQuery.trim())
-        const result = await api<{ success?: boolean; data?: UnifiedTeamMember[]; summary?: TeamSummary; pendingItems?: TeamPendingItem[] }>(`/admin/team?${params.toString()}`, { csrf: auth.csrfToken })
+        params.set('page', String(page))
+        params.set('limit', String(TEAM_PAGE_SIZE))
+        const result = await api<{ success?: boolean; data?: UnifiedTeamMember[]; summary?: TeamSummary; pendingItems?: TeamPendingItem[]; pagination?: UnifiedTeamPagination }>(`/admin/team?${params.toString()}`, { csrf: auth.csrfToken })
         if (sequence !== loadSequence.current) return
         const members = Array.isArray(result?.data) ? result!.data! : []
         setTeamRows(members)
         setSelectedIds((current) => current.filter((id) => members.some((member) => member.id === id)))
         setSummary({ ...(result?.summary || { members: members.length }), pendingItems: result?.pendingItems || result?.summary?.pendingItems || [] })
+        setPagination(result?.pagination || { page, limit: TEAM_PAGE_SIZE, total: members.length, pages: 1, hasMore: false })
       } else {
         const params = new URLSearchParams({ status: statusFilter || 'ALL' })
         if (searchQuery.trim()) params.set('q', searchQuery.trim())
@@ -350,6 +360,7 @@ export function UsersModule() {
         setTeamRows(legacyRows.map((row) => ({ ...row, schedule: undefined, identityLinks: [] })))
         setSelectedIds([])
         setSummary(result?.summary || { members: legacyRows.length })
+        setPagination(null)
       }
       if (sequence === loadSequence.current) setLoadError('')
     } catch (error: any) {
@@ -357,12 +368,12 @@ export function UsersModule() {
     } finally {
       if (sequence === loadSequence.current) setLoading(false)
     }
-  }, [searchQuery, statusFilter])
+  }, [page, searchQuery, statusFilter])
 
   React.useEffect(() => { void load() }, [load])
 
   React.useEffect(() => {
-    const timer = window.setTimeout(() => setSearchQuery(searchInput), 250)
+    const timer = window.setTimeout(() => { setSearchQuery(searchInput); setPage(1) }, 250)
     return () => window.clearTimeout(timer)
   }, [searchInput])
 
@@ -776,7 +787,7 @@ export function UsersModule() {
                 </div>
               </div>
               <div className="flex items-center gap-2 text-xs text-blue-100/60">
-                <span>{loading ? 'Atualizando' : `${teamRows.length} ${teamRows.length === 1 ? 'membro' : 'membros'}`}</span>
+                <span>{loading ? 'Atualizando' : `${pageTotal} ${pageTotal === 1 ? 'membro' : 'membros'}`}</span>
                 <span className="size-1 rounded-full bg-white/25" aria-hidden="true" />
                 <span>{unitCount} {unitCount === 1 ? 'unidade' : 'unidades'}</span>
               </div>
@@ -801,7 +812,7 @@ export function UsersModule() {
                     <Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Buscar por nome, usuário, cargo ou unidade" className="pl-9" aria-label="Buscar equipe" />
                   </label>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1) }}>
                       <SelectTrigger className="w-full min-w-[170px] sm:w-[190px]" aria-label="Filtrar status"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="ACTIVE">Ativos e convites</SelectItem>
@@ -812,11 +823,11 @@ export function UsersModule() {
                         <SelectItem value="ALL">Todos os estados</SelectItem>
                       </SelectContent>
                     </Select>
-                    {(searchInput || searchQuery || statusFilter !== 'ACTIVE') && <Button type="button" variant="ghost" size="sm" onClick={() => { setSearchInput(''); setSearchQuery(''); setStatusFilter('ACTIVE') }}>Limpar</Button>}
+                    {(searchInput || searchQuery || statusFilter !== 'ACTIVE') && <Button type="button" variant="ghost" size="sm" onClick={() => { setSearchInput(''); setSearchQuery(''); setStatusFilter('ACTIVE'); setPage(1) }}>Limpar</Button>}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Exibidos</p><p className="mt-1 text-lg font-semibold text-white">{teamRows.length}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Total</p><p className="mt-1 text-lg font-semibold text-white">{pageTotal}</p></div>
                   <div className="rounded-xl border border-amber-300/15 bg-amber-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-amber-100/55">Convites</p><p className="mt-1 text-lg font-semibold text-amber-50">{summary.pendingInvites || 0}</p></div>
                   <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-sky-100/55">Vínculos pendentes</p><p className="mt-1 text-lg font-semibold text-sky-50">{summary.pendingLinks || 0}</p></div>
                   <div className="rounded-xl border border-rose-300/15 bg-rose-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-rose-100/55">Contas sem vínculo</p><p className="mt-1 text-lg font-semibold text-rose-50">{summary.pendingAccountLinks || 0}</p></div>
@@ -957,6 +968,16 @@ export function UsersModule() {
               ))}
               {!teamRows.length && <div className="rounded-2xl border border-dashed border-white/15 p-5 text-sm text-blue-100/70">{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</div>}
             </div>
+            {teamConfig.enabled && pagination && (
+              <nav className="mt-4 flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/10 px-3 py-3 text-xs text-blue-100/65 sm:flex-row sm:items-center sm:justify-between" aria-label="Paginação da equipe">
+                <span>{pageTotal > 0 ? `Exibindo ${pageStart}–${pageEnd} de ${pageTotal}` : 'Nenhum membro encontrado'}</span>
+                <div className="flex items-center gap-2">
+                  <Button type="button" size="sm" variant="outline" disabled={loading || page <= 1} aria-label="Página anterior" onClick={() => setPage((current) => Math.max(1, current - 1))}>Anterior</Button>
+                  <span aria-live="polite" className="min-w-[5.5rem] text-center">Página {pagination.page} de {pagination.pages}</span>
+                  <Button type="button" size="sm" variant="outline" disabled={loading || !pagination.hasMore} aria-label="Próxima página" onClick={() => setPage((current) => current + 1)}>Próxima</Button>
+                </div>
+              </nav>
+            )}
           </CardContent>
         </Card>
       </div>
