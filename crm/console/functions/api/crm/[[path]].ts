@@ -20,7 +20,11 @@ function isLoopbackTarget(value: string): boolean {
 export function buildCrmTargetUrl(targetOrigin: string, rest: string, search: string): string {
   const targetUrl = new URL(targetOrigin)
   const basePath = targetUrl.pathname.replace(/\/$/, '')
-  targetUrl.pathname = `${basePath}/inventory${rest.startsWith('/') ? '' : '/'}${rest}`
+  // Hosted Core owns the /inventory mount. The local CRM adapter exposes its
+  // admin routes directly, so adding that prefix to a loopback target would
+  // turn a valid /admin/team request into a guaranteed 404.
+  const mountPath = isLoopbackTarget(targetOrigin) ? '' : '/inventory'
+  targetUrl.pathname = `${basePath}${mountPath}${rest.startsWith('/') ? '' : '/'}${rest}`
   targetUrl.search = search
   return targetUrl.toString()
 }
@@ -39,7 +43,9 @@ export async function onRequest(context: any): Promise<Response> {
   const prefix = '/api/crm'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
-  const targetOrigin = (context.env?.INSUMOS_API_TARGET as string | undefined) || 'https://api.skincos.com.br'
+  const targetOrigin = (context.env?.CRM_API_TARGET as string | undefined)
+    || (context.env?.INSUMOS_API_TARGET as string | undefined)
+    || 'https://api.skincos.com.br'
   const targetUrl = new URL(buildCrmTargetUrl(targetOrigin, rest, url.search))
 
   const headers = sanitizeProxyRequestHeaders(request.headers)
