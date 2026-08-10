@@ -16,6 +16,7 @@ import {
   dependencyClosureForSource,
   emptyState,
   evaluateLeaseAdmission,
+  fenceAuthorityEpoch,
   loadGlobalPolicy,
   lockScopeFor,
   migratePersistedState,
@@ -108,6 +109,46 @@ test("expired leases cannot be reused and stale proofs fail after fencing advanc
   assert.equal(staleCheck.reason, "lease-fence-mismatch");
 });
 
+test("recovery fencing revokes held leases, advances the authority epoch, and rejects stale proofs", () => {
+  const request = releaseRequest("recovery-fence-lease");
+  const acquired = acquireLease(emptyState(), request, { now: 1_000, leaseId: "lease-0000000000000091" });
+  const proof = {
+    resource: acquired.lease.resource,
+    leaseId: acquired.lease.leaseId,
+    fencingToken: acquired.lease.fencingToken,
+    intentDigest: acquired.lease.intentDigest,
+    authorityEpoch: acquired.lease.authorityEpoch,
+    owner: acquired.lease.owner,
+  };
+  const fenced = fenceAuthorityEpoch(acquired.state, {
+    now: 2_000,
+    expectedEpoch: 1,
+    recoveryId: "recovery-0000000000000001",
+    requestDigest: digest("e"),
+  });
+  assert.equal(fenced.accepted, true);
+  assert.equal(fenced.authorityEpoch, 2);
+  assert.equal(fenced.fencedLeases.length, 1);
+  assert.equal(checkLease(fenced.state, proof, { now: 2_001 }).valid, false);
+  const retry = fenceAuthorityEpoch(fenced.state, {
+    now: 2_002,
+    expectedEpoch: 1,
+    recoveryId: "recovery-0000000000000001",
+    requestDigest: digest("different-envelope"),
+    intentDigest: digest("e"),
+  });
+  assert.equal(retry.idempotent, true);
+  assert.equal(retry.authorityEpoch, 2);
+  const replay = fenceAuthorityEpoch(fenced.state, {
+    now: 2_003,
+    expectedEpoch: 2,
+    recoveryId: "recovery-0000000000000001",
+    requestDigest: digest("f"),
+  });
+  assert.equal(replay.accepted, false);
+  assert.equal(replay.reason, "recovery-id-replayed");
+});
+
 test("release promotion accepts an unrelated main tip and rejects closure drift before mutation", () => {
   const request = releaseRequest();
   const acquired = acquireLease(emptyState(), request, { now: 1_000, leaseId: "lease-0000000000000001" });
@@ -173,6 +214,38 @@ test("mutation leases also require the observed closure when a caller supplies i
   assert.equal(missing.reason, "dependency-closure-intent-missing");
 });
 
+test("merge authorization binds the final mutation to the intended main base", () => {
+  const baseSha = sha("a");
+  const request = buildLeaseRequest({
+    operation: "mutation",
+    resource: "merge:main",
+    owner,
+    idempotencyKey: "merge-base-binding-1",
+    ttlMs: 60_000,
+    intent: { dependencyClosureDigest: digest("c"), inputs: { baseSha } },
+  });
+  const acquired = acquireLease(emptyState(), request, { now: 1_000, leaseId: "lease-0000000000000005" });
+  const proof = {
+    resource: acquired.lease.resource,
+    leaseId: acquired.lease.leaseId,
+    fencingToken: acquired.lease.fencingToken,
+    intentDigest: acquired.lease.intentDigest,
+    owner: acquired.lease.owner,
+  };
+  assert.equal(authorizeMutation(acquired.state, proof, {
+    now: 2_000,
+    expectedMainSha: baseSha,
+    observedDependencyClosureDigest: digest("c"),
+  }).valid, true);
+  const changedBase = authorizeMutation(acquired.state, proof, {
+    now: 2_000,
+    expectedMainSha: sha("b"),
+    observedDependencyClosureDigest: digest("c"),
+  });
+  assert.equal(changedBase.valid, false);
+  assert.equal(changedBase.reason, "merge-base-intent-mismatch");
+});
+
 test("missing closure, artifact identity, owner or lease authority fails closed", () => {
   assert.deepEqual(compareDependencyClosure(digest("c"), ""), {
     valid: false,
@@ -229,6 +302,8 @@ test("legacy persisted coordinator state receives only the additive nonce map", 
   assert.deepEqual(migrated.nonces, {});
   assert.deepEqual(migrated.fencingCounters, legacy.fencingCounters);
   assert.deepEqual(migrated.leases, legacy.leases);
+  assert.equal(migrated.authorityEpoch, 1);
+  assert.deepEqual(migrated.recoveryFences, {});
   assert.equal(legacy.nonces, undefined);
   assert.throws(() => migratePersistedState({ ...legacy, leases: null }), /coordinator state leases is invalid/);
   assert.throws(() => migratePersistedState({ ...legacy, nonces: [] }), /coordinator state nonces are invalid/);

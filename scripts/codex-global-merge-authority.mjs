@@ -53,7 +53,7 @@ function assertSha(value, label) {
   return normalized;
 }
 
-const MERGE_METHODS = new Set(["squash", "merge", "rebase"]);
+const MERGE_METHODS = new Set(["squash"]);
 
 async function setMergeAuthorityStatus(repository, headSha, state, description) {
   return githubJson(repository, `/statuses/${headSha}`, {
@@ -128,6 +128,7 @@ export async function mergePullRequest({ repository, pullNumber, expectedHeadSha
         expectedResource: resource,
         expectedIntentDigest: proof.intentDigest,
         observedDependencyClosureDigest: closure.digest,
+        expectedMainSha: baseSha,
       },
     });
     if (checked.passed !== true) throw new Error(`merge:main mutation authorization failed: ${checked.reason || "unknown"}`);
@@ -143,6 +144,17 @@ export async function mergePullRequest({ repository, pullNumber, expectedHeadSha
       || assertSha(finalPull.base?.sha, "final pull request base SHA") !== baseSha
       || assertSha(finalPull.head?.sha, "final pull request head SHA") !== headSha
     ) throw new Error("pull request base or head changed after merge authorization status");
+    const finalLease = await checkGlobalLease({
+      proof,
+      url,
+      authorization: {
+        expectedResource: resource,
+        expectedIntentDigest: proof.intentDigest,
+        observedDependencyClosureDigest: closure.digest,
+        expectedMainSha: baseSha,
+      },
+    });
+    if (finalLease.passed !== true) throw new Error(`merge:main final mutation authorization failed: ${finalLease.reason || "unknown"}`);
     merged = await githubJson(repository, `/pulls/${pullNumber}/merge`, {
       method: "PUT",
       body: JSON.stringify({ sha: headSha, merge_method: mergeMethod }),

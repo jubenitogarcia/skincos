@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "workerName": "skincos-global-coordinator",
+  "recoveryProtocol": "epoch-fence-v1",
+  "authority": "github-actions-normal-deployment-plus-cloudflare-version-restore",
+  "knownVersions": [
+    {
+      "versionId": "7e7575c7-6094-4695-a588-c25921b053d6",
+      "environment": "production",
+      "sourceSha": "7ab35c2fd090b7d367ec4c66e969871f8e826f36",
+      "protocol": "legacy-v1",
+      "recoveryEligible": false,
+      "registeredFromWorkflowRun": "31404890347",
+      "reason": "historical incumbent predates epoch-fence recovery protocol"
+    }
+  ],
+  "registrationRule": "Only a successful normal production deployment with readyz protocol epoch-fence-v1 and a non-sensitive readback may add recoveryEligible=true. The recovery workflow accepts an exact versionId from this registry and never uploads arbitrary source."
+}

@@ -31,6 +31,10 @@ inputs:
   shared_secret:
     description: Shared custody secret passed only in process environment
     required: true
+  key_id:
+    description: Optional active coordination key identifier; defaults to the repository variable
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -42,6 +46,7 @@ runs:
       env:
         SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
         SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
+        SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id || vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
         GLOBAL_PROOF_B64: ${{ inputs.proof_b64 }}
         GLOBAL_PROOF_FILE_INPUT: ${{ inputs.proof_file }}
         GLOBAL_RESOURCE: ${{ inputs.resource }}
@@ -77,10 +82,12 @@ runs:
         while (( coordination_attempt <= coordination_max_attempts )); do
           if SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
             SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+            SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
               node scripts/codex-global-coordination-workflow.mjs renew \
                 --proof-file "$GLOBAL_PROOF_FILE" && \
             SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
             SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+            SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
               node scripts/codex-global-coordination-workflow.mjs check \
                 --proof-file "$GLOBAL_PROOF_FILE" \
                 --resource "$GLOBAL_RESOURCE" \
