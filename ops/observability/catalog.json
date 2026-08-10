@@ -23,6 +23,10 @@
     "readiness": "checks only hard dependencies and returns 503 when unavailable",
     "requiredResponseFields": ["ok", "unit", "version", "environment", "request_id", "dependencies"],
     "logFields": ["domain", "version", "environment", "request_id", "duration_ms", "status", "route", "event", "action", "result", "reason", "authority_epoch", "key_id", "resource_class"],
+    "runtimeEventContract": {
+      "events": ["coordination.readiness", "coordination.request_processed", "coordination.request_rejected", "coordination.request_failed"],
+      "fields": ["route", "action", "status", "result", "reason", "coordinationPlane", "authorityEpoch", "keyId", "resourceClass", "durationMs"]
+    },
     "forbiddenLogData": ["actor", "email", "phone", "cookie", "authorization", "token", "secret", "payload", "request_body", "request_digest", "recovery_id"]
   },
   "units": [

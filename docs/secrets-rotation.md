@@ -18,7 +18,8 @@ Garantir que segredos críticos (GitHub, Cloudflare, backend) tenham **escopo m�
 - `SESSION_SECRET`
 - `MIGRATION_TOKEN`
 - `INTEGRATIONS_ENCRYPTION_SECRET`
-- `SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` — active normal coordination custody.
+- `SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` — legacy/current normal coordination custody and, when no explicit active key exists, the active key.
+- `SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY` — optional explicit active normal coordination custody during a key transition; it takes precedence over the shared secret only when paired with a non-legacy active key ID.
 - `SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY` — time-bounded overlap key during rotation.
 - `SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET` — separate break-glass custody; never reuse the normal key.
 NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
@@ -53,19 +54,29 @@ NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
 
 ### Coordenação global: rotação de chave e fencing
 
-O contrato normal usa `SKINCOS_GLOBAL_COORDINATION_KEY_ID` como variável ativa e
-`SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` como sua custódia. A rotação é uma
+O contrato normal usa `SKINCOS_GLOBAL_COORDINATION_KEY_ID` como identificador
+ativo e `authorityEpoch` como fencing. Sem `SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY`,
+`SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` continua sendo a custódia ativa.
+Durante a primeira rotação, a nova custódia explícita pode ser publicada no
+Worker como `COORDINATION_ACTIVE_KEY`, enquanto o shared secret antigo fica
+temporariamente como chave anterior por herança controlada. A rotação é uma
 operação coordenada, não uma troca unilateral no Worker:
 
-1. Criar a nova chave fora do repositório e configurar o secret normal ativo.
-2. Publicar primeiro `SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY` e sua variável
-   de expiração curta; manter `SKINCOS_GLOBAL_COORDINATION_KEY_ID` no valor
-   anterior durante a janela de compatibilidade.
+1. Criar a nova chave fora do repositório e configurar
+   `SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY`; definir um novo
+   `SKINCOS_GLOBAL_COORDINATION_KEY_ID` e uma variável anterior com ID e
+   expiração curta. O workflow recusa uma chave explícita sem esse overlap.
+2. Manter `SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` disponível somente para
+   a herança da chave anterior durante a primeira transição, ou configurar
+   explicitamente `SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY` em rotações
+   posteriores.
 3. Fazer deploy do coordination plane, validar `/v1/readyz`, e confirmar que o
    readback assinado contém `protocol=epoch-fence-v1`, `keyId` e um
    `authorityEpoch` inteiro.
-4. Alterar a variável ativa para o novo key ID, atualizar os clientes/actions e
-   fazer um novo deploy. Os leases emitidos carregam `authorityKeyId` e
+4. Atualizar clientes/actions para enviar a nova custódia e o novo key ID e
+   fazer um novo deploy. Durante a primeira janela, chamadas sem key ID só
+   podem drenar se a chave anterior for explicitamente `legacy-v1` e ainda
+   estiver dentro da expiração. Os leases emitidos carregam `authorityKeyId` e
    `authorityEpoch`; provas sem ambos são rejeitadas depois da transição.
 5. Após o TTL máximo dos leases e a janela de overlap, remover a chave anterior,
    apagar sua variável de expiração e repetir a readiness/readback. Se houver

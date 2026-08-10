@@ -42,6 +42,14 @@ revalidação do lease. Não adicionar bypass humano para compensar a limitaçã
 Depois de provisionar a autoridade compatível, reaplicar o ruleset completo e
 confirmar o readback antes de remover este blocker.
 
+O endpoint REST de merge recebe um SHA condicional da HEAD da PR, mas não um
+compare-and-swap do SHA-base de `main`. A autoridade agora faz readback do
+commit squash, dos parents, da PR e da ponta de `main` depois da mutação; isso
+detecta e evidencia uma corrida tardia, mas não torna a janela atômica. A
+prova final de exclusividade só fica fechada quando o ruleset live restringir
+updates de `main` ao integrador compatível ou uma fila de merge equivalente
+for instalada e lida de volta.
+
 ## Observações
 
 - Se precisar de aprovações no futuro: usar `CODEOWNERS` + “Require review from Code Owners” e um usuário humano/bot dedicado para reviews.

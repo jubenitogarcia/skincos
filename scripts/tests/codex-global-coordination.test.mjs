@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import test from "node:test";
-import { acquireMergeLease } from "../codex-global-merge-authority.mjs";
+import { acquireMergeLease, assertMergeReadback } from "../codex-global-merge-authority.mjs";
 import {
   acquireLease,
   authorizeMutation,
@@ -435,6 +435,37 @@ test("merge authority retries only known transient lease conflicts", async () =>
     pollMs: 0,
     acquireImpl: async () => ({ passed: false, reason: "coordination-dependency-closure-ambiguous" }),
   }), /failed closed/);
+});
+
+test("merge authority attests the exact squash parent before releasing merge custody", () => {
+  const base = sha("a");
+  const head = sha("b");
+  const merge = sha("c");
+  const result = assertMergeReadback({
+    pull: { state: "closed", merged: true, merged_at: "2026-08-10T15:00:00Z", head: { sha: head }, merge_commit_sha: merge },
+    main: { sha: merge },
+    mergeCommit: { parents: [{ sha: base }] },
+    mergeResponseSha: merge,
+    expectedHeadSha: head,
+    expectedBaseSha: base,
+  });
+  assert.deepEqual(result, { mergeCommitSha: merge, expectedHeadSha: head, expectedBaseSha: base });
+  assert.throws(() => assertMergeReadback({
+    pull: { state: "closed", merged: true, merged_at: "2026-08-10T15:00:00Z", head: { sha: head }, merge_commit_sha: merge },
+    main: { sha: merge },
+    mergeCommit: { parents: [{ sha: sha("d") }] },
+    mergeResponseSha: merge,
+    expectedHeadSha: head,
+    expectedBaseSha: base,
+  }), /post-mutation base readback failed/);
+  assert.throws(() => assertMergeReadback({
+    pull: { state: "closed", merged: true, merged_at: "2026-08-10T15:00:00Z", head: { sha: head }, merge_commit_sha: merge },
+    main: { sha: sha("d") },
+    mergeCommit: { parents: [{ sha: base }] },
+    mergeResponseSha: merge,
+    expectedHeadSha: head,
+    expectedBaseSha: base,
+  }), /main readback does not point/);
 });
 
 test("the policy and current Ponto source produce a deterministic dependency closure", () => {
