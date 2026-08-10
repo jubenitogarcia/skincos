@@ -261,7 +261,7 @@ test('team readiness is authenticated, read-only and reports safe dependency cod
   assert.doesNotMatch(readiness, /console\.log|process\.env|personalEmail|mobilePhone/i);
 });
 
-test('unified team rollout is explicit, staging-only and fail-closed by default', async () => {
+test('unified team rollout is explicit, reversibly gated in production and fail-closed by default', async () => {
   const workflow = await readFile(
     new URL('../../.github/workflows/deploy-core-workers.yml', import.meta.url),
     'utf8',
@@ -269,8 +269,11 @@ test('unified team rollout is explicit, staging-only and fail-closed by default'
   assert.match(workflow, /unified_team_enabled:/);
   assert.match(workflow, /default: false/);
   assert.match(workflow, /UNIFIED_TEAM_ENABLED: \$\{\{ inputs\.unified_team_enabled \}\}/);
-  assert.match(workflow, /Unified team routes can only be enabled in staging/);
   assert.match(workflow, /Unified team routes require the inventory unit/);
+  assert.match(workflow, /UNIFIED_TEAM_PRODUCTION_ENABLED: \$\{\{ vars\.ENABLE_CRM_UNIFIED_TEAM_PRODUCTION \}\}/);
+  assert.match(workflow, /Production unified team routes require ENABLE_CRM_UNIFIED_TEAM_PRODUCTION=true/);
+  assert.match(workflow, /Unified team routes are disabled for pilot, canary, and rollback/);
+  assert.match(workflow, /\$\{UNIFIED_TEAM_PRODUCTION_ENABLED:-false\}/);
   assert.match(workflow, /unified_team_var=false/);
   assert.match(workflow, /--var "APP_VERSION:\$RELEASE_SHA"/);
   assert.match(workflow, /--var "UNIFIED_TEAM_ENABLED:\$unified_team_var"/);

@@ -22,7 +22,7 @@ on:
         default: false
         type: boolean
       unified_team_enabled:
-        description: "Enable unified team routes for isolated staging validation only"
+        description: "Enable unified team routes for staging validation or an explicitly enabled production rollout"
         required: true
         default: false
         type: boolean
@@ -758,6 +758,7 @@ jobs:
           TARGET: ${{ inputs.target }}
           UNIT: ${{ inputs.unit }}
           UNIFIED_TEAM_ENABLED: ${{ inputs.unified_team_enabled }}
+          UNIFIED_TEAM_PRODUCTION_ENABLED: ${{ vars.ENABLE_CRM_UNIFIED_TEAM_PRODUCTION }}
           BOOTSTRAP_FINANCE_CONTEXT: ${{ inputs.bootstrap_finance_context }}
           RELEASE_SCOPE: ${{ inputs.release_scope }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -774,8 +775,23 @@ jobs:
             inventory_d1_name=skincos-db
           fi
           if [[ "$UNIFIED_TEAM_ENABLED" == "true" ]]; then
-            [[ "$TARGET" == "staging" ]] || { echo 'Unified team routes can only be enabled in staging.'; exit 1; }
             [[ "$UNIT" == "inventory" || "$UNIT" == "all" ]] || { echo 'Unified team routes require the inventory unit.'; exit 1; }
+            case "$TARGET" in
+              staging) ;;
+              production)
+                # Production activation is a separately auditable, reversible
+                # control. A missing environment flag remains fail-closed even
+                # when a caller supplies unified_team_enabled=true.
+                [[ "${UNIFIED_TEAM_PRODUCTION_ENABLED:-false}" == "true" ]] || {
+                  echo 'Production unified team routes require ENABLE_CRM_UNIFIED_TEAM_PRODUCTION=true.'
+                  exit 1
+                }
+                ;;
+              *)
+                echo 'Unified team routes are disabled for pilot, canary, and rollback.'
+                exit 1
+                ;;
+            esac
           fi
           if [[ "$UNIT" == "inventory" || "$UNIT" == "all" ]]; then
             # D1 migrations must precede the Worker that requires them. They
