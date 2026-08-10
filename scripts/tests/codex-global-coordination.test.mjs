@@ -18,6 +18,7 @@ import {
   evaluateLeaseAdmission,
   loadGlobalPolicy,
   lockScopeFor,
+  migratePersistedState,
   normalizeResourceKey,
   releaseLease,
   renewLease,
@@ -215,6 +216,22 @@ test("renewal and nonce replay are explicit state transitions", () => {
   assert.equal(renewed.lease.updatedAt, 20_000);
   assert.equal(renewed.lease.heartbeatAt, 20_000);
   assert.equal(fs.existsSync(new URL("../../ops/governance/global-concurrency-policy.json", import.meta.url)), true);
+});
+
+test("legacy persisted coordinator state receives only the additive nonce map", () => {
+  const legacy = {
+    schemaVersion: 1,
+    contractId: "skincos/global-coordination/v1",
+    fencingCounters: { "repository:skincos": 4 },
+    leases: {},
+  };
+  const migrated = migratePersistedState(legacy);
+  assert.deepEqual(migrated.nonces, {});
+  assert.deepEqual(migrated.fencingCounters, legacy.fencingCounters);
+  assert.deepEqual(migrated.leases, legacy.leases);
+  assert.equal(legacy.nonces, undefined);
+  assert.throws(() => migratePersistedState({ ...legacy, leases: null }), /coordinator state leases is invalid/);
+  assert.throws(() => migratePersistedState({ ...legacy, nonces: [] }), /coordinator state nonces are invalid/);
 });
 
 test("global admission allows an unrelated merge while fencing a closure-overlapping merge", () => {
