@@ -188,7 +188,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config workforce/schedule/wrangler.toml --env staging
+          npx --yes wrangler@4 d1 migrations apply skincos-escala-staging --remote --config workforce/schedule/wrangler.toml --env staging
 
       - name: Check Escala API deployment lease before staging deployment
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}

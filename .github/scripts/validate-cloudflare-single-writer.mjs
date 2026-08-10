@@ -34,6 +34,7 @@ function resourcePresent(text, resource) {
 function coordinationGuardPresent(text) {
   return text.includes("global-coordination-acquire")
     || text.includes("global-coordination-check")
+    || text.includes("global-coordinator-deployment-guard.mjs")
     || text.includes("ponto-orchestrator-gate.yml");
 }
 

@@ -467,16 +467,24 @@ function assertResumeIdentityContracts() {
     step: 'default_upload',
     publishRunIndex: 3,
     media: { id: 'fixture-video', mediaKind: 'video', finalUrl: 'https://example.invalid/video.mp4', groupOrder: 0 },
-    text: { caption: 'Legenda aprovada', selectedFrameUrl: 'https://example.invalid/cover-a.jpg' },
+    text: {
+      caption: 'Legenda aprovada',
+      selectedFrameUrl: 'https://example.invalid/cover-a.jpg',
+      coverStatus: 'ai',
+      coverSource: 'ai',
+      coverArtifactKey: 'a'.repeat(64),
+      coverIdentity: 'b'.repeat(64),
+    },
     jsonRequest: { video_url: 'https://example.invalid/video.mp4', caption: 'Legenda aprovada', cover_url: 'https://example.invalid/cover-a.jpg' },
   };
   const first = semanticJobKey(base);
   const reordered = semanticJobKey({ ...base, publishRunIndex: 99, attempt: 2, waitSeconds: 30 });
   const changedCaption = semanticJobKey({ ...base, text: { ...base.text, caption: 'Legenda editorial diferente' }, jsonRequest: { ...base.jsonRequest, caption: 'Legenda editorial diferente' } });
   const changedFrame = semanticJobKey({ ...base, text: { ...base.text, selectedFrameUrl: 'https://example.invalid/cover-b.jpg' }, jsonRequest: { ...base.jsonRequest, cover_url: 'https://example.invalid/cover-b.jpg' } });
+  const changedCover = semanticJobKey({ ...base, text: { ...base.text, coverArtifactKey: 'c'.repeat(64), coverIdentity: 'd'.repeat(64) }, jsonRequest: { ...base.jsonRequest, cover_url: 'https://example.invalid/cover-b.jpg' } });
   if (first !== reordered) fail(`${NODE_NAME}: sequential queue ordering changed semantic resume identity.`);
-  if (first === changedCaption || first === changedFrame) fail(`${NODE_NAME}: editorial content change did not invalidate durable resume identity.`);
-  return { stableAcrossQueueReorder: true, captionChangeInvalidates: true, frameChangeInvalidates: true };
+  if (first === changedCaption || first === changedFrame || first === changedCover) fail(`${NODE_NAME}: editorial content change did not invalidate durable resume identity.`);
+  return { stableAcrossQueueReorder: true, captionChangeInvalidates: true, frameChangeInvalidates: true, coverChangeInvalidates: true };
 }
 
 // A Facebook Reel is not complete when its upload session is ready.  Preserve
@@ -659,6 +667,21 @@ function isRemoteUrl(value) {
   return /^https?:\/\//i.test(String(value || '').trim());
 }
 
+function selectedReelCover(media) {
+  const current = asObject(media);
+  const cover = asObject(current.reelCover || current.reel_cover || current.coverPlan);
+  const status = String(cover.coverStatus || cover.status || '').trim().toLowerCase();
+  return {
+    coverStatus: status,
+    coverSource: String(cover.coverSource || cover.source || '').trim().toLowerCase(),
+    coverUrl: String(cover.coverUrl || cover.deliveryUrl || '').trim(),
+    coverAssetUrl: String(cover.coverAssetUrl || cover.assetUrl || '').trim(),
+    coverArtifactKey: String(cover.coverArtifactKey || cover.artifactKey || '').trim(),
+    coverIdentity: String(cover.coverIdentity || cover.identityHash || '').trim(),
+    reason: String(cover.reason || cover.failureReason || '').trim(),
+  };
+}
+
 function cloudinaryVideoCoverUrl(videoUrl, timestampSeconds) {
   const source = String(videoUrl || '').trim();
   const seconds = asNumber(timestampSeconds, undefined);
@@ -734,6 +757,8 @@ function technicalFrameContext(payload) {
   ];
   const byGroup = {};
   const byItem = {};
+  const coversByGroup = {};
+  const coversByItem = {};
   const groupRows = {};
   for (const media of entries) {
     const current = asObject(media);
@@ -742,19 +767,24 @@ function technicalFrameContext(payload) {
     groupRows[groupKey] ||= { mediaCount: 0, frames: [] };
     groupRows[groupKey].mediaCount += 1;
     const frame = selectedTechnicalFrame(current);
+    const cover = selectedReelCover(current);
     if (!frame.selectedFrameUrl && frame.bestFrameSeconds === undefined) continue;
     const mediaId = String(current.id || current.mediaId || '').trim();
     const groupOrder = asNumber(current.groupOrder, undefined);
     if (mediaId) byItem[`id:${mediaId}`] = frame;
     if (groupOrder !== undefined) byItem[`group:${groupKey}:${groupOrder}`] = frame;
+    if (mediaId && cover.coverStatus) coversByItem[`id:${mediaId}`] = cover;
+    if (groupOrder !== undefined && cover.coverStatus) coversByItem[`group:${groupKey}:${groupOrder}`] = cover;
     groupRows[groupKey].frames.push(frame);
+    if (cover.coverStatus) groupRows[groupKey].cover = cover;
   }
   for (const [groupKey, group] of Object.entries(groupRows)) {
     // A group fallback is safe only for a true single-media group.  A mixed
     // carousel must never leak one video's frame into an image sibling.
     if (group.mediaCount === 1 && group.frames.length === 1) byGroup[groupKey] = group.frames[0];
+    if (group.mediaCount === 1 && group.cover) coversByGroup[groupKey] = group.cover;
   }
-  return { byGroup, byItem };
+  return { byGroup, byItem, coversByGroup, coversByItem };
 }
 
 function sameFrameSeconds(left, right) {
@@ -864,6 +894,11 @@ function applyTechnicalFrame(job, framesByGroup) {
     framesByGroup.byGroup[groupKey];
   if (!frame) return current;
 
+  const reelCover =
+    (mediaId && framesByGroup.coversByItem?.[`id:${mediaId}`]) ||
+    (groupKey && groupOrder !== undefined && framesByGroup.coversByItem?.[`group:${groupKey}:${groupOrder}`]) ||
+    framesByGroup.coversByGroup?.[groupKey];
+
   const warningSet = new Set(asArray(current.warnings).map((entry) => String(entry)).filter(Boolean));
   const text = { ...asObject(current.text) };
   const editorial = editorialFrameSelection(text, frame);
@@ -893,15 +928,25 @@ function applyTechnicalFrame(job, framesByGroup) {
     if (platform === 'instagram' && String(body.media_type || '').toUpperCase() === 'REELS') {
       const media = asObject(current.media);
       const mainVideoUrl = String(media.finalUrl || media.secure_url || media.url || '').trim();
-      const coverUrl = cloudinaryVideoCoverUrl(mainVideoUrl, effectiveFrame.bestFrameSeconds);
+      const aiCoverUrl = reelCover?.coverStatus === 'ai' && isRemoteUrl(reelCover.coverUrl)
+        ? reelCover.coverUrl
+        : '';
+      const coverUrl = aiCoverUrl || cloudinaryVideoCoverUrl(mainVideoUrl, effectiveFrame.bestFrameSeconds);
       if (coverUrl) {
         body.cover_url = coverUrl;
         delete body.thumb_offset;
+        delete body.thumbnail_url;
         text.coverUrl = coverUrl;
-        text.coverStatus = 'requested';
+        text.coverStatus = aiCoverUrl ? 'ai' : 'requested';
+        text.coverSource = aiCoverUrl ? 'ai' : 'frame';
+        if (aiCoverUrl) {
+          text.coverArtifactKey = reelCover.coverArtifactKey;
+          text.coverIdentity = reelCover.coverIdentity;
+        }
       } else if (effectiveFrame.bestFrameSeconds !== undefined) {
         body.thumb_offset = Math.max(0, Math.round(effectiveFrame.bestFrameSeconds * 1000));
-        text.coverStatus = 'requested_fallback';
+        text.coverStatus = reelCover?.coverStatus === 'fallback_frame' ? 'fallback_frame' : 'requested_fallback';
+        text.coverSource = 'frame';
       }
     }
 
@@ -990,6 +1035,70 @@ function assertFrameSelectionContracts() {
     fail(`${NODE_NAME}: image sibling inherited a video frame in mixed carousel fixture.`);
   }
   return { validReel: 'editorial_verified', invalidReel: 'not_promoted', mixedImage: 'unchanged' };
+}
+
+function assertAiCoverContracts() {
+  const media = [{
+    id: 'fixture-ai-video',
+    groupKey: 'fixture:ai-cover',
+    groupOrder: 0,
+    mediaKind: 'video',
+    finalUrl: 'https://res.cloudinary.com/example/video/upload/v1/fixture-ai.mp4',
+    bestFrame: {
+      selectedFrameUrl: 'https://res.cloudinary.com/example/image/upload/v1/fixture-ai-frame.jpg',
+      bestTimestampSeconds: 1.5,
+      selectedFrameRank: 1,
+      candidates: [{ rank: 1, url: 'https://res.cloudinary.com/example/image/upload/v1/fixture-ai-frame.jpg', timestampSeconds: 1.5 }],
+    },
+    reelCover: {
+      coverStatus: 'ai',
+      coverSource: 'ai',
+      coverUrl: 'https://res.cloudinary.com/example/image/upload/l_text:Arial_24_bold:Espa%C3%A7o%20Facial/fl_layer_apply/fixture-ai-cover.png',
+      coverArtifactKey: 'a'.repeat(64),
+      coverIdentity: 'b'.repeat(64),
+    },
+  }];
+  const context = technicalFrameContext({ normalizedCombinedMediaItems: media });
+  const base = {
+    groupKey: 'fixture:ai-cover',
+    groupOrder: 0,
+    platform: 'instagram',
+    media: { id: 'fixture-ai-video', finalUrl: media[0].finalUrl },
+    text: {
+      selectedFrameUrl: media[0].bestFrame.selectedFrameUrl,
+      bestFrameSeconds: 1.5,
+      frameAnalysisSummary: { selectedSource: 'candidates' },
+    },
+    jsonRequest: { media_type: 'REELS', video_url: media[0].finalUrl, thumbnail_url: media[0].bestFrame.selectedFrameUrl, thumb_offset: 1500 },
+  };
+  const generated = applyTechnicalFrame(base, context);
+  if (generated.jsonRequest.cover_url !== media[0].reelCover.coverUrl ||
+      generated.jsonRequest.thumbnail_url ||
+      Object.prototype.hasOwnProperty.call(generated.jsonRequest, 'thumb_offset') ||
+      generated.text.coverStatus !== 'ai' || generated.text.coverSource !== 'ai') {
+    fail(`${NODE_NAME}: AI Reel cover was not applied as the canonical cover_url.`);
+  }
+
+  const fallback = applyTechnicalFrame({
+    ...base,
+    jsonRequest: { media_type: 'REELS', video_url: media[0].finalUrl },
+    text: { ...base.text },
+    media: { ...base.media },
+  }, technicalFrameContext({ normalizedCombinedMediaItems: [{ ...media[0], reelCover: { coverStatus: 'fallback_frame', reason: 'provider_timeout' } }] }));
+  if (!String(fallback.jsonRequest.cover_url || '').includes('so_1.5,f_jpg') || fallback.text.coverSource !== 'frame') {
+    fail(`${NODE_NAME}: AI generation failure did not preserve the deterministic frame fallback.`);
+  }
+
+  const image = applyTechnicalFrame({
+    groupKey: 'fixture:ai-cover',
+    groupOrder: 0,
+    platform: 'instagram',
+    media: { id: 'fixture-image', finalUrl: 'https://example.invalid/image.jpg', mediaKind: 'image' },
+    text: { caption: 'image fixture' },
+    jsonRequest: { image_url: 'https://example.invalid/image.jpg' },
+  }, context);
+  if (image.jsonRequest.cover_url || image.text.coverStatus) fail(`${NODE_NAME}: non-Reel media inherited an AI cover.`);
+  return { aiCover: 'canonical_cover_url', failureFallback: 'frame', nonReels: 'unchanged' };
 }
 
 function applyPlatformAccessibilityContract(job) {
@@ -1427,6 +1536,7 @@ function main() {
       jobGraphContracts: assertJobGraphContracts(source.jsCode),
       accessibilityContracts: assertAccessibilityContracts(),
       frameSelectionContracts: assertFrameSelectionContracts(),
+      aiCoverContracts: assertAiCoverContracts(),
       resumeIdentityContracts: assertResumeIdentityContracts(),
     }));
     return;
@@ -1436,4 +1546,16 @@ function main() {
   process.stdout.write(JSON.stringify(compactResult(result, payload, source.filePath)));
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = {
+  assertAccessibilityContracts,
+  assertAiCoverContracts,
+  assertFrameSelectionContracts,
+  assertJobGraphContracts,
+  assertOutputContract,
+  assertResumeIdentityContracts,
+  compactResult,
+  contractPayload,
+  executeSource,
+};

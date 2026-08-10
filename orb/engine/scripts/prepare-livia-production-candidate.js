@@ -15,6 +15,8 @@ const { patchWorkflow: patchFacebookCarouselContract } = require('./patch-livia-
 const { patchWorkflow: patchJobGraphPayloadFile } = require('./patch-livia-job-graph-payload-file');
 const { patchWorkflow: patchScheduleCadence } = require('./patch-livia-schedule-cadence');
 const { patchWorkflow: patchTodayFirstSelection } = require('./patch-livia-today-first-selection');
+const { patchWorkflow: patchNotificationContract, validate: validateNotificationContract } = require('./patch-livia-notification-contract');
+const { patchWorkflow: patchAiReelCovers, validate: validateAiReelCovers } = require('./patch-livia-ai-reel-covers');
 const { patchResumeIdentity, validate: pinRuntimeIsolation } = require('./patch-livia-runtime-isolation');
 
 const RELEASE_ROOT_RE = /^\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine$/;
@@ -43,6 +45,10 @@ function buildCandidate(workflow, releaseRoot) {
   candidate = patchTodayFirstSelection(candidate);
   candidate = patchScheduleCadence(candidate);
   candidate = patchJobGraphPayloadFile(candidate, releaseRoot);
+  candidate = patchNotificationContract(candidate);
+  validateNotificationContract(candidate);
+  candidate = patchAiReelCovers(candidate);
+  validateAiReelCovers(candidate);
   const semanticResumeNodes = patchResumeIdentity(candidate);
   const runtimeNodes = pinRuntimeIsolation(candidate, releaseRoot);
 
@@ -59,6 +65,8 @@ function buildCandidate(workflow, releaseRoot) {
         'today-first-due-selection',
         'schedule-cadence',
         'job-graph-payload-file',
+        'notification-contract',
+        'ai-reel-cover-generation',
         'runtime-isolation',
       ],
       runtimeNodes,

@@ -197,6 +197,26 @@ function stateOrEmpty(state) {
   return clone(state);
 }
 
+// The first global coordinator rollout persisted the v1 state before request
+// nonces were introduced. Migrate only that additive field; any other malformed
+// state remains fail-closed instead of being silently repaired.
+export function migratePersistedState(state) {
+  const next = stateOrEmpty(state);
+  for (const [key, value] of Object.entries({
+    fencingCounters: next.fencingCounters,
+    leases: next.leases,
+  })) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`coordinator state ${key} is invalid`);
+    }
+  }
+  if (next.nonces === undefined) next.nonces = {};
+  if (!next.nonces || typeof next.nonces !== "object" || Array.isArray(next.nonces)) {
+    throw new Error("coordinator state nonces are invalid");
+  }
+  return next;
+}
+
 function assertTime(now) {
   if (!Number.isInteger(now) || now < 0) throw new Error("coordinator time is invalid");
 }
@@ -381,7 +401,7 @@ export function evaluateLeaseAdmission(state, request, { now } = {}) {
 }
 
 export function consumeNonce(state, { nonce, digest, now, ttlMs = 900_000 }) {
-  const next = stateOrEmpty(state);
+  const next = migratePersistedState(state);
   assertTime(now);
   assertTtl(ttlMs);
   const key = requireId(nonce, "request nonce");
