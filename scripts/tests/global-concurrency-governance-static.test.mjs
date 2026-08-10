@@ -198,6 +198,8 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(integrationRecheck, /--max-wait-ms 15000/);
   assert.match(integrationRecheck, /gh api --paginate/);
   assert.match(integrationRecheck, /gate_state/);
+  assert.match(integrationRecheck, /--jq '\[\.\[\] \| select\(\.context == "skincos-integration-gate"\)\]\[0\]\.state \/\/ ""'/);
+  assert.doesNotMatch(integrationRecheck, /--jq '[^\n]*\/\/ ""\)"/);
   assert.match(read("ops/cloudflare/global-coordinator/index.js"), /buildLegacyIntentV1/);
   assert.match(read("scripts/codex-global-coordination-workflow.mjs"), /admission paths are not bound/);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
