@@ -250,6 +250,17 @@ test('team telemetry accepts only aggregate fields and cannot persist identity P
   assert.doesNotMatch(implementation, /email|phone|fullName|entityId|memberId/i);
 });
 
+test('team readiness is authenticated, read-only and reports safe dependency codes', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const readiness = await readFile(new URL('../src/services/teamReadiness.js', import.meta.url), 'utf8');
+  assert.match(admin, /mode === 'readiness'/);
+  assert.match(admin, /buildTeamReadiness\(/);
+  assert.match(admin, /hasAuthMailerConfig\(env\)/);
+  assert.match(admin, /Boolean\(env\?\.WORKFORCE\?\.fetch\)/);
+  assert.match(readiness, /never returns secret/);
+  assert.doesNotMatch(readiness, /console\.log|process\.env|personalEmail|mobilePhone/i);
+});
+
 test('unified team rollout is explicit, staging-only and fail-closed by default', async () => {
   const workflow = await readFile(
     new URL('../../.github/workflows/deploy-core-workers.yml', import.meta.url),

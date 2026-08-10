@@ -65,6 +65,28 @@ function requestErrorMessage(error: any, fallback: string) {
   return message || fallback
 }
 
+const readinessLabels: Record<string, string> = {
+  UNIFIED_TEAM_ENABLED: 'liberação da centralização',
+  TEAM_SCHEMA: 'estrutura do cadastro unificado',
+  ONBOARDING_USERNAME: 'coluna de usuário do onboarding',
+  ONBOARDING_REQUEST_FINGERPRINT: 'fingerprint de idempotência',
+  INVITE_USERNAME: 'usuário do convite',
+  INVITE_CORPORATE_EMAIL: 'identidade corporativa do convite',
+  ONBOARDING_SAGA: 'estado transacional do onboarding',
+  TEAM_LINK_LEDGER: 'ledger de vínculos da equipe',
+  WORKFORCE_BINDING: 'vínculo com Workforce',
+  IDENTITY_PII_KEY: 'chave privada de identidade',
+  INVITE_MAILER: 'mailer de convites',
+}
+
+function readinessMessage(readiness?: UnifiedTeamConfig['readiness']) {
+  if (!readiness || readiness.ready) return ''
+  const missing = (readiness.missing || []).map((item) => readinessLabels[item] || item).join(', ')
+  if (readiness.state === 'MIGRATION_REQUIRED') return `A centralização está bloqueada até concluir ${missing || 'as migrações do cadastro unificado'}.`
+  if (readiness.state === 'DEPENDENCY_DEGRADED') return `A centralização está em modo protegido porque falta configurar ${missing || 'uma dependência operacional'}.`
+  return 'A centralização da equipe está desligada neste ambiente.'
+}
+
 const unitLabels: Record<string, string> = { 'novo-hamburgo': 'Novo Hamburgo', 'barra-shopping-sul': 'Barra Shopping Sul' }
 const titleOptions = ['Gestor', 'Gerente', 'Coordenador', 'Responsável Técnico', 'Injetor', 'Consultor']
 const creatableTitlesByRole: Record<string, string[]> = {
@@ -760,6 +782,11 @@ export function UsersModule() {
               <CircleAlert className="mt-0.5 size-4 shrink-0 text-rose-200" aria-hidden="true" />
               <div className="min-w-0 flex-1"><p>{loadError}</p><p className="mt-1 text-xs text-rose-100/65">Os dados exibidos podem estar desatualizados.</p></div>
               <TooltipButton label="Tentar carregar novamente"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label="Tentar carregar novamente" onClick={() => void load()}><RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" /></Button></TooltipButton>
+            </div>}
+            {teamConfig.enabled && teamConfig.readiness && !teamConfig.readiness.ready && <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-200/20 bg-amber-300/[0.06] px-3 py-3 text-sm text-amber-50" role="status">
+              <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-200" aria-hidden="true" />
+              <div className="min-w-0 flex-1"><p>{readinessMessage(teamConfig.readiness)}</p><p className="mt-1 text-xs text-amber-100/60">As ações de escrita continuam protegidas até o ambiente ficar pronto.</p></div>
+              <TooltipButton label="Atualizar prontidão"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full text-amber-100 hover:bg-amber-200/10" aria-label="Atualizar prontidão" onClick={() => void load()}><RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" /></Button></TooltipButton>
             </div>}
             {canRead && (
               <div className="mb-4 space-y-3">

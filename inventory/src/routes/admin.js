@@ -8,13 +8,14 @@ import {
 } from '../services/backup.js';
 import { isAuthorizedDevSeedRequest } from '../lib/devSeed.js';
 import { resolveCrmTables } from '../d1Store.js';
-import { sendAccountInviteEmail } from '../smtpMailer.js';
+import { hasAuthMailerConfig, sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
 import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
 import { buildEmployeeOnboardingFingerprintPayload, canCreateEmployee, displayJobTitle, publicOnboarding, resolveEmployeeProfile, suggestEmployeeUsername, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
 import { syncIdentityWorkforceOnboarding, syncIdentityWorkforceStatus } from '../../../shared/identity-runtime/workforce-onboarding.js';
 import { isValidAccountTransition, normalizeAccountState, shouldIssueInvite } from '../../../shared/identity-runtime/onboarding-state.js';
 import { recordTeamTelemetry } from '../services/teamTelemetry.js';
+import { buildTeamReadiness } from '../services/teamReadiness.js';
 import {
   SCHEDULE_SYNC_STATES,
   buildScheduleSyncRecord,
@@ -581,14 +582,6 @@ export async function handleAdminRoutes({
     return withCORS(JSON.stringify({ success: false, error: 'DB_NOT_CONFIGURED' }), { status: 500 }, appOrigin);
   }
 
-  if (isTeamRoute && url.pathname === '/admin/team' && request.method === 'GET' && url.searchParams.get('mode') === 'config') {
-    return withCORS(JSON.stringify({ success: true, data: { enabled: unifiedTeamEnabled(env), legacyEscalaEditor: !unifiedTeamEnabled(env) } }), { status: 200 }, appOrigin);
-  }
-
-  if (isTeamRoute && !unifiedTeamEnabled(env)) {
-    return withCORS(JSON.stringify({ success: false, error: 'Gestão centralizada da equipe ainda não está liberada', code: 'TEAM_UNIFIED_DISABLED' }), { status: 404 }, appOrigin);
-  }
-
   const { usersTable, invitesTable } = await resolveCrmTables(env);
   const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
   const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
@@ -603,6 +596,42 @@ export async function handleAdminRoutes({
     && await tableExists(env, 'crm_employee_account_links')
     && await tableExists(env, 'crm_team_operations')
     && await tableExists(env, 'crm_team_telemetry');
+
+  const teamSchemaMissing = [
+    !onboardingHasUsername && 'ONBOARDING_USERNAME',
+    !onboardingHasRequestFingerprint && 'ONBOARDING_REQUEST_FINGERPRINT',
+    !invitesHasUsername && 'INVITE_USERNAME',
+    !invitesHasCorporateEmail && 'INVITE_CORPORATE_EMAIL',
+    !onboardingHasSaga && 'ONBOARDING_SAGA',
+    !teamTablesReady && 'TEAM_LINK_LEDGER',
+  ].filter(Boolean);
+  const teamReadiness = buildTeamReadiness({
+    enabled: unifiedTeamEnabled(env),
+    schemaReady: teamSchemaMissing.length === 0,
+    schemaMissing: teamSchemaMissing,
+    workforceBinding: Boolean(env?.WORKFORCE?.fetch),
+    piiKey: Boolean(String(env?.IDENTITY_PII_KEY || '').trim()),
+    inviteMailer: Boolean(hasAuthMailerConfig(env)),
+  });
+
+  if (isTeamRoute && url.pathname === '/admin/team' && request.method === 'GET' && ['config', 'readiness'].includes(url.searchParams.get('mode'))) {
+    const mode = url.searchParams.get('mode');
+    if (mode === 'readiness') {
+      return withCORS(JSON.stringify({ success: true, data: teamReadiness }), { status: 200 }, appOrigin);
+    }
+    return withCORS(JSON.stringify({
+      success: true,
+      data: {
+        enabled: unifiedTeamEnabled(env),
+        legacyEscalaEditor: !unifiedTeamEnabled(env),
+        readiness: teamReadiness,
+      },
+    }), { status: 200 }, appOrigin);
+  }
+
+  if (isTeamRoute && !unifiedTeamEnabled(env)) {
+    return withCORS(JSON.stringify({ success: false, error: 'Gestão centralizada da equipe ainda não está liberada', code: 'TEAM_UNIFIED_DISABLED' }), { status: 404 }, appOrigin);
+  }
 
   if (isTeamRoute && (!onboardingHasUsername || !onboardingHasRequestFingerprint || !invitesHasUsername || !invitesHasCorporateEmail || !onboardingHasSaga || !teamTablesReady)) {
     return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);

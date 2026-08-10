@@ -58,6 +58,16 @@ resolvem a identidade. Falhas são persistidas somente como códigos operacionai
 sem PII e podem ser repetidas pela rota autenticada
 `POST /admin/team/:id/schedule-sync`, sempre com `Idempotency-Key` único.
 
+### Prontidão do módulo
+
+Gestores autorizados podem consultar `GET /admin/team?mode=readiness`. A
+resposta é somente leitura e PII-free; ela informa `DISABLED`,
+`MIGRATION_REQUIRED`, `DEPENDENCY_DEGRADED` ou `READY`, além de códigos
+sanitizados para cada requisito ausente. O endpoint não testa por tentativa,
+não envia convite, não altera flag e não revela valores de segredos. O painel
+de Usuários usa o mesmo contrato para orientar a correção sem transformar uma
+falha de binding ou migração em uma tentativa de escrita.
+
 Vínculos novos entram como `PENDING_REVIEW` quando não vieram de uma resposta
 confirmada da origem. A decisão humana usa
 `POST /admin/team/:id/links/:linkId/review` com `CONFIRMED` ou `REJECTED`;
