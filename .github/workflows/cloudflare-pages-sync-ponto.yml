@@ -71,7 +71,7 @@ jobs:
       orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
   provision:
     needs: coordination
-    if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    if: ${{ github.run_attempt == 1 && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/skincos/release/ponto/') && inputs.orchestrator_run_id != '' && github.sha == inputs.release_sha)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ inputs.target }}
@@ -175,6 +175,8 @@ jobs:
           import { pontoSourceClosureMatches } from "./.github/scripts/ponto-source-closure.mjs";
           const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const releaseRef = `refs/tags/skincos/release/ponto/${process.env.RELEASE_SHA}`;
+          const releaseTag = releaseRef.slice("refs/tags/".length);
           const expectedTitle = new RegExp(
             `^Attest Ponto Workers ${process.env.TARGET} ${process.env.RELEASE_SHA} orchestrator=${process.env.ORCHESTRATOR_RUN_ID} nonce=([0-9a-f]{32})$`,
           ).exec(String(run.display_title || ""));
@@ -184,12 +186,13 @@ jobs:
             || workflow.name !== "Attest Ponto Worker secret custody"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
+            || ![workflow.path, `${workflow.path}@${releaseRef}`].includes(run.path)
             || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
-            || run.head_branch !== "main"
+            || run.head_branch !== releaseTag
+            || String(run.head_sha || "").toLowerCase() !== process.env.RELEASE_SHA
             || !pontoSourceClosureMatches(process.env.RELEASE_SHA, String(run.head_sha || "").toLowerCase())
             || !expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY

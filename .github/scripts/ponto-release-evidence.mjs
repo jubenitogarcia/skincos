@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { validateRootCustody } from "./ponto-root-custody.mjs";
+import { verifyReleaseIdentity } from "./ponto-release-identity.mjs";
 
 const STAGES = ["preview", "staging", "pilot", "canary", "production", "rollback"];
 const PREDECESSOR = { staging: "preview", pilot: "staging", canary: "pilot", production: "canary" };
@@ -225,6 +226,16 @@ function validateEvidence(evidence) {
   assert(/^[0-9]+$/.test(String(evidence.runId || "")), "invalid runId");
   assert(typeof evidence.repository === "string" && evidence.repository.includes("/"), "invalid repository");
   assert(evidence.decision === "pass", "release decision is not pass");
+  if (evidence.releaseIdentity !== null && evidence.releaseIdentity !== undefined) {
+    verifyReleaseIdentity(evidence.releaseIdentity, {
+      module: "ponto",
+      sourceCommit: evidence.sourceSha,
+      sourceTree: evidence.sourceTree,
+      dependencyClosureDigest: evidence.releaseIdentity.dependencyClosureDigest,
+      expectedReleaseTag: `skincos/release/ponto/${evidence.sourceSha}`,
+      expectedReleaseRef: `refs/tags/skincos/release/ponto/${evidence.sourceSha}`,
+    });
+  }
   if (evidence.stage === "preview") {
     assert(evidence.predecessor === null, "preview cannot have a predecessor");
   } else {
@@ -324,6 +335,7 @@ if (mode === "write") {
     runId: required("GITHUB_RUN_ID"),
     repository: required("GITHUB_REPOSITORY"),
     createdAt: new Date().toISOString(),
+    releaseIdentity: optionalJson("PONTO_RELEASE_IDENTITY_JSON", null),
     predecessor,
     surfaces: optionalJson("PONTO_RELEASE_SURFACES_JSON", {}),
     edgeGuard: optionalJson("PONTO_RELEASE_EDGE_GUARD_JSON", null),
@@ -353,6 +365,9 @@ if (mode === "write") {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, [
       `source_sha=${evidence.sourceSha}`,
       `source_tree=${evidence.sourceTree}`,
+      `release_ref=${evidence.releaseIdentity?.releaseRef || ""}`,
+      `release_tag=${evidence.releaseIdentity?.releaseTag || ""}`,
+      `release_identity_digest=${evidence.releaseIdentity?.releaseIdentityDigest || ""}`,
       `stage=${evidence.stage}`,
       `artifact_sha256=${digestFile(file)}`,
       `timekeeping_candidate_version_id=${evidence.surfaces.timekeeping.candidateVersionId || ""}`,

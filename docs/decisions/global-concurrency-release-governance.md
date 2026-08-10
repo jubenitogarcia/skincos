@@ -1,6 +1,6 @@
 # Governança global de concorrência e release
 
-**Status:** Fase 1 implementada em PR de follow-up; autoridade Cloudflare
+**Status:** Fases 1–3 implementadas em PRs ordenadas; autoridade Cloudflare
 staging provisionada e ativada; autoridade de produção permanece ausente e
 fail-closed
 
@@ -84,15 +84,20 @@ a revalidação imediatamente antes da mutação são a autoridade técnica.
 ## Release imutável sem congelar `main`
 
 Uma identidade de release é formada por `sourceCommit`, `sourceTree`,
-`dependencyClosureDigest` e a lista exata de artefatos/digests/version IDs. O
-build é uma operação anterior; promoção recebe e verifica a mesma identidade.
+`dependencyClosureDigest`, a ref/tag determinística protegida e a lista exata de
+artefatos/digests/version IDs. O workflow coordenador cria
+`skincos/release/<module>/<sourceCommit>` uma vez, aceita apenas o alvo exato e
+persiste `release-identity.json` com digest próprio. O build é uma operação
+anterior; promoção recebe e verifica a mesma identidade.
 
-Durante a migração, o dispatcher Ponto ainda conserva compatibilidade com
-`assertMainShaUnchanged`, mas a decisão operacional usa closure. Mudança
-independente em `main` não cancela a release; uma mudança relevante na closure
-é detectada antes do próximo dispatch ou mutação e interrompe a cadeia. A
-próxima fase consolidará a identidade em manifest/ref imutável consumido por
-todos os child workflows, incluindo IDs de artefato, versão e rollback.
+O dispatcher e os child workflows governados consomem a release tag/ref e o
+SHA exato; eles não são redespachados a partir da ponta viva de `main`. A
+validação de `main` permanece apenas no coordenador raiz e nos predecessores
+que deliberadamente são emissores em `main`. Durante a migração, o dispatcher
+conserva `assertMainShaUnchanged` como compatibilidade exportada, mas a decisão
+operacional usa closure. Mudança independente em `main` não cancela a release;
+uma mudança relevante na closure é detectada antes do próximo dispatch ou
+mutação e interrompe a cadeia.
 
 Antes de cada mutação, `authorizeMutation` exige:
 
@@ -105,9 +110,10 @@ Uma mudança em `main` fora da closure mantém o candidato válido. Uma mudança
 dentro da closure interrompe a cadeia antes da próxima mutação. Ausência de
 digest observável não é tratada como “sem mudança”.
 
-O dispatcher Ponto agora busca a ponta atual de `main` antes de cada dispatch e
-compara a closure Ponto. `assertMainShaUnchanged` permanece exportado para
-compatibilidade histórica, mas não é mais a condição que invalida uma release;
+O dispatcher Ponto busca a ponta atual de `main` antes de cada dispatch e
+compara a closure Ponto, mas despacha o workflow filho na identidade imutável.
+`assertMainShaUnchanged` permanece exportado para compatibilidade histórica,
+mas não é mais a condição que invalida uma release;
 `assertPontoDependencyClosureUnchanged` é a guarda aplicada ao caminho real.
 O lease do dispatcher cobre somente a chamada de dispatch; o workflow filho
 adquire e renova seu próprio recurso de superfície antes da mutação e libera o
@@ -165,11 +171,13 @@ Os contratos são exercitados por
 `scripts/tests/codex-global-coordination-client.test.mjs`,
 `scripts/tests/codex-global-coordination-workflow.test.mjs`, além de
 `ops/cloudflare/global-coordinator/index.test.mjs` e do teste focado do
-dispatcher Ponto. A Fase 1 inclui propriedades de exclusividade, fencing após
-expiração, admission por closure, retries idempotentes, alias de superfície e
-indisponibilidade ambígua fail-closed; o teste de caos/concorrência completo e
-a aceitação multi-thread permanecem nas fases seguintes. A validação remota do
-staging comprovou a versão implantada;
+dispatcher Ponto, da identidade de release, do matcher de dispatch, do lease
+do orquestrador e da reconciliação de children. As fases iniciais incluem
+propriedades de exclusividade, fencing após expiração, admission por closure,
+retries idempotentes, alias de superfície, indisponibilidade ambígua
+fail-closed e rejeição de ref/tag/SHA divergentes. O teste de
+caos/concorrência completo e a aceitação multi-thread permanecem nas fases
+seguintes. A validação remota do staging comprovou a versão implantada;
 rollback é a restauração de uma versão anterior do Worker ou a remoção
 controlada do ambiente staging, sem tocar uma rota de produção. A existência
 do código, um build ou um endpoint 200 não constitui prova de autoridade global

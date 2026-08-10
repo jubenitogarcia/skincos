@@ -241,7 +241,7 @@ if (invokedAsScript) {
     for (const status of NON_TERMINAL) {
       let exhausted = false;
       for (let page = 1; page <= 20; page += 1) {
-        const payload = await request(`/repos/${repository}/actions/runs?branch=main&status=${status}&per_page=100&page=${page}`);
+        const payload = await request(`/repos/${repository}/actions/runs?status=${status}&per_page=100&page=${page}`);
         const rows = payload?.workflow_runs || [];
         for (const run of rows) {
           if (ALLOWED_HIGH_RISK_EVENTS.has(run?.event)) found.set(String(run.id), run);
@@ -271,7 +271,7 @@ if (invokedAsScript) {
       let coordinatorInventoryExhausted = false;
       for (let page = 1; page <= 20; page += 1) {
         const payload = await request(
-          `/repos/${repository}/actions/workflows/${workflow.id}/runs?event=workflow_dispatch&branch=main&status=completed&created=${encodeURIComponent(`>=${recentSince}`)}&per_page=100&page=${page}`,
+          `/repos/${repository}/actions/workflows/${workflow.id}/runs?event=workflow_dispatch&status=completed&created=${encodeURIComponent(`>=${recentSince}`)}&per_page=100&page=${page}`,
         );
         const rows = payload?.workflow_runs || [];
         for (const row of rows) coordinatorCandidates.set(String(row.id), row);
@@ -305,7 +305,7 @@ if (invokedAsScript) {
         let exhausted = false;
         for (let page = 1; page <= 20; page += 1) {
           const payload = await request(
-            `/repos/${repository}/actions/workflows/${specification.id}/runs?event=workflow_dispatch&branch=main&status=completed&created=${encodeURIComponent(createdRange)}&per_page=100&page=${page}`,
+            `/repos/${repository}/actions/workflows/${specification.id}/runs?event=workflow_dispatch&status=completed&created=${encodeURIComponent(createdRange)}&per_page=100&page=${page}`,
           );
           const rows = payload?.workflow_runs || [];
           for (const row of rows) completedWindowRuns.set(String(row.id), row);

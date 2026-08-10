@@ -89,10 +89,18 @@ jobs:
         if: ${{ inputs.required }}
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto release SHA is invalid'; exit 1; }
-          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto gate must execute from main'; exit 1; }
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            :
+          elif [[ "$GITHUB_REF" == refs/tags/skincos/release/ponto/* && -n "$ORCHESTRATOR_RUN_ID" && "$GITHUB_SHA" == "$RELEASE_SHA" ]]; then
+            :
+          else
+            echo 'Ponto gate must execute from main or the exact governed Ponto release ref'
+            exit 1
+          fi
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto gate observed source SHA is invalid'; exit 1; }
           if ! git cat-file -e "$RELEASE_SHA^{commit}" 2>/dev/null; then
             git fetch --no-tags origin "$RELEASE_SHA"

@@ -8,11 +8,13 @@ const expected = {
   orchestratorHeadSha: "a".repeat(40),
   correlation: "12345",
   dispatchRequestedAt: "2026-07-29T12:00:10.500Z",
+  expectedHeadBranch: "skincos/release/ponto/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
 const current = {
   workflow_id: 77,
   path: ".github/workflows/module-availability.yml",
   head_sha: "a".repeat(40),
+  head_branch: "skincos/release/ponto/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   created_at: "2026-07-29T12:00:11.000Z",
   display_title: "Module timekeeping production maintenance orchestrator=12345",
 };
@@ -42,4 +44,9 @@ test("allows a current main head when the caller supplies a closure validator", 
     ...expected,
     headShaMatches: (headSha) => headSha === "b".repeat(40),
   }), true);
+});
+
+test("requires the immutable release ref when a governed dispatch supplies one", () => {
+  assert.equal(matchesDispatchedRun({ ...current, head_branch: "main" }, expected), false);
+  assert.equal(matchesDispatchedRun({ ...current, head_branch: expected.expectedHeadBranch }, expected), true);
 });

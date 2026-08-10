@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { releaseTagFor } from "./ponto-release-identity.mjs";
 
 const NON_TERMINAL = new Set(["queued", "in_progress", "waiting", "pending", "requested"]);
 const CORRELATED_TITLE_SUFFIX =
@@ -14,11 +15,18 @@ export const readGitHubResponse = (response) => (
 export function isCorrelatedChild(run, {
   repository,
   orchestratorRunId,
+  orchestratorHeadSha = "",
+  releaseSha = orchestratorHeadSha,
 }) {
   const titleMatch = CORRELATED_TITLE_SUFFIX.exec(String(run?.display_title || ""));
+  const expectedReleaseSha = String(releaseSha || "").trim().toLowerCase();
+  const expectedBranch = /^[0-9a-f]{40}$/.test(expectedReleaseSha)
+    ? releaseTagFor("ponto", expectedReleaseSha)
+    : "main";
   return String(run?.id || "") !== String(orchestratorRunId)
     && run?.event === "workflow_dispatch"
-    && run?.head_branch === "main"
+    && run?.head_branch === expectedBranch
+    && (!expectedReleaseSha || String(run?.head_sha || "").trim().toLowerCase() === expectedReleaseSha)
     && run?.repository?.full_name === repository
     && titleMatch?.[1] === String(orchestratorRunId)
     && String(run?.path || "").startsWith(".github/workflows/");
@@ -128,7 +136,7 @@ async function main() {
   const discover = async () => {
     const found = new Map();
     for (let page = 1; page <= 5; page += 1) {
-      const payload = await request(`/repos/${repository}/actions/runs?event=workflow_dispatch&branch=main&per_page=100&page=${page}`);
+      const payload = await request(`/repos/${repository}/actions/runs?event=workflow_dispatch&per_page=100&page=${page}`);
       const rows = payload?.workflow_runs || [];
       for (const run of rows) {
         if (
