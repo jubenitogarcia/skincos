@@ -139,5 +139,7 @@ fi
 # The runner persists only sanitized migration-evidence rows. Bind each
 # mutable invocation to the already-validated immutable release; no caller
 # supplied path or environment is retained.
-native_coordination_check
+if [[ "$ACTION" != '--dry-run' ]]; then
+  native_coordination_check
+fi
 run_sudo_clean /usr/bin/node "$RUNNER" "$ACTION" --release-sha "$RELEASE_SHA"

@@ -33,7 +33,9 @@ runs:
   using: composite
   steps:
     - name: Acquire remote custody
-      if: ${{ inputs.required == 'true' }}
+      # Production mutations cannot opt out merely because the authority has
+      # not been provisioned yet. They must fail closed at this boundary.
+      if: ${{ inputs.required == 'true' || github.event.inputs.target == 'production' }}
       shell: bash
       env:
         SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}

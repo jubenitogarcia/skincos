@@ -76,6 +76,9 @@ test("the reusable check action accepts either an external proof file or an enco
   assert.match(action, /git fetch --no-tags origin "\$GLOBAL_SOURCE_SHA"/);
   assert.match(action, /--source "\$GLOBAL_OBSERVED_SOURCE_SHA"/);
   assert.match(action, /--candidate-source "\$GLOBAL_SOURCE_SHA"/);
+  assert.match(action, /inputs\.required == 'true' \|\| github\.event\.inputs\.target == 'production'/);
+  assert.match(read(".github/actions/global-coordination-acquire/action.yml"), /github\.event\.inputs\.target == 'production'/);
+  assert.match(read(".github/actions/global-coordination-release/action.yml"), /github\.event\.inputs\.target == 'production'/);
   assert.match(action, /GLOBAL_PROOF_FILE_INPUT/);
   assert.match(action, /base64 -d/);
 });
@@ -177,6 +180,10 @@ test("native mini-PC mutations use the common coordinator and detached closure p
   assert.match(harmonia, /deploy:atendimento:staging/);
   assert.match(harmonia, /deploy:atendimento:production/);
   assert.match(harmonia, /native_coordination_check/);
+  const migration = read("scripts/run-atendimento-staging-migration.sh");
+  assert.match(migration, /if \[\[ "\$ACTION" != '--dry-run' \]\]; then\s+native_coordination_check/);
+  const tunnel = read("scripts/runtime/install-atendimento-production-tunnel.sh");
+  assert.match(tunnel, /systemctl daemon-reload[\s\S]*coordination_run check[\s\S]*systemctl enable --now/);
 
   for (const [file, resource] of [
     ["scripts/provision-atendimento-staging.sh", "deploy:atendimento:staging"],

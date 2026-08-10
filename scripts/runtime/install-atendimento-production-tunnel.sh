@@ -121,6 +121,9 @@ coordination_run check \
   --resource cloudflare:atendimento:production --module atendimento --source "$RELEASE_SHA" \
   --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n systemctl daemon-reload
+coordination_run check \
+  --resource cloudflare:atendimento:production --module atendimento --source "$RELEASE_SHA" \
+  --closure-file "$COORDINATION_CLOSURE" >/dev/null
 sudo -n systemctl enable --now cloudflare-atendimento-production.service >/dev/null
 sudo -n systemctl is-active --quiet cloudflare-atendimento-production.service
 printf 'installed=true tunnel_id=%s hostname=%s service=cloudflare-atendimento-production.service shared_restart=false\n' "$TUNNEL_ID" "$HOSTNAME"
