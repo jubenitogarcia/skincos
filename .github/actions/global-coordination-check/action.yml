@@ -72,15 +72,28 @@ runs:
           printf '%s' "$GLOBAL_PROOF_B64" | base64 -d > "$GLOBAL_PROOF_FILE"
         fi
         [[ -f "$GLOBAL_PROOF_FILE" ]] || { echo 'Global coordination proof file is missing'; exit 1; }
-        SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
-        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
-          node scripts/codex-global-coordination-workflow.mjs renew \
-            --proof-file "$GLOBAL_PROOF_FILE"
-        SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
-        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
-          node scripts/codex-global-coordination-workflow.mjs check \
-            --proof-file "$GLOBAL_PROOF_FILE" \
-            --resource "$GLOBAL_RESOURCE" \
-            --module "$GLOBAL_MODULE" \
-            --source "$GLOBAL_OBSERVED_SOURCE_SHA" \
-            --candidate-source "$GLOBAL_SOURCE_SHA"
+        coordination_attempt=1
+        coordination_max_attempts=3
+        while (( coordination_attempt <= coordination_max_attempts )); do
+          if SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
+            SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+              node scripts/codex-global-coordination-workflow.mjs renew \
+                --proof-file "$GLOBAL_PROOF_FILE" && \
+            SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
+            SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+              node scripts/codex-global-coordination-workflow.mjs check \
+                --proof-file "$GLOBAL_PROOF_FILE" \
+                --resource "$GLOBAL_RESOURCE" \
+                --module "$GLOBAL_MODULE" \
+                --source "$GLOBAL_OBSERVED_SOURCE_SHA" \
+                --candidate-source "$GLOBAL_SOURCE_SHA"; then
+            exit 0
+          fi
+          if (( coordination_attempt == coordination_max_attempts )); then
+            echo "Global coordination revalidation failed after ${coordination_max_attempts} attempts" >&2
+            exit 1
+          fi
+          echo "Global coordination revalidation attempt ${coordination_attempt} failed; retrying" >&2
+          sleep 2
+          coordination_attempt=$((coordination_attempt + 1))
+        done
