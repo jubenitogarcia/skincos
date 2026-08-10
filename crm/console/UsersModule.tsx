@@ -310,7 +310,9 @@ export function UsersModule() {
 
   const role = String(me?.user?.role || '').toUpperCase()
   const actorUnits = Array.isArray(me?.user?.allowedUnits) ? me!.user!.allowedUnits!.filter(Boolean) : []
-  const canManage = ['ADMIN', 'GESTOR', 'GERENTE'].includes(role) && (role === 'ADMIN' || actorUnits.length > 0)
+  const dataUnavailable = Boolean(loadError)
+  const writesAvailable = !loading && !dataUnavailable && (!teamConfig.enabled || !teamConfig.readiness || teamConfig.readiness.ready)
+  const canManage = writesAvailable && ['ADMIN', 'GESTOR', 'GERENTE'].includes(role) && (role === 'ADMIN' || actorUnits.length > 0)
   const selectableUnits = role === 'ADMIN' ? Object.keys(unitLabels) : actorUnits
   const selectableTitles = React.useMemo(() => creatableTitlesByRole[role] || [], [role])
   const generatedEmail = buildCorporateEmail(form.fullName)
@@ -405,6 +407,7 @@ export function UsersModule() {
   const toggleUnit = (unit: string) => setForm((current) => ({ ...current, units: current.units.includes(unit) ? current.units.filter((item) => item !== unit) : [...current.units, unit] }))
 
   const openCreate = React.useCallback(() => {
+    if (!canManage) return
     const defaultTitle = selectableTitles[selectableTitles.length - 1] || 'Consultor'
     const defaultUnits = selectableUnits.length === 1 ? selectableUnits : []
     setEditingId(null)
@@ -417,7 +420,7 @@ export function UsersModule() {
     setCrmUsernameInput('')
     setForm({ ...initialForm, jobTitle: defaultTitle, units: defaultUnits })
     setOpen(true)
-  }, [selectableTitles, selectableUnits])
+  }, [canManage, selectableTitles, selectableUnits])
 
   const openEdit = (row: UnifiedTeamMember) => {
     setEditingId(row.id)
@@ -571,7 +574,7 @@ export function UsersModule() {
   }
 
   const syncEscala = async (member: UnifiedTeamMember, created: boolean) => {
-    if (!teamConfig.enabled || !member.workforceEmployeeId) return
+    if (!canManage || !teamConfig.enabled || !member.workforceEmployeeId) return
     setSyncingEscala(true)
     try {
       const schedulePayload = {
@@ -685,7 +688,7 @@ export function UsersModule() {
   const changeStatus = async (row: UnifiedTeamMember, nextStatus: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED') => {
     const activating = nextStatus === 'ACTIVE'
     const actionLabel = nextStatus === 'TERMINATED' ? 'desativar permanentemente' : activating ? 'ativar' : 'suspender'
-    if (!teamConfig.enabled || !window.confirm(`${actionLabel[0].toUpperCase() + actionLabel.slice(1)} ${row.fullName}?${nextStatus === 'TERMINATED' ? ' O acesso será encerrado e o histórico preservado.' : activating ? '' : ' O histórico e a agenda serão preservados.'}`)) return
+    if (!canManage || !teamConfig.enabled || !window.confirm(`${actionLabel[0].toUpperCase() + actionLabel.slice(1)} ${row.fullName}?${nextStatus === 'TERMINATED' ? ' O acesso será encerrado e o histórico preservado.' : activating ? '' : ' O histórico e a agenda serão preservados.'}`)) return
     const terminationReason = nextStatus === 'TERMINATED'
       ? window.prompt('Informe o motivo do desligamento (obrigatório):', '')?.trim() || ''
       : ''
@@ -705,7 +708,7 @@ export function UsersModule() {
   }
 
   const changeInvite = async (row: UnifiedTeamMember, action: 'resend' | 'revoke') => {
-    if (!teamConfig.enabled) return
+    if (!canManage || !teamConfig.enabled) return
     const label = action === 'resend' ? 'Reenviar o convite' : 'Revogar o convite'
     if (!window.confirm(`${label} de ${row.fullName}?`)) return
     try {
@@ -766,7 +769,7 @@ export function UsersModule() {
   return (
     <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
       <div className="mx-auto max-w-7xl space-y-4">
-        {!teamConfig.enabled && (
+        {!dataUnavailable && !teamConfig.enabled && (
           <Card className="border-amber-300/20 bg-amber-500/10">
             <CardContent className="p-4 text-sm text-amber-50/90">
               A centralização da equipe está preparada, mas a flag de liberação ainda está desligada. A Escala continua com o editor antigo como contingência controlada.
@@ -787,9 +790,9 @@ export function UsersModule() {
                 </div>
               </div>
               <div className="flex items-center gap-2 text-xs text-blue-100/60">
-                <span>{loading ? 'Atualizando' : `${pageTotal} ${pageTotal === 1 ? 'membro' : 'membros'}`}</span>
+                <span>{dataUnavailable ? 'Indisponível' : loading ? 'Atualizando' : `${pageTotal} ${pageTotal === 1 ? 'membro' : 'membros'}`}</span>
                 <span className="size-1 rounded-full bg-white/25" aria-hidden="true" />
-                <span>{unitCount} {unitCount === 1 ? 'unidade' : 'unidades'}</span>
+                <span>{dataUnavailable ? 'Indisponível' : `${unitCount} ${unitCount === 1 ? 'unidade' : 'unidades'}`}</span>
               </div>
             </div>
           </CardHeader>
@@ -827,11 +830,11 @@ export function UsersModule() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Total</p><p className="mt-1 text-lg font-semibold text-white">{pageTotal}</p></div>
-                  <div className="rounded-xl border border-amber-300/15 bg-amber-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-amber-100/55">Convites</p><p className="mt-1 text-lg font-semibold text-amber-50">{summary.pendingInvites || 0}</p></div>
-                  <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-sky-100/55">Vínculos pendentes</p><p className="mt-1 text-lg font-semibold text-sky-50">{summary.pendingLinks || 0}</p></div>
-                  <div className="rounded-xl border border-rose-300/15 bg-rose-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-rose-100/55">Contas sem vínculo</p><p className="mt-1 text-lg font-semibold text-rose-50">{summary.pendingAccountLinks || 0}</p></div>
-                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><p className="mt-1 text-lg font-semibold text-white">{unitCount}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Total</p><p className="mt-1 text-lg font-semibold text-white">{dataUnavailable ? 'Indisponível' : pageTotal}</p></div>
+                  <div className="rounded-xl border border-amber-300/15 bg-amber-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-amber-100/55">Convites</p><p className="mt-1 text-lg font-semibold text-amber-50">{dataUnavailable ? 'Indisponível' : summary.pendingInvites || 0}</p></div>
+                  <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-sky-100/55">Vínculos pendentes</p><p className="mt-1 text-lg font-semibold text-sky-50">{dataUnavailable ? 'Indisponível' : summary.pendingLinks || 0}</p></div>
+                  <div className="rounded-xl border border-rose-300/15 bg-rose-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-rose-100/55">Contas sem vínculo</p><p className="mt-1 text-lg font-semibold text-rose-50">{dataUnavailable ? 'Indisponível' : summary.pendingAccountLinks || 0}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><p className="mt-1 text-lg font-semibold text-white">{dataUnavailable ? 'Indisponível' : unitCount}</p></div>
                 </div>
                 {canManage && bulkEligibleRows.length > 0 && (
                   <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
@@ -933,7 +936,7 @@ export function UsersModule() {
                     </tr>
                   ))}
                   {!teamRows.length && (
-                    <tr><td className="p-5 text-blue-100/70" colSpan={9}>{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
+                    <tr><td className="p-5 text-blue-100/70" colSpan={9}>{dataUnavailable ? 'Dados indisponíveis. Tente novamente.' : loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -966,15 +969,15 @@ export function UsersModule() {
                   </div>
                 </article>
               ))}
-              {!teamRows.length && <div className="rounded-2xl border border-dashed border-white/15 p-5 text-sm text-blue-100/70">{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</div>}
+              {!teamRows.length && <div className="rounded-2xl border border-dashed border-white/15 p-5 text-sm text-blue-100/70">{dataUnavailable ? 'Dados indisponíveis. Tente novamente.' : loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</div>}
             </div>
             {teamConfig.enabled && pagination && (
               <nav className="mt-4 flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/10 px-3 py-3 text-xs text-blue-100/65 sm:flex-row sm:items-center sm:justify-between" aria-label="Paginação da equipe">
-                <span>{pageTotal > 0 ? `Exibindo ${pageStart}–${pageEnd} de ${pageTotal}` : 'Nenhum membro encontrado'}</span>
+                <span>{dataUnavailable ? 'Dados indisponíveis. Tente novamente.' : pageTotal > 0 ? `Exibindo ${pageStart}–${pageEnd} de ${pageTotal}` : 'Nenhum membro encontrado'}</span>
                 <div className="flex items-center gap-2">
-                  <Button type="button" size="sm" variant="outline" disabled={loading || page <= 1} aria-label="Página anterior" onClick={() => setPage((current) => Math.max(1, current - 1))}>Anterior</Button>
+                  <Button type="button" size="sm" variant="outline" disabled={loading || dataUnavailable || page <= 1} aria-label="Página anterior" onClick={() => setPage((current) => Math.max(1, current - 1))}>Anterior</Button>
                   <span aria-live="polite" className="min-w-[5.5rem] text-center">Página {pagination.page} de {pagination.pages}</span>
-                  <Button type="button" size="sm" variant="outline" disabled={loading || !pagination.hasMore} aria-label="Próxima página" onClick={() => setPage((current) => current + 1)}>Próxima</Button>
+                  <Button type="button" size="sm" variant="outline" disabled={loading || dataUnavailable || !pagination.hasMore} aria-label="Próxima página" onClick={() => setPage((current) => current + 1)}>Próxima</Button>
                 </div>
               </nav>
             )}
