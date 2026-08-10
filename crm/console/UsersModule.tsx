@@ -174,6 +174,11 @@ function crmAccountBadgeVariant(row: Pick<UnifiedTeamMember, 'crmAccountLinked' 
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' | 'premium'
 
+// The desktop table keeps compact columns at the dashboard width. Badges must
+// be allowed to wrap inside those cells instead of painting over the adjacent
+// account, schedule, or action columns.
+const compactTableBadgeClass = 'max-w-full !whitespace-normal !shrink break-words text-center leading-tight px-2 py-1 text-[11px]'
+
 function statusBadgeVariant(status: string): BadgeVariant {
   if (status === 'ACTIVE') return 'success'
   if (status === 'INVITED' || status === 'PENDING_ACCESS') return 'warning'
@@ -858,14 +863,14 @@ export function UsersModule() {
                 <table className="w-full table-fixed text-sm">
                   <colgroup>
                   <col className="w-[4%]" />
-                  <col className="w-[22%]" />
+                  <col className="w-[19%]" />
                   <col className="w-[12%]" />
                   <col className="w-[10%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[18%]" />
-                  <col className="w-[10%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[14%]" />
                   <col className="w-[9%]" />
-                  <col className="w-[7%]" />
+                  <col className="w-[8%]" />
                 </colgroup>
                 <thead className="bg-black/25 text-[11px] uppercase tracking-[0.12em] text-blue-100/60">
                   <tr>
@@ -895,18 +900,18 @@ export function UsersModule() {
                           </div>
                         </div>
                       </td>
-                      <td className="p-3 align-middle font-mono text-xs text-blue-100/80">{row.username || '—'}</td>
-                      <td className="p-3 align-middle"><Badge variant={titleBadgeVariant(row.jobTitle)} className="px-2 py-1 text-[11px]">{row.jobTitle}</Badge></td>
-                      <td className="p-3 align-middle text-blue-100/80">{row.department || '—'}</td>
+                      <td className="min-w-0 p-3 align-middle font-mono text-xs break-words text-blue-100/80">{row.username || '—'}</td>
+                      <td className="min-w-0 p-3 align-middle"><Badge variant={titleBadgeVariant(row.jobTitle)} className={compactTableBadgeClass}>{row.jobTitle}</Badge></td>
+                      <td className="min-w-0 p-3 align-middle break-words text-blue-100/80">{row.department || '—'}</td>
                       <td className="p-3 align-middle">
                         <div className="flex min-w-0 flex-wrap gap-1">
                           {row.units.length ? row.units.map((unit) => (
-                            <Badge key={unit} variant="outline" className="px-2 py-1 text-[11px]">{unitLabels[unit] || unit}</Badge>
-                          )) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}
+                            <Badge key={unit} variant="outline" className={compactTableBadgeClass}>{unitLabels[unit] || unit}</Badge>
+                          )) : <Badge variant="outline" className={compactTableBadgeClass}>Sem unidade</Badge>}
                         </div>
                       </td>
-                      <td className="p-3 align-middle"><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={crmAccountBadgeVariant(row)} className="px-2 py-1 text-[11px]" title={row.crmAccountUsername ? `Conta ${row.crmAccountUsername}` : 'Conta ainda sem vínculo explícito'}>{crmAccountLabel(row)}</Badge></div></td>
-                      <td className="p-3 align-middle"><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></td>
+                      <td className="min-w-0 p-3 align-middle"><div className="flex min-w-0 flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className={compactTableBadgeClass}>{statusLabel(row.accountStatus)}</Badge><Badge variant={crmAccountBadgeVariant(row)} className={compactTableBadgeClass} title={row.crmAccountUsername ? `Conta ${row.crmAccountUsername}` : 'Conta ainda sem vínculo explícito'}>{crmAccountLabel(row)}</Badge></div></td>
+                      <td className="min-w-0 p-3 align-middle"><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className={compactTableBadgeClass}>{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></td>
                       <td className="p-3 text-right align-middle">
                         <TooltipButton label={`Editar ${row.fullName}`}>
                           <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full text-blue-100 hover:bg-white/[0.10]" aria-label={`Editar ${row.fullName}`} onClick={() => openEdit(row)}>
