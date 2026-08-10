@@ -58,6 +58,19 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByRole('table').getByText('Ana Ribeiro', { exact: true })).toHaveCount(0)
   })
 
+  test('exposes native required semantics for the unified employee form', async ({ page }) => {
+    await mockUsersApi(page)
+    await page.goto('/?module=users')
+    await page.getByRole('button', { name: 'Cadastrar funcionário' }).click()
+    await expect(page.getByLabel('Nome completo')).toHaveAttribute('required', '')
+    await expect(page.getByLabel('Nome de usuário')).toHaveAttribute('required', '')
+    await expect(page.getByLabel(/E-mail pessoal/)).toHaveAttribute('required', '')
+    await expect(page.getByLabel(/Celular/)).toHaveAttribute('required', '')
+    await expect(page.getByLabel('Departamento')).toHaveAttribute('required', '')
+    await expect(page.getByRole('combobox', { name: 'Cargo' })).toHaveAttribute('aria-required', 'true')
+    await expect(page.getByRole('group', { name: 'Unidades de acesso' })).toHaveAttribute('aria-required', 'true')
+  })
+
   test('shows a read-only inspection view to Supervisor', async ({ page }) => {
     await mockUsersApi(page, 'SUPERVISOR')
     await page.goto('/?module=users')
