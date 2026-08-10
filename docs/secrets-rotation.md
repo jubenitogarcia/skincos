@@ -18,6 +18,9 @@ Garantir que segredos críticos (GitHub, Cloudflare, backend) tenham **escopo m�
 - `SESSION_SECRET`
 - `MIGRATION_TOKEN`
 - `INTEGRATIONS_ENCRYPTION_SECRET`
+- `SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` — active normal coordination custody.
+- `SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY` — time-bounded overlap key during rotation.
+- `SKINCOS_GLOBAL_COORDINATION_RECOVERY_SECRET` — separate break-glass custody; never reuse the normal key.
 NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
 
 ### CRM API / Infra
@@ -47,6 +50,34 @@ NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
 2. Atualizar em `GitHub Actions secrets`.
 3. Atualizar secrets/vars no Cloudflare (Workers/Pages).
 4. Fazer deploy de teste e validar `/health`.
+
+### Coordenação global: rotação de chave e fencing
+
+O contrato normal usa `SKINCOS_GLOBAL_COORDINATION_KEY_ID` como variável ativa e
+`SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET` como sua custódia. A rotação é uma
+operação coordenada, não uma troca unilateral no Worker:
+
+1. Criar a nova chave fora do repositório e configurar o secret normal ativo.
+2. Publicar primeiro `SKINCOS_GLOBAL_COORDINATION_PREVIOUS_KEY` e sua variável
+   de expiração curta; manter `SKINCOS_GLOBAL_COORDINATION_KEY_ID` no valor
+   anterior durante a janela de compatibilidade.
+3. Fazer deploy do coordination plane, validar `/v1/readyz`, e confirmar que o
+   readback assinado contém `protocol=epoch-fence-v1`, `keyId` e um
+   `authorityEpoch` inteiro.
+4. Alterar a variável ativa para o novo key ID, atualizar os clientes/actions e
+   fazer um novo deploy. Os leases emitidos carregam `authorityKeyId` e
+   `authorityEpoch`; provas sem ambos são rejeitadas depois da transição.
+5. Após o TTL máximo dos leases e a janela de overlap, remover a chave anterior,
+   apagar sua variável de expiração e repetir a readiness/readback. Se houver
+   dúvida sobre a autoridade, interromper mutações e usar somente o workflow
+   `recover-global-coordinator.yml` com versão incumbent registrada e
+   confirmação exata; o workflow aplica fencing de epoch antes de qualquer
+   nova aquisição.
+
+O recovery secret precisa ser provisionado separadamente em cada environment e
+não é aceito pelo endpoint normal. A operação de recovery é limitada a uma
+versão conhecida, uma tentativa e um `recovery_id` idempotente; estado saudável,
+versão desconhecida, epoch divergente ou probe ambíguo falham fechados.
 
 ### Backend / CRM API (SSH)
 1. Gerar nova chave SSH.

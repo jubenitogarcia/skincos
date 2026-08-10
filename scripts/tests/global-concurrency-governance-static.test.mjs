@@ -99,7 +99,7 @@ test("the reusable check action accepts either an external proof file or an enco
   const action = read(".github/actions/global-coordination-check/action.yml");
   assert.match(action, /proof_b64:[\s\S]*?required: false/);
   assert.match(action, /proof_file:[\s\S]*?required: false/);
-  assert.match(action, /key_id:[\s\S]*?defaults to the repository variable/);
+  assert.match(action, /key_id:[\s\S]*?supplied by the caller/);
   assert.match(action, /observed_source_sha:[\s\S]*?required: false/);
   assert.match(action, /git fetch --no-tags --force origin main:refs\/remotes\/origin\/main/);
   assert.match(action, /git fetch --no-tags origin "\$GLOBAL_SOURCE_SHA"/);
@@ -112,8 +112,15 @@ test("the reusable check action accepts either an external proof file or an enco
   assert.match(action, /base64 -d/);
   assert.match(action, /coordination_max_attempts=3/);
   assert.match(action, /Global coordination revalidation failed after/);
-  assert.match(read(".github/actions/global-coordination-acquire/action.yml"), /SKINCOS_GLOBAL_COORDINATION_KEY_ID/);
-  assert.match(read(".github/actions/global-coordination-release/action.yml"), /SKINCOS_GLOBAL_COORDINATION_KEY_ID/);
+  for (const file of [
+    ".github/actions/global-coordination-acquire/action.yml",
+    ".github/actions/global-coordination-check/action.yml",
+    ".github/actions/global-coordination-release/action.yml",
+  ]) {
+    const reusableAction = read(file);
+    assert.match(reusableAction, /SKINCOS_GLOBAL_COORDINATION_KEY_ID:\s+\$\{\{\s*inputs\.key_id\s*\}\}/);
+    assert.doesNotMatch(reusableAction, /\bvars\./);
+  }
 });
 
 test("the staging RBAC journey recovers synthetic teardown under a fresh lease", () => {

@@ -32,7 +32,7 @@ inputs:
     description: Shared custody secret passed only in process environment
     required: true
   key_id:
-    description: Optional active coordination key identifier; defaults to the repository variable
+    description: Optional active coordination key identifier supplied by the caller; empty preserves legacy coordination compatibility
     required: false
     default: ''
 runs:
@@ -46,7 +46,7 @@ runs:
       env:
         SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
         SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ inputs.shared_secret }}
-        SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id || vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+        SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id }}
         GLOBAL_PROOF_B64: ${{ inputs.proof_b64 }}
         GLOBAL_PROOF_FILE_INPUT: ${{ inputs.proof_file }}
         GLOBAL_RESOURCE: ${{ inputs.resource }}
