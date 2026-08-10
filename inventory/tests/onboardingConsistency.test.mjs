@@ -203,6 +203,9 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
 test('team edits expose a fail-closed local persistence compensation boundary', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   const updateBlock = admin.slice(admin.indexOf('const teamMemberMatch'), admin.indexOf("if (url.pathname === '/admin/team' && request.method === 'GET')"));
+  const teamValidationIndex = updateBlock.indexOf('const teamData = normalizeTeamData');
+  const workforceSyncIndex = updateBlock.indexOf('await syncIdentityWorkforceOnboarding');
+  assert.ok(teamValidationIndex >= 0 && teamValidationIndex < workforceSyncIndex, 'team input must be validated before Workforce synchronization');
   assert.match(updateBlock, /let workforceSynchronized = false/);
   assert.match(updateBlock, /localPersistenceStage = 'ONBOARDING_UPDATE'/);
   assert.match(updateBlock, /localPersistenceStage = 'TEAM_UPDATE'/);
@@ -211,6 +214,8 @@ test('team edits expose a fail-closed local persistence compensation boundary', 
   assert.match(updateBlock, /TEAM_LOCAL_PERSISTENCE_PENDING/);
   assert.match(updateBlock, /failClosed: true/);
   assert.match(updateBlock, /outcome: 'PENDING'/);
+  assert.match(admin, /LOCAL_TEAM_CREATE_PENDING/);
+  assert.match(admin, /Projeção local da equipe pendente de compensação/);
 });
 
 test('team usernames remain reserved across lifecycle history', async () => {
@@ -245,6 +250,17 @@ test('team telemetry accepts only aggregate fields and cannot persist identity P
   assert.doesNotMatch(implementation, /email|phone|fullName|entityId|memberId/i);
 });
 
+test('team readiness is authenticated, read-only and reports safe dependency codes', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const readiness = await readFile(new URL('../src/services/teamReadiness.js', import.meta.url), 'utf8');
+  assert.match(admin, /mode === 'readiness'/);
+  assert.match(admin, /buildTeamReadiness\(/);
+  assert.match(admin, /hasAuthMailerConfig\(env\)/);
+  assert.match(admin, /Boolean\(env\?\.WORKFORCE\?\.fetch\)/);
+  assert.match(readiness, /never returns secret/);
+  assert.doesNotMatch(readiness, /console\.log|process\.env|personalEmail|mobilePhone/i);
+});
+
 test('unified team rollout is explicit, staging-only and fail-closed by default', async () => {
   const workflow = await readFile(
     new URL('../../.github/workflows/deploy-core-workers.yml', import.meta.url),
@@ -272,6 +288,7 @@ test('unified team maps dependency outages to retryable 503 responses', async ()
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   assert.match(admin, /function isOnboardingDependencyError\(value\)/);
   assert.match(admin, /IDENTITY_WORKFORCE_\|SMTP_\|EMAIL_\|MODULE_\|TIMEKEEPING_\|RELEASE_AFFINITY_\|RUNTIME_BINDINGS_\|SERVICE_\|DATABASE_UNAVAILABLE/);
+  assert.match(admin, /DOMAIN_SERVICE_DEGRADED/);
   assert.match(admin, /isOnboardingDependencyError\(message\) \? 503 : 500/);
   assert.doesNotMatch(admin, /message === 'IDENTITY_PII_KEY_NOT_CONFIGURED'.*\^WORKFORCE_\|\^SMTP_\|\^EMAIL_/s);
 });
