@@ -66,6 +66,7 @@ SNAPSHOT_INPUT_FIELDS = {
     "remote_fingerprint",
     "blocker_fingerprint",
     "valid_evidence_refs",
+    "resource_declaration",
 }
 SNAPSHOT_TOP_LEVEL_FIELDS = SNAPSHOT_INPUT_FIELDS - {"schema_version"}
 SNAPSHOT_STRING_FIELDS = (
@@ -73,6 +74,26 @@ SNAPSHOT_STRING_FIELDS = (
     "checkpoint",
     "remote_fingerprint",
     "blocker_fingerprint",
+)
+RESOURCE_DECLARATION_SCHEMA_VERSION = 1
+RESOURCE_DECLARATION_FIELDS = {
+    "schema_version",
+    "reads",
+    "writes",
+    "requires",
+    "leases",
+}
+RESOURCE_DECLARATION_LIST_FIELDS = ("reads", "writes", "requires", "leases")
+MAX_RESOURCE_DECLARATION_ITEMS = 64
+MAX_RESOURCE_DECLARATION_ITEM_LENGTH = 256
+GLOBAL_RESOURCE_PREFIXES = (
+    "merge:",
+    "release:",
+    "deploy:",
+    "mutate:",
+    "cloudflare:",
+    "promotion:",
+    "global:",
 )
 MAX_SNAPSHOT_STRING_LENGTH = 512
 MAX_EVIDENCE_REFS = 32
@@ -238,6 +259,14 @@ def validate_contract(contract: dict[str, Any], event_session: str) -> str | Non
     evidence = contract.get("evidence_refs")
     if not isinstance(evidence, list) or any(not isinstance(item, str) for item in evidence):
         return "supervisor state evidence_refs must be a list of strings"
+    _, declaration_error = normalize_resource_declaration(contract.get("resource_declaration"))
+    if declaration_error:
+        return declaration_error
+    next_item = contract.get("next_item")
+    next_item_is_global = isinstance(next_item, dict) and (
+        next_item.get("mutates_global") is True
+        or is_global_resource_name(next_item.get("resource"))
+    )
 
     if status == "continue":
         if contract.get("objective_status") != "in_progress":
@@ -248,6 +277,8 @@ def validate_contract(contract: dict[str, Any], event_session: str) -> str | Non
             return "continue cannot carry a human or credential blocker"
         if contract.get("production_authorization_required"):
             return "continue cannot require production authorization"
+        if next_item_is_global and contract.get("resource_declaration") is None:
+            return "global next_item requires reads/writes/requires/leases resource_declaration"
     elif status == "complete":
         if contract.get("objective_status") != "complete":
             return "complete requires objective_status=complete"
@@ -262,6 +293,67 @@ def validate_contract(contract: dict[str, Any], event_session: str) -> str | Non
     ):
         return "production_authorization_required requires its boolean gate"
     return None
+
+
+def is_global_resource_name(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower().startswith(GLOBAL_RESOURCE_PREFIXES)
+
+
+def default_resource_declaration() -> dict[str, Any]:
+    return {
+        "schema_version": RESOURCE_DECLARATION_SCHEMA_VERSION,
+        "reads": [],
+        "writes": [],
+        "requires": [],
+        "leases": [],
+    }
+
+
+def normalize_resource_declaration(
+    value: Any,
+    *,
+    required: bool = False,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if value is None:
+        if required:
+            return None, "resource_declaration is required for a global mutation"
+        return default_resource_declaration(), None
+    if not isinstance(value, dict):
+        return None, "resource_declaration must be a JSON object"
+    unknown = sorted(set(value) - RESOURCE_DECLARATION_FIELDS)
+    if unknown:
+        return None, f"resource_declaration contains unsupported fields: {', '.join(unknown)}"
+    if value.get("schema_version", RESOURCE_DECLARATION_SCHEMA_VERSION) != RESOURCE_DECLARATION_SCHEMA_VERSION:
+        return None, "resource_declaration schema_version is unsupported"
+
+    normalized: dict[str, Any] = {"schema_version": RESOURCE_DECLARATION_SCHEMA_VERSION}
+    for field in RESOURCE_DECLARATION_LIST_FIELDS:
+        raw = value.get(field, [])
+        if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+            return None, f"resource_declaration {field} must be a list of strings"
+        if len(raw) > MAX_RESOURCE_DECLARATION_ITEMS:
+            return None, f"resource_declaration {field} exceeds the item limit"
+        items: set[str] = set()
+        for item in raw:
+            candidate = item.strip()
+            if not candidate:
+                return None, f"resource_declaration {field} cannot contain empty items"
+            if len(candidate) > MAX_RESOURCE_DECLARATION_ITEM_LENGTH:
+                return None, f"resource_declaration {field} contains an oversized item"
+            if "\n" in candidate or "\r" in candidate:
+                return None, f"resource_declaration {field} cannot contain line breaks"
+            items.add(candidate)
+        normalized[field] = sorted(items)
+
+    global_writes = [item for item in normalized["writes"] if is_global_resource_name(item)]
+    if global_writes and not normalized["leases"]:
+        return None, "global writes require an explicit lease declaration"
+    if "merge:main" in global_writes:
+        if "merge:main" not in normalized["leases"]:
+            return None, "merge:main writes require the merge:main lease"
+        if "skincos-integration-gate" not in normalized["requires"]:
+            return None, "merge:main writes require skincos-integration-gate"
+    return normalized, None
 
 
 def canonical_json(value: Any) -> tuple[str | None, str | None]:
@@ -389,6 +481,7 @@ def build_session_snapshot(
         "remote_fingerprint": None,
         "blocker_fingerprint": None,
         "valid_evidence_refs": [],
+        "resource_declaration": default_resource_declaration(),
     }
     if previous and not is_root:
         for field in (
@@ -399,8 +492,18 @@ def build_session_snapshot(
             "remote_fingerprint",
             "blocker_fingerprint",
             "valid_evidence_refs",
+            "resource_declaration",
         ):
             context[field] = previous.get(field)
+
+    raw_declaration = contract.get("resource_declaration")
+    if raw_declaration is not None:
+        declaration, declaration_error = normalize_resource_declaration(raw_declaration)
+        if declaration_error or declaration is None:
+            return None, declaration_error
+        context["resource_declaration"] = declaration
+    elif not isinstance(context.get("resource_declaration"), dict):
+        context["resource_declaration"] = default_resource_declaration()
 
     for field in SNAPSHOT_STRING_FIELDS:
         if field not in declared:
@@ -449,6 +552,7 @@ def build_session_snapshot(
         "checkpoint": context["checkpoint"],
         "remote_fingerprint": context["remote_fingerprint"],
         "valid_evidence_refs": context["valid_evidence_refs"],
+        "resource_declaration": context["resource_declaration"],
     }
     serialized, field_error = canonical_json(progress_material)
     if field_error or serialized is None:
@@ -467,6 +571,7 @@ def build_session_snapshot(
         "remote_fingerprint": context["remote_fingerprint"],
         "blocker_fingerprint": context["blocker_fingerprint"],
         "valid_evidence_refs": context["valid_evidence_refs"],
+        "resource_declaration": context["resource_declaration"],
         "completed_item": contract.get("completed_item"),
         "next_item": contract.get("next_item"),
         "progress_fingerprint": digest(serialized),
@@ -501,6 +606,10 @@ def validate_stored_snapshot(
     _, error = normalize_snapshot_refs(snapshot.get("valid_evidence_refs"), "valid_evidence_refs")
     if error:
         return error
+    if "resource_declaration" in snapshot:
+        _, error = normalize_resource_declaration(snapshot.get("resource_declaration"))
+        if error:
+            return error
     for field in ("completed_item", "next_item"):
         error = validate_snapshot_item(snapshot.get(field), field)
         if error:
@@ -774,6 +883,7 @@ def continuation_prompt(
             "remote_fingerprint": snapshot["remote_fingerprint"],
             "blocker_fingerprint": snapshot["blocker_fingerprint"],
             "valid_evidence_refs": snapshot["valid_evidence_refs"],
+            "resource_declaration": snapshot["resource_declaration"],
         },
     }
     return (
@@ -987,6 +1097,9 @@ def process(
                 {**event_record, "result": "invalid_session_snapshot", "mission_id": mission_id},
             )
             return safe_allow(f"SKINCOS supervisor safety stop: {snapshot_error}")
+
+        mission["resource_declaration"] = snapshot["resource_declaration"]
+        mission["branch_worktree"] = snapshot["branch_worktree"]
 
         status = str(contract["orchestration_status"])
         if status != "continue":

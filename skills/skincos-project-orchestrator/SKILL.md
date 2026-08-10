@@ -46,6 +46,15 @@ fail-closed stop. The production coordinator URL is intentionally separate
 from staging, so an absent production authority must block pilot, canary,
 production, and rollback rather than reuse staging custody.
 
+Each mission milestone also carries a compact `resource_declaration` with
+`reads`, `writes`, `requires` and `leases`. Derive it from the actual next
+operation and persist it with the supervisor snapshot. For a global mutation,
+the orchestrator must acquire the listed remote lease and own a current fencing
+proof before executing; authorization remains valid while waiting for that
+ownership. The Stop hook only validates this shape and persistence. It is not a
+second coordination authority and must not contain dependency or business
+compatibility decisions.
+
 ## Authorization
 
 Authorization comes from the current explicit mission under

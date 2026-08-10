@@ -141,6 +141,49 @@ class GateFixture(unittest.TestCase):
         self.assertIn("$skincos-project-orchestrator supervisor-cycle", result["reason"])
         self.assertIn('"cycle": 1', result["reason"])
 
+    def test_global_next_item_requires_a_resource_declaration(self) -> None:
+        result = self.run_gate(
+            self.payload(
+                self.contract(next_item={"resource": "merge:main", "operation": "merge"})
+            )
+        )
+        self.assertTrue(result["continue"])
+        self.assertIn("resource_declaration", result["stopReason"])
+
+    def test_resource_declaration_is_normalized_and_persisted(self) -> None:
+        declaration = {
+            "schema_version": 1,
+            "reads": ["main", "main"],
+            "writes": ["merge:main"],
+            "requires": ["skincos-integration-gate"],
+            "leases": ["merge:main"],
+        }
+        result = self.run_gate(
+            self.payload(
+                self.contract(
+                    next_item={"resource": "merge:main", "operation": "merge"},
+                    resource_declaration=declaration,
+                )
+            )
+        )
+        self.assertEqual(result["decision"], "block")
+        snapshot = self.read_snapshot()
+        self.assertEqual(snapshot["resource_declaration"]["reads"], ["main"])
+        self.assertEqual(snapshot["resource_declaration"]["leases"], ["merge:main"])
+        self.assertIn('"resource_declaration"', result["reason"])
+
+    def test_merge_main_declaration_requires_gate_and_lease(self) -> None:
+        result = self.run_gate(
+            self.payload(
+                self.contract(
+                    next_item={"resource": "merge:main", "operation": "merge"},
+                    resource_declaration={"writes": ["merge:main"]},
+                )
+            )
+        )
+        self.assertTrue(result["continue"])
+        self.assertIn("explicit lease declaration", result["stopReason"])
+
     def test_active_mission_rejects_an_unstructured_normal_stop(self) -> None:
         initial = self.run_gate(self.payload())
         self.assertEqual(initial["decision"], "block")

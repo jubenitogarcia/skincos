@@ -148,6 +148,12 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-check/);
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-release/);
   assert.match(scheduler, /resource: merge:main/);
+  assert.match(scheduler, /Detect whether branch maintenance needs merge:main/);
+  assert.match(scheduler, /steps\.maintenance_scan\.outputs\.needs_maintenance == 'true'/);
+  assert.match(scheduler, /steps\.acquire_branch_maintenance\.outcome == 'success'/);
+  assert.match(read(".github/actions/global-coordination-release/action.yml"), /max_attempts=5/);
+  assert.match(read(".codex/hooks/skincos-supervisor-gate.py"), /resource_declaration/);
+  assert.match(read("skills/skincos-project-orchestrator/references/supervisor-cycle.md"), /technical wait\/blocker/);
   assert.deepEqual(policy.releaseClosures.merge.patterns, ["**"]);
   assert.match(policy.resourceClasses.mutate, /^\^mutate:/);
   assert.equal(policy.admission.coordinationPlane, "global");

@@ -14,8 +14,15 @@
   e `DECISIONS.md` como contexto durável/histórico, não como cópias
   obrigatórias de estado volátil.
 - Use branches in the format `codex/admin/<task-slug>`.
-- Prefer worktrees under `C:\CodexShared\Worktrees\skincos\admin\<task-slug>`
-  when more than one Codex task may work in parallel.
+- For every non-trivial or potentially concurrent mission, a dedicated
+  worktree under `C:\CodexShared\Worktrees\skincos\admin\<task-slug>` is
+  mandatory. The shared checkout is a read-only context/source-of-truth
+  surface for agents, not a normal editing surface. The task identity is the
+  tuple `mission_id`, `task_slug`, `codex/admin/<task-slug>` branch and the
+  dedicated worktree path; persist that tuple in the supervisor snapshot.
+- A worktree may not be edited by another task. Pushes must use the task branch
+  and PR flow; direct pushes or merges to `main` are unsupported and are
+  rejected by the protected ruleset and integration authority.
 - Keep Codex authentication, browser profiles, temporary files and PID state in
   `%LOCALAPPDATA%\Codex\skincos\`. Keep durable operator artifacts (logs,
   reports, checkpoints, evidence and local backups) in the private runtime at
