@@ -6,7 +6,7 @@ import {
     listEsfaFallbackRedirects,
     listEsfaManagedRedirectSeeds,
 } from "../src/lib/esfaManagedRedirects";
-import { ESFA_REDIRECTS } from "../src/lib/esfaRedirects";
+import { ESFA_REDIRECTS, normalizeEsfaRedirectPath } from "../src/lib/esfaRedirects";
 import { ANIVERSARIO_7_ESFA_REDIRECTS, ANIVERSARIO_7_LEGACY_REDIRECTS } from "../src/lib/aniversario7Redirects";
 
 test("buildEsfaManagedRedirectSeed infers metadata for migrated esfa redirects", () => {
@@ -23,6 +23,23 @@ test("buildEsfaManagedRedirectSeed infers metadata for migrated esfa redirects",
     assert.equal(seed.unitSlug, "barrashoppingsul");
     assert.equal(seed.source, ESFA_MIGRATED_SOURCE);
     assert.equal(seed.createdAtMs, 123);
+});
+
+test("Clube Botox U aliases resolve to the requested Asaas payment links", () => {
+    const redirects = {
+        "/ClubeBotox40U": "https://www.asaas.com/c/85kw6n2otrtdhjqe",
+        "/ClubeBotox50U": "https://www.asaas.com/c/93fcmgkhgcin2igk",
+        "/ClubeBotox60U": "https://www.asaas.com/c/hqown86982e9y7f4",
+    };
+
+    for (const [requestedPath, destinationUrl] of Object.entries(redirects)) {
+        const slugPath = normalizeEsfaRedirectPath(requestedPath);
+        assert.equal(ESFA_REDIRECTS[slugPath], destinationUrl);
+
+        const seed = buildEsfaManagedRedirectSeed({ slugPath, destinationUrl, now: 789 });
+        assert.equal(seed.destinationHost, "www.asaas.com");
+        assert.equal(seed.placement, "payment");
+    }
 });
 
 test("listEsfaManagedRedirectSeeds covers the full static catalog", () => {

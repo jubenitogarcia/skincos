@@ -41,6 +41,10 @@ export const ESFA_REDIRECTS: Record<string, string> = {
 
   // Campanhas
   ...ANIVERSARIO_7_ESFA_REDIRECTS,
+  // Clube Botox
+  "/clubebotox40u": "https://www.asaas.com/c/85kw6n2otrtdhjqe",
+  "/clubebotox50u": "https://www.asaas.com/c/93fcmgkhgcin2igk",
+  "/clubebotox60u": "https://www.asaas.com/c/hqown86982e9y7f4",
   "/bebadessafonte": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+da+HealthBodyRun+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
 
   // Interno
