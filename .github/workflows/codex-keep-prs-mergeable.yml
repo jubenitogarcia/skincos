@@ -182,9 +182,40 @@ jobs:
               });
             }
 
+            async function authoritySignalIsOnlyBlock(pr) {
+              const headSha = String(pr.head?.sha || '').trim().toLowerCase();
+              if (!/^[0-9a-f]{40}$/.test(headSha)) return false;
+              try {
+                const [combined, checkRuns] = await Promise.all([
+                  github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: headSha }),
+                  github.paginate(github.rest.checks.listForRef, {
+                    owner,
+                    repo,
+                    ref: headSha,
+                    per_page: 100,
+                  }),
+                ]);
+                const statuses = combined.data.statuses || [];
+                const authorityStatuses = statuses
+                  .filter((status) => String(status.context || '') === 'global-merge-authority')
+                  .sort((left, right) => Date.parse(String(left.created_at || '')) - Date.parse(String(right.created_at || '')));
+                const latestAuthority = authorityStatuses.at(-1);
+                if (String(latestAuthority?.state || '') !== 'failure') return false;
+                if (statuses.some((status) => String(status.context || '') !== 'global-merge-authority' && String(status.state || '') !== 'success')) return false;
+                const allowedConclusions = new Set(['success', 'skipped', 'neutral']);
+                if (checkRuns.some((run) => String(run.status || '') !== 'completed' || !allowedConclusions.has(String(run.conclusion || '')))) return false;
+                core.info(`PR #${pr.number} is blocked only by the deliberate global-merge-authority status; bootstrapping the official dispatch.`);
+                return true;
+              } catch (err) {
+                core.warning(`Could not verify the authority-only block for #${pr.number}: ${err?.message || err}`);
+                return false;
+              }
+            }
+
             async function dispatchMergeAuthorityIfEligible(pr) {
               const labels = new Set((pr.labels || []).map((label) => String(label?.name || '')));
-              if (pr.draft === true || pr.mergeable_state !== 'clean' || !labels.has(LABELS.enabled.name)) return;
+              const authorityOnlyBlock = pr.mergeable_state === 'blocked' && await authoritySignalIsOnlyBlock(pr);
+              if (pr.draft === true || !['clean', 'blocked'].includes(String(pr.mergeable_state || '')) || (pr.mergeable_state === 'blocked' && !authorityOnlyBlock) || !labels.has(LABELS.enabled.name)) return;
               const activeStatuses = new Set(['queued', 'in_progress', 'waiting', 'requested']);
               let runs = [];
               try {
@@ -333,6 +364,8 @@ jobs:
               // Keep conflict label unless it is clearly clean.
               if (mergeableState === "clean") {
                 await removeLabel(prNumber, LABELS.conflict.name);
+                await dispatchMergeAuthorityIfEligible(full);
+              } else if (mergeableState === "blocked") {
                 await dispatchMergeAuthorityIfEligible(full);
               }
             }

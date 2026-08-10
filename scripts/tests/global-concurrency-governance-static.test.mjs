@@ -252,6 +252,10 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(scheduler, /ALLOW_BRANCH_UPDATES/);
   assert.match(scheduler, /always\(\)/);
   assert.match(scheduler, /allowBranchUpdates/);
+  assert.match(scheduler, /getCombinedStatusForRef/);
+  assert.match(scheduler, /checks\.listForRef/);
+  assert.match(scheduler, /authoritySignalIsOnlyBlock/);
+  assert.match(scheduler, /mergeableState === "blocked"/);
   assert.match(read(".github/actions/global-coordination-release/action.yml"), /max_attempts=5/);
   assert.match(read(".codex/hooks/skincos-supervisor-gate.py"), /resource_declaration/);
   assert.match(read("skills/skincos-project-orchestrator/references/supervisor-cycle.md"), /technical wait\/blocker/);
