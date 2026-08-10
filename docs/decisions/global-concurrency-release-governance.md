@@ -2,9 +2,10 @@
 
 **Status:** Fundação das Fases 1–5 implementada; esta hardening final adiciona
 fencing de autoridade, recovery fail-closed, gate de merge com rechecagem final,
-closure automática e rastreamento transitive de writers. O rollout remoto da
-versão desta branch ainda exige CI, staging e a promoção normal protegida; a
-existência do código não é confundida com o estado live.
+closure automática e rastreamento transitive de writers. O coordination plane
+foi validado em staging no SHA `64993934c371dba5a06381a98056c5f5eabc419d` em
+2026-08-10; produção permanece sem promoção. A existência do código não é
+confundida com o estado live.
 
 ## Problema
 
@@ -94,10 +95,20 @@ a revalidação imediatamente antes da mutação são a autoridade técnica.
 O ruleset versionado acrescenta a regra `update`, limita o merge a `squash` e
 declara o GitHub Actions integration actor como único bypass técnico do update
 rule. O validador rejeita qualquer workflow adicional que contenha uma mutação
-de merge ou atualização direta de `main`. A janela residual entre a última
-leitura REST e o `PUT /merge` é fechada pelo update rule da plataforma, pela
-concurrency do workflow e pelo `sha` esperado enviado à API; se a plataforma
-não comprovar o actor dedicado, o rollout permanece fail-closed.
+de merge ou atualização direta de `main`.
+
+O readback live de 2026-08-10 mostrou o ruleset ativo `main-enterprise-baseline`
+(ID `19631459`) com `deletion`, `non_fast_forward`, `pull_request` somente com
+`squash` e os checks obrigatórios, mas sem a regra `update` e sem bypass actors.
+A aplicação do estado-alvo foi recusada pelo GitHub porque este repositório
+pessoal não pode usar a integração GitHub Actions como actor de bypass de
+ruleset. Portanto, o estado-alvo versionado não deve ser descrito como estado
+live: a integração suportada permanece `global-merge-authority.yml`, com
+revalidação de base/head/lease e checks obrigatórios. A janela residual entre a
+última leitura REST e o `PUT /merge` só poderá ser considerada fechada pela
+plataforma depois que uma organização ou GitHub App/integração compatível for
+provisionada e o ruleset completo for reaplicado e lido de volta. O fail-closed
+continua sendo a regra; não se adiciona bypass humano.
 
 ## Release imutável sem congelar `main`
 
