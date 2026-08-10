@@ -23,7 +23,45 @@ jobs:
         with:
           ref: main
           fetch-depth: 1
+      - name: Detect whether branch maintenance needs merge:main
+        id: maintenance_scan
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          github-token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              base: "main",
+              sort: "updated",
+              direction: "desc",
+              per_page: 100,
+            });
+            const candidates = pulls.filter((pr) => {
+              if (pr.head?.repo?.full_name !== `${owner}/${repo}`) return false;
+              if (!String(pr.head?.ref || "").startsWith("codex/")) return false;
+              return String(pr.user?.login || "") === "jubenitogarcia";
+            });
+            let needsMaintenance = false;
+            for (const pr of candidates) {
+              const response = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: pr.number,
+              });
+              if (response.data.mergeable_state === "behind") {
+                needsMaintenance = true;
+                break;
+              }
+            }
+            core.setOutput("needs_maintenance", String(needsMaintenance));
+            core.info(`Branch maintenance lease needed: ${needsMaintenance}`);
       - name: Acquire merge:main for branch maintenance
+        id: acquire_branch_maintenance
+        if: ${{ steps.maintenance_scan.outputs.needs_maintenance == 'true' }}
         uses: ./.github/actions/global-coordination-acquire
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -35,6 +73,8 @@ jobs:
           source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-merge-maintenance.json
       - name: Check merge:main before PR branch maintenance
+        id: check_branch_maintenance
+        if: ${{ steps.acquire_branch_maintenance.outcome == 'success' }}
         uses: ./.github/actions/global-coordination-check
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -46,12 +86,16 @@ jobs:
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Keep codex PRs up-to-date (update-branch) + label conflicts
+        if: ${{ always() }}
+        env:
+          ALLOW_BRANCH_UPDATES: ${{ steps.check_branch_maintenance.outcome == 'success' && 'true' || 'false' }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           github-token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || github.token }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+            const allowBranchUpdates = process.env.ALLOW_BRANCH_UPDATES === "true";
 
             const LABELS = {
               updated: {
@@ -204,6 +248,11 @@ jobs:
               }
 
               if (mergeableState === "behind") {
+                if (!allowBranchUpdates) {
+                  await addLabel(prNumber, LABELS.pending.name);
+                  core.warning(`PR #${prNumber} is behind but branch maintenance lease is not held; leaving it unchanged.`);
+                  continue;
+                }
                 // Keep strict up-to-date requirement satisfied.
                 try {
                   await github.rest.pulls.updateBranch({

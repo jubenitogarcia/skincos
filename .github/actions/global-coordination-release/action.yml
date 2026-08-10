@@ -32,7 +32,21 @@ runs:
           echo 'No global coordination proof was acquired; nothing to release'
           exit 0
         fi
-        SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
-        SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
-          node scripts/codex-global-coordination-workflow.mjs release \
-            --proof-file "$GLOBAL_PROOF_FILE"
+        attempt=1
+        max_attempts=5
+        while true; do
+          if SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
+          SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+            node scripts/codex-global-coordination-workflow.mjs release \
+              --proof-file "$GLOBAL_PROOF_FILE"; then
+            exit 0
+          fi
+          if (( attempt >= max_attempts )); then
+            echo "Global coordination release failed after ${max_attempts} idempotent attempts" >&2
+            exit 1
+          fi
+          sleep_seconds=$((attempt * 2))
+          echo "Global coordination release retry ${attempt}/${max_attempts} after ${sleep_seconds}s" >&2
+          sleep "$sleep_seconds"
+          attempt=$((attempt + 1))
+        done

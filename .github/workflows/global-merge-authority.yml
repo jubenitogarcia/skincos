@@ -51,7 +51,11 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         if: ${{ github.event_name == 'workflow_dispatch' }}
         with:
-          ref: main
+          # Execute the authority implementation from the explicitly selected
+          # dispatch ref. Normal production dispatches use main; this also
+          # makes the first governed migration run the candidate's corrected
+          # status-publication code before that correction is merged.
+          ref: ${{ github.ref }}
           fetch-depth: 0
       - name: Fetch the exact base tree used by the merge intent
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -71,6 +75,10 @@ jobs:
           # GitHub emits the normal post-merge workflow events. GITHUB_TOKEN
           # events are intentionally suppressed by GitHub.
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          # Required status checks are bound to the GitHub Actions integration;
+          # keep status publication on that token while GH_TOKEN performs the
+          # merge mutation and preserves post-merge workflow events.
+          SKINCOS_STATUS_TOKEN: ${{ github.token }}
           SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
