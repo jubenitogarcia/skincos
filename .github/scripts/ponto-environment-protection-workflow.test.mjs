@@ -135,6 +135,35 @@ test("ordinary and watchdog rollback revalidate governance and use dedicated int
   }
 });
 
+test("staging cleanup does not dispatch a transition before release identity exists", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const cleanup = source.indexOf(
+    "- name: Restore staging Ponto to maintenance after the journey",
+  );
+  assert.ok(cleanup >= 0);
+  const cleanupBlock = source.slice(cleanup, source.indexOf("\n      - name:", cleanup + 1));
+  assert.match(
+    cleanupBlock,
+    /if: \$\{\{ always\(\) && inputs\.stage == 'staging' && steps\.release_identity\.outcome == 'success' \}\}/,
+  );
+});
+
+test("every coordinator module transition carries the immutable release SHA", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  for (const marker of [
+    "Put Ponto in maintenance before staging or live mutation",
+    "Activate exact staging release for the synthetic journey",
+    "Restore staging Ponto to maintenance after the journey",
+    "Open the approved live cohort or activate production",
+  ]) {
+    const start = source.indexOf(`- name: ${marker}`);
+    assert.ok(start >= 0, marker);
+    const end = source.indexOf("\n      - name:", start + 1);
+    const block = source.slice(start, end === -1 ? source.length : end);
+    assert.match(block, /release_sha: process\.env\.RELEASE_SHA/, marker);
+  }
+});
+
 test("emergency broker environments allow only the implicit protected-branch rule", () => {
   const source = workflow("ponto-progressive-release.yml");
   const start = source.indexOf(

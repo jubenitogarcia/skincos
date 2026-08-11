@@ -515,7 +515,7 @@ test('CCG-99 classifies executor 429 and resumes from its checkpoint idempotentl
     content_id: 'content-ccg99-executor',
     campaign_id: 'campaign-ccg99-executor',
     request_hash: 'request-ccg99-executor',
-    idempotency_key: 'idempotency-ccg99-executor',
+    idempotency_key: 'idempotency-ccg99-executor', // gitleaks:allow - deterministic non-secret test fixture
   };
   const raw = {
     ...ids,

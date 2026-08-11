@@ -943,6 +943,7 @@ jobs:
             module: "timekeeping",
             target: process.env.STAGE === "staging" ? "staging" : "production",
             state: "maintenance",
+            release_sha: process.env.RELEASE_SHA,
             message: "Ponto release in progress.",
             orchestrator_run_id: process.env.GITHUB_RUN_ID,
           }));
@@ -1282,12 +1283,12 @@ jobs:
           run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/staging-journey.json")"
           gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "timekeeping-staging-journey-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/staging-slo"
       - name: Restore staging Ponto to maintenance after the journey
-        if: ${{ always() && inputs.stage == 'staging' }}
+        if: ${{ always() && inputs.stage == 'staging' && steps.release_identity.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           node - "$RUNNER_TEMP/module-staging-restore.json" <<'NODE'
-          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ module: "timekeeping", target: "staging", state: "maintenance", message: "Staging Ponto journey complete; awaiting the next governed release.", orchestrator_run_id: process.env.GITHUB_RUN_ID }));
+          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ module: "timekeeping", target: "staging", state: "maintenance", release_sha: process.env.RELEASE_SHA, message: "Staging Ponto journey complete; awaiting the next governed release.", orchestrator_run_id: process.env.GITHUB_RUN_ID }));
           NODE
           node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-staging-restore.json" "$PONTO_ARTIFACT_DIR/runs/module-staging-restore.json"
           run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-staging-restore.json")"
