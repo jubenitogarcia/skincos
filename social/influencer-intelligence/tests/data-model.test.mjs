@@ -14,8 +14,10 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_data_model_v1.up.sql');
 const snapshotMetadataMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_snapshots_v1.up.sql');
+const scoringMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_scoring_v0.up.sql');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const snapshotMetadataMigration = fs.readFileSync(snapshotMetadataMigrationPath, 'utf8');
+const scoringMigration = fs.readFileSync(scoringMigrationPath, 'utf8');
 const digestA = 'a'.repeat(64);
 const digestB = 'b'.repeat(64);
 const observedAt = '2026-08-11T12:00:00.000Z';
@@ -109,6 +111,15 @@ test('defines additive durable coverage and freshness metadata for snapshot coll
   assert.doesNotMatch(snapshotMetadataMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
   assert.doesNotMatch(snapshotMetadataMigration, /TRUNCATE\s+/i);
   assert.match(snapshotMetadataMigration, /COMMIT;\s*$/);
+});
+
+test('defines additive score weights version metadata without destructive DDL', () => {
+  assert.match(scoringMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
+  assert.match(scoringMigration, /ADD COLUMN IF NOT EXISTS weights_version/);
+  assert.match(scoringMigration, /creator_score/);
+  assert.doesNotMatch(scoringMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(scoringMigration, /TRUNCATE\s+/i);
+  assert.match(scoringMigration, /COMMIT;\s*$/);
 });
 
 test('repository exposes a parameterized, injected PostgreSQL boundary', async () => {
@@ -226,6 +237,26 @@ test('scores accept future provider slugs but require auditable provenance and v
   await assert.rejects(
     repository.recordScore(baseScore({ scoreKey: 'score-3', ingestKey: 'score-ingest-3', evidenceState: 'unavailable', score: 1, providers: [], provenance: [] })),
     (error) => error.code === 'UNAVAILABLE_SCORE_MUST_BE_NULL',
+  );
+});
+
+test('scoring v0 persistence requires and binds the exact weights version', async () => {
+  const queryable = fakeQueryable([{ rows: [{ score_key: 'score-v0' }] }]);
+  const repository = createInfluencerIntelligenceRepository({ queryable });
+  await repository.recordScore(baseScore({
+    scoreKey: 'score-v0',
+    ingestKey: 'score-ingest-v0',
+    algorithmVersion: 'influencer-intelligence-scoring/v0',
+    weightsVersion: 'influencer-intelligence-scoring-weights/v0',
+  }));
+  assert.equal(queryable.calls[0].values[16], 'influencer-intelligence-scoring-weights/v0');
+  await assert.rejects(
+    repository.recordScore(baseScore({
+      scoreKey: 'score-v0-missing-weights',
+      ingestKey: 'score-ingest-v0-missing-weights',
+      algorithmVersion: 'influencer-intelligence-scoring/v0',
+    })),
+    (error) => error.code === 'WEIGHTS_VERSION_REQUIRED',
   );
 });
 

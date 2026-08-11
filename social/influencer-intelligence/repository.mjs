@@ -310,8 +310,8 @@ export const SQL = Object.freeze({
     returning analysis_key, ingest_key, creator_key, evidence_state, computed_at`,
   recordScore: `
     insert into influencer_intelligence.creator_score
-      (score_key, ingest_key, creator_key, score_kind, score, confidence, coverage_available, coverage_expected, evidence_state, algorithm_version, model_version, providers, input_fingerprint, provenance, computed_at, retention_policy_version)
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::text[], $13, $14::jsonb, $15::timestamptz, $16)
+      (score_key, ingest_key, creator_key, score_kind, score, confidence, coverage_available, coverage_expected, evidence_state, algorithm_version, model_version, providers, input_fingerprint, provenance, computed_at, retention_policy_version, weights_version)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::text[], $13, $14::jsonb, $15::timestamptz, $16, $17)
     on conflict (ingest_key) do nothing
     returning score_key, ingest_key, creator_key, score_kind, score, evidence_state, computed_at`,
   recordScoreComponent: `
@@ -343,7 +343,7 @@ export const SQL = Object.freeze({
     order by observed_at desc, retrieved_at desc, snapshot_key desc
     limit $2`,
   latestScores: `
-    select score_key, ingest_key, creator_key, score_kind, score, confidence, coverage_available, coverage_expected, evidence_state, algorithm_version, model_version, providers, provenance, computed_at
+    select score_key, ingest_key, creator_key, score_kind, score, confidence, coverage_available, coverage_expected, evidence_state, algorithm_version, model_version, providers, provenance, computed_at, weights_version
     from influencer_intelligence.creator_score
     where creator_key = $1
     order by computed_at desc, score_key desc
@@ -561,6 +561,11 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
       safeInput(input, 'creatorScore');
       const scoreKind = requiredString(input.scoreKind, 'scoreKind', /^(influencer|campaign-fit|brand-fit|risk)$/);
       const evidenceState = requiredString(input.evidenceState, 'evidenceState', /^(derived|inferred|unavailable)$/);
+      const algorithmVersion = version(input.algorithmVersion, 'algorithmVersion');
+      const weightsVersion = optionalString(input.weightsVersion ?? input.weights_version, 'weightsVersion', VERSION_PATTERN);
+      if (algorithmVersion.startsWith('influencer-intelligence-scoring/') && !weightsVersion) {
+        fail('WEIGHTS_VERSION_REQUIRED');
+      }
       const score = decimal(input.score, 'score', { minimum: 0, maximum: 100 });
       if (evidenceState === 'unavailable' && score !== null) fail('UNAVAILABLE_SCORE_MUST_BE_NULL');
       if (evidenceState !== 'unavailable' && score === null) fail('AVAILABLE_SCORE_REQUIRED');
@@ -576,9 +581,9 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
          requiredString(input.scoreKey, 'scoreKey'), requiredString(input.ingestKey, 'ingestKey'), requiredString(input.creatorKey, 'creatorKey'),
          scoreKind, score, confidence,
          coverageAvailable, coverageExpected,
-         evidenceState, version(input.algorithmVersion, 'algorithmVersion'), optionalString(input.modelVersion, 'modelVersion', VERSION_PATTERN),
+         evidenceState, algorithmVersion, optionalString(input.modelVersion, 'modelVersion', VERSION_PATTERN),
          providers, digest(input.inputFingerprint, 'inputFingerprint'), { entries: provenanceEntries },
-         timestamp(input.computedAt, 'computedAt'), version(input.retentionPolicyVersion, 'retentionPolicyVersion'),
+         timestamp(input.computedAt, 'computedAt'), version(input.retentionPolicyVersion, 'retentionPolicyVersion'), weightsVersion,
       ].map((value) => (value && typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : value)));
       return { inserted: Boolean(row), row };
     },

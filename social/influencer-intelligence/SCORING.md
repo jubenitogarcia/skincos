@@ -1,0 +1,57 @@
+# Influencer Score v0
+
+`scoring.mjs` is a pure deterministic boundary over the versioned analytics
+artifact. It does not call providers, an LLM, PostgreSQL, Orb, CRM, MCP, or a
+network. A caller supplies optional comments, commercial-saturation, and
+brand-fit values only as bounded structured signals with evidence references.
+
+The output always includes `overall_score`, `confidence_score`,
+`data_coverage`, `algorithm_version`, `weights_version`, `calculated_at`,
+`input_snapshot_keys`, `input_evidence_refs`, `input_fingerprint`, component
+scores, and deterministic explanation codes. The result is frozen and can be
+persisted as a new append-only score artifact.
+
+## Components and weights
+
+| Component | Weight | Source rule |
+| --- | ---: | --- |
+| `engagement_quality` | 0.20 | Median engagement rate, with comment/like ratio when available |
+| `growth_integrity` | 0.14 | Profile growth history and bounded growth-pattern anomalies |
+| `content_performance` | 0.16 | Engagement rate and views/follower ratio when available |
+| `consistency` | 0.12 | Posting-interval dispersion and engagement volatility |
+| `comment_quality` | 0.08 | Structured aggregate comment signal; unavailable by default |
+| `commercial_saturation` | 0.08 | Structured saturation signal; unavailable by default |
+| `brand_fit` | 0.08 | Structured campaign/brand signal; unavailable without a brief |
+| `risk` | 0.08 | Bounded pattern/outlier indicators; never a fake-follower fact |
+| `profile_integrity` | 0.06 | Profile metric coverage and history length |
+
+Weights are configuration, not prompt instructions. When a component is
+unavailable, its configured weight is excluded from the weighted mean and the
+remaining weights are normalized. This avoids treating missing data as a zero
+score; `data_coverage` and `confidence_score` expose the missing component and
+limit decision confidence.
+
+The score uses normalized rates and robust analytics, never absolute follower
+count as a quality input. Ratio thresholds are versioned internal v0 scoring
+configuration, not external benchmarks. Follower-tier benchmarks remain
+unavailable until a governed SKINCOS calibration dataset exists.
+
+## Confidence and coverage
+
+`confidence_score` is an objective 0..100 envelope over history length, media
+history, comment sample size, freshness, provider reliability, official-provider
+availability, and analytics metric coverage. A one-snapshot or stale fallback
+result therefore cannot receive high confidence even if a component can be
+computed.
+
+`data_coverage` combines analytics metric coverage (65%) with the configured
+weight of components that have usable evidence (35%). `null` and
+`unavailable` remain distinct from observed numeric zero.
+
+## Safety and explanations
+
+Every component carries an evidence state, confidence, bounded references, and
+a deterministic explanation `{ code, inputs, limitations }`. Growth and
+outlier signals are pattern indicators only; the engine never labels a creator
+or follower as fake from indirect evidence. LLM text or free-form rationale is
+not accepted by this boundary.
