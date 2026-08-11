@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { patchWorkflow: patchDrivePublicationMarks } = require('./patch-livia-drive-publication-marks');
+const { patchWorkflow: patchCommercialCatalog, validate: validateCommercialCatalog } = require('./patch-livia-commercial-catalog');
 const { patchWorkflow: patchTokenVaultPreflight } = require('./patch-livia-token-vault-preflight');
 const { patchWorkflow: patchAccessibilityContract } = require('./patch-livia-accessibility-contract');
 const { patchWorkflow: patchFacebookCarouselContract } = require('./patch-livia-facebook-carousel-contract');
@@ -39,6 +40,8 @@ function buildCandidate(workflow, releaseRoot) {
   }
 
   let candidate = patchDrivePublicationMarks(workflow);
+  candidate = patchCommercialCatalog(candidate);
+  validateCommercialCatalog(candidate);
   candidate = patchTokenVaultPreflight(candidate, releaseRoot);
   candidate = patchAccessibilityContract(candidate);
   candidate = patchFacebookCarouselContract(candidate);
@@ -59,6 +62,7 @@ function buildCandidate(workflow, releaseRoot) {
       releaseRoot,
       patches: [
         'drive-publication-marks',
+        'crm-commercial-catalog',
         'token-vault-preflight',
         'accessibility-contract',
         'facebook-carousel-contract',

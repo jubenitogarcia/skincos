@@ -20,6 +20,7 @@ test('production candidate builder applies every Livia fail-closed patch as one 
 
   assert.deepEqual(report.patches, [
     'drive-publication-marks',
+    'crm-commercial-catalog',
     'token-vault-preflight',
     'accessibility-contract',
     'facebook-carousel-contract',
@@ -32,6 +33,12 @@ test('production candidate builder applies every Livia fail-closed patch as one 
   ]);
   assert.equal(nodes.has('Merge Drive Result and Context'), false);
   assert.equal(nodes.has('Prepare Drive Publication Marks'), true);
+  assert.equal(nodes.has('Prepare Livia CRM Catalog Context'), true);
+  assert.equal(nodes.has('CRM Commercial Catalog'), true);
+  assert.equal(nodes.has('Knowledge'), false);
+  assert.equal(nodes.get('CRM Commercial Catalog').parameters.method, 'GET');
+  assert.equal(nodes.get('CRM Commercial Catalog').parameters.sendBody, false);
+  assert.doesNotMatch(JSON.stringify(nodes.get('CRM Commercial Catalog').parameters), /\$fromAI|placeholderDefinitions|\{unit\}/i);
   assert.equal(nodes.has('Collect Drive Publication Marks'), true);
   assert.deepEqual(nodes.get('Schedule Trigger').parameters.rule.interval, [
     { field: 'minutes', minutesInterval: 15 },

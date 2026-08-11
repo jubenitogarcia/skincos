@@ -32,8 +32,12 @@ O comando valida o construtor, a matriz offline e os entrypoints antes de criar
 `/opt/skincos/current/source`. Em seguida, gere o manifesto da versão
 candidata pelo construtor único e valide o grafo produzido. Não aplique patches
 isolados manualmente: o construtor inclui, como unidade atômica de candidato,
-as marcas Drive por fonte, o preflight do Token Vault, o contrato de alt text,
-o contrato de carrossel Facebook e o pin/runtime semanticamente idempotente.
+o catálogo comercial oficial CRM read-only, as marcas Drive por fonte, o
+preflight do Token Vault, o contrato de alt text, o contrato de carrossel
+Facebook e o pin/runtime semanticamente idempotente. O patch comercial valida
+que a tool usa GET/Bearer sem placeholder, que `bss` e `nh` são derivados de
+`Get Credential Tokens`, que Documents permanece editorial e que `crmPricing`
+falha fechado fora de `crm|none`.
 
 ```bash
 sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/prepare-livia-production-candidate.js \
@@ -43,6 +47,21 @@ sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/eng
 sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/validate-livia-workflow.js \
   /var/tmp/livia-candidate.json
 ```
+
+Antes da escrita versionada, faça o smoke autenticado read-only do CRM com o
+token protegido já carregado no runtime. O endpoint deve aceitar apenas Bearer,
+retornar `crm-commercial-catalog/v1`, conter as duas chaves CRM solicitadas e
+não executar mutação:
+
+```bash
+CRM_CATALOG_TOKEN="${CRM_COMMERCIAL_CATALOG_TOKEN:-${META_ADS_OFFER_CONTEXT_TOKEN:-}}"
+test -n "$CRM_CATALOG_TOKEN"
+curl --fail-with-body --silent --show-error \
+  -H "Authorization: Bearer $CRM_CATALOG_TOKEN" \
+  'http://127.0.0.1:8099/api/atendimento/internal/commercial/catalog?units=barra-shopping-sul,novo-hamburgo'
+```
+
+Não registre o valor do token nem o response bruto em artefatos compartilhados.
 
 Somente então gere o manifesto da versão candidata e publique exclusivamente
 pela transação versionada:

@@ -332,6 +332,7 @@ sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/prepare-livia-production-candidate.js" \
   "$DESTINATION/orb/engine/scripts/validate-livia-workflow.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-drive-publication-marks.js" \
+  "$DESTINATION/orb/engine/scripts/patch-livia-commercial-catalog.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-token-vault-preflight.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-accessibility-contract.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-facebook-carousel-contract.js" \
@@ -341,6 +342,7 @@ sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/patch-livia-notification-contract.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-ai-reel-covers.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-runtime-isolation.js" \
+  "$DESTINATION/orb/engine/scripts/lib/crm-commercial-catalog-contract.js" \
   "$DESTINATION/orb/engine/scripts/livia/rollout-policy.js" \
   "$DESTINATION/orb/engine/scripts/livia/set-rollout-mode.js" \
   "$DESTINATION/ops/governance/livia-rollout-policy.json"
