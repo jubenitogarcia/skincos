@@ -1,7 +1,8 @@
 # Influencer Intelligence
 
-Status: architecture v1 defined; M2 provider boundary merged, and data model
-v1 is an additive, unapplied artifact in this milestone. The domain remains
+Status: architecture v1 defined; M2 provider boundary and M4 deterministic
+analytics are implemented in source control, and data model v1 is an additive,
+unapplied artifact in this milestone. The domain remains
 experimental, not exposed, and off by default.
 
 This domain provides read-only intelligence about Instagram creators for
@@ -120,6 +121,22 @@ These migrations are not applied to local, staging, or production through an
 operational runner; they are validated as source-controlled artifacts and
 through synthetic repository tests. No UI, feature wiring,
 runtime, CRM, MCP, Orb, systemd, or external provider call is included.
+
+## M4 decision: deterministic analytics
+
+[`analytics.mjs`](./analytics.mjs) is a pure ESM engine over normalized profile
+and media snapshots. It emits versioned, coverage-aware metrics for profile
+growth, cadence, likes, comments, engagement, views/reach, video performance,
+volatility, trends, robust outliers, and bounded growth anomalies. The formulas
+and limitations are documented in [`ANALYTICS.md`](./ANALYTICS.md).
+
+Missing values stay unavailable and zero denominators never produce a numeric
+result. A viral post is retained as observed evidence but cannot replace the
+robust series summary. Follower-tier benchmark output is an explicit
+`skincos_internal` structure and remains unavailable until a governed internal
+calibration dataset exists. The engine does not infer follower quality or fake
+followers and does not connect providers, PostgreSQL, Orb, CRM, or runtime
+routes.
 
 ## M3 snapshot operations
 
@@ -267,7 +284,7 @@ production configuration.
 | Architecture | Canonical architecture v1 | Defined in the ADR and runtime-free manifest |
 | M2 | Official-first router and controlled collectors | Merged in #1305; injected synthetic transports only |
 | M3 | Append-only snapshots, retention, and Orb scheduling | Snapshot operations implemented; Orb scheduling pending |
-| M4 | Robust analytics and outlier-resistant metrics | Pending |
+| M4 | Robust analytics and outlier-resistant metrics | Implemented in this PR; pure deterministic engine, golden fixtures, and formula documentation |
 | M5 | Deterministic score, confidence, coverage, and provenance | Pending |
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Pending |
 | M7 | `skincos-influencer-intelligence` Codex skill | Pending |
