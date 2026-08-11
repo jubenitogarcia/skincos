@@ -279,15 +279,23 @@ provider-debug endpoint in this contract.
 
 ## 9. MCP read-only contract
 
-M6 will expose four bounded tools through the existing
-`orb/engine/mcp-readonly-gateway` security pattern:
+M6 adds a source-only domain adapter for the existing
+`orb/engine/mcp-readonly-gateway` security pattern. The current tool registry
+is intentionally limited to artifacts that already exist and delegates to an
+authenticated internal read service:
 
 | Tool | Input | Output |
 | --- | --- | --- |
-| `influencer_intelligence_get_creator_analysis` | creator key, window, metric set | Analysis envelope |
-| `influencer_intelligence_compare_creators` | up to 20 creator keys, window, metric set | Comparison envelope |
-| `influencer_intelligence_get_campaign_fit` | creator keys, structured campaign criteria, window | Campaign Fit envelope |
-| `influencer_intelligence_get_data_coverage` | creator key, window | Coverage/provenance envelope |
+| `search_creators` | bounded query, provider/state filter, page | Creator registry projection |
+| `get_creator_profile` | creator key | Latest profile envelope |
+| `get_creator_snapshots` | creator key, optional bounded window/page | Historical snapshot envelope |
+| `get_creator_media` | creator key, optional bounded window/page | Media metrics envelope |
+| `get_creator_analytics` | creator key, optional bounded window | Persisted deterministic analytics envelope |
+| `get_creator_score` | creator key | Persisted deterministic score envelope |
+| `compare_creators` | up to 20 creator keys, optional bounded window | Comparison envelope |
+
+`get_campaign_fit` is deliberately deferred and is not registered before M11,
+when the Campaign Fit artifact and its separate confidence contract exist.
 
 Each tool requires authentication and the domain grant. Tool input uses a
 closed JSON schema with `additionalProperties: false`, bounded sizes, bounded
@@ -296,7 +304,9 @@ sanitization, a domain rate limit, a 12-second timeout/abort path, an audit
 event, and a read-only database role. The response is sanitized again before
 leaving the gateway.
 
-MCP delegates to the internal service. It cannot call Meta Graph or
+MCP delegates to the internal service. The M6 adapter is not a live transport
+registration; the existing gateway remains the owner of transport and
+upstream-authentication integration. The adapter cannot call Meta Graph or
 instagrapi, retrieve Token Vault material, run arbitrary SQL or shell, scrape,
 publish, engage, or mutate Orb/n8n workflows. Errors are reduced to stable
 codes and never include raw upstream payloads.
@@ -400,7 +410,7 @@ source-controlled migration artifacts; they do not apply them.
 | M3 | Append-only snapshots, retention policy, and Orb job contract | Snapshots merged in PR #1331; inactive scheduler source merged in #1335; import/runtime pending |
 | M4 | Robust analytics and outlier-resistant metrics | Merged in PR #1333; synthetic time-series fixtures and explicit unavailable coverage |
 | M5 | Deterministic score/confidence/provenance engine | Merged in PR #1334; versioned algorithms and golden evidence |
-| M6 | Hardened authenticated read-only MCP | Tool schema, auth/grant, sanitization, limits, timeout, audit, read-only role |
+| M6 | Hardened authenticated read-only MCP domain adapter | Tool schema, auth/grant, sanitization, limits, timeout, audit contract, read-only service delegation; runtime registration remains pending |
 | M7 | `skincos-influencer-intelligence` skill | Skill uses only the approved MCP contract and cannot bypass boundaries |
 | M8 | Read-only CRM API/dashboard | Server-side flag/grant, module catalog, shadow UI, direct-provider negative tests |
 | M9 | Minimized comments intelligence | Aggregate-only topics/sentiment/safety/spam signals and retention evidence |

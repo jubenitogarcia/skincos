@@ -286,17 +286,21 @@ export const API_CONTRACT = deepFreeze({
 
 export const MCP_CONTRACT = deepFreeze({
   contractVersion: 'influencer-intelligence/mcp/v1',
-  transport: 'reuse the authenticated read-only gateway pattern; MCP is not a provider transport',
+  transport: 'domain adapter for the authenticated orb/engine/mcp-readonly-gateway pattern; MCP is not a provider transport',
   controls: ['authentication', 'server-side grant', 'schema sanitization', 'bounded input', 'rate limit', 'timeout and abort', 'audit event', 'read-only database role', 'redacted output'],
-  limits: { maxCreatorsPerRequest: 20, maxWindowDays: 365, timeoutMs: 12000, rateLimitPerMinute: 60 },
+  limits: { maxRequestBytes: 65536, maxResponseBytes: 524288, maxPageSize: 50, maxCreatorsPerRequest: 20, maxWindowDays: 365, maxConcurrentRequests: 4, timeoutMs: 12000, rateLimitPerMinute: 60 },
   tools: [
-    { name: 'influencer_intelligence_get_creator_analysis', readOnly: true, input: ['creatorKey', 'window', 'metricSet'] },
-    { name: 'influencer_intelligence_compare_creators', readOnly: true, input: ['creatorKeys', 'window', 'metricSet'] },
-    { name: 'influencer_intelligence_get_campaign_fit', readOnly: true, input: ['creatorKeys', 'campaignCriteria', 'window'] },
-    { name: 'influencer_intelligence_get_data_coverage', readOnly: true, input: ['creatorKey', 'window'] },
+    { name: 'search_creators', readOnly: true, input: ['query', 'provider', 'registry_state', 'page', 'page_size'] },
+    { name: 'get_creator_profile', readOnly: true, input: ['creator_key'] },
+    { name: 'get_creator_snapshots', readOnly: true, input: ['creator_key', 'window', 'page', 'page_size'] },
+    { name: 'get_creator_media', readOnly: true, input: ['creator_key', 'window', 'page', 'page_size'] },
+    { name: 'get_creator_analytics', readOnly: true, input: ['creator_key', 'window'] },
+    { name: 'get_creator_score', readOnly: true, input: ['creator_key'] },
+    { name: 'compare_creators', readOnly: true, input: ['creator_keys', 'window'] },
   ],
+  deferredTools: [{ name: 'get_campaign_fit', unavailableUntil: 'M11', rule: 'not registered before Campaign Fit exists' }],
   forbidden: ['arbitrary SQL', 'arbitrary shell', 'scraping', 'provider credential retrieval', 'publication', 'engagement', 'workflow mutation', 'raw comment or media output'],
-  output: ['versioned response envelope', 'coverage', 'provenance', 'requestId', 'sanitized errors'],
+  output: ['versioned response envelope', 'data classification', 'freshness', 'confidence', 'coverage', 'provenance', 'requestId', 'sanitized errors'],
 });
 
 export const RELEASE_CONTRACT = deepFreeze({
@@ -322,6 +326,8 @@ export const RELEASE_CONTRACT = deepFreeze({
     schedulerWorkflowImported: false,
     schedulerWorkflowActive: false,
     schedulerMigrationArtifactAdded: true,
+    mcpSourceAdded: true,
+    mcpRuntimeRegistered: false,
   },
 });
 
@@ -350,7 +356,7 @@ export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'M3', title: 'Append-only snapshots, retention, and Orb job contract', status: 'data model #1322, snapshots #1331, and scheduler #1335 merged; artifacts/import/runtime pending', acceptance: ['new additive tables', 'immutable evidence lifecycle', 'bounded snapshot_creator and snapshot_creator_media operations', 'inactive dry-run/shadow scheduling', 'resume/recovery with idempotent service calls', 'no live workflow import'] },
   { id: 'M4', title: 'Robust analytics', status: 'merged #1333; synthetic source/tests only', acceptance: ['time windows', 'viral-outlier resistance', 'explicit unavailable coverage'] },
   { id: 'M5', title: 'Deterministic scores and confidence', status: 'merged #1334; synthetic source/tests only', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
-  { id: 'M6', title: 'Hardened read-only MCP', status: 'pending', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
+  { id: 'M6', title: 'Hardened read-only MCP', status: 'source adapter and protocol tests implemented; runtime registration pending', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
   { id: 'M7', title: 'Codex skill', status: 'pending', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
   { id: 'M8', title: 'CRM read-only surface', status: 'pending', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
   { id: 'M9', title: 'Comments intelligence', status: 'pending', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
