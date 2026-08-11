@@ -66,7 +66,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-skincos-st
 ```
 
 The registered task runs `-Mode audit` only. Cleanup and hardlink deduplication
-remain explicit operator actions.
+remain explicit operator actions. The default scheduled audit intentionally
+omits `-IncludeWorktreeStatus`: detailed classification invokes Git status and
+merge-base checks for every registered worktree and should be run explicitly
+when needed:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-skincos-storage-governance-task.ps1 `
+  -RepositoryRoot (Get-Location).Path `
+  -ScriptPath (Join-Path (Get-Location).Path 'scripts\skincos-storage-governance.ps1') `
+  -IncludeWorktreeStatus -Apply
+```
 
 ## Release archives
 
