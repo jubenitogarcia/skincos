@@ -1,10 +1,26 @@
 # Influencer Intelligence
 
-Status: M2 provider boundary, experimental, not exposed, and off by default.
+Status: architecture v1 defined; M2 provider boundary merged, experimental,
+not exposed, and off by default.
 
 This domain provides read-only intelligence about Instagram creators for
 analysis, comparison, and campaign fit. It is not an engagement automation
 surface, a publication surface, or a new scraping project.
+
+## Architecture v1
+
+The canonical architecture decision is documented in
+[`docs/decisions/adr-influencer-intelligence-architecture.md`](../../docs/decisions/adr-influencer-intelligence-architecture.md).
+The versioned, runtime-free contract companion is
+[`architecture.mjs`](./architecture.mjs). Together they define the provider
+boundary, append-only data model, provenance and score envelopes, internal API,
+read-only MCP tools, release/flag model, privacy rules, observability, and the
+M0--M13 implementation gates.
+
+The architecture milestone itself does not add routes, migrations, provider
+transports, CRM registration, MCP registration, Orb workflow changes, or flag
+wiring. `INFLUENCER_INTELLIGENCE_ENABLED` remains `false` and the domain stays
+off until a later milestone proves its own gates.
 
 ## M0 decision
 
@@ -62,8 +78,9 @@ credentials, sessions, comments, media, and contact fields never enter the
 normalized provider contract. Every returned metric is `observed` or explicit
 `unavailable`, then passes through the versioned M0 snapshot contract.
 
-The Meta adapter is a boundary around the existing official CRM integration,
-not a second HTTP client. The instagrapi adapter is a narrow boundary around
+M2 is merged as PR #1305. The Meta adapter is a boundary around the existing
+official CRM integration, not a second HTTP client. The instagrapi adapter is a
+narrow boundary around
 the existing `social/instagram` read path, not a new scraper or session
 implementation. M2 uses synthetic transports only: it does not call Graph,
 instagrapi, Token Vault, PostgreSQL, Orb, or any runtime endpoint. A future
@@ -188,9 +205,10 @@ production configuration.
 
 | Milestone | Deliverable | Status |
 | --- | --- | --- |
-| M0 | Architecture and normalized contracts | Merged in #1303 |
+| M0 | Normalized contracts | Merged in #1303 |
 | M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; artifact only, not applied |
-| M2 | Official-first router and controlled collectors | In progress; injected synthetic transports only |
+| Architecture | Canonical architecture v1 | Defined in the ADR and runtime-free manifest |
+| M2 | Official-first router and controlled collectors | Merged in #1305; injected synthetic transports only |
 | M3 | Append-only snapshots, retention, and Orb scheduling | Pending |
 | M4 | Robust analytics and outlier-resistant metrics | Pending |
 | M5 | Deterministic score, confidence, coverage, and provenance | Pending |
