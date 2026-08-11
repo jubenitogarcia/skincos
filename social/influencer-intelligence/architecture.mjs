@@ -337,10 +337,10 @@ export const OBSERVABILITY_CONTRACT = deepFreeze({
 });
 
 export const IMPLEMENTATION_PLAN = deepFreeze([
-  { id: 'architecture', title: 'Canonical architecture v1', status: 'this PR', acceptance: ['ADR and manifest agree', 'boundaries and non-goals are explicit', 'no runtime or migration change'] },
+  { id: 'architecture', title: 'Canonical architecture v1', status: 'merged #1310; runtime-free manifest', acceptance: ['ADR and manifest agree', 'boundaries and non-goals are explicit', 'no runtime or migration change'] },
   { id: 'M0', title: 'Normalized contracts', status: 'merged #1303', acceptance: ['pure versioned evidence, provenance, coverage, signal, and score envelopes'] },
-  { id: 'M1', title: 'Creator registry and additive PostgreSQL artifact', status: 'merged #1304; unapplied artifact', acceptance: ['minimal pseudonymous registry', 'additive/idempotent SQL', 'destination and grant gates before apply'] },
-  { id: 'M2', title: 'Official-first provider router and bounded collectors', status: 'merged #1305; synthetic transport only', acceptance: ['Meta first', 'controlled instagrapi fallback', 'fail-closed classification', 'no duplicate scraper'] },
+  { id: 'M1', title: 'Creator registry and additive PostgreSQL artifact', status: 'merged #1304 plus data-model extension #1322; unapplied artifacts', acceptance: ['minimal pseudonymous registry', 'additive/idempotent SQL', 'destination and grant gates before apply'] },
+  { id: 'M2', title: 'Official-first provider router and bounded collectors', status: 'canonical router merged #1324 (supersedes #1305); synthetic transport only', acceptance: ['Meta first', 'controlled instagrapi fallback', 'fail-closed classification', 'no duplicate scraper'] },
   { id: 'M3', title: 'Append-only snapshots, retention, and Orb job contract', status: 'workflow source and contract implemented; import/runtime pending', acceptance: ['new additive tables', 'immutable evidence lifecycle', 'bounded snapshot_creator and snapshot_creator_media operations', 'inactive dry-run/shadow scheduling', 'resume/recovery with idempotent service calls', 'no live workflow import'] },
   { id: 'M4', title: 'Robust analytics', status: 'merged #1333; synthetic source/tests only', acceptance: ['time windows', 'viral-outlier resistance', 'explicit unavailable coverage'] },
   { id: 'M5', title: 'Deterministic scores and confidence', status: 'merged #1334; synthetic source/tests only', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
