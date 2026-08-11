@@ -9,8 +9,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { getCsrfToken } from '@/csrf'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { Switch } from '@/switch'
 import { buildCorporateEmail, suggestUsername, type UnifiedTeamConfig, type UnifiedTeamMember, type UnifiedTeamPagination } from '@/teamApi'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { TooltipButton } from '@/tooltip'
 
 type Me = { success?: boolean; user?: { username?: string; role?: string; allowedUnits?: string[] }; csrfToken?: string }
@@ -19,7 +19,6 @@ type ApiError = { error?: string; message?: string; code?: string }
 type RequestOptions = { method?: string; body?: unknown; csrf?: string | null; headers?: Record<string, string> }
 type TeamPendingItem = { memberId: string; kind: 'PROVISIONING' | 'COMPENSATION' | 'CRM_ACCOUNT_LINK' | 'IDENTITY_LINK' | 'ESCALA_LINK' | 'ESCALA_SYNC'; source?: string; status: string }
 type TeamSummary = { members?: number; pendingLinks?: number; pendingProvisioning?: number; pendingInvites?: number; pendingAccountLinks?: number; pendingItems?: TeamPendingItem[] }
-type TeamHistoryEntry = { id: string | number; timestamp?: string | null; actor?: string; role?: string; action?: string; entity?: string; before?: Record<string, unknown> | null; after?: Record<string, unknown> | null }
 
 function Badge({ variant, className, style, ...props }: React.ComponentProps<typeof BaseBadge>) {
   const accessibleColors = variant === 'success'
@@ -88,6 +87,19 @@ function readinessMessage(readiness?: UnifiedTeamConfig['readiness']) {
 }
 
 const unitLabels: Record<string, string> = { 'novo-hamburgo': 'Novo Hamburgo', 'barra-shopping-sul': 'Barra Shopping Sul' }
+const standardDepartmentOptions = ['Atendimento', 'Recepção', 'Comercial', 'Operações', 'Administrativo', 'Financeiro', 'Marketing', 'Recursos Humanos', 'Tecnologia']
+const scheduleRoleByJobTitle: Record<string, string> = {
+  Gestor: 'Gestor',
+  Gerente: 'Gerente',
+  Coordenador: 'Coordenador',
+  'Responsável Técnico': 'Responsável Técnico',
+  Injetor: 'Injetor',
+  Consultor: 'Consultor',
+}
+const unitAccentClasses: Record<string, string> = {
+  'novo-hamburgo': 'border-emerald-300/70 bg-emerald-400/20 text-emerald-50 hover:bg-emerald-400/30',
+  'barra-shopping-sul': 'border-violet-300/70 bg-violet-400/20 text-violet-50 hover:bg-violet-400/30',
+}
 const titleOptions = ['Gestor', 'Gerente', 'Coordenador', 'Responsável Técnico', 'Injetor', 'Consultor']
 const creatableTitlesByRole: Record<string, string[]> = {
   ADMIN: titleOptions,
@@ -106,11 +118,43 @@ const initialForm = {
   units: [] as string[],
   scheduleProfessionalId: '',
   scheduleStatus: 'Ativo',
-  scheduleRole: 'Injetor',
+  scheduleRole: 'Consultor',
   scheduleShift: '',
   scheduleNickname: '',
   scheduleInstagram: '',
   scheduleColor: '',
+}
+
+function scheduleRoleForJobTitle(jobTitle: string, fallback = '') {
+  return scheduleRoleByJobTitle[jobTitle] || fallback || jobTitle
+}
+
+function isScheduleActive(value?: string) {
+  return !['inativo', 'inactive', 'desligado', 'off', '0', 'false'].includes(String(value || '').trim().toLowerCase())
+}
+
+function nationalMobileDigits(value: string) {
+  const raw = String(value || '').replace(/\D/g, '')
+  const hasBrazilCountryCode = String(value || '').trim().startsWith('+55') || (raw.length >= 13 && raw.startsWith('55'))
+  return (hasBrazilCountryCode ? raw.slice(2) : raw).slice(0, 11)
+}
+
+function formatMobileInput(value: string) {
+  const digits = nationalMobileDigits(value)
+  if (!digits) return ''
+  if (digits.length <= 2) return `(${digits}`
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`
+}
+
+function storedMobilePhone(value: string) {
+  const digits = nationalMobileDigits(value)
+  return digits ? `+55${digits}` : ''
+}
+
+function unitButtonClass(unit: string, selected: boolean) {
+  if (!selected) return 'border-white/15 bg-white/[0.03] text-blue-100/75 hover:bg-white/[0.08]'
+  return `${unitAccentClasses[unit] || 'border-sky-300/70 bg-sky-400/20 text-sky-50 hover:bg-sky-400/30'} ring-2 ring-white/25 ring-offset-2 ring-offset-corporate-900`
 }
 
 const TEAM_PAGE_SIZE = 50
@@ -148,7 +192,7 @@ function emptyTeamForm(row?: UnifiedTeamMember) {
     units: row?.units || [],
     scheduleProfessionalId: row?.schedule?.professionalId || '',
     scheduleStatus: row?.schedule?.status || 'Ativo',
-    scheduleRole: row?.schedule?.role || 'Injetor',
+    scheduleRole: scheduleRoleForJobTitle(row?.jobTitle || 'Consultor', row?.schedule?.role || ''),
     scheduleShift: row?.schedule?.shift || '',
     scheduleNickname: row?.schedule?.nickname || '',
     scheduleInstagram: row?.schedule?.instagram || '',
@@ -227,51 +271,6 @@ function scheduleSyncBadgeVariant(state?: string): BadgeVariant {
   return 'warning'
 }
 
-function historyActionLabel(action: string) {
-  return ({
-    EMPLOYEE_TEAM_CREATED: 'Cadastro criado',
-    EMPLOYEE_TEAM_UPDATED: 'Cadastro atualizado',
-    EMPLOYEE_TEAM_STATUS_CHANGED: 'Status alterado',
-    EMPLOYEE_TEAM_BULK_STATUS_CHANGED: 'Status alterado em lote',
-    EMPLOYEE_TEAM_INVITE_RESENT: 'Convite reenviado',
-    EMPLOYEE_TEAM_INVITE_REVOKED: 'Convite revogado',
-    EMPLOYEE_ONBOARDING_STATUS_CHANGED: 'Status alterado',
-    EMPLOYEE_ONBOARDING_ACTIVATION_RETRY: 'Ativação processada',
-    EMPLOYEE_IDENTITY_LINK_CREATED: 'Vínculo operacional criado',
-    EMPLOYEE_ESCALA_SYNC_RECORDED: 'Sincronização da Escala registrada',
-  } as Record<string, string>)[String(action || '').toUpperCase()] || String(action || 'Alteração registrada')
-}
-
-function historyChange(entry: TeamHistoryEntry) {
-  const before = entry.before && typeof entry.before === 'object' ? entry.before : {}
-  const after = entry.after && typeof entry.after === 'object' ? entry.after : {}
-  const accountStatus = after.accountStatus || after.status
-  const previousStatus = before.accountStatus || before.status
-  if (accountStatus) {
-    const transition = previousStatus && String(previousStatus) !== String(accountStatus)
-      ? `: ${statusLabel(String(previousStatus))} → ${statusLabel(String(accountStatus))}`
-      : `: ${statusLabel(String(accountStatus))}`
-    const reason = after.terminationReason ? ` · Motivo: ${String(after.terminationReason)}` : ''
-    return `Conta${transition}${reason}`
-  }
-  const profile = after.profile || after.jobTitle
-  const units = Array.isArray(after.units) ? after.units.map((unit) => unitLabels[String(unit)] || String(unit)).join(', ') : ''
-  if (profile || units) return [profile ? `Cargo: ${String(profile)}` : '', units ? `Unidades: ${units}` : ''].filter(Boolean).join(' · ')
-  const source = after.source
-  const reviewStatus = after.reviewStatus
-  if (source || reviewStatus) return [`Vínculo: ${String(source || 'operacional')}`, reviewStatus ? String(reviewStatus) : ''].filter(Boolean).join(' · ')
-  if (after.scheduleSyncState) return [`Escala: ${scheduleSyncLabel(String(after.scheduleSyncState))}`, after.errorCode ? `Código: ${String(after.errorCode)}` : ''].filter(Boolean).join(' · ')
-  if (after.inviteIssued) return 'Convite emitido'
-  if (after.inviteRevoked) return 'Acesso aguardando novo convite'
-  return 'Alteração registrada'
-}
-
-function historyTimestamp(timestamp?: string | null) {
-  if (!timestamp) return 'Data não informada'
-  const date = new Date(timestamp)
-  return Number.isNaN(date.getTime()) ? 'Data não informada' : date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
-}
-
 export function UsersModule() {
   const [me, setMe] = React.useState<Me | null>(null)
   const [teamRows, setTeamRows] = React.useState<UnifiedTeamMember[]>([])
@@ -293,10 +292,6 @@ export function UsersModule() {
   const [pagination, setPagination] = React.useState<UnifiedTeamPagination | null>(null)
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
   const [bulkSaving, setBulkSaving] = React.useState(false)
-  const [formTab, setFormTab] = React.useState('identity')
-  const [historyRows, setHistoryRows] = React.useState<TeamHistoryEntry[]>([])
-  const [historyLoading, setHistoryLoading] = React.useState(false)
-  const [historyError, setHistoryError] = React.useState('')
   const [linkSource, setLinkSource] = React.useState<'ESCALA' | 'ATENDIMENTO'>('ESCALA')
   const [linkSourceId, setLinkSourceId] = React.useState('')
   const [linkSaving, setLinkSaving] = React.useState(false)
@@ -310,9 +305,7 @@ export function UsersModule() {
 
   const role = String(me?.user?.role || '').toUpperCase()
   const actorUnits = Array.isArray(me?.user?.allowedUnits) ? me!.user!.allowedUnits!.filter(Boolean) : []
-  const dataUnavailable = Boolean(loadError)
-  const writesAvailable = !loading && !dataUnavailable && (!teamConfig.enabled || !teamConfig.readiness || teamConfig.readiness.ready)
-  const canManage = writesAvailable && ['ADMIN', 'GESTOR', 'GERENTE'].includes(role) && (role === 'ADMIN' || actorUnits.length > 0)
+  const canManage = ['ADMIN', 'GESTOR', 'GERENTE'].includes(role) && (role === 'ADMIN' || actorUnits.length > 0)
   const selectableUnits = role === 'ADMIN' ? Object.keys(unitLabels) : actorUnits
   const selectableTitles = React.useMemo(() => creatableTitlesByRole[role] || [], [role])
   const generatedEmail = buildCorporateEmail(form.fullName)
@@ -326,6 +319,11 @@ export function UsersModule() {
   const canRead = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)
   const formReadOnly = !canManage
   const editTitles = Array.from(new Set([editingRow?.jobTitle, ...selectableTitles].filter((value): value is string => Boolean(value))))
+  const departmentOptions = React.useMemo(() => Array.from(new Set([
+    ...standardDepartmentOptions,
+    ...teamRows.map((row) => row.department),
+    editingRow?.department,
+  ].filter((value): value is string => Boolean(value?.trim())))), [editingRow?.department, teamRows])
 
   const load = React.useCallback(async () => {
     const sequence = ++loadSequence.current
@@ -379,57 +377,32 @@ export function UsersModule() {
     return () => window.clearTimeout(timer)
   }, [searchInput])
 
-  const loadHistory = React.useCallback(async (memberId: string) => {
-    setHistoryLoading(true)
-    setHistoryError('')
-    try {
-      const result = await api<{ success?: boolean; data?: TeamHistoryEntry[] }>(`/admin/team/${encodeURIComponent(memberId)}/history`, { csrf: me?.csrfToken })
-      setHistoryRows(Array.isArray(result?.data) ? result.data : [])
-    } catch (error: any) {
-      setHistoryRows([])
-      setHistoryError(error?.message || 'O histórico está indisponível no momento.')
-    } finally {
-      setHistoryLoading(false)
-    }
-  }, [me?.csrfToken])
-
-  React.useEffect(() => {
-    if (!open || !editingId || !teamConfig.enabled) {
-      setHistoryRows([])
-      setHistoryError('')
-      setHistoryLoading(false)
-      return
-    }
-    void loadHistory(editingId)
-  }, [open, editingId, teamConfig.enabled, loadHistory])
-
   const updateField = (field: keyof typeof initialForm, value: string | string[]) => setForm((current) => ({ ...current, [field]: value }))
+  const updateJobTitle = (jobTitle: string) => setForm((current) => ({ ...current, jobTitle, scheduleRole: scheduleRoleForJobTitle(jobTitle, current.scheduleRole) }))
   const toggleUnit = (unit: string) => setForm((current) => ({ ...current, units: current.units.includes(unit) ? current.units.filter((item) => item !== unit) : [...current.units, unit] }))
 
   const openCreate = React.useCallback(() => {
-    if (!canManage) return
     const defaultTitle = selectableTitles[selectableTitles.length - 1] || 'Consultor'
-    const defaultUnits = selectableUnits.length === 1 ? selectableUnits : []
+    const defaultUnits = [...selectableUnits]
     setEditingId(null)
     setEditingOriginalName('')
     setCollisionRequired(false)
     usernameWasEdited.current = false
-    setFormTab('identity')
-    setHistoryRows([])
-    setHistoryError('')
     setCrmUsernameInput('')
-    setForm({ ...initialForm, jobTitle: defaultTitle, units: defaultUnits })
+    setForm({
+      ...initialForm,
+      jobTitle: defaultTitle,
+      scheduleRole: scheduleRoleForJobTitle(defaultTitle),
+      units: defaultUnits,
+    })
     setOpen(true)
-  }, [canManage, selectableTitles, selectableUnits])
+  }, [selectableTitles, selectableUnits])
 
   const openEdit = (row: UnifiedTeamMember) => {
     setEditingId(row.id)
     setEditingOriginalName(row.fullName)
     setCollisionRequired(false)
     usernameWasEdited.current = true
-    setFormTab('identity')
-    setHistoryRows([])
-    setHistoryError('')
     setCrmUsernameInput(row.crmAccountReviewStatus === 'REJECTED' ? (row.crmAccountUsername || '') : '')
     setForm(emptyTeamForm(row))
     setOpen(true)
@@ -574,7 +547,7 @@ export function UsersModule() {
   }
 
   const syncEscala = async (member: UnifiedTeamMember, created: boolean) => {
-    if (!canManage || !teamConfig.enabled || !member.workforceEmployeeId) return
+    if (!teamConfig.enabled || !member.workforceEmployeeId) return
     setSyncingEscala(true)
     try {
       const schedulePayload = {
@@ -585,7 +558,7 @@ export function UsersModule() {
         role: form.scheduleRole,
         shift: form.scheduleShift,
         nickname: form.scheduleNickname,
-        phone: form.mobilePhone || member.schedule?.phone || undefined,
+        phone: storedMobilePhone(form.mobilePhone) || storedMobilePhone(member.schedule?.phone || '') || undefined,
         email: effectiveEmail,
         instagram: form.scheduleInstagram,
         color: form.scheduleColor,
@@ -626,8 +599,14 @@ export function UsersModule() {
   const submit = async () => {
     if (!canManage) return
     const username = form.username.trim() || suggestUsername(form.fullName, effectiveEmail)
-    if (!form.fullName.trim() || !username || !effectiveEmail || (!editingId && (!form.personalEmail.trim() || !form.mobilePhone.trim())) || !form.department.trim() || !form.units.length) {
+    const normalizedMobilePhone = storedMobilePhone(form.mobilePhone)
+    const mobileDigits = nationalMobileDigits(form.mobilePhone)
+    if (!form.fullName.trim() || !username || !effectiveEmail || (!editingId && (!form.personalEmail.trim() || !mobileDigits)) || !form.department.trim() || !form.units.length) {
       toast.error('Preencha nome, usuário, e-mails, telefone, departamento e ao menos uma unidade.')
+      return
+    }
+    if ((mobileDigits.length > 0 && mobileDigits.length !== 11) || (!editingId && mobileDigits.length !== 11)) {
+      toast.error('Informe o celular com DDD e 9 dígitos após o +55.')
       return
     }
     setSaving(true)
@@ -637,7 +616,7 @@ export function UsersModule() {
         username,
         corporateEmail: effectiveEmail,
         ...(form.personalEmail.trim() ? { personalEmail: form.personalEmail } : {}),
-        ...(form.mobilePhone.trim() ? { mobilePhone: form.mobilePhone } : {}),
+        ...(normalizedMobilePhone ? { mobilePhone: normalizedMobilePhone } : {}),
         department: form.department,
         jobTitle: form.jobTitle,
         units: form.units,
@@ -688,7 +667,7 @@ export function UsersModule() {
   const changeStatus = async (row: UnifiedTeamMember, nextStatus: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED') => {
     const activating = nextStatus === 'ACTIVE'
     const actionLabel = nextStatus === 'TERMINATED' ? 'desativar permanentemente' : activating ? 'ativar' : 'suspender'
-    if (!canManage || !teamConfig.enabled || !window.confirm(`${actionLabel[0].toUpperCase() + actionLabel.slice(1)} ${row.fullName}?${nextStatus === 'TERMINATED' ? ' O acesso será encerrado e o histórico preservado.' : activating ? '' : ' O histórico e a agenda serão preservados.'}`)) return
+    if (!teamConfig.enabled || !window.confirm(`${actionLabel[0].toUpperCase() + actionLabel.slice(1)} ${row.fullName}?${nextStatus === 'TERMINATED' ? ' O acesso será encerrado e o histórico preservado.' : activating ? '' : ' O histórico e a agenda serão preservados.'}`)) return
     const terminationReason = nextStatus === 'TERMINATED'
       ? window.prompt('Informe o motivo do desligamento (obrigatório):', '')?.trim() || ''
       : ''
@@ -708,7 +687,7 @@ export function UsersModule() {
   }
 
   const changeInvite = async (row: UnifiedTeamMember, action: 'resend' | 'revoke') => {
-    if (!canManage || !teamConfig.enabled) return
+    if (!teamConfig.enabled) return
     const label = action === 'resend' ? 'Reenviar o convite' : 'Revogar o convite'
     if (!window.confirm(`${label} de ${row.fullName}?`)) return
     try {
@@ -769,7 +748,7 @@ export function UsersModule() {
   return (
     <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
       <div className="mx-auto max-w-7xl space-y-4">
-        {!dataUnavailable && !teamConfig.enabled && (
+        {!teamConfig.enabled && (
           <Card className="border-amber-300/20 bg-amber-500/10">
             <CardContent className="p-4 text-sm text-amber-50/90">
               A centralização da equipe está preparada, mas a flag de liberação ainda está desligada. A Escala continua com o editor antigo como contingência controlada.
@@ -790,9 +769,9 @@ export function UsersModule() {
                 </div>
               </div>
               <div className="flex items-center gap-2 text-xs text-blue-100/60">
-                <span>{dataUnavailable ? 'Indisponível' : loading ? 'Atualizando' : `${pageTotal} ${pageTotal === 1 ? 'membro' : 'membros'}`}</span>
+                <span>{loading ? 'Atualizando' : `${pageTotal} ${pageTotal === 1 ? 'membro' : 'membros'}`}</span>
                 <span className="size-1 rounded-full bg-white/25" aria-hidden="true" />
-                <span>{dataUnavailable ? 'Indisponível' : `${unitCount} ${unitCount === 1 ? 'unidade' : 'unidades'}`}</span>
+                <span>{unitCount} {unitCount === 1 ? 'unidade' : 'unidades'}</span>
               </div>
             </div>
           </CardHeader>
@@ -830,11 +809,11 @@ export function UsersModule() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Total</p><p className="mt-1 text-lg font-semibold text-white">{dataUnavailable ? 'Indisponível' : pageTotal}</p></div>
-                  <div className="rounded-xl border border-amber-300/15 bg-amber-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-amber-100/55">Convites</p><p className="mt-1 text-lg font-semibold text-amber-50">{dataUnavailable ? 'Indisponível' : summary.pendingInvites || 0}</p></div>
-                  <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-sky-100/55">Vínculos pendentes</p><p className="mt-1 text-lg font-semibold text-sky-50">{dataUnavailable ? 'Indisponível' : summary.pendingLinks || 0}</p></div>
-                  <div className="rounded-xl border border-rose-300/15 bg-rose-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-rose-100/55">Contas sem vínculo</p><p className="mt-1 text-lg font-semibold text-rose-50">{dataUnavailable ? 'Indisponível' : summary.pendingAccountLinks || 0}</p></div>
-                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><p className="mt-1 text-lg font-semibold text-white">{dataUnavailable ? 'Indisponível' : unitCount}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Total</p><p className="mt-1 text-lg font-semibold text-white">{pageTotal}</p></div>
+                  <div className="rounded-xl border border-amber-300/15 bg-amber-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-amber-100/55">Convites</p><p className="mt-1 text-lg font-semibold text-amber-50">{summary.pendingInvites || 0}</p></div>
+                  <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-sky-100/55">Vínculos pendentes</p><p className="mt-1 text-lg font-semibold text-sky-50">{summary.pendingLinks || 0}</p></div>
+                  <div className="rounded-xl border border-rose-300/15 bg-rose-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-rose-100/55">Contas sem vínculo</p><p className="mt-1 text-lg font-semibold text-rose-50">{summary.pendingAccountLinks || 0}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><p className="mt-1 text-lg font-semibold text-white">{unitCount}</p></div>
                 </div>
                 {canManage && bulkEligibleRows.length > 0 && (
                   <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
@@ -936,7 +915,7 @@ export function UsersModule() {
                     </tr>
                   ))}
                   {!teamRows.length && (
-                    <tr><td className="p-5 text-blue-100/70" colSpan={9}>{dataUnavailable ? 'Dados indisponíveis. Tente novamente.' : loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
+                    <tr><td className="p-5 text-blue-100/70" colSpan={9}>{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -969,15 +948,15 @@ export function UsersModule() {
                   </div>
                 </article>
               ))}
-              {!teamRows.length && <div className="rounded-2xl border border-dashed border-white/15 p-5 text-sm text-blue-100/70">{dataUnavailable ? 'Dados indisponíveis. Tente novamente.' : loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</div>}
+              {!teamRows.length && <div className="rounded-2xl border border-dashed border-white/15 p-5 text-sm text-blue-100/70">{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</div>}
             </div>
             {teamConfig.enabled && pagination && (
               <nav className="mt-4 flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/10 px-3 py-3 text-xs text-blue-100/65 sm:flex-row sm:items-center sm:justify-between" aria-label="Paginação da equipe">
-                <span>{dataUnavailable ? 'Dados indisponíveis. Tente novamente.' : pageTotal > 0 ? `Exibindo ${pageStart}–${pageEnd} de ${pageTotal}` : 'Nenhum membro encontrado'}</span>
+                <span>{pageTotal > 0 ? `Exibindo ${pageStart}–${pageEnd} de ${pageTotal}` : 'Nenhum membro encontrado'}</span>
                 <div className="flex items-center gap-2">
-                  <Button type="button" size="sm" variant="outline" disabled={loading || dataUnavailable || page <= 1} aria-label="Página anterior" onClick={() => setPage((current) => Math.max(1, current - 1))}>Anterior</Button>
+                  <Button type="button" size="sm" variant="outline" disabled={loading || page <= 1} aria-label="Página anterior" onClick={() => setPage((current) => Math.max(1, current - 1))}>Anterior</Button>
                   <span aria-live="polite" className="min-w-[5.5rem] text-center">Página {pagination.page} de {pagination.pages}</span>
-                  <Button type="button" size="sm" variant="outline" disabled={loading || dataUnavailable || !pagination.hasMore} aria-label="Próxima página" onClick={() => setPage((current) => current + 1)}>Próxima</Button>
+                  <Button type="button" size="sm" variant="outline" disabled={loading || !pagination.hasMore} aria-label="Próxima página" onClick={() => setPage((current) => current + 1)}>Próxima</Button>
                 </div>
               </nav>
             )}
@@ -1011,33 +990,46 @@ export function UsersModule() {
             </div>
           </DialogHeader>
 
-          <Tabs value={formTab} onValueChange={setFormTab} className="mt-1">
-            <TabsList className="w-full sm:w-auto">
-              <TabsTrigger value="identity">Identidade e acesso</TabsTrigger>
-              <TabsTrigger value="operation" disabled={!teamConfig.enabled}>Operação</TabsTrigger>
-              <TabsTrigger value="history" disabled={!editingId}>Histórico</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="identity" className="mt-4 space-y-5">
+          <div className="mt-4 space-y-5">
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="space-y-1.5 text-sm">Nome completo<Input value={form.fullName} disabled={formReadOnly} required={!formReadOnly} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value, username: usernameWasEdited.current ? current.username : suggestUsername(event.target.value, buildCorporateEmail(event.target.value)) }))} /></label>
                 <label className="space-y-1.5 text-sm">Nome de usuário<Input value={form.username} onChange={(event) => { usernameWasEdited.current = true; updateField('username', event.target.value) }} placeholder="primeironomeultimosobrenome" disabled={formReadOnly || !!editingId} required={!formReadOnly && !editingId} /></label>
                 <label className="space-y-1.5 text-sm">E-mail corporativo <span className="text-xs text-blue-100/45">{editingId ? 'mantido' : 'calculado'}</span><Input value={effectiveEmail} readOnly aria-readonly="true" /></label>
                 <label className="space-y-1.5 text-sm">E-mail pessoal <span className="text-xs text-blue-100/45">{editingId ? 'opcional' : 'obrigatório'}</span><Input type="email" value={form.personalEmail} disabled={formReadOnly} required={!formReadOnly && !editingId} onChange={(event) => updateField('personalEmail', event.target.value)} /></label>
-                <label className="space-y-1.5 text-sm">Celular <span className="text-xs text-blue-100/45">{editingId ? 'opcional' : 'obrigatório'}</span><Input value={form.mobilePhone} disabled={formReadOnly} required={!formReadOnly && !editingId} onChange={(event) => updateField('mobilePhone', event.target.value)} inputMode="tel" /></label>
-                <label className="space-y-1.5 text-sm">Departamento<Input value={form.department} disabled={formReadOnly} required={!formReadOnly} onChange={(event) => updateField('department', event.target.value)} /></label>
-                <label className="space-y-1.5 text-sm">Cargo<Select value={form.jobTitle} onValueChange={(jobTitle) => updateField('jobTitle', jobTitle)} disabled={formReadOnly}><SelectTrigger disabled={formReadOnly} aria-required={!formReadOnly}><SelectValue /></SelectTrigger><SelectContent>{editTitles.map((title) => <SelectItem value={title} key={title}>{title}</SelectItem>)}</SelectContent></Select></label>
+                <label className="space-y-1.5 text-sm">
+                  Celular <span className="text-xs text-blue-100/45">{editingId ? 'opcional' : 'obrigatório'}</span>
+                  <div className="flex items-center overflow-hidden rounded-md border border-white/10 bg-white/[0.03] focus-within:border-sky-300/60 focus-within:ring-2 focus-within:ring-sky-300/20">
+                    <span className="border-r border-white/10 px-3 py-2 text-sm font-semibold text-blue-100/65" aria-hidden="true">+55</span>
+                    <Input id="users-mobile-phone" value={formatMobileInput(form.mobilePhone)} disabled={formReadOnly} required={!formReadOnly && !editingId} onChange={(event) => updateField('mobilePhone', storedMobilePhone(event.target.value))} inputMode="numeric" maxLength={15} aria-label="Celular" className="border-0 bg-transparent focus-visible:ring-0" />
+                  </div>
+                  <span className="block text-xs text-blue-100/45">Somente números: DDD + 9 dígitos. O código +55 é fixo.</span>
+                </label>
+                <label className="space-y-1.5 text-sm">
+                  Departamento <span className="text-xs text-blue-100/45">obrigatório</span>
+                  <Select value={form.department} onValueChange={(department) => updateField('department', department)} disabled={formReadOnly}>
+                    <SelectTrigger className="w-full" disabled={formReadOnly} aria-label="Departamento" aria-required={!formReadOnly}><SelectValue placeholder="Selecionar departamento" /></SelectTrigger>
+                    <SelectContent>{departmentOptions.map((department) => <SelectItem value={department} key={department}>{department}</SelectItem>)}</SelectContent>
+                  </Select>
+                </label>
+                <label className="space-y-1.5 text-sm">
+                  Cargo
+                  <Select value={form.jobTitle} onValueChange={updateJobTitle} disabled={formReadOnly}>
+                    <SelectTrigger className="w-full" disabled={formReadOnly} aria-label="Cargo" aria-required={!formReadOnly}><SelectValue /></SelectTrigger>
+                    <SelectContent>{editTitles.map((title) => <SelectItem value={title} key={title}>{title}</SelectItem>)}</SelectContent>
+                  </Select>
+                </label>
               </div>
 
               {!editingId && (collisionRequired || form.corporateEmailOverride) && <label className="block space-y-1.5 text-sm">Ajuste do e-mail em caso de colisão<Input type="email" value={form.corporateEmailOverride} disabled={formReadOnly} onChange={(event) => updateField('corporateEmailOverride', event.target.value)} placeholder="primeironomeultimosobrenome2@espacofacial.com" /><span className="block text-xs text-amber-100/70">Use somente após o sistema informar colisão; o ajuste também deve manter o domínio corporativo.</span></label>}
 
               <div>
                 <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-blue-100/55">Unidades de acesso</p>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="Unidades de acesso" aria-required={!formReadOnly}>{selectableUnits.map((unit) => <Button key={unit} type="button" variant={form.units.includes(unit) ? 'default' : 'outline'} disabled={formReadOnly} onClick={() => toggleUnit(unit)}>{unitLabels[unit] || unit}</Button>)}</div>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Unidades de acesso" aria-required={!formReadOnly}>{selectableUnits.map((unit) => <Button key={unit} type="button" variant="outline" aria-pressed={form.units.includes(unit)} className={unitButtonClass(unit, form.units.includes(unit))} disabled={formReadOnly} onClick={() => toggleUnit(unit)}>{unitLabels[unit] || unit}</Button>)}</div>
+                <p className="mt-2 text-xs text-blue-100/45">As unidades disponíveis já começam selecionadas; a cor indica a unidade ativa.</p>
               </div>
-            </TabsContent>
+            <div className="space-y-4 border-t border-white/10 pt-5">
 
-            <TabsContent value="operation" className="mt-4 space-y-4">
+            <div className="space-y-4">
               {teamConfig.enabled ? <>
                 <section className="rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby="team-schedule-title">
                   <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -1055,8 +1047,17 @@ export function UsersModule() {
                     </div>}
                   </div>
                   <div className="grid gap-3 md:grid-cols-2">
-                    <label className="space-y-1.5 text-sm">Status na Escala<Input value={form.scheduleStatus} disabled={formReadOnly} onChange={(event) => updateField('scheduleStatus', event.target.value)} /></label>
-                    <label className="space-y-1.5 text-sm">Função na Escala<Input value={form.scheduleRole} disabled={formReadOnly} onChange={(event) => updateField('scheduleRole', event.target.value)} /></label>
+                    <label className="space-y-1.5 text-sm">
+                      Status na Escala <span className="text-xs text-blue-100/45">on/off</span>
+                      <div className="flex min-h-9 items-center gap-3 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
+                        <Switch checked={isScheduleActive(form.scheduleStatus)} disabled={formReadOnly} onCheckedChange={(checked) => updateField('scheduleStatus', checked ? 'Ativo' : 'Inativo')} aria-label="Status na Escala" />
+                        <span className={isScheduleActive(form.scheduleStatus) ? 'font-medium text-emerald-100' : 'font-medium text-rose-100'}>{isScheduleActive(form.scheduleStatus) ? 'Ativo' : 'Inativo'}</span>
+                      </div>
+                    </label>
+                    <label className="space-y-1.5 text-sm">
+                      Função na Escala <span className="text-xs text-blue-100/45">definida pelo cargo</span>
+                      <Input value={form.scheduleRole} disabled={formReadOnly} readOnly={!formReadOnly} aria-readonly="true" />
+                    </label>
                     <label className="space-y-1.5 text-sm">Turno<Input value={form.scheduleShift} disabled={formReadOnly} onChange={(event) => updateField('scheduleShift', event.target.value)} /></label>
                     <label className="space-y-1.5 text-sm">Apelido<Input value={form.scheduleNickname} disabled={formReadOnly} onChange={(event) => updateField('scheduleNickname', event.target.value)} /></label>
                     <label className="space-y-1.5 text-sm">Instagram<Input value={form.scheduleInstagram} disabled={formReadOnly} onChange={(event) => updateField('scheduleInstagram', event.target.value)} /></label>
@@ -1092,37 +1093,9 @@ export function UsersModule() {
                   {canManage && editingId && <div className="mt-4 grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)_auto] sm:items-end"><label className="space-y-1 text-xs text-blue-100/75">Origem<Select value={linkSource} onValueChange={(value: 'ESCALA' | 'ATENDIMENTO') => setLinkSource(value)}><SelectTrigger aria-label="Origem do vínculo"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ESCALA">Escala</SelectItem><SelectItem value="ATENDIMENTO">Atendimento</SelectItem></SelectContent></Select></label><label className="space-y-1 text-xs text-blue-100/75">Identificador<Input value={linkSourceId} onChange={(event) => setLinkSourceId(event.target.value)} placeholder="ID explícito do sistema de origem" /></label><Button type="button" disabled={linkSaving || !linkSourceId.trim()} onClick={() => void addIdentityLink()}><Link2 className="mr-2 size-4" aria-hidden="true" />{linkSaving ? 'Vinculando…' : 'Registrar vínculo'}</Button></div>}
                 </section>
               </> : <div className="rounded-2xl border border-dashed border-white/15 p-4 text-sm text-blue-100/65">O vínculo operacional aparece após a liberação da centralização.</div>}
-            </TabsContent>
-
-            <TabsContent value="history" className="mt-4">
-              <section className="rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby="team-history-title">
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <div>
-                    <h3 id="team-history-title" className="text-sm font-semibold text-white">Histórico do cadastro</h3>
-                    <p className="mt-1 text-xs text-blue-100/55">Alterações, convites e vínculos registrados sem expor dados sensíveis.</p>
-                  </div>
-                  {editingId && <span className="text-xs text-blue-100/45">Mais recente primeiro</span>}
-                </div>
-                {historyLoading && <p className="text-sm text-blue-100/65">Carregando histórico…</p>}
-                {!historyLoading && historyError && <p role="status" className="text-sm text-amber-100/80">{historyError}</p>}
-                {!historyLoading && !historyError && !historyRows.length && <p className="text-sm text-blue-100/65">Nenhuma alteração registrada para este cadastro.</p>}
-                {!historyLoading && !historyError && historyRows.length > 0 && (
-                  <ol className="space-y-3" aria-label="Eventos do histórico do cadastro">
-                    {historyRows.map((entry) => (
-                      <li key={String(entry.id)} className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-sm font-medium text-white">{historyActionLabel(entry.action || '')}</span>
-                          <time className="text-xs text-blue-100/50" dateTime={entry.timestamp || undefined}>{historyTimestamp(entry.timestamp)}</time>
-                        </div>
-                        <p className="mt-1 text-xs text-blue-100/70">{historyChange(entry)}</p>
-                        <p className="mt-2 text-[11px] text-blue-100/45">Por {entry.actor || 'sistema'}{entry.role ? ` · ${entry.role}` : ''}</p>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </section>
-            </TabsContent>
-          </Tabs>
+            </div>
+          </div>
+          </div>
 
           <DialogFooter className="border-t border-white/10 pt-4"><Button variant="outline" onClick={() => setOpen(false)}>Fechar</Button>{canManage ? <Button onClick={() => void submit()} disabled={saving}>{saving ? 'Salvando…' : editingId ? 'Salvar alterações' : 'Cadastrar e convidar'}</Button> : <span className="inline-flex items-center gap-2 text-xs text-blue-100/55"><ShieldCheck className="size-4" aria-hidden="true" />Somente leitura</span>}</DialogFooter>
         </DialogContent>
