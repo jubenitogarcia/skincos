@@ -59,6 +59,9 @@
     "native-promotions",
     "releases",
     "checkpoints",
+    "native-source-release",
+    "livia-reel-frame-contract",
+    "mcp-readonly-gateway",
     "retired-worktrees",
     "backups",
     "recovered-worktree-artifacts"
