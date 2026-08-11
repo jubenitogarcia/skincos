@@ -157,6 +157,10 @@ Gestor e a flag local de equipe unificada habilitadas. Ele reutiliza a mesma
 proveniência e a mesma faixa privada da prévia da thread, mas não envia
 convites reais nem altera o banco remoto.
 
+A implementação UX validada nesta missão está no worktree
+`C:\CodexShared\Worktrees\skincos\admin\users-production-flag-20260810`, no
+commit `ca1e1dab82616f1804b91d0ecd87e355f065e2d2`. Esta referência é evidência
+histórica da versão integrada e não é um destino fixo do launcher.
 ### EF App
 
 - `Setup`
