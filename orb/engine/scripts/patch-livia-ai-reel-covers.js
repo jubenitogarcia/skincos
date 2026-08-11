@@ -71,6 +71,35 @@ function codeParameters(mode, jsCode) {
   return { mode, language: 'javaScript', jsCode };
 }
 
+const EXISTING_CODE_NODE_MODES = Object.freeze({
+  'Prepare Livia Reel Cover Jobs': 'runOnceForAllItems',
+  'Normalize Livia Reel Cover OpenAI': 'runOnceForEachItem',
+  'Normalize Livia Reel Cover Cached Binary': 'runOnceForEachItem',
+  'Normalize Livia Reel Cover Cached Result': 'runOnceForEachItem',
+  'Normalize Livia Reel Cover Fallback': 'runOnceForEachItem',
+  'Normalize Livia Reel Cover Upload': 'runOnceForEachItem',
+  'Aggregate Livia Reel Cover Outcomes': 'runOnceForAllItems',
+  'Attach Livia Reel Cover Context': 'runOnceForAllItems',
+});
+
+function normalizeExistingCodeNodes(workflow) {
+  for (const [name, mode] of Object.entries(EXISTING_CODE_NODE_MODES)) {
+    const node = (workflow.nodes || []).find((entry) => entry?.name === name);
+    if (!node) continue;
+    node.parameters ||= {};
+    node.parameters.mode = mode;
+    node.parameters.language = 'javaScript';
+  }
+  const upload = (workflow.nodes || []).find((entry) => entry?.name === 'Upload Livia Reel Cover');
+  if (upload) {
+    upload.parameters ||= {};
+    upload.parameters.additionalFieldsFile ||= {};
+    upload.parameters.additionalFieldsFile.public_id = '={{ $json.coverPublicId }}';
+    upload.parameters.additionalFieldsFile.overwrite = true;
+  }
+  return workflow;
+}
+
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -580,7 +609,7 @@ function patchWorkflow(workflow) {
 
   const alreadyPatched = NODE_NAMES.every((name) => names.has(name)) &&
     String((candidate.nodes || []).find((entry) => entry?.name === HYDRATE_NODE)?.parameters?.jsonOutput || '').includes('liviaCoverResults');
-  if (alreadyPatched) return candidate;
+  if (alreadyPatched) return normalizeExistingCodeNodes(candidate);
   if (NODE_NAMES.some((name) => names.has(name))) fail('AI Reel cover patch found a partial previous application.');
 
   const hydrate = candidate.nodes.find((entry) => entry.name === HYDRATE_NODE);
