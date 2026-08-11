@@ -52,10 +52,13 @@ fi
 if [[ -n "$BACKUP_PUBLISH_OWNER" ]]; then
   id "$BACKUP_PUBLISH_OWNER" >/dev/null 2>&1 || { echo "Backup publish owner is unavailable: $BACKUP_PUBLISH_OWNER" >&2; exit 1; }
 fi
-[[ "$STALE_PARTIAL_MAX_AGE_HOURS" =~ ^[1-9][0-9]*$ ]] || {
+if [[ ! "$STALE_PARTIAL_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] || (( 10#$STALE_PARTIAL_MAX_AGE_HOURS < 1 )); then
   echo "STALE_PARTIAL_MAX_AGE_HOURS must be a positive integer." >&2
   exit 1
-}
+fi
+# Normalize accepted values once so every subsequent arithmetic expression is
+# decimal, including zero-padded operator input such as "08".
+STALE_PARTIAL_MAX_AGE_HOURS=$((10#$STALE_PARTIAL_MAX_AGE_HOURS))
 
 mkdir -p "$(dirname "$LOCK_FILE")" "$N8N_HEALTH_DIR" "$BACKUP_ROOT"
 if [[ -n "$BACKUP_PUBLISH_OWNER" && "$BACKUP_ROOT" == /var/backups/* ]]; then

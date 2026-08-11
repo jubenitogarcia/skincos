@@ -108,6 +108,12 @@ grep -q '"storageFormat": "tar"' "$backup_dir/manifest.json"
 grep -Eq '"storageArchiveSha256": "[0-9a-f]{64}"' "$backup_dir/manifest.json"
 grep -Eq '"storageBytes": [1-9][0-9]*' "$backup_dir/manifest.json"
 
+if run_backup 000 >"$test_root/zero-age.out" 2>"$test_root/zero-age.err"; then
+  echo 'Zero stale partial age was unexpectedly accepted.' >&2
+  exit 1
+fi
+grep -q 'STALE_PARTIAL_MAX_AGE_HOURS must be a positive integer.' "$test_root/zero-age.err"
+
 if PATH="$fake_bin:$PATH" \
   N8N_ROOT="$repo_root" \
   N8N_RUNTIME_HOME="$runtime_root" \
