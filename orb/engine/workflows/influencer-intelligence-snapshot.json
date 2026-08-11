@@ -1,0 +1,271 @@
+{
+  "name": "SKINCOS | Influencer Intelligence Snapshot (OFF)",
+  "active": false,
+  "nodes": [
+    {
+      "id": "ii-1",
+      "name": "01_Cron_6h",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 6,
+              "unit": "hours"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ii-2",
+      "name": "02_Feature_Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const enabled = String($env.INFLUENCER_INTELLIGENCE_ENABLED || 'false').trim().toLowerCase() === 'true';\nconst serviceUrl = String($env.INFLUENCER_INTELLIGENCE_SERVICE_URL || '').trim();\nif (enabled && !/^https?:\\/\\/(127\\.0\\.0\\.1|localhost|[a-z0-9.-]+\\.internal)(?::\\d+)?(?:\\/|$)/i.test(serviceUrl)) {\n  throw new Error('INFLUENCER_INTELLIGENCE_SERVICE_URL must resolve to an internal service');\n}\nreturn [{ json: {\n  enabled,\n  status: enabled ? 'enabled' : 'disabled',\n  reason: enabled ? null : 'feature_flag_off',\n  workflow_version: 'influencer-intelligence-snapshot-workflow/v1',\n  mode: enabled ? 'shadow' : 'off',\n  requested_at: new Date().toISOString()\n} }];"
+      }
+    },
+    {
+      "id": "ii-3",
+      "name": "03_If_Enabled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{String($json.enabled)}}",
+              "operation": "equal",
+              "value2": "true"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ii-4",
+      "name": "04_Select_Active_Creators",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        680,
+        -80
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT ON (r.creator_key)\n  r.creator_key,\n  r.canonical_handle,\n  r.monitoring_interval_hours,\n  i.identity_key,\n  i.provider,\n  i.identity_state,\n  i.evidence_state\nFROM influencer_intelligence.creator_registry r\nJOIN influencer_intelligence.creator_identity i\n  ON i.creator_key = r.creator_key\nWHERE r.monitoring_enabled = true\n  AND r.registry_state = 'candidate'\n  AND i.identity_state = 'active'\n  AND i.evidence_state = 'observed'\n  AND NOT EXISTS (\n    SELECT 1\n    FROM influencer_intelligence.creator_profile_snapshot s\n    WHERE s.creator_key = r.creator_key\n      AND s.observed_at >= now() - make_interval(hours => r.monitoring_interval_hours)\n  )\nORDER BY r.creator_key,\n  CASE i.provider WHEN 'meta-graph' THEN 0 ELSE 1 END,\n  i.observed_at DESC NULLS LAST,\n  i.retrieved_at DESC NULLS LAST\nLIMIT 25;"
+      }
+    },
+    {
+      "id": "ii-5",
+      "name": "05_Build_Bounded_Snapshot_Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        900,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = $input.all().map((item) => item.json || {}).slice(0, 25);\nconst creators = rows.map((row) => ({\n  creator_key: String(row.creator_key || '').trim(),\n  identity_key: String(row.identity_key || '').trim(),\n  canonical_handle: row.canonical_handle ? String(row.canonical_handle).trim() : null,\n  provider: String(row.provider || '').trim(),\n  operations: ['snapshot_creator', 'snapshot_creator_media'],\n  bucket_seconds: 3600,\n  media_limit: 20\n})).filter((creator) => creator.creator_key && creator.identity_key && ['meta-graph', 'instagrapi'].includes(creator.provider));\nreturn [{ json: {\n  contract_version: 'influencer-intelligence/scheduler/v1',\n  workflow_version: 'influencer-intelligence-snapshot-workflow/v1',\n  mode: 'shadow',\n  max_creators: 25,\n  max_concurrency: 1,\n  timeout_ms: 30000,\n  retry_policy: {\n    max_attempts: 2,\n    same_idempotency_key: true,\n    retryable_classes: ['timeout', 'rate_limited', 'upstream_5xx', 'network_transient']\n  },\n  service_path: '/internal/influencer-intelligence/v1/snapshots',\n  creators\n} }];"
+      }
+    },
+    {
+      "id": "ii-6",
+      "name": "06_Dispatch_And_Register_Snapshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        -80
+      ],
+      "retryOnFail": false,
+      "parameters": {
+        "url": "={{$env.INFLUENCER_INTELLIGENCE_SERVICE_URL.replace(/\\/$/, '')}}/internal/influencer-intelligence/v1/snapshots",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {
+          "timeout": 30000
+        },
+        "bodyParametersJson": "={{$json}}"
+      }
+    },
+    {
+      "id": "ii-7",
+      "name": "07_Record_Bounded_Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const response = $input.first()?.json || {};\nconst coverage = response.coverage && typeof response.coverage === 'object' ? response.coverage : { state: 'unavailable', available: null, expected: null, ratio: null };\nconst failures = Array.isArray(response.failures) ? response.failures.slice(0, 50).map((failure) => ({ code: String(failure.code || 'provider_failure').slice(0, 80), classification: String(failure.classification || 'permanent').slice(0, 40), retryable: failure.retryable === true })) : [];\nreturn [{ json: {\n  event_type: 'snapshot_result_registered',\n  event_version: 'influencer-intelligence/snapshot-result/v1',\n  status: String(response.status || response.collectorRun?.status || 'failed'),\n  coverage,\n  freshness: response.freshness || { status: 'unknown', observedAt: null, retrievedAt: null, ageSeconds: null },\n  failure_count: failures.length,\n  failures,\n  deduplicated: response.deduplicated === true,\n  no_provider_payload_logged: true,\n  no_credentials_logged: true\n} }];"
+      }
+    },
+    {
+      "id": "ii-8",
+      "name": "08_Feature_Off_Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        680,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { event_type: 'snapshot_scheduler_skipped', event_version: 'influencer-intelligence/snapshot-result/v1', status: 'skipped', reason: 'feature_flag_off', no_provider_call: true } }];"
+      }
+    },
+    {
+      "id": "ii-90",
+      "name": "90_Error_Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        320
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ii-91",
+      "name": "91_Record_Sanitized_Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        240,
+        320
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first()?.json || {};\nconst error = raw.error || {};\nconst message = String(error.message || 'workflow_failure').replace(/(authorization|token|api[_-]?key|secret|cookie|password)\\s*[:=]\\s*[^\\s,\\\"'}]+/ig, '$1=[REDACTED]').slice(0, 500);\nreturn [{ json: { event_type: 'snapshot_scheduler_failure', event_version: 'influencer-intelligence/snapshot-result/v1', status: 'failed', code: String(error.code || 'workflow_failure').slice(0, 80), message, retry_policy: { bounded: true, same_idempotency_key_required: true } } }];"
+      }
+    }
+  ],
+  "connections": {
+    "01_Cron_6h": {
+      "main": [
+        [
+          {
+            "node": "02_Feature_Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02_Feature_Gate": {
+      "main": [
+        [
+          {
+            "node": "03_If_Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03_If_Enabled": {
+      "main": [
+        [
+          {
+            "node": "04_Select_Active_Creators",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "08_Feature_Off_Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04_Select_Active_Creators": {
+      "main": [
+        [
+          {
+            "node": "05_Build_Bounded_Snapshot_Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05_Build_Bounded_Snapshot_Request": {
+      "main": [
+        [
+          {
+            "node": "06_Dispatch_And_Register_Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06_Dispatch_And_Register_Snapshot": {
+      "main": [
+        [
+          {
+            "node": "07_Record_Bounded_Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "90_Error_Trigger": {
+      "main": [
+        [
+          {
+            "node": "91_Record_Sanitized_Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/Sao_Paulo",
+    "executionTimeout": 900,
+    "saveExecutionProgress": true,
+    "availableInMCP": false
+  },
+  "meta": {
+    "module": "influencer-intelligence",
+    "contract_version": "influencer-intelligence/scheduler/v1",
+    "workflow_version": "influencer-intelligence-snapshot-workflow/v1",
+    "active_default": false,
+    "feature_flag": "INFLUENCER_INTELLIGENCE_ENABLED",
+    "default_mode": "shadow",
+    "max_concurrency": 1,
+    "max_attempts": 2,
+    "timeout_ms": 30000,
+    "provider_transport": false,
+    "instagram_write": false,
+    "publish_allowed": false,
+    "no_public_webhook": true,
+    "service_path": "/internal/influencer-intelligence/v1/snapshots"
+  }
+}
