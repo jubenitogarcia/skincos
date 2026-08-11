@@ -1,7 +1,9 @@
 # Influencer Intelligence
 
-Status: architecture v1 defined; M2 provider boundary merged, and data model
-v1 is an additive, unapplied artifact in this milestone. The domain remains
+Status: architecture v1 defined; M2 provider boundary, M4 deterministic
+analytics, and M5 deterministic scoring are implemented in source control, and
+data model v1 plus scoring metadata remain additive, unapplied artifacts in
+this milestone. The domain remains
 experimental, not exposed, and off by default.
 
 This domain provides read-only intelligence about Instagram creators for
@@ -118,10 +120,27 @@ fallback.
 
 These migrations are not applied to local, staging, or production through an
 operational runner; they are validated as source-controlled artifacts and
-through synthetic repository tests. No UI, feature wiring,
-runtime, CRM, MCP, Orb, systemd, or external provider call is included.
+through synthetic repository tests. No UI, feature wiring, runtime, CRM, MCP,
+systemd, or external provider call is included; the Orb source added by M3 is
+inactive orchestration only.
 
-## M3 snapshot operations
+## M4 decision: deterministic analytics
+
+[`analytics.mjs`](./analytics.mjs) is a pure ESM engine over normalized profile
+and media snapshots. It emits versioned, coverage-aware metrics for profile
+growth, cadence, likes, comments, engagement, views/reach, video performance,
+volatility, trends, robust outliers, and bounded growth anomalies. The formulas
+and limitations are documented in [`ANALYTICS.md`](./ANALYTICS.md).
+
+Missing values stay unavailable and zero denominators never produce a numeric
+result. A viral post is retained as observed evidence but cannot replace the
+robust series summary. Follower-tier benchmark output is an explicit
+`skincos_internal` structure and remains unavailable until a governed internal
+calibration dataset exists. The engine does not infer follower quality or fake
+followers and does not connect providers, PostgreSQL, Orb, CRM, or runtime
+routes.
+
+## M3 snapshot operations and Orb source
 
 The bounded internal operations in [`snapshots.mjs`](./snapshots.mjs) now provide
 `snapshot_creator` and `snapshot_creator_media` over the injected provider router
@@ -129,6 +148,13 @@ and PostgreSQL repository. They create and finalize `collector_run` metadata,
 persist provider failures as explicit `collector_evidence`, retain append-only
 profile/media observations, and return freshness, coverage, limitations and
 provider evidence. They do not schedule themselves and do not open a transport.
+
+The inactive Orb export in [`orb/engine/workflows/influencer-intelligence-snapshot.json`](../../orb/engine/workflows/influencer-intelligence-snapshot.json)
+is orchestration-only. It selects explicitly opted-in identities, sends one
+bounded batch to the internal snapshot service, and emits a redacted result
+receipt. The six-hour trigger, one-at-a-time service lease, feature flag,
+two-attempt retry policy, and 30-second timeout are conservative source
+defaults; the workflow is not imported or activated by this milestone.
 
 Snapshot artifact keys are deterministic for creator/provider/media/observed-time
 bucket. A repeat in the same bucket is a no-op; a later bucket records a new
@@ -141,8 +167,9 @@ remains off.
 The operation tests use only injected fixtures and cover first collection,
 replay, metric changes, fallback/partial coverage, timeout, nonexistent and
 private profiles, unavailable media metrics, provenance classification and
-credential rejection. Orb scheduling, Token Vault transport wiring, migration
-application and real provider calls remain later operational gates.
+credential rejection. Token Vault transport wiring, migration application,
+service route mounting, live Orb import and real provider calls remain later
+operational gates.
 
 ## Concrete target architecture
 
@@ -203,8 +230,8 @@ deployment hardening.
   contact fields are not values in this contract.
 - `ScoreEnvelope`: a score from 0 to 100 or an explicit `null` when
   unavailable, confidence from 0 to 1, derived data coverage, provider list,
-  provenance, timestamp, deterministic `algorithmVersion`, and structured
-  signals.
+  provenance, timestamp, deterministic `algorithmVersion`, `weightsVersion`,
+  and structured signals.
 - `StructuredSignal`: a bounded scalar, explicit evidence state, confidence,
   evidence references, and an optional model version. Free-form LLM rationale
   or prompt/completion text is not persisted here.
@@ -263,12 +290,12 @@ production configuration.
 | Milestone | Deliverable | Status |
 | --- | --- | --- |
 | M0 | Normalized contracts | Merged in #1303 |
-| M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; artifact only, not applied |
-| Architecture | Canonical architecture v1 | Defined in the ADR and runtime-free manifest |
-| M2 | Official-first router and controlled collectors | Merged in #1305; injected synthetic transports only |
-| M3 | Append-only snapshots, retention, and Orb scheduling | Snapshot operations implemented; Orb scheduling pending |
-| M4 | Robust analytics and outlier-resistant metrics | Pending |
-| M5 | Deterministic score, confidence, coverage, and provenance | Pending |
+| M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; registry artifact only, not applied |
+| Architecture | Canonical architecture v1 | Merged in #1310; runtime-free manifest |
+| M2 | Official-first router and controlled collectors | Canonical router #1324 (supersedes #1305); injected synthetic transports only |
+| M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, and inactive Orb scheduler #1335; artifacts/import/runtime pending |
+| M4 | Robust analytics and outlier-resistant metrics | Merged in #1333; pure deterministic engine, golden fixtures, and formula documentation |
+| M5 | Deterministic score, confidence, coverage, and provenance | Merged in #1334; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Pending |
 | M7 | `skincos-influencer-intelligence` Codex skill | Pending |
 | M8 | Read-only CRM contracts and dashboard | Pending |

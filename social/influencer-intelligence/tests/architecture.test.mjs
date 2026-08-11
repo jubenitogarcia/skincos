@@ -120,8 +120,11 @@ test('requires deterministic score identity, coverage, and structured signals', 
   assert.equal(PRIVACY_CONTRACT.neverPersisted.includes('raw comment text by default'), true);
 });
 
-test('keeps API and MCP contracts read-only and bounded', () => {
-  assert.ok(API_CONTRACT.routes.every(({ readOnly }) => readOnly === true));
+test('keeps API reads and MCP tools read-only while isolating Orb collection', () => {
+  const snapshotRoute = API_CONTRACT.routes.find(({ path }) => path.endsWith('/snapshots'));
+  assert.equal(snapshotRoute?.readOnly, false);
+  assert.equal(snapshotRoute?.caller, 'Orb-only controlled collection operation');
+  assert.ok(API_CONTRACT.routes.filter(({ path }) => !path.endsWith('/snapshots')).every(({ readOnly }) => readOnly === true));
   assert.equal(API_CONTRACT.requestRules.maxCreatorsPerRequest, 20);
   assert.equal(API_CONTRACT.requestRules.maxWindowDays, 365);
   for (const control of ['authentication', 'server-side grant', 'schema sanitization', 'rate limit', 'timeout and abort', 'audit event', 'read-only database role']) {
@@ -142,6 +145,9 @@ test('keeps this architecture milestone off and runtime-free', () => {
   assert.equal(RELEASE_CONTRACT.architecturePrScope.crmRegistered, false);
   assert.equal(RELEASE_CONTRACT.architecturePrScope.mcpRegistered, false);
   assert.equal(RELEASE_CONTRACT.architecturePrScope.orbWorkflowChanged, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowImported, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowActive, false);
 
   const source = fs.readFileSync(architecturePath, 'utf8');
   assert.doesNotMatch(source, /\b(?:fetch|spawn|exec|execFile|createServer|listen)\s*\(/i);

@@ -126,7 +126,7 @@ export const DATA_MODEL = deepFreeze({
     {
       name: 'creator_registry',
       lifecycle: 'minimal operational binding; current state may transition under explicit policy',
-      fields: ['creatorKey', 'canonicalHandle', 'registryState', 'createdAt', 'updatedAt'],
+      fields: ['creatorKey', 'canonicalHandle', 'registryState', 'monitoringEnabled', 'monitoringIntervalHours', 'createdAt', 'updatedAt'],
     },
     {
       name: 'creator_provider_registry',
@@ -151,7 +151,7 @@ export const DATA_MODEL = deepFreeze({
     {
       name: 'score_snapshots',
       lifecycle: 'append-only derived artifact',
-      fields: ['scoreKey', 'creatorKey', 'scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'signals'],
+      fields: ['scoreKey', 'creatorKey', 'scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'weightsVersion', 'signals'],
     },
     {
       name: 'structured_signals',
@@ -220,7 +220,7 @@ export const PROVENANCE_CONTRACT = deepFreeze({
 
 export const SCORE_CONTRACT = deepFreeze({
   contractVersion: 'influencer-intelligence/score/v1',
-  requiredFields: ['scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'signals'],
+  requiredFields: ['scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'weightsVersion', 'signals'],
   ranges: { score: '0..100 or null', confidence: '0..1', coverageRatio: '0..1' },
   scoreKinds: ['influencer', 'campaign-fit', 'brand-fit', 'risk'],
   deterministicFirst: true,
@@ -242,6 +242,14 @@ export const API_CONTRACT = deepFreeze({
   },
   responseEnvelope: ['contractVersion', 'requestId', 'generatedAt', 'data', 'coverage', 'provenance', 'errors'],
   routes: [
+    {
+      method: 'POST',
+      path: '/internal/influencer-intelligence/v1/snapshots',
+      readOnly: false,
+      caller: 'Orb-only controlled collection operation',
+      purpose: 'Dispatch bounded snapshot_creator and snapshot_creator_media operations through the internal service; persist collector_run and append-only evidence.',
+      controls: ['server-side flag', 'workflow grant', 'internal authentication', 'bounded operation schema', 'lease', 'idempotency', 'redacted audit'],
+    },
     {
       method: 'GET',
       path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/analysis',
@@ -309,6 +317,12 @@ export const RELEASE_CONTRACT = deepFreeze({
     mcpRegistered: false,
     orbWorkflowChanged: false,
   },
+  currentSourceScope: {
+    schedulerSourceAdded: true,
+    schedulerWorkflowImported: false,
+    schedulerWorkflowActive: false,
+    schedulerMigrationArtifactAdded: true,
+  },
 });
 
 export const PRIVACY_CONTRACT = deepFreeze({
@@ -329,13 +343,13 @@ export const OBSERVABILITY_CONTRACT = deepFreeze({
 });
 
 export const IMPLEMENTATION_PLAN = deepFreeze([
-  { id: 'architecture', title: 'Canonical architecture v1', status: 'this PR', acceptance: ['ADR and manifest agree', 'boundaries and non-goals are explicit', 'no runtime or migration change'] },
+  { id: 'architecture', title: 'Canonical architecture v1', status: 'merged #1310; runtime-free manifest', acceptance: ['ADR and manifest agree', 'boundaries and non-goals are explicit', 'no runtime or migration change'] },
   { id: 'M0', title: 'Normalized contracts', status: 'merged #1303', acceptance: ['pure versioned evidence, provenance, coverage, signal, and score envelopes'] },
-  { id: 'M1', title: 'Creator registry and additive PostgreSQL artifact', status: 'merged #1304; unapplied artifact', acceptance: ['minimal pseudonymous registry', 'additive/idempotent SQL', 'destination and grant gates before apply'] },
-  { id: 'M2', title: 'Official-first provider router and bounded collectors', status: 'merged #1305; synthetic transport only', acceptance: ['Meta first', 'controlled instagrapi fallback', 'fail-closed classification', 'no duplicate scraper'] },
-  { id: 'M3', title: 'Append-only snapshots, retention, and Orb job contract', status: 'snapshot operations implemented; Orb scheduling pending', acceptance: ['new additive tables', 'immutable evidence lifecycle', 'bounded snapshot_creator and snapshot_creator_media operations', 'dry-run/shadow scheduling', 'resume/recovery without live workflow import'] },
-  { id: 'M4', title: 'Robust analytics', status: 'pending', acceptance: ['time windows', 'viral-outlier resistance', 'explicit unavailable coverage'] },
-  { id: 'M5', title: 'Deterministic scores and confidence', status: 'pending', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
+  { id: 'M1', title: 'Creator registry and additive PostgreSQL artifact', status: 'merged #1304; registry artifact unapplied', acceptance: ['minimal pseudonymous registry', 'additive/idempotent SQL', 'destination and grant gates before apply'] },
+  { id: 'M2', title: 'Official-first provider router and bounded collectors', status: 'canonical router merged #1324 (supersedes #1305); synthetic transport only', acceptance: ['Meta first', 'controlled instagrapi fallback', 'fail-closed classification', 'no duplicate scraper'] },
+  { id: 'M3', title: 'Append-only snapshots, retention, and Orb job contract', status: 'data model #1322, snapshots #1331, and scheduler #1335 merged; artifacts/import/runtime pending', acceptance: ['new additive tables', 'immutable evidence lifecycle', 'bounded snapshot_creator and snapshot_creator_media operations', 'inactive dry-run/shadow scheduling', 'resume/recovery with idempotent service calls', 'no live workflow import'] },
+  { id: 'M4', title: 'Robust analytics', status: 'merged #1333; synthetic source/tests only', acceptance: ['time windows', 'viral-outlier resistance', 'explicit unavailable coverage'] },
+  { id: 'M5', title: 'Deterministic scores and confidence', status: 'merged #1334; synthetic source/tests only', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
   { id: 'M6', title: 'Hardened read-only MCP', status: 'pending', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
   { id: 'M7', title: 'Codex skill', status: 'pending', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
   { id: 'M8', title: 'CRM read-only surface', status: 'pending', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
