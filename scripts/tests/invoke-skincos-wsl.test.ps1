@@ -108,6 +108,10 @@ $stdinGateway = & $gatewayPath `
 Assert-True `
     -Condition ([string]($stdinGateway | Select-Object -Last 1) -eq "received=stdin-round-trip") `
     -Message "explicit standard input must reach WSL without becoming an argv value"
+$stdinGatewayOutput = [string]($stdinGateway | Select-Object -Last 1)
+Assert-True `
+    -Condition (-not $stdinGatewayOutput.Contains([char]0xFEFF)) `
+    -Message "explicit standard input must reach WSL as BOM-free bytes without becoming an argv value"
 
 # Use an intentionally unregistered path; a real shared worktree is approved
 # by the gateway and must not be treated as an unsafe fixture.
