@@ -177,6 +177,10 @@ async function mergePullRequestOnce({ repository, pullNumber, expectedHeadSha, m
     });
     if (checked.passed !== true) throw new Error(`merge:main mutation authorization failed: ${checked.reason || "unknown"}`);
     await setMergeAuthorityStatus(repository, headSha, "success", "merge:main lease and dependency closure authorized");
+    // GitHub rulesets evaluate a newly published commit status asynchronously.
+    // Give the required global-merge-authority status a bounded propagation
+    // window before the protected-ref merge mutation.
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
     const [finalMain, finalPull] = await Promise.all([
       githubJson(repository, "/commits/main"),
       githubJson(repository, `/pulls/${pullNumber}`),
