@@ -200,6 +200,56 @@ function Ensure-LocalState {
     }
 }
 
+function Register-PrivateWorktreeLifecycle {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorktreePath,
+        [Parameter(Mandatory = $true)][string]$Purpose,
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [bool]$Pinned = $false
+    )
+    $lifecycleRoot = Join-Path $operatorRuntimeRoot 'storage-governance\worktrees'
+    New-Item -ItemType Directory -Force -Path $lifecycleRoot | Out-Null
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { $key = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($WorktreePath))).Replace('-', '').ToLowerInvariant() } finally { $hash.Dispose() }
+    $recordPath = Join-Path $lifecycleRoot "$key.json"
+    $now = (Get-Date).ToUniversalTime().ToString('o')
+    $record = [ordered]@{
+        schema_version = 1
+        path = (Resolve-Path -LiteralPath $WorktreePath).Path
+        owner = [string]$env:USERNAME
+        task_slug = $Purpose
+        branch = $null
+        base_ref = $TargetCommit
+        commit = $TargetCommit
+        created_at_utc = $now
+        last_seen_at_utc = $now
+        lifecycle_status = 'active'
+        pinned = $Pinned
+        lease = $null
+        dependency_state = 'unknown'
+        associated_artifacts = @()
+    }
+    $temporary = "$recordPath.$([Guid]::NewGuid().ToString('N')).tmp"
+    $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding UTF8
+    Move-Item -LiteralPath $temporary -Destination $recordPath -Force
+    return $recordPath
+}
+
+function Assert-WorktreePathAvailable {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoPath,
+        [Parameter(Mandatory = $true)][string]$WorktreePath
+    )
+    $target = [IO.Path]::GetFullPath($WorktreePath).TrimEnd('\', '/')
+    $lines = @(& git -C $RepoPath worktree list --porcelain 2>$null)
+    foreach ($line in $lines | Where-Object { $_ -like 'worktree *' }) {
+        $registered = [IO.Path]::GetFullPath($line.Substring(9)).TrimEnd('\', '/')
+        if ($registered.Equals($target, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "O caminho do worktree '$WorktreePath' ainda está registrado pelo Git. A criação foi bloqueada; use close-shared-worktree.ps1 para resolver o registro de forma explícita."
+        }
+    }
+}
+
 function Convert-WindowsPathToWsl {
     param([string]$Path)
 
@@ -686,6 +736,7 @@ function Sync-CrmLocalSourceRoot {
             }
             & git -C $ProjectRoot worktree add --detach $snapshotRoot $TargetCommit | Out-Host
             if ($LASTEXITCODE -ne 0) { throw "Não foi possível criar o worktree isolado do snapshot do CRM Local em '$snapshotRoot'." }
+            Register-PrivateWorktreeLifecycle -WorktreePath $snapshotRoot -Purpose "crm-local-snapshot-$($TargetCommit.Substring(0,12))" -TargetCommit $TargetCommit | Out-Null
             try {
                 Apply-CrmLocalSourceSnapshot -Snapshot $Snapshot -DestinationRoot $snapshotRoot
             } catch {
@@ -712,11 +763,12 @@ function Sync-CrmLocalSourceRoot {
         }
 
         if (-not (Test-Path -LiteralPath $sourceRoot)) {
-            & git -C $ProjectRoot worktree prune | Out-Null
+            Assert-WorktreePathAvailable -RepoPath $ProjectRoot -WorktreePath $sourceRoot
             & git -C $ProjectRoot worktree add --detach $sourceRoot $TargetCommit | Out-Host
             if ($LASTEXITCODE -ne 0) {
                 throw "Não foi possível criar o worktree limpo do CRM Local em '$sourceRoot'."
             }
+            Register-PrivateWorktreeLifecycle -WorktreePath $sourceRoot -Purpose "crm-local-$($Persona.ToLowerInvariant())" -TargetCommit $TargetCommit | Out-Null
             return $sourceRoot
         }
 
@@ -781,7 +833,7 @@ function Sync-CrmLocalImmutableSourceRoot {
                 New-Item -ItemType Directory -Path $quarantineRoot -Force | Out-Null
                 $quarantinePath = Join-Path $quarantineRoot ("{0}-{1}" -f $sourceKey, (Get-Date -Format 'yyyyMMddHHmmssfff'))
                 Move-Item -LiteralPath $sourceRoot -Destination $quarantinePath
-                & git -C $snapshotSourceRoot worktree prune | Out-Null
+                Assert-WorktreePathAvailable -RepoPath $ProjectRoot -WorktreePath $sourceRoot
                 Write-Host "[crm-local] Fonte incompleta preservada em quarentena: '$quarantinePath'."
             } else {
                 $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
@@ -793,11 +845,12 @@ function Sync-CrmLocalImmutableSourceRoot {
             }
         }
 
-        & git -C $snapshotSourceRoot worktree prune | Out-Null
-        & git -C $snapshotSourceRoot worktree add --detach $sourceRoot $TargetCommit | Out-Host
+        Assert-WorktreePathAvailable -RepoPath $ProjectRoot -WorktreePath $sourceRoot
+        & git -C $ProjectRoot worktree add --detach $sourceRoot $TargetCommit | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Não foi possível criar a fonte imutável do CRM Local em '$sourceRoot'."
         }
+        Register-PrivateWorktreeLifecycle -WorktreePath $sourceRoot -Purpose "crm-local-immutable-$sourceKey" -TargetCommit $TargetCommit -Pinned $true | Out-Null
         try {
             Apply-CrmLocalSourceSnapshot -Snapshot $Snapshot -DestinationRoot $sourceRoot
             $metadata = [ordered]@{

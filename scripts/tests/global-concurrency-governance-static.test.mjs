@@ -239,8 +239,12 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(read("ops/cloudflare/global-coordinator/index.js"), /keyCandidatesForRequest/);
   assert.match(read("ops/cloudflare/global-coordinator/key-ring.mjs"), /PREVIOUS_KEY_EXPIRES_AT/);
   assert.match(read("ops/cloudflare/global-coordinator/key-ring.mjs"), /allowUnpinnedKeyDuringGrace/);
-  assert.match(read(".github/workflows/deploy-global-coordinator.yml"), /explicit active key cannot retain the legacy key id/);
-  assert.match(read(".github/workflows/deploy-global-coordinator.yml"), /COORDINATION_ACTIVE_KEY \|\| process\.env\.COORDINATION_SHARED_SECRET/);
+  const coordinatorDeploy = read(".github/workflows/deploy-global-coordinator.yml");
+  assert.match(coordinatorDeploy, /explicit active key cannot retain the legacy key id/);
+  assert.match(coordinatorDeploy, /COORDINATION_ACTIVE_KEY \|\| process\.env\.COORDINATION_SHARED_SECRET/);
+  assert.match(coordinatorDeploy, /--secrets-file \"\$SECRETS_FILE\"/);
+  assert.match(coordinatorDeploy, /mode: 0o600/);
+  assert.doesNotMatch(coordinatorDeploy, /wrangler@4\.120\.0 secret put/);
   assert.match(read("scripts/codex-global-coordination-workflow.mjs"), /admission paths are not bound/);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
   assert.match(workflow, /pull_request_target/);
