@@ -205,11 +205,12 @@ jobs:
           set -euo pipefail
           npm --prefix orb/engine run workflow:campaign-creative:runtime:test
 
-      - name: Verify native Orb backup path
+      - name: Verify native Orb backup and startup paths
         if: ${{ needs.changes.outputs.orb_runtime == 'true' || needs.changes.outputs.all == 'true' }}
         run: |
           set -euo pipefail
           bash orb/engine/scripts/test-backup-n8n-storage-copy.sh
+          bash scripts/runtime/test-orb-runtime-startup-contract.sh
 
   supervised-continuity-windows:
     name: Supervised continuity (Windows)
