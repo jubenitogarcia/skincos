@@ -1668,6 +1668,9 @@ jobs:
             "$PONTO_ARTIFACT_DIR/release-identity-final.json"
       - name: Write immutable release evidence
         if: success()
+        env:
+          SOURCE_TREE: ${{ steps.source.outputs.tree }}
+          PREDECESSOR_STAGE: ${{ steps.source.outputs.predecessor }}
         run: |
           set -euo pipefail
           export PONTO_RELEASE_IDENTITY_JSON="$(cat "$PONTO_ARTIFACT_DIR/release-identity-final.json")"
