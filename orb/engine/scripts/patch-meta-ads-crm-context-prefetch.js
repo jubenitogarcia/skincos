@@ -4,12 +4,13 @@
 // Moves the CRM catalog lookup out of the AI sub-node. n8n's HTTP Request Tool
 // does not reliably execute a loopback authenticated URL on this runtime,
 // while the normal HTTP Request node does. The model still receives only the
-// CRM result that belongs to each destination and never a spreadsheet.
+// official CRM result that belongs to each destination.
 const fs = require('fs');
 const path = require('path');
+const { CRM_COMMERCIAL_CATALOG_URL } = require('./lib/crm-commercial-catalog-contract');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
-const CRM_URL = 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context';
+const CRM_URL = CRM_COMMERCIAL_CATALOG_URL;
 const PREPARE_NODE = 'Prepare CRM Offer Context Requests';
 const FETCH_NODE = 'Fetch CRM Offer Context';
 const ATTACH_NODE = 'Attach CRM Offer Context';

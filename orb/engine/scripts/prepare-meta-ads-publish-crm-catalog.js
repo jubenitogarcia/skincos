@@ -5,11 +5,16 @@
 // writes to n8n; the controlled apply script performs the version-checked save.
 const fs = require('fs');
 const path = require('path');
+const {
+  CRM_COMMERCIAL_CATALOG_TOOL_NAME,
+  CRM_COMMERCIAL_CATALOG_TOOL_ID,
+  CRM_COMMERCIAL_CATALOG_UNIT_QUERY_URL,
+} = require('./lib/crm-commercial-catalog-contract');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
-const CRM_TOOL_NAME = 'CRM Offer Context';
-const CRM_TOOL_ID = 'meta-publish-crm-offer-context';
-const CRM_URL = 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit={unit}';
+const CRM_TOOL_NAME = CRM_COMMERCIAL_CATALOG_TOOL_NAME;
+const CRM_TOOL_ID = CRM_COMMERCIAL_CATALOG_TOOL_ID;
+const CRM_URL = CRM_COMMERCIAL_CATALOG_UNIT_QUERY_URL;
 
 function parseArgs(argv) {
   const values = new Map();
@@ -49,7 +54,7 @@ function updateModelSchema(model) {
 function createCrmTool(credentialId, credentialName) {
   return {
     parameters: {
-      toolDescription: 'Consulta o catálogo comercial ativo e atualizado no CRM. Chame exatamente uma vez por item, usando a unidade de destino recebida (`barra-shopping-sul` ou `novo-hamburgo`). Use apenas preços, combinações, condições e vigências retornados por esta ferramenta; se não houver oferta correspondente, não invente dados.',
+      toolDescription: 'Consulta o catálogo comercial oficial ativo e vigente no CRM para a unidade de destino. Use apenas preços, combos, procedimentos, parcelamentos, condições e vigências retornados por esta ferramenta; se não houver oferta correspondente, não invente dados.',
       method: 'GET',
       url: CRM_URL,
       authentication: 'genericCredentialType',
@@ -87,7 +92,7 @@ function transform(workflow, { credentialId, credentialName }) {
   if (!Array.isArray(workflow.nodes)) throw new Error('Workflow nodes are missing.');
   const legacy = workflow.nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheetsTool' || node.name === 'Knowledge');
   if (legacy.length !== 1 || legacy[0].name !== 'Knowledge') throw new Error('Expected exactly the legacy Knowledge Google Sheets tool.');
-  if (workflow.nodes.some((node) => node.name === CRM_TOOL_NAME || node.id === CRM_TOOL_ID)) throw new Error('CRM Offer Context tool already exists; export a new baseline before reapplying.');
+  if (workflow.nodes.some((node) => node.name === CRM_TOOL_NAME || node.id === CRM_TOOL_ID)) throw new Error('CRM Commercial Catalog tool already exists; export a new baseline before reapplying.');
 
   const livia = requiredNode(workflow, 'Livia');
   const model = requiredNode(workflow, 'OpenAI Chat Model (Agent)');

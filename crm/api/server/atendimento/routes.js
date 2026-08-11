@@ -39,11 +39,13 @@ function safeEqual(left, right) {
     }
 }
 
-function verifyMetaAdsOfferContextToken(req, expectedToken) {
+function verifyCommercialCatalogToken(req, expectedToken) {
     const authorization = String(req?.headers?.authorization || '')
     const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
     return !!expectedToken && safeEqual(token, expectedToken)
 }
+
+const verifyMetaAdsOfferContextToken = verifyCommercialCatalogToken
 
 function normalizeRole(value) {
     const raw = String(value || '').trim().toUpperCase()
@@ -334,8 +336,12 @@ export function createAtendimentoRouter(options = {}) {
         process.env.CRM_ESCALA_HMAC_KEY ||
         '',
     ).trim()
-    const metaAdsOfferContextToken = String(
-        options.metaAdsOfferContextToken || process.env.META_ADS_OFFER_CONTEXT_TOKEN || '',
+    const commercialCatalogToken = String(
+        options.commercialCatalogToken ||
+        process.env.CRM_COMMERCIAL_CATALOG_TOKEN ||
+        options.metaAdsOfferContextToken ||
+        process.env.META_ADS_OFFER_CONTEXT_TOKEN ||
+        '',
     ).trim()
     // The dedicated read-only runtime owns a replay-protected actor verifier.
     // Keep the shared CRM's long-lived v1 verifier intact until it can migrate
@@ -367,13 +373,24 @@ export function createAtendimentoRouter(options = {}) {
             if (atendimentoModuleUnavailable(moduleControl)) {
                 return json(res, 503, { ok: false, error: 'MODULE_MAINTENANCE', moduleControl })
             }
-            if (req.path === '/internal/meta-ads/offer-context') {
-                if (!metaAdsOfferContextToken) {
-                    return json(res, 503, { ok: false, error: 'META_ADS_OFFER_CONTEXT_TOKEN_NOT_CONFIGURED' })
+            const isCommercialCatalogPath = req.path === '/internal/commercial/catalog'
+            const isMetaAdsCompatibilityPath = req.path === '/internal/meta-ads/offer-context'
+            if (isCommercialCatalogPath || isMetaAdsCompatibilityPath) {
+                if (!commercialCatalogToken) {
+                    return json(res, 503, {
+                        ok: false,
+                        error: isMetaAdsCompatibilityPath
+                            ? 'META_ADS_OFFER_CONTEXT_TOKEN_NOT_CONFIGURED'
+                            : 'CRM_COMMERCIAL_CATALOG_TOKEN_NOT_CONFIGURED',
+                    })
                 }
-                if (!verifyMetaAdsOfferContextToken(req, metaAdsOfferContextToken)) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
-                req.atendimentoActor = { id: 'meta-ads-publish', role: 'SERVICE' }
-                req.metaAdsOfferContext = true
+                if (!verifyCommercialCatalogToken(req, commercialCatalogToken)) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
+                req.atendimentoActor = {
+                    id: isMetaAdsCompatibilityPath ? 'meta-ads-publish' : 'crm-commercial-catalog',
+                    role: 'SERVICE',
+                }
+                req.commercialCatalog = true
+                req.metaAdsOfferContext = isMetaAdsCompatibilityPath
                 return next()
             }
             if (!actorKey && !customVerifySignedActor && String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
@@ -1188,6 +1205,15 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    expressRouter.get('/internal/commercial/catalog', async (req, res) => {
+        try {
+            if (!req.commercialCatalog) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
+            return json(res, 200, { ok: true, ...(await store.commercialCatalog(req.query || {})) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.get('/internal/meta-ads/offer-context', async (req, res) => {
         try {
             if (!req.metaAdsOfferContext) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
@@ -1398,6 +1424,7 @@ export const __testables = {
     isClientesCommercialPath,
     redactLocalDiagnostic,
     safeEqual,
+    verifyCommercialCatalogToken,
     verifyMetaAdsOfferContextToken,
     verifySignedActor,
 }

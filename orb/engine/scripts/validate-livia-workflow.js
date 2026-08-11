@@ -215,7 +215,12 @@ function validateStructure() {
     assert(connectionExists('Attach Image Visual Evidence', 'Loop Livia Media Evidence'), 'Image evidence must rejoin the per-item loop');
     assert(connectionExists('Assert Livia Video Analysis', 'Loop Livia Media Evidence'), 'Validated video evidence must rejoin the per-item loop');
     assert(connectionExists('Loop Livia Media Evidence', 'Build Livia Group Evidence', 0), 'Ordered media evidence must be composed at group completion');
-    assert(connectionExists('Build Livia Group Evidence', 'Livia'), 'The editorial agent must receive the full evidence group');
+    if (names.has('Prepare Livia CRM Catalog Context')) {
+      assert(connectionExists('Build Livia Group Evidence', 'Prepare Livia CRM Catalog Context'), 'The editorial agent must receive the deterministic CRM unit context');
+      assert(connectionExists('Prepare Livia CRM Catalog Context', 'Livia'), 'The editorial agent must receive the CRM unit context before analysis');
+    } else {
+      assert(connectionExists('Build Livia Group Evidence', 'Livia'), 'The editorial agent must receive the full evidence group');
+    }
     assert(connectionExists('Livia', 'Merge Livia Output and Visual Contract'), 'Editorial output must rejoin the validated evidence contract');
     assert(connectionExists('Merge Livia Output and Visual Contract', 'Assert Livia Visual Analysis'), 'Editorial output must be checked against visual evidence');
     const hasReelCoverLane = names.has('Attach Livia Reel Cover Context');
