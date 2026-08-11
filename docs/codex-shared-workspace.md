@@ -158,10 +158,16 @@ Gestor e a flag local de equipe unificada habilitadas. Ele reutiliza a mesma
 proveniência e a mesma faixa privada da prévia da thread, mas não envia
 convites reais nem altera o banco remoto.
 
+Quando esse atalho é acionado no clone compartilhado, ele lista somente os
+worktrees registrados do operador compatíveis com Usuários e exige uma escolha
+explícita. Cancelar não inicia nada e não existe checkout padrão, lembrado ou
+hard-coded; em um worktree já aberto, a ação usa diretamente aquele checkout.
+
 A implementação UX validada nesta missão está no worktree
 `C:\CodexShared\Worktrees\skincos\admin\users-production-flag-20260810`, no
 commit `ca1e1dab82616f1804b91d0ecd87e355f065e2d2`. Esta referência é evidência
 histórica da versão integrada e não é um destino fixo do launcher.
+
 ### EF App
 
 - `Setup`

@@ -10,11 +10,17 @@ const launcher = read('scripts/run-shared-codex-shortcut.ps1')
 const environment = read('.codex/environments/environment.toml')
 const workspaceDocs = read('docs/codex-shared-workspace.md')
 
-test('thread preview launcher is canonical and fail-closed', () => {
+test('thread preview launcher requires an explicit registered worktree', () => {
   assert.match(launcher, /function Resolve-CrmThreadPreviewSourceCheckout/)
   assert.match(launcher, /CRM – Prévia da Thread não pode usar o clone compartilhado/)
+  assert.match(launcher, /function Get-CrmThreadPreviewRegisteredWorktrees/)
+  assert.match(launcher, /function Select-CrmThreadPreviewSourceCheckout/)
+  assert.match(launcher, /Nenhum worktree foi selecionado; a ação foi cancelada/)
+  assert.match(launcher, /registered worktree; there is intentionally no remembered\/default/)
   assert.match(launcher, /"CrmUsersThreadPreview"\s*\{[\s\S]*?Invoke-CrmThreadPreviewAction -Role Gestor -Module "users"/)
+  assert.match(launcher, /"CrmUsersThreadPreview"\s*\{[\s\S]*?Resolve-CrmThreadPreviewActionSource/)
   assert.match(launcher, /\$SelectedAction -like 'Crm\*' -and \$SelectedAction -notin @\('CrmThreadPreview', 'CrmUsersThreadPreview'\)/)
+  assert.doesNotMatch(launcher, /users-production-flag-20260810/)
 })
 
 test('Codex App uses the current worktree launcher relatively', () => {
