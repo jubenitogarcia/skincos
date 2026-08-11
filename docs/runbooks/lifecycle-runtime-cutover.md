@@ -20,12 +20,21 @@ through `\\wsl.localhost`; WSL never recursively walks `/mnt/c`.
 ## Release promotion
 
 1. Confirm the reviewed `origin/main` SHA and a clean canonical clone.
-2. On Windows, create `git archive --format=tar <sha>` in the private runtime,
-   compute SHA-256, produce verified lineage against `origin/main`, and copy
-   the tar and lineage to native Linux storage through
+2. On Windows, create a compressed, tracked-source-only
+   `git archive --format=tar.gz` in the private runtime, compute SHA-256,
+   produce verified lineage against `origin/main`, and copy the archive and
+   lineage to native Linux storage through
    `\\wsl.localhost\Ubuntu-24.04\home\admin\skincos-native-release\<sha>`.
 
    ```powershell
+   $release = '<sha>'
+   $releaseRoot = "C:\CodexRuntime\operator\admin\skincos\native-releases\$release"
+   $archive = Join-Path $releaseRoot 'source.tar.gz'
+   New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
+   if (Test-Path -LiteralPath $archive) { throw "Refusing to overwrite source archive: $archive" }
+   git -C C:\CodexShared\Projetos\skincos archive --format=tar.gz --prefix="skincos-$release/" --output=$archive $release
+   $archiveSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+
    & scripts/runtime/verify-native-source-release-lineage.ps1 -ReleaseSha <sha> -ParentReleaseSha <current-release-sha>
    ```
 3. From the reviewed Git tree in WSL, materialize one closure attestation for
@@ -50,8 +59,8 @@ through `\\wsl.localhost`; WSL never recursively walks `/mnt/c`.
 
    ```bash
    scripts/runtime/prepare-native-source-release.sh \
-      --archive /home/admin/skincos-native-release/<sha>/source.tar \
-      --sha256 <sha256> --lineage /home/admin/skincos-native-release/<sha>/lineage.json \
+      --archive /home/admin/skincos-native-release/<sha>/source.tar.gz \
+      --sha256 <archive-sha256> --lineage /home/admin/skincos-native-release/<sha>/lineage.json \
       --lineage-sha256 <lineage-sha256> \
       --coordination-closure /home/admin/skincos-native-release/<sha>/orb-closure.json \
       --coordination-closure /home/admin/skincos-native-release/<sha>/atendimento-closure.json \
