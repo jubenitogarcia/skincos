@@ -73,13 +73,23 @@ run_backup() {
     N8N_HEALTH_DIR="$runtime_root/health" \
     BACKUP_ROOT="$backup_root" \
     BACKUP_STORAGE_COPY_TRANSPORT=tar \
+    STALE_PARTIAL_MAX_AGE_HOURS=6 \
     MANAGE_N8N_SERVICE=0 \
     VERIFY_RESTORE=1 \
     RETENTION_COUNT=1 \
     bash "$repo_root/scripts/backup-n8n.sh"
 }
 
+stale_partial="$backup_root/.partial-incomplete"
+recovery_partial="$backup_root/.partial-recovery-candidate"
+mkdir -p "$stale_partial" "$recovery_partial"
+printf 'incomplete\n' > "$stale_partial/storage.tar"
+printf '{}\n' > "$recovery_partial/manifest.json"
+touch -d '8 hours ago' "$stale_partial" "$recovery_partial"
+
 run_backup
+[[ ! -e "$stale_partial" ]]
+[[ -e "$recovery_partial/manifest.json" ]]
 sleep 1
 run_backup
 
