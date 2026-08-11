@@ -172,6 +172,27 @@ function ensureCoverage(available, expected, label) {
   if (available > expected) fail(`${label.toUpperCase()}_COVERAGE_INVALID`);
 }
 
+function optionalCoverage(input, label, { expectedMinimum = 0 } = {}) {
+  const hasAvailable = input.coverageAvailable !== undefined && input.coverageAvailable !== null;
+  const hasExpected = input.coverageExpected !== undefined && input.coverageExpected !== null;
+  if (!hasAvailable && !hasExpected) return [null, null];
+  if (!hasAvailable || !hasExpected) fail(`${label.toUpperCase()}_COVERAGE_PAIR_REQUIRED`);
+  const available = integer(input.coverageAvailable, 'coverageAvailable', { required: true });
+  const expected = integer(input.coverageExpected, 'coverageExpected', { required: true, minimum: expectedMinimum });
+  ensureCoverage(available, expected, label);
+  return [available, expected];
+}
+
+function optionalFreshness(input, label) {
+  const freshnessStatus = optionalString(
+    input.freshnessStatus,
+    `${label}.freshnessStatus`,
+    /^(fresh|stale|unknown)$/,
+  );
+  const freshnessAgeSeconds = integer(input.freshnessAgeSeconds, `${label}.freshnessAgeSeconds`, { minimum: 0 });
+  return { freshnessStatus, freshnessAgeSeconds };
+}
+
 function ensureAvailableEvidence({ evidenceState, providers, provenance, label }) {
   if (evidenceState === 'unavailable') return;
   if (providers.length === 0) fail(`${label.toUpperCase()}_PROVIDERS_REQUIRED`);
@@ -206,8 +227,8 @@ async function insertIdempotent(queryable, sql, params) {
 export const SQL = Object.freeze({
   createCollectorRun: `
     insert into influencer_intelligence.collector_run
-      (run_key, idempotency_key, provider, mode, status, request_fingerprint, correlation_id, attempt_count, started_at, finished_at)
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz)
+      (run_key, idempotency_key, provider, mode, status, request_fingerprint, correlation_id, attempt_count, started_at, finished_at, coverage_available, coverage_expected, failure_count, freshness_status, freshness_age_seconds)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11, $12, $13, $14, $15)
     on conflict (idempotency_key) do nothing
     returning run_key, idempotency_key, request_fingerprint, status`,
   readCollectorRun: `
@@ -216,7 +237,14 @@ export const SQL = Object.freeze({
     where idempotency_key = $1`,
   updateCollectorRun: `
     update influencer_intelligence.collector_run
-    set status = $2, finished_at = $3::timestamptz, updated_at = now()
+    set status = $2,
+        finished_at = $3::timestamptz,
+        coverage_available = coalesce($4, coverage_available),
+        coverage_expected = coalesce($5, coverage_expected),
+        failure_count = coalesce($6, failure_count),
+        freshness_status = coalesce($7, freshness_status),
+        freshness_age_seconds = coalesce($8, freshness_age_seconds),
+        updated_at = now()
     where run_key = $1
     returning run_key, status, finished_at`,
   upsertCreatorIdentity: `
@@ -243,23 +271,29 @@ export const SQL = Object.freeze({
     returning evidence_key, ingest_key, creator_key, provider, evidence_state`,
   recordProfileSnapshot: `
     insert into influencer_intelligence.creator_profile_snapshot
-      (snapshot_key, ingest_key, creator_key, identity_key, evidence_key, provider, provider_adapter_version, contract_version, evidence_state, observed_at, retrieved_at, source_ref, canonical_handle, followers_count, following_count, media_count, is_private, is_verified, normalized_metrics, retention_policy_version)
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz, $11::timestamptz, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20)
+      (snapshot_key, ingest_key, creator_key, identity_key, evidence_key, provider, provider_adapter_version, contract_version, evidence_state, observed_at, retrieved_at, source_ref, canonical_handle, followers_count, following_count, media_count, is_private, is_verified, normalized_metrics, retention_policy_version, coverage_available, coverage_expected, freshness_status, freshness_age_seconds)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz, $11::timestamptz, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24)
     on conflict (ingest_key) do nothing
     returning snapshot_key, ingest_key, creator_key, provider, evidence_state, observed_at`,
   upsertMedia: `
     insert into influencer_intelligence.creator_media
       (media_key, creator_key, provider, provider_media_digest, media_kind, published_at, source_ref)
     values ($1, $2, $3, $4, $5, $6::timestamptz, $7)
-    on conflict (provider, provider_media_digest) do update
-      set source_ref = coalesce(excluded.source_ref, influencer_intelligence.creator_media.source_ref),
+    on conflict (media_key) do update
+      set provider = excluded.provider,
+          provider_media_digest = excluded.provider_media_digest,
+          media_kind = case
+            when excluded.media_kind = 'unknown' then influencer_intelligence.creator_media.media_kind
+            else excluded.media_kind
+          end,
+          source_ref = coalesce(excluded.source_ref, influencer_intelligence.creator_media.source_ref),
           published_at = coalesce(excluded.published_at, influencer_intelligence.creator_media.published_at),
           updated_at = now()
     returning media_key, creator_key, provider, provider_media_digest`,
   recordMediaSnapshot: `
     insert into influencer_intelligence.creator_media_snapshot
-      (snapshot_key, ingest_key, media_key, creator_key, evidence_key, provider, provider_adapter_version, contract_version, evidence_state, observed_at, retrieved_at, source_ref, likes_count, comments_count, shares_count, saves_count, views_count, reach_count, impressions_count, normalized_metrics, retention_policy_version)
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz, $11::timestamptz, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21)
+      (snapshot_key, ingest_key, media_key, creator_key, evidence_key, provider, provider_adapter_version, contract_version, evidence_state, observed_at, retrieved_at, source_ref, likes_count, comments_count, shares_count, saves_count, views_count, reach_count, impressions_count, normalized_metrics, retention_policy_version, coverage_available, coverage_expected, freshness_status, freshness_age_seconds)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz, $11::timestamptz, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21, $22, $23, $24, $25)
     on conflict (ingest_key) do nothing
     returning snapshot_key, ingest_key, media_key, creator_key, provider, evidence_state, observed_at`,
   recordCommentSample: `
@@ -352,10 +386,14 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
         startedAt: timestamp(input.startedAt || new Date().toISOString(), 'startedAt'),
         finishedAt: timestamp(input.finishedAt, 'finishedAt', { required: false }),
       };
+      const [coverageAvailable, coverageExpected] = optionalCoverage(input, 'collectorRun');
+      const failureCount = integer(input.failureCount ?? 0, 'failureCount', { required: true });
+      const freshness = optionalFreshness(input, 'collectorRun');
       ensureTimestampOrder(values.startedAt, values.finishedAt, 'collectorRun');
       const row = await insertReturning(queryable, SQL.createCollectorRun, [
         values.runKey, values.idempotencyKey, values.provider, values.mode, values.status,
         values.requestFingerprint, values.correlationId, values.attemptCount, values.startedAt, values.finishedAt,
+        coverageAvailable, coverageExpected, failureCount, freshness.freshnessStatus, freshness.freshnessAgeSeconds,
       ]);
       if (row) return { inserted: true, row };
       const existing = (await queryable.query(SQL.readCollectorRun, [values.idempotencyKey])).rows?.[0];
@@ -371,7 +409,21 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
       const runKey = requiredString(input.runKey, 'runKey');
       const status = requiredString(input.status, 'status', /^(queued|running|completed|partial|failed|cancelled|unavailable)$/);
       const finishedAt = timestamp(input.finishedAt, 'finishedAt', { required: false });
-      const row = await insertReturning(queryable, SQL.updateCollectorRun, [runKey, status, finishedAt]);
+      const [coverageAvailable, coverageExpected] = optionalCoverage(input, 'collectorRunUpdate');
+      const failureCount = input.failureCount === undefined || input.failureCount === null
+        ? null
+        : integer(input.failureCount, 'failureCount', { required: true });
+      const freshness = optionalFreshness(input, 'collectorRunUpdate');
+      const row = await insertReturning(queryable, SQL.updateCollectorRun, [
+        runKey,
+        status,
+        finishedAt,
+        coverageAvailable,
+        coverageExpected,
+        failureCount,
+        freshness.freshnessStatus,
+        freshness.freshnessAgeSeconds,
+      ]);
       if (!row) fail('COLLECTOR_RUN_NOT_FOUND');
       return row;
     },
@@ -413,6 +465,8 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
       safeInput(input.normalizedMetrics, 'normalizedMetrics');
       const evidenceState = requiredString(input.evidenceState, 'evidenceState', /^(observed|unavailable)$/);
       const metrics = normalizeSafeJson(input.normalizedMetrics, 'normalizedMetrics');
+      const [coverageAvailable, coverageExpected] = optionalCoverage(input, 'profileSnapshot', { expectedMinimum: 1 });
+      const freshness = optionalFreshness(input, 'profileSnapshot');
       const row = await insertReturning(queryable, SQL.recordProfileSnapshot, [
         common.key, common.ingestKey, common.creatorKey, optionalString(input.identityKey, 'identityKey'),
         requiredString(input.evidenceKey, 'evidenceKey'), common.provider, version(input.providerAdapterVersion, 'providerAdapterVersion'),
@@ -420,6 +474,7 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
         common.sourceRef, optionalString(input.canonicalHandle, 'canonicalHandle', /^[a-z0-9._]{1,30}$/),
         integer(input.followersCount, 'followersCount'), integer(input.followingCount, 'followingCount'), integer(input.mediaCount, 'mediaCount'),
          optionalBoolean(input.isPrivate, 'isPrivate'), optionalBoolean(input.isVerified, 'isVerified'), JSON.stringify(metrics), common.retentionPolicyVersion,
+         coverageAvailable, coverageExpected, freshness.freshnessStatus, freshness.freshnessAgeSeconds,
       ]);
       return { inserted: Boolean(row), row };
     },
@@ -439,6 +494,8 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
     async recordMediaSnapshot(input) {
       const common = commonArtifact(input, 'snapshot');
       const metrics = normalizeSafeJson(input.normalizedMetrics, 'normalizedMetrics');
+      const [coverageAvailable, coverageExpected] = optionalCoverage(input, 'mediaSnapshot', { expectedMinimum: 1 });
+      const freshness = optionalFreshness(input, 'mediaSnapshot');
       const row = await insertReturning(queryable, SQL.recordMediaSnapshot, [
         common.key, common.ingestKey, requiredString(input.mediaKey, 'mediaKey'), common.creatorKey,
         requiredString(input.evidenceKey, 'evidenceKey'), common.provider, version(input.providerAdapterVersion, 'providerAdapterVersion'),
@@ -447,6 +504,7 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
         integer(input.likesCount, 'likesCount'), integer(input.commentsCount, 'commentsCount'), integer(input.sharesCount, 'sharesCount'),
         integer(input.savesCount, 'savesCount'), integer(input.viewsCount, 'viewsCount'), integer(input.reachCount, 'reachCount'),
         integer(input.impressionsCount, 'impressionsCount'), JSON.stringify(metrics), common.retentionPolicyVersion,
+        coverageAvailable, coverageExpected, freshness.freshnessStatus, freshness.freshnessAgeSeconds,
       ]);
       return { inserted: Boolean(row), row };
     },

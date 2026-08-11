@@ -60,8 +60,8 @@ jobs:
         run: node .github/scripts/validate-module-catalog.mjs && node .github/scripts/validate-module-maturity.mjs
       - name: Validate domain import boundaries
         run: node .github/scripts/validate-domain-boundaries.mjs
-      - name: Test Influencer Intelligence contract boundary
-        run: node --test social/influencer-intelligence/tests/contracts.test.mjs social/influencer-intelligence/tests/registry.test.mjs social/influencer-intelligence/tests/providers.test.mjs social/influencer-intelligence/tests/provider-router-contract.test.mjs social/influencer-intelligence/tests/architecture.test.mjs social/influencer-intelligence/tests/data-model.test.mjs
+      - name: Test Influencer Intelligence contracts, providers and snapshots
+        run: node --test social/influencer-intelligence/tests/contracts.test.mjs social/influencer-intelligence/tests/registry.test.mjs social/influencer-intelligence/tests/providers.test.mjs social/influencer-intelligence/tests/provider-router-contract.test.mjs social/influencer-intelligence/tests/architecture.test.mjs social/influencer-intelligence/tests/data-model.test.mjs social/influencer-intelligence/tests/snapshots.test.mjs
       - name: Validate reproducible staging manifest
         run: node .github/scripts/validate-staging-manifest.mjs
       - name: Validate staging bootstrap safety guards
