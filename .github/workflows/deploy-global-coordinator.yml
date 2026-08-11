@@ -194,22 +194,33 @@ jobs:
             wrangler_vars+=(--var "COORDINATION_PREVIOUS_KEY_ID:${COORDINATION_PREVIOUS_KEY_ID}")
             wrangler_vars+=(--var "COORDINATION_PREVIOUS_KEY_EXPIRES_AT:${COORDINATION_PREVIOUS_KEY_EXPIRES_AT}")
           fi
+          # Keep code, non-secret vars and secret bindings in the same Worker
+          # version. `wrangler secret put` creates and deploys a separate
+          # version, which can otherwise pair the new key with the previous
+          # version's keyId during rotation.
+          export SECRETS_FILE="$RUNNER_TEMP/skincos-global-coordinator-secrets.json"
+          trap 'rm -f -- "$SECRETS_FILE"' EXIT
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const names = [
+            'COORDINATION_SHARED_SECRET',
+            'COORDINATION_ADMIN_SECRET',
+            'COORDINATION_ACTIVE_KEY',
+            'COORDINATION_PREVIOUS_KEY',
+            'COORDINATION_RECOVERY_SECRET',
+          ];
+          const secrets = Object.fromEntries(names
+            .map((name) => [name, process.env[name]])
+            .filter(([, value]) => typeof value === 'string' && value.length > 0));
+          fs.writeFileSync(process.env.SECRETS_FILE, JSON.stringify(secrets), { mode: 0o600 });
+          NODE
           npx --yes wrangler@4.120.0 deploy \
             --config wrangler.toml \
             --env "$TARGET" \
             "${wrangler_vars[@]}" \
+            --secrets-file "$SECRETS_FILE" \
             --message "global-coordinator:${TARGET}:${GITHUB_SHA}"
-          printf '%s' "$COORDINATION_SHARED_SECRET" | npx --yes wrangler@4.120.0 secret put COORDINATION_SHARED_SECRET --config wrangler.toml --env "$TARGET" >/dev/null
-          printf '%s' "$COORDINATION_ADMIN_SECRET" | npx --yes wrangler@4.120.0 secret put COORDINATION_ADMIN_SECRET --config wrangler.toml --env "$TARGET" >/dev/null
-          if [[ -n "${COORDINATION_ACTIVE_KEY:-}" ]]; then
-            printf '%s' "$COORDINATION_ACTIVE_KEY" | npx --yes wrangler@4.120.0 secret put COORDINATION_ACTIVE_KEY --config wrangler.toml --env "$TARGET" >/dev/null
-          fi
-          if [[ -n "${COORDINATION_PREVIOUS_KEY:-}" ]]; then
-            printf '%s' "$COORDINATION_PREVIOUS_KEY" | npx --yes wrangler@4.120.0 secret put COORDINATION_PREVIOUS_KEY --config wrangler.toml --env "$TARGET" >/dev/null
-          fi
-          if [[ -n "${COORDINATION_RECOVERY_SECRET:-}" ]]; then
-            printf '%s' "$COORDINATION_RECOVERY_SECRET" | npx --yes wrangler@4.120.0 secret put COORDINATION_RECOVERY_SECRET --config wrangler.toml --env "$TARGET" >/dev/null
-          fi
 
       - name: Read back the active version and verify the signed live gate
         id: postdeploy
