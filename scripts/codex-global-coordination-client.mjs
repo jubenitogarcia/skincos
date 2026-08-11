@@ -30,8 +30,12 @@ export function sha256(value) {
 }
 
 export function hmac(secret, value) {
-  if (!String(secret || "").trim()) throw new Error("global coordination custody is unavailable");
-  return crypto.createHmac("sha256", String(secret)).update(value).digest("base64url");
+  // GitHub secret transport may preserve a terminal newline. The Worker key
+  // ring trims custody before verification, so clients must canonicalize the
+  // same way before signing or verifying responses.
+  const normalizedSecret = String(secret || "").trim();
+  if (!normalizedSecret) throw new Error("global coordination custody is unavailable");
+  return crypto.createHmac("sha256", normalizedSecret).update(value).digest("base64url");
 }
 
 export function newRequestNonce() {
