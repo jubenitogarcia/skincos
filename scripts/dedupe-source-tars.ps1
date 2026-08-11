@@ -38,13 +38,17 @@ function Get-LinkNames([string]$Path) {
     } catch { return @() }
 }
 
-$files = @(Get-ChildItem -LiteralPath $root -Force -File -ErrorAction SilentlyContinue | Where-Object {
-    $_.Name -match 'source.*\.tar$' -and $_.LastWriteTimeUtc -lt $cutoff -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
+function Test-SourceArchiveName([string]$Name) {
+    return $Name -match 'source.*\.tar(?:\.gz)?$'
+}
+
+$files = @(Get-ChildItem -LiteralPath $root -Force -File -Filter '*source*.tar*' -ErrorAction SilentlyContinue | Where-Object {
+    (Test-SourceArchiveName $_.Name) -and $_.LastWriteTimeUtc -lt $cutoff -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
 })
 foreach ($name in @('native-releases', 'native-promotions', 'releases', 'checkpoints', 'native-source-release', 'livia-reel-frame-contract', 'livia-1dee4fc2', 'livia-c525f5e1', 'mcp-readonly-gateway')) {
     $candidateRoot = Join-Path $root $name
     if (Test-Path -LiteralPath $candidateRoot -PathType Container) { $files += @(Get-ChildItem -LiteralPath $candidateRoot -Depth 2 -Recurse -Force -File -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -match 'source.*\.tar$' -and $_.LastWriteTimeUtc -lt $cutoff -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        (Test-SourceArchiveName $_.Name) -and $_.LastWriteTimeUtc -lt $cutoff -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
     }) }
 }
 $rows = foreach ($file in $files) {
