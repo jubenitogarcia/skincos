@@ -13,6 +13,11 @@ if ($document.schema_version -ne 1) { throw 'unexpected schema version' }
 if ($document.drive.device -ne 'C:') { throw 'drive snapshot missing' }
 if ($document.threshold_state -notin @('healthy','warning','high','critical','emergency')) { throw 'invalid threshold state' }
 if ($document.limitations.Count -lt 3) { throw 'safety limitations missing' }
+$policyDocument = Get-Content -LiteralPath $policy -Raw | ConvertFrom-Json
+$requiredFocalRoots = @('native-source-release', 'livia-reel-frame-contract', 'mcp-readonly-gateway')
+foreach ($root in $requiredFocalRoots) {
+    if ($policyDocument.protectedArtifactDirectories -notcontains $root) { throw "focal artifact root missing from policy: $root" }
+}
 $taskPreview = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -RepositoryRoot (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) -ScriptPath $script | Out-String) | ConvertFrom-Json
 if ($taskPreview.action -ne 'dry-run' -or $taskPreview.include_worktree_status) { throw 'scheduled audit must default to quick mode' }
 if (-not $taskPreview.include_focal_artifacts -or $taskPreview.arguments -notmatch '-IncludeFocalArtifacts') { throw 'scheduled audit must include focal artifact scan' }
