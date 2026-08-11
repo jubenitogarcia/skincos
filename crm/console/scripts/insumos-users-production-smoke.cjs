@@ -17,7 +17,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..')
 const ARTIFACT_DIR = path.join(REPO_ROOT, 'output', 'playwright')
 fs.mkdirSync(ARTIFACT_DIR, { recursive: true })
 
-const CRM_URL = String(process.env.CRM_URL || 'https://crm.skincos.com.br').trim().replace(/\/$/, '')
+const CRM_URL = 'https://crm.skincos.com.br'
 const SMOKE_EMAIL = String(process.env.SMOKE_EMAIL || '').trim()
 const SMOKE_PASSWORD = String(process.env.SMOKE_PASSWORD || '')
 const NO_SCREENSHOTS = process.env.NO_SCREENSHOTS === '1' || process.env.NO_SCREENSHOTS === 'true'
@@ -53,8 +53,9 @@ async function main() {
       '--mute-audio',
     ],
   })
-  const context = await browser.newContext({ viewport: { width: 1365, height: 860 } })
+  const context = await browser.newContext({ baseURL: CRM_URL, viewport: { width: 1365, height: 860 } })
   const page = await context.newPage()
+  const api = context.request
   const consoleLines = []
   const pageErrors = []
 
@@ -65,43 +66,35 @@ async function main() {
     try { localStorage.setItem('app.activeModule', 'users') } catch {}
   })
 
-  async function apiJson(endpoint, options = {}) {
-    return page.evaluate(async ({ endpoint, options }) => {
-      try {
-        const response = await fetch(endpoint, {
-          credentials: 'include',
-          headers: { accept: 'application/json', ...(options.headers || {}) },
-          ...options,
-        })
-        const text = await response.text()
-        let json = null
-        try { json = text ? JSON.parse(text) : null } catch {}
-        return { status: response.status, ok: response.ok, json }
-      } catch {
-        return { status: 0, ok: false, json: null }
-      }
-    }, { endpoint, options })
+  async function readJson(response) {
+    const text = await response.text()
+    let json = null
+    try { json = text ? JSON.parse(text) : null } catch {}
+    return { status: response.status(), ok: response.ok(), json }
+  }
+
+  async function apiJson(endpoint) {
+    try {
+      return await readJson(await api.get(endpoint, {
+        headers: { accept: 'application/json' },
+      }))
+    } catch {
+      return { status: 0, ok: false, json: null }
+    }
   }
 
   try {
-    const moduleUrl = new URL(`${CRM_URL}/`)
-    moduleUrl.searchParams.set('module', 'users')
-    await page.goto(moduleUrl.toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await page.goto('https://crm.skincos.com.br/?module=users', { waitUntil: 'domcontentloaded', timeout: 60_000 })
     await page.waitForTimeout(1_500)
 
-    const login = await page.evaluate(async ({ email, password }) => {
-      try {
-        const response = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', accept: 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ email, password }),
-        })
-        return { status: response.status, ok: response.ok }
-      } catch {
-        return { status: 0, ok: false }
-      }
-    }, { email: SMOKE_EMAIL, password: SMOKE_PASSWORD })
+    let login = { status: 0, ok: false }
+    try {
+      const response = await api.post('/api/auth/login', {
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        data: { email: SMOKE_EMAIL, password: SMOKE_PASSWORD },
+      })
+      login = { status: response.status(), ok: response.ok() }
+    } catch {}
     assert(login.status === 200 && login.ok, `AUTH_LOGIN_FAILED:${login.status}`)
 
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
