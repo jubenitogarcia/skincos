@@ -163,7 +163,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout trusted Ponto custody guard
-        if: ${{ inputs.orchestrator_run_id != '' && contains(fromJSON('["canary","active"]'), inputs.state) }}
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
           ref: ${{ github.sha }}
@@ -223,7 +222,6 @@ jobs:
             echo "NAMESPACE_ID=$NAMESPACE_ID"
             echo "OPPOSITE_NAMESPACE_ID=$OPPOSITE_NAMESPACE_ID"
           } >> "$GITHUB_ENV"
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
       - name: Attest exact Ponto module-control identity before any state mutation
         if: ${{ inputs.module == 'timekeeping' }}
         env:

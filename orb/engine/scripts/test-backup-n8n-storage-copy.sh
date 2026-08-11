@@ -61,6 +61,8 @@ EOF
 chmod +x "$fake_bin"/*
 
 run_backup() {
+  local stale_partial_max_age_hours="${1:-6}"
+
   PATH="$fake_bin:$PATH" \
     N8N_ROOT="$repo_root" \
     N8N_RUNTIME_HOME="$runtime_root" \
@@ -73,15 +75,25 @@ run_backup() {
     N8N_HEALTH_DIR="$runtime_root/health" \
     BACKUP_ROOT="$backup_root" \
     BACKUP_STORAGE_COPY_TRANSPORT=tar \
+    STALE_PARTIAL_MAX_AGE_HOURS="$stale_partial_max_age_hours" \
     MANAGE_N8N_SERVICE=0 \
     VERIFY_RESTORE=1 \
     RETENTION_COUNT=1 \
     bash "$repo_root/scripts/backup-n8n.sh"
 }
 
-run_backup
+stale_partial="$backup_root/.partial-incomplete"
+recovery_partial="$backup_root/.partial-recovery-candidate"
+mkdir -p "$stale_partial" "$recovery_partial"
+printf 'incomplete\n' > "$stale_partial/storage.tar"
+printf '{}\n' > "$recovery_partial/manifest.json"
+touch -d '9 hours ago' "$stale_partial" "$recovery_partial"
+
+run_backup 08
+[[ ! -e "$stale_partial" ]]
+[[ -e "$recovery_partial/manifest.json" ]]
 sleep 1
-run_backup
+run_backup 08
 
 mapfile -t backups < <(find "$backup_root" -mindepth 1 -maxdepth 1 -type d ! -name '.partial-*' -print)
 [[ "${#backups[@]}" == "1" ]]
@@ -95,6 +107,18 @@ grep -q '"restoreVerified": true' "$backup_dir/manifest.json"
 grep -q '"storageFormat": "tar"' "$backup_dir/manifest.json"
 grep -Eq '"storageArchiveSha256": "[0-9a-f]{64}"' "$backup_dir/manifest.json"
 grep -Eq '"storageBytes": [1-9][0-9]*' "$backup_dir/manifest.json"
+
+if run_backup 000 >"$test_root/zero-age.out" 2>"$test_root/zero-age.err"; then
+  echo 'Zero stale partial age was unexpectedly accepted.' >&2
+  exit 1
+fi
+grep -q 'STALE_PARTIAL_MAX_AGE_HOURS must be an integer between 1 and 8760.' "$test_root/zero-age.err"
+
+if run_backup 18446744073709551617 >"$test_root/overflow-age.out" 2>"$test_root/overflow-age.err"; then
+  echo 'Overflowing stale partial age was unexpectedly accepted.' >&2
+  exit 1
+fi
+grep -q 'STALE_PARTIAL_MAX_AGE_HOURS must be an integer between 1 and 8760.' "$test_root/overflow-age.err"
 
 if PATH="$fake_bin:$PATH" \
   N8N_ROOT="$repo_root" \

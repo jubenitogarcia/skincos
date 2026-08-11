@@ -7,7 +7,7 @@ const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://espacofacial.com")
 
 export const metadata: Metadata = {
   title: "Cartas da Beleza em Movimento | Espaço Facial",
-  description: "Uma experiência editorial exclusiva da Espaço Facial Novo Hamburgo em parceria com a Velocity.",
+  description: "Uma experiência editorial exclusiva da Espaço Facial Novo Hamburgo para celebrar 3 anos de beleza em movimento.",
   alternates: {
     canonical: `${siteUrl}/beleza-em-movimento`,
   },
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 export default function BeautyMovementPage() {
   return (
     <>
-      <Header preferredUnitSlug="novo-hamburgo" fixedUnitSlug="novo-hamburgo" />
+      <Header preferredUnitSlug="novo-hamburgo" fixedUnitSlug="novo-hamburgo" scrollAware />
       <BeautyMovementCampaign />
       <Footer />
     </>

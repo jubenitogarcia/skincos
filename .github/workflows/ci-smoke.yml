@@ -10,7 +10,6 @@ on:
       - "docs/project-state/**"
       - ".codex/**"
       - "skills/**"
-      - "ops/codex/**"
       - "scripts/codex-*.mjs"
       - "scripts/tests/codex-*.mjs"
       - "scripts/codex-*.sh"
@@ -25,7 +24,6 @@ on:
       - "docs/project-state/**"
       - ".codex/**"
       - "skills/**"
-      - "ops/codex/**"
       - "scripts/codex-*.mjs"
       - "scripts/tests/codex-*.mjs"
       - "scripts/codex-*.sh"
@@ -46,6 +44,7 @@ jobs:
       observability: ${{ steps.scope.outputs.observability }}
       clientes_runtime_contract: ${{ steps.scope.outputs.clientes_runtime_contract }}
       orb_runtime: ${{ steps.scope.outputs.orb_runtime }}
+      storage_governance: ${{ steps.scope.outputs.storage_governance }}
       ccg: ${{ steps.scope.outputs.ccg }}
       all: ${{ steps.scope.outputs.all }}
       node: ${{ steps.scope.outputs.node }}
@@ -76,7 +75,8 @@ jobs:
           codex="$(changed .codex skills ops/codex scripts/codex-*.mjs scripts/codex-*.sh scripts/*codex*.ps1)"
           observability="$(changed scripts/observability)"
           clientes_runtime_contract="$(changed scripts crm/api ops/runtime/units)"
-          orb_runtime="$(changed orb ops/runtime platform service)"
+          orb_runtime="$(changed orb ops/runtime platform service scripts/runtime/start-n8n-runtime.sh scripts/runtime/prepare-lifecycle-layout.sh scripts/runtime/test-orb-runtime-startup-contract.sh)"
+          storage_governance="$(changed ops/codex/storage-retention-policy.json scripts/skincos-storage-governance.ps1 scripts/dedupe-source-tars.ps1 scripts/tests/test-skincos-storage-governance.ps1)"
           ccg="$(changed orb/engine)"
           all="$(changed .github/workflows/ci-smoke.yml)"
           node=false
@@ -88,6 +88,7 @@ jobs:
           echo "observability=$observability" >> "$GITHUB_OUTPUT"
           echo "clientes_runtime_contract=$clientes_runtime_contract" >> "$GITHUB_OUTPUT"
           echo "orb_runtime=$orb_runtime" >> "$GITHUB_OUTPUT"
+          echo "storage_governance=$storage_governance" >> "$GITHUB_OUTPUT"
           echo "ccg=$ccg" >> "$GITHUB_OUTPUT"
           echo "all=$all" >> "$GITHUB_OUTPUT"
           echo "node=$node" >> "$GITHUB_OUTPUT"
@@ -205,16 +206,17 @@ jobs:
           set -euo pipefail
           npm --prefix orb/engine run workflow:campaign-creative:runtime:test
 
-      - name: Verify native Orb backup path
+      - name: Verify native Orb backup and startup paths
         if: ${{ needs.changes.outputs.orb_runtime == 'true' || needs.changes.outputs.all == 'true' }}
         run: |
           set -euo pipefail
           bash orb/engine/scripts/test-backup-n8n-storage-copy.sh
+          bash scripts/runtime/test-orb-runtime-startup-contract.sh
 
   supervised-continuity-windows:
     name: Supervised continuity (Windows)
     needs: changes
-    if: ${{ needs.changes.outputs.codex == 'true' || needs.changes.outputs.all == 'true' }}
+    if: ${{ needs.changes.outputs.codex == 'true' || needs.changes.outputs.storage_governance == 'true' || needs.changes.outputs.all == 'true' }}
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -233,3 +235,10 @@ jobs:
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-host-wrappers.ps1
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-rollback.ps1
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-skill-installer.ps1
+
+      - name: Verify storage governance contracts
+        if: ${{ needs.changes.outputs.storage_governance == 'true' || needs.changes.outputs.all == 'true' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\tests\test-skincos-storage-governance.ps1

@@ -40,13 +40,32 @@ test('keeps the provider boundary official-first and fail-closed', () => {
     'permission_gap',
     'coverage_gap',
     'timeout',
+    'circuit_open',
+    'retry_exhausted',
   ]);
   assert.deepEqual(BOUNDARIES.find(({ id }) => id === 'provider-router').failClosedFor, [
     'policy_block',
     'invalid_response',
     'unclassified_transport',
   ]);
+  assert.deepEqual(PROVIDER_INTERFACE.operations.map(({ name }) => name), [
+    'resolve_creator',
+    'get_profile',
+    'get_recent_media',
+    'get_media_metrics',
+    'get_comments_sample',
+    'get_profile_metrics',
+  ]);
   assert.ok(PROVIDER_INTERFACE.operations.every(({ readOnly }) => readOnly === true));
+  assert.deepEqual(PROVIDER_INTERFACE.result.fields, [
+    'provider',
+    'retrievedAt',
+    'dataClassification',
+    'freshness',
+    'limitations',
+    'providerSpecificEvidence',
+    'data',
+  ]);
 });
 
 test('models evidence as append-only and provenance-complete', () => {
@@ -65,6 +84,30 @@ test('models evidence as append-only and provenance-complete', () => {
     assert.match(resources.get(name).lifecycle, /append-only/i);
   }
   assert.match(DATA_MODEL.invariants.join('\n'), /never silently imputed as zero/i);
+});
+
+test('maps the reviewed physical data-model artifact without enabling runtime', () => {
+  assert.equal(DATA_MODEL.persistence.migration, 'migrations/20260811_influencer_intelligence_data_model_v1.up.sql');
+  assert.equal(DATA_MODEL.persistence.dependsOn, 'migrations/20260810_influencer_intelligence_registry_v1.up.sql');
+  assert.match(DATA_MODEL.persistence.artifactStatus, /not applied/i);
+  const relations = new Map(DATA_MODEL.persistence.relations.map((relation) => [relation.name, relation]));
+  for (const name of [
+    'creator_identity',
+    'collector_run',
+    'creator_media',
+    'collector_evidence',
+    'creator_profile_snapshot',
+    'creator_media_snapshot',
+    'creator_comment_sample',
+    'creator_analysis',
+    'creator_score',
+    'creator_score_component',
+    'campaign',
+    'campaign_creator_fit',
+  ]) {
+    assert.ok(relations.has(name), `missing physical relation: ${name}`);
+  }
+  assert.equal(DATA_MODEL.persistence.appendOnlyRelations.length, 8);
 });
 
 test('requires deterministic score identity, coverage, and structured signals', () => {
