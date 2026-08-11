@@ -250,7 +250,7 @@ function Get-SourceTarRecords {
     $files = @()
     foreach ($scanRoot in $scanRoots) {
         if (-not (Test-Path -LiteralPath $scanRoot -PathType Container)) { continue }
-        $files += @(Get-ChildItem -LiteralPath $scanRoot -Recurse -Force -File -Filter '*source*.tar' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'source.*\.tar$' })
+        $files += @(Get-ChildItem -LiteralPath $scanRoot -Recurse -Force -File -Filter '*source*.tar*' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'source.*\.tar(?:\.gz)?$' })
     }
     $rows = foreach ($file in $files) {
         $hash = $null

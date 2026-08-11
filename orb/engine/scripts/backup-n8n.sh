@@ -17,6 +17,8 @@ RUNTIME_SERVICE="${RUNTIME_SERVICE:-$SKINCOS_N8N_SERVICE}"
 VERIFY_RESTORE="${VERIFY_RESTORE:-auto}"
 BACKUP_STORAGE_COPY_TRANSPORT="${BACKUP_STORAGE_COPY_TRANSPORT:-auto}"
 BACKUP_PUBLISH_OWNER="${BACKUP_PUBLISH_OWNER:-}"
+STALE_PARTIAL_MAX_AGE_HOURS="${STALE_PARTIAL_MAX_AGE_HOURS:-6}"
+readonly MAX_STALE_PARTIAL_MAX_AGE_HOURS=8760
 
 timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
 partial="$BACKUP_ROOT/.partial-$timestamp"
@@ -51,6 +53,22 @@ fi
 if [[ -n "$BACKUP_PUBLISH_OWNER" ]]; then
   id "$BACKUP_PUBLISH_OWNER" >/dev/null 2>&1 || { echo "Backup publish owner is unavailable: $BACKUP_PUBLISH_OWNER" >&2; exit 1; }
 fi
+if [[ ! "$STALE_PARTIAL_MAX_AGE_HOURS" =~ ^[0-9]+$ ]]; then
+  echo "STALE_PARTIAL_MAX_AGE_HOURS must be an integer between 1 and $MAX_STALE_PARTIAL_MAX_AGE_HOURS." >&2
+  exit 1
+fi
+# Strip only leading zeroes before checking length or performing arithmetic.
+# This keeps operator input such as "08" valid without allowing an
+# arbitrarily long all-digit value to overflow Bash arithmetic.
+stale_partial_age_leading_zeroes="${STALE_PARTIAL_MAX_AGE_HOURS%%[!0]*}"
+stale_partial_age_decimal="${STALE_PARTIAL_MAX_AGE_HOURS#"$stale_partial_age_leading_zeroes"}"
+stale_partial_age_decimal="${stale_partial_age_decimal:-0}"
+if [[ ${#stale_partial_age_decimal} -gt 4 ]] \
+  || (( 10#$stale_partial_age_decimal < 1 || 10#$stale_partial_age_decimal > MAX_STALE_PARTIAL_MAX_AGE_HOURS )); then
+  echo "STALE_PARTIAL_MAX_AGE_HOURS must be an integer between 1 and $MAX_STALE_PARTIAL_MAX_AGE_HOURS." >&2
+  exit 1
+fi
+STALE_PARTIAL_MAX_AGE_HOURS=$((10#$stale_partial_age_decimal))
 
 mkdir -p "$(dirname "$LOCK_FILE")" "$N8N_HEALTH_DIR" "$BACKUP_ROOT"
 if [[ -n "$BACKUP_PUBLISH_OWNER" && "$BACKUP_ROOT" == /var/backups/* ]]; then
@@ -63,6 +81,34 @@ if [[ -n "$BACKUP_PUBLISH_OWNER" && "$BACKUP_ROOT" == /var/backups/* ]]; then
 fi
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "Another Orb backup is already running." >&2; exit 1; }
+
+prune_stale_incomplete_partials() {
+  local stale_partial
+  # Values are accepted as decimal digits, including operator-supplied values
+  # such as "08". Force the arithmetic expansion to base 10 so Bash does not
+  # interpret a leading zero as an invalid octal literal.
+  local stale_after_minutes=$((10#$STALE_PARTIAL_MAX_AGE_HOURS * 60))
+
+  while IFS= read -r -d '' stale_partial; do
+    # A manifest may represent a completed payload interrupted immediately
+    # before the atomic rename. Keep it for explicit recovery instead of
+    # treating it as disposable temporary state.
+    if [[ -e "$stale_partial/manifest.json" ]]; then
+      echo "Retaining stale partial with manifest for manual recovery: $stale_partial" >&2
+      continue
+    fi
+    echo "Pruning stale incomplete backup partial: $stale_partial"
+    rm -rf -- "$stale_partial"
+  done < <(
+    find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.partial-*' \
+      -mmin "+$stale_after_minutes" -print0
+  )
+}
+
+# A hard shutdown can bypass the EXIT trap below and leave a growing
+# .partial-* directory forever. This runs only after the backup lock is held,
+# only for old partials without a recovery manifest.
+prune_stale_incomplete_partials
 
 n8n_was_active=0
 cleanup() {

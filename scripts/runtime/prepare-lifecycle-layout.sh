@@ -35,6 +35,7 @@ done
 
 directories=(
   "$STATE_ROOT/orb"
+  "$STATE_ROOT/orb/n8n-home"
   "$STATE_ROOT/orb/ccg-executor"
   "$STATE_ROOT/messaging-whatsapp/instances"
   "$STATE_ROOT/messaging-whatsapp/store"

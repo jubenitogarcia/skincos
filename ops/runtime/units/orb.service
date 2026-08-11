@@ -2,6 +2,10 @@
 Description=Skincos Orb runtime
 After=network-online.target postgresql.service postgresql@16-main.service
 Wants=network-online.target postgresql.service postgresql@16-main.service
+# Stop a persistent startup failure before it becomes an unbounded restart and
+# error-log growth loop. An operator must investigate and explicitly recover.
+StartLimitIntervalSec=5min
+StartLimitBurst=5
 
 [Service]
 Type=simple
