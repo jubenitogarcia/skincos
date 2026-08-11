@@ -1,7 +1,8 @@
 # Influencer Intelligence
 
-Status: architecture v1 defined; M2 provider boundary merged, experimental,
-not exposed, and off by default.
+Status: architecture v1 defined; M2 provider boundary merged, and data model
+v1 is an additive, unapplied artifact in this milestone. The domain remains
+experimental, not exposed, and off by default.
 
 This domain provides read-only intelligence about Instagram creators for
 analysis, comparison, and campaign fit. It is not an engagement automation
@@ -86,6 +87,31 @@ implementation. M2 uses synthetic transports only: it does not call Graph,
 instagrapi, Token Vault, PostgreSQL, Orb, or any runtime endpoint. A future
 transport must establish a separate read-only analytics allowlist and Token
 Vault custody before it can be connected.
+
+## Data model v1 decision
+
+The persistent model is documented in [`DATA_MODEL.md`](./DATA_MODEL.md) and
+implemented as the additive migration
+[`20260811_influencer_intelligence_data_model_v1.up.sql`](./migrations/20260811_influencer_intelligence_data_model_v1.up.sql).
+It retains M1's `creator_registry` as the canonical creator relation and adds
+provider-neutral identity, media, collector evidence, append-only profile/media
+snapshots, aggregate comment intelligence, versioned analyses and scores,
+campaign criteria, and campaign fit relations. Every historical ingest has a
+unique `ingest_key`; derived rows carry coverage, confidence, providers,
+algorithm/model versions, input fingerprints, and structured provenance.
+
+The repository in [`repository.mjs`](./repository.mjs) is an injected,
+parameterized PostgreSQL boundary. It validates bounded JSON, provider/source
+slugs, timestamp ordering, unavailable/null rules, coverage, and idempotency
+conflicts without reading secrets or opening a provider transport. Provider
+slugs are open in persistence for future adapters, while the current runtime
+allowlist remains official-first `meta-graph` with controlled `instagrapi`
+fallback.
+
+This milestone does not apply either migration to local, staging, or production
+through an operational runner; it only validates the artifact in a disposable
+PostgreSQL database and synthetic repository tests. No UI, feature wiring,
+runtime, CRM, MCP, Orb, systemd, or external provider call is included.
 
 ## Concrete target architecture
 
@@ -209,7 +235,7 @@ production configuration.
 | M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; artifact only, not applied |
 | Architecture | Canonical architecture v1 | Defined in the ADR and runtime-free manifest |
 | M2 | Official-first router and controlled collectors | Merged in #1305; injected synthetic transports only |
-| M3 | Append-only snapshots, retention, and Orb scheduling | Pending |
+| M3 | Append-only snapshots, retention, and Orb scheduling | Data model v1 in this milestone; Orb scheduling pending |
 | M4 | Robust analytics and outlier-resistant metrics | Pending |
 | M5 | Deterministic score, confidence, coverage, and provenance | Pending |
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Pending |
@@ -235,3 +261,24 @@ production configuration.
 - Rollback: close or revert the single-purpose change to merge SHA
   `f0dcab87d5348941d5c28e690c8a689a3bad8a3d`. No user data, provider session,
   network state, or remote database state is created by this milestone.
+
+## Data model risk, validation, and rollback
+
+- Risk: high because the change adds persistent relations and immutable
+  lifecycle rules, but the migration remains unapplied and no runtime path can
+  write to it.
+- Surfaces: `social/influencer-intelligence/**` and the focused architecture
+  workflow test; no database credentials, grants, CRM, MCP, Orb, systemd,
+  Cloudflare, or user-facing surface.
+- Migration: additive M2-dependent artifact only. A future destination runner
+  must prove database identity, migration order, checkpoint/restore, lock and
+  statement timeouts, least-privilege roles, and post-apply verification.
+- Flag: `INFLUENCER_INTELLIGENCE_ENABLED=false`; no grant or runtime wiring is
+  added.
+- Validation: focused repository/migration tests, disposable PostgreSQL apply
+  with synthetic rows and append-only trigger rejection, architecture/domain
+  boundary checks, security checks, diff hygiene, and terminal hosted CI on
+  the exact pull-request SHA.
+- Rollback: before any future apply, disable collection and retain the prior
+  schema checkpoint; this PR itself rolls back by closing or reverting its
+  single-purpose change without touching a live database.

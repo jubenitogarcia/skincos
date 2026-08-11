@@ -67,6 +67,30 @@ test('models evidence as append-only and provenance-complete', () => {
   assert.match(DATA_MODEL.invariants.join('\n'), /never silently imputed as zero/i);
 });
 
+test('maps the reviewed physical data-model artifact without enabling runtime', () => {
+  assert.equal(DATA_MODEL.persistence.migration, 'migrations/20260811_influencer_intelligence_data_model_v1.up.sql');
+  assert.equal(DATA_MODEL.persistence.dependsOn, 'migrations/20260810_influencer_intelligence_registry_v1.up.sql');
+  assert.match(DATA_MODEL.persistence.artifactStatus, /not applied/i);
+  const relations = new Map(DATA_MODEL.persistence.relations.map((relation) => [relation.name, relation]));
+  for (const name of [
+    'creator_identity',
+    'collector_run',
+    'creator_media',
+    'collector_evidence',
+    'creator_profile_snapshot',
+    'creator_media_snapshot',
+    'creator_comment_sample',
+    'creator_analysis',
+    'creator_score',
+    'creator_score_component',
+    'campaign',
+    'campaign_creator_fit',
+  ]) {
+    assert.ok(relations.has(name), `missing physical relation: ${name}`);
+  }
+  assert.equal(DATA_MODEL.persistence.appendOnlyRelations.length, 8);
+});
+
 test('requires deterministic score identity, coverage, and structured signals', () => {
   assert.equal(SCORE_CONTRACT.deterministicFirst, true);
   for (const field of ['score', 'confidence', 'coverage', 'provenance', 'timestamp', 'algorithmVersion', 'signals']) {
