@@ -1,6 +1,15 @@
 "use client";
 
-import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+    type AnimationEvent as ReactAnimationEvent,
+    type CSSProperties,
+    type KeyboardEvent as ReactKeyboardEvent,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import {
     BEAUTY_MOVEMENT_ACTS,
     BEAUTY_MOVEMENT_ACT_DEFINITIONS,
@@ -21,6 +30,7 @@ import type {
     BeautyMovementDiscountKind,
     BeautyMovementRewardType,
 } from "@/lib/beautyMovementRewards";
+import { BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate } from "@/lib/beautyMovementMotion";
 import styles from "./BeautyMovementExperience.module.css";
 
 export type BeautyMovementBenefit = {
@@ -110,9 +120,33 @@ export type BeautyMovementExperienceProps = {
     isLocalPreview?: boolean;
 };
 
-type HandStage = "waiting" | "ready" | "reveal" | "held" | "collect" | "deal" | "finale";
-type FinaleStage = "hidden" | "collecting" | "merging" | "confirmation" | "result";
+type HandStage =
+    | "waiting"
+    | "prompt"
+    | "prompt-out"
+    | "ready"
+    | "reveal"
+    | "held"
+    | "collect"
+    | "expand"
+    | "deal"
+    | "finale";
+type IntroStage = "hidden" | "entering" | "holding" | "exiting";
+type FinaleStage = "hidden" | "assembling" | "collecting" | "merging" | "confirmation" | "result";
 type SpecialCardKind = "velocity" | "discount" | "free_procedure" | "reserved";
+type ProgressRect = {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+};
+type ProgressMotion = {
+    fromIndex: number;
+    toIndex: number;
+    from: ProgressRect;
+    to: ProgressRect;
+    key: number;
+};
 
 type ShareNavigator = Navigator & {
     canShare?: (data?: ShareData) => boolean;
@@ -121,19 +155,62 @@ type ShareNavigator = Navigator & {
 
 const STORY_WIDTH = 1080;
 const STORY_HEIGHT = 1920;
-const AUTO_ADVANCE_SECONDS = 5;
-const FINALE_HOLD_SECONDS = 5;
-const HAND_REVEAL_MS = 1350;
-const HAND_COLLECT_MS = 720;
-const HAND_DEAL_MS = 880;
-const HAND_FINALE_MS = 1120;
+const INITIAL_TABLE_HEIGHT = 220;
+const AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION.autoAdvanceMs / 1_000;
+const FINALE_HOLD_SECONDS = BEAUTY_MOVEMENT_MOTION.finaleHoldMs / 1_000;
 
-function prefersReducedMotion(): boolean {
-    return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function motionDuration(durationMs: number, reducedMotion: boolean): number {
+    return reducedMotion ? 0 : durationMs;
 }
 
-function motionDuration(durationMs: number): number {
-    return prefersReducedMotion() ? 0 : durationMs;
+function useReducedMotionPreference(): boolean {
+    const [reducedMotion, setReducedMotion] = useState(false);
+
+    useEffect(() => {
+        const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+        const syncPreference = () => setReducedMotion(media.matches);
+
+        syncPreference();
+        media.addEventListener("change", syncPreference);
+        return () => media.removeEventListener("change", syncPreference);
+    }, []);
+
+    return reducedMotion;
+}
+
+function promptWordCount(text: string): number {
+    return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function promptEntryDuration(text: string): number {
+    return BEAUTY_MOVEMENT_MOTION.promptWordAnimationMs + Math.max(0, promptWordCount(text) - 1) * BEAUTY_MOVEMENT_MOTION.promptWordDelayMs;
+}
+
+function promptReadingDuration(text: string): number {
+    return promptEntryDuration(text) + BEAUTY_MOVEMENT_MOTION.promptReadingHoldMs;
+}
+
+function promptExitDuration(text: string): number {
+    return BEAUTY_MOVEMENT_MOTION.promptExitBaseMs + Math.max(0, promptWordCount(text) - 1) * BEAUTY_MOVEMENT_MOTION.promptExitWordDelayMs;
+}
+
+function promptExitTransitionDuration(text: string): number {
+    return promptExitDuration(text) + BEAUTY_MOVEMENT_MOTION.promptExitBreathMs;
+}
+
+function renderPromptWords(text: string, wordOffset = 0) {
+    const words = text.trim().split(/\s+/).filter(Boolean);
+
+    return words.map((word, index) => (
+        <span
+            className={styles.promptWord}
+            key={`${word}-${index}`}
+            style={{ "--prompt-word-index": wordOffset + index } as CSSProperties}
+        >
+            {word}
+            {index < words.length - 1 ? " " : null}
+        </span>
+    ));
 }
 
 function getSelectionsFromReveals(
@@ -430,7 +507,6 @@ function drawStoryCardIllustration(context: CanvasRenderingContext2D, cardId: st
 
 function createStoryBlob(
     reading: ReturnType<typeof getBeautyMovementReading>,
-    partnerName: string,
 ): Promise<Blob | null> {
     return new Promise((resolve) => {
         const canvas = document.createElement("canvas");
@@ -502,7 +578,7 @@ function createStoryBlob(
         context.fillText("Beleza que se move com você.", 104, 1644);
         context.font = `400 26px ${textFont}`;
         context.fillStyle = "#505050";
-        context.fillText(`Espaço Facial · com ${partnerName}`, 104, 1700);
+        context.fillText("Espaço Facial · 3 anos em movimento", 104, 1700);
 
         canvas.toBlob((blob) => resolve(blob), "image/png", 0.96);
     });
@@ -527,6 +603,7 @@ export default function BeautyMovementExperience({
     onTrack,
     isLocalPreview = false,
 }: BeautyMovementExperienceProps) {
+    const reducedMotion = useReducedMotionPreference();
     const incomingSelections = useMemo(
         () => getSelectionsFromReveals(initialState.palette, initialState.reveals),
         [initialState.palette, initialState.reveals],
@@ -536,6 +613,7 @@ export default function BeautyMovementExperience({
     const [displayedActIndex, setDisplayedActIndex] = useState(() =>
         Math.min(getCurrentActIndex(incomingSelections), BEAUTY_MOVEMENT_ACTS.length - 1),
     );
+    const [introStage, setIntroStage] = useState<IntroStage>("hidden");
     const [handStage, setHandStage] = useState<HandStage>(() =>
         initialState.confirmed || initialReadingComplete ? "ready" : "waiting",
     );
@@ -550,25 +628,67 @@ export default function BeautyMovementExperience({
         initialState.confirmed ? "result" : initialReadingComplete ? "confirmation" : "hidden",
     );
     const [finaleHoldRemaining, setFinaleHoldRemaining] = useState(0);
+    const [tableExpansionHeight, setTableExpansionHeight] = useState<number | null>(null);
     const [autoAdvanceActive, setAutoAdvanceActive] = useState(false);
+    const [progressMotion, setProgressMotion] = useState<ProgressMotion | null>(null);
     const openedRef = useRef(false);
     const viewedActsRef = useRef(new Set<number>());
     const viewedResultRef = useRef(false);
     const conditionsOpenedRef = useRef(false);
     const autoAdvanceTimerRef = useRef<number | null>(null);
+    const autoAdvanceFrameRef = useRef<number | null>(null);
     const handTransitionTimerRef = useRef<number | null>(null);
+    const introTimerRef = useRef<number | null>(null);
+    const handExpansionFrameRef = useRef<number | null>(null);
+    const progressMotionTimerRef = useRef<number | null>(null);
     const scrollAnimationFrameRef = useRef<number | null>(null);
+    const scrollInterruptCleanupRef = useRef<(() => void) | null>(null);
     const tableRef = useRef<HTMLElement | null>(null);
+    const tableSurfaceRef = useRef<HTMLDivElement | null>(null);
+    const progressListRef = useRef<HTMLOListElement | null>(null);
+    const progressButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const finaleRef = useRef<HTMLElement | null>(null);
     const confirmationActionRef = useRef<HTMLElement | null>(null);
     const selectionsRef = useRef(selections);
     const displayedActIndexRef = useRef(displayedActIndex);
+    const introStageRef = useRef(introStage);
     const handStageRef = useRef(handStage);
     const finaleStageRef = useRef(finaleStage);
+    const reducedMotionRef = useRef(reducedMotion);
     const revealInFlightRef = useRef(false);
     const transitionInFlightRef = useRef(false);
     const confirmInFlightRef = useRef(false);
     const mountedRef = useRef(true);
+    const revealTransitionTokenRef = useRef<number | null>(null);
+    const autoAdvanceGateRef = useRef(createBeautyMovementMotionGate());
+    const handTransitionGateRef = useRef(createBeautyMovementMotionGate());
+    const introTransitionGateRef = useRef(createBeautyMovementMotionGate());
+    const progressMotionKeyRef = useRef(0);
+
+    const motionCssVariables = useMemo(
+        () =>
+            ({
+                "--bm-auto-advance-ms": `${BEAUTY_MOVEMENT_MOTION.autoAdvanceMs}ms`,
+                "--bm-hand-reveal-ms": `${BEAUTY_MOVEMENT_MOTION.handRevealMs}ms`,
+                "--bm-hand-collect-ms": `${BEAUTY_MOVEMENT_MOTION.handCollectMs}ms`,
+                "--bm-hand-expand-ms": `${BEAUTY_MOVEMENT_MOTION.handExpandMs}ms`,
+                "--bm-hand-deal-ms": `${BEAUTY_MOVEMENT_MOTION.handDealMs}ms`,
+                "--bm-table-expand-height": `${tableExpansionHeight ?? INITIAL_TABLE_HEIGHT}px`,
+                "--bm-progress-collapse-ms": `${BEAUTY_MOVEMENT_MOTION.progressCollapseMs}ms`,
+                "--bm-progress-transfer-ms": `${BEAUTY_MOVEMENT_MOTION.progressTransferMs}ms`,
+                "--bm-progress-expand-ms": `${BEAUTY_MOVEMENT_MOTION.progressExpandMs}ms`,
+                "--bm-progress-total-ms": `${BEAUTY_MOVEMENT_MOTION.progressTransitionMs}ms`,
+                "--bm-finale-enter-ms": `${BEAUTY_MOVEMENT_MOTION.finaleCardsEnterMs}ms`,
+                "--bm-finale-merge-ms": `${BEAUTY_MOVEMENT_MOTION.finaleMergeMs}ms`,
+                "--bm-finale-card-merge-ms": `${BEAUTY_MOVEMENT_MOTION.finaleCardMergeMs}ms`,
+                "--bm-finale-merge-stagger-ms": `${BEAUTY_MOVEMENT_MOTION.finaleMergeStaggerMs}ms`,
+                "--bm-prompt-word-delay-ms": `${BEAUTY_MOVEMENT_MOTION.promptWordDelayMs}ms`,
+                "--bm-prompt-word-animation-ms": `${BEAUTY_MOVEMENT_MOTION.promptWordAnimationMs}ms`,
+                "--bm-prompt-exit-ms": `${BEAUTY_MOVEMENT_MOTION.promptExitBaseMs}ms`,
+                "--bm-prompt-exit-delay-ms": `${BEAUTY_MOVEMENT_MOTION.promptExitWordDelayMs}ms`,
+            }) as CSSProperties,
+        [tableExpansionHeight],
+    );
 
     useEffect(() => {
         selectionsRef.current = incomingSelections;
@@ -584,12 +704,20 @@ export default function BeautyMovementExperience({
     }, [displayedActIndex]);
 
     useEffect(() => {
+        introStageRef.current = introStage;
+    }, [introStage]);
+
+    useEffect(() => {
         handStageRef.current = handStage;
     }, [handStage]);
 
     useEffect(() => {
         finaleStageRef.current = finaleStage;
     }, [finaleStage]);
+
+    useEffect(() => {
+        reducedMotionRef.current = reducedMotion;
+    }, [reducedMotion]);
 
     useEffect(() => {
         if (initialState.confirmed) {
@@ -641,17 +769,37 @@ export default function BeautyMovementExperience({
     }, [finaleStage]);
 
     useEffect(() => {
+        mountedRef.current = true;
+        const autoAdvanceGate = autoAdvanceGateRef.current;
+        const handTransitionGate = handTransitionGateRef.current;
+        const introTransitionGate = introTransitionGateRef.current;
         return () => {
             mountedRef.current = false;
+            autoAdvanceGate.invalidate();
+            handTransitionGate.invalidate();
+            introTransitionGate.invalidate();
             if (autoAdvanceTimerRef.current !== null) {
                 window.clearTimeout(autoAdvanceTimerRef.current);
+            }
+            if (autoAdvanceFrameRef.current !== null) {
+                window.cancelAnimationFrame(autoAdvanceFrameRef.current);
             }
             if (handTransitionTimerRef.current !== null) {
                 window.clearTimeout(handTransitionTimerRef.current);
             }
+            if (introTimerRef.current !== null) {
+                window.clearTimeout(introTimerRef.current);
+            }
+            if (handExpansionFrameRef.current !== null) {
+                window.cancelAnimationFrame(handExpansionFrameRef.current);
+            }
+            if (progressMotionTimerRef.current !== null) {
+                window.clearTimeout(progressMotionTimerRef.current);
+            }
             if (scrollAnimationFrameRef.current !== null) {
                 window.cancelAnimationFrame(scrollAnimationFrameRef.current);
             }
+            scrollInterruptCleanupRef.current?.();
         };
     }, []);
 
@@ -660,7 +808,6 @@ export default function BeautyMovementExperience({
         [initialState.palette, selections],
     );
     const consentInvalid = confirmationAttempted && !operationalConsent;
-    const partnerName = initialState.campaign.partnerName?.trim() || "Velocity";
     const primaryWhatsappLabel = initialState.campaign.whatsappLabel?.trim() || "Falar com a equipe";
     const invitationTitle = initialState.campaign.invitationTitle?.trim() || "Seu convite para celebrar";
     const invitationText =
@@ -676,7 +823,53 @@ export default function BeautyMovementExperience({
         });
     }
 
+    function measureProgressButton(index: number): ProgressRect | null {
+        const list = progressListRef.current;
+        const button = progressButtonRefs.current[index];
+        if (!list || !button) return null;
+
+        const listRect = list.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+        return {
+            left: buttonRect.left - listRect.left,
+            top: buttonRect.top - listRect.top,
+            width: buttonRect.width,
+            height: buttonRect.height,
+        };
+    }
+
+    function startProgressMotion(fromIndex: number, toIndex: number) {
+        if (fromIndex === toIndex || reducedMotionRef.current) {
+            if (progressMotionTimerRef.current !== null) {
+                window.clearTimeout(progressMotionTimerRef.current);
+                progressMotionTimerRef.current = null;
+            }
+            setProgressMotion(null);
+            return;
+        }
+
+        const from = measureProgressButton(fromIndex);
+        const to = measureProgressButton(toIndex);
+        if (!from || !to) return;
+
+        if (progressMotionTimerRef.current !== null) {
+            window.clearTimeout(progressMotionTimerRef.current);
+        }
+
+        const key = progressMotionKeyRef.current + 1;
+        progressMotionKeyRef.current = key;
+        setProgressMotion({ fromIndex, toIndex, from, to, key });
+        progressMotionTimerRef.current = window.setTimeout(() => {
+            progressMotionTimerRef.current = null;
+            if (mountedRef.current && progressMotionKeyRef.current === key) {
+                setProgressMotion(null);
+            }
+        }, BEAUTY_MOVEMENT_MOTION.progressTransitionMs);
+    }
+
     function setCurrentActIndex(next: number) {
+        const previous = displayedActIndexRef.current;
+        startProgressMotion(previous, next);
         displayedActIndexRef.current = next;
         setDisplayedActIndex(next);
     }
@@ -684,6 +877,11 @@ export default function BeautyMovementExperience({
     function setCurrentHandStage(next: HandStage) {
         handStageRef.current = next;
         setHandStage(next);
+    }
+
+    function setCurrentIntroStage(next: IntroStage) {
+        introStageRef.current = next;
+        setIntroStage(next);
     }
 
     function setCurrentFinaleStage(next: FinaleStage) {
@@ -695,32 +893,41 @@ export default function BeautyMovementExperience({
         return index === 0 || Boolean(selectionsRef.current[BEAUTY_MOVEMENT_ACTS[index - 1]]);
     }
 
-    function cancelAutoAdvance() {
+    const cancelAutoAdvance = useCallback(() => {
+        autoAdvanceGateRef.current.invalidate();
         if (autoAdvanceTimerRef.current !== null) {
             window.clearTimeout(autoAdvanceTimerRef.current);
             autoAdvanceTimerRef.current = null;
         }
+        if (autoAdvanceFrameRef.current !== null) {
+            window.cancelAnimationFrame(autoAdvanceFrameRef.current);
+            autoAdvanceFrameRef.current = null;
+        }
         setAutoAdvanceActive(false);
-    }
+    }, []);
 
-    function cancelScrollAnimation() {
+    const cancelScrollAnimation = useCallback(() => {
         if (scrollAnimationFrameRef.current !== null) {
             window.cancelAnimationFrame(scrollAnimationFrameRef.current);
             scrollAnimationFrameRef.current = null;
         }
-    }
+        scrollInterruptCleanupRef.current?.();
+        scrollInterruptCleanupRef.current = null;
+    }, []);
 
     function scrollToElement(target: HTMLElement | null) {
         cancelScrollAnimation();
         if (!target) return;
 
-        if (prefersReducedMotion()) {
+        if (reducedMotion) {
             target.scrollIntoView({ behavior: "auto", block: "start" });
             return;
         }
 
         const startTop = window.scrollY;
-        const targetTop = Math.max(0, startTop + target.getBoundingClientRect().top - 32);
+        const stickyHeader = document.querySelector("header");
+        const scrollOffset = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32;
+        const targetTop = Math.max(0, startTop + target.getBoundingClientRect().top - scrollOffset);
         const distance = targetTop - startTop;
         const duration = Math.min(1040, Math.max(680, Math.abs(distance) * 0.55));
         const startedAt = performance.now();
@@ -729,6 +936,19 @@ export default function BeautyMovementExperience({
                 ? 4 * progress * progress * progress
                 : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
+        const interruptOnUserIntent = () => cancelScrollAnimation();
+        const removeScrollInterrupts = () => {
+            window.removeEventListener("wheel", interruptOnUserIntent);
+            window.removeEventListener("touchstart", interruptOnUserIntent);
+            window.removeEventListener("pointerdown", interruptOnUserIntent);
+            window.removeEventListener("keydown", interruptOnUserIntent);
+        };
+        window.addEventListener("wheel", interruptOnUserIntent, { passive: true, once: true });
+        window.addEventListener("touchstart", interruptOnUserIntent, { passive: true, once: true });
+        window.addEventListener("pointerdown", interruptOnUserIntent, { passive: true, once: true });
+        window.addEventListener("keydown", interruptOnUserIntent, { once: true });
+        scrollInterruptCleanupRef.current = removeScrollInterrupts;
+
         const animate = (now: number) => {
             const progress = Math.min(1, (now - startedAt) / duration);
             window.scrollTo(0, startTop + distance * easeInOut(progress));
@@ -736,6 +956,8 @@ export default function BeautyMovementExperience({
                 scrollAnimationFrameRef.current = window.requestAnimationFrame(animate);
             } else {
                 scrollAnimationFrameRef.current = null;
+                removeScrollInterrupts();
+                scrollInterruptCleanupRef.current = null;
             }
         };
 
@@ -751,25 +973,146 @@ export default function BeautyMovementExperience({
         scrollToElement(finaleRef.current);
     }
 
-    function clearHandTransition() {
+    function clearHandTransitionTimer() {
         if (handTransitionTimerRef.current !== null) {
             window.clearTimeout(handTransitionTimerRef.current);
             handTransitionTimerRef.current = null;
         }
     }
 
-    function startInitialDeal() {
-        if (handStageRef.current !== "waiting" || finaleStageRef.current !== "hidden" || transitionInFlightRef.current) return;
+    function cancelHandTransition() {
+        handTransitionGateRef.current.invalidate();
+        revealTransitionTokenRef.current = null;
+        clearHandTransitionTimer();
+        if (handExpansionFrameRef.current !== null) {
+            window.cancelAnimationFrame(handExpansionFrameRef.current);
+            handExpansionFrameRef.current = null;
+        }
+    }
 
-        transitionInFlightRef.current = true;
-        clearHandTransition();
-        setCurrentHandStage("deal");
+    function beginHandTransition() {
+        cancelHandTransition();
+        return handTransitionGateRef.current.start();
+    }
+
+    function scheduleHandTransition(token: number, delayMs: number, callback: () => void) {
+        clearHandTransitionTimer();
         handTransitionTimerRef.current = window.setTimeout(() => {
             handTransitionTimerRef.current = null;
-            if (!mountedRef.current) return;
-            transitionInFlightRef.current = false;
-            setCurrentHandStage("ready");
-        }, motionDuration(HAND_DEAL_MS));
+            if (!mountedRef.current || !handTransitionGateRef.current.isCurrent(token)) return;
+            callback();
+        }, motionDuration(delayMs, reducedMotionRef.current));
+    }
+
+    function scheduleDealSequence(token: number, onReady: () => void) {
+        if (reducedMotionRef.current) {
+            setCurrentHandStage("deal");
+            scheduleHandTransition(
+                token,
+                BEAUTY_MOVEMENT_MOTION.handDealMs + BEAUTY_MOVEMENT_MOTION.handDealSettleMs,
+                onReady,
+            );
+            return;
+        }
+
+        // Freeze the compact surface height before revealing the next hand.
+        // The expand class then transitions from this measured height to the
+        // full card-grid height, instead of asking CSS to animate from `auto`.
+        // This keeps the deck visibly anchored to the lower edge while the
+        // white table grows around it.
+        const surfaceBeforeExpand = tableSurfaceRef.current;
+        const startHeight = Math.max(
+            INITIAL_TABLE_HEIGHT,
+            Math.ceil(surfaceBeforeExpand?.getBoundingClientRect().height ?? INITIAL_TABLE_HEIGHT),
+        );
+        setTableExpansionHeight(startHeight);
+        setCurrentHandStage("expand");
+        // Wait for the expansion state to render the next hand before measuring it.
+        // A second frame avoids measuring the previous hand's layout during a fast
+        // state transition, especially on mobile and after a smooth scroll.
+        handExpansionFrameRef.current = window.requestAnimationFrame(() => {
+            if (!mountedRef.current || !handTransitionGateRef.current.isCurrent(token)) return;
+
+            handExpansionFrameRef.current = window.requestAnimationFrame(() => {
+                handExpansionFrameRef.current = null;
+                if (!mountedRef.current || !handTransitionGateRef.current.isCurrent(token)) return;
+
+                const surface = tableSurfaceRef.current;
+                const targetHeight = Math.max(
+                    startHeight,
+                    Math.ceil(surface?.scrollHeight ?? startHeight),
+                );
+                setTableExpansionHeight(targetHeight);
+                scheduleHandTransition(token, BEAUTY_MOVEMENT_MOTION.handExpandMs, () => {
+                    setCurrentHandStage("deal");
+                    scheduleHandTransition(
+                        token,
+                        BEAUTY_MOVEMENT_MOTION.handDealMs + BEAUTY_MOVEMENT_MOTION.handDealSettleMs,
+                        onReady,
+                    );
+                });
+            });
+        });
+    }
+
+    function clearIntroTransitionTimer() {
+        if (introTimerRef.current !== null) {
+            window.clearTimeout(introTimerRef.current);
+            introTimerRef.current = null;
+        }
+    }
+
+    function cancelIntroTransition() {
+        introTransitionGateRef.current.invalidate();
+        clearIntroTransitionTimer();
+    }
+
+    function beginIntroTransition() {
+        cancelIntroTransition();
+        return introTransitionGateRef.current.start();
+    }
+
+    function scheduleIntroTransition(token: number, delayMs: number, callback: () => void) {
+        clearIntroTransitionTimer();
+        introTimerRef.current = window.setTimeout(() => {
+            introTimerRef.current = null;
+            if (!mountedRef.current || !introTransitionGateRef.current.isCurrent(token)) return;
+            callback();
+        }, motionDuration(delayMs, reducedMotionRef.current));
+    }
+
+    function startInitialDeal() {
+        if (
+            handStageRef.current !== "waiting" ||
+            introStageRef.current !== "hidden" ||
+            finaleStageRef.current !== "hidden" ||
+            transitionInFlightRef.current
+        ) return;
+
+        transitionInFlightRef.current = true;
+        const handToken = beginHandTransition();
+        const introToken = beginIntroTransition();
+        setCurrentIntroStage("entering");
+        scheduleIntroTransition(introToken, promptEntryDuration(initialExperienceCopy), () => {
+            setCurrentIntroStage("holding");
+            scheduleIntroTransition(introToken, BEAUTY_MOVEMENT_MOTION.initialIntroHoldMs, () => {
+                setCurrentIntroStage("exiting");
+                scheduleIntroTransition(introToken, promptExitTransitionDuration(initialExperienceCopy), () => {
+                    setCurrentIntroStage("hidden");
+                    setCurrentHandStage("prompt");
+                    scheduleHandTransition(handToken, promptReadingDuration(tableDefinition.prompt), () => {
+                        setCurrentHandStage("prompt-out");
+                        scheduleHandTransition(handToken, promptExitTransitionDuration(tableDefinition.prompt), () => {
+                            scheduleDealSequence(handToken, () => {
+                                transitionInFlightRef.current = false;
+                                setCurrentHandStage("ready");
+                                window.requestAnimationFrame(scrollToTable);
+                            });
+                        });
+                    });
+                });
+            });
+        });
     }
 
     function handleDeckKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
@@ -786,34 +1129,37 @@ export default function BeautyMovementExperience({
 
         transitionInFlightRef.current = true;
         cancelAutoAdvance();
-        clearHandTransition();
+        const handToken = beginHandTransition();
         setCurrentHandStage("collect");
-        handTransitionTimerRef.current = window.setTimeout(() => {
-            if (!mountedRef.current) return;
+        scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.handCollectMs, () => {
             setCurrentHandStage("finale");
-            setCurrentFinaleStage("collecting");
-            handTransitionTimerRef.current = window.setTimeout(() => {
-                if (!mountedRef.current) return;
-                setFinaleHoldRemaining(0);
-                setCurrentFinaleStage("merging");
-                handTransitionTimerRef.current = window.setTimeout(() => {
-                    handTransitionTimerRef.current = null;
-                    if (!mountedRef.current) return;
-                    transitionInFlightRef.current = false;
-                    setCurrentHandStage("ready");
-                    setCurrentFinaleStage(confirmed ? "result" : "confirmation");
-                    if (confirmed) {
-                        window.requestAnimationFrame(() => {
-                            window.requestAnimationFrame(scrollToFinale);
-                        });
-                    } else {
-                        window.requestAnimationFrame(() => {
-                            confirmationActionRef.current?.focus({ preventScroll: true });
-                        });
-                    }
-                }, motionDuration(HAND_FINALE_MS));
-            }, FINALE_HOLD_SECONDS * 1000);
-        }, motionDuration(HAND_COLLECT_MS));
+            setCurrentFinaleStage("assembling");
+            scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.finaleCardsEnterMs, () => {
+                setCurrentFinaleStage("collecting");
+                scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.finaleHoldMs, () => {
+                    setFinaleHoldRemaining(0);
+                    setCurrentFinaleStage("merging");
+                    scheduleHandTransition(
+                        handToken,
+                        BEAUTY_MOVEMENT_MOTION.finaleMergeMs + BEAUTY_MOVEMENT_MOTION.finaleMergeSettleMs,
+                        () => {
+                            transitionInFlightRef.current = false;
+                            setCurrentHandStage("ready");
+                            setCurrentFinaleStage(confirmed ? "result" : "confirmation");
+                            if (confirmed) {
+                                window.requestAnimationFrame(() => {
+                                    window.requestAnimationFrame(scrollToFinale);
+                                });
+                            } else {
+                                window.requestAnimationFrame(() => {
+                                    confirmationActionRef.current?.focus({ preventScroll: true });
+                                });
+                            }
+                        },
+                    );
+                });
+            });
+        });
     }
 
     function moveToNextHand(index: number) {
@@ -826,30 +1172,153 @@ export default function BeautyMovementExperience({
         }
 
         transitionInFlightRef.current = true;
-        clearHandTransition();
+        const handToken = beginHandTransition();
         setCurrentHandStage("collect");
-        handTransitionTimerRef.current = window.setTimeout(() => {
-            if (!mountedRef.current) return;
+        scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.handCollectMs, () => {
             setCurrentActIndex(nextIndex);
-            setCurrentHandStage("deal");
-            handTransitionTimerRef.current = window.setTimeout(() => {
-                handTransitionTimerRef.current = null;
-                if (!mountedRef.current) return;
-                transitionInFlightRef.current = false;
-                setCurrentHandStage("ready");
-            }, motionDuration(HAND_DEAL_MS));
-        }, motionDuration(HAND_COLLECT_MS));
+            setCurrentHandStage("prompt");
+            scheduleHandTransition(handToken, promptReadingDuration(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || ""), () => {
+                setCurrentHandStage("prompt-out");
+                scheduleHandTransition(
+                    handToken,
+                    promptExitTransitionDuration(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || ""),
+                    () => {
+                        scheduleDealSequence(handToken, () => {
+                            transitionInFlightRef.current = false;
+                            setCurrentHandStage("ready");
+                            window.requestAnimationFrame(scrollToTable);
+                        });
+                    },
+                );
+            });
+        });
+    }
+
+    function startAutoAdvance(index: number, delayMs = BEAUTY_MOVEMENT_MOTION.autoAdvanceMs) {
+        const token = autoAdvanceGateRef.current.start();
+        autoAdvanceFrameRef.current = window.requestAnimationFrame(() => {
+            autoAdvanceFrameRef.current = null;
+            if (
+                !mountedRef.current ||
+                reducedMotionRef.current ||
+                !autoAdvanceGateRef.current.isCurrent(token) ||
+                handStageRef.current !== "held" ||
+                displayedActIndexRef.current !== index ||
+                finaleStageRef.current !== "hidden"
+            ) return;
+
+            setAutoAdvanceActive(true);
+            autoAdvanceTimerRef.current = window.setTimeout(() => {
+                autoAdvanceTimerRef.current = null;
+                if (
+                    !mountedRef.current ||
+                    !autoAdvanceGateRef.current.isCurrent(token) ||
+                    handStageRef.current !== "held" ||
+                    displayedActIndexRef.current !== index ||
+                    finaleStageRef.current !== "hidden"
+                ) return;
+
+                setAutoAdvanceActive(false);
+                moveToNextHand(index);
+            }, delayMs);
+        });
     }
 
     function scheduleNextHand(index: number) {
-        if (prefersReducedMotion()) return;
+        if (reducedMotion) return;
         cancelAutoAdvance();
-        setAutoAdvanceActive(true);
-        autoAdvanceTimerRef.current = window.setTimeout(() => {
-            autoAdvanceTimerRef.current = null;
-            setAutoAdvanceActive(false);
-            moveToNextHand(index);
-        }, AUTO_ADVANCE_SECONDS * 1000);
+        startAutoAdvance(index);
+    }
+
+    useEffect(() => {
+        if (!autoAdvanceActive) return;
+
+        const cancelOnReadingIntent = () => cancelAutoAdvance();
+        window.addEventListener("wheel", cancelOnReadingIntent, { passive: true });
+        window.addEventListener("touchmove", cancelOnReadingIntent, { passive: true });
+        window.addEventListener("keydown", cancelOnReadingIntent);
+
+        return () => {
+            window.removeEventListener("wheel", cancelOnReadingIntent);
+            window.removeEventListener("touchmove", cancelOnReadingIntent);
+            window.removeEventListener("keydown", cancelOnReadingIntent);
+        };
+    }, [autoAdvanceActive, cancelAutoAdvance]);
+
+    useEffect(() => {
+        if (!reducedMotion) return;
+        cancelAutoAdvance();
+        cancelScrollAnimation();
+    }, [reducedMotion, cancelAutoAdvance, cancelScrollAnimation]);
+
+    useEffect(() => {
+        if (handStage !== "expand") return;
+
+        let resizeFrame: number | null = null;
+        const syncExpansionHeight = () => {
+            if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
+            resizeFrame = window.requestAnimationFrame(() => {
+                resizeFrame = null;
+                const surface = tableSurfaceRef.current;
+                if (!surface || handStageRef.current !== "expand") return;
+                setTableExpansionHeight(Math.max(220, surface.scrollHeight));
+            });
+        };
+
+        window.addEventListener("resize", syncExpansionHeight);
+        const surfaceObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(syncExpansionHeight);
+        if (surfaceObserver && tableSurfaceRef.current) surfaceObserver.observe(tableSurfaceRef.current);
+        return () => {
+            window.removeEventListener("resize", syncExpansionHeight);
+            surfaceObserver?.disconnect();
+            if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
+        };
+    }, [handStage]);
+
+    useEffect(() => {
+        const cancelWhenBackgrounded = () => {
+            if (document.visibilityState === "hidden") cancelAutoAdvance();
+        };
+
+        document.addEventListener("visibilitychange", cancelWhenBackgrounded);
+        return () => document.removeEventListener("visibilitychange", cancelWhenBackgrounded);
+    }, [cancelAutoAdvance]);
+
+    function handleProgressClick(index: number) {
+        if (index !== displayedActIndexRef.current || !isActUnlocked(index)) return;
+
+        const act = BEAUTY_MOVEMENT_ACTS[index];
+        const hasSelection = Boolean(act && selectionsRef.current[act]);
+        if (hasSelection && handStageRef.current === "held") {
+            if (index === BEAUTY_MOVEMENT_ACTS.length - 1) {
+                beginFinale();
+            } else {
+                moveToNextHand(index);
+            }
+            return;
+        }
+
+        scrollToTable();
+    }
+
+    function settleReveal(actIndex: number, token: number) {
+        if (
+            !handTransitionGateRef.current.isCurrent(token) ||
+            handStageRef.current !== "reveal" ||
+            displayedActIndexRef.current !== actIndex
+        ) return;
+
+        clearHandTransitionTimer();
+        revealTransitionTokenRef.current = null;
+        setCurrentHandStage("held");
+        scheduleNextHand(actIndex);
+    }
+
+    function handleSelectedCardAnimationEnd(event: ReactAnimationEvent<HTMLButtonElement>, actIndex: number) {
+        if (event.currentTarget !== event.target || event.animationName !== "cardLiftAndSettle") return;
+        const token = revealTransitionTokenRef.current;
+        if (token === null) return;
+        settleReveal(actIndex, token);
     }
 
     async function handleReveal(actIndex: number, card: BeautyMovementCard) {
@@ -881,14 +1350,12 @@ export default function BeautyMovementExperience({
                 ...(committedSelections ?? {}),
                 [act]: committedSelections?.[act] ?? card.id,
             }));
-            clearHandTransition();
+            const handToken = beginHandTransition();
+            revealTransitionTokenRef.current = handToken;
             setCurrentHandStage("reveal");
-            handTransitionTimerRef.current = window.setTimeout(() => {
-                handTransitionTimerRef.current = null;
-                if (!mountedRef.current) return;
-                setCurrentHandStage("held");
-                scheduleNextHand(actIndex);
-            }, motionDuration(HAND_REVEAL_MS));
+            scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.handRevealFallbackMs, () => {
+                settleReveal(actIndex, handToken);
+            });
             onTrack?.("beauty_movement_card_revealed", { actIndex: actIndex + 1 });
         } catch {
             if (mountedRef.current) {
@@ -945,7 +1412,7 @@ export default function BeautyMovementExperience({
         if (reading.length !== BEAUTY_MOVEMENT_ACTS.length) return;
 
         setShareStatus(null);
-        const blob = await createStoryBlob(reading, partnerName);
+        const blob = await createStoryBlob(reading);
         if (!blob) {
             setShareStatus("Não foi possível preparar o Story neste navegador.");
             return;
@@ -984,12 +1451,33 @@ export default function BeautyMovementExperience({
 
     const tableAct = BEAUTY_MOVEMENT_ACTS[displayedActIndex] ?? BEAUTY_MOVEMENT_ACTS[0];
     const tableDefinition = BEAUTY_MOVEMENT_ACT_DEFINITIONS[displayedActIndex] ?? BEAUTY_MOVEMENT_ACT_DEFINITIONS[0];
+    const initialExperienceCopy =
+        initialState.campaign.description?.trim() ||
+        "3 anos. 3 cartas. Um novo movimento para celebrar tudo o que ainda vem pela frente.";
     const tableCards = getBeautyMovementCardsForAct(initialState.palette, tableAct);
     const tableSelectedCardId = selections[tableAct];
     const tableSelected = Boolean(tableSelectedCardId);
     const nextDefinition = BEAUTY_MOVEMENT_ACT_DEFINITIONS[displayedActIndex + 1];
     const tableIsUnlocked = isActUnlocked(displayedActIndex);
-    const waitingForInitialDeal = handStage === "waiting" && finaleStage === "hidden";
+    const waitingForInitialDeal = handStage === "waiting" && introStage === "hidden" && finaleStage === "hidden";
+    const tablePromptCopy =
+        introStage !== "hidden"
+            ? { title: initialExperienceCopy, subtitle: "" }
+            : handStage === "prompt" || handStage === "prompt-out"
+              ? { title: tableDefinition.promptTitle, subtitle: tableDefinition.promptSubtitle }
+              : null;
+    const tablePromptText = tablePromptCopy ? [tablePromptCopy.title, tablePromptCopy.subtitle].filter(Boolean).join(" ") : null;
+    const promptTitleWordCount = tablePromptCopy ? promptWordCount(tablePromptCopy.title) : 0;
+    const tablePromptClassName =
+        introStage === "entering"
+            ? styles.tablePromptIntro
+            : introStage === "holding"
+              ? styles.tablePromptIntroHolding
+              : introStage === "exiting"
+                ? styles.tablePromptIntroExit
+                : handStage === "prompt-out"
+                  ? styles.tablePromptExit
+                  : "";
 
     function renderCard(card: BeautyMovementCard, cardIndex: number) {
         const pendingKey = `${displayedActIndex}:${card.id}`;
@@ -1002,6 +1490,13 @@ export default function BeautyMovementExperience({
                 className={`${styles.cardButton} ${isPending ? styles.cardButtonPending : ""} ${isSelected ? styles.cardButtonSelected : ""}`.trim()}
                 key={card.id}
                 onClick={() => void handleReveal(displayedActIndex, card)}
+                onKeyDown={(event) => {
+                    if ((event.key === "Enter" || event.key === " ") && !event.repeat) {
+                        event.preventDefault();
+                        void handleReveal(displayedActIndex, card);
+                    }
+                }}
+                onAnimationEnd={isSelected ? (event) => handleSelectedCardAnimationEnd(event, displayedActIndex) : undefined}
                 disabled={!tableIsUnlocked || handStage !== "ready" || Boolean(revealPendingCardId) || tableSelected}
                 aria-busy={isPending || undefined}
                 aria-pressed={isSelected}
@@ -1266,67 +1761,135 @@ export default function BeautyMovementExperience({
 
             <section className={styles.shell} aria-labelledby="beauty-movement-title">
                 <header className={styles.hero}>
-                    <div className={styles.brandLine} aria-label={`Espaço Facial em parceria com ${partnerName}`}>
-                        <span>Espaço Facial</span>
-                        <span className={styles.brandDivider} aria-hidden="true">
-                            ×
-                        </span>
-                        <span className={styles.partnerName}>{partnerName}</span>
-                    </div>
+                    {waitingForInitialDeal ? (
+                        <button
+                            className={styles.heroDeckPrompt}
+                            id="beauty-movement-deck-prompt"
+                            type="button"
+                            onClick={scrollToTable}
+                            aria-label="Ir ao baralho e começar sua leitura"
+                        >
+                            <span>Começar a leitura</span>
+                            <span className={styles.heroDeckPromptArrow} aria-hidden="true">
+                                ↓
+                            </span>
+                        </button>
+                    ) : null}
                     <h1 id="beauty-movement-title">{initialState.campaign.title?.trim() || "Beleza que se move com você."}</h1>
-                    <p className={styles.heroCopy}>
-                        {initialState.campaign.description?.trim() ||
-                            "Cartas da Beleza em Movimento celebra os 3 anos da Espaço Facial Novo Hamburgo."}
-                    </p>
                 </header>
 
                 <section
                     ref={tableRef}
                     className={styles.tableStage}
                     id="mesa-de-cartas"
-                    aria-labelledby="table-stage-title"
+                    aria-label={tableDefinition.label}
+                    aria-describedby={tablePromptText ? "table-stage-prompt" : undefined}
                     data-hand-stage={handStage}
                     data-act-index={displayedActIndex}
                     data-finale-stage={finaleStage}
+                    style={motionCssVariables}
                 >
-                    <ol className={styles.progress} aria-label="Progresso da experiência">
-                        {BEAUTY_MOVEMENT_ACT_DEFINITIONS.map((act, index) => {
-                            const isDone = Boolean(selections[act.id]);
-                            const isCurrent = index === displayedActIndex;
-                            const isLocked = !isActUnlocked(index);
-                            return (
-                                <li
-                                    className={`${styles.progressItem} ${isDone ? styles.progressItemDone : ""} ${isCurrent ? styles.progressItemCurrent : ""}`.trim()}
-                                    key={act.id}
-                                >
-                                    <button
-                                        className={styles.progressButton}
-                                        type="button"
-                                        onClick={scrollToTable}
-                                        disabled={!isCurrent}
-                                        aria-current={isCurrent ? "step" : undefined}
-                                        aria-label={`Acompanhar a mesa de cartas em ${act.label}${isLocked ? ", ainda bloqueada" : ""}`}
-                                    >
-                                        <span className={styles.progressCopy}>
-                                            <strong>{act.label}</strong>
-                                            <small>{isDone ? "Escolha guardada" : act.progressLabel}</small>
-                                        </span>
-                                    </button>
-                                </li>
-                            );
-                        })}
-                    </ol>
+                    <div className={styles.progressRow}>
+                        <div className={styles.progressGroup}>
+                            <ol
+                                ref={progressListRef}
+                                className={`${styles.progress} ${progressMotion ? styles.progressMotionActive : ""}`.trim()}
+                                aria-label="Progresso da experiência"
+                            >
+                                {progressMotion ? (
+                                    <li
+                                        className={styles.progressTransfer}
+                                        aria-hidden="true"
+                                        style={
+                                            {
+                                                "--progress-from-left": `${progressMotion.from.left}px`,
+                                                "--progress-from-top": `${progressMotion.from.top}px`,
+                                                "--progress-from-width": `${progressMotion.from.width}px`,
+                                                "--progress-from-height": `${progressMotion.from.height}px`,
+                                                "--progress-to-left": `${progressMotion.to.left}px`,
+                                                "--progress-to-top": `${progressMotion.to.top}px`,
+                                                "--progress-to-width": `${progressMotion.to.width}px`,
+                                                "--progress-to-height": `${progressMotion.to.height}px`,
+                                            } as CSSProperties
+                                        }
+                                    />
+                                ) : null}
+                                {BEAUTY_MOVEMENT_ACT_DEFINITIONS.map((act, index) => {
+                                    const isDone = Boolean(selections[act.id]);
+                                    const isCurrent = introStage === "hidden" && !waitingForInitialDeal && index === displayedActIndex;
+                                    const isLocked = !isActUnlocked(index);
+                                    const isProgressSource = progressMotion?.fromIndex === index;
+                                    const isProgressTarget = progressMotion?.toIndex === index;
+                                    const isAdvanceReady = isCurrent && isDone && handStage === "held";
+                                    const nextAct = BEAUTY_MOVEMENT_ACT_DEFINITIONS[index + 1];
+                                    const progressActionLabel = isAdvanceReady
+                                        ? index === BEAUTY_MOVEMENT_ACTS.length - 1
+                                            ? "Continuar para confirmação"
+                                            : `Continuar para ${nextAct?.label || "a próxima etapa"}`
+                                        : `Acompanhar a mesa de cartas em ${act.label}${isLocked ? ", ainda bloqueada" : ""}`;
+                                    return (
+                                        <li
+                                            className={[
+                                                styles.progressItem,
+                                                isDone ? styles.progressItemDone : "",
+                                                isCurrent && !progressMotion ? styles.progressItemCurrent : "",
+                                                isProgressSource ? styles.progressItemTransferFrom : "",
+                                                isProgressTarget ? styles.progressItemTransferTo : "",
+                                            ].filter(Boolean).join(" ")}
+                                            key={act.id}
+                                        >
+                                            <button
+                                                className={styles.progressButton}
+                                                type="button"
+                                                onClick={() => handleProgressClick(index)}
+                                                ref={(element) => {
+                                                    progressButtonRefs.current[index] = element;
+                                                }}
+                                                disabled={!isCurrent || Boolean(progressMotion)}
+                                                aria-current={isCurrent ? "step" : undefined}
+                                                aria-label={progressActionLabel}
+                                            >
+                                                <span className={styles.progressCopy}>
+                                                    <strong>{act.label}</strong>
+                                                </span>
+                                                {isCurrent && !progressMotion && autoAdvanceActive ? (
+                                                    <span className={styles.autoAdvance} role="status" aria-live="polite">
+                                                        <span className={styles.srOnly}>
+                                                            {nextDefinition ? "Próxima mão" : "Confirmação"} automática em {AUTO_ADVANCE_SECONDS} segundos.
+                                                        </span>
+                                                    </span>
+                                                ) : null}
+                                            </button>
+                                        </li>
+                                    );
+                                })}
+                            </ol>
+                        </div>
 
-                    <div className={styles.actHeading}>
-                        <h2 id="table-stage-title">{tableDefinition.label}</h2>
-                        <p>{tableDefinition.prompt}</p>
+                        {tablePromptCopy ? (
+                            <p
+                                className={`${styles.tablePrompt} ${tablePromptClassName}`.trim()}
+                                id="table-stage-prompt"
+                                key={introStage !== "hidden" ? "experience-intro" : tableDefinition.id}
+                            >
+                                <span className={styles.promptTitle}>{renderPromptWords(tablePromptCopy.title)}</span>
+                                {tablePromptCopy.subtitle ? (
+                                    <span className={styles.promptSubtitle}>
+                                        {renderPromptWords(tablePromptCopy.subtitle, promptTitleWordCount)}
+                                    </span>
+                                ) : null}
+                            </p>
+                        ) : null}
                     </div>
 
                     <div
+                        ref={tableSurfaceRef}
                         className={styles.tableSurface}
                         data-deck-state={
-                            waitingForInitialDeal
+                            waitingForInitialDeal || introStage !== "hidden" || handStage === "prompt" || handStage === "prompt-out"
                                 ? "waiting"
+                                : handStage === "expand"
+                                  ? "expanding"
                                 : finaleStage === "confirmation" || finaleStage === "result"
                                   ? "final"
                                   : "ready"
@@ -1347,19 +1910,7 @@ export default function BeautyMovementExperience({
                                 <BrandMark className={styles.deckBrandLogo} tone="light" title="" />
                             </span>
                         </button>
-                        {waitingForInitialDeal ? (
-                            <span
-                                className={styles.deckPrompt}
-                                id="beauty-movement-deck-prompt"
-                                role="note"
-                            >
-                                Clique no baralho
-                                <span className={styles.deckPromptArrow} aria-hidden="true">
-                                    ↓
-                                </span>
-                            </span>
-                        ) : null}
-                        {finaleStage === "collecting" || finaleStage === "merging" ? (
+                        {finaleStage === "assembling" || finaleStage === "collecting" || finaleStage === "merging" ? (
                             <div
                                 className={`${styles.finaleCardGrid} ${finaleStage === "merging" ? styles.finaleCardGridMerging : styles.finaleCardGridHolding}`}
                                 aria-hidden="true"
@@ -1375,7 +1926,7 @@ export default function BeautyMovementExperience({
                                 {finaleStage === "confirmation" ? renderConfirmationAction() : null}
                                 {renderSpecialCard(finaleStage === "result")}
                             </div>
-                        ) : finaleStage === "hidden" && !waitingForInitialDeal ? (
+                        ) : finaleStage === "hidden" && introStage === "hidden" && handStage !== "waiting" && handStage !== "prompt" && handStage !== "prompt-out" ? (
                             <div className={styles.cardGrid} role="group" aria-label={`Cartas da etapa ${tableDefinition.label}`}>
                                 {tableCards.map(renderCard)}
                             </div>
@@ -1389,53 +1940,6 @@ export default function BeautyMovementExperience({
                         ) : null}
                     </div>
 
-                    {finaleStage === "hidden" ? (
-                        <div className={styles.actAdvance}>
-                            <p className={styles.advanceNote} role="status">
-                                {waitingForInitialDeal
-                                    ? "Clique no baralho para distribuir esta mão."
-                                    : tableSelected
-                                      ? "Carta revelada. As outras cartas serão recolhidas antes da próxima mão."
-                                      : handStage === "ready"
-                                        ? "Escolha uma carta para liberar o avanço."
-                                      : handStage === "held"
-                                        ? "Escolha uma carta para liberar o avanço."
-                                        : "A próxima mão está sendo preparada."}
-                            </p>
-                            {autoAdvanceActive ? (
-                                <div className={styles.autoAdvance} role="status" aria-live="polite">
-                                    <span className={styles.autoAdvanceLabel}>
-                                        {nextDefinition ? "Próxima mão" : "Confirmação"}
-                                    </span>
-                                    <span className={styles.autoAdvanceHint}>
-                                        Você pode continuar antes pelo botão.
-                                    </span>
-                                    <span className={styles.srOnly}>
-                                        {nextDefinition ? "Próxima mão" : "Confirmação"} automática em {AUTO_ADVANCE_SECONDS} segundos.
-                                    </span>
-                                </div>
-                            ) : null}
-                            {nextDefinition ? (
-                                <button
-                                    className={styles.continueButton}
-                                    type="button"
-                                    onClick={() => moveToNextHand(displayedActIndex)}
-                                    disabled={!tableSelected || handStage !== "held"}
-                                >
-                                    Continuar para {nextDefinition.label}
-                                </button>
-                            ) : (
-                                <button
-                                    className={styles.continueButton}
-                                    type="button"
-                                    onClick={beginFinale}
-                                    disabled={!tableSelected || handStage !== "held"}
-                                >
-                                    Continuar para confirmar
-                                </button>
-                            )}
-                        </div>
-                    ) : null}
                 </section>
 
                 {actionError && finaleStage === "hidden" ? (

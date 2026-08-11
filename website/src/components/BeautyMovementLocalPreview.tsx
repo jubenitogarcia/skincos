@@ -31,7 +31,7 @@ const INITIAL_PREVIEW_STATE: BeautyMovementExperienceInitialState = {
     confirmed: false,
     campaign: {
         title: "Beleza que se move com você.",
-        description: "Cartas da Beleza em Movimento celebra os 3 anos da Espaço Facial Novo Hamburgo.",
+        description: "3 anos. 3 cartas. Um novo movimento para celebrar tudo o que ainda vem pela frente.",
         invitationTitle: "Seu convite para celebrar",
         invitationText: "A equipe vai confirmar os próximos detalhes com você.",
         partnerName: "Velocity",
