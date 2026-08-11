@@ -490,12 +490,13 @@ test("typed intent binds every dispatch input and derives the exact nonce run na
   ), /unknown inputs/);
 });
 
-test("core intent binds unified-team rollout and derives the exact team-aware run name", () => {
+test("core intent binds unified-team rollout and production authorization", () => {
   const input = {
     target: "staging",
     unit: "inventory",
     bootstrap_finance_context: false,
     unified_team_enabled: true,
+    production_unified_team_authorized: false,
     release_sha: releaseSha,
     release_scope: "ponto",
     orchestrator_run_id: orchestratorRunId,
@@ -511,8 +512,15 @@ test("core intent binds unified-team rollout and derives the exact team-aware ru
     ".github/workflows/deploy-core-workers.yml",
     { ...input, unified_team_enabled: false },
   );
+  const authorized = canonicalizeGovernedIntent(
+    ".github/workflows/deploy-core-workers.yml",
+    { ...input, production_unified_team_authorized: true },
+  );
   assert.equal(enabled.normalizedInputs.unified_team_enabled, true);
+  assert.equal(enabled.normalizedInputs.production_unified_team_authorized, false);
+  assert.equal(authorized.normalizedInputs.production_unified_team_authorized, true);
   assert.notEqual(enabled.digest, disabled.digest);
+  assert.notEqual(enabled.digest, authorized.digest);
   assert.equal(
     expectedGovernedRunName(".github/workflows/deploy-core-workers.yml", enabled.normalizedInputs),
     `Core inventory staging team=true ${releaseSha} orchestrator=${orchestratorRunId} nonce=${dispatchNonce}`,

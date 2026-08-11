@@ -56,6 +56,7 @@ const GOVERNED_INTENT_SCHEMAS = {
     unit: stringField("all"),
     bootstrap_finance_context: booleanField(false),
     unified_team_enabled: booleanField(false),
+    production_unified_team_authorized: booleanField(false),
     release_sha: stringField(),
     preview_run_id: stringField(),
     staging_run_id: stringField(),
