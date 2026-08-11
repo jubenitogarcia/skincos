@@ -389,6 +389,12 @@ export function normalizeScoreEnvelope(input) {
   const scoreKind = enumValue(input.scoreKind, 'scoreKind', SCORE_KINDS, scoreKindSet);
   const evidenceState = normalizeEvidenceState(input.evidenceState, 'score.evidenceState');
   const algorithmVersion = versionValue(input.algorithmVersion, 'algorithmVersion');
+  const weightsVersion = input.weightsVersion === undefined || input.weightsVersion === null
+    ? null
+    : versionValue(input.weightsVersion, 'weightsVersion');
+  if (algorithmVersion.startsWith('influencer-intelligence-scoring/') && !weightsVersion) {
+    fail('score.weightsVersion is required for Influencer Score v0');
+  }
   const timestamp = timestampValue(input.timestamp, 'score.timestamp');
   const coverage = normalizeCoverage(input.coverage);
   const providers = normalizeProviders(input.providers, evidenceState);
@@ -415,6 +421,7 @@ export function normalizeScoreEnvelope(input) {
     providers,
     provenance,
     algorithmVersion,
+    weightsVersion,
     timestamp,
     signals,
   });

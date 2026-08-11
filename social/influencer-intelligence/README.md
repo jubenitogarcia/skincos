@@ -1,8 +1,9 @@
 # Influencer Intelligence
 
-Status: architecture v1 defined; M2 provider boundary and M4 deterministic
-analytics are implemented in source control, and data model v1 is an additive,
-unapplied artifact in this milestone. The domain remains
+Status: architecture v1 defined; M2 provider boundary, M4 deterministic
+analytics, and M5 deterministic scoring are implemented in source control, and
+data model v1 plus scoring metadata remain additive, unapplied artifacts in
+this milestone. The domain remains
 experimental, not exposed, and off by default.
 
 This domain provides read-only intelligence about Instagram creators for
@@ -220,8 +221,8 @@ deployment hardening.
   contact fields are not values in this contract.
 - `ScoreEnvelope`: a score from 0 to 100 or an explicit `null` when
   unavailable, confidence from 0 to 1, derived data coverage, provider list,
-  provenance, timestamp, deterministic `algorithmVersion`, and structured
-  signals.
+  provenance, timestamp, deterministic `algorithmVersion`, `weightsVersion`,
+  and structured signals.
 - `StructuredSignal`: a bounded scalar, explicit evidence state, confidence,
   evidence references, and an optional model version. Free-form LLM rationale
   or prompt/completion text is not persisted here.
@@ -285,7 +286,7 @@ production configuration.
 | M2 | Official-first router and controlled collectors | Merged in #1305; injected synthetic transports only |
 | M3 | Append-only snapshots, retention, and Orb scheduling | Snapshot operations implemented; Orb scheduling pending |
 | M4 | Robust analytics and outlier-resistant metrics | Implemented in this PR; pure deterministic engine, golden fixtures, and formula documentation |
-| M5 | Deterministic score, confidence, coverage, and provenance | Pending |
+| M5 | Deterministic score, confidence, coverage, and provenance | Implemented in this PR; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Pending |
 | M7 | `skincos-influencer-intelligence` Codex skill | Pending |
 | M8 | Read-only CRM contracts and dashboard | Pending |

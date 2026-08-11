@@ -151,7 +151,7 @@ export const DATA_MODEL = deepFreeze({
     {
       name: 'score_snapshots',
       lifecycle: 'append-only derived artifact',
-      fields: ['scoreKey', 'creatorKey', 'scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'signals'],
+      fields: ['scoreKey', 'creatorKey', 'scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'weightsVersion', 'signals'],
     },
     {
       name: 'structured_signals',
@@ -220,7 +220,7 @@ export const PROVENANCE_CONTRACT = deepFreeze({
 
 export const SCORE_CONTRACT = deepFreeze({
   contractVersion: 'influencer-intelligence/score/v1',
-  requiredFields: ['scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'signals'],
+  requiredFields: ['scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'weightsVersion', 'signals'],
   ranges: { score: '0..100 or null', confidence: '0..1', coverageRatio: '0..1' },
   scoreKinds: ['influencer', 'campaign-fit', 'brand-fit', 'risk'],
   deterministicFirst: true,
@@ -335,7 +335,7 @@ export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'M2', title: 'Official-first provider router and bounded collectors', status: 'merged #1305; synthetic transport only', acceptance: ['Meta first', 'controlled instagrapi fallback', 'fail-closed classification', 'no duplicate scraper'] },
   { id: 'M3', title: 'Append-only snapshots, retention, and Orb job contract', status: 'snapshot operations implemented; Orb scheduling pending', acceptance: ['new additive tables', 'immutable evidence lifecycle', 'bounded snapshot_creator and snapshot_creator_media operations', 'dry-run/shadow scheduling', 'resume/recovery without live workflow import'] },
   { id: 'M4', title: 'Robust analytics', status: 'implemented in this PR; pure deterministic ESM boundary', acceptance: ['time windows', 'viral-outlier resistance', 'explicit unavailable coverage'] },
-  { id: 'M5', title: 'Deterministic scores and confidence', status: 'pending', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
+  { id: 'M5', title: 'Deterministic scores and confidence', status: 'implemented in this PR; weights and algorithm versioned', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
   { id: 'M6', title: 'Hardened read-only MCP', status: 'pending', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
   { id: 'M7', title: 'Codex skill', status: 'pending', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
   { id: 'M8', title: 'CRM read-only surface', status: 'pending', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
