@@ -11,6 +11,7 @@ readonly RUNNER_USER='skincos-actions'
 readonly UNIT_NAME='skincos-native-custody-runner.service'
 readonly CUSTODY_HELPER='/usr/local/sbin/skincos-provision-global-coordination'
 readonly SUDOERS_FILE='/etc/sudoers.d/skincos-native-custody'
+readonly CUSTODY_DIR='/etc/skincos/global-coordination'
 
 REPOSITORY=''
 RUNNER_VERSION=''
@@ -25,8 +26,10 @@ Usage: scripts/runtime/install-native-custody-runner.sh \
   [--apply]
 
 Reads one GitHub Actions runner registration token from stdin. The token is
-used only by config.sh and is never written to a file or printed. Without
---apply, validates the runner package contract and the local custody helper.
+used only during the one-time upstream config.sh registration. It is not
+written to a file or printed; config.sh necessarily receives it as a
+short-lived local process argument. Without --apply, validates the runner
+package contract and the local custody helper.
 EOF
 }
 
@@ -74,6 +77,11 @@ install -o root -g root -m 0755 \
 install -o root -g root -m 0440 \
   "$ROOT_DIR/ops/runtime/github-actions-runner/skincos-native-custody.sudoers" "$SUDOERS_FILE"
 visudo -cf "$SUDOERS_FILE" >/dev/null
+# ProtectSystem=strict requires every writable path to exist before systemd
+# creates its mount namespace. Create only the empty private directory here;
+# the custody file and its secret remain workflow-owned and are written later
+# by the fixed helper.
+install -d -o root -g admin -m 0750 "$CUSTODY_DIR"
 
 if [[ ! -f "$RUNNER_ROOT/.runner" ]]; then
   IFS= read -r RUNNER_TOKEN || { echo 'runner registration token is missing' >&2; exit 78; }
@@ -105,6 +113,9 @@ chown -R "$RUNNER_USER:$RUNNER_USER" "$RUNNER_ROOT"
 install -o root -g root -m 0644 \
   "$ROOT_DIR/ops/runtime/units/$UNIT_NAME" "/etc/systemd/system/$UNIT_NAME"
 systemctl daemon-reload
-systemctl enable --now "$UNIT_NAME" >/dev/null
+systemctl enable "$UNIT_NAME" >/dev/null
+# Restart explicitly so an already active runner adopts the new sandbox and
+# writable-path contract instead of retaining its previous mount namespace.
+systemctl restart "$UNIT_NAME"
 systemctl is-active --quiet "$UNIT_NAME" || { echo 'native custody runner service is not active' >&2; exit 78; }
 printf 'native_custody_runner=active label=skincos-native-custody user=%s\n' "$RUNNER_USER"
