@@ -71,7 +71,10 @@ flock -n 9 || { echo "Another Orb backup is already running." >&2; exit 1; }
 
 prune_stale_incomplete_partials() {
   local stale_partial
-  local stale_after_minutes=$((STALE_PARTIAL_MAX_AGE_HOURS * 60))
+  # Values are accepted as decimal digits, including operator-supplied values
+  # such as "08". Force the arithmetic expansion to base 10 so Bash does not
+  # interpret a leading zero as an invalid octal literal.
+  local stale_after_minutes=$((10#$STALE_PARTIAL_MAX_AGE_HOURS * 60))
 
   while IFS= read -r -d '' stale_partial; do
     # A manifest may represent a completed payload interrupted immediately

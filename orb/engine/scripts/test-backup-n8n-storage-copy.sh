@@ -61,6 +61,8 @@ EOF
 chmod +x "$fake_bin"/*
 
 run_backup() {
+  local stale_partial_max_age_hours="${1:-6}"
+
   PATH="$fake_bin:$PATH" \
     N8N_ROOT="$repo_root" \
     N8N_RUNTIME_HOME="$runtime_root" \
@@ -73,7 +75,7 @@ run_backup() {
     N8N_HEALTH_DIR="$runtime_root/health" \
     BACKUP_ROOT="$backup_root" \
     BACKUP_STORAGE_COPY_TRANSPORT=tar \
-    STALE_PARTIAL_MAX_AGE_HOURS=6 \
+    STALE_PARTIAL_MAX_AGE_HOURS="$stale_partial_max_age_hours" \
     MANAGE_N8N_SERVICE=0 \
     VERIFY_RESTORE=1 \
     RETENTION_COUNT=1 \
@@ -85,13 +87,13 @@ recovery_partial="$backup_root/.partial-recovery-candidate"
 mkdir -p "$stale_partial" "$recovery_partial"
 printf 'incomplete\n' > "$stale_partial/storage.tar"
 printf '{}\n' > "$recovery_partial/manifest.json"
-touch -d '8 hours ago' "$stale_partial" "$recovery_partial"
+touch -d '9 hours ago' "$stale_partial" "$recovery_partial"
 
-run_backup
+run_backup 08
 [[ ! -e "$stale_partial" ]]
 [[ -e "$recovery_partial/manifest.json" ]]
 sleep 1
-run_backup
+run_backup 08
 
 mapfile -t backups < <(find "$backup_root" -mindepth 1 -maxdepth 1 -type d ! -name '.partial-*' -print)
 [[ "${#backups[@]}" == "1" ]]
