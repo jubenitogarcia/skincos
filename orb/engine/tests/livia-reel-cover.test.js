@@ -167,6 +167,27 @@ test('candidate adds the provider request and deterministic Cloudinary upload wi
   assert.equal(upload.credentials.cloudinaryApi.id, '60cg2qgxCV0YLKpD');
 });
 
+test('already-installed live Reel cover nodes receive the required Code metadata', () => {
+  const workflow = JSON.parse(fs.readFileSync(WORKFLOW_PATH, 'utf8'));
+  const candidate = patchWorkflow(workflow);
+  const nodes = new Map(candidate.nodes.map((node) => [node.name, node]));
+
+  for (const name of [
+    'Prepare Livia Reel Cover Jobs',
+    'Normalize Livia Reel Cover OpenAI',
+    'Normalize Livia Reel Cover Cached Binary',
+    'Normalize Livia Reel Cover Cached Result',
+    'Normalize Livia Reel Cover Fallback',
+    'Normalize Livia Reel Cover Upload',
+    'Aggregate Livia Reel Cover Outcomes',
+    'Attach Livia Reel Cover Context',
+  ]) {
+    assert.equal(nodes.get(name).parameters.language, 'javaScript');
+  }
+
+  assert.equal(nodes.get('Upload Livia Reel Cover').parameters.additionalFieldsFile.overwrite, true);
+});
+
 test('provider failure is converted to a cached frame fallback and retry reuses it without regeneration', async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'livia-reel-cover-test-'));
   try {
