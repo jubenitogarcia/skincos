@@ -160,7 +160,8 @@ jobs:
           RUNNER_TEMP_DIR: ${{ runner.temp }}/insumos-production-smoke-identity
         run: |
           set -euo pipefail
-          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --file "${RUNNER_TEMP_DIR}/verify.sql" --json > "${RUNNER_TEMP_DIR}/before.json"
+          verify_command="$(<"${RUNNER_TEMP_DIR}/verify.sql")"
+          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --command "$verify_command" --json > "${RUNNER_TEMP_DIR}/before.json"
           RUNNER_TEMP_DIR="${RUNNER_TEMP_DIR}" node <<'NODE'
           const fs = require('fs')
           const path = require('path')
@@ -233,7 +234,8 @@ jobs:
           RUNNER_TEMP_DIR: ${{ runner.temp }}/insumos-production-smoke-identity
         run: |
           set -euo pipefail
-          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --file "${RUNNER_TEMP_DIR}/verify.sql" --json > "${RUNNER_TEMP_DIR}/after.json"
+          verify_command="$(<"${RUNNER_TEMP_DIR}/verify.sql")"
+          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --command "$verify_command" --json > "${RUNNER_TEMP_DIR}/after.json"
           ACTION="${ACTION}" RUNNER_TEMP_DIR="${RUNNER_TEMP_DIR}" node <<'NODE'
           const fs = require('fs')
           const path = require('path')
