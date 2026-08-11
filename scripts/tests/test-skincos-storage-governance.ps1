@@ -1,0 +1,14 @@
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$script = Join-Path (Split-Path -Parent $PSScriptRoot) 'skincos-storage-governance.ps1'
+$policy = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'ops\codex\storage-retention-policy.json'
+if (-not (Test-Path -LiteralPath $script)) { throw 'governance script missing' }
+if (-not (Test-Path -LiteralPath $policy)) { throw 'governance policy missing' }
+
+$result = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Mode audit -PolicyPath $policy
+$document = ($result -join "`n") | ConvertFrom-Json
+if ($document.schema_version -ne 1) { throw 'unexpected schema version' }
+if ($document.drive.device -ne 'C:') { throw 'drive snapshot missing' }
+if ($document.threshold_state -notin @('healthy','warning','high','critical','emergency')) { throw 'invalid threshold state' }
+if ($document.limitations.Count -lt 3) { throw 'safety limitations missing' }
+Write-Output 'PASS: storage governance audit emits a versioned, fail-closed report.'

@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "policyId": "skincos-development-storage-2026-08",
+  "thresholdsGB": {
+    "warning": 100,
+    "high": 50,
+    "critical": 25,
+    "emergency": 10
+  },
+  "retentionDays": {
+    "temporary": 14,
+    "build": 14,
+    "endedWorktree": 14,
+    "release": 90,
+    "checkpoint": 30,
+    "codexSession": 30,
+    "codexArchivedSession": 90,
+    "governanceReport": 30
+  },
+  "paths": {
+    "projectRoot": "C:\\CodexShared\\Projetos\\skincos",
+    "worktreeRoot": "C:\\CodexShared\\Worktrees\\skincos\\admin",
+    "runtimeRoot": "C:\\CodexRuntime",
+    "codexHome": "%USERPROFILE%\\.codex",
+    "privateStateRoot": "C:\\CodexRuntime\\operator\\admin\\skincos\\storage-governance"
+  },
+  "safeCleanupRoots": [
+    "%LOCALAPPDATA%\\Temp",
+    "%LOCALAPPDATA%\\npm-cache\\_npx"
+  ],
+  "reportOnlyRoots": [
+    "C:\\Temp",
+    "C:\\tmp",
+    "%LOCALAPPDATA%\\pnpm-cache",
+    "C:\\CodexRuntime\\operator\\admin\\skincos\\cache",
+    "C:\\CodexRuntime\\operator\\admin\\skincos\\playwright-browsers"
+  ],
+  "protectedRoots": [
+    "C:\\Users\\admin\\AppData\\Local\\wsl",
+    "C:\\WSL",
+    "C:\\SKINCOS_STAGING",
+    "C:\\CodexShared\\Projetos\\skincos",
+    "%USERPROFILE%\\.codex\\sessions",
+    "%USERPROFILE%\\.codex\\archived_sessions",
+    "C:\\pagefile.sys",
+    "C:\\swapfile.sys"
+  ],
+  "regenerableDirectoryNames": [
+    "node_modules",
+    "dist",
+    ".vite",
+    ".next",
+    ".turbo",
+    "coverage",
+    "playwright-report"
+  ],
+  "protectedArtifactDirectories": [
+    "native-releases",
+    "native-promotions",
+    "releases",
+    "checkpoints",
+    "retired-worktrees",
+    "backups",
+    "recovered-worktree-artifacts"
+  ],
+  "protectedNamePatterns": [
+    "*.env",
+    "*.dev.vars",
+    "*.cloudflared",
+    "*.jsonl",
+    "*.sqlite",
+    "*.sqlite-*",
+    "*.vhdx",
+    "*.dmp",
+    "*.etl",
+    "*.tar",
+    "*.zip",
+    "*.mp4",
+    "*.mov",
+    "*.MOV",
+    "*.HEIC"
+  ],
+  "defaults": {
+    "dryRun": true,
+    "deepScan": false,
+    "worktreeRemoval": false,
+    "artifactHardlinkDeduplication": false,
+    "codexSessionRemoval": false,
+    "wslMutation": false
+  },
+  "scheduledAudit": {
+    "taskName": "SKINCOS Storage Governance Audit",
+    "intervalHours": 6,
+    "runAtLogon": true,
+    "runLevel": "limited"
+  }
+}
