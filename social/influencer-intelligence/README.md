@@ -290,10 +290,10 @@ production configuration.
 | Milestone | Deliverable | Status |
 | --- | --- | --- |
 | M0 | Normalized contracts | Merged in #1303 |
-| M1 | Creator registry and additive PostgreSQL schema | #1304 plus data-model extension #1322; artifacts only, not applied |
+| M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; registry artifact only, not applied |
 | Architecture | Canonical architecture v1 | Merged in #1310; runtime-free manifest |
 | M2 | Official-first router and controlled collectors | Canonical router #1324 (supersedes #1305); injected synthetic transports only |
-| M3 | Append-only snapshots, retention, and Orb scheduling | Snapshots #1331 plus inactive Orb scheduler #1335; import/runtime pending |
+| M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, and inactive Orb scheduler #1335; artifacts/import/runtime pending |
 | M4 | Robust analytics and outlier-resistant metrics | Merged in #1333; pure deterministic engine, golden fixtures, and formula documentation |
 | M5 | Deterministic score, confidence, coverage, and provenance | Merged in #1334; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Pending |

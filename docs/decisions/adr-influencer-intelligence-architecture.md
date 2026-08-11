@@ -139,9 +139,10 @@ session use, or provider call.
 
 ## 5. Canonical data model
 
-The PostgreSQL schema is `influencer_intelligence`. M1 currently provides only
-the reviewed registry artifact; M3 will add snapshot persistence after a
-separate migration review.
+The PostgreSQL schema is `influencer_intelligence`. M1 provides the reviewed
+registry artifact; M3 adds the reviewed data-model, snapshot metadata, scheduler
+opt-in, and scoring metadata artifacts. All remain unapplied until their
+destination, role, grant, checkpoint, and verification gates exist.
 
 | Resource | Lifecycle | Canonical content |
 | --- | --- | --- |
@@ -310,9 +311,10 @@ grant=module.influencer-intelligence.access
 rollout=off -> shadow -> active
 ```
 
-The flag is not wired by this PR or by M0--M2. A future CRM surface must add
-the module catalog evidence, server-side grant, explicit data scope, owner,
-fallback, SLO, smoke, and rollback identity before it can be activated.
+The flag is not wired for users or runtime by this ADR or by M0--M5. The M3
+workflow source only checks the flag and remains inactive. A future CRM surface
+must add the module catalog evidence, server-side grant, explicit data scope,
+owner, fallback, SLO, smoke, and rollback identity before it can be activated.
 Navigation visibility, a frontend flag, a generic role, a direct URL, or a
 successful health check is not authorization.
 
@@ -364,8 +366,9 @@ without the required audit evidence is not considered proven.
 
 M1's migration
 [`20260810_influencer_intelligence_registry_v1.up.sql`](../../social/influencer-intelligence/migrations/20260810_influencer_intelligence_registry_v1.up.sql)
-is an unapplied, additive proposal for the minimal registry. M3 may add
-snapshot and evidence tables only in a separate migration-focused change.
+is an unapplied, additive proposal for the minimal registry. M3's separate
+additive artifacts for the data model, snapshot metadata, scheduler opt-in, and
+scoring metadata are also unapplied and are reviewed independently.
 
 Future migrations must:
 
@@ -380,20 +383,21 @@ Future migrations must:
 - preserve evidence on rollback by disabling/repointing code or recording a
   non-destructive rollback marker rather than deleting rows.
 
-This architecture PR creates no table, grants no role, runs no SQL against a
-database, and changes no runtime schema.
+Architecture PR #1310 created no table, granted no role, ran no SQL against a
+database, and changed no runtime schema. Later M3/M5 PRs add only
+source-controlled migration artifacts; they do not apply them.
 
 ## 14. Implementation plan
 
 | Milestone | Deliverable | Gate |
 | --- | --- | --- |
-| Architecture | This ADR and `architecture.mjs` | Contract/documentation tests; no runtime effect |
+| Architecture | This ADR and `architecture.mjs` | Merged in PR #1310; contract/documentation tests; no runtime effect |
 | M0 | Pure normalized evidence/provenance/coverage/signal/score contracts | Merged in PR #1303; no network or persistence |
 | M1 | Minimal pseudonymous registry and additive PostgreSQL artifact | Merged in PR #1304; artifact only, not applied |
-| M2 | Official-first Meta router and controlled instagrapi boundary | Merged in PR #1305; injected synthetic transports only |
-| M3 | Append-only snapshots, retention policy, and Orb job contract | Separate additive migration, dry-run/shadow scheduling, recovery tests |
-| M4 | Robust analytics and outlier-resistant metrics | Synthetic time-series fixtures and explicit unavailable coverage |
-| M5 | Deterministic score/confidence/provenance engine | Versioned algorithms and calibration evidence |
+| M2 | Official-first Meta router and controlled instagrapi boundary | Canonical router merged in PR #1324 (supersedes #1305); injected synthetic transports only |
+| M3 | Append-only snapshots, retention policy, and Orb job contract | Snapshots merged in PR #1331; inactive scheduler source merged in #1335; import/runtime pending |
+| M4 | Robust analytics and outlier-resistant metrics | Merged in PR #1333; synthetic time-series fixtures and explicit unavailable coverage |
+| M5 | Deterministic score/confidence/provenance engine | Merged in PR #1334; versioned algorithms and golden evidence |
 | M6 | Hardened authenticated read-only MCP | Tool schema, auth/grant, sanitization, limits, timeout, audit, read-only role |
 | M7 | `skincos-influencer-intelligence` skill | Skill uses only the approved MCP contract and cannot bypass boundaries |
 | M8 | Read-only CRM API/dashboard | Server-side flag/grant, module catalog, shadow UI, direct-provider negative tests |
