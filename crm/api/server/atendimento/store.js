@@ -2620,6 +2620,32 @@ function commercialOfferSelect(whereSql = '') {
         order by o.updated_at desc`
 }
 
+const COMMERCIAL_CATALOG_UNITS = Object.freeze([
+    'barra-shopping-sul',
+    'novo-hamburgo',
+])
+
+function normalizeCommercialCatalogUnits(query = {}) {
+    const values = []
+    const add = (value) => {
+        if (Array.isArray(value)) value.forEach(add)
+        else if (value != null) String(value).split(',').forEach((part) => values.push(part))
+    }
+    add(query.units)
+    add(query.unit)
+
+    const units = [...new Set(values
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .map((value) => normalizeUnit(value).slug)
+        .filter(Boolean))]
+    if (!units.length) throw commercialOfferError('UNIT_REQUIRED')
+    if (units.some((unit) => !COMMERCIAL_CATALOG_UNITS.includes(unit))) {
+        throw commercialOfferError('UNIT_NOT_FOUND', 404)
+    }
+    return COMMERCIAL_CATALOG_UNITS.filter((unit) => units.includes(unit))
+}
+
 function normalizeGoalMonth(value) {
     const raw = String(value || '').trim()
     if (/^\d{4}-\d{2}$/.test(raw)) return `${raw}-01`
@@ -6245,14 +6271,13 @@ export function createAtendimentoStore(options = {}) {
             })
         },
 
-        async metaAdsOfferContext(query) {
+        async commercialCatalog(query = {}) {
             await ensureReady()
-            const unitSlug = normalizeUnit(query?.unit || '').slug
-            if (!unitSlug) throw commercialOfferError('UNIT_REQUIRED')
+            const unitSlugs = normalizeCommercialCatalogUnits(query)
             const offerKey = String(query?.offerKey || '').trim()
-            const params = [unitSlug]
+            const params = [unitSlugs]
             const where = [
-                'u.slug = $1',
+                'u.slug = any($1::text[])',
                 `o.status = 'active'`,
                 '(o.validity_start is null or o.validity_start <= current_date)',
                 '(o.validity_end is null or o.validity_end >= current_date)',
@@ -6262,10 +6287,38 @@ export function createAtendimentoStore(options = {}) {
                 where.push(`o.offer_key = $${params.length}`)
             }
             const rows = await pgPool.query(commercialOfferSelect(`where ${where.join(' and ')}`), params)
-            return {
+            const units = Object.fromEntries(unitSlugs.map((unitSlug) => [unitSlug, {
                 unitSlug,
+                offers: [],
+            }]))
+            for (const row of rows.rows) {
+                const mapped = mapCommercialOffer(row)
+                units[mapped.unitSlug]?.offers.push(mapped)
+            }
+            const result = {
+                schemaVersion: 'crm-commercial-catalog/v1',
                 asOf: new Date().toISOString().slice(0, 10),
-                offers: rows.rows.map(mapCommercialOffer),
+                requestedUnits: unitSlugs,
+                units,
+            }
+            if (unitSlugs.length === 1) {
+                result.unitSlug = unitSlugs[0]
+                result.offers = units[unitSlugs[0]].offers
+            }
+            return result
+        },
+
+        // Compatibility adapter for the existing Meta Ads workflow. New
+        // consumers must call commercialCatalog through the generic route.
+        async metaAdsOfferContext(query) {
+            const result = await this.commercialCatalog({
+                unit: query?.unit,
+                offerKey: query?.offerKey,
+            })
+            return {
+                unitSlug: result.unitSlug,
+                asOf: result.asOf,
+                offers: result.offers,
             }
         },
 

@@ -8,6 +8,7 @@ const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { parse } = require('/usr/local/lib/node_modules/n8n/node_modules/flatted');
 const runtimePaths = require('../lib/runtime-paths');
+const { validate: validateCommercialCatalog } = require('../patch-livia-commercial-catalog');
 
 const WORKFLOW_ID = 'WGXr4vYkv9UoJ8zc';
 const PROCESS_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'process-media-asset.js');
@@ -940,6 +941,13 @@ function validateWorkflow() {
   }
   if (staticValidation.status !== 0) {
     errors.push(staticValidation.stdout || staticValidation.stderr || 'validate-livia-workflow failed.');
+  }
+  if (nodeByName.has('Prepare Livia CRM Catalog Context') || nodeByName.has('CRM Commercial Catalog')) {
+    try {
+      validateCommercialCatalog(workflow);
+    } catch (error) {
+      errors.push(`CRM commercial catalog contract failed: ${error.message || error}`);
+    }
   }
 
   if (errors.length) {

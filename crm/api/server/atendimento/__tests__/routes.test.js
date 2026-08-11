@@ -10,7 +10,10 @@ function actorHeader(actor) {
 function captureAtendimentoRoutes(store, options = {}) {
     const routes = new Map()
     const router = {
-        use() { return router },
+        use(handler) {
+            if (typeof handler === 'function' && handler.length >= 3) routes.middleware = handler
+            return router
+        },
         get(path, handler) { routes.set(`GET ${path}`, handler); return router },
         post(path, handler) { routes.set(`POST ${path}`, handler); return router },
         put(path, handler) { routes.set(`PUT ${path}`, handler); return router },
@@ -74,6 +77,56 @@ test('accepts only the dedicated bearer token for the Meta Ads offer context', (
     assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer wrong' } }, 'offer-context-secret'), false)
     assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Basic offer-context-secret' } }, 'offer-context-secret'), false)
     assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer offer-context-secret' } }, ''), false)
+})
+
+test('accepts the generic CRM commercial catalog bearer contract and preserves the Meta alias', () => {
+    const request = { headers: { authorization: 'Bearer catalog-secret' } }
+    assert.equal(__testables.verifyCommercialCatalogToken(request, 'catalog-secret'), true)
+    assert.equal(__testables.verifyCommercialCatalogToken(request, 'wrong'), false)
+    assert.equal(__testables.verifyMetaAdsOfferContextToken(request, 'catalog-secret'), true)
+})
+
+test('registers the read-only generic commercial catalog route', async () => {
+    const calls = []
+    const routes = captureAtendimentoRoutes({
+        async commercialCatalog(query) {
+            calls.push(query)
+            return { schemaVersion: 'crm-commercial-catalog/v1', requestedUnits: ['barra-shopping-sul'], units: {} }
+        },
+    })
+    const response = captureResponse()
+    await routes.get('GET /internal/commercial/catalog')({
+        commercialCatalog: true,
+        query: { unit: 'barra-shopping-sul' },
+    }, response)
+    assert.equal(response.state.status, 200)
+    assert.equal(response.state.body.ok, true)
+    assert.deepEqual(calls, [{ unit: 'barra-shopping-sul' }])
+})
+
+test('authenticates the generic route in middleware and marks it as a service read', async () => {
+    const routes = captureAtendimentoRoutes({ commercialCatalog: async () => ({}) }, { commercialCatalogToken: 'catalog-secret' })
+    assert.equal(typeof routes.middleware, 'function')
+
+    let nextCalled = false
+    const validRequest = {
+        path: '/internal/commercial/catalog',
+        method: 'GET',
+        headers: { authorization: 'Bearer catalog-secret' },
+    }
+    await routes.middleware(validRequest, captureResponse(), () => { nextCalled = true })
+    assert.equal(nextCalled, true)
+    assert.deepEqual(validRequest.atendimentoActor, { id: 'crm-commercial-catalog', role: 'SERVICE' })
+    assert.equal(validRequest.commercialCatalog, true)
+
+    const invalidResponse = captureResponse()
+    await routes.middleware({
+        path: '/internal/commercial/catalog',
+        method: 'GET',
+        headers: { authorization: 'Bearer wrong' },
+    }, invalidResponse, () => {})
+    assert.equal(invalidResponse.state.status, 401)
+    assert.deepEqual(invalidResponse.state.body, { ok: false, error: 'UNAUTHORIZED' })
 })
 
 test('keeps Clientes routes exclusive to GESTOR, matching the CRM module policy', () => {

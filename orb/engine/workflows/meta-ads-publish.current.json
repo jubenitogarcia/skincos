@@ -2177,7 +2177,7 @@
     },
     {
       "parameters": {
-        "url": "={{ 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit=' + encodeURIComponent($json.crm_unit) }}",
+        "url": "={{ 'http://127.0.0.1:8099/api/atendimento/internal/commercial/catalog?unit=' + encodeURIComponent($json.crm_unit) }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBearerAuth",
         "options": {
