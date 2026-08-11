@@ -120,8 +120,9 @@ fallback.
 
 These migrations are not applied to local, staging, or production through an
 operational runner; they are validated as source-controlled artifacts and
-through synthetic repository tests. No UI, feature wiring,
-runtime, CRM, MCP, Orb, systemd, or external provider call is included.
+through synthetic repository tests. No UI, feature wiring, runtime, CRM, MCP,
+systemd, or external provider call is included; the Orb source added by M3 is
+inactive orchestration only.
 
 ## M4 decision: deterministic analytics
 
@@ -289,12 +290,12 @@ production configuration.
 | Milestone | Deliverable | Status |
 | --- | --- | --- |
 | M0 | Normalized contracts | Merged in #1303 |
-| M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; artifact only, not applied |
-| Architecture | Canonical architecture v1 | Defined in the ADR and runtime-free manifest |
-| M2 | Official-first router and controlled collectors | Merged in #1305; injected synthetic transports only |
-| M3 | Append-only snapshots, retention, and Orb scheduling | Snapshot operations implemented; Orb scheduling pending |
-| M4 | Robust analytics and outlier-resistant metrics | Implemented in this PR; pure deterministic engine, golden fixtures, and formula documentation |
-| M5 | Deterministic score, confidence, coverage, and provenance | Implemented in this PR; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
+| M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; registry artifact only, not applied |
+| Architecture | Canonical architecture v1 | Merged in #1310; runtime-free manifest |
+| M2 | Official-first router and controlled collectors | Canonical router #1324 (supersedes #1305); injected synthetic transports only |
+| M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, and inactive Orb scheduler #1335; artifacts/import/runtime pending |
+| M4 | Robust analytics and outlier-resistant metrics | Merged in #1333; pure deterministic engine, golden fixtures, and formula documentation |
+| M5 | Deterministic score, confidence, coverage, and provenance | Merged in #1334; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Pending |
 | M7 | `skincos-influencer-intelligence` Codex skill | Pending |
 | M8 | Read-only CRM contracts and dashboard | Pending |

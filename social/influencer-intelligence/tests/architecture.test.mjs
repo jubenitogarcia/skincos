@@ -144,7 +144,10 @@ test('keeps this architecture milestone off and runtime-free', () => {
   assert.equal(RELEASE_CONTRACT.architecturePrScope.providerCalls, false);
   assert.equal(RELEASE_CONTRACT.architecturePrScope.crmRegistered, false);
   assert.equal(RELEASE_CONTRACT.architecturePrScope.mcpRegistered, false);
-  assert.equal(RELEASE_CONTRACT.architecturePrScope.orbWorkflowChanged, true);
+  assert.equal(RELEASE_CONTRACT.architecturePrScope.orbWorkflowChanged, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowImported, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowActive, false);
 
   const source = fs.readFileSync(architecturePath, 'utf8');
   assert.doesNotMatch(source, /\b(?:fetch|spawn|exec|execFile|createServer|listen)\s*\(/i);
