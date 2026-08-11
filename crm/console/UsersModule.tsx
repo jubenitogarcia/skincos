@@ -855,8 +855,8 @@ export function UsersModule() {
             <div className="hidden overflow-auto rounded-xl border border-white/10 md:block">
                 <table className="w-full table-fixed text-sm">
                   <colgroup>
-                  <col className="w-[4%]" />
-                  <col className="w-[19%]" />
+                  <col className="w-[6%]" />
+                  <col className="w-[17%]" />
                   <col className="w-[12%]" />
                   <col className="w-[10%]" />
                   <col className="w-[11%]" />
