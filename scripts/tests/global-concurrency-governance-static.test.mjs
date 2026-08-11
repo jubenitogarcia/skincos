@@ -444,3 +444,17 @@ test("CRM Pages deploy declares coordination as a direct dependency for lease ou
 
   assert.match(workflow, /\n  deploy:\n    # The deploy job reads lease outputs from the reusable coordination job\.[\s\S]*?\n    needs: \[coordination, promotion\]/);
 });
+
+test("Core Worker jobs declare coordination before consuming its lease outputs", () => {
+  const workflow = read(".github/workflows/deploy-core-workers.yml");
+
+  for (const jobName of [
+    "ponto-identity-staging",
+    "ponto-progressive-release",
+    "ponto-identity-progressive-release",
+  ]) {
+    const block = jobBlock(workflow, jobName);
+    assert.match(block, /needs: \[(?:coordination, (?:promotion|progressive))\]/);
+    assert.match(block, /needs\.coordination\.outputs\.(?:global_coordinator_url|global_proof_b64)/);
+  }
+});
