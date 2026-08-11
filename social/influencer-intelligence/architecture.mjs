@@ -44,10 +44,13 @@ export const BOUNDARIES = deepFreeze([
   {
     id: 'provider-router',
     owner: DOMAIN_ROOT,
-    owns: ['provider ordering', 'explicit gap classification', 'bounded adapter projection'],
+    owns: ['provider ordering', 'explicit gap classification', 'bounded adapter projection', 'timeout and safe retry', 'per-provider operation circuit state'],
     order: ['meta-graph', 'instagrapi'],
-    fallbackOnlyFor: ['provider_unavailable', 'permission_gap', 'coverage_gap', 'timeout'],
+    fallbackOnlyFor: ['provider_unavailable', 'permission_gap', 'coverage_gap', 'timeout', 'circuit_open', 'retry_exhausted'],
     failClosedFor: ['policy_block', 'invalid_response', 'unclassified_transport'],
+    retryPolicy: 'Only bounded provider_unavailable, transport_error, rate_limited, and timeout failures may retry; policy and invalid responses never retry.',
+    circuitPolicy: 'Failures are isolated by provider and operation; an open circuit is a fallback gap and never produces data.',
+    externalPolicy: 'Future external providers require explicit configuration and allowlisting after a measured gap review.',
   },
   {
     id: 'token-vault',
@@ -87,25 +90,28 @@ export const BOUNDARIES = deepFreeze([
 export const PROVIDER_INTERFACE = deepFreeze({
   contractVersion: 'influencer-intelligence/provider-interface/v1',
   request: {
-    required: ['creatorKey', 'observedAt', 'retrievedAt', 'requestedFields', 'correlationId'],
-    optional: ['canonicalHandle', 'window'],
+    required: ['operation', 'observedAt', 'retrievedAt', 'correlationId'],
+    identityRules: ['resolve_creator requires canonicalHandle', 'all other operations require creatorKey', 'get_media_metrics requires bounded mediaKeys'],
+    optional: ['creatorKey', 'canonicalHandle', 'window', 'limit', 'mediaKeys', 'metricSet', 'requestedFields'],
     forbidden: ['rawProviderAccountReference', 'credentialMaterial', 'sessionMaterial', 'rawQuery', 'engagementAction'],
   },
   result: {
-    statuses: ['collected', 'unavailable'],
-    fields: ['provider', 'providerAdapterVersion', 'observedAt', 'retrievedAt', 'observations', 'provenance'],
+    statuses: ['ok', 'unavailable'],
+    fields: ['provider', 'retrievedAt', 'dataClassification', 'freshness', 'limitations', 'providerSpecificEvidence', 'data'],
     forbidden: ['rawProviderPayload', 'directContactFields', 'rawCommentText', 'mediaBinary', 'credentialMaterial'],
   },
   operations: [
-    { name: 'collectProfile', readOnly: true, lifecycle: 'M2 boundary; synthetic transport only until a later gate' },
-    { name: 'collectMediaSummary', readOnly: true, lifecycle: 'M3/M4 design; no implementation in architecture PR' },
-    { name: 'collectCommentsAggregate', readOnly: true, lifecycle: 'M9 design; aggregate-only output' },
-    { name: 'collectInsights', readOnly: true, lifecycle: 'M4 design; explicit unavailable state when permission is missing' },
+    { name: 'resolve_creator', readOnly: true, lifecycle: 'provider identity resolution; bounded public handle projection' },
+    { name: 'get_profile', readOnly: true, lifecycle: 'bounded profile projection; synthetic transport only until a later gate' },
+    { name: 'get_recent_media', readOnly: true, lifecycle: 'bounded media identity projection; no binary archive' },
+    { name: 'get_media_metrics', readOnly: true, lifecycle: 'bounded media metrics projection; unavailable when coverage is missing' },
+    { name: 'get_comments_sample', readOnly: true, lifecycle: 'aggregate/sample intelligence only; no raw comment text' },
+    { name: 'get_profile_metrics', readOnly: true, lifecycle: 'bounded profile aggregate metrics; unavailable when not supplied' },
   ],
   providerIdentity: {
     allowed: ['meta-graph', 'instagrapi'],
     officialFirst: 'meta-graph',
-    futureProviders: 'M13 may add a provider only after a measured, documented gap and a separate review.',
+    futureProviders: 'Only explicitly configured and allowlisted after a measured, documented gap and a separate review.',
   },
 });
 

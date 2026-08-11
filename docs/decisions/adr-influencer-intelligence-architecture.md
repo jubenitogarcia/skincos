@@ -85,27 +85,35 @@ actual deployable surface to govern.
 
 ## 4. Provider interface
 
-The interface is a logical contract, not a new provider implementation:
+The interface is a logical contract implemented by the bounded
+`provider-contracts.mjs`/`.d.ts` boundary and the injected adapters:
 
 ```text
 ProviderAdapter {
   id: ProviderId
   officialFirst: boolean
   capabilities: ReadOnlyCapability[]
-  collect(request: ProviderRequest): Promise<ProviderResult>
+  resolve_creator(request, context): Promise<ProviderResult>
+  get_profile(request, context): Promise<ProviderResult>
+  get_recent_media(request, context): Promise<ProviderResult>
+  get_media_metrics(request, context): Promise<ProviderResult>
+  get_comments_sample(request, context): Promise<ProviderResult>
+  get_profile_metrics(request, context): Promise<ProviderResult>
 }
 ```
 
-`ProviderRequest` contains only an opaque `creatorKey`, optional approved
-canonical handle, requested normalized fields, observation/retrieval
-timestamps, time window, and correlation id. It does not contain a raw
-provider account reference, credential material, session material, arbitrary
-query, engagement instruction, or publication instruction.
+`ProviderRequest` contains an operation, an opaque `creatorKey` or approved
+canonical handle according to that operation, bounded normalized fields,
+observation/retrieval timestamps, an optional time window, and a correlation
+id. It does not contain a raw provider account reference, credential material,
+session material, arbitrary query, engagement instruction, or publication
+instruction.
 
-`ProviderResult` is either `collected` or `unavailable` and contains the
-provider id, provider adapter version, bounded scalar observations, and
-provenance. It never contains a raw provider object, direct contact field,
-raw comment text, media binary, credential, or session.
+`ProviderResult` is either `ok` or `unavailable` and contains the provider id,
+retrieval timestamp, `observed`/`derived`/`inferred` classification, freshness,
+limitations, bounded provider-specific evidence, and operation-specific data.
+Unavailable data is `null`; the result never contains a raw provider object,
+direct contact field, raw comment text, media binary, credential, or session.
 
 The v1 provider allowlist and order are closed:
 
@@ -117,12 +125,13 @@ The v1 provider allowlist and order are closed:
    measured coverage/permission gap, privacy review, cost/risk review, and a
    separate contract/PR.
 
-The only fallback reason codes in v1 are
-`provider_unavailable`, `permission_gap`, `coverage_gap`, and `timeout`.
-`policy_block`, `invalid_response`, and unclassified transport failures fail
-closed and do not trigger a fallback. A provider response with a missing or
-invalid metric is an explicit unavailable observation, never a fabricated
-zero.
+The fallback reason codes are `provider_unavailable`, `permission_gap`,
+`coverage_gap`, `timeout`, `circuit_open`, and `retry_exhausted`.
+Retries are bounded and limited to safe transient transport/timeout classes;
+failure state is isolated by provider and operation. `policy_block`,
+`invalid_response`, and unclassified transport failures fail closed and do not
+trigger a fallback. A provider response with a missing or invalid metric is an
+explicit unavailable observation, never a fabricated zero.
 
 The M2 provider boundary already implements this injected-transport shape for
 synthetic tests. The architecture PR adds no real transport, HTTP client,
