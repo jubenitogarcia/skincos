@@ -40,13 +40,32 @@ test('keeps the provider boundary official-first and fail-closed', () => {
     'permission_gap',
     'coverage_gap',
     'timeout',
+    'circuit_open',
+    'retry_exhausted',
   ]);
   assert.deepEqual(BOUNDARIES.find(({ id }) => id === 'provider-router').failClosedFor, [
     'policy_block',
     'invalid_response',
     'unclassified_transport',
   ]);
+  assert.deepEqual(PROVIDER_INTERFACE.operations.map(({ name }) => name), [
+    'resolve_creator',
+    'get_profile',
+    'get_recent_media',
+    'get_media_metrics',
+    'get_comments_sample',
+    'get_profile_metrics',
+  ]);
   assert.ok(PROVIDER_INTERFACE.operations.every(({ readOnly }) => readOnly === true));
+  assert.deepEqual(PROVIDER_INTERFACE.result.fields, [
+    'provider',
+    'retrievedAt',
+    'dataClassification',
+    'freshness',
+    'limitations',
+    'providerSpecificEvidence',
+    'data',
+  ]);
 });
 
 test('models evidence as append-only and provenance-complete', () => {

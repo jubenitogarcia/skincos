@@ -64,29 +64,36 @@ the artifact is the source-controlled schema proposal only.
 
 ## M2 decision: official-first provider router
 
-M2 adds [`provider-router.mjs`](./provider-router.mjs) and the two explicit
-adapters under [`providers/`](./providers/). The router has a closed provider
-allowlist and requires `meta-graph` to be the first configured provider. It
-falls back to `instagrapi` only for explicit gap codes
-(`provider_unavailable`, `permission_gap`, `coverage_gap`, or `timeout`).
-Invalid responses, policy blocks, and unclassified transport errors fail
-closed and do not trigger fallback.
+The M2 baseline adds [`provider-router.mjs`](./provider-router.mjs) and the two
+explicit adapters under [`providers/`](./providers/). The router requires
+`meta-graph` to be first and falls back to `instagrapi` only for explicit gap
+codes (`provider_unavailable`, `permission_gap`, `coverage_gap`, `timeout`,
+`circuit_open`, or `retry_exhausted`). Invalid responses, policy blocks, and
+unclassified transport errors fail closed and do not trigger fallback.
 
-Both adapters accept an injected `readProfile` function. The function receives
-an immutable read-only request and must return only the bounded projection
-`handle`, `followersCount`, and `mediaCount`; raw Graph/instagrapi payloads,
-credentials, sessions, comments, media, and contact fields never enter the
-normalized provider contract. Every returned metric is `observed` or explicit
-`unavailable`, then passes through the versioned M0 snapshot contract.
+The provider-router extension defines the typed operations
+`resolve_creator`, `get_profile`, `get_recent_media`, `get_media_metrics`,
+`get_comments_sample`, and `get_profile_metrics`. Every result is a bounded
+envelope carrying `provider`, `retrieved_at`, `data_classification`,
+`freshness`, `limitations`, and provider-specific evidence. Missing coverage is
+returned as `unavailable` with `data: null`; the router never substitutes or
+invents metrics. Adapters receive injected read-only transports and expose no
+follow, like, DM, post, session, credential, or raw-payload surface.
 
-M2 is merged as PR #1305. The Meta adapter is a boundary around the existing
-official CRM integration, not a second HTTP client. The instagrapi adapter is a
-narrow boundary around
-the existing `social/instagram` read path, not a new scraper or session
-implementation. M2 uses synthetic transports only: it does not call Graph,
-instagrapi, Token Vault, PostgreSQL, Orb, or any runtime endpoint. A future
-transport must establish a separate read-only analytics allowlist and Token
-Vault custody before it can be connected.
+Retries are bounded to safe transient transport/timeout classes, and circuit
+state is isolated by provider and operation. Future external providers are
+interfaces only until they are explicitly enabled and allowlisted after a
+measured gap review. No new scraper, Instaloader path, or duplicate instagrapi
+implementation is introduced.
+
+The original M2 boundary is merged as PR #1305. The Meta adapter remains a
+boundary around the existing official CRM integration, not a second HTTP
+client; the instagrapi adapter remains a narrow boundary around the existing
+`social/instagram` read path. This milestone continues to use synthetic,
+injected transports only: it does not call Graph, instagrapi, Token Vault,
+PostgreSQL, Orb, or any runtime endpoint. A future transport must establish a
+separate read-only analytics allowlist and Token Vault custody before it can be
+connected.
 
 ## Data model v1 decision
 
