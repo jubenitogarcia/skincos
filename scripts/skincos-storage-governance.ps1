@@ -10,6 +10,8 @@ param(
     [switch]$AllowWorktreeRemoval,
     [switch]$AllowArtifactHardlinkDeduplication,
     [switch]$IncludeWorktreeStatus,
+    [switch]$IncludeFocalArtifacts,
+    [switch]$IncludeWorktreeFocalArtifacts,
     [int]$MaxWorktrees = 700
 )
 
@@ -240,13 +242,19 @@ function Get-WorktreeRecords {
 }
 
 function Get-SourceTarRecords {
-    param([Parameter(Mandatory = $true)][string]$RuntimeRoot)
+    param([Parameter(Mandatory = $true)][string]$RuntimeRoot, [string[]]$RelativeRoots = @(), [switch]$ComputeHash)
     $root = Join-Path $RuntimeRoot 'operator\admin\skincos'
     if (-not (Test-Path -LiteralPath $root -PathType Container)) { return @() }
-    $files = @(Get-ChildItem -LiteralPath $root -Recurse -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'source.*\.tar$' })
+    $scanRoots = @($root)
+    if (@($RelativeRoots).Count -gt 0) { $scanRoots = @($RelativeRoots | ForEach-Object { Join-Path $root $_ }) }
+    $files = @()
+    foreach ($scanRoot in $scanRoots) {
+        if (-not (Test-Path -LiteralPath $scanRoot -PathType Container)) { continue }
+        $files += @(Get-ChildItem -LiteralPath $scanRoot -Recurse -Force -File -Filter '*source*.tar' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'source.*\.tar$' })
+    }
     $rows = foreach ($file in $files) {
         $hash = $null
-        try { $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpperInvariant() } catch {}
+        if ($ComputeHash) { try { $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpperInvariant() } catch {} }
         [pscustomobject]@{ path = $file.FullName; bytes = [int64]$file.Length; size_gb = Get-BytesGB $file.Length; sha256 = $hash; last_write_utc = $file.LastWriteTimeUtc.ToString('o') }
     }
     return $rows
@@ -254,14 +262,30 @@ function Get-SourceTarRecords {
 
 function Get-WorkerdRecords {
     param([Parameter(Mandatory = $true)][string[]]$Roots)
-    $rows = @()
+    $rows = [System.Collections.Generic.List[object]]::new()
     foreach ($root in $Roots) {
         if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
-        foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'workerd*' })) {
-            $rows += [pscustomobject]@{ path = $file.FullName; bytes = [int64]$file.Length; size_mb = [math]::Round($file.Length / 1MB, 3); sha256 = $null; link_type = [string]$file.LinkType }
+        $pending = [System.Collections.Generic.Stack[string]]::new()
+        $pending.Push([IO.Path]::GetFullPath($root))
+        while ($pending.Count -gt 0) {
+            $current = $pending.Pop()
+            try {
+                foreach ($filePath in [IO.Directory]::EnumerateFiles($current, 'workerd*', [IO.SearchOption]::TopDirectoryOnly)) {
+                    try {
+                        $file = Get-Item -LiteralPath $filePath -Force -ErrorAction Stop
+                        $rows.Add([pscustomobject]@{ path = $file.FullName; bytes = [int64]$file.Length; size_mb = [math]::Round($file.Length / 1MB, 3); sha256 = $null; link_type = [string]$file.LinkType })
+                    } catch {}
+                }
+                foreach ($directoryPath in [IO.Directory]::EnumerateDirectories($current)) {
+                    try {
+                        $attributes = [IO.File]::GetAttributes($directoryPath)
+                        if (($attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) { $pending.Push($directoryPath) }
+                    } catch {}
+                }
+            } catch {}
         }
     }
-    return $rows
+    return @($rows)
 }
 
 function Get-CleanupCandidates {
@@ -370,9 +394,13 @@ if ($IncludeWorktreeStatus -or $Mode -in @('cleanup', 'emergency', 'classify-wor
 }
 $sourceTars = @()
 $workerd = @()
-if ($Deep) {
-    $sourceTars = @(Get-SourceTarRecords -RuntimeRoot $paths.runtimeRoot)
-    $workerd = @(Get-WorkerdRecords -Roots @($paths.projectRoot, $paths.worktreeRoot, (Join-Path $paths.runtimeRoot 'operator\admin\skincos\source')))
+if ($Deep -or $IncludeFocalArtifacts) {
+    $sourceTarRoots = @()
+    if (-not $Deep) { $sourceTarRoots = @($Policy.protectedArtifactDirectories) }
+    $sourceTars = @(Get-SourceTarRecords -RuntimeRoot $paths.runtimeRoot -RelativeRoots $sourceTarRoots -ComputeHash:$Deep)
+    $focalRoots = @($paths.projectRoot)
+    if ($Deep -or $IncludeWorktreeFocalArtifacts) { $focalRoots = @($paths.projectRoot, $paths.worktreeRoot, (Join-Path $paths.runtimeRoot 'operator\admin\skincos\source')) }
+    $workerd = @(Get-WorkerdRecords -Roots $focalRoots)
 }
 $candidates = @()
 $worktreeCandidates = @()
@@ -400,6 +428,9 @@ $document = [ordered]@{
     mode = $Mode
     applied = [bool]$Apply
     deep_scan = [bool]$Deep
+    focal_artifact_scan = [bool]($Deep -or $IncludeFocalArtifacts)
+    focal_worktree_scan = [bool]($Deep -or $IncludeWorktreeFocalArtifacts)
+    source_tar_hashes_computed = [bool]$Deep
     threshold_state = $thresholdState
     drive = $drive
     paths = $paths
