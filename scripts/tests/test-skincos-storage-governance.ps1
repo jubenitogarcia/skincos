@@ -53,9 +53,10 @@ try {
     if ($fixtureNames -notcontains 'source.tar' -or $fixtureNames -notcontains 'source.tar.gz') { throw 'focal storage inventory must include plain and compressed source archives' }
 
     $dedupeOutput = Join-Path $fixtureRoot 'dedupe-report.json'
-    $dedupeResult = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $dedupe -RuntimeRoot $fixtureRuntime -StateRoot (Join-Path $fixtureRoot 'dedupe-state') -MinimumAgeDays 1 -OutputPath $dedupeOutput
+    $dedupeResult = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $dedupe -RuntimeRoot $fixtureRuntime -StateRoot (Join-Path $fixtureRoot 'dedupe-state') -MinimumAgeDays 1 -IncludeInventory -OutputPath $dedupeOutput
     $dedupeDocument = ($dedupeResult -join "`n") | ConvertFrom-Json
-    if ($dedupeDocument.source_tar_count -ne 2 -or $dedupeDocument.duplicate_groups -ne 1) { throw 'source archive dedupe must include compressed archives' }
+    $dedupeNames = @($dedupeDocument.source_tars | ForEach-Object { [IO.Path]::GetFileName($_.path) })
+    if (-not $dedupeDocument.source_tar_inventory_included -or $dedupeDocument.source_tar_count -ne 2 -or $dedupeDocument.duplicate_groups -ne 1 -or $dedupeNames -notcontains 'source.tar.gz') { throw 'source archive dedupe must include compressed archives in an explicit inventory' }
 } finally {
     if (Test-Path -LiteralPath $fixtureRoot -PathType Container) {
         $resolvedFixtureRoot = [IO.Path]::GetFullPath($fixtureRoot)

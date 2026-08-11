@@ -5,7 +5,8 @@ param(
     [int]$MinimumAgeDays = 2,
     [switch]$Apply,
     [switch]$AllowHardlinkDeduplication,
-    [string]$OutputPath = ''
+    [string]$OutputPath = '',
+    [switch]$IncludeInventory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -135,6 +136,8 @@ $document = [ordered]@{
     hardlink_deduplication_allowed = [bool]$AllowHardlinkDeduplication
     source_tar_count = $rows.Count
     source_tar_bytes = [int64](($rows | Measure-Object bytes -Sum).Sum)
+    source_tar_inventory_included = [bool]$IncludeInventory
+    source_tars = if ($IncludeInventory) { $rows } else { @() }
     duplicate_groups = $groups.Count
     operations = $operations
     safety = @(
