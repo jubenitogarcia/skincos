@@ -202,9 +202,10 @@ function createCatalogTool(credential) {
 function addCommercialGuard(assertNode) {
   const code = String(assertNode?.parameters?.jsCode || '');
   if (code.includes('livia_crm_pricing_guard_v1')) return;
-  const marker = 'return { json: current };';
-  if (!code.includes(marker)) throw new Error('Assert Livia Visual Analysis return contract is missing.');
-  assertNode.parameters.jsCode = code.replace(marker, `${COMMERCIAL_GUARD_CODE}\n${marker}`);
+  const marker = 'return { json: current';
+  const markerIndex = code.lastIndexOf(marker);
+  if (markerIndex < 0) throw new Error('Assert Livia Visual Analysis return contract is missing.');
+  assertNode.parameters.jsCode = `${code.slice(0, markerIndex)}${COMMERCIAL_GUARD_CODE}\n${code.slice(markerIndex)}`;
 }
 
 function validate(workflow) {
