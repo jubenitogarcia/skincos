@@ -158,10 +158,15 @@ Gestor e a flag local de equipe unificada habilitadas. Ele reutiliza a mesma
 proveniência e a mesma faixa privada da prévia da thread, mas não envia
 convites reais nem altera o banco remoto.
 
-Quando esse atalho é acionado no clone compartilhado, ele lista somente os
-worktrees registrados do operador compatíveis com Usuários e exige uma escolha
-explícita. Cancelar não inicia nada e não existe checkout padrão, lembrado ou
-hard-coded; em um worktree já aberto, a ação usa diretamente aquele checkout.
+Quando a ação é acionada pelo Codex App com a thread aberta no worktree correto,
+o launcher usa diretamente esse worktree pelo caminho relativo da ação. Não é
+necessário informar `threadId`, escolher outro worktree ou usar um checkout
+fixo. Não execute `Set-Location` para o clone compartilhado antes do clique.
+
+Se o cwd for `C:\CodexShared\Projetos\skincos`, a ação falha de forma
+controlada e orienta abrir o worktree da thread. O clone compartilhado não
+recebe o `threadId` do Codex App e não pode inferir com segurança qual thread
+deve ser executada.
 
 A implementação UX validada nesta missão está no worktree
 `C:\CodexShared\Worktrees\skincos\admin\users-production-flag-20260810`, no
