@@ -4,10 +4,12 @@ $script = Join-Path (Split-Path -Parent $PSScriptRoot) 'skincos-storage-governan
 $policy = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'ops\codex\storage-retention-policy.json'
 $installer = Join-Path (Split-Path -Parent $PSScriptRoot) 'install-skincos-storage-governance-task.ps1'
 $dedupe = Join-Path (Split-Path -Parent $PSScriptRoot) 'dedupe-source-tars.ps1'
+$ciSmoke = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) '.github\workflows\ci-smoke.yml'
 if (-not (Test-Path -LiteralPath $script)) { throw 'governance script missing' }
 if (-not (Test-Path -LiteralPath $policy)) { throw 'governance policy missing' }
 if (-not (Test-Path -LiteralPath $installer)) { throw 'governance task installer missing' }
 if (-not (Test-Path -LiteralPath $dedupe)) { throw 'source archive dedupe script missing' }
+if (-not (Test-Path -LiteralPath $ciSmoke)) { throw 'CI smoke workflow missing' }
 
 $result = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Mode audit -PolicyPath $policy
 $document = ($result -join "`n") | ConvertFrom-Json
@@ -24,6 +26,11 @@ if ($policyDocument.protectedNamePatterns -notcontains '*.tar.gz') { throw 'comp
 $taskPreview = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -RepositoryRoot (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) -ScriptPath $script | Out-String) | ConvertFrom-Json
 if ($taskPreview.action -ne 'dry-run' -or $taskPreview.include_worktree_status) { throw 'scheduled audit must default to quick mode' }
 if (-not $taskPreview.include_focal_artifacts -or $taskPreview.arguments -notmatch '-IncludeFocalArtifacts') { throw 'scheduled audit must include focal artifact scan' }
+$ciSmokeText = Get-Content -LiteralPath $ciSmoke -Raw
+foreach ($requiredContract in @('storage_governance: ${{ steps.scope.outputs.storage_governance }}', 'ops/codex/storage-retention-policy.json', 'Verify storage governance contracts', 'test-skincos-storage-governance.ps1')) {
+    if (-not $ciSmokeText.Contains($requiredContract)) { throw "storage governance CI contract missing: $requiredContract" }
+}
+if ($ciSmokeText -match '(?m)^\s+- "ops/codex/\*\*"$') { throw 'storage governance policy must not be excluded from CI triggers' }
 
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("skincos-source-archive-test-" + [guid]::NewGuid().ToString('N'))
 try {

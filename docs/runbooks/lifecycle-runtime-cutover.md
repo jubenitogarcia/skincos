@@ -28,11 +28,23 @@ through `\\wsl.localhost`; WSL never recursively walks `/mnt/c`.
 
    ```powershell
    $release = '<sha>'
+   $resolvedRelease = @(& git -C C:\CodexShared\Projetos\skincos rev-parse --verify "$release^{commit}" 2>$null)
+   if ($LASTEXITCODE -ne 0 -or $resolvedRelease.Count -ne 1) { throw 'Release SHA must resolve to one full commit SHA.' }
+   $release = ([string]$resolvedRelease[0]).Trim().ToLowerInvariant()
+   if ($release -notmatch '^[0-9a-f]{40}$') { throw 'Release SHA must resolve to one full commit SHA.' }
    $releaseRoot = "C:\CodexRuntime\operator\admin\skincos\native-releases\$release"
    $archive = Join-Path $releaseRoot 'source.tar.gz'
    New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
    if (Test-Path -LiteralPath $archive) { throw "Refusing to overwrite source archive: $archive" }
-   git -C C:\CodexShared\Projetos\skincos archive --format=tar.gz --prefix="skincos-$release/" --output=$archive $release
+   $partialArchive = "$archive.partial-$PID"
+   if (Test-Path -LiteralPath $partialArchive) { throw "Refusing to reuse partial source archive: $partialArchive" }
+   try {
+     git -C C:\CodexShared\Projetos\skincos archive --format=tar.gz --prefix="skincos-$release/" --output=$partialArchive $release
+     if ($LASTEXITCODE -ne 0) { throw "git archive failed for $release" }
+     Move-Item -LiteralPath $partialArchive -Destination $archive -ErrorAction Stop
+   } finally {
+     if (Test-Path -LiteralPath $partialArchive) { Remove-Item -LiteralPath $partialArchive -Force -ErrorAction SilentlyContinue }
+   }
    $archiveSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
 
    & scripts/runtime/verify-native-source-release-lineage.ps1 -ReleaseSha <sha> -ParentReleaseSha <current-release-sha>
