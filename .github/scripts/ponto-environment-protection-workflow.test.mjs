@@ -135,6 +135,19 @@ test("ordinary and watchdog rollback revalidate governance and use dedicated int
   }
 });
 
+test("staging cleanup does not dispatch a transition before release identity exists", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const cleanup = source.indexOf(
+    "- name: Restore staging Ponto to maintenance after the journey",
+  );
+  assert.ok(cleanup >= 0);
+  const cleanupBlock = source.slice(cleanup, source.indexOf("\n      - name:", cleanup + 1));
+  assert.match(
+    cleanupBlock,
+    /if: \$\{\{ always\(\) && inputs\.stage == 'staging' && steps\.release_identity\.outcome == 'success' \}\}/,
+  );
+});
+
 test("emergency broker environments allow only the implicit protected-branch rule", () => {
   const source = workflow("ponto-progressive-release.yml");
   const start = source.indexOf(
