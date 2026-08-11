@@ -1,0 +1,326 @@
+/**
+ * Versioned, runtime-free architecture contract for Influencer Intelligence.
+ *
+ * This file describes boundaries and future interfaces only. It deliberately
+ * does not register routes, providers, jobs, migrations, grants, or secrets.
+ */
+
+const deepFreeze = (value, seen = new Set()) => {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) deepFreeze(child, seen);
+  return Object.freeze(value);
+};
+
+export const INFLUENCER_INTELLIGENCE_ARCHITECTURE_VERSION =
+  'influencer-intelligence-architecture/v1';
+
+export const DOMAIN_ROOT = 'social/influencer-intelligence';
+
+export const FEATURE_ACCESS = deepFreeze({
+  flag: 'INFLUENCER_INTELLIGENCE_ENABLED',
+  defaultValue: false,
+  initialMode: 'off',
+  grant: 'module.influencer-intelligence.access',
+  serverSideOnly: true,
+  wired: false,
+});
+
+export const BOUNDARIES = deepFreeze([
+  {
+    id: 'instagram-infrastructure',
+    owner: 'social/instagram',
+    owns: ['existing OAuth and connection state', 'existing read transports', 'existing session lifecycle', 'existing publication and engagement surfaces'],
+    mayExpose: ['bounded read-only provider transport to an approved adapter'],
+    mustNotOwn: ['Influencer Intelligence scores', 'Influencer Intelligence snapshots', 'CRM campaign-fit decisions'],
+  },
+  {
+    id: 'influencer-intelligence',
+    owner: DOMAIN_ROOT,
+    owns: ['normalized evidence contracts', 'creator registry', 'append-only snapshots', 'analytics', 'scores', 'campaign-fit projections', 'provenance'],
+    mayConsume: ['approved provider adapters', 'PostgreSQL read/write roles introduced by later milestones'],
+    mustNotConsumeDirectly: ['provider credentials', 'raw provider payloads', 'raw comments or media', 'shell commands', 'live workflow JSON'],
+  },
+  {
+    id: 'provider-router',
+    owner: DOMAIN_ROOT,
+    owns: ['provider ordering', 'explicit gap classification', 'bounded adapter projection'],
+    order: ['meta-graph', 'instagrapi'],
+    fallbackOnlyFor: ['provider_unavailable', 'permission_gap', 'coverage_gap', 'timeout'],
+    failClosedFor: ['policy_block', 'invalid_response', 'unclassified_transport'],
+  },
+  {
+    id: 'token-vault',
+    owner: 'platform/security/token-vault',
+    owns: ['credential custody', 'least-privilege provider access', 'secret audit'],
+    futureRequirement: 'A separate read-only analytics action and allowlist must be reviewed before a provider transport is connected.',
+    mustNotReturnToDomain: ['credential material', 'session material', 'unbounded connection payloads'],
+  },
+  {
+    id: 'internal-service',
+    owner: 'future Influencer Intelligence service',
+    owns: ['authentication', 'grant checks', 'request validation', 'read-only envelopes', 'correlation'],
+    mustNotExpose: ['raw provider payloads', 'arbitrary SQL', 'arbitrary shell', 'engagement or publication actions'],
+  },
+  {
+    id: 'mcp',
+    owner: 'orb/engine/mcp-readonly-gateway pattern',
+    owns: ['authenticated tool presentation', 'sanitization', 'bounded read-only invocation', 'rate limits', 'timeouts', 'audit'],
+    delegatesTo: 'internal Influencer Intelligence service',
+    mustNotDo: ['scrape', 'publish', 'engage', 'execute arbitrary SQL', 'execute arbitrary shell', 'mutate workflows'],
+  },
+  {
+    id: 'crm',
+    owner: 'crm',
+    owns: ['read-only module contract', 'dashboard projection', 'server-side module authorization'],
+    consumes: 'versioned internal API envelope',
+    mustNotDo: ['call Meta Graph directly', 'call instagrapi directly', 'infer authorization from navigation visibility'],
+  },
+  {
+    id: 'orb',
+    owner: 'orb/engine',
+    owns: ['schedule', 'retry', 'resume', 'job correlation', 'operator recovery'],
+    mustNotDo: ['become a provider', 'compute scores', 'own domain snapshots', 'import stale local workflow JSON as live truth'],
+  },
+]);
+
+export const PROVIDER_INTERFACE = deepFreeze({
+  contractVersion: 'influencer-intelligence/provider-interface/v1',
+  request: {
+    required: ['creatorKey', 'observedAt', 'retrievedAt', 'requestedFields', 'correlationId'],
+    optional: ['canonicalHandle', 'window'],
+    forbidden: ['rawProviderAccountReference', 'credentialMaterial', 'sessionMaterial', 'rawQuery', 'engagementAction'],
+  },
+  result: {
+    statuses: ['collected', 'unavailable'],
+    fields: ['provider', 'providerAdapterVersion', 'observedAt', 'retrievedAt', 'observations', 'provenance'],
+    forbidden: ['rawProviderPayload', 'directContactFields', 'rawCommentText', 'mediaBinary', 'credentialMaterial'],
+  },
+  operations: [
+    { name: 'collectProfile', readOnly: true, lifecycle: 'M2 boundary; synthetic transport only until a later gate' },
+    { name: 'collectMediaSummary', readOnly: true, lifecycle: 'M3/M4 design; no implementation in architecture PR' },
+    { name: 'collectCommentsAggregate', readOnly: true, lifecycle: 'M9 design; aggregate-only output' },
+    { name: 'collectInsights', readOnly: true, lifecycle: 'M4 design; explicit unavailable state when permission is missing' },
+  ],
+  providerIdentity: {
+    allowed: ['meta-graph', 'instagrapi'],
+    officialFirst: 'meta-graph',
+    futureProviders: 'M13 may add a provider only after a measured, documented gap and a separate review.',
+  },
+});
+
+export const DATA_MODEL = deepFreeze({
+  schema: 'influencer_intelligence',
+  identity: {
+    creatorKey: 'opaque internal key',
+    canonicalHandle: 'optional normalized public handle',
+    providerAccount: 'SHA-256 digest only in the registry; raw provider identity stays inside the approved transport boundary',
+  },
+  resources: [
+    {
+      name: 'creator_registry',
+      lifecycle: 'minimal operational binding; current state may transition under explicit policy',
+      fields: ['creatorKey', 'canonicalHandle', 'registryState', 'createdAt', 'updatedAt'],
+    },
+    {
+      name: 'creator_provider_registry',
+      lifecycle: 'minimal provider binding; current availability only',
+      fields: ['creatorKey', 'provider', 'providerAccountDigest', 'providerState', 'evidenceState', 'lastObservedAt', 'lastRetrievedAt', 'sourceRef'],
+    },
+    {
+      name: 'provider_snapshots',
+      lifecycle: 'append-only',
+      fields: ['snapshotKey', 'creatorKey', 'provider', 'providerAdapterVersion', 'observedAt', 'retrievedAt', 'contractVersion', 'retentionPolicyVersion'],
+    },
+    {
+      name: 'metric_observations',
+      lifecycle: 'append-only child of a snapshot',
+      fields: ['snapshotKey', 'metricKey', 'unit', 'value', 'evidenceState', 'confidence', 'provenance'],
+    },
+    {
+      name: 'analytics_results',
+      lifecycle: 'append-only derived artifact; recomputation creates a new version',
+      fields: ['analysisKey', 'creatorKey', 'window', 'inputSnapshotKeys', 'algorithmVersion', 'coverage', 'provenance', 'computedAt'],
+    },
+    {
+      name: 'score_snapshots',
+      lifecycle: 'append-only derived artifact',
+      fields: ['scoreKey', 'creatorKey', 'scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'signals'],
+    },
+    {
+      name: 'structured_signals',
+      lifecycle: 'append-only evidence-bearing projection',
+      fields: ['key', 'value', 'evidenceState', 'confidence', 'evidenceRefs', 'modelVersion'],
+    },
+  ],
+  invariants: [
+    'Unavailable values are null and are never silently imputed as zero.',
+    'Historical provider snapshots, observations, analytics results, scores, and signals are never updated in place.',
+    'The registry is not a raw provider cache.',
+    'Every historical artifact carries a retention policy version.',
+  ],
+});
+
+export const PROVENANCE_CONTRACT = deepFreeze({
+  contractVersion: 'influencer-intelligence/provenance/v1',
+  evidenceStates: ['observed', 'derived', 'inferred', 'unavailable'],
+  requiredFields: ['contractVersion', 'provider', 'sourceType', 'evidenceState', 'observedAt', 'retrievedAt', 'sourceRef'],
+  optionalFields: ['providerAdapterVersion', 'algorithmVersion', 'modelVersion', 'evidenceRefs'],
+  sourceRef: 'opaque bounded path without query strings or fragments',
+  coverage: {
+    fields: ['availableMetrics', 'expectedMetrics', 'ratio'],
+    ratioRule: 'ratio is computed by the service from availableMetrics / expectedMetrics',
+    zeroRule: 'missing coverage is unavailable, not zero performance',
+  },
+  stateRules: {
+    observed: 'provider returned or directly measured the scalar',
+    derived: 'deterministic computation from versioned observed inputs',
+    inferred: 'bounded interpretation with confidence, evidence references, and model version when model-derived',
+    unavailable: 'provider, permission, or coverage did not supply the signal; value must be null',
+  },
+});
+
+export const SCORE_CONTRACT = deepFreeze({
+  contractVersion: 'influencer-intelligence/score/v1',
+  requiredFields: ['scoreKind', 'score', 'confidence', 'coverage', 'evidenceState', 'providers', 'provenance', 'timestamp', 'algorithmVersion', 'signals'],
+  ranges: { score: '0..100 or null', confidence: '0..1', coverageRatio: '0..1' },
+  scoreKinds: ['influencer', 'campaign-fit', 'brand-fit', 'risk'],
+  deterministicFirst: true,
+  followerRule: 'absolute follower count is an observed scale signal, never a quality score',
+  robustnessRule: 'time-bounded post-level robust statistics must cap viral outlier influence',
+  riskRule: 'indirect evidence may produce an inferred suspicious-pattern signal, never a factual fake-followers claim',
+  llmRule: 'LLM output is structured and auditable; free-form prompt, completion, or rationale text is not persisted',
+  unavailableRule: 'no provider or insufficient coverage yields an explicit unavailable result, not a fabricated score',
+});
+
+export const API_CONTRACT = deepFreeze({
+  contractVersion: 'influencer-intelligence/api/v1',
+  exposure: 'internal authenticated service contract; not implemented or publicly mounted by the architecture PR',
+  authorization: {
+    session: true,
+    serverSideFlag: FEATURE_ACCESS.flag,
+    grant: FEATURE_ACCESS.grant,
+    scope: 'explicit actor and data scope; navigation is not authorization',
+  },
+  responseEnvelope: ['contractVersion', 'requestId', 'generatedAt', 'data', 'coverage', 'provenance', 'errors'],
+  routes: [
+    {
+      method: 'GET',
+      path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/analysis',
+      readOnly: true,
+      purpose: 'Return a versioned analysis envelope for one creator.',
+    },
+    {
+      method: 'GET',
+      path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/coverage',
+      readOnly: true,
+      purpose: 'Return data availability and provenance coverage without provider payloads.',
+    },
+    {
+      method: 'POST',
+      path: '/internal/influencer-intelligence/v1/compare',
+      readOnly: true,
+      purpose: 'Compute a bounded comparison from creator keys and a time window; POST is query transport, not mutation.',
+    },
+    {
+      method: 'POST',
+      path: '/internal/influencer-intelligence/v1/campaign-fit',
+      readOnly: true,
+      purpose: 'Compute a bounded campaign-fit projection from structured criteria; no campaign is created or dispatched.',
+    },
+  ],
+  requestRules: {
+    maxCreatorsPerRequest: 20,
+    maxWindowDays: 365,
+    acceptedIdentity: ['opaque creatorKey', 'approved canonical handle resolver'],
+    rejectedInput: ['provider account ids', 'credential material', 'raw comment text', 'raw media', 'arbitrary query fragments'],
+  },
+  errorCodes: ['AUTH_REQUIRED', 'GRANT_REQUIRED', 'INVALID_INPUT', 'NOT_FOUND', 'UNAVAILABLE', 'RATE_LIMITED', 'UPSTREAM_GAP', 'INTERNAL'],
+});
+
+export const MCP_CONTRACT = deepFreeze({
+  contractVersion: 'influencer-intelligence/mcp/v1',
+  transport: 'reuse the authenticated read-only gateway pattern; MCP is not a provider transport',
+  controls: ['authentication', 'server-side grant', 'schema sanitization', 'bounded input', 'rate limit', 'timeout and abort', 'audit event', 'read-only database role', 'redacted output'],
+  limits: { maxCreatorsPerRequest: 20, maxWindowDays: 365, timeoutMs: 12000, rateLimitPerMinute: 60 },
+  tools: [
+    { name: 'influencer_intelligence_get_creator_analysis', readOnly: true, input: ['creatorKey', 'window', 'metricSet'] },
+    { name: 'influencer_intelligence_compare_creators', readOnly: true, input: ['creatorKeys', 'window', 'metricSet'] },
+    { name: 'influencer_intelligence_get_campaign_fit', readOnly: true, input: ['creatorKeys', 'campaignCriteria', 'window'] },
+    { name: 'influencer_intelligence_get_data_coverage', readOnly: true, input: ['creatorKey', 'window'] },
+  ],
+  forbidden: ['arbitrary SQL', 'arbitrary shell', 'scraping', 'provider credential retrieval', 'publication', 'engagement', 'workflow mutation', 'raw comment or media output'],
+  output: ['versioned response envelope', 'coverage', 'provenance', 'requestId', 'sanitized errors'],
+});
+
+export const RELEASE_CONTRACT = deepFreeze({
+  module: 'social',
+  maturity: 'experimental',
+  flag: FEATURE_ACCESS.flag,
+  flagDefault: 'false',
+  grant: FEATURE_ACCESS.grant,
+  rollout: ['off', 'shadow', 'active'],
+  shadow: 'synthetic fixtures or explicitly approved staging only; no real-user activation',
+  activation: 'requires immutable release SHA, explicit flag, explicit grant, data scope, pre-production evidence, smoke, and rollback identity',
+  mergeRule: 'merge, CI, health, or navigation visibility never activates the domain',
+  architecturePrScope: {
+    runtimeEnabled: false,
+    migrationApplied: false,
+    providerCalls: false,
+    crmRegistered: false,
+    mcpRegistered: false,
+    orbWorkflowChanged: false,
+  },
+});
+
+export const PRIVACY_CONTRACT = deepFreeze({
+  retained: ['opaque creator key', 'optional normalized public handle', 'scalar metric observations', 'aggregate comments signals', 'provider account digest', 'bounded provenance and audit metadata'],
+  neverPersisted: ['raw provider account identity', 'raw profile payload', 'direct contact fields', 'credential material', 'cookies or sessions', 'raw comment text by default', 'raw media or binaries', 'unbounded model prompts or completions', 'simulator output as observed evidence'],
+  comments: 'store bounded topic, sentiment, safety, spam, and coverage aggregates; raw text requires a separate privacy decision',
+  retention: 'every historical artifact names a reviewed retentionPolicyVersion and finite retention class; no indefinite raw cache',
+  deletion: 'privacy deletion or tombstoning is a separate controlled policy; it must not rewrite historical evidence silently',
+  language: 'indirect signals are labeled inferred and may not be presented as facts about fake followers or identity',
+});
+
+export const OBSERVABILITY_CONTRACT = deepFreeze({
+  auditEventFields: ['requestId', 'correlationId', 'actorScope', 'grant', 'operation', 'provider', 'providerAttemptStatus', 'reasonCode', 'latencyMs', 'timeout', 'fallbackUsed', 'coverage', 'algorithmVersion', 'resultKey', 'at'],
+  metrics: ['request_count', 'request_latency_ms', 'provider_attempt_count', 'provider_gap_count', 'fallback_count', 'unavailable_count', 'coverage_ratio', 'score_generation_count', 'rate_limited_count', 'timeout_count'],
+  logging: 'redacted structured logs only; no credentials, sessions, raw payloads, raw comments, direct contact fields, or unrestricted model text',
+  alerts: ['unexpected provider fallback increase', 'coverage regression', 'unavailable spike', 'timeout spike', 'sanitization or authorization failure spike'],
+  auditFailure: 'a failed audit write must not expose request data; the operation is not considered proven without the required audit path',
+});
+
+export const IMPLEMENTATION_PLAN = deepFreeze([
+  { id: 'architecture', title: 'Canonical architecture v1', status: 'this PR', acceptance: ['ADR and manifest agree', 'boundaries and non-goals are explicit', 'no runtime or migration change'] },
+  { id: 'M0', title: 'Normalized contracts', status: 'merged #1303', acceptance: ['pure versioned evidence, provenance, coverage, signal, and score envelopes'] },
+  { id: 'M1', title: 'Creator registry and additive PostgreSQL artifact', status: 'merged #1304; unapplied artifact', acceptance: ['minimal pseudonymous registry', 'additive/idempotent SQL', 'destination and grant gates before apply'] },
+  { id: 'M2', title: 'Official-first provider router and bounded collectors', status: 'merged #1305; synthetic transport only', acceptance: ['Meta first', 'controlled instagrapi fallback', 'fail-closed classification', 'no duplicate scraper'] },
+  { id: 'M3', title: 'Append-only snapshots, retention, and Orb job contract', status: 'pending', acceptance: ['new additive tables', 'immutable evidence lifecycle', 'dry-run/shadow scheduling', 'resume/recovery without live workflow import'] },
+  { id: 'M4', title: 'Robust analytics', status: 'pending', acceptance: ['time windows', 'viral-outlier resistance', 'explicit unavailable coverage'] },
+  { id: 'M5', title: 'Deterministic scores and confidence', status: 'pending', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
+  { id: 'M6', title: 'Hardened read-only MCP', status: 'pending', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
+  { id: 'M7', title: 'Codex skill', status: 'pending', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
+  { id: 'M8', title: 'CRM read-only surface', status: 'pending', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
+  { id: 'M9', title: 'Comments intelligence', status: 'pending', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
+  { id: 'M10', title: 'Semantic content and Reels signals', status: 'pending', acceptance: ['approved media projection', 'no raw media archive by default', 'versioned inference'] },
+  { id: 'M11', title: 'Campaign and brand fit', status: 'pending', acceptance: ['structured criteria', 'explainable deterministic base', 'inferred signals labeled'] },
+  { id: 'M12', title: 'Synthetic validation and calibration', status: 'pending', acceptance: ['fixtures', 'outlier tests', 'coverage/confidence calibration', 'negative policy tests'] },
+  { id: 'M13', title: 'Optional provider gap analysis', status: 'pending', acceptance: ['measured gap report', 'cost/risk/privacy review', 'new provider only after approval'] },
+]);
+
+export const ARCHITECTURE_MANIFEST = deepFreeze({
+  version: INFLUENCER_INTELLIGENCE_ARCHITECTURE_VERSION,
+  domainRoot: DOMAIN_ROOT,
+  featureAccess: FEATURE_ACCESS,
+  boundaries: BOUNDARIES,
+  providerInterface: PROVIDER_INTERFACE,
+  dataModel: DATA_MODEL,
+  provenance: PROVENANCE_CONTRACT,
+  score: SCORE_CONTRACT,
+  api: API_CONTRACT,
+  mcp: MCP_CONTRACT,
+  release: RELEASE_CONTRACT,
+  privacy: PRIVACY_CONTRACT,
+  observability: OBSERVABILITY_CONTRACT,
+  implementationPlan: IMPLEMENTATION_PLAN,
+});
