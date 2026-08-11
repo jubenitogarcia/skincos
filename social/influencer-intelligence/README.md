@@ -98,8 +98,9 @@ connected.
 ## Data model v1 decision
 
 The persistent model is documented in [`DATA_MODEL.md`](./DATA_MODEL.md) and
-implemented as the additive migration
-[`20260811_influencer_intelligence_data_model_v1.up.sql`](./migrations/20260811_influencer_intelligence_data_model_v1.up.sql).
+implemented as the additive migrations
+[`20260811_influencer_intelligence_data_model_v1.up.sql`](./migrations/20260811_influencer_intelligence_data_model_v1.up.sql)
+and [`20260811_influencer_intelligence_snapshots_v1.up.sql`](./migrations/20260811_influencer_intelligence_snapshots_v1.up.sql).
 It retains M1's `creator_registry` as the canonical creator relation and adds
 provider-neutral identity, media, collector evidence, append-only profile/media
 snapshots, aggregate comment intelligence, versioned analyses and scores,
@@ -115,10 +116,33 @@ slugs are open in persistence for future adapters, while the current runtime
 allowlist remains official-first `meta-graph` with controlled `instagrapi`
 fallback.
 
-This milestone does not apply either migration to local, staging, or production
-through an operational runner; it only validates the artifact in a disposable
-PostgreSQL database and synthetic repository tests. No UI, feature wiring,
+These migrations are not applied to local, staging, or production through an
+operational runner; they are validated as source-controlled artifacts and
+through synthetic repository tests. No UI, feature wiring,
 runtime, CRM, MCP, Orb, systemd, or external provider call is included.
+
+## M3 snapshot operations
+
+The bounded internal operations in [`snapshots.mjs`](./snapshots.mjs) now provide
+`snapshot_creator` and `snapshot_creator_media` over the injected provider router
+and PostgreSQL repository. They create and finalize `collector_run` metadata,
+persist provider failures as explicit `collector_evidence`, retain append-only
+profile/media observations, and return freshness, coverage, limitations and
+provider evidence. They do not schedule themselves and do not open a transport.
+
+Snapshot artifact keys are deterministic for creator/provider/media/observed-time
+bucket. A repeat in the same bucket is a no-op; a later bucket records a new
+observation. Provider `null`/missing fields remain `null`, while an explicit zero
+is retained as zero. Profile collection requires an existing internal identity;
+media collection is bounded to 50 items and records publication timestamps when
+the provider supplies them. The default mode is `shadow`, and the module flag
+remains off.
+
+The operation tests use only injected fixtures and cover first collection,
+replay, metric changes, fallback/partial coverage, timeout, nonexistent and
+private profiles, unavailable media metrics, provenance classification and
+credential rejection. Orb scheduling, Token Vault transport wiring, migration
+application and real provider calls remain later operational gates.
 
 ## Concrete target architecture
 
@@ -242,7 +266,7 @@ production configuration.
 | M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; artifact only, not applied |
 | Architecture | Canonical architecture v1 | Defined in the ADR and runtime-free manifest |
 | M2 | Official-first router and controlled collectors | Merged in #1305; injected synthetic transports only |
-| M3 | Append-only snapshots, retention, and Orb scheduling | Data model v1 in this milestone; Orb scheduling pending |
+| M3 | Append-only snapshots, retention, and Orb scheduling | Snapshot operations implemented; Orb scheduling pending |
 | M4 | Robust analytics and outlier-resistant metrics | Pending |
 | M5 | Deterministic score, confidence, coverage, and provenance | Pending |
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Pending |

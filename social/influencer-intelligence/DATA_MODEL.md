@@ -3,9 +3,10 @@
 Status: source-controlled additive PostgreSQL artifact; not applied to local,
 staging, or production by this milestone.
 
-The canonical schema is `influencer_intelligence`. The migration is
+The canonical schema is `influencer_intelligence`. The base migration is
 `migrations/20260811_influencer_intelligence_data_model_v1.up.sql` and depends
-on the M1 registry migration.
+on the M1 registry migration. Snapshot collection metadata is added
+additively by `migrations/20260811_influencer_intelligence_snapshots_v1.up.sql`.
 
 ## Naming and boundaries
 
@@ -38,7 +39,8 @@ provider contract still controls which providers may be used by the runtime.
 
 - Every collected artifact carries provider, evidence state, observed time,
   retrieved time, source reference, retention policy version, and an evidence
-  key. `timestamptz` is used everywhere and the migration session is UTC.
+  key. M3 snapshot rows additionally retain explicit coverage and freshness
+  metadata. `timestamptz` is used everywhere and the migration session is UTC.
 - `observed` is provider evidence; `derived` is deterministic computation;
   `inferred` requires a model version and evidence references; `unavailable`
   stores null values and is never treated as zero.
@@ -54,6 +56,9 @@ provider contract still controls which providers may be used by the runtime.
 - Current operational rows (`creator_identity`, `creator_media`, `campaign`,
   and `collector_run`) may change state under a later controlled repository
   operation. Their historical children cannot be updated or deleted.
+- `collector_run` retains final coverage, freshness and failure count. Profile
+  and media snapshots retain their own coverage/freshness metadata; unavailable
+  rows retain null metrics and an explicit unavailable evidence state.
 
 ## Retention and cardinality policy
 
@@ -83,7 +88,8 @@ production apply. A future runner must:
 1. prove the exact PostgreSQL database and migrator/owner roles;
 2. take and retain a restore-verified checkpoint;
 3. set lock and statement timeouts and serialize the migration;
-4. apply the M1 registry before this migration in one controlled destination;
+4. apply the M1 registry, then the data model and snapshot metadata migrations
+   in one controlled destination;
 5. verify relations, constraints, indexes, append-only triggers, migration
    identity, and least-privilege runtime access;
 6. record a rollback identity. Rollback is operationally fail-closed: disable
