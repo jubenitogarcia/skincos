@@ -44,6 +44,18 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${RELEASE_SHA}" ]]
           [[ "${ACTION}" == "provision" || "${ACTION}" == "cleanup" ]]
 
+      - name: Acquire production Identity/D1 coordination lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: true
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-users-production-smoke.json
+
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -129,6 +141,19 @@ jobs:
 
       - name: Check synthetic identity collision
         if: ${{ inputs.action == 'provision' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: true
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-users-production-smoke.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Read collision state after lease check
+        if: ${{ inputs.action == 'provision' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -146,6 +171,18 @@ jobs:
           if (!Number.isInteger(count) || count !== 0) throw new Error(`SMOKE_IDENTITY_COLLISION:${Number.isInteger(count) ? count : 'unknown'}`)
           fs.writeFileSync(path.join(dir, 'before-count.json'), JSON.stringify({ collisionCountBefore: count, synthetic: true, piiFree: true }) + '\n')
           NODE
+
+      - name: Revalidate production Identity/D1 lease before mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: true
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-users-production-smoke.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
 
       - name: Apply exact synthetic identity mutation
         env:
@@ -179,6 +216,15 @@ jobs:
           const before = fs.existsSync(beforePath) ? JSON.parse(fs.readFileSync(beforePath, 'utf8')) : {}
           fs.writeFileSync(path.join(dir, 'evidence.json'), JSON.stringify({ action, database: 'skincos-db', synthetic: true, piiFree: true, collisionCountBefore: before.collisionCountBefore ?? null, finalCount: count, auditHistoryDeleted: false }) + '\n')
           NODE
+
+      - name: Release production Identity/D1 coordination lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: true
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-users-production-smoke.json
 
       - name: Upload sanitized identity evidence
         if: ${{ always() }}
