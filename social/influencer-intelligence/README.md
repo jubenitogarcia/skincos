@@ -139,7 +139,7 @@ calibration dataset exists. The engine does not infer follower quality or fake
 followers and does not connect providers, PostgreSQL, Orb, CRM, or runtime
 routes.
 
-## M3 snapshot operations
+## M3 snapshot operations and Orb source
 
 The bounded internal operations in [`snapshots.mjs`](./snapshots.mjs) now provide
 `snapshot_creator` and `snapshot_creator_media` over the injected provider router
@@ -147,6 +147,13 @@ and PostgreSQL repository. They create and finalize `collector_run` metadata,
 persist provider failures as explicit `collector_evidence`, retain append-only
 profile/media observations, and return freshness, coverage, limitations and
 provider evidence. They do not schedule themselves and do not open a transport.
+
+The inactive Orb export in [`orb/engine/workflows/influencer-intelligence-snapshot.json`](../../orb/engine/workflows/influencer-intelligence-snapshot.json)
+is orchestration-only. It selects explicitly opted-in identities, sends one
+bounded batch to the internal snapshot service, and emits a redacted result
+receipt. The six-hour trigger, one-at-a-time service lease, feature flag,
+two-attempt retry policy, and 30-second timeout are conservative source
+defaults; the workflow is not imported or activated by this milestone.
 
 Snapshot artifact keys are deterministic for creator/provider/media/observed-time
 bucket. A repeat in the same bucket is a no-op; a later bucket records a new
@@ -159,8 +166,9 @@ remains off.
 The operation tests use only injected fixtures and cover first collection,
 replay, metric changes, fallback/partial coverage, timeout, nonexistent and
 private profiles, unavailable media metrics, provenance classification and
-credential rejection. Orb scheduling, Token Vault transport wiring, migration
-application and real provider calls remain later operational gates.
+credential rejection. Token Vault transport wiring, migration application,
+service route mounting, live Orb import and real provider calls remain later
+operational gates.
 
 ## Concrete target architecture
 
