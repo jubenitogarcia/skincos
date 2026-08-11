@@ -165,7 +165,16 @@ jobs:
           const fs = require('fs')
           const path = require('path')
           const dir = process.env.RUNNER_TEMP_DIR
-          const payload = JSON.parse(fs.readFileSync(path.join(dir, 'before.json'), 'utf8'))
+          const raw = fs.readFileSync(path.join(dir, 'before.json'), 'utf8')
+          const starts = [raw.indexOf('['), raw.indexOf('{')].filter((index) => index >= 0).sort((left, right) => left - right)
+          let payload
+          for (const start of starts) {
+            try {
+              payload = JSON.parse(raw.slice(start))
+              break
+            } catch {}
+          }
+          if (payload === undefined) throw new Error('D1_JSON_OUTPUT_INVALID')
           const rows = Array.isArray(payload) ? payload.flatMap((item) => Array.isArray(item?.results) ? item.results : []) : (Array.isArray(payload?.results) ? payload.results : [])
           const count = Number(rows[0]?.c)
           if (!Number.isInteger(count) || count !== 0) throw new Error(`SMOKE_IDENTITY_COLLISION:${Number.isInteger(count) ? count : 'unknown'}`)
@@ -207,7 +216,16 @@ jobs:
           const path = require('path')
           const action = process.env.ACTION
           const dir = process.env.RUNNER_TEMP_DIR
-          const payload = JSON.parse(fs.readFileSync(path.join(dir, 'after.json'), 'utf8'))
+          const raw = fs.readFileSync(path.join(dir, 'after.json'), 'utf8')
+          const starts = [raw.indexOf('['), raw.indexOf('{')].filter((index) => index >= 0).sort((left, right) => left - right)
+          let payload
+          for (const start of starts) {
+            try {
+              payload = JSON.parse(raw.slice(start))
+              break
+            } catch {}
+          }
+          if (payload === undefined) throw new Error('D1_JSON_OUTPUT_INVALID')
           const rows = Array.isArray(payload) ? payload.flatMap((item) => Array.isArray(item?.results) ? item.results : []) : (Array.isArray(payload?.results) ? payload.results : [])
           const count = Number(rows[0]?.c)
           const expected = action === 'provision' ? 1 : 0
