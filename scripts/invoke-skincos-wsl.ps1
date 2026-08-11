@@ -537,7 +537,13 @@ function Invoke-SkincosWslWithStandardInput {
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
+    $previousInputEncoding = [Console]::InputEncoding
     try {
+        # Windows PowerShell's default redirected-input encoding has a UTF-8
+        # preamble. Select BOM-free UTF-8 before Process creates its
+        # StandardInput writer; the native receiver must see the exact first
+        # byte of an opaque token.
+        [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
         if (-not $process.Start()) {
             throw "WSL process could not be started."
         }
@@ -545,7 +551,13 @@ function Invoke-SkincosWslWithStandardInput {
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         try {
-            $process.StandardInput.Write($InputText)
+            # Process.StandardInput may prepend a UTF-8 BOM on the first text
+            # write under Windows PowerShell. Native stdin contracts carry
+            # opaque one-shot credentials, so write BOM-free UTF-8 bytes to
+            # the underlying stream instead of using the TextWriter.
+            $inputBytes = [Text.UTF8Encoding]::new($false).GetBytes($InputText)
+            $process.StandardInput.BaseStream.Write($inputBytes, 0, $inputBytes.Length)
+            $process.StandardInput.BaseStream.Flush()
         } finally {
             $process.StandardInput.Close()
         }
@@ -560,6 +572,7 @@ function Invoke-SkincosWslWithStandardInput {
         }
         $ExitCode.Value = $process.ExitCode
     } finally {
+        [Console]::InputEncoding = $previousInputEncoding
         $process.Dispose()
     }
 }

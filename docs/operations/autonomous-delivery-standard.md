@@ -46,14 +46,30 @@ private `/etc/skincos/global-coordination/orb-backup.env` atomically and emits
 metadata only. No workflow copies the value to the checkout, Windows, an
 artifact, a comment, or a log.
 
+The bootstrap is executable without a manual secret handoff when the operator
+already has an authenticated GitHub CLI session and native root access. Run
+`scripts/bootstrap-native-custody-runner.ps1`: it verifies the current runner
+release and digest, requests a short-lived registration token only when the
+local runner identity is absent, and sends it through the typed WSL gateway's
+in-memory `StandardInputText` path. The gateway writes BOM-free UTF-8 bytes to
+stdin; the token never enters a Windows-side argv value, file, log or artifact.
+The upstream `config.sh` registration necessarily receives it as a short-lived
+local process argument, which is not persisted or emitted. The installer
+creates only the empty custody directory before starting systemd, so
+`ProtectSystem=strict` remains compatible with the later workflow-owned
+atomic secret write.
+
 The routine path is
 `.github/workflows/provision-native-global-coordination-custody.yml`. The
 native production runner uses `SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL`; a
 staging coordinator is a separate trust plane and is never silently reused for
 production custody. The
-one-time runner registration and genuinely nonexistent secret remain bootstrap
-operations; an already existing secret, staging, merge, release, shadow, active
-or rollback state is not a reason for a manual interruption.
+An already existing GitHub secret, staging, merge, release, shadow, active or
+rollback state is not a reason for a manual interruption. Human action remains
+necessary only when the authenticated GitHub session, native root/platform
+trust, or a genuinely nonexistent credential is unavailable; the normal
+registration, custody reconciliation and recovery path is otherwise
+Codex-executable and fail-closed.
 
 ## Evidence and recovery
 
