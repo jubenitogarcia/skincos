@@ -23,6 +23,12 @@ It must not be placed in the shared checkout.
 # Quick report; no mutation
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\skincos-storage-governance.ps1 -Mode audit
 
+# Focal inventory for the active project and release roots, without Git status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\skincos-storage-governance.ps1 -Mode audit -IncludeFocalArtifacts
+
+# Focal inventory including worktrees, source archives and workerd paths
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\skincos-storage-governance.ps1 -Mode audit -IncludeFocalArtifacts -IncludeWorktreeFocalArtifacts
+
 # Full targeted inventory, including worktrees, source archives and workerd paths
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\skincos-storage-governance.ps1 -Mode audit -Deep -IncludeWorktreeStatus
 
@@ -65,11 +71,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-skincos-st
   -IntervalHours 6 -Apply
 ```
 
-The registered task runs `-Mode audit` only. Cleanup and hardlink deduplication
-remain explicit operator actions. The default scheduled audit intentionally
-omits `-IncludeWorktreeStatus`: detailed classification invokes Git status and
-merge-base checks for every registered worktree and should be run explicitly
-when needed:
+The registered task runs `-Mode audit -IncludeFocalArtifacts` by default. This
+keeps `source.tar` and active-project `workerd*` visible without invoking Git
+status and merge-base checks for every registered worktree. Cleanup and hardlink
+deduplication remain explicit operator actions. Worktree artifact scanning and
+detailed worktree classification should be run explicitly when needed. The
+scheduled focal scan records archive metadata without rehashing all archive
+bytes; use `-Deep` when SHA-256 recomputation is required:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-skincos-storage-governance-task.ps1 `

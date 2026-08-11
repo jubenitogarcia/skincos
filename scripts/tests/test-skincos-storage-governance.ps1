@@ -15,4 +15,5 @@ if ($document.threshold_state -notin @('healthy','warning','high','critical','em
 if ($document.limitations.Count -lt 3) { throw 'safety limitations missing' }
 $taskPreview = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -RepositoryRoot (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) -ScriptPath $script | Out-String) | ConvertFrom-Json
 if ($taskPreview.action -ne 'dry-run' -or $taskPreview.include_worktree_status) { throw 'scheduled audit must default to quick mode' }
+if (-not $taskPreview.include_focal_artifacts -or $taskPreview.arguments -notmatch '-IncludeFocalArtifacts') { throw 'scheduled audit must include focal artifact scan' }
 Write-Output 'PASS: storage governance audit emits a versioned, fail-closed report.'
