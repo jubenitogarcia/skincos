@@ -16,6 +16,16 @@ const setState = workflow.slice(setStateStart, emergencyStart);
 
 test("Ponto control-plane mutation remains protected and GitHub-hosted without changing Finance", () => {
   assert.ok(setStateStart >= 0 && setStateStart < emergencyStart);
+  assert.match(
+    setState,
+    /- name: Checkout trusted Ponto custody guard\n\s+uses: actions\/checkout@[0-9a-f]+/,
+  );
+  const checkoutStep = setState.indexOf("      - name: Checkout trusted Ponto custody guard");
+  const coordinationAction = setState.indexOf(
+    "        uses: ./.github/actions/global-coordination-check",
+    checkoutStep,
+  );
+  assert.ok(checkoutStep >= 0 && coordinationAction > checkoutStep);
   assert.match(setState, /runs-on: ubuntu-latest/);
   assert.match(setState, /environment: \$\{\{ inputs\.target \}\}/);
   assert.match(setState, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/);
