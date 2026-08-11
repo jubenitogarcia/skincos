@@ -1,6 +1,6 @@
 # Influencer Intelligence
 
-Status: M1 registry artifact, experimental, not exposed, and off by default.
+Status: M2 provider boundary, experimental, not exposed, and off by default.
 
 This domain provides read-only intelligence about Instagram creators for
 analysis, comparison, and campaign fit. It is not an engagement automation
@@ -45,6 +45,31 @@ first prove destination identity, role custody, checkpoint, lock/statement
 timeouts, scoped grants, and post-apply verification. Until that runner exists,
 the artifact is the source-controlled schema proposal only.
 
+## M2 decision: official-first provider router
+
+M2 adds [`provider-router.mjs`](./provider-router.mjs) and the two explicit
+adapters under [`providers/`](./providers/). The router has a closed provider
+allowlist and requires `meta-graph` to be the first configured provider. It
+falls back to `instagrapi` only for explicit gap codes
+(`provider_unavailable`, `permission_gap`, `coverage_gap`, or `timeout`).
+Invalid responses, policy blocks, and unclassified transport errors fail
+closed and do not trigger fallback.
+
+Both adapters accept an injected `readProfile` function. The function receives
+an immutable read-only request and must return only the bounded projection
+`handle`, `followersCount`, and `mediaCount`; raw Graph/instagrapi payloads,
+credentials, sessions, comments, media, and contact fields never enter the
+normalized provider contract. Every returned metric is `observed` or explicit
+`unavailable`, then passes through the versioned M0 snapshot contract.
+
+The Meta adapter is a boundary around the existing official CRM integration,
+not a second HTTP client. The instagrapi adapter is a narrow boundary around
+the existing `social/instagram` read path, not a new scraper or session
+implementation. M2 uses synthetic transports only: it does not call Graph,
+instagrapi, Token Vault, PostgreSQL, Orb, or any runtime endpoint. A future
+transport must establish a separate read-only analytics allowlist and Token
+Vault custody before it can be connected.
+
 ## Concrete target architecture
 
 ```text
@@ -53,8 +78,8 @@ Codex
   -> read-only Influencer Intelligence MCP (M6)
   -> internal service/API (M2-M5)
   -> provider router
-       -> Meta Graph official adapter (first preference)
-       -> existing social/instagram instagrapi adapter (controlled fallback)
+       -> Meta Graph official adapter (first preference; M2 boundary)
+       -> existing social/instagram instagrapi adapter (controlled fallback; M2 boundary)
        -> optional future provider only after a documented gap (M13)
   -> PostgreSQL append-only snapshots (M1/M3)
   -> deterministic analytics and scoring (M4/M5)
@@ -74,8 +99,9 @@ deployment hardening.
 
 - Official-first collection will wrap the existing CRM Graph adapter in
   `crm/console/functions/_lib/instagramGraph.ts` and its authenticated
-  connection boundary in `instagramStore.ts`; the CRM UI must not call Graph
-  or instagrapi directly.
+  connection boundary in `instagramStore.ts`; M2 only defines the injected
+  projection boundary, and the CRM UI must not call Graph or instagrapi
+  directly.
 - The controlled fallback will reuse the existing
   `social/instagram/module/instagram_site_sync.py` and its vendored instagrapi
   session path. It will not duplicate that implementation.
@@ -143,8 +169,8 @@ ratio.
 
 ## Rollout and access
 
-The planned module flag is `INFLUENCER_INTELLIGENCE_ENABLED=false`. M0 and M1
-do not wire it. When the CRM surface is introduced, access must be independently
+The planned module flag is `INFLUENCER_INTELLIGENCE_ENABLED=false`. M0 through
+M2 do not wire it. When the CRM surface is introduced, access must be independently
 enforced by the server-side grant `module.influencer-intelligence.access` and
 the module catalog; navigation visibility is not authorization.
 
@@ -154,17 +180,17 @@ The only permitted progression is:
 off -> shadow (synthetic or approved staging evidence) -> active (explicit gate)
 ```
 
-No M0/M1 artifact enables a real user, calls an external provider with business
-effects, publishes content, sends engagement actions, or changes production
-configuration.
+No M0/M1/M2 artifact enables a real user, calls an external provider with
+business effects, publishes content, sends engagement actions, or changes
+production configuration.
 
 ## Milestone map
 
 | Milestone | Deliverable | Status |
 | --- | --- | --- |
 | M0 | Architecture and normalized contracts | Merged in #1303 |
-| M1 | Creator registry and additive PostgreSQL schema | In progress; artifact only, not applied |
-| M2 | Official-first router and controlled collectors | Pending; no provider code in M1 |
+| M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; artifact only, not applied |
+| M2 | Official-first router and controlled collectors | In progress; injected synthetic transports only |
 | M3 | Append-only snapshots, retention, and Orb scheduling | Pending |
 | M4 | Robust analytics and outlier-resistant metrics | Pending |
 | M5 | Deterministic score, confidence, coverage, and provenance | Pending |
@@ -177,17 +203,17 @@ configuration.
 | M12 | Synthetic validation and calibration | Pending |
 | M13 | Optional provider gap analysis | Pending; only if a measured gap remains |
 
-## M0/M1 risk, validation, and rollback
+## M2 risk, validation, and rollback
 
-- Risk: high because a PostgreSQL artifact is being reviewed, but no database
-  connection or mutation occurs in this milestone.
-- Surfaces: `social/influencer-intelligence/**`; no runtime, CRM, MCP, Orb,
-  systemd, Cloudflare, or user-facing surface.
-- Migration: additive SQL artifact only; remote apply is prohibited in M1.
+- Risk: high because this milestone defines the provider boundary, but no
+  network, database, runtime, or session operation occurs.
+- Surfaces: `social/influencer-intelligence/**` and the focused architecture
+  workflow test; no CRM, MCP, Orb, systemd, Cloudflare, or user-facing surface.
+- Migration: none in M2; the additive M1 SQL artifact remains unapplied.
 - Flag: declared for the future, not wired; default remains `false`.
-- Validation: focused M0/M1 Node tests, SQL shape and privilege checks,
-  architecture/domain-boundary checks, forbidden-surface/secret scan, and
-  terminal hosted checks on the exact pull-request SHA.
+- Validation: focused M0/M1/M2 Node tests, provider static surface scan,
+  architecture/domain-boundary checks, secret scan, and terminal hosted checks
+  on the exact pull-request SHA.
 - Rollback: close or revert the single-purpose change to merge SHA
-  `26b17ef3f64482ac1d3aa0182af597262bb633d1`. No user data or remote database
-  state is created by this milestone.
+  `f0dcab87d5348941d5c28e690c8a689a3bad8a3d`. No user data, provider session,
+  network state, or remote database state is created by this milestone.
