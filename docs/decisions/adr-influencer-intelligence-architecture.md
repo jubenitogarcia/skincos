@@ -367,8 +367,10 @@ without the required audit evidence is not considered proven.
 M1's migration
 [`20260810_influencer_intelligence_registry_v1.up.sql`](../../social/influencer-intelligence/migrations/20260810_influencer_intelligence_registry_v1.up.sql)
 is an unapplied, additive proposal for the minimal registry. M3's separate
-additive artifacts for the data model, snapshot metadata, scheduler opt-in, and
-scoring metadata are also unapplied and are reviewed independently.
+additive artifacts for the data model, snapshot metadata, and scheduler opt-in
+are also unapplied and are reviewed independently. M5's separate scoring
+metadata artifact is likewise unapplied and is tied to the deterministic score
+algorithm and weights version.
 
 Future migrations must:
 
