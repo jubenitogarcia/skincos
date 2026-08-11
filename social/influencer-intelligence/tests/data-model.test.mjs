@@ -13,7 +13,9 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_data_model_v1.up.sql');
+const snapshotMetadataMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_snapshots_v1.up.sql');
 const migration = fs.readFileSync(migrationPath, 'utf8');
+const snapshotMetadataMigration = fs.readFileSync(snapshotMetadataMigrationPath, 'utf8');
 const digestA = 'a'.repeat(64);
 const digestB = 'b'.repeat(64);
 const observedAt = '2026-08-11T12:00:00.000Z';
@@ -93,6 +95,20 @@ test('defines the complete additive PostgreSQL model with immutable evidence', (
   assert.doesNotMatch(migration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
   assert.doesNotMatch(migration, /GRANT\s+PUBLIC/i);
   assert.doesNotMatch(migration, /\b(?:access_token|refresh_token|password|secret|email|phone|caption|biography|raw_text)\b/i);
+});
+
+test('defines additive durable coverage and freshness metadata for snapshot collection', () => {
+  assert.match(snapshotMetadataMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
+  assert.match(snapshotMetadataMigration, /ADD COLUMN IF NOT EXISTS coverage_available/);
+  assert.match(snapshotMetadataMigration, /ADD COLUMN IF NOT EXISTS coverage_expected/);
+  assert.match(snapshotMetadataMigration, /ADD COLUMN IF NOT EXISTS failure_count/);
+  assert.match(snapshotMetadataMigration, /freshness_status/);
+  assert.match(snapshotMetadataMigration, /freshness_age_seconds/);
+  assert.match(snapshotMetadataMigration, /coverage_check/);
+  assert.match(snapshotMetadataMigration, /failure_count_check/);
+  assert.doesNotMatch(snapshotMetadataMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(snapshotMetadataMigration, /TRUNCATE\s+/i);
+  assert.match(snapshotMetadataMigration, /COMMIT;\s*$/);
 });
 
 test('repository exposes a parameterized, injected PostgreSQL boundary', async () => {
@@ -184,6 +200,12 @@ test('profile snapshots preserve provenance and reject reversed timestamps or ra
     }),
     /not permitted|KEY_INVALID|FIELD_FORBIDDEN/,
   );
+});
+
+test('media identity reconciliation does not rewrite historical metric snapshots', () => {
+  assert.match(SQL.upsertMedia, /on conflict \(media_key\) do update/i);
+  assert.match(SQL.recordMediaSnapshot, /on conflict \(ingest_key\) do nothing/i);
+  assert.doesNotMatch(SQL.recordMediaSnapshot, /on conflict \(media_key\) do update/i);
 });
 
 test('scores accept future provider slugs but require auditable provenance and versions', async () => {
