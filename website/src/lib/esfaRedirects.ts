@@ -3,9 +3,25 @@ import { ANIVERSARIO_7_ESFA_REDIRECTS } from "@/lib/aniversario7Redirects";
 export const ESFA_PRESERVE_QUERYSTRING = true;
 
 export const CLUBE_BOTOX_ASAAS_REDIRECTS: Record<string, string> = {
+  // Novo Hamburgo — Clube do Botox
   "/nh/clubebotox40u": "https://www.asaas.com/c/85kw6n2otrtdhjqe",
   "/nh/clubebotox50u": "https://www.asaas.com/c/93fcmgkhgcin2igk",
   "/nh/clubebotox60u": "https://www.asaas.com/c/hqown86982e9y7f4",
+  "/nh/clubebotox90u": "https://www.asaas.com/c/y27jhi7xoq0nhiwi",
+  "/nh/clubebotox40urec": "https://www.asaas.com/c/d6wi6vey83vare5o",
+  "/nh/clubebotox50urec": "https://www.asaas.com/c/qfh7xmfkx75thufp",
+  "/nh/clubebotox60urec": "https://www.asaas.com/c/s6pzbxxek5zupn20",
+  "/nh/clubebotox90urec": "https://www.asaas.com/c/nhimvltr035trkro",
+
+  // BarraShoppingSul — Clube do Botox
+  "/bss/clubebotox40u": "https://www.asaas.com/c/bv1wikkg0l1h53wc",
+  "/bss/clubebotox50u": "https://www.asaas.com/c/tfy2w7livbb3pby9",
+  "/bss/clubebotox60u": "https://www.asaas.com/c/0tt8mgwk40cs58gk",
+  "/bss/clubebotox90u": "https://www.asaas.com/c/kjt19ogowi7an6gu",
+  "/bss/clubebotox40urec": "https://www.asaas.com/c/pf2r6q16tiyrp9bc",
+  "/bss/clubebotox50urec": "https://www.asaas.com/c/prjvdv7v95x50y32",
+  "/bss/clubebotox60urec": "https://www.asaas.com/c/lr38ej38lji2kyuz",
+  "/bss/clubebotox90urec": "https://www.asaas.com/c/zmfwvjotop3vpmjz",
 };
 
 export const ESFA_RETIRED_REDIRECTS: Record<string, string> = {

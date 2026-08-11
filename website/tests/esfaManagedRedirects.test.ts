@@ -29,11 +29,24 @@ test("buildEsfaManagedRedirectSeed infers metadata for migrated esfa redirects",
     assert.equal(seed.createdAtMs, 123);
 });
 
-test("Clube Botox U aliases resolve to the requested Asaas payment links", () => {
+test("Clube Botox aliases resolve to the requested Asaas payment links", () => {
     const redirects = {
         "/nh/ClubeBotox40U": "https://www.asaas.com/c/85kw6n2otrtdhjqe",
         "/nh/ClubeBotox50U": "https://www.asaas.com/c/93fcmgkhgcin2igk",
         "/nh/ClubeBotox60U": "https://www.asaas.com/c/hqown86982e9y7f4",
+        "/nh/ClubeBotox90U": "https://www.asaas.com/c/y27jhi7xoq0nhiwi",
+        "/nh/ClubeBotox40URec": "https://www.asaas.com/c/d6wi6vey83vare5o",
+        "/nh/ClubeBotox50URec": "https://www.asaas.com/c/qfh7xmfkx75thufp",
+        "/nh/ClubeBotox60URec": "https://www.asaas.com/c/s6pzbxxek5zupn20",
+        "/nh/ClubeBotox90URec": "https://www.asaas.com/c/nhimvltr035trkro",
+        "/bss/ClubeBotox40U": "https://www.asaas.com/c/bv1wikkg0l1h53wc",
+        "/bss/ClubeBotox50U": "https://www.asaas.com/c/tfy2w7livbb3pby9",
+        "/bss/ClubeBotox60U": "https://www.asaas.com/c/0tt8mgwk40cs58gk",
+        "/bss/ClubeBotox90U": "https://www.asaas.com/c/kjt19ogowi7an6gu",
+        "/bss/ClubeBotox40URec": "https://www.asaas.com/c/pf2r6q16tiyrp9bc",
+        "/bss/ClubeBotox50URec": "https://www.asaas.com/c/prjvdv7v95x50y32",
+        "/bss/ClubeBotox60URec": "https://www.asaas.com/c/lr38ej38lji2kyuz",
+        "/bss/ClubeBotox90URec": "https://www.asaas.com/c/zmfwvjotop3vpmjz",
     };
 
     for (const [requestedPath, destinationUrl] of Object.entries(redirects)) {
@@ -43,7 +56,7 @@ test("Clube Botox U aliases resolve to the requested Asaas payment links", () =>
         const seed = buildEsfaManagedRedirectSeed({ slugPath, destinationUrl, now: 789 });
         assert.equal(seed.destinationHost, "www.asaas.com");
         assert.equal(seed.placement, "payment");
-        assert.equal(seed.unitSlug, "novo-hamburgo");
+        assert.equal(seed.unitSlug, slugPath.startsWith("/nh/") ? "novo-hamburgo" : "barrashoppingsul");
     }
 });
 
