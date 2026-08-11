@@ -5,6 +5,7 @@ param(
     [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos",
     [string]$Repository = "jubenitogarcia/skincos",
     [string]$ReportPath,
+    [string]$TopologyPath,
     [string[]]$ProtectedPath = @(),
     [switch]$SkipGitHub,
     [switch]$SkipHealth,
@@ -580,10 +581,236 @@ function Get-WorktreeAudit {
             openPullRequest = $openPullRequest
             protected = $protected
             manifestReferences = @($manifestReferences | ForEach-Object { $_.runtimeId })
+            manifestFiles = @($manifestReferences | ForEach-Object { $_.manifestPath })
+            manifestProcesses = @($manifestReferences | ForEach-Object { $_.pids })
             classification = $classification
         }
     }
     return @($records)
+}
+
+function Get-TopologyDocument {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return [pscustomobject]@{ status = "not_configured"; path = $null; document = $null }
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return [pscustomobject]@{ status = "missing"; path = $Path; document = $null }
+    }
+
+    try {
+        $document = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    }
+    catch {
+        return [pscustomobject]@{ status = "invalid"; path = $Path; document = $null; error = $_.Exception.Message }
+    }
+
+    if ([int]$document.schemaVersion -ne 1 -or [string]$document.topologyId -ne "skincos-canonical-worktrees") {
+        return [pscustomobject]@{ status = "invalid"; path = $Path; document = $null; error = "unsupported_schema" }
+    }
+    $surfaceIds = @($document.crm.surfaces | ForEach-Object { [string]$_.id }) + @($document.orb.families | ForEach-Object { [string]$_.id })
+    if (@($surfaceIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9-]*$' }).Count -gt 0) {
+        return [pscustomobject]@{ status = "invalid"; path = $Path; document = $null; error = "invalid_surface_id" }
+    }
+    if (@($surfaceIds | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) {
+        return [pscustomobject]@{ status = "invalid"; path = $Path; document = $null; error = "duplicate_surface_id" }
+    }
+    return [pscustomobject]@{ status = "ok"; path = $Path; document = $document }
+}
+
+function Get-TopologySurfaceDefinitions {
+    param(
+        [object]$Topology,
+        [string]$WorktreeRoot
+    )
+
+    if ($null -eq $Topology) {
+        return @()
+    }
+
+    $definitions = @()
+    foreach ($surface in @($Topology.crm.surfaces)) {
+        $id = [string]$surface.id
+        $definitions += [pscustomobject]@{
+            surfaceType = "crm-module"
+            surfaceId = $id
+            label = [string]$surface.label
+            pilot = @($Topology.crm.pilot) -contains $id
+            expectedPath = Join-Path $WorktreeRoot (Join-Path ([string]$Topology.worktree.canonicalRelativeRoot) ("crm\$id"))
+            workflowIds = @()
+        }
+    }
+    foreach ($family in @($Topology.orb.families)) {
+        $id = [string]$family.id
+        $definitions += [pscustomobject]@{
+            surfaceType = "orb-workflow-family"
+            surfaceId = $id
+            label = [string]$family.label
+            pilot = @($Topology.orb.pilot) -contains $id
+            expectedPath = Join-Path $WorktreeRoot (Join-Path ([string]$Topology.worktree.canonicalRelativeRoot) ("orb\$id"))
+            workflowIds = @($family.mainWorkflowIds) + @($family.subworkflowIds) + @($family.relatedWorkflowIds)
+        }
+    }
+    return @($definitions)
+}
+
+function Get-CanonicalRegistrySnapshot {
+    param([string]$RegistryRoot)
+
+    $path = Join-Path $RegistryRoot "canonical-registry.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return [pscustomobject]@{ status = "missing"; path = $path; surfaces = @() }
+    }
+    try {
+        $value = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    }
+    catch {
+        return [pscustomobject]@{ status = "invalid"; path = $path; surfaces = @(); error = $_.Exception.Message }
+    }
+    if ($null -eq $value -or [int]$value.schemaVersion -ne 1) {
+        return [pscustomobject]@{ status = "invalid"; path = $path; surfaces = @(); error = "unsupported_schema" }
+    }
+    return [pscustomobject]@{ status = "ok"; path = $path; surfaces = @($value.surfaces) }
+}
+
+function Get-CanonicalLeaseSnapshot {
+    param(
+        [string]$RegistryRoot,
+        [string]$SurfaceType,
+        [string]$SurfaceId
+    )
+
+    $leasePath = Join-Path $RegistryRoot (Join-Path "leases" "$SurfaceType--$SurfaceId")
+    $ownerPath = Join-Path $leasePath "owner.json"
+    if (-not (Test-Path -LiteralPath $ownerPath -PathType Leaf)) {
+        return [pscustomobject]@{ status = "free"; path = $leasePath; owner = $null }
+    }
+    try {
+        $owner = Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json
+        return [pscustomobject]@{ status = "claimed"; path = $leasePath; owner = $owner }
+    }
+    catch {
+        return [pscustomobject]@{ status = "invalid"; path = $leasePath; owner = $null; error = $_.Exception.Message }
+    }
+}
+
+function Get-CanonicalTopologyAudit {
+    param(
+        [object]$TopologyState,
+        [string]$WorktreeRoot,
+        [string]$OperatorRuntimeRoot,
+        [object[]]$Worktrees
+    )
+
+    if ($TopologyState.status -ne "ok") {
+        return [pscustomobject]@{
+            status = $TopologyState.status
+            topologyPath = $TopologyState.path
+            surfaceCount = 0
+            presentCount = 0
+            missingCount = 0
+            duplicateCount = 0
+            claimedCount = 0
+            surfaces = @()
+            unmappedCanonicalWorktrees = @()
+            registry = Get-CanonicalRegistrySnapshot -RegistryRoot (Join-Path $OperatorRuntimeRoot "worktree-registry")
+        }
+    }
+
+    $registry = Get-CanonicalRegistrySnapshot -RegistryRoot (Join-Path $OperatorRuntimeRoot "worktree-registry")
+    $definitions = @(Get-TopologySurfaceDefinitions -Topology $TopologyState.document -WorktreeRoot $WorktreeRoot)
+    $canonicalRows = @()
+    foreach ($definition in $definitions) {
+        $expected = Normalize-PathString -Path $definition.expectedPath
+        $matches = @($Worktrees | Where-Object { (Normalize-PathString -Path $_.path) -eq $expected })
+        $registryRows = @($registry.surfaces | Where-Object { $_.surfaceType -eq $definition.surfaceType -and $_.surfaceId -eq $definition.surfaceId })
+        $lease = Get-CanonicalLeaseSnapshot -RegistryRoot (Join-Path $OperatorRuntimeRoot "worktree-registry") -SurfaceType $definition.surfaceType -SurfaceId $definition.surfaceId
+        $registryMismatch = $false
+        if ($matches.Count -eq 1 -and $registryRows.Count -eq 1) {
+            $registryMismatch = (Normalize-PathString -Path ([string]$registryRows[0].path)) -ne $expected -or
+                ([string]$registryRows[0].targetCommit).ToLowerInvariant() -ne ([string]$matches[0].head).ToLowerInvariant()
+        }
+        $status = "missing"
+        if ($registry.status -eq "invalid") {
+            $status = "invalid_registry"
+        }
+        elseif ($matches.Count -gt 1 -or $registryRows.Count -gt 1) {
+            $status = "duplicate"
+        }
+        elseif ($matches.Count -eq 0 -and $registryRows.Count -gt 0) {
+            $status = "registry_without_worktree"
+        }
+        elseif ($matches.Count -eq 1 -and $matches[0].dirtyCount -gt 0) {
+            $status = "blocked_dirty"
+        }
+        elseif ($matches.Count -eq 1 -and $registryMismatch) {
+            $status = "registry_mismatch"
+        }
+        elseif ($matches.Count -eq 1 -and $lease.status -eq "claimed") {
+            $status = "claimed"
+        }
+        elseif ($matches.Count -eq 1 -and $registryRows.Count -eq 1) {
+            $status = "ready"
+        }
+        elseif ($matches.Count -eq 1) {
+            $status = "unregistered_worktree"
+        }
+
+        $canonicalRows += [pscustomobject]@{
+            surfaceType = $definition.surfaceType
+            surfaceId = $definition.surfaceId
+            label = $definition.label
+            pilot = [bool]$definition.pilot
+            expectedPath = $definition.expectedPath
+            status = $status
+            worktreeCount = $matches.Count
+            worktrees = @($matches | ForEach-Object {
+                [pscustomobject]@{
+                    path = $_.path
+                    head = $_.head
+                    branch = $_.branch
+                    detached = [bool]$_.detached
+                    dirtyCount = $_.dirtyCount
+                    prunable = [bool]$_.prunable
+                }
+            })
+            registryCount = $registryRows.Count
+            registry = @($registryRows)
+            registryMismatch = $registryMismatch
+            lease = $lease
+            manifestReferences = @($matches | ForEach-Object { $_.manifestReferences })
+            manifestFiles = @($matches | ForEach-Object { $_.manifestFiles })
+            manifestProcesses = @($matches | ForEach-Object { $_.manifestProcesses })
+            preservationReason = if ($status -eq "missing") { "canonical_slot_missing" } elseif ($status -eq "duplicate") { "duplicate_slot" } elseif ($status -eq "registry_mismatch") { "registry_mismatch" } elseif ($status -eq "blocked_dirty") { "dirty" } elseif ($status -eq "claimed") { "active_lease" } elseif (@($matches | ForEach-Object { $_.manifestReferences } | Where-Object { $_ }).Count -gt 0) { "manifest_reference" } else { "ready" }
+            workflowIds = @($definition.workflowIds)
+        }
+    }
+
+    $canonicalRoot = Join-Path $WorktreeRoot ([string]$TopologyState.document.worktree.canonicalRelativeRoot)
+    $expectedPaths = @($canonicalRows | ForEach-Object { Normalize-PathString -Path $_.expectedPath })
+    $unmapped = @($Worktrees | Where-Object {
+        $path = Normalize-PathString -Path $_.path
+        (Test-PathWithinRoot -Path $_.path -Root $canonicalRoot) -and ($expectedPaths -notcontains $path)
+    } | ForEach-Object {
+        [pscustomobject]@{ path = $_.path; head = $_.head; branch = $_.branch; dirtyCount = $_.dirtyCount }
+    })
+
+    $driftStatuses = @("invalid_registry", "duplicate", "registry_without_worktree", "registry_mismatch")
+    return [pscustomobject]@{
+        status = if (@($canonicalRows | Where-Object { $driftStatuses -contains $_.status }).Count -gt 0) { "drift" } else { "ok" }
+        topologyPath = $TopologyState.path
+        canonicalRoot = $canonicalRoot
+        surfaceCount = $canonicalRows.Count
+        presentCount = @($canonicalRows | Where-Object { $_.worktreeCount -eq 1 }).Count
+        missingCount = @($canonicalRows | Where-Object { $_.status -eq "missing" }).Count
+        duplicateCount = @($canonicalRows | Where-Object { $_.status -eq "duplicate" }).Count
+        claimedCount = @($canonicalRows | Where-Object { $_.status -eq "claimed" }).Count
+        pilot = @($canonicalRows | Where-Object { $_.pilot })
+        surfaces = @($canonicalRows)
+        unmappedCanonicalWorktrees = $unmapped
+        registry = $registry
+    }
 }
 
 function Get-Health {
@@ -632,6 +859,7 @@ function Get-GitIntegrity {
 
 $normalizedProjectRoot = Normalize-PathString -Path $ProjectRoot
 $scriptCheckoutRoot = Split-Path -Parent $PSScriptRoot
+$effectiveTopologyPath = if ([string]::IsNullOrWhiteSpace($TopologyPath)) { Join-Path $ProjectRoot "ops\codex\worktree-topology.json" } else { $TopologyPath }
 $effectiveProtectedPaths = @($ProtectedPath)
 if (Test-PathWithinRoot -Path $scriptCheckoutRoot -Root $WorktreeRoot -or $normalizedProjectRoot -eq (Normalize-PathString -Path $scriptCheckoutRoot)) {
     $effectiveProtectedPaths += $scriptCheckoutRoot
@@ -642,6 +870,8 @@ $originMain = ((Get-GitOutput -RepoPath $ProjectRoot -Arguments @("rev-parse", "
 $pullRequestIndex = Get-PullRequestIndex -RepositoryName $Repository -Skip:$SkipGitHub
 $manifestIndex = Get-RuntimeManifestIndex -RuntimePath (Join-Path $OperatorRuntimeRoot "runtime\crm-local")
 $worktrees = @(Get-WorktreeAudit -RepoPath $ProjectRoot -SharedWorktreePath $WorktreeRoot -RuntimePath $RuntimeRoot -OperatorPath $OperatorRuntimeRoot -OriginMain $originMain -PullRequestIndex $pullRequestIndex -ManifestIndex $manifestIndex -ProtectedPaths $effectiveProtectedPaths)
+$topologyState = Get-TopologyDocument -Path $effectiveTopologyPath
+$canonicalTopology = Get-CanonicalTopologyAudit -TopologyState $topologyState -WorktreeRoot $WorktreeRoot -OperatorRuntimeRoot $OperatorRuntimeRoot -Worktrees $worktrees
 $gitIntegrity = Get-GitIntegrity -RepoPath $ProjectRoot
 
 $retiredPaths = @(
@@ -698,6 +928,11 @@ $result = [pscustomobject]@{
         privateSourceWorktreeCount = $privateSourceWorktrees.Count
         privateSourceMetadataCount = $sourceMetadataCount
         runtimeManifestCount = $runtimeManifests.Count
+        canonicalSurfaceCount = $canonicalTopology.surfaceCount
+        canonicalPresentCount = $canonicalTopology.presentCount
+        canonicalMissingCount = $canonicalTopology.missingCount
+        canonicalDuplicateCount = $canonicalTopology.duplicateCount
+        canonicalClaimedCount = $canonicalTopology.claimedCount
         classificationCounts = $classificationCounts
         runtimeStateCounts = $runtimeStateCounts
     }
@@ -707,6 +942,7 @@ $result = [pscustomobject]@{
         count = @($pullRequestIndex.pullRequests).Count
     }
     worktrees = @($worktrees)
+    canonicalTopology = $canonicalTopology
     runtimeManifests = @($runtimeManifests)
     retiredPaths = @($retiredPaths | ForEach-Object { [pscustomobject]@{ path = $_; exists = Test-Path -LiteralPath $_ } })
     orphanScheduledTaskPresent = $null -ne $orphanTask
@@ -742,7 +978,8 @@ Write-Output $json
 if ($FailOnDrift) {
     $retiredPresent = @($result.retiredPaths | Where-Object { $_.exists }).Count -gt 0
     $prunablePresent = @($result.worktrees | Where-Object { $_.prunable }).Count -gt 0
-    if ($retiredPresent -or $result.orphanScheduledTaskPresent -or $prunablePresent -or $result.project.gitIntegrity.state -ne "ok") {
+    $canonicalDrift = $result.canonicalTopology.status -in @("invalid", "drift")
+    if ($retiredPresent -or $result.orphanScheduledTaskPresent -or $prunablePresent -or $result.project.gitIntegrity.state -ne "ok" -or $canonicalDrift) {
         exit 1
     }
 }
