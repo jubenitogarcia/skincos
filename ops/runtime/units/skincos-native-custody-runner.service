@@ -14,7 +14,11 @@ ExecStart=/var/lib/skincos-runtime/github-actions-runner/run.sh
 Restart=always
 RestartSec=10
 TimeoutStopSec=300
-NoNewPrivileges=true
+# The only privileged transition is the fixed, argumentless sudoers command
+# below. NoNewPrivileges must remain disabled so that this narrowly scoped
+# helper can atomically reconcile native custody; the runner still has no
+# general root command, shell, or writable system path.
+NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
@@ -24,6 +28,7 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadWritePaths=/var/lib/skincos-runtime/github-actions-runner
+ReadWritePaths=/etc/skincos/global-coordination
 UMask=0077
 
 [Install]
