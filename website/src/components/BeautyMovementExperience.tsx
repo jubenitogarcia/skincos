@@ -159,8 +159,12 @@ const INITIAL_TABLE_HEIGHT = 220;
 const AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION.autoAdvanceMs / 1_000;
 const FINALE_HOLD_SECONDS = BEAUTY_MOVEMENT_MOTION.finaleHoldMs / 1_000;
 
-function motionDuration(durationMs: number, reducedMotion: boolean): number {
-    return reducedMotion ? 0 : durationMs;
+function motionDuration(durationMs: number, reducedMotion: boolean, preserveTiming = false): number {
+    return reducedMotion && !preserveTiming ? 0 : durationMs;
+}
+
+function promptReadingDelay(text: string, reducedMotion: boolean): number {
+    return reducedMotion ? BEAUTY_MOVEMENT_MOTION.promptReadingHoldMs : promptReadingDuration(text);
 }
 
 function useReducedMotionPreference(): boolean {
@@ -507,6 +511,7 @@ function drawStoryCardIllustration(context: CanvasRenderingContext2D, cardId: st
 
 function createStoryBlob(
     reading: ReturnType<typeof getBeautyMovementReading>,
+    partnerName?: string | null,
 ): Promise<Blob | null> {
     return new Promise((resolve) => {
         const canvas = document.createElement("canvas");
@@ -578,7 +583,7 @@ function createStoryBlob(
         context.fillText("Beleza que se move com você.", 104, 1644);
         context.font = `400 26px ${textFont}`;
         context.fillStyle = "#505050";
-        context.fillText("Espaço Facial · 3 anos em movimento", 104, 1700);
+        context.fillText(partnerName?.trim() || "Espaço Facial · 3 anos em movimento", 104, 1700);
 
         canvas.toBlob((blob) => resolve(blob), "image/png", 0.96);
     });
@@ -995,13 +1000,18 @@ export default function BeautyMovementExperience({
         return handTransitionGateRef.current.start();
     }
 
-    function scheduleHandTransition(token: number, delayMs: number, callback: () => void) {
+    function scheduleHandTransition(
+        token: number,
+        delayMs: number,
+        callback: () => void,
+        preserveTiming = false,
+    ) {
         clearHandTransitionTimer();
         handTransitionTimerRef.current = window.setTimeout(() => {
             handTransitionTimerRef.current = null;
             if (!mountedRef.current || !handTransitionGateRef.current.isCurrent(token)) return;
             callback();
-        }, motionDuration(delayMs, reducedMotionRef.current));
+        }, motionDuration(delayMs, reducedMotionRef.current, preserveTiming));
     }
 
     function scheduleDealSequence(token: number, onReady: () => void) {
@@ -1072,13 +1082,18 @@ export default function BeautyMovementExperience({
         return introTransitionGateRef.current.start();
     }
 
-    function scheduleIntroTransition(token: number, delayMs: number, callback: () => void) {
+    function scheduleIntroTransition(
+        token: number,
+        delayMs: number,
+        callback: () => void,
+        preserveTiming = false,
+    ) {
         clearIntroTransitionTimer();
         introTimerRef.current = window.setTimeout(() => {
             introTimerRef.current = null;
             if (!mountedRef.current || !introTransitionGateRef.current.isCurrent(token)) return;
             callback();
-        }, motionDuration(delayMs, reducedMotionRef.current));
+        }, motionDuration(delayMs, reducedMotionRef.current, preserveTiming));
     }
 
     function startInitialDeal() {
@@ -1100,7 +1115,7 @@ export default function BeautyMovementExperience({
                 scheduleIntroTransition(introToken, promptExitTransitionDuration(initialExperienceCopy), () => {
                     setCurrentIntroStage("hidden");
                     setCurrentHandStage("prompt");
-                    scheduleHandTransition(handToken, promptReadingDuration(tableDefinition.prompt), () => {
+                    scheduleHandTransition(handToken, promptReadingDelay(tableDefinition.prompt, reducedMotionRef.current), () => {
                         setCurrentHandStage("prompt-out");
                         scheduleHandTransition(handToken, promptExitTransitionDuration(tableDefinition.prompt), () => {
                             scheduleDealSequence(handToken, () => {
@@ -1109,9 +1124,9 @@ export default function BeautyMovementExperience({
                                 window.requestAnimationFrame(scrollToTable);
                             });
                         });
-                    });
+                    }, true);
                 });
-            });
+            }, true);
         });
     }
 
@@ -1157,7 +1172,7 @@ export default function BeautyMovementExperience({
                             }
                         },
                     );
-                });
+                }, true);
             });
         });
     }
@@ -1177,20 +1192,25 @@ export default function BeautyMovementExperience({
         scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.handCollectMs, () => {
             setCurrentActIndex(nextIndex);
             setCurrentHandStage("prompt");
-            scheduleHandTransition(handToken, promptReadingDuration(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || ""), () => {
-                setCurrentHandStage("prompt-out");
-                scheduleHandTransition(
-                    handToken,
-                    promptExitTransitionDuration(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || ""),
-                    () => {
-                        scheduleDealSequence(handToken, () => {
-                            transitionInFlightRef.current = false;
-                            setCurrentHandStage("ready");
-                            window.requestAnimationFrame(scrollToTable);
-                        });
-                    },
-                );
-            });
+            scheduleHandTransition(
+                handToken,
+                promptReadingDelay(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || "", reducedMotionRef.current),
+                () => {
+                    setCurrentHandStage("prompt-out");
+                    scheduleHandTransition(
+                        handToken,
+                        promptExitTransitionDuration(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || ""),
+                        () => {
+                            scheduleDealSequence(handToken, () => {
+                                transitionInFlightRef.current = false;
+                                setCurrentHandStage("ready");
+                                window.requestAnimationFrame(scrollToTable);
+                            });
+                        },
+                    );
+                },
+                true,
+            );
         });
     }
 
@@ -1412,7 +1432,7 @@ export default function BeautyMovementExperience({
         if (reading.length !== BEAUTY_MOVEMENT_ACTS.length) return;
 
         setShareStatus(null);
-        const blob = await createStoryBlob(reading);
+        const blob = await createStoryBlob(reading, initialState.campaign.partnerName);
         if (!blob) {
             setShareStatus("Não foi possível preparar o Story neste navegador.");
             return;

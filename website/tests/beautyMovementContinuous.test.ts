@@ -50,7 +50,9 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /onKeyDown=\{\(event\) => \{/);
     assert.match(experience, /event\.key === "Enter" \|\| event\.key === " "/);
     assert.match(experience, /event\.preventDefault\(\);\s*void handleReveal\(displayedActIndex, card\)/);
-    assert.match(experience, /function motionDuration\(durationMs: number, reducedMotion: boolean\)/);
+    assert.match(experience, /function motionDuration\(durationMs: number, reducedMotion: boolean, preserveTiming = false\)/);
+    assert.match(experience, /function promptReadingDelay\(text: string, reducedMotion: boolean\)/);
+    assert.match(experience, /motionDuration\(delayMs, reducedMotionRef\.current, preserveTiming\)/);
     assert.match(experience, /if \(reducedMotion\) return;/);
     assert.match(experience, /handleSelectedCardAnimationEnd/);
     assert.match(experience, /handRevealFallbackMs/);
@@ -258,6 +260,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /\.tableStage\[data-hand-stage="expand"\] \.tableSurface[\s\S]*height: var\(--bm-table-expand-height, 220px\)/);
     assert.match(styles, /\.tableStage\[data-hand-stage="expand"\] \.cardGrid[\s\S]*visibility: hidden/);
     assert.match(styles, /transition: height var\(--bm-hand-expand-ms\)/);
+    assert.match(styles, /@keyframes deckStageExpand[\s\S]*0%\s*\{[\s\S]*translateX\(-50%\) translateY\(-24px\)[\s\S]*100%\s*\{[\s\S]*translateX\(-50%\) translateY\(0\)/);
     assert.match(styles, /animation: deckStageCollect var\(--bm-hand-collect-ms\)/);
     assert.match(styles, /@keyframes finaleCardsMerge[\s\S]*0% \{[\s\S]*opacity: 1[\s\S]*translate3d\(0, 0, 0\)/);
     assert.doesNotMatch(styles, /\.brandLine|\.brandDivider|\.partnerName/);
@@ -276,6 +279,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.doesNotMatch(experience, /aria-label="Cartas finais"/);
     assert.match(experience, /function drawStoryCardIllustration/);
     assert.match(experience, /drawStoryCardIllustration\(context, line\.cardId/);
+    assert.match(experience, /createStoryBlob\(reading, initialState\.campaign\.partnerName\)/);
     assert.match(experience, /getStoryCanvasFont\("--font-brand-ui"/);
     assert.match(illustrations, /case "reward-reserved"/);
     assert.match(illustrations, /case "reward-procedure"/);
@@ -293,6 +297,9 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(header, /data-scroll-aware-header/);
     assert.match(header, /HeaderScrollBehavior/);
     assert.match(headerScrollBehavior, /addEventListener\("scroll"/);
+    assert.match(headerScrollBehavior, /addEventListener\("focusin"/);
+    assert.match(headerScrollBehavior, /addEventListener\("keydown"/);
+    assert.match(headerScrollBehavior, /revealHeader/);
     assert.match(headerScrollBehavior, /header--hidden/);
     assert.match(headerScrollBehavior, /requestAnimationFrame/);
     assert.match(globalStyles, /\.header\[data-scroll-aware-header="true"\]\.header--hidden/);

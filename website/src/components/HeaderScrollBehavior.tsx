@@ -11,12 +11,16 @@ export default function HeaderScrollBehavior() {
         let lastScrollY = Math.max(window.scrollY, 0);
         let frame: number | null = null;
 
+        const revealHeader = () => {
+            header.classList.remove("header--hidden");
+        };
+
         const update = () => {
             const currentScrollY = Math.max(window.scrollY, 0);
             const delta = currentScrollY - lastScrollY;
 
             if (currentScrollY <= 12 || delta < -4) {
-                header.classList.remove("header--hidden");
+                revealHeader();
             } else if (delta > 4) {
                 header.classList.add("header--hidden");
             }
@@ -30,11 +34,20 @@ export default function HeaderScrollBehavior() {
             frame = window.requestAnimationFrame(update);
         };
 
+        const handleFocusIn = () => revealHeader();
+        const handleKeyboardIntent = (event: KeyboardEvent) => {
+            if (event.key === "Tab" || event.key === "Home" || event.key === "End") revealHeader();
+        };
+
         window.addEventListener("scroll", handleScroll, { passive: true });
+        header.addEventListener("focusin", handleFocusIn);
+        window.addEventListener("keydown", handleKeyboardIntent, true);
         return () => {
             window.removeEventListener("scroll", handleScroll);
+            header.removeEventListener("focusin", handleFocusIn);
+            window.removeEventListener("keydown", handleKeyboardIntent, true);
             if (frame !== null) window.cancelAnimationFrame(frame);
-            header.classList.remove("header--hidden");
+            revealHeader();
         };
     }, []);
 
