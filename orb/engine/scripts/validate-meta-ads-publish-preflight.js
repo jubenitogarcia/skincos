@@ -9,7 +9,7 @@ const {
 const { CODE_SOURCES } = require('./lib/meta-ads-publish-code-sources');
 const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
 const {
-  CRM_URL: CRM_OFFER_CONTEXT_URL,
+  CRM_URL: CRM_COMMERCIAL_CATALOG_URL,
   FETCH_NODE: CRM_FETCH_NODE,
   validate: validateCrmContextPrefetch,
 } = require('./patch-meta-ads-crm-context-prefetch');
@@ -35,7 +35,7 @@ function structuralContractDrift(nodes, connections) {
   const sheets = nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheetsTool');
   if (sheets.length) drift.push({ contract: 'commercial_offer_source', reason: 'google_sheets_tool_present', nodes: sheets.map((node) => node.name) });
   const crmFetch = nodes.find((node) => node.name === CRM_FETCH_NODE);
-  if (!crmFetch || crmFetch.type !== 'n8n-nodes-base.httpRequest' || crmFetch.parameters?.authentication !== 'genericCredentialType' || crmFetch.parameters?.genericAuthType !== 'httpBearerAuth' || !crmFetch.credentials?.httpBearerAuth?.id || !String(crmFetch.parameters?.url || '').includes(CRM_OFFER_CONTEXT_URL)) {
+  if (!crmFetch || crmFetch.type !== 'n8n-nodes-base.httpRequest' || crmFetch.parameters?.authentication !== 'genericCredentialType' || crmFetch.parameters?.genericAuthType !== 'httpBearerAuth' || !crmFetch.credentials?.httpBearerAuth?.id || !String(crmFetch.parameters?.url || '').includes(CRM_COMMERCIAL_CATALOG_URL)) {
     drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_prefetch_request_invalid' });
   }
   try {
