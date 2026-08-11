@@ -58,6 +58,7 @@ const forbiddenKeySet = new Set([
   'telephone',
   'username',
 ]);
+const forbiddenKeyPattern = /(?:token|secret|password|cookie|session|authorization|email|phone|username)/i;
 const sensitiveStringPattern = /(?:^|[?&\s])(?:access[_-]?token|refresh[_-]?token|authorization|cookie|password|secret|api[_-]?key)\s*[:=]/i;
 const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
 
@@ -106,7 +107,10 @@ export function assertNoSensitiveFields(value, path = 'input', seen = new Set())
     return;
   }
   for (const [key, child] of Object.entries(value)) {
-    if (forbiddenKeySet.has(normalizedKey(key))) fail(`${path}.${key} is not permitted in a domain contract`);
+    const keyName = normalizedKey(key);
+    if (forbiddenKeySet.has(keyName) || forbiddenKeyPattern.test(keyName)) {
+      fail(`${path}.${key} is not permitted in a domain contract`);
+    }
     assertNoSensitiveFields(child, `${path}.${key}`, seen);
   }
   seen.delete(value);
@@ -214,6 +218,26 @@ function normalizeProvider(value, label = 'provider') {
 
 function normalizeEvidenceState(value, label = 'evidenceState') {
   return enumValue(value, label, EVIDENCE_STATES, evidenceStateSet);
+}
+
+export function normalizeCreatorKey(value) {
+  return opaqueId(value, 'creatorKey');
+}
+
+export function normalizeCanonicalHandle(value) {
+  return normalizeHandle(value);
+}
+
+export function normalizeProviderId(value, label = 'provider') {
+  return normalizeProvider(value, label);
+}
+
+export function normalizeEvidenceStateValue(value, label = 'evidenceState') {
+  return normalizeEvidenceState(value, label);
+}
+
+export function normalizeProvenanceSourceRef(value, label = 'sourceRef') {
+  return safeSourceRef(value, label);
 }
 
 export function normalizeProvenance(input) {
