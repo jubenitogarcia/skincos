@@ -199,3 +199,14 @@ test("Timekeeping candidate upload requires both root secrets in the selected en
   assert.match(block, /\["PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"\]/);
   assert.match(block, /repository fallback is refused/);
 });
+
+test("Timekeeping release receives the coordinator proof before global mutation", () => {
+  const workflow = fs.readFileSync(new URL("../workflows/deploy-timekeeping.yml", import.meta.url), "utf8");
+  const releaseStart = workflow.indexOf("\n  release:");
+  const coordinationReleaseStart = workflow.indexOf("\n  global-coordination-release:", releaseStart);
+  assert.ok(releaseStart >= 0 && coordinationReleaseStart > releaseStart);
+  const release = workflow.slice(releaseStart, coordinationReleaseStart);
+  assert.match(release, /needs: \[coordination, promotion, progressive\]/);
+  assert.match(release, /needs\.coordination\.outputs\.global_coordinator_url/);
+  assert.match(release, /needs\.coordination\.outputs\.global_proof_b64/);
+});

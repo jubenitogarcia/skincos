@@ -182,7 +182,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [promotion, progressive]
+    needs: [coordination, promotion, progressive]
     if: >-
       ${{
         always() &&
