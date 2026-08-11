@@ -91,8 +91,16 @@ $backupFiles = if (Test-Path -LiteralPath $backupRoot) {
 } else { @() }
 $latestBackup = if ($backupFiles.Count -gt 0) { $backupFiles[0] } else { $null }
 $orphanTask = Get-ScheduledTask -TaskName "Orb Stack WSL Supervisor" -ErrorAction SilentlyContinue
-$gitFsck = & git -C $ProjectRoot fsck --no-dangling 2>$null
-$gitFsckOk = $LASTEXITCODE -eq 0
+$gitFsckError = $null
+try {
+    $gitFsck = & git -C $ProjectRoot fsck --no-dangling 2>&1
+    $gitFsckOk = $LASTEXITCODE -eq 0
+    if (-not $gitFsckOk) { $gitFsckError = (@($gitFsck) -join "`n") }
+} catch {
+    $gitFsckOk = $false
+    $gitFsckError = $_.Exception.Message
+    $gitFsck = @()
+}
 $drive = Get-PSDrive -Name C
 
 $result = [pscustomobject]@{
@@ -102,6 +110,7 @@ $result = [pscustomobject]@{
         branch = (@(Get-GitOutput -Arguments @("branch", "--show-current")) | Select-Object -First 1)
         dirtyCount = @(Get-GitOutput -Arguments @("status", "--porcelain")).Count
         fsckOk = $gitFsckOk
+        fsckError = $gitFsckError
     }
     footprints = @(
         Get-DirectoryFootprint -Path $ProjectRoot
