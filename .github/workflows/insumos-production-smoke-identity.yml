@@ -1,0 +1,236 @@
+name: Insumos production smoke identity
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Provision or remove the exact synthetic smoke identity"
+        required: true
+        type: choice
+        options:
+          - provision
+          - cleanup
+      release_sha:
+        description: "Exact merged commit containing this governed workflow"
+        required: true
+        type: string
+
+concurrency:
+  group: insumos-production-smoke-identity
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact governed workflow
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 1
+
+      - name: Verify immutable checkout and action
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "${RELEASE_SHA}" ]]
+          [[ "${ACTION}" == "provision" || "${ACTION}" == "cleanup" ]]
+
+      - name: Acquire production Identity/D1 coordination lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: true
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-users-production-smoke.json
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+
+      - name: Verify synthetic identity contract
+        env:
+          ACTION: ${{ inputs.action }}
+          SMOKE_USERNAME: ${{ secrets.INSUMOS_SMOKE_USERNAME }}
+          SMOKE_EMAIL: ${{ secrets.INSUMOS_SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.INSUMOS_SMOKE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ "${SMOKE_USERNAME}" != codex-users-smoke-* ]]; then
+            echo "The smoke username must use the synthetic prefix."
+            exit 1
+          fi
+          if [[ ! "${SMOKE_USERNAME}" =~ ^codex-users-smoke-[a-z0-9-]+$ ]]; then
+            echo "The smoke username contains unsupported characters."
+            exit 1
+          fi
+          if [[ ! "${SMOKE_EMAIL}" =~ ^codex-users-smoke-[a-z0-9-]+@espacofacial\.com$ ]]; then
+            echo "The smoke email must use the synthetic domain."
+            exit 1
+          fi
+          if [[ "${ACTION}" == "provision" && ${#SMOKE_PASSWORD} -lt 16 ]]; then
+            echo "The smoke password does not meet the minimum length."
+            exit 1
+          fi
+
+      - name: Generate scoped SQL
+        env:
+          ACTION: ${{ inputs.action }}
+          SMOKE_USERNAME: ${{ secrets.INSUMOS_SMOKE_USERNAME }}
+          SMOKE_EMAIL: ${{ secrets.INSUMOS_SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.INSUMOS_SMOKE_PASSWORD }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}/insumos-production-smoke-identity
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP_DIR}"
+          ACTION="${ACTION}" SMOKE_USERNAME="${SMOKE_USERNAME}" SMOKE_EMAIL="${SMOKE_EMAIL}" SMOKE_PASSWORD="${SMOKE_PASSWORD}" RUNNER_TEMP_DIR="${RUNNER_TEMP_DIR}" node <<'NODE'
+          const crypto = require('crypto')
+          const fs = require('fs')
+          const path = require('path')
+
+          const action = String(process.env.ACTION || '')
+          const username = String(process.env.SMOKE_USERNAME || '')
+          const email = String(process.env.SMOKE_EMAIL || '').toLowerCase()
+          const password = String(process.env.SMOKE_PASSWORD || '')
+          const dir = String(process.env.RUNNER_TEMP_DIR || '')
+          const now = new Date().toISOString()
+          const iterations = 100000
+
+          if (!/^codex-users-smoke-[a-z0-9-]+$/.test(username)) throw new Error('SMOKE_USERNAME_CONTRACT')
+          if (!/^codex-users-smoke-[a-z0-9-]+@espacofacial\.com$/.test(email)) throw new Error('SMOKE_EMAIL_CONTRACT')
+          if (!dir) throw new Error('RUNNER_TEMP_DIR_REQUIRED')
+
+          const sql = (value) => `'${String(value).replace(/'/g, "''")}'`
+          const hashPassword = () => {
+            const salt = crypto.randomBytes(16)
+            const derived = crypto.pbkdf2Sync(password, salt, iterations, 32, 'sha256')
+            const b64url = (bytes) => bytes.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+            return `pbkdf2_sha256$${iterations}$${b64url(salt)}$${b64url(derived)}`
+          }
+
+          const identityWhere = `(lower(username) = lower(${sql(username)}) OR lower(email) = lower(${sql(email)}))`
+          const exactWhere = `(username = ${sql(username)} AND lower(email) = lower(${sql(email)}) AND display_name = 'Codex production smoke' AND role = 'ADMIN')`
+          let statements
+          if (action === 'provision') {
+            const passwordHash = hashPassword()
+            statements = `INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)\nSELECT ${sql(username)}, ${sql(email)}, 'Codex production smoke', ${sql(passwordHash)}, 'ADMIN', NULL, '[]', '[]', 1, ${sql(now)}, ${sql(now)}\nWHERE NOT EXISTS (SELECT 1 FROM crm_users WHERE ${identityWhere});\n`
+          } else if (action === 'cleanup') {
+            statements = `DELETE FROM crm_identity_sessions WHERE username = ${sql(username)};\nDELETE FROM auth_attempts WHERE username = ${sql(username)} OR username = ${sql(email)};\nDELETE FROM crm_user_prefs WHERE username = ${sql(username)};\nDELETE FROM crm_users WHERE ${exactWhere};\n`
+          } else {
+            throw new Error('ACTION_CONTRACT')
+          }
+
+          const verify = `SELECT COUNT(*) AS c FROM crm_users WHERE ${identityWhere};\n`
+          fs.writeFileSync(path.join(dir, 'mutation.sql'), statements, { encoding: 'utf8', mode: 0o600 })
+          fs.writeFileSync(path.join(dir, 'verify.sql'), verify, { encoding: 'utf8', mode: 0o600 })
+          fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ action, synthetic: true, piiFree: true, database: 'skincos-db' }) + '\n', { encoding: 'utf8', mode: 0o600 })
+          NODE
+
+      - name: Check synthetic identity collision
+        if: ${{ inputs.action == 'provision' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: true
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-users-production-smoke.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Read collision state after lease check
+        if: ${{ inputs.action == 'provision' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}/insumos-production-smoke-identity
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --file "${RUNNER_TEMP_DIR}/verify.sql" --json > "${RUNNER_TEMP_DIR}/before.json"
+          RUNNER_TEMP_DIR="${RUNNER_TEMP_DIR}" node <<'NODE'
+          const fs = require('fs')
+          const path = require('path')
+          const dir = process.env.RUNNER_TEMP_DIR
+          const payload = JSON.parse(fs.readFileSync(path.join(dir, 'before.json'), 'utf8'))
+          const rows = Array.isArray(payload) ? payload.flatMap((item) => Array.isArray(item?.results) ? item.results : []) : (Array.isArray(payload?.results) ? payload.results : [])
+          const count = Number(rows[0]?.c)
+          if (!Number.isInteger(count) || count !== 0) throw new Error(`SMOKE_IDENTITY_COLLISION:${Number.isInteger(count) ? count : 'unknown'}`)
+          fs.writeFileSync(path.join(dir, 'before-count.json'), JSON.stringify({ collisionCountBefore: count, synthetic: true, piiFree: true }) + '\n')
+          NODE
+
+      - name: Revalidate production Identity/D1 lease before mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: true
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-users-production-smoke.json
+          resource: global:ponto-workers-writer
+          module: core
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+
+      - name: Apply exact synthetic identity mutation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}/insumos-production-smoke-identity
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --file "${RUNNER_TEMP_DIR}/mutation.sql" >/dev/null
+
+      - name: Verify final synthetic identity state
+        env:
+          ACTION: ${{ inputs.action }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}/insumos-production-smoke-identity
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --file "${RUNNER_TEMP_DIR}/verify.sql" --json > "${RUNNER_TEMP_DIR}/after.json"
+          ACTION="${ACTION}" RUNNER_TEMP_DIR="${RUNNER_TEMP_DIR}" node <<'NODE'
+          const fs = require('fs')
+          const path = require('path')
+          const action = process.env.ACTION
+          const dir = process.env.RUNNER_TEMP_DIR
+          const payload = JSON.parse(fs.readFileSync(path.join(dir, 'after.json'), 'utf8'))
+          const rows = Array.isArray(payload) ? payload.flatMap((item) => Array.isArray(item?.results) ? item.results : []) : (Array.isArray(payload?.results) ? payload.results : [])
+          const count = Number(rows[0]?.c)
+          const expected = action === 'provision' ? 1 : 0
+          if (!Number.isInteger(count) || count !== expected) throw new Error(`SMOKE_IDENTITY_FINAL_STATE:${Number.isInteger(count) ? count : 'unknown'}:expected:${expected}`)
+          const beforePath = path.join(dir, 'before-count.json')
+          const before = fs.existsSync(beforePath) ? JSON.parse(fs.readFileSync(beforePath, 'utf8')) : {}
+          fs.writeFileSync(path.join(dir, 'evidence.json'), JSON.stringify({ action, database: 'skincos-db', synthetic: true, piiFree: true, collisionCountBefore: before.collisionCountBefore ?? null, finalCount: count, auditHistoryDeleted: false }) + '\n')
+          NODE
+
+      - name: Release production Identity/D1 coordination lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: true
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-users-production-smoke.json
+
+      - name: Upload sanitized identity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: insumos-production-smoke-identity-${{ github.run_id }}
+          path: ${{ runner.temp }}/insumos-production-smoke-identity/evidence.json
+          if-no-files-found: ignore
+          retention-days: 7
