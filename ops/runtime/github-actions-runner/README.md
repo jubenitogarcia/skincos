@@ -23,9 +23,18 @@ from the `skincos` service account and is never used by pull-request workflows.
   not copied to Windows, the repository, artifacts, or logs.
 
 The one-time runner registration token is consumed by
-`scripts/runtime/install-native-custody-runner.sh`. It is not persisted by the
+`scripts/runtime/install-native-custody-runner.sh`. The canonical Windows
+entrypoint `scripts/bootstrap-native-custody-runner.ps1` obtains that token
+only when the local identity is absent and sends it through the typed WSL
+gateway's in-memory, BOM-free stdin transport. It is not persisted by the
 bootstrap script. The runner's own registration credential remains in its
 private service directory and is not a repository secret or a workflow output.
+
+The systemd unit keeps `ProtectSystem=strict` and the narrow sudoers command.
+It deliberately does not set `NoNewPrivileges=true`, because that would make
+the fixed root helper impossible to execute; the only additional writable path
+is the pre-created empty custody directory, and the helper still owns the
+atomic file write and metadata validation.
 
 ## Routine flow
 
@@ -41,7 +50,9 @@ private service directory and is not a repository secret or a workflow output.
 5. The workflow releases the lease in an `always()` step. Missing runner,
    missing secret, invalid path, stale SHA, or failed audit is fail-closed.
 
-The bridge removes the previous manual GitHub-to-mini-PC copy gap. Initial
-creation of a genuinely nonexistent GitHub secret, platform trust, or runner
-registration credential remains a bootstrap boundary; routine rotation and
-reconciliation are automated through the same guarded workflow.
+The bridge removes the previous manual GitHub-to-mini-PC copy gap. If an
+authenticated GitHub session and native root/platform trust already exist,
+runner registration is executable by Codex; genuinely nonexistent secrets,
+MFA/re-authentication, or unavailable platform trust remain the only bootstrap
+boundaries. Routine rotation and reconciliation are automated through the same
+guarded workflow.

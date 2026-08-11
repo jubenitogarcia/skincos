@@ -142,6 +142,16 @@ executável; não é uma espera humana recorrente. Somente a criação inicial d
 uma credencial inexistente, MFA/reautenticação ou confiança de plataforma fora
 do alcance continua sendo exceção humana.
 
+Quando a sessão GitHub já autenticada e o acesso root nativo existem, o
+bootstrap do runner também é uma ação autônoma: use
+`scripts/bootstrap-native-custody-runner.ps1`, que fixa/verifica o digest do
+runner, obtém o token efêmero somente quando necessário e o transporta por
+stdin em memória através do gateway tipado. O gateway precisa enviar UTF-8 sem
+BOM para contratos de tokens opacos; nenhum valor secreto pode entrar em
+argv, arquivo, log ou artefato. O instalador cria previamente apenas o
+diretório privado exigido pelo sandbox systemd; a workflow continua sendo a
+única escritora do arquivo de custódia.
+
 PRs Codex com o marcador persistente `automerge/enabled` entram na fila oficial
 quando a API reporta estado `clean`. A fila pode atualizar a branch sob o lease
 `merge:main` e redisparar a autoridade; o workflow oficial ainda revalida
