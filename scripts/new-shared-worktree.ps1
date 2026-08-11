@@ -50,6 +50,43 @@ function Ensure-SafeDirectory {
     }
 }
 
+function Write-WorktreeLifecycleRecord {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoPath,
+        [Parameter(Mandatory = $true)][string]$TaskSlug,
+        [Parameter(Mandatory = $true)][string]$Branch,
+        [Parameter(Mandatory = $true)][string]$Base
+    )
+
+    $lifecycleRoot = 'C:\CodexRuntime\operator\admin\skincos\storage-governance\worktrees'
+    New-Item -ItemType Directory -Force -Path $lifecycleRoot | Out-Null
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($RepoPath))).Replace('-', '').ToLowerInvariant()
+    } finally { $hash.Dispose() }
+    $recordPath = Join-Path $lifecycleRoot "$digest.json"
+    $record = [ordered]@{
+        schema_version = 1
+        path = (Resolve-Path -LiteralPath $RepoPath).Path
+        owner = $Actor
+        task_slug = $TaskSlug
+        branch = $Branch
+        base_ref = $Base
+        commit = ((git -C $RepoPath rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant())
+        created_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+        last_seen_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+        lifecycle_status = 'active'
+        pinned = $false
+        lease = $null
+        dependency_state = 'unknown'
+        associated_artifacts = @()
+    }
+    $temporary = "$recordPath.$([Guid]::NewGuid().ToString('N')).tmp"
+    $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding UTF8
+    Move-Item -LiteralPath $temporary -Destination $recordPath -Force
+    return $recordPath
+}
+
 $normalizedActor = Normalize-Actor -Value $Actor
 $normalizedTask = Normalize-Slug -Value $TaskSlug
 
@@ -83,6 +120,7 @@ if ($branchExists) {
 
 git -C $ProjectRoot worktree add $worktreePath -b $BranchName $BaseRef
 Ensure-SafeDirectory -RepoPath $worktreePath
+$lifecycleRecord = Write-WorktreeLifecycleRecord -RepoPath $worktreePath -TaskSlug $normalizedTask -Branch $BranchName -Base $BaseRef
 
 $result = [pscustomobject]@{
     actor = $normalizedActor
@@ -92,6 +130,7 @@ $result = [pscustomobject]@{
     projectRoot = $ProjectRoot
     worktreePath = $worktreePath
     validationCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-skincos-worktree.ps1 -ProjectRoot '$worktreePath' -TaskSlug '$normalizedTask' -Mode edit"
+    lifecycleRecord = $lifecycleRecord
 }
 
 $result | ConvertTo-Json -Depth 4
