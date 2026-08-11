@@ -18,6 +18,7 @@ VERIFY_RESTORE="${VERIFY_RESTORE:-auto}"
 BACKUP_STORAGE_COPY_TRANSPORT="${BACKUP_STORAGE_COPY_TRANSPORT:-auto}"
 BACKUP_PUBLISH_OWNER="${BACKUP_PUBLISH_OWNER:-}"
 STALE_PARTIAL_MAX_AGE_HOURS="${STALE_PARTIAL_MAX_AGE_HOURS:-6}"
+readonly MAX_STALE_PARTIAL_MAX_AGE_HOURS=8760
 
 timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
 partial="$BACKUP_ROOT/.partial-$timestamp"
@@ -52,13 +53,22 @@ fi
 if [[ -n "$BACKUP_PUBLISH_OWNER" ]]; then
   id "$BACKUP_PUBLISH_OWNER" >/dev/null 2>&1 || { echo "Backup publish owner is unavailable: $BACKUP_PUBLISH_OWNER" >&2; exit 1; }
 fi
-if [[ ! "$STALE_PARTIAL_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] || (( 10#$STALE_PARTIAL_MAX_AGE_HOURS < 1 )); then
-  echo "STALE_PARTIAL_MAX_AGE_HOURS must be a positive integer." >&2
+if [[ ! "$STALE_PARTIAL_MAX_AGE_HOURS" =~ ^[0-9]+$ ]]; then
+  echo "STALE_PARTIAL_MAX_AGE_HOURS must be an integer between 1 and $MAX_STALE_PARTIAL_MAX_AGE_HOURS." >&2
   exit 1
 fi
-# Normalize accepted values once so every subsequent arithmetic expression is
-# decimal, including zero-padded operator input such as "08".
-STALE_PARTIAL_MAX_AGE_HOURS=$((10#$STALE_PARTIAL_MAX_AGE_HOURS))
+# Strip only leading zeroes before checking length or performing arithmetic.
+# This keeps operator input such as "08" valid without allowing an
+# arbitrarily long all-digit value to overflow Bash arithmetic.
+stale_partial_age_leading_zeroes="${STALE_PARTIAL_MAX_AGE_HOURS%%[!0]*}"
+stale_partial_age_decimal="${STALE_PARTIAL_MAX_AGE_HOURS#"$stale_partial_age_leading_zeroes"}"
+stale_partial_age_decimal="${stale_partial_age_decimal:-0}"
+if [[ ${#stale_partial_age_decimal} -gt 4 ]] \
+  || (( 10#$stale_partial_age_decimal < 1 || 10#$stale_partial_age_decimal > MAX_STALE_PARTIAL_MAX_AGE_HOURS )); then
+  echo "STALE_PARTIAL_MAX_AGE_HOURS must be an integer between 1 and $MAX_STALE_PARTIAL_MAX_AGE_HOURS." >&2
+  exit 1
+fi
+STALE_PARTIAL_MAX_AGE_HOURS=$((10#$stale_partial_age_decimal))
 
 mkdir -p "$(dirname "$LOCK_FILE")" "$N8N_HEALTH_DIR" "$BACKUP_ROOT"
 if [[ -n "$BACKUP_PUBLISH_OWNER" && "$BACKUP_ROOT" == /var/backups/* ]]; then

@@ -112,7 +112,13 @@ if run_backup 000 >"$test_root/zero-age.out" 2>"$test_root/zero-age.err"; then
   echo 'Zero stale partial age was unexpectedly accepted.' >&2
   exit 1
 fi
-grep -q 'STALE_PARTIAL_MAX_AGE_HOURS must be a positive integer.' "$test_root/zero-age.err"
+grep -q 'STALE_PARTIAL_MAX_AGE_HOURS must be an integer between 1 and 8760.' "$test_root/zero-age.err"
+
+if run_backup 18446744073709551617 >"$test_root/overflow-age.out" 2>"$test_root/overflow-age.err"; then
+  echo 'Overflowing stale partial age was unexpectedly accepted.' >&2
+  exit 1
+fi
+grep -q 'STALE_PARTIAL_MAX_AGE_HOURS must be an integer between 1 and 8760.' "$test_root/overflow-age.err"
 
 if PATH="$fake_bin:$PATH" \
   N8N_ROOT="$repo_root" \
