@@ -58,3 +58,18 @@ test('Livia commercial catalog patch is idempotent', () => {
   const twice = patchWorkflow(once);
   assert.deepEqual(twice, once);
 });
+
+test('Livia commercial guard preserves the live visual assertion return envelope', () => {
+  const liveShape = fixture();
+  const visualAssert = liveShape.nodes.find((node) => node.name === 'Assert Livia Visual Analysis');
+  visualAssert.parameters.jsCode = visualAssert.parameters.jsCode.replace(
+    'return { json: current };',
+    'return { json: current, binary: $input.item.binary, pairedItem: $input.item.pairedItem };',
+  );
+
+  const candidate = patchWorkflow(liveShape);
+  validate(candidate);
+  const patchedCode = candidate.nodes.find((node) => node.name === 'Assert Livia Visual Analysis').parameters.jsCode;
+  assert.match(patchedCode, /livia_crm_pricing_guard_v1/);
+  assert.match(patchedCode, /return \{ json: current, binary: \$input\.item\.binary, pairedItem: \$input\.item\.pairedItem \};/);
+});
