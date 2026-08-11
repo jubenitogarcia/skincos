@@ -88,7 +88,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-skincos-st
 
 ## Release archives
 
-`dedupe-source-tars.ps1` hashes the bounded release/checkpoint roots and only
+`dedupe-source-tars.ps1` hashes the bounded release, checkpoint and snapshot
+roots and only
 considers exact SHA-256 and byte-size duplicates. With explicit hardlink mode,
 it preserves every original path, quarantines the duplicate transactionally,
 creates a hardlink to the canonical artifact, verifies the hash and link list,
