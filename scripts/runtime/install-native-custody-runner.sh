@@ -26,8 +26,10 @@ Usage: scripts/runtime/install-native-custody-runner.sh \
   [--apply]
 
 Reads one GitHub Actions runner registration token from stdin. The token is
-used only by config.sh and is never written to a file or printed. Without
---apply, validates the runner package contract and the local custody helper.
+used only during the one-time upstream config.sh registration. It is not
+written to a file or printed; config.sh necessarily receives it as a
+short-lived local process argument. Without --apply, validates the runner
+package contract and the local custody helper.
 EOF
 }
 
@@ -111,6 +113,9 @@ chown -R "$RUNNER_USER:$RUNNER_USER" "$RUNNER_ROOT"
 install -o root -g root -m 0644 \
   "$ROOT_DIR/ops/runtime/units/$UNIT_NAME" "/etc/systemd/system/$UNIT_NAME"
 systemctl daemon-reload
-systemctl enable --now "$UNIT_NAME" >/dev/null
+systemctl enable "$UNIT_NAME" >/dev/null
+# Restart explicitly so an already active runner adopts the new sandbox and
+# writable-path contract instead of retaining its previous mount namespace.
+systemctl restart "$UNIT_NAME"
 systemctl is-active --quiet "$UNIT_NAME" || { echo 'native custody runner service is not active' >&2; exit 78; }
 printf 'native_custody_runner=active label=skincos-native-custody user=%s\n' "$RUNNER_USER"

@@ -147,8 +147,10 @@ bootstrap do runner também é uma ação autônoma: use
 `scripts/bootstrap-native-custody-runner.ps1`, que fixa/verifica o digest do
 runner, obtém o token efêmero somente quando necessário e o transporta por
 stdin em memória através do gateway tipado. O gateway precisa enviar UTF-8 sem
-BOM para contratos de tokens opacos; nenhum valor secreto pode entrar em
-argv, arquivo, log ou artefato. O instalador cria previamente apenas o
+BOM para contratos de tokens opacos; o token não entra em argv do Windows,
+arquivo, log ou artefato. O `config.sh` upstream necessariamente o recebe
+como argumento local de curta duração durante o registro, sem persistência ou
+emissão. O instalador cria previamente apenas o
 diretório privado exigido pelo sandbox systemd; a workflow continua sendo a
 única escritora do arquivo de custódia.
 

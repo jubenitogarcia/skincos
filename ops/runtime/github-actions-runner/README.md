@@ -27,8 +27,11 @@ The one-time runner registration token is consumed by
 entrypoint `scripts/bootstrap-native-custody-runner.ps1` obtains that token
 only when the local identity is absent and sends it through the typed WSL
 gateway's in-memory, BOM-free stdin transport. It is not persisted by the
-bootstrap script. The runner's own registration credential remains in its
-private service directory and is not a repository secret or a workflow output.
+bootstrap script or emitted as a Windows argument, file, log, artifact, or
+workflow output. The upstream `config.sh` necessarily receives it as a
+short-lived local process argument during registration. The runner's own
+registration credential remains in its private service directory and is not a
+repository secret or a workflow output.
 
 The systemd unit keeps `ProtectSystem=strict` and the narrow sudoers command.
 It deliberately does not set `NoNewPrivileges=true`, because that would make

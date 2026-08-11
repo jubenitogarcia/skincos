@@ -120,7 +120,8 @@ try {
         if ($registrationToken -match '[\r\n]') {
             throw 'GitHub returned an invalid multi-line runner registration token.'
         }
-        $standardInput = $registrationToken + [Environment]::NewLine
+        # Bash read contracts require LF; Windows [Environment]::NewLine is CRLF.
+        $standardInput = $registrationToken + [char]10
     }
 
     if (-not $Apply) {

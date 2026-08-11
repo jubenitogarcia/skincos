@@ -52,7 +52,9 @@ already has an authenticated GitHub CLI session and native root access. Run
 release and digest, requests a short-lived registration token only when the
 local runner identity is absent, and sends it through the typed WSL gateway's
 in-memory `StandardInputText` path. The gateway writes BOM-free UTF-8 bytes to
-stdin; the token is never an argv value, file, log or artifact. The installer
+stdin; the token never enters a Windows-side argv value, file, log or artifact.
+The upstream `config.sh` registration necessarily receives it as a short-lived
+local process argument, which is not persisted or emitted. The installer
 creates only the empty custody directory before starting systemd, so
 `ProtectSystem=strict` remains compatible with the later workflow-owned
 atomic secret write.
