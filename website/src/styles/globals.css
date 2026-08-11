@@ -338,6 +338,21 @@ button:focus-visible {
   border-bottom: 1px solid var(--border)
 }
 
+.header[data-scroll-aware-header="true"] {
+  transition: transform 220ms cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+}
+
+.header[data-scroll-aware-header="true"].header--hidden {
+  transform: translateY(-100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header[data-scroll-aware-header="true"] {
+    transition-duration: 0.01ms;
+  }
+}
+
 .nav {
   display: flex;
   align-items: center;

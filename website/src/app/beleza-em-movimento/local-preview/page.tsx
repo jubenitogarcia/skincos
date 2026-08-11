@@ -18,7 +18,7 @@ export default function BeautyMovementLocalPreviewPage() {
 
     return (
         <>
-            <Header preferredUnitSlug="novo-hamburgo" fixedUnitSlug="novo-hamburgo" />
+            <Header preferredUnitSlug="novo-hamburgo" fixedUnitSlug="novo-hamburgo" scrollAware />
             <BeautyMovementLocalPreview />
             <Footer />
         </>

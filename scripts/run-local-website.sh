@@ -302,6 +302,7 @@ start_detached_supervisor() {
     OPEN_BROWSER=0 \
     WEBSITE_SUPERVISOR_MODE=1 \
     WEBSITE_DETACH=0 \
+    WEBSITE_SOURCE_ROOT="$WEBSITE_SOURCE_ROOT" \
     WEBSITE_HOST="$WEBSITE_HOST" \
     WEBSITE_PORT="$WEBSITE_PORT" \
     WEBSITE_STATE_DIR="$WEBSITE_STATE_DIR" \
@@ -309,6 +310,10 @@ start_detached_supervisor() {
     WEBSITE_LOG_FILE="$LOG_FILE" \
     WEBSITE_PORT_FILE="$PORT_FILE" \
     WEBSITE_ROUTE="$WEBSITE_ROUTE" \
+    TMPDIR="${TMPDIR:-}" \
+    TMP="${TMP:-}" \
+    TEMP="${TEMP:-}" \
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}" \
     bash "$SCRIPT_PATH" >>"$LOG_FILE" 2>&1 < /dev/null &
   DETACHED_SUPERVISOR_PID=$!
 }
