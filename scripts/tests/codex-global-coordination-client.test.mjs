@@ -142,6 +142,27 @@ test("GitHub and mini-PC clients produce the same signed envelope contract", () 
   }).headers.authorization, "Bearer admin-secret");
 });
 
+test("secret transport whitespace does not change the signed envelope", () => {
+  const args = {
+    url: "https://coordination.example.test",
+    action: "check",
+    secret,
+    keyId: "active-v2",
+    proof: {
+      resource: "deploy:website:staging",
+      leaseId: "lease-0000000000000001",
+      fencingToken: 4,
+      intentDigest: "a".repeat(64),
+      owner: { provider: "github", missionId: "mission-1", threadId: "thread-1", actor: "actions" },
+    },
+    nonce: "w".repeat(32),
+    requestedAt: "2026-08-09T18:00:00.000Z",
+  };
+  const clean = buildAuthenticatedRequest(args);
+  const transported = buildAuthenticatedRequest({ ...args, secret: `\n ${secret} \r\n` });
+  assert.equal(transported.headers["x-skincos-coordination-request-signature"], clean.headers["x-skincos-coordination-request-signature"]);
+});
+
 test("response signatures cover the authority envelope and tampering fails closed", () => {
   const unsigned = { schemaVersion: 1, contractId: CONTRACT_ID, passed: true, accepted: true, reason: "lease-acquired" };
   const responseDigest = crypto.createHash("sha256").update(canonicalJson(unsigned)).digest("hex");
