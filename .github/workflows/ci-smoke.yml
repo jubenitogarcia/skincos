@@ -76,7 +76,7 @@ jobs:
           codex="$(changed .codex skills ops/codex scripts/codex-*.mjs scripts/codex-*.sh scripts/*codex*.ps1)"
           observability="$(changed scripts/observability)"
           clientes_runtime_contract="$(changed scripts crm/api ops/runtime/units)"
-          orb_runtime="$(changed orb ops/runtime platform service)"
+          orb_runtime="$(changed orb ops/runtime platform service scripts/runtime/start-n8n-runtime.sh scripts/runtime/test-orb-runtime-startup-contract.sh)"
           ccg="$(changed orb/engine)"
           all="$(changed .github/workflows/ci-smoke.yml)"
           node=false
