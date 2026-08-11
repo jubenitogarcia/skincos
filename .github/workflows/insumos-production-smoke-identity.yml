@@ -160,14 +160,47 @@ jobs:
           RUNNER_TEMP_DIR: ${{ runner.temp }}/insumos-production-smoke-identity
         run: |
           set -euo pipefail
-          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --file "${RUNNER_TEMP_DIR}/verify.sql" --json > "${RUNNER_TEMP_DIR}/before.json"
+          verify_command="$(<"${RUNNER_TEMP_DIR}/verify.sql")"
+          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --command "$verify_command" --json > "${RUNNER_TEMP_DIR}/before.json"
           RUNNER_TEMP_DIR="${RUNNER_TEMP_DIR}" node <<'NODE'
           const fs = require('fs')
           const path = require('path')
           const dir = process.env.RUNNER_TEMP_DIR
-          const payload = JSON.parse(fs.readFileSync(path.join(dir, 'before.json'), 'utf8'))
-          const rows = Array.isArray(payload) ? payload.flatMap((item) => Array.isArray(item?.results) ? item.results : []) : (Array.isArray(payload?.results) ? payload.results : [])
-          const count = Number(rows[0]?.c)
+          const raw = fs.readFileSync(path.join(dir, 'before.json'), 'utf8')
+          const starts = []
+          for (const marker of ['[', '{']) {
+            let index = raw.indexOf(marker)
+            while (index >= 0) {
+              starts.push(index)
+              index = raw.indexOf(marker, index + 1)
+            }
+          }
+          starts.sort((left, right) => left - right)
+          const collectResultRows = (value) => {
+            if (Array.isArray(value)) {
+              return value.flatMap((item) => item && typeof item === 'object' && Object.hasOwn(item, 'c') ? [item] : collectResultRows(item))
+            }
+            if (!value || typeof value !== 'object') return []
+            if (Object.hasOwn(value, 'c')) return [value]
+            if (Array.isArray(value.results)) return value.results
+            return Object.values(value).flatMap(collectResultRows)
+          }
+          let parsed = false
+          let rows = []
+          for (const start of starts) {
+            try {
+              const candidateRows = collectResultRows(JSON.parse(raw.slice(start)))
+              parsed = true
+              if (candidateRows.some((row) => row && typeof row === 'object' && Object.hasOwn(row, 'c'))) {
+                rows = candidateRows
+                break
+              }
+            } catch {}
+          }
+          if (!parsed) throw new Error('D1_JSON_OUTPUT_INVALID')
+          const row = rows.find((candidate) => candidate && typeof candidate === 'object' && Object.hasOwn(candidate, 'c'))
+          if (!row) throw new Error('D1_JSON_RESULT_ROWS_MISSING')
+          const count = Number(row.c)
           if (!Number.isInteger(count) || count !== 0) throw new Error(`SMOKE_IDENTITY_COLLISION:${Number.isInteger(count) ? count : 'unknown'}`)
           fs.writeFileSync(path.join(dir, 'before-count.json'), JSON.stringify({ collisionCountBefore: count, synthetic: true, piiFree: true }) + '\n')
           NODE
@@ -201,15 +234,48 @@ jobs:
           RUNNER_TEMP_DIR: ${{ runner.temp }}/insumos-production-smoke-identity
         run: |
           set -euo pipefail
-          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --file "${RUNNER_TEMP_DIR}/verify.sql" --json > "${RUNNER_TEMP_DIR}/after.json"
+          verify_command="$(<"${RUNNER_TEMP_DIR}/verify.sql")"
+          npx --yes wrangler@4.119.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --command "$verify_command" --json > "${RUNNER_TEMP_DIR}/after.json"
           ACTION="${ACTION}" RUNNER_TEMP_DIR="${RUNNER_TEMP_DIR}" node <<'NODE'
           const fs = require('fs')
           const path = require('path')
           const action = process.env.ACTION
           const dir = process.env.RUNNER_TEMP_DIR
-          const payload = JSON.parse(fs.readFileSync(path.join(dir, 'after.json'), 'utf8'))
-          const rows = Array.isArray(payload) ? payload.flatMap((item) => Array.isArray(item?.results) ? item.results : []) : (Array.isArray(payload?.results) ? payload.results : [])
-          const count = Number(rows[0]?.c)
+          const raw = fs.readFileSync(path.join(dir, 'after.json'), 'utf8')
+          const starts = []
+          for (const marker of ['[', '{']) {
+            let index = raw.indexOf(marker)
+            while (index >= 0) {
+              starts.push(index)
+              index = raw.indexOf(marker, index + 1)
+            }
+          }
+          starts.sort((left, right) => left - right)
+          const collectResultRows = (value) => {
+            if (Array.isArray(value)) {
+              return value.flatMap((item) => item && typeof item === 'object' && Object.hasOwn(item, 'c') ? [item] : collectResultRows(item))
+            }
+            if (!value || typeof value !== 'object') return []
+            if (Object.hasOwn(value, 'c')) return [value]
+            if (Array.isArray(value.results)) return value.results
+            return Object.values(value).flatMap(collectResultRows)
+          }
+          let parsed = false
+          let rows = []
+          for (const start of starts) {
+            try {
+              const candidateRows = collectResultRows(JSON.parse(raw.slice(start)))
+              parsed = true
+              if (candidateRows.some((row) => row && typeof row === 'object' && Object.hasOwn(row, 'c'))) {
+                rows = candidateRows
+                break
+              }
+            } catch {}
+          }
+          if (!parsed) throw new Error('D1_JSON_OUTPUT_INVALID')
+          const row = rows.find((candidate) => candidate && typeof candidate === 'object' && Object.hasOwn(candidate, 'c'))
+          if (!row) throw new Error('D1_JSON_RESULT_ROWS_MISSING')
+          const count = Number(row.c)
           const expected = action === 'provision' ? 1 : 0
           if (!Number.isInteger(count) || count !== expected) throw new Error(`SMOKE_IDENTITY_FINAL_STATE:${Number.isInteger(count) ? count : 'unknown'}:expected:${expected}`)
           const beforePath = path.join(dir, 'before-count.json')
