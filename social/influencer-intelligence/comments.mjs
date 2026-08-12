@@ -348,10 +348,10 @@ function median(values) {
 }
 
 function countBins(values, bins) {
-  const counts = Object.fromEntries(bins.map(({ key }) => [key, 0]));
+  const counts = Object.fromEntries(bins.map(({ bucket }) => [bucket, 0]));
   for (const value of values) {
     const bucket = bins.find(({ minimum, maximum }) => value >= minimum && (maximum === undefined || value <= maximum));
-    counts[bucket?.key || bins.at(-1).key] += 1;
+    counts[bucket?.bucket || bins.at(-1).bucket] += 1;
   }
   return counts;
 }
@@ -475,18 +475,18 @@ function buildMetrics(comments) {
   }
   const likeCounts = comments.map(({ like_count: count }) => count).filter((count) => count !== undefined);
   const likeBins = [
-    { key: 'none', minimum: 0, maximum: 0 },
-    { key: 'low', minimum: 1, maximum: 2 },
-    { key: 'medium', minimum: 3, maximum: 9 },
-    { key: 'high', minimum: 10, maximum: 49 },
-    { key: 'very_high', minimum: 50 },
+    { bucket: 'none', minimum: 0, maximum: 0 },
+    { bucket: 'low', minimum: 1, maximum: 2 },
+    { bucket: 'medium', minimum: 3, maximum: 9 },
+    { bucket: 'high', minimum: 10, maximum: 49 },
+    { bucket: 'very_high', minimum: 50 },
   ];
   const lengthBins = [
-    { key: 'empty', minimum: 0, maximum: 0 },
-    { key: 'short_1_20', minimum: 1, maximum: 20 },
-    { key: 'medium_21_80', minimum: 21, maximum: 80 },
-    { key: 'long_81_160', minimum: 81, maximum: 160 },
-    { key: 'very_long_161_plus', minimum: 161 },
+    { bucket: 'empty', minimum: 0, maximum: 0 },
+    { bucket: 'short_1_20', minimum: 1, maximum: 20 },
+    { bucket: 'medium_21_80', minimum: 21, maximum: 80 },
+    { bucket: 'long_81_160', minimum: 81, maximum: 160 },
+    { bucket: 'very_long_161_plus', minimum: 161 },
   ];
   return Object.freeze({
     unique_commenter_ratio: commenterDigests.length === 0
