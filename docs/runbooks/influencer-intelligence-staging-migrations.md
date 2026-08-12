@@ -17,8 +17,10 @@ checkpoint only below
 `/var/backups/skincos/influencer-intelligence/staging/`; callers cannot choose
 the destination. The underlying fixed runner is
 `scripts/staging/influencer-intelligence-migration.mjs`. It reads the database URL only from the native private file
-`/etc/skincos/influencer-intelligence-staging-migrator.env`; the file is not in
-Git and its value is never printed. The URL must point to loopback TLS,
+`/etc/skincos/crm-atendimento-staging-migrator.env`, the canonical staging
+database migrator custody already used by the CRM; no analytics-specific copy
+of the password is created. The file is not in Git and its value is never
+printed. The URL must point to loopback TLS,
 `skincos_staging`, and `skincos_staging_migrator_login`. The runner overrides
 the connection application name to `influencer-intelligence-migration` and
 proves it from PostgreSQL.

@@ -148,3 +148,7 @@ test('native staging wrapper is release-bound and keeps database custody out of 
     assert.doesNotMatch(wrapper, /DATABASE_URL|password|--database-url|--connection-string/)
     assert.match(wrapper, /CHECKPOINT_ROOT='\/var\/backups\/skincos\/influencer-intelligence\/staging'/)
 })
+
+test('runner reuses the canonical CRM staging migrator custody without duplicating a secret', () => {
+    assert.equal(__testables.FIXED_ENV_FILE, '/etc/skincos/crm-atendimento-staging-migrator.env')
+})
