@@ -71,7 +71,7 @@ jobs:
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
-      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
     with:
       required: true
       global_lease_required: true
@@ -179,7 +179,8 @@ jobs:
           required: 'true'
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
           resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
           module: ponto
@@ -191,7 +192,8 @@ jobs:
           required: 'true'
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: global:staging-d1
           module: core
           source_sha: ${{ inputs.release_sha }}
@@ -207,7 +209,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
       - name: Provision only run-scoped synthetic staging records
         env:
@@ -248,7 +251,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
       - name: Attest the exact synthetic PIN credential in staging D1
         env:
@@ -505,7 +509,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
       - name: Execute authenticated Ponto journey
         env:
@@ -529,7 +534,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
       - name: Tear down only this run's synthetic staging records
         if: ${{ always() && steps.check_staging_d1_teardown.outcome == 'success' }}
@@ -619,7 +625,8 @@ jobs:
         with:
           required: 'true'
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-timekeeping-staging-d1.json
 
       - name: Upload sanitised journey evidence
@@ -639,8 +646,9 @@ jobs:
     if: ${{ always() && needs.coordination.outputs.global_lease_required == 'true' }}
     uses: ./.github/workflows/global-coordination-release.yml
     secrets:
-      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
     with:
       required: true
       proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
       coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+      key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}

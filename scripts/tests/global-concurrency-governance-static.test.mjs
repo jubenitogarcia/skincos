@@ -62,6 +62,39 @@ test("direct Ponto recovery jobs use remote custody at every governed boundary",
   }
 });
 
+test("Ponto release custody pins the active coordination key at every release boundary", () => {
+  const directCustodyWorkflows = [
+    ".github/workflows/ponto-progressive-release.yml",
+    ".github/workflows/ponto-release-watchdog.yml",
+    ".github/workflows/ponto-staging-recovery-rollback.yml",
+    ".github/workflows/ponto-staging-core-provenance-recovery.yml",
+    ".github/workflows/cloudflare-pages-sync-ponto.yml",
+    ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
+    ".github/workflows/deploy-core-workers.yml",
+    ".github/workflows/deploy-crm-pages.yml",
+    ".github/workflows/deploy-timekeeping.yml",
+    ".github/workflows/module-availability.yml",
+    ".github/workflows/ponto-production-baseline.yml",
+    ".github/workflows/ponto-production-slo.yml",
+    ".github/workflows/ponto-staging-rollback-drill.yml",
+    ".github/workflows/timekeeping-staging-journey.yml",
+  ];
+  const activeSecret = /^\s{10}shared_secret: \$\{\{ secrets\.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY \}\}$/gm;
+  const activeKeyId = /^\s{10}key_id: \$\{\{ vars\.SKINCOS_GLOBAL_COORDINATION_KEY_ID \}\}$/gm;
+  for (const workflow of directCustodyWorkflows) {
+    const source = read(workflow);
+    assert.ok([...source.matchAll(activeSecret)].length > 0, workflow);
+    assert.equal([...source.matchAll(activeSecret)].length, [...source.matchAll(activeKeyId)].length, workflow);
+    assert.doesNotMatch(source, /secrets\.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET/, workflow);
+  }
+  const gate = read(".github/workflows/ponto-orchestrator-gate.yml");
+  assert.match(gate, /GLOBAL_KEY_ID: \$\{\{ vars\.SKINCOS_GLOBAL_COORDINATION_KEY_ID \}\}/);
+  assert.match(gate, /SKINCOS_GLOBAL_COORDINATION_KEY_ID="\$GLOBAL_KEY_ID"/);
+  const release = read(".github/workflows/global-coordination-release.yml");
+  assert.match(release, /key_id:[\s\S]*?required: false/);
+  assert.match(release, /SKINCOS_GLOBAL_COORDINATION_KEY_ID: \$\{\{ inputs\.key_id \}\}/);
+});
+
 test("legacy recovery and WAF mutators are fail-closed through the same authority", () => {
   const waf = jobBlock(read(".github/workflows/ponto-waf-security.yml"), "apply");
   assert.match(waf, /resource: cloudflare:ponto-waf:production/);
