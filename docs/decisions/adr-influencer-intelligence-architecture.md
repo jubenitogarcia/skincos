@@ -421,7 +421,7 @@ source-controlled migration artifacts; they do not apply them.
 | M10 | Semantic content and Reels signals | Approved bounded media projection and model provenance |
 | M11 | Campaign/brand fit | Structured criteria, deterministic base, labeled inferred signals, additive persistence metadata, persisted read-only MCP/CRM projection |
 | M12 | Synthetic validation and calibration | Versioned synthetic dataset and deterministic report covering outliers, coverage, confidence, zero-denominators, follower-scale normalization, and separate Campaign Fit; no live provider calls |
-| M13 | Optional provider gap analysis | Measured gap report before any external provider is considered |
+| M13 | Optional provider gap analysis | Source-implemented capability gap report/ADR; live coverage decision pending runtime evidence; no external provider integrated |
 
 Each milestone remains off by default, uses a dedicated worktree/branch and
 single-purpose PR, records risk/surfaces/flag/migration/validation/rollback,
