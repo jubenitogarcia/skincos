@@ -387,8 +387,19 @@ function sourceProvenance(profiles, media) {
   ));
 }
 
-function metricObservationCount(items, fields) {
-  return items.filter((item) => fields.some((field) => item[field]?.value !== null)).length;
+function metricObservationCount(items, fields, { identityField = null } = {}) {
+  const observed = new Set();
+  let count = 0;
+  for (const item of items) {
+    if (!fields.some((field) => item[field]?.value !== null)) continue;
+    if (identityField) {
+      const identity = item[identityField];
+      if (observed.has(identity)) continue;
+      observed.add(identity);
+    }
+    count += 1;
+  }
+  return count;
 }
 
 function historySummary(profiles, media) {
@@ -396,7 +407,11 @@ function historySummary(profiles, media) {
     profileSnapshotCount: profiles.length,
     profileMetricObservationCount: metricObservationCount(profiles, ['followersCount', 'followingCount', 'mediaCount']),
     mediaSnapshotCount: media.length,
-    mediaMetricObservationCount: metricObservationCount(media, ['likesCount', 'commentsCount', 'viewsCount', 'reachCount', 'followersCount']),
+    mediaMetricObservationCount: metricObservationCount(
+      media,
+      ['likesCount', 'commentsCount', 'viewsCount', 'reachCount'],
+      { identityField: 'mediaKey' },
+    ),
   };
 }
 

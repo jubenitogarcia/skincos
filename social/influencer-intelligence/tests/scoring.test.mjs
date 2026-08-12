@@ -204,6 +204,62 @@ test('input fingerprint binds structured-signal provider provenance', () => {
   assert.notEqual(base.input_fingerprint, changed.input_fingerprint);
 });
 
+test('input fingerprint preserves provider assignment for each structured signal', () => {
+  const fixture = GOLDEN_FIXTURES.smallStable;
+  const base = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'derived',
+        confidence: 0.62,
+        evidence_refs: ['comment-sample-001'],
+        providers: ['comments-engine'],
+      },
+      brand_fit: {
+        score: 82,
+        evidence_state: 'derived',
+        confidence: 0.9,
+        evidence_refs: ['campaign-brief-001'],
+        providers: ['campaign-engine'],
+      },
+    },
+  });
+  const changed = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'derived',
+        confidence: 0.62,
+        evidence_refs: ['comment-sample-001'],
+        providers: ['campaign-engine'],
+      },
+      brand_fit: {
+        score: 82,
+        evidence_state: 'derived',
+        confidence: 0.9,
+        evidence_refs: ['campaign-brief-001'],
+        providers: ['comments-engine'],
+      },
+    },
+  });
+
+  assert.notEqual(base.input_fingerprint, changed.input_fingerprint);
+});
+
+test('legacy analytics summaries preserve usable history when history is absent', () => {
+  const analytics = analyticsFor(GOLDEN_FIXTURES.smallStable);
+  const legacyAnalytics = structuredClone(analytics);
+  delete legacyAnalytics.history;
+
+  const current = computeInfluencerScore({ analytics });
+  const legacy = computeInfluencerScore({ analytics: legacyAnalytics });
+
+  assert.equal(legacy.confidence_factors.history_length, current.confidence_factors.history_length);
+  assert.equal(legacy.confidence_factors.media_history_length, current.confidence_factors.media_history_length);
+  assert.equal(legacy.confidence_score, current.confidence_score);
+  assert.equal(legacy.data_coverage, current.data_coverage);
+});
+
 test('unavailable profile and media provenance cannot satisfy the short-history gate', () => {
   const fixture = structuredClone(GOLDEN_FIXTURES.fewPosts);
   fixture.profileSnapshots = [

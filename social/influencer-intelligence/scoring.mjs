@@ -178,6 +178,16 @@ function unavailableComponent(name, weight, reasonCode, inputs = {}) {
   };
 }
 
+function normalizeSignalProviders(signal, name) {
+  const providers = signal.providers ?? [];
+  if (!Array.isArray(providers) || providers.length > 16 || providers.some((provider) => (
+    typeof provider !== 'string' || !/^[a-z0-9][a-z0-9._:-]{0,79}$/.test(provider)
+  ))) {
+    fail('INVALID_SIGNAL_PROVIDERS', `${name} signal providers are invalid`);
+  }
+  return unique(providers);
+}
+
 function derivedComponent(name, weight, score, confidence, refs, code, inputs, limitations = []) {
   return {
     component_name: name,
@@ -199,6 +209,7 @@ function derivedComponent(name, weight, score, confidence, refs, code, inputs, l
 function normalizeStructuredSignal(name, signal, weight) {
   if (signal === undefined || signal === null) return unavailableComponent(name, weight, 'structured_signal_unavailable');
   assertRecord(signal, `${name} signal`);
+  const providers = normalizeSignalProviders(signal, name);
   const evidenceState = signal.evidence_state || signal.evidenceState;
   if (!['observed', 'derived', 'inferred', 'unavailable'].includes(evidenceState)) {
     fail('INVALID_SIGNAL_STATE', `${name} signal evidence state is invalid`);
@@ -211,7 +222,10 @@ function normalizeStructuredSignal(name, signal, weight) {
   }
   if (evidenceState === 'unavailable') {
     if (score !== null || confidence !== 0) fail('UNAVAILABLE_SIGNAL_HAS_VALUE', `${name} unavailable signal must be value-free`);
-    return unavailableComponent(name, weight, 'structured_signal_unavailable', { sample_size: signal.sample_size ?? null });
+    return {
+      ...unavailableComponent(name, weight, 'structured_signal_unavailable', { sample_size: signal.sample_size ?? null }),
+      providers,
+    };
   }
   if (score === null || refs.length === 0) fail('AVAILABLE_SIGNAL_EVIDENCE_REQUIRED', `${name} signal requires score and evidence refs`);
   const modelVersion = signal.model_version || signal.modelVersion || null;
@@ -224,6 +238,7 @@ function normalizeStructuredSignal(name, signal, weight) {
     contribution: null,
     evidence_state: evidenceState,
     confidence: round(confidence, 6),
+    providers,
     evidence_refs: unique(refs).slice(0, 32),
     ...(modelVersion ? { model_version: boundedString(modelVersion, `${name}.model_version`) } : {}),
     explanation: {
@@ -362,7 +377,7 @@ function normalizeAnalytics(analytics) {
   const providers = unique(Array.isArray(analytics.providers) ? analytics.providers : []);
   const provenance = Array.isArray(analytics.provenance) ? analytics.provenance : [];
   const history = analytics.history === undefined || analytics.history === null
-    ? null
+    ? legacyHistorySummary(analytics)
     : (() => {
       assertRecord(analytics.history, 'analytics.history');
       return {
@@ -373,6 +388,43 @@ function normalizeAnalytics(analytics) {
       };
     })();
   return { ...analytics, creatorKey, calculatedAt, evidenceState, coverageRatio, providers, provenance, history };
+}
+
+function legacyCount(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 100000 ? value : 0;
+}
+
+function summaryCount(record, path) {
+  const value = get(record, `${path}.count`);
+  return legacyCount(value);
+}
+
+function legacyHistorySummary(analytics) {
+  const profileMetricObservationCount = Math.max(
+    summaryCount(analytics, 'profileGrowth.followers.summary'),
+    summaryCount(analytics, 'profileGrowth.following'),
+    summaryCount(analytics, 'profileGrowth.mediaCount'),
+  );
+  const metricCounts = [
+    summaryCount(analytics, 'likes'),
+    summaryCount(analytics, 'comments'),
+    summaryCount(analytics, 'videoPerformance.likes'),
+    summaryCount(analytics, 'videoPerformance.comments'),
+    summaryCount(analytics, 'videoPerformance.views'),
+    summaryCount(analytics, 'videoPerformance.reach'),
+  ];
+  const availableMediaMetricCount = Math.max(...metricCounts, 0);
+  const publicationCount = legacyCount(analytics.postingCadence?.publicationCount);
+  const mediaMetricObservationCount = publicationCount > 0
+    ? Math.min(availableMediaMetricCount, publicationCount)
+    : availableMediaMetricCount;
+  return {
+    profileSnapshotCount: profileMetricObservationCount,
+    profileMetricObservationCount,
+    mediaSnapshotCount: Math.max(publicationCount, mediaMetricObservationCount),
+    mediaMetricObservationCount,
+    source: 'legacy_analytics_summary_fallback',
+  };
 }
 
 function freshnessFactor(analytics, calculatedAt) {
@@ -464,6 +516,7 @@ function inputFingerprint(analytics, components, providers) {
       effective_weight: component.effective_weight || null,
       contribution: component.contribution ?? null,
       explanation: component.explanation,
+      providers: component.providers || [],
       evidence_refs: component.evidence_refs,
     })),
   });
