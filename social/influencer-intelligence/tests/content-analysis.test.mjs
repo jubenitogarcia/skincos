@@ -109,6 +109,30 @@ test('semantic output rejects free-form or unsupported fields', async () => {
   );
 });
 
+test('semantic output rejects non-array evidence references instead of silently degrading', async () => {
+  const input = fixture('recentSample');
+  input.semantic_analyzer = {
+    async analyze() {
+      return {
+        schema_version: CONTENT_SEMANTIC_SCHEMA_VERSION,
+        model_version: 'content-semantic-model-v1',
+        confidence: 0.8,
+        items: [{
+          content_key: 'media:content-001',
+          confidence: 0.8,
+          topics: ['skincare'],
+          evidence_refs: 'not-an-array',
+        }],
+      };
+    },
+  };
+
+  await assert.rejects(
+    analyzeContentSample(input),
+    (error) => error instanceof ContentAnalysisError && error.code === 'SEMANTIC.ITEMS[0].EVIDENCE_REFS_INVALID',
+  );
+});
+
 test('analyzer transport failure does not invent semantic features', async () => {
   const input = fixture('recentSample');
   input.semantic_analyzer = { async analyze() { throw new Error('model unavailable'); } };

@@ -565,6 +565,12 @@ function normalizeSemanticEvidence(value, label) {
   }));
 }
 
+function normalizeReferenceArray(value, label, maximum) {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.length > maximum) fail(`${label.toUpperCase()}_INVALID`);
+  return value.map((ref, index) => safeSourceRef(ref, `${label}[${index}]`));
+}
+
 function normalizeSemanticItem(value, index, contentKeys, defaultRefs) {
   const label = `semantic.items[${index}]`;
   assertAllowedKeys(value, new Set([
@@ -577,9 +583,8 @@ function normalizeSemanticItem(value, index, contentKeys, defaultRefs) {
   const contentKey = safeKey(value.content_key, `${label}.content_key`, CONTENT_KEY_PATTERN);
   if (!contentKeys.has(contentKey)) fail('SEMANTIC_CONTENT_KEY_UNKNOWN');
   const confidence = boundedDecimal(value.confidence, `${label}.confidence`);
-  const evidenceRefs = value.evidence_refs === undefined
-    ? [...defaultRefs]
-    : value.evidence_refs.map((ref, refIndex) => safeSourceRef(ref, `${label}.evidence_refs[${refIndex}]`));
+  const explicitEvidenceRefs = normalizeReferenceArray(value.evidence_refs, `${label}.evidence_refs`, 8);
+  const evidenceRefs = explicitEvidenceRefs || [...defaultRefs];
   if (evidenceRefs.length === 0 || evidenceRefs.length > 8) fail('SEMANTIC_EVIDENCE_REFS_INVALID');
   const evidence = normalizeSemanticEvidence(value.evidence, `${label}.evidence`);
   const features = {};
@@ -615,9 +620,7 @@ function normalizeSemanticResult(value, contentItems, fallbackRefs) {
   const confidence = boundedDecimal(value.confidence, 'semantic.confidence');
   if (!Array.isArray(value.items) || value.items.length > contentItems.length) fail('SEMANTIC_ITEMS_INVALID');
   const contentKeys = new Set(contentItems.map(({ content_key: key }) => key));
-  const evidenceRefs = value.evidence_refs === undefined
-    ? [...fallbackRefs]
-    : value.evidence_refs.map((ref, index) => safeSourceRef(ref, `semantic.evidence_refs[${index}]`));
+  const evidenceRefs = normalizeReferenceArray(value.evidence_refs, 'semantic.evidence_refs', 16) || [...fallbackRefs];
   if (evidenceRefs.length === 0 || evidenceRefs.length > 16) fail('SEMANTIC_EVIDENCE_REFS_INVALID');
   const items = value.items.map((item, index) => normalizeSemanticItem(item, index, contentKeys, evidenceRefs));
   if (new Set(items.map(({ content_key: key }) => key)).size !== items.length) fail('SEMANTIC_CONTENT_KEY_DUPLICATE');
