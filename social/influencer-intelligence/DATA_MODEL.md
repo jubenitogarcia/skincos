@@ -21,7 +21,7 @@ The existing M1 names are retained to avoid a destructive rename:
 | media | `creator_media` | Stable media identity without raw provider ID or binary |
 | media snapshot | `creator_media_snapshot` | Append-only normalized media metrics |
 | comment sample | `creator_comment_sample` | Aggregate-only comment intelligence; no raw text |
-| analysis | `creator_analysis` | Append-only derived time-window artifact |
+| analysis | `creator_analysis` | Append-only derived time-window artifact; M10 content features live under `analysis_metrics.content_features` |
 | score | `creator_score` | Append-only deterministic score envelope |
 | score component | `creator_score_component` | Append-only explainable score component |
 | campaign | `campaign` | Versioned structured criteria, not a dispatch record |
@@ -53,6 +53,10 @@ provider contract still controls which providers may be used by the runtime.
 - Comment intelligence is aggregate-only (`topic_key`, sentiment/safety
   labels, counts, ratios, and bounded metrics). Indirect growth signals must be
   labeled `inferred`; they cannot be stated as proof of fake followers.
+- Content intelligence is feature-only: bounded topics, categories, entity
+  projections, format/safety signals, model metadata, and evidence references
+  may be persisted; raw captions, transcripts, frame binaries, media URLs, and
+  download paths are not persisted by M10.
 - Current operational rows (`creator_identity`, `creator_media`, `campaign`,
   and `collector_run`) may change state under a later controlled repository
   operation. Their historical children cannot be updated or deleted.

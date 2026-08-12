@@ -179,6 +179,16 @@ test('records M9 comments intelligence as source-complete without wiring runtime
   assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsRuntimeWired, false);
 });
 
+test('records M10 content analysis as source-complete without media/runtime wiring', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M10');
+  assert.match(milestone.status, /bounded feature projection/i);
+  assert.match(milestone.status, /runtime\/media adapter remains off/i);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.contentSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.contentRuntimeWired, false);
+  assert.equal(DATA_MODEL.resources.some(({ name }) => name === 'content_analysis_features'), true);
+  assert.equal(PRIVACY_CONTRACT.neverPersisted.includes('raw captions or transcripts'), true);
+});
+
 test('keeps this architecture milestone off and runtime-free', () => {
   assert.equal(FEATURE_ACCESS.defaultValue, false);
   assert.equal(FEATURE_ACCESS.initialMode, 'off');
