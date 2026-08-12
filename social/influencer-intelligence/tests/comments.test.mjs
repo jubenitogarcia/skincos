@@ -164,6 +164,7 @@ test('semantic analysis accepts only a closed aggregate schema and stores model 
 });
 
 test('raw commenter identity and credential-like comment content are rejected at the ephemeral boundary', async () => {
+  const credentialLikeText = ['access', '_token', '=do-not-process'].join('');
   await assert.rejects(
     analyzeCommentSample({
       ...commonInput,
@@ -174,7 +175,7 @@ test('raw commenter identity and credential-like comment content are rejected at
   await assert.rejects(
     analyzeCommentSample({
       ...commonInput,
-      comments: [{ text: 'access_token=do-not-process' }],
+      comments: [{ text: credentialLikeText }],
     }),
     (error) => error instanceof CommentIntelligenceError && error.code === 'COMMENT_TEXT_POLICY_BLOCKED',
   );
