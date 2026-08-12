@@ -36,6 +36,15 @@ export const HIGH_RISK_WORKFLOWS = Object.freeze([
   { path: ".github/workflows/ponto-production-slo.yml", targets: ["production"] },
 ]);
 
+// A workflow_run watchdog is bound to the exact coordinator that emitted its
+// event.  It must not treat a separately queued or active coordinator for the
+// same target as part of that emergency: doing so can turn a duplicate
+// cancellation into an interruption of the valid release owner.
+export const isWithinEmergencyCoordinatorScope = (coordinator, exactCoordinatorRunId = "") => {
+  const exact = String(exactCoordinatorRunId || "").trim();
+  return !exact || String(coordinator?.runId || "") === exact;
+};
+
 export const targetForStage = (stage) => stage === "staging" ? "staging" : "production";
 export const isBodylessResponseStatus = (status) => status === 202 || status === 204;
 export const isInventoryWorkflowState = (state) =>
@@ -260,18 +269,18 @@ if (invokedAsScript) {
         throw new Error(`non-terminal ${status} run inventory exceeds the governed discovery bound`);
       }
     }
-    const coordinatorCandidates = new Map(
-      [...coordinators.values()]
-        .filter(record => record.live)
-        .map(record => [record.runId, record.live]),
-    );
-    if (exactCoordinatorRunId && !coordinatorCandidates.has(exactCoordinatorRunId)) {
+    const coordinatorCandidates = new Map();
+    if (exactCoordinatorRunId) {
       coordinatorCandidates.set(
         exactCoordinatorRunId,
         await request(`/repos/${repository}/actions/runs/${exactCoordinatorRunId}`),
       );
+    } else {
+      for (const record of coordinators.values()) {
+        if (record.live) coordinatorCandidates.set(record.runId, record.live);
+      }
     }
-    if (!completedCoordinatorDiscoveryDone) {
+    if (!exactCoordinatorRunId && !completedCoordinatorDiscoveryDone) {
       const recentSince = new Date(Date.parse(startedAt) - 24 * 60 * 60 * 1_000).toISOString();
       let coordinatorInventoryExhausted = false;
       for (let page = 1; page <= 20; page += 1) {
@@ -296,7 +305,7 @@ if (invokedAsScript) {
         workflowId: workflow.id,
         target,
       });
-      if (!parsed) continue;
+      if (!parsed || !isWithinEmergencyCoordinatorScope(parsed, exactCoordinatorRunId)) continue;
       found.set(parsed.runId, coordinatorRun);
       if (completedWindowScans.has(parsed.runId)) continue;
       const from = Date.parse(String(coordinatorRun.created_at || ""));
@@ -594,7 +603,7 @@ if (invokedAsScript) {
         workflowId: workflow.id,
         target,
       });
-      if (!parsed) continue;
+      if (!parsed || !isWithinEmergencyCoordinatorScope(parsed, exactCoordinatorRunId)) continue;
       const record = coordinators.get(parsed.runId) || {
         ...parsed,
         firstObservedAt: new Date().toISOString(),
@@ -627,7 +636,7 @@ if (invokedAsScript) {
         workflowId: workflow.id,
         target,
       });
-      if (!parsed) {
+      if (!parsed || !isWithinEmergencyCoordinatorScope(parsed, exactCoordinatorRunId)) {
         invalidCoordinatorIds.add(coordinatorRunId);
         continue;
       }

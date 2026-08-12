@@ -1311,7 +1311,10 @@ jobs:
           run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/staging-journey.json")"
           gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "timekeeping-staging-journey-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/staging-slo"
       - name: Restore staging Ponto to maintenance after the journey
-        if: ${{ always() && inputs.stage == 'staging' && steps.release_identity.outcome == 'success' }}
+        # A failed or cancelled path is closed exclusively by the emergency
+        # broker/watchdog.  Do not dispatch the regular module-control writer
+        # unless the authenticated synthetic journey actually completed.
+        if: ${{ inputs.stage == 'staging' && steps.staging_journey.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
