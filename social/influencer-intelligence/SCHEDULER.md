@@ -34,16 +34,22 @@ timeout, and two total attempts. The workflow remains inactive until the
 service route, migration, flag, grant, lease, and staging evidence are
 independently proven.
 
-The service route is an internal mutation boundary for historical collection:
+The service route is an internal mutation boundary for historical collection.
+The runtime registration supplies a loopback binding, but it remains disabled
+and accepts only the Orb caller, private service token, fixed grant, and
+shadow contract:
 
 `POST /internal/influencer-intelligence/v1/snapshots`
 
 It accepts only the bounded snapshot operation contract and must enforce the
 server-side flag/grant, internal authentication, provider selection, timeout,
 lease, idempotency, and redacted structured audit. Orb does not receive or
-forward provider credentials.
+forward provider credentials. The workflow includes a deterministic
+creator/time-bucket idempotency key for each operation so a bounded retry does
+not create a second historical observation.
 
 ## Operational status
 
-This milestone adds source and tests only. It does not import, activate, apply
-the migration, expose the endpoint, or collect real creator data.
+The source workflow is still `active: false` and is not imported. Registration
+does not assign the grant, deploy Token Vault, enable the flag, or collect real
+creator data. See [`RUNTIME.md`](./RUNTIME.md) for installation and rollback.

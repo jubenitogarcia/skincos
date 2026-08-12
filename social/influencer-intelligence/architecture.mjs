@@ -1,10 +1,10 @@
 /**
- * Versioned, runtime-free architecture contract for Influencer Intelligence.
+ * Versioned architecture and release contract for Influencer Intelligence.
  *
- * This file describes boundaries and future interfaces only. It deliberately
- * does not register routes, providers, jobs, grants, or secrets. The separate
- * staging migration runner is an operational tool and is not a runtime
- * registration or activation path.
+ * Runtime registration is described as a separate, disabled operational
+ * surface. This manifest never opens a socket, calls a provider, reads a
+ * secret, or activates a workflow; it records the current source/runtime gate
+ * so release evidence cannot confuse registration with activation.
  */
 
 const deepFreeze = (value, seen = new Set()) => {
@@ -175,7 +175,7 @@ export const DATA_MODEL = deepFreeze({
       'migrations/20260812_influencer_intelligence_snapshot_fencing_v1.up.sql',
     ],
     dependsOn: 'migrations/20260810_influencer_intelligence_registry_v1.up.sql',
-    artifactStatus: 'source-controlled additive artifacts; not applied by this milestone',
+    artifactStatus: 'source-controlled additive artifacts; applied in staging only; production remains unapplied',
     appendOnlyRelations: [
       'collector_evidence',
       'creator_profile_snapshot',
@@ -246,7 +246,7 @@ export const SCORE_CONTRACT = deepFreeze({
 
 export const API_CONTRACT = deepFreeze({
   contractVersion: 'influencer-intelligence/api/v1',
-  exposure: 'internal authenticated service contract; not implemented or publicly mounted by the architecture PR',
+  exposure: 'internal authenticated service contract; registered on loopback only and disabled by default',
   authorization: {
     session: true,
     serverSideFlag: FEATURE_ACCESS.flag,
@@ -275,13 +275,49 @@ export const API_CONTRACT = deepFreeze({
       method: 'GET',
       path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/analysis',
       readOnly: true,
+      caller: 'MCP/internal read transport',
       purpose: 'Return a versioned analysis envelope for one creator.',
+    },
+    {
+      method: 'GET',
+      path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/dashboard',
+      readOnly: true,
+      caller: 'CRM signed upstream only',
+      purpose: 'Return an assembled read-only dashboard projection; the public CRM analysis path maps here.',
     },
     {
       method: 'GET',
       path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/coverage',
       readOnly: true,
       purpose: 'Return data availability and provenance coverage without provider payloads.',
+    },
+    {
+      method: 'GET',
+      path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/profile',
+      readOnly: true,
+      caller: 'MCP internal transport',
+      purpose: 'Return the latest persisted profile projection without contacting a provider.',
+    },
+    {
+      method: 'GET',
+      path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/snapshots',
+      readOnly: true,
+      caller: 'MCP internal transport',
+      purpose: 'Return bounded append-only profile history.',
+    },
+    {
+      method: 'GET',
+      path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/media',
+      readOnly: true,
+      caller: 'MCP internal transport',
+      purpose: 'Return bounded persisted media metrics without media binaries.',
+    },
+    {
+      method: 'GET',
+      path: '/internal/influencer-intelligence/v1/creators/{creatorKey}/score',
+      readOnly: true,
+      caller: 'MCP internal transport',
+      purpose: 'Return the latest persisted deterministic score and components.',
     },
     {
       method: 'POST',
@@ -344,21 +380,28 @@ export const RELEASE_CONTRACT = deepFreeze({
     orbWorkflowChanged: false,
   },
   currentSourceScope: {
+    internalServiceSourceAdded: true,
+    internalServiceRuntimeRegistered: true,
+    internalServiceRuntimeEnabled: false,
     schedulerSourceAdded: true,
     schedulerWorkflowImported: false,
     schedulerWorkflowActive: false,
     schedulerMigrationArtifactAdded: true,
     mcpSourceAdded: true,
-    mcpRuntimeRegistered: false,
+    mcpRuntimeRegistered: true,
+    mcpRuntimeEnabled: false,
     crmSourceAdded: true,
     crmRuntimeEnabled: false,
-    crmUpstreamConfigured: false,
+    crmUpstreamConfigured: true,
     crmFeatureFlagDefault: false,
+    orbRuntimeRegistered: true,
+    orbWorkflowImported: false,
+    orbWorkflowActive: false,
     analyticsTransportSourceAdded: true,
     analyticsTransportStagingDeployed: false,
     analyticsRuntimeProviderCalls: false,
     migrationRunnerSourceAdded: true,
-    migrationStagingApplied: false,
+    migrationStagingApplied: true,
     migrationRuntimeGrant: false,
     commentsSourceAdded: true,
     commentsMigrationArtifactAdded: true,
@@ -373,6 +416,20 @@ export const RELEASE_CONTRACT = deepFreeze({
      calibrationRuntimeWired: false,
      gapAnalysisSourceAdded: true,
      externalProviderIntegrated: false,
+  },
+  runtimeRegistration: {
+    version: 'influencer-intelligence/runtime-registration/v1',
+    serviceUnit: 'ops/runtime/units/influencer-intelligence.service',
+    mcpUnit: 'ops/runtime/units/influencer-intelligence-mcp.service',
+    installer: 'scripts/runtime/install-influencer-intelligence-runtime.sh',
+    registrationMarker: 'INFLUENCER_INTELLIGENCE_RUNTIME_REGISTERED=true',
+    defaultFlag: false,
+    unitsEnabledByInstaller: false,
+    listeners: ['127.0.0.1:8899', '127.0.0.1:8767'],
+    providerCalls: false,
+    instagramWrite: false,
+    orbWorkflowImported: false,
+    rollback: 'disable both units, restore the prior immutable release, and preserve the private env file; no migration rollback is required',
   },
 });
 
@@ -398,17 +455,18 @@ export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'M0', title: 'Normalized contracts', status: 'merged #1303', acceptance: ['pure versioned evidence, provenance, coverage, signal, and score envelopes'] },
   { id: 'M1', title: 'Creator registry and additive PostgreSQL artifact', status: 'merged #1304; staging-only governed runner source added; artifact unapplied pending terminal staging evidence', acceptance: ['minimal pseudonymous registry', 'additive/idempotent SQL', 'destination and grant gates before apply'] },
   { id: 'M2', title: 'Official-first provider router and bounded collectors', status: 'canonical router merged #1324 (supersedes #1305); transport gate source implemented, staging credential/deployment pending', acceptance: ['Meta first', 'controlled instagrapi fallback', 'fail-closed classification', 'no duplicate scraper'] },
-  { id: 'M3', title: 'Append-only snapshots, retention, and Orb job contract', status: 'data model #1322, snapshots #1331, and scheduler #1335 merged; artifacts/import/runtime pending', acceptance: ['new additive tables', 'immutable evidence lifecycle', 'bounded snapshot_creator and snapshot_creator_media operations', 'inactive dry-run/shadow scheduling', 'resume/recovery with idempotent service calls', 'no live workflow import'] },
+  { id: 'M3', title: 'Append-only snapshots, retention, and Orb job contract', status: 'data model #1322, snapshots #1331, scheduler #1335, and disabled service binding merged; workflow import remains pending', acceptance: ['new additive tables', 'immutable evidence lifecycle', 'bounded snapshot_creator and snapshot_creator_media operations', 'inactive dry-run/shadow scheduling', 'resume/recovery with idempotent service calls', 'no live workflow import'] },
   { id: 'M4', title: 'Robust analytics', status: 'merged #1333; synthetic source/tests only', acceptance: ['time windows', 'viral-outlier resistance', 'explicit unavailable coverage'] },
   { id: 'M5', title: 'Deterministic scores and confidence', status: 'merged #1334; synthetic source/tests only', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
-  { id: 'M6', title: 'Hardened read-only MCP', status: 'source adapter and protocol tests implemented; runtime registration pending', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
+  { id: 'M6', title: 'Hardened read-only MCP', status: 'source adapter, protocol tests, and disabled loopback runtime registration implemented', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
   { id: 'M7', title: 'Codex skill', status: 'versioned skill and contract tests implemented; MCP/runtime registration remains governed by later gates', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
-  { id: 'M8', title: 'CRM read-only surface', status: 'internal proxy, typed client, gated shadow dashboard, and synthetic UI tests implemented; upstream/runtime remains off', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
+  { id: 'M8', title: 'CRM read-only surface', status: 'internal proxy, signed upstream registration, typed client, gated shadow dashboard, and synthetic UI tests implemented; runtime remains off', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
   { id: 'M9', title: 'Comments intelligence', status: 'source implemented; aggregate-only analyzer, additive persistence metadata, and synthetic tests; runtime/provider wiring remains off', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
   { id: 'M10', title: 'Semantic content and Reels signals', status: 'source implemented; bounded feature projection and closed semantic interface; runtime/media adapter remains off', acceptance: ['approved media projection', 'no raw media archive by default', 'versioned inference'] },
   { id: 'M11', title: 'Campaign and brand fit', status: 'source implemented; deterministic engine, additive persistence metadata, read-only MCP projection, CRM query surface, and golden tests; compute/runtime remains off', acceptance: ['structured criteria', 'explainable deterministic base', 'inferred signals labeled', 'separate campaign-fit confidence and coverage', 'persisted fit read has no implicit computation'] },
   { id: 'M12', title: 'Synthetic validation and calibration', status: 'source implemented; deterministic synthetic report and focused tests; no live provider or runtime calls', acceptance: ['fixtures', 'outlier tests', 'coverage/confidence calibration', 'negative policy tests'] },
   { id: 'M13', title: 'Optional provider gap analysis', status: 'source implemented; source-level gap matrix/ADR; live coverage decision pending runtime evidence; no external provider integrated', acceptance: ['source-level gap report', 'cost/risk/privacy review', 'live coverage evidence before provider selection', 'new provider only after explicit configuration, allowlisting, and approval'] },
+  { id: 'runtime-registration', title: 'Internal runtime registration', status: 'service, MCP, signed CRM upstream, and inactive Orb source registered; flag/grant, Token Vault deployment, workflow import, and provider calls remain off', acceptance: ['loopback internal service binding', 'MCP delegates through service', 'CRM signature includes fixed grant', 'Orb workflow source carries private service auth', 'units install disabled', 'rollback and staging validation documented'] },
 ]);
 
 export const ARCHITECTURE_MANIFEST = deepFreeze({

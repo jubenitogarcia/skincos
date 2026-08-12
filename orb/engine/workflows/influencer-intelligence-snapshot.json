@@ -83,7 +83,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const rows = $input.all().map((item) => item.json || {}).slice(0, 25);\nconst creators = rows.map((row) => ({\n  creator_key: String(row.creator_key || '').trim(),\n  identity_key: String(row.identity_key || '').trim(),\n  canonical_handle: row.canonical_handle ? String(row.canonical_handle).trim() : null,\n  provider: String(row.provider || '').trim(),\n  operations: ['snapshot_creator', 'snapshot_creator_media'],\n  bucket_seconds: 3600,\n  media_limit: 20\n})).filter((creator) => creator.creator_key && creator.identity_key && ['meta-graph', 'instagrapi'].includes(creator.provider));\nreturn [{ json: {\n  contract_version: 'influencer-intelligence/scheduler/v1',\n  workflow_version: 'influencer-intelligence-snapshot-workflow/v1',\n  mode: 'shadow',\n  max_creators: 25,\n  max_concurrency: 1,\n  timeout_ms: 30000,\n  retry_policy: {\n    max_attempts: 2,\n    same_idempotency_key: true,\n    retryable_classes: ['timeout', 'rate_limited', 'upstream_5xx', 'network_transient']\n  },\n  service_path: '/internal/influencer-intelligence/v1/snapshots',\n  creators\n} }];"
+        "jsCode": "const rows = $input.all().map((item) => item.json || {}).slice(0, 25);\nconst requestedAt = new Date().toISOString();\nconst bucket = new Date(Math.floor(Date.parse(requestedAt) / 3600000) * 3600000).toISOString();\nconst idempotency = (operation, creatorKey) => `ii:${operation.replace(/_/g, '-')}:${creatorKey}:${bucket}`;\nconst creators = rows.map((row) => {\n  const creatorKey = String(row.creator_key || '').trim();\n  return {\n    creator_key: creatorKey,\n    identity_key: String(row.identity_key || '').trim(),\n    canonical_handle: row.canonical_handle ? String(row.canonical_handle).trim() : null,\n    provider: String(row.provider || '').trim(),\n    operations: ['snapshot_creator', 'snapshot_creator_media'],\n    bucket_seconds: 3600,\n    media_limit: 20,\n    idempotency_keys: {\n      snapshot_creator: idempotency('snapshot_creator', creatorKey),\n      snapshot_creator_media: idempotency('snapshot_creator_media', creatorKey)\n    }\n  };\n}).filter((creator) => creator.creator_key && creator.identity_key && ['meta-graph', 'instagrapi'].includes(creator.provider));\nreturn [{ json: {\n  contract_version: 'influencer-intelligence/scheduler/v1',\n  workflow_version: 'influencer-intelligence-snapshot-workflow/v1',\n  mode: 'shadow',\n  requested_at: requestedAt,\n  max_creators: 25,\n  max_concurrency: 1,\n  timeout_ms: 30000,\n  retry_policy: {\n    max_attempts: 2,\n    same_idempotency_key: true,\n    retryable_classes: ['timeout', 'rate_limited', 'upstream_5xx', 'network_transient']\n  },\n  service_path: '/internal/influencer-intelligence/v1/snapshots',\n  creators\n} }];"
       }
     },
     {
@@ -100,6 +100,23 @@
         "url": "={{$env.INFLUENCER_INTELLIGENCE_SERVICE_URL.replace(/\\/$/, '')}}/internal/influencer-intelligence/v1/snapshots",
         "method": "POST",
         "jsonParameters": true,
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-influencer-intelligence-service-token",
+              "value": "={{String($env.INFLUENCER_INTELLIGENCE_SERVICE_TOKEN || '').trim()}}"
+            },
+            {
+              "name": "x-influencer-intelligence-grant",
+              "value": "module.influencer-intelligence.access"
+            },
+            {
+              "name": "x-influencer-intelligence-caller",
+              "value": "orb-scheduler"
+            }
+          ]
+        },
         "options": {
           "timeout": 30000
         },
@@ -263,6 +280,9 @@
     "max_attempts": 2,
     "timeout_ms": 30000,
     "provider_transport": false,
+    "runtime_registered": true,
+    "runtime_activation": "flag_and_grant_required",
+    "service_auth": "private environment token plus fixed module grant",
     "instagram_write": false,
     "publish_allowed": false,
     "no_public_webhook": true,

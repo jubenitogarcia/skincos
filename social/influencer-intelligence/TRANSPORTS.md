@@ -1,9 +1,11 @@
 # Read-only provider transports
 
-Status: source-complete for the analytics transport gate; staging verification
-and a scoped credential are still required before any live collection. The
-Influencer Intelligence flag, CRM grant, MCP registration, Orb workflow and
-PostgreSQL migrations remain off/unapplied.
+Status: source-complete for the analytics transport gate and connected to the
+registered internal runtime by lazy composition. Staging Worker deployment, a
+scoped credential, a least-privilege runtime database role and synthetic
+shadow evidence are still required before any live collection. Service/MCP
+units are registered but disabled; the CRM grant is not assigned, the Orb
+workflow is not imported, and production remains off.
 
 ## Request path
 
@@ -76,8 +78,9 @@ unclassified failures remain terminal.
 4. Check health/contract, exercise synthetic invalid-scope and bounded fixture
    requests, and perform at most one explicitly approved read-only Meta smoke
    if a scoped staging credential already exists.
-5. Keep `INFLUENCER_INTELLIGENCE_ENABLED=false`, the grant absent, and all
-   scheduling/CRM/MCP registrations inactive.
+5. Keep `INFLUENCER_INTELLIGENCE_ENABLED=false`, the grant absent, and the
+   service/MCP units disabled; keep scheduling inactive and do not import the
+   Orb workflow.
 
 Rollback is redeployment of the previously recorded staging Worker version and
 removal/rotation of only the staging analytics secret if required. Production

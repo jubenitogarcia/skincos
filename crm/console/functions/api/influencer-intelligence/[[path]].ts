@@ -8,6 +8,7 @@ const MAX_RESPONSE_BYTES = 512 * 1024
 const MAX_CONCURRENT_REQUESTS = 4
 const MAX_REQUESTS_PER_MINUTE = 60
 const REQUEST_TIMEOUT_MS = 12_000
+const INFLUENCER_INTELLIGENCE_GRANT = 'module.influencer-intelligence.access'
 const SAFE_CREATOR_KEY = /^[A-Za-z0-9._:-]{1,128}$/
 const SAFE_HANDLE = /^@?[A-Za-z0-9._]{1,30}$/
 const SENSITIVE_KEY = /(?:access[_-]?token|refresh[_-]?token|authorization|cookie|credential|secret|password|api[_-]?key|session|email|phone|telephone|cpf|raw|provider.?account|comment.?text|caption|media.?url|image.?url|video.?url|binary|sql|shell|command|prompt|completion)/i
@@ -61,6 +62,12 @@ function normalizedServicePath(requestPath: string): string | null {
   return path.slice('/v1'.length)
 }
 
+function isCreatorProjectionRoute(path: string, projection: 'analysis' | 'coverage'): boolean {
+  const match = path.match(/^\/creators\/([^/]{1,256})\/(analysis|coverage)$/)
+  if (!match || match[2] !== projection) return false
+  try { return SAFE_CREATOR_KEY.test(decodeURIComponent(match[1])) } catch { return false }
+}
+
 function isAllowedRoute(requestPath: string, method: string): boolean {
   const path = normalizedServicePath(requestPath)
   const verb = String(method || 'GET').toUpperCase()
@@ -68,8 +75,8 @@ function isAllowedRoute(requestPath: string, method: string): boolean {
   if (path === '/creators') return verb === 'GET' || verb === 'POST'
   if (path === '/compare') return verb === 'POST'
   if (path === '/campaign-fit') return verb === 'POST'
-  if (/^\/creators\/[A-Za-z0-9._:-]{1,128}\/analysis$/.test(path)) return verb === 'GET'
-  if (/^\/creators\/[A-Za-z0-9._:-]{1,128}\/coverage$/.test(path)) return verb === 'GET'
+  if (isCreatorProjectionRoute(path, 'analysis')) return verb === 'GET'
+  if (isCreatorProjectionRoute(path, 'coverage')) return verb === 'GET'
   return false
 }
 
@@ -163,6 +170,7 @@ function upstreamHeaders(request: Request, requestId: string): Headers {
   headers.set('cache-control', 'no-store')
   headers.set('x-request-id', requestId)
   headers.set('x-influencer-audit', 'required')
+  headers.set('x-crm-grant', INFLUENCER_INTELLIGENCE_GRANT)
   return headers
 }
 
@@ -199,7 +207,8 @@ function targetUrl(targetOrigin: string, requestPath: string, search: string): s
   if (!path) return null
   const url = new URL(targetOrigin)
   const base = url.pathname.replace(/\/$/, '')
-  url.pathname = `${base}${SERVICE_PREFIX}${path === '/' ? '' : path}`
+  const internalPath = path.replace(/\/analysis$/, '/dashboard')
+  url.pathname = `${base}${SERVICE_PREFIX}${internalPath === '/' ? '' : internalPath}`
   url.search = search
   return url.toString()
 }
@@ -240,12 +249,12 @@ export async function onRequest(context: { request: Request; env?: Record<string
   if (!outgoingUrl || !servicePath) return json(404, { ok: false, error: 'NOT_FOUND' }, requestId)
   const actorScope = await digestScope(String(userOrResponse.id || 'unknown'))
   const timestamp = String(Date.now())
-  const signature = await signActor(actorKey, `${timestamp}.${actorScope}.${method}.${new URL(outgoingUrl).pathname}${incoming.search}`)
+  const signature = await signActor(actorKey, `2.${timestamp}.${actorScope}.${method}.${new URL(outgoingUrl).pathname}${incoming.search}.${INFLUENCER_INTELLIGENCE_GRANT}`)
   const headers = upstreamHeaders(request, requestId)
   headers.set('x-crm-actor-scope', actorScope)
   headers.set('x-crm-actor-role', String(userOrResponse.role || ''))
   headers.set('x-crm-ts', timestamp)
-  headers.set('x-crm-signature-version', '1')
+  headers.set('x-crm-signature-version', '2')
   headers.set('x-crm-signature', signature)
 
   activeRequests += 1

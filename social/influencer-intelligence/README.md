@@ -3,11 +3,12 @@
 Status: architecture v1 defined; M2 provider boundary, M4 deterministic
 analytics, M5 deterministic scoring, M6 read-only MCP adapter, M7 Codex skill,
 M8 CRM contract/dashboard source, M9 comments intelligence, M10 bounded content
-analysis, M11 Campaign Fit, and M12 synthetic calibration are implemented in
-source control. The governed staging migration runner is now source-complete;
-the data model remains an additive, unapplied artifact until staging evidence
-is captured. All Influencer Intelligence runtime/upstream registrations remain
-off.
+analysis, M11 Campaign Fit, M12 synthetic calibration, and the disabled runtime
+registration are implemented in source control. The governed staging migration
+runner and additive data model are applied in staging only; production remains
+unapplied. The internal service, MCP, CRM upstream and Orb source are
+registered but remain off by default and require the server flag plus the
+explicit grant.
 The domain remains
 experimental, not exposed, and off by default.
 
@@ -19,21 +20,20 @@ surface, a publication surface, or a new scraping project.
 
 The canonical architecture decision is documented in
 [`docs/decisions/adr-influencer-intelligence-architecture.md`](../../docs/decisions/adr-influencer-intelligence-architecture.md).
-The versioned, runtime-free contract companion is
+The versioned contract companion is
 [`architecture.mjs`](./architecture.mjs). Together they define the provider
 boundary, append-only data model, provenance and score envelopes, internal API,
 read-only MCP tools, release/flag model, privacy rules, observability, and the
 M0--M13 implementation gates.
 
-The architecture and M0-M7 source milestones were source-only and did not add
-provider transports, live MCP registration, Orb workflow imports, or
-activation. The current transport gate adds the separate Token Vault analytics
-adapter and official Meta Graph read projection described in
+The architecture and M0-M7 source milestones were source-only. The current
+transport gate adds the separate Token Vault analytics adapter and official
+Meta Graph read projection described in
 [`TRANSPORTS.md`](./TRANSPORTS.md); it still does not add live registrations or
-activation. M8 adds only the bounded, authenticated CRM proxy/client/dashboard
-boundary; the upstream target is not configured,
-`INFLUENCER_INTELLIGENCE_ENABLED` remains `false`, and the domain stays off
-until later milestones prove their own gates.
+activation. M8 adds the bounded, authenticated CRM proxy/client/dashboard
+boundary. The runtime-registration gate adds loopback-only service/MCP
+bindings and a signed CRM upstream contract, but does not enable units, assign
+grants, import the Orb workflow, or call a provider.
 
 ## M0 decision
 
@@ -184,10 +184,11 @@ remains off.
 The operation tests use only injected fixtures and cover first collection,
 replay, metric changes, fallback/partial coverage, timeout, nonexistent and
 private profiles, unavailable media metrics, provenance classification and
-credential rejection. PostgreSQL migration application, internal service route
-mounting, live MCP/CRM registration, Orb import and real bulk collection remain
-later operational gates. The Token Vault analytics transport itself is
-source-complete but must pass the staging gate in [`TRANSPORTS.md`](./TRANSPORTS.md).
+credential rejection. The internal service binding, MCP binding and signed CRM
+upstream are now registered by the separate runtime gate, but units remain
+disabled, the Orb workflow is not imported, and real bulk collection remains
+blocked. The Token Vault analytics transport itself is source-complete but
+must pass the staging gate in [`TRANSPORTS.md`](./TRANSPORTS.md).
 
 ## Concrete target architecture
 
@@ -228,13 +229,24 @@ The adapter requires authentication, the server-side domain grant, opaque
 actor scope, closed input schemas, bounded windows/pages/comparisons, timeout,
 abort propagation, concurrency control, rate limiting, sanitized output, and
 mandatory audit. It returns explicit classification, freshness, provenance,
-confidence, coverage, limitations, and unavailable/null states. It never calls
-Meta, instagrapi, Token Vault, PostgreSQL, SQL, shell, Orb, or a scoring engine;
-it cannot mutate Instagram, workflows, or persisted scores. The source and
-protocol tests are present, while runtime registration remains pending.
+confidence, coverage, limitations, and unavailable/null states. The domain
+adapter never calls Meta, instagrapi, Token Vault, PostgreSQL, SQL, shell, Orb,
+or a scoring engine; the registered MCP transport delegates to the internal
+service and cannot mutate Instagram, workflows, or persisted scores. The
+transport remains loopback-only, bearer/grant gated, and disabled by default.
 
 See [`MCP_READONLY.md`](./MCP_READONLY.md) for the internal service contract,
 limits, sanitization boundary, and rollback posture.
+
+## Runtime registration gate
+
+[`RUNTIME.md`](./RUNTIME.md) documents the current operational binding. It
+registers `runtime/server.mjs` and `runtime/mcp-server.mjs` as strict systemd
+unit templates, adds CRM signature version 2 with the fixed grant, and carries
+private service auth in the inactive Orb source. The installer validates and
+installs the units without enabling them; the flag, grants, Token Vault
+deployment, runtime database role, workflow import, and provider calls remain
+separate gates.
 
 ## M7 decision: Codex skill
 
@@ -370,10 +382,10 @@ production configuration.
 | M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; registry artifact only, not applied |
 | Architecture | Canonical architecture v1 | Merged in #1310; runtime-free manifest |
 | M2 | Official-first router and controlled collectors | Canonical router #1324 (supersedes #1305); injected synthetic transports only |
-| M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, and inactive Orb scheduler #1335; artifacts/import/runtime pending |
+| M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, inactive Orb scheduler #1335, and disabled service binding; workflow import pending |
 | M4 | Robust analytics and outlier-resistant metrics | Merged in #1333; pure deterministic engine, golden fixtures, and formula documentation |
 | M5 | Deterministic score, confidence, coverage, and provenance | Merged in #1334; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
-| M6 | Authenticated, sanitized, rate-limited read-only MCP | Source adapter and protocol tests implemented; runtime registration pending |
+| M6 | Authenticated, sanitized, rate-limited read-only MCP | Source adapter, protocol tests, and disabled loopback transport registration |
 | M7 | `skincos-influencer-intelligence` Codex skill | Versioned skill, UI metadata and contract tests implemented; runtime/user access remains governed |
 | M8 | Read-only CRM contracts and dashboard | Source implemented; gated shadow UI, upstream/runtime off |
 | M9 | Minimized comments intelligence | Source implemented; additive quality/sampling migration and synthetic tests; runtime/provider wiring remains off |
@@ -381,6 +393,7 @@ production configuration.
 | M11 | Campaign and brand fit | Source implemented; deterministic engine, additive fit metadata, persisted MCP read, CRM query surface, and golden tests; compute/runtime remains off |
 | M12 | Synthetic validation and calibration | Source implemented; versioned golden dataset, deterministic report, outlier/missing-data/confidence/campaign-fit guardrails, and focused tests; no live provider calls |
 | M13 | Optional provider gap analysis | Source implemented; source-level gap matrix/ADR; live coverage decision pending runtime evidence; no external provider integrated |
+| Runtime registration | Internal service, MCP, CRM upstream and Orb binding | Registered in source with strict units and private auth; default off, no grants, no workflow import, no provider calls |
 
 ## M12 decision: synthetic calibration before commercial use
 
