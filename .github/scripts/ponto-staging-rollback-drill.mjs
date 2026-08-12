@@ -382,7 +382,7 @@ export async function runStagingRollbackDrill(config, runtime) {
           ...await runtime.setModuleState("active", {
             // The drill's signed coordinator lease covers this direct mutation;
             // incumbent source evidence remains independently attested per surface.
-            releaseSha: config.releaseSha,
+            releaseSha: incumbentProvenance.timekeeping.sourceSha,
             versions: versionSet(config.ids, "incumbent"),
           }, "incumbent-active"),
         };
@@ -414,8 +414,8 @@ export async function runStagingRollbackDrill(config, runtime) {
           label: "incumbent",
           pages: rollbackPages,
           expected: {
-            releaseSha: config.releaseSha,
-            sourceSha: null,
+            releaseSha: incumbentProvenance.timekeeping.sourceSha,
+            sourceSha: incumbentProvenance.timekeeping.sourceSha,
             pagesActiveDeploymentId: rollbackPages.activeDeploymentId,
             timekeepingVersionId: config.ids.timekeeping.incumbent,
             identityVersionId: config.ids.identityWorkforce.incumbent,
