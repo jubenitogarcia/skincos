@@ -103,6 +103,17 @@
       ],
       "sharedInputs": true
     },
+    "influencer-intelligence": {
+      "patterns": [
+        "social/influencer-intelligence/**",
+        "scripts/staging/influencer-intelligence-migration.mjs",
+        "scripts/runtime/global-coordination-*.sh",
+        "scripts/runtime/run-influencer-intelligence-staging-migration.sh",
+        "crm/api/server/atendimento/runtimeEnv.js",
+        "crm/api/server/harmonia/store/pg.js"
+      ],
+      "sharedInputs": true
+    },
     "finance": {
       "patterns": ["finance/**", ".github/workflows/deploy-finance*.yml", ".github/workflows/finance-staging-*.yml", ".github/scripts/finance-*.mjs", ".github/scripts/validate-finance-canary-policy.mjs"],
       "sharedInputs": true

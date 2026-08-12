@@ -4,8 +4,9 @@ Status: architecture v1 defined; M2 provider boundary, M4 deterministic
 analytics, M5 deterministic scoring, M6 read-only MCP adapter, M7 Codex skill,
 M8 CRM contract/dashboard source, M9 comments intelligence, M10 bounded content
 analysis, M11 Campaign Fit, and M12 synthetic calibration are implemented in
-source control. Data model v1 plus scoring metadata remain additive, unapplied
-artifacts, and all Influencer Intelligence runtime/upstream registrations remain
+source control. The governed staging migration runner is now source-complete;
+the data model remains an additive, unapplied artifact until staging evidence
+is captured. All Influencer Intelligence runtime/upstream registrations remain
 off.
 The domain remains
 experimental, not exposed, and off by default.
@@ -68,10 +69,11 @@ The migration is idempotent and additive. It creates the domain schema, a
 schema-migration ledger, creator registry, provider registry, and narrow
 indexes. It has no seed rows, no clear credentials, no direct contact fields,
 no public grants, and no destructive rollback SQL. M1 does not apply the
-migration to local, staging, or production PostgreSQL: the future runner must
-first prove destination identity, role custody, checkpoint, lock/statement
-timeouts, scoped grants, and post-apply verification. Until that runner exists,
-the artifact is the source-controlled schema proposal only.
+migration to local, staging, or production PostgreSQL until the staging-only
+runner first proves destination identity, role custody, private checkpoint,
+lock/statement timeouts, scoped grants, and post-apply verification. The
+artifact remains the source-controlled schema proposal until that terminal
+staging evidence exists.
 
 ## M2 decision: official-first provider router
 
@@ -127,11 +129,17 @@ slugs are open in persistence for future adapters, while the current runtime
 allowlist remains official-first `meta-graph` with controlled `instagrapi`
 fallback.
 
-These migrations are not applied to local, staging, or production through an
-operational runner; they are validated as source-controlled artifacts and
-through synthetic repository tests. No UI, feature wiring, runtime, CRM, MCP,
-systemd, or external provider call is included; the Orb source added by M3 is
-inactive orchestration only.
+The staging-only operational runner is
+[`scripts/staging/influencer-intelligence-migration.mjs`](../../scripts/staging/influencer-intelligence-migration.mjs),
+with its admission and rollback contract in
+[`docs/runbooks/influencer-intelligence-staging-migrations.md`](../../docs/runbooks/influencer-intelligence-staging-migrations.md).
+It proves database/session identity, role custody, minimum DDL privileges,
+private checkpoint, advisory lock, session timeouts, source checksums,
+append-only post-validation and absence of runtime grants before committing.
+The artifact remains unapplied until a terminal staging run supplies that
+evidence. No UI, feature wiring, runtime, CRM, MCP, systemd, or external
+provider call is included; the Orb source added by M3 is inactive
+orchestration only.
 
 ## M4 decision: deterministic analytics
 
