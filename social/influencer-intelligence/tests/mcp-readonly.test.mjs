@@ -292,6 +292,26 @@ test('enforces concurrency without queueing unbounded work', async () => {
   assert.equal((await first).error, undefined);
 });
 
+test('keeps generated request identity aligned between the service envelope and audit event', async () => {
+  const { gateway, audit } = createHarness();
+  const response = await gateway.handleRpc({
+    rpc: { jsonrpc: '2.0', method: 'tools/call', params: { name: 'get_creator_profile', arguments: { creator_key: 'creator-1' } } },
+    context: AUTH,
+  });
+
+  const requestId = response.result.structuredContent.request_id;
+  assert.match(requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].request_id, requestId);
+});
+
+test('does not allow callers to raise the bounded concurrency ceiling', () => {
+  assert.throws(
+    () => createHarness({ maxConcurrentRequests: MCP_READONLY_LIMITS.maxConcurrentRequests + 1 }),
+    /maxConcurrentRequests is invalid/,
+  );
+});
+
 test('audit failure fails closed instead of returning a successful result', async () => {
   const gateway = createInfluencerIntelligenceMcpGateway({ readService: fixtureService(), audit: async () => { throw new Error('disk unavailable'); } });
   const response = await call(gateway, 'get_creator_profile', { creator_key: 'creator-1' });

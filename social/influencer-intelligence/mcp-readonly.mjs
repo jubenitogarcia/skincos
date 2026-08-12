@@ -516,7 +516,10 @@ export function createInfluencerIntelligenceMcpGateway({
 } = {}) {
   requireReadService(readService);
   assertCondition(typeof audit === 'function', 'INVALID_INPUT', 'audit function is required');
-  assertCondition(Number.isInteger(maxConcurrentRequests) && maxConcurrentRequests > 0, 'INVALID_INPUT', 'maxConcurrentRequests is invalid');
+  assertCondition(Number.isInteger(maxConcurrentRequests)
+    && maxConcurrentRequests > 0
+    && maxConcurrentRequests <= MCP_READONLY_LIMITS.maxConcurrentRequests,
+  'INVALID_INPUT', 'maxConcurrentRequests is invalid');
   assertCondition(Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= MCP_READONLY_LIMITS.timeoutMs, 'INVALID_INPUT', 'timeoutMs is invalid');
   let concurrent = 0;
 
@@ -629,7 +632,7 @@ export function createInfluencerIntelligenceMcpGateway({
     }
 
     try {
-      await recordAudit({ requestId: id, tool: toolName, ok: outcomeCode === null, code: outcomeCode, context: normalizedContext, startedAt });
+      await recordAudit({ requestId, tool: toolName, ok: outcomeCode === null, code: outcomeCode, context: normalizedContext, startedAt });
     } catch (error) {
       return rpcError(id, errorCode(error));
     }
