@@ -64,6 +64,8 @@ test("direct Ponto recovery jobs use remote custody at every governed boundary",
 
 test("Ponto release custody pins the active coordination key at every release boundary", () => {
   const directCustodyWorkflows = [
+    ".github/workflows/ponto-emergency-close.yml",
+    ".github/workflows/ponto-emergency-latch-reset.yml",
     ".github/workflows/ponto-progressive-release.yml",
     ".github/workflows/ponto-release-watchdog.yml",
     ".github/workflows/ponto-staging-recovery-rollback.yml",
@@ -77,6 +79,7 @@ test("Ponto release custody pins the active coordination key at every release bo
     ".github/workflows/ponto-production-baseline.yml",
     ".github/workflows/ponto-production-slo.yml",
     ".github/workflows/ponto-staging-rollback-drill.yml",
+    ".github/workflows/ponto-waf-security.yml",
     ".github/workflows/timekeeping-staging-journey.yml",
   ];
   const activeSecret = /^\s{10}shared_secret: \$\{\{ secrets\.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY \}\}$/gm;
