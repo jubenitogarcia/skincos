@@ -35,6 +35,13 @@
         "route": "/?module=users",
         "source": "registry-exception",
         "reason": "registry surface has a validated local preview but is absent from localLaunchCatalog"
+      },
+      {
+        "id": "clinical-approvals",
+        "label": "Aprovações clínicas",
+        "route": "/?module=clinical-approvals",
+        "source": "local-launch-catalog",
+        "reason": "disabled online but still defined by the local catalog and registry"
       }
     ]
   },
