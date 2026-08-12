@@ -17,8 +17,8 @@ import {
   normalizeProviderId,
 } from './contracts.mjs';
 
-export const MCP_READONLY_CONTRACT_VERSION = 'influencer-intelligence/mcp/v1';
-export const MCP_READONLY_SERVER_VERSION = 'influencer-intelligence-mcp/v1';
+export const MCP_READONLY_CONTRACT_VERSION = 'influencer-intelligence/mcp/v1.1';
+export const MCP_READONLY_SERVER_VERSION = 'influencer-intelligence-mcp/v1.1';
 
 export const MCP_READONLY_LIMITS = Object.freeze({
   maxRequestBytes: 64 * 1024,
@@ -89,6 +89,7 @@ const STORE_METHODS = Object.freeze({
   get_creator_media: 'getCreatorMedia',
   get_creator_analytics: 'getCreatorAnalytics',
   get_creator_score: 'getCreatorScore',
+  get_campaign_fit: 'getCampaignFit',
   compare_creators: 'compareCreators',
 });
 
@@ -177,6 +178,7 @@ function normalizeInput(toolName, input = {}) {
     get_creator_media: new Set(['creator_key', 'window', 'page', 'page_size']),
     get_creator_analytics: new Set(['creator_key', 'window']),
     get_creator_score: new Set(['creator_key']),
+    get_campaign_fit: new Set(['campaign_key', 'campaign_version', 'creator_keys', 'page', 'page_size']),
     compare_creators: new Set(['creator_keys', 'window']),
   }[toolName];
   assertCondition(allowed, 'INVALID_INPUT', 'tool is not registered');
@@ -200,6 +202,21 @@ function normalizeInput(toolName, input = {}) {
   if (toolName === 'compare_creators') {
     const window = normalizeWindow(input.window);
     return { creator_keys: normalizeCreatorKeys(input.creator_keys), ...(window ? { window } : {}) };
+  }
+
+  if (toolName === 'get_campaign_fit') {
+    const campaignKey = normalizeCreatorKey(input.campaign_key);
+    const campaignVersion = input.campaign_version === undefined
+      ? 1
+      : finiteInteger(input.campaign_version, 'campaign_version', { minimum: 1, maximum: 100000 });
+    const creatorKeys = input.creator_keys === undefined ? undefined : normalizeCreatorKeys(input.creator_keys);
+    return {
+      campaign_key: campaignKey,
+      campaign_version: campaignVersion,
+      ...(creatorKeys ? { creator_keys: creatorKeys } : {}),
+      page: pageValue(input.page, 'page', 1, 100000),
+      page_size: pageValue(input.page_size, 'page_size', 25, MCP_READONLY_LIMITS.maxPageSize),
+    };
   }
 
   const creatorKey = normalizeCreatorKey(input.creator_key);
@@ -463,6 +480,7 @@ function toolDefinitions() {
     { name: 'get_creator_media', description: 'Return bounded creator media metrics without media binaries or raw captions.', inputSchema: { type: 'object', properties: { creator_key: { type: 'string', minLength: 1, maxLength: 128 }, window: { type: 'object', properties: { start: { type: 'string', format: 'date-time' }, end: { type: 'string', format: 'date-time' } }, required: ['start', 'end'], additionalProperties: false }, page: { type: 'integer', minimum: 1 }, page_size: { type: 'integer', minimum: 1, maximum: 50 } }, required: ['creator_key'], additionalProperties: false } },
     { name: 'get_creator_analytics', description: 'Return the latest deterministic analytics artifact; never computes a new analysis.', inputSchema: { type: 'object', properties: { creator_key: { type: 'string', minLength: 1, maxLength: 128 }, window: { type: 'object', properties: { start: { type: 'string', format: 'date-time' }, end: { type: 'string', format: 'date-time' } }, required: ['start', 'end'], additionalProperties: false } }, required: ['creator_key'], additionalProperties: false } },
     { name: 'get_creator_score', description: 'Return the latest persisted deterministic Influencer Score artifact.', inputSchema: { type: 'object', properties: { creator_key: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['creator_key'], additionalProperties: false } },
+    { name: 'get_campaign_fit', description: 'Return persisted Campaign Fit projections for a versioned campaign; never computes or starts collection.', inputSchema: { type: 'object', properties: { campaign_key: { type: 'string', minLength: 1, maxLength: 128 }, campaign_version: { type: 'integer', minimum: 1 }, creator_keys: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1, maxLength: 128 } }, page: { type: 'integer', minimum: 1 }, page_size: { type: 'integer', minimum: 1, maximum: 50 } }, required: ['campaign_key'], additionalProperties: false } },
     { name: 'compare_creators', description: 'Return a bounded comparison from existing artifacts without recalculating scores.', inputSchema: { type: 'object', properties: { creator_keys: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1, maxLength: 128 } }, window: { type: 'object', properties: { start: { type: 'string', format: 'date-time' }, end: { type: 'string', format: 'date-time' } }, required: ['start', 'end'], additionalProperties: false } }, required: ['creator_keys'], additionalProperties: false } },
   ].map((definition) => Object.freeze(definition));
 }

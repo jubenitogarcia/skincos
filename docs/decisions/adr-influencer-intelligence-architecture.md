@@ -294,8 +294,12 @@ authenticated internal read service:
 | `get_creator_score` | creator key | Persisted deterministic score envelope |
 | `compare_creators` | up to 20 creator keys, optional bounded window | Comparison envelope |
 
-`get_campaign_fit` is deliberately deferred and is not registered before M11,
-when the Campaign Fit artifact and its separate confidence contract exist.
+`get_campaign_fit` is registered by M11 as a bounded read of a persisted,
+versioned Campaign Fit artifact. It accepts only an opaque campaign key/version
+and bounded creator keys; it never accepts a raw brief, computes implicitly, or
+starts collection. Campaign Fit has its own score, confidence, coverage,
+components, weights version, limitations, and provenance and is not a
+replacement for the general Influencer Score.
 
 Each tool requires authentication and the domain grant. Tool input uses a
 closed JSON schema with `additionalProperties: false`, bounded sizes, bounded
@@ -415,7 +419,7 @@ source-controlled migration artifacts; they do not apply them.
 | M8 | Read-only CRM API/dashboard | Implemented in source: bounded internal Pages proxy, typed client, gated shadow dashboard, server-side flag/grant and direct-provider negative tests; upstream remains unconfigured/off |
 | M9 | Minimized comments intelligence | Aggregate-only topics/sentiment/safety/spam signals and retention evidence |
 | M10 | Semantic content and Reels signals | Approved bounded media projection and model provenance |
-| M11 | Campaign/brand fit | Structured criteria, deterministic base, labeled inferred signals |
+| M11 | Campaign/brand fit | Structured criteria, deterministic base, labeled inferred signals, additive persistence metadata, persisted read-only MCP/CRM projection |
 | M12 | Synthetic validation and calibration | Outlier, coverage, confidence, privacy, authorization, and fallback tests |
 | M13 | Optional provider gap analysis | Measured gap report before any external provider is considered |
 

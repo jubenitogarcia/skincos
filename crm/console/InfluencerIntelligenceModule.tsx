@@ -9,6 +9,7 @@ import { createInfluencerIntelligenceApi, InfluencerIntelligenceApiError } from 
 import {
   INFLUENCER_INTELLIGENCE_FEATURE_FLAG,
   INFLUENCER_INTELLIGENCE_GRANT,
+  type InfluencerCampaignFitResponse,
   type InfluencerComparison,
   type InfluencerCreatorDashboard,
   type InfluencerCreatorSummary,
@@ -256,6 +257,39 @@ function ComparisonTable({ comparison }: { comparison: InfluencerComparison }) {
   )
 }
 
+function CampaignFitTable({ response }: { response: InfluencerCampaignFitResponse }) {
+  return (
+    <Card className="border-sky-300/20 bg-sky-500/[0.04]" data-testid="influencer-campaign-fit">
+      <CardHeader>
+        <CardTitle className="text-base text-white">Campaign Fit · {response.campaignKey} v{response.campaignVersion}</CardTitle>
+        <p className="text-xs leading-relaxed text-slate-400">Adequação à campanha é uma projeção separada do Influencer Score geral. Esta consulta lê somente resultados persistidos; não calcula nem inicia coleta.</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="overflow-x-auto rounded-xl border border-white/10">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-black/20 text-xs uppercase tracking-[0.08em] text-slate-400">
+              <tr><th className="px-3 py-2">Creator</th><th className="px-3 py-2">Campaign Fit</th><th className="px-3 py-2">Confidence</th><th className="px-3 py-2">Coverage</th><th className="px-3 py-2">Conflitos / limitações</th></tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {response.fits.map((fit) => (
+                <tr key={`${fit.creatorKey}-${fit.campaignVersion}`}>
+                  <td className="px-3 py-3 text-slate-200">{fit.creatorKey}</td>
+                  <td className="px-3 py-3"><div className="text-white">{formatScore(fit.campaignFitScore)}{fit.campaignFitScore === null ? null : ' / 100'}</div><div className="mt-1"><Badge variant={fit.evidenceState === 'unavailable' ? 'secondary' : fit.evidenceState === 'inferred' ? 'warning' : 'success'}>{stateLabel(fit.evidenceState)}</Badge></div></td>
+                  <td className="px-3 py-3 text-slate-300">{formatScore(fit.campaignFitConfidence)} / 100</td>
+                  <td className="px-3 py-3 text-slate-300">{formatScore(fit.dataCoverage)} / 100</td>
+                  <td className="max-w-md px-3 py-3 text-xs leading-relaxed text-slate-400">{[...fit.competitorConflicts, ...fit.limitations].length ? [...fit.competitorConflicts, ...fit.limitations].map((item, index) => <div key={`${item}-${index}`}>• {item}</div>) : 'Sem conflitos ou limitações registradas.'}</td>
+                </tr>
+              ))}
+              {!response.fits.length ? <tr><td colSpan={5} className="px-3 py-5 text-center text-slate-500">Campaign Fit ainda não calculado para os creators selecionados.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+        {response.limitations.map((item, index) => <div key={`${item}-${index}`} className="text-xs text-slate-400">• {item}</div>)}
+      </CardContent>
+    </Card>
+  )
+}
+
 function getUiError(error: unknown): string {
   if (error instanceof InfluencerIntelligenceApiError) {
     if (error.code === 'GRANT_REQUIRED' || error.status === 403) return 'A permissão do módulo não está disponível para esta sessão.'
@@ -272,6 +306,9 @@ export function InfluencerIntelligencePanel({ client = createInfluencerIntellige
   const [selectedKeys, setSelectedKeys] = React.useState<string[]>([])
   const [dashboard, setDashboard] = React.useState<InfluencerCreatorDashboard | null>(null)
   const [comparison, setComparison] = React.useState<InfluencerComparison | null>(null)
+  const [campaignKey, setCampaignKey] = React.useState('')
+  const [campaignVersion, setCampaignVersion] = React.useState('1')
+  const [campaignFit, setCampaignFit] = React.useState<InfluencerCampaignFitResponse | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [notice, setNotice] = React.useState('')
   const [error, setError] = React.useState('')
@@ -297,6 +334,7 @@ export function InfluencerIntelligencePanel({ client = createInfluencerIntellige
     setError('')
     setNotice('')
     setComparison(null)
+    setCampaignFit(null)
     try {
       setDashboard(await client.getCreatorDashboard(creatorKey))
       setSelectedKeys((current) => current.includes(creatorKey) ? current : [...current, creatorKey].slice(-20))
@@ -338,6 +376,30 @@ export function InfluencerIntelligencePanel({ client = createInfluencerIntellige
     }
   }, [client, selectedKeys])
 
+  const loadCampaignFit = React.useCallback(async () => {
+    const normalizedCampaignKey = campaignKey.trim()
+    if (!normalizedCampaignKey) {
+      setError('Informe a chave de uma campanha persistida.')
+      return
+    }
+    const parsedCampaignVersion = Number(campaignVersion)
+    if (!Number.isSafeInteger(parsedCampaignVersion) || parsedCampaignVersion < 1 || parsedCampaignVersion > 100000) {
+      setError('Informe uma versão de campanha válida.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setNotice('')
+    try {
+      setCampaignFit(await client.getCampaignFit(normalizedCampaignKey, selectedKeys, parsedCampaignVersion))
+    } catch (caught) {
+      setCampaignFit(null)
+      setError(getUiError(caught))
+    } finally {
+      setLoading(false)
+    }
+  }, [campaignKey, campaignVersion, client, selectedKeys])
+
   if (!enabled || !granted) {
     return (
       <section className="mx-auto max-w-4xl rounded-2xl border border-amber-300/20 bg-amber-500/[0.06] p-6" data-testid="influencer-module-off">
@@ -358,7 +420,7 @@ export function InfluencerIntelligencePanel({ client = createInfluencerIntellige
           <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void search() }}>
             <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar creator por handle ou chave aprovada" aria-label="Buscar creator" className="pl-9" maxLength={80} /></div>
             <Button type="submit" disabled={loading}><Search className="size-4" />{loading ? 'Consultando…' : 'Buscar'}</Button>
-            <Button type="button" variant="outline" onClick={() => { setQuery(''); setResults([]); setDashboard(null); setComparison(null); setError(''); setNotice('') }} disabled={loading}>Limpar</Button>
+            <Button type="button" variant="outline" onClick={() => { setQuery(''); setResults([]); setDashboard(null); setComparison(null); setCampaignFit(null); setCampaignKey(''); setCampaignVersion('1'); setError(''); setNotice('') }} disabled={loading}>Limpar</Button>
           </form>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400"><Database className="size-3.5" />A busca não dispara scraping ou snapshot. O cadastro apenas registra a intenção no serviço interno.</div>
         </CardContent>
@@ -368,7 +430,10 @@ export function InfluencerIntelligencePanel({ client = createInfluencerIntellige
 
       {results.length ? <Card className="border-white/10 bg-white/[0.03]" data-testid="influencer-search-results"><CardHeader><CardTitle className="text-base text-white">Creators encontrados</CardTitle></CardHeader><CardContent className="space-y-2">{results.map((creator) => <div key={creator.creatorKey} className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-black/10 p-3"><input type="checkbox" aria-label={`Selecionar ${creator.handle ? `@${creator.handle}` : creator.creatorKey}`} checked={selectedKeys.includes(creator.creatorKey)} onChange={(event) => setSelectedKeys((current) => event.target.checked ? [...new Set([...current, creator.creatorKey])].slice(-20) : current.filter((key) => key !== creator.creatorKey))} /><CreatorIdentity creator={creator} /><div className="ml-auto flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => void openCreator(creator.creatorKey)} disabled={loading}>Ver análise</Button><Button size="sm" onClick={() => void addCreator(creator.handle || creator.creatorKey)} disabled={loading || creator.registryState !== 'candidate'}><Plus className="size-3.5" />Adicionar creator</Button></div></div>)}<div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3"><span className="text-xs text-slate-400">{selectedKeys.length} selecionado(s) · máximo 20</span><Button size="sm" onClick={() => void compare()} disabled={loading || selectedKeys.length < 2}><Users className="size-3.5" />Comparar selecionados</Button></div></CardContent></Card> : null}
 
+      {results.length ? <Card className="border-white/10 bg-white/[0.03]" data-testid="influencer-campaign-fit-query"><CardHeader><CardTitle className="text-base text-white">Consultar Campaign Fit</CardTitle></CardHeader><CardContent className="space-y-2"><div className="flex flex-col gap-2 sm:flex-row"><Input value={campaignKey} onChange={(event) => setCampaignKey(event.target.value)} placeholder="Chave da campanha persistida" aria-label="Chave da campanha" maxLength={128} /><Input type="number" min={1} max={100000} step={1} value={campaignVersion} onChange={(event) => setCampaignVersion(event.target.value)} placeholder="Versão" aria-label="Versão da campanha" /><Button type="button" onClick={() => void loadCampaignFit()} disabled={loading || selectedKeys.length === 0}>Consultar Campaign Fit</Button></div><p className="text-xs text-slate-500">Selecione ao menos um creator. O serviço interno retorna apenas uma projeção já calculada e versionada.</p></CardContent></Card> : null}
+
       {comparison ? <ComparisonTable comparison={comparison} /> : null}
+      {campaignFit ? <CampaignFitTable response={campaignFit} /> : null}
       {loading && !dashboard ? <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-8 text-center text-sm text-slate-400"><RefreshCw className="mx-auto mb-2 size-5 animate-spin" />Consultando o serviço interno…</div> : null}
       {dashboard ? <CreatorDashboardView dashboard={dashboard} /> : !loading && !results.length ? <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-10 text-center text-sm text-slate-500">Busque um creator para visualizar uma análise versionada. Sem análise, os valores permanecem indisponíveis.</div> : null}
       <div className="flex items-center gap-2 text-xs text-slate-500"><CheckCircle2 className="size-3.5" />Sem follow, like, post, DM, publicação ou automação de engagement.</div>

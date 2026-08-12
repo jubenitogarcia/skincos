@@ -206,8 +206,9 @@ deployment hardening.
 the existing `orb/engine/mcp-readonly-gateway` pattern. It exposes bounded
 `search_creators`, `get_creator_profile`, `get_creator_snapshots`,
 `get_creator_media`, `get_creator_analytics`, `get_creator_score`, and
-`compare_creators` tools through an injected internal read service. Campaign Fit
-is intentionally deferred from the tool registry until M11.
+`get_campaign_fit` and `compare_creators` tools through an injected internal
+read service. `get_campaign_fit` reads a persisted, versioned projection and
+does not accept a raw campaign brief or start computation.
 
 The adapter requires authentication, the server-side domain grant, opaque
 actor scope, closed input schemas, bounded windows/pages/comparisons, timeout,
@@ -363,7 +364,7 @@ production configuration.
 | M8 | Read-only CRM contracts and dashboard | Source implemented; gated shadow UI, upstream/runtime off |
 | M9 | Minimized comments intelligence | Source implemented; additive quality/sampling migration and synthetic tests; runtime/provider wiring remains off |
 | M10 | Semantic content and Reels signals | Source implemented; bounded feature projection, closed semantic schema, fixtures and persistence boundary; media/runtime adapter remains off |
-| M11 | Campaign and brand fit | Pending |
+| M11 | Campaign and brand fit | Source implemented; deterministic engine, additive fit metadata, persisted MCP read, CRM query surface, and golden tests; compute/runtime remains off |
 | M12 | Synthetic validation and calibration | Pending |
 | M13 | Optional provider gap analysis | Pending; only if a measured gap remains |
 
