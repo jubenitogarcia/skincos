@@ -116,6 +116,15 @@
       ]
     },
     {
+      "key": "influencer-intelligence",
+      "label": "Influencer Intelligence",
+      "route": "/?module=influencer-intelligence",
+      "onlineEnabled": false,
+      "dependencyIds": [
+        "influencer-intelligence-internal-api"
+      ]
+    },
+    {
       "key": "meta-pages-review",
       "label": "Meta Review",
       "route": "/?module=meta-pages-review",

@@ -1,9 +1,10 @@
 # Influencer Intelligence
 
 Status: architecture v1 defined; M2 provider boundary, M4 deterministic
-analytics, M5 deterministic scoring, and the M6 read-only MCP domain adapter
-are implemented in source control. Data model v1 plus scoring metadata remain
-additive, unapplied artifacts, and M6 runtime registration is still deferred.
+analytics, M5 deterministic scoring, M6 read-only MCP adapter, M7 Codex skill,
+and M8 CRM contract/dashboard source are implemented in source control. Data
+model v1 plus scoring metadata remain additive, unapplied artifacts, and all
+Influencer Intelligence runtime/upstream registrations remain off.
 The domain remains
 experimental, not exposed, and off by default.
 
@@ -21,10 +22,11 @@ boundary, append-only data model, provenance and score envelopes, internal API,
 read-only MCP tools, release/flag model, privacy rules, observability, and the
 M0--M13 implementation gates.
 
-The architecture and M6 source milestones do not add routes, migrations,
-provider transports, CRM registration, live MCP registration, Orb workflow
-imports, or flag wiring. `INFLUENCER_INTELLIGENCE_ENABLED` remains `false` and
-the domain stays off until later milestones prove their own gates.
+The architecture and M0-M7 source milestones do not add provider transports,
+live MCP registration, Orb workflow imports, or activation. M8 adds only the
+bounded, authenticated CRM proxy/client/dashboard boundary; the upstream
+target is not configured, `INFLUENCER_INTELLIGENCE_ENABLED` remains `false`,
+and the domain stays off until later milestones prove their own gates.
 
 ## M0 decision
 
@@ -337,7 +339,7 @@ production configuration.
 | M5 | Deterministic score, confidence, coverage, and provenance | Merged in #1334; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Source adapter and protocol tests implemented; runtime registration pending |
 | M7 | `skincos-influencer-intelligence` Codex skill | Versioned skill, UI metadata and contract tests implemented; runtime/user access remains governed |
-| M8 | Read-only CRM contracts and dashboard | Pending |
+| M8 | Read-only CRM contracts and dashboard | Source implemented; gated shadow UI, upstream/runtime off |
 | M9 | Minimized comments intelligence | Pending |
 | M10 | Semantic content and Reels signals | Pending |
 | M11 | Campaign and brand fit | Pending |

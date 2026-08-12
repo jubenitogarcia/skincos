@@ -8,6 +8,8 @@ export type ModuleAccessContext = {
   role: unknown
   allowedModules: unknown
   enabledModuleKeys: ReadonlySet<string>
+  grants?: ReadonlySet<string>
+  featureFlags?: Readonly<Record<string, boolean>>
   maintenanceModuleKeys?: ReadonlySet<string>
   financeEnabled: boolean
 }
@@ -17,6 +19,8 @@ export type CrmModuleManifest = {
   label: string
   icon: ReactNode
   permissions: readonly string[]
+  featureFlag?: string
+  requiredGrant?: string
   loader: () => Promise<{ default: ComponentType }>
   fallback: { loadingLabel: string; unavailableLabel: string }
 }

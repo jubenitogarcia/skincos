@@ -122,9 +122,12 @@ test('requires deterministic score identity, coverage, and structured signals', 
 
 test('keeps API reads and MCP tools read-only while isolating Orb collection', () => {
   const snapshotRoute = API_CONTRACT.routes.find(({ path }) => path.endsWith('/snapshots'));
+  const registryRoute = API_CONTRACT.routes.find(({ path }) => path.endsWith('/creators'));
   assert.equal(snapshotRoute?.readOnly, false);
   assert.equal(snapshotRoute?.caller, 'Orb-only controlled collection operation');
-  assert.ok(API_CONTRACT.routes.filter(({ path }) => !path.endsWith('/snapshots')).every(({ readOnly }) => readOnly === true));
+  assert.equal(registryRoute?.readOnly, false);
+  assert.equal(registryRoute?.caller, 'CRM-authenticated registry request');
+  assert.ok(API_CONTRACT.routes.filter(({ path }) => !path.endsWith('/snapshots') && !path.endsWith('/creators')).every(({ readOnly }) => readOnly === true));
   assert.equal(API_CONTRACT.requestRules.maxCreatorsPerRequest, 20);
   assert.equal(API_CONTRACT.requestRules.maxWindowDays, 365);
   for (const control of ['authentication', 'server-side grant', 'schema sanitization', 'rate limit', 'timeout and abort', 'audit event', 'read-only database role']) {
@@ -179,6 +182,10 @@ test('keeps this architecture milestone off and runtime-free', () => {
   assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowActive, false);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpSourceAdded, true);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmRuntimeEnabled, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmUpstreamConfigured, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmFeatureFlagDefault, false);
 
   const source = fs.readFileSync(architecturePath, 'utf8');
   assert.doesNotMatch(source, /\b(?:fetch|spawn|exec|execFile|createServer|listen)\s*\(/i);
