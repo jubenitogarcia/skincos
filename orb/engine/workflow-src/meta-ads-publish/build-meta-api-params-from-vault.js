@@ -13,7 +13,7 @@ const SAFE_LANDING_PAGE_BY_DESTINATION = Object.freeze({
   novohamburgo: 'https://espacofacial.com/agendamento?unit=novo-hamburgo',
 });
 const SAFE_WHATSAPP_DESTINATION_URL = 'https://api.whatsapp.com/send';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v19_tracking_contract';
 
 const root = $input.first()?.json || {};
 if (root.ok !== true || root.ready !== true) {
@@ -44,6 +44,11 @@ if (missingVideoActions.length) {
 }
 if (Number(videoUpload.max_file_bytes) < 90 * 1024 * 1024 || Number(videoUpload.max_chunk_bytes) < 16 * 1024 * 1024) {
   throw new Error('Meta Publish gateway declarou limites insuficientes para upload de video.');
+}
+
+const trackingCapabilities = asObject(asObject(root.capabilities).tracking);
+if (trackingCapabilities.adset_conversion_observation !== true || trackingCapabilities.creative_url_tags_readback !== true) {
+  throw new Error('Meta Publish gateway sem capacidade de contrato de conversao e url_tags.');
 }
 
 const destinations = Array.isArray(root.destinations) ? root.destinations : [];
@@ -86,6 +91,7 @@ const rows = destinations.map((entry) => {
       token_id: safeString(item.token_id),
       allowed_link_hosts: Array.isArray(item.allowed_link_hosts) ? item.allowed_link_hosts : [],
       landing_pages_by_creative_group: landingPages,
+      tracking_contract: asObject(item.tracking_contract),
       landing_page_validation: asObject(item.landing_page_validation),
       freshness_window_days: Number(item.freshness_window_days || 7),
       // Destination data is intentionally non-secret and lets the publisher

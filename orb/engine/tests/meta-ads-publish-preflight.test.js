@@ -111,8 +111,10 @@ test('gateway parameters reject a Token Vault contract revision mismatch before 
     path.join(__dirname, '..', 'workflow-src', 'meta-ads-publish', 'build-meta-api-params-from-vault.js'),
     'utf8',
   );
-  assert.match(source, /const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta'/);
+  assert.match(source, /const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v19_tracking_contract'/);
   assert.match(source, /gatewayContractRevision !== WORKFLOW_CONTRACT_REVISION/);
+  assert.match(source, /adset_conversion_observation/);
+  assert.match(source, /creative_url_tags_readback/);
 });
 
 test('video upload replay key includes normalized bytes and rejects the legacy v4 key', () => {

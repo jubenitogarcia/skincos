@@ -359,15 +359,21 @@ sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/livia/publish-progress-ledger.js" \
   "$DESTINATION/orb/engine/scripts/livia/validate-publish-token-health.js"
 # The Meta Ads Publish preflight also runs as postgres for peer authentication.
-# Its source comparison reads the immutable workflow export and all 49 Code-node
-# sources. Grant only read/traverse access to that audit surface; it contains no
-# runtime credentials and remains non-writable to postgres.
+# Its source comparison reads the immutable workflow export and all Code-node
+# sources. The versioned checkpoint/apply pair uses the same peer-authenticated
+# connection, so grant only the exact immutable entrypoints and helpers it
+# needs. This surface contains no runtime credentials and remains non-writable
+# to postgres.
 coordination_check
 sudo -n setfacl -m u:postgres:r-- \
+  "$DESTINATION/orb/engine/scripts/export-meta-ads-publish-live.js" \
+  "$DESTINATION/orb/engine/scripts/apply-meta-ads-publish-workflow-snapshot.js" \
   "$DESTINATION/orb/engine/scripts/inspect-meta-ads-publish-version-alignment.js" \
   "$DESTINATION/orb/engine/scripts/validate-meta-ads-publish-preflight.js" \
   "$DESTINATION/orb/engine/scripts/patch-meta-ads-video-transfer-replay.js" \
   "$DESTINATION/orb/engine/scripts/patch-meta-ads-crm-context-prefetch.js" \
+  "$DESTINATION/orb/engine/scripts/patch-meta-ads-advantage-plus-drift-readback.js" \
+  "$DESTINATION/orb/engine/scripts/lib/runtime-paths.js" \
   "$DESTINATION/orb/engine/scripts/lib/meta-ads-publish-execution-semantics.js" \
   "$DESTINATION/orb/engine/scripts/lib/meta-ads-publish-code-sources.js" \
   "$DESTINATION/orb/engine/workflows/meta-ads-publish.current.json"

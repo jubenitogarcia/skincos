@@ -15,14 +15,18 @@ const CREATIVE_READ_FIELDS = Object.freeze([
   'name',
   'object_story_spec',
   'asset_feed_spec',
+  'url_tags',
   'degrees_of_freedom_spec',
   'creative_sourcing_spec',
 ]);
 const ADSET_PLACEMENT_FIELDS = [
   'id',
   'campaign{id,objective}',
+  'billing_event',
   'optimization_goal',
   'destination_type',
+  'attribution_spec',
+  'promoted_object',
   'targeting{publisher_platforms,facebook_positions,instagram_positions,audience_network_positions,whatsapp_positions,effective_publisher_platforms,effective_facebook_positions,effective_instagram_positions,effective_audience_network_positions,effective_whatsapp_positions}',
 ].join(',');
 const ADSET_READ_FIELDS = [
@@ -41,6 +45,15 @@ const ADSET_READ_FIELDS = [
   'attribution_spec',
   'promoted_object',
   'targeting',
+].join(',');
+// Narrow readback used by the diagnostic runner. Unlike get_adset it never
+// reads targeting, budget, dates, names or raw identifiers into the journal.
+const ADSET_CONVERSION_CONTRACT_FIELDS = [
+  'billing_event',
+  'optimization_goal',
+  'destination_type',
+  'attribution_spec',
+  'promoted_object',
 ].join(',');
 const CAMPAIGN_READ_FIELDS = [
   'id',
@@ -102,7 +115,7 @@ const VIDEO_UPLOAD_ACTIONS = Object.freeze([
 // capabilities.  The workflow rejects a mismatch before it can open a publish
 // run, so a partial rollout cannot silently mix producer, checkpoint and
 // gateway behavior.
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v19_tracking_contract';
 const MUTATING_ACTIONS = new Set([
   'upload_image',
   'start_video_upload',
@@ -124,6 +137,7 @@ const ALLOWED_ACTIONS = new Set([
   'get_creative',
   'get_ad',
   'get_adset',
+  'read_adset_conversion_contract',
   'get_campaign',
   'create_campaign',
   'create_adset',
@@ -285,6 +299,7 @@ async function getConfig(env, requestId) {
       continue;
     }
     const allowedLinkHosts = normalizeHosts(config.allowed_link_hosts);
+    const trackingContract = normalizeTrackingContract(config.tracking_contract);
     const landingDefinition = normalizeLandingPageMap(config.landing_pages_by_creative_group, allowedLinkHosts);
     const landingPageValidation = await validateLandingPagesOnline(landingDefinition.pages, allowedLinkHosts, env);
     const landingErrors = [...landingDefinition.errors, ...landingPageValidation.errors];
@@ -312,6 +327,10 @@ async function getConfig(env, requestId) {
       instagram_user_id: normalizeNumericId(config.instagram_user_id, 'instagram_user_id'),
       allowed_link_hosts: allowedLinkHosts,
       landing_pages_by_creative_group: landingDefinition.pages,
+      // URL tags are a creative-level contract. They are intentionally
+      // configured here rather than inferred from an existing ad, so a legacy
+      // creative can never copy stale campaign attribution into a new one.
+      tracking_contract: trackingContract,
       landing_page_validation: {
         ok: landingErrors.length === 0,
         results: landingPageValidation.results,
@@ -350,6 +369,10 @@ async function getConfig(env, requestId) {
         supported_actions: VIDEO_UPLOAD_ACTIONS,
         max_file_bytes: MAX_VIDEO_BYTES,
         max_chunk_bytes: MAX_VIDEO_CHUNK_BYTES,
+      },
+      tracking: {
+        adset_conversion_observation: true,
+        creative_url_tags_readback: true,
       },
     },
     secrets_exposed: false,
@@ -649,6 +672,7 @@ async function performOperation(action, body, context) {
   if (action === 'get_creative') return getCreative(body, context);
   if (action === 'get_ad') return getAd(body, context);
   if (action === 'get_adset') return getAdset(body, context);
+  if (action === 'read_adset_conversion_contract') return readAdsetConversionContract(body, context);
   if (action === 'get_campaign') return getCampaign(body, context);
   if (action === 'create_campaign') return createCampaign(body, context);
   if (action === 'create_adset') return createAdset(body, context);
@@ -696,6 +720,10 @@ async function readAdsetPlacements(body, adsetId, context) {
     campaign_objective: clean(campaign.objective).toUpperCase(),
     optimization_goal: clean(adset.optimization_goal).toUpperCase(),
     destination_type: clean(adset.destination_type).toUpperCase(),
+    // Never pass raw IDs from promoted_object into n8n execution history. The
+    // publisher only needs a boolean contract to decide whether a website ad
+    // may proceed; the Token Vault remains the boundary for identifiers.
+    conversion_tracking: summarizeAdsetConversionTracking(adset),
   });
 }
 
@@ -838,6 +866,21 @@ async function getAdset(body, context) {
     context,
   );
   return sanitizeGraphValue(result.body);
+}
+
+// This dedicated diagnostic action persists only a reduced conversion
+// contract. It avoids journaling targeting, names, budgets, raw Pixel IDs and
+// raw dataset IDs that the generic get_adset readback would otherwise retain.
+async function readAdsetConversionContract(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const adsetId = normalizeNumericId(body.object_id, 'object_id');
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, adsetId, { fields: ADSET_CONVERSION_CONTRACT_FIELDS }),
+    { method: 'GET' },
+    auth,
+    context,
+  );
+  return summarizeAdsetConversionTracking(asObject(result.body));
 }
 
 async function getCampaign(body, context) {
@@ -1170,6 +1213,9 @@ async function findAdByPayload(auth, payload, context) {
 
 function validateCreativePayload(value, operationKey) {
   const payload = sanitizeGraphValue(asObject(value));
+  if (Object.prototype.hasOwnProperty.call(payload, 'url_tags')) {
+    payload.url_tags = normalizeUrlTags(payload.url_tags, { required: true });
+  }
   const hasStory = Object.keys(asObject(payload.object_story_spec)).length > 0;
   const hasFeed = Object.keys(asObject(payload.asset_feed_spec)).length > 0;
   if (!hasStory) {
@@ -1808,6 +1854,91 @@ function normalizeHosts(value) {
   return [...new Set(safeArray(value).map((entry) => clean(entry).toLowerCase()).filter((entry) => /^[a-z0-9.-]+$/.test(entry)))];
 }
 
+const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+const URL_TAG_FORBIDDEN_KEY_PATTERN = /(?:token|secret|password|authorization|signature|api_?key)/i;
+const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-]+$/;
+
+// Meta expects url_tags to be a query-string fragment on the AdCreative, not
+// a URL. Keep the value deliberately narrow: it may contain standard UTM
+// parameters and Meta macros, but no URL, fragment, whitespace or secret-like
+// parameter names can cross into a Graph mutation body.
+function normalizeUrlTags(value, { required = false } = {}) {
+  const raw = clean(value);
+  if (!raw) {
+    if (required) throw failure('url_tags_required');
+    return '';
+  }
+  if (raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw)) {
+    throw failure('url_tags_invalid');
+  }
+  const seen = new Set();
+  const pairs = raw.split('&');
+  if (!pairs.length) throw failure('url_tags_invalid');
+  for (const pair of pairs) {
+    const separator = pair.indexOf('=');
+    if (separator <= 0 || separator !== pair.lastIndexOf('=')) throw failure('url_tags_invalid');
+    const key = pair.slice(0, separator).toLowerCase();
+    const parameterValue = pair.slice(separator + 1);
+    if (!URL_TAG_PARAMETER_KEY_PATTERN.test(key) || URL_TAG_FORBIDDEN_KEY_PATTERN.test(key) || seen.has(key) || !parameterValue || !URL_TAG_VALUE_PATTERN.test(parameterValue)) {
+      throw failure('url_tags_invalid');
+    }
+    seen.add(key);
+  }
+  if (!seen.has('utm_source') || !seen.has('utm_medium')) throw failure('url_tags_required_utm_source_and_medium');
+  return raw;
+}
+
+function normalizeTrackingContract(value) {
+  const source = asObject(value);
+  const urlTags = normalizeUrlTags(source.url_tags);
+  return {
+    url_tags: urlTags,
+    url_tags_configured: Boolean(urlTags),
+  };
+}
+
+function safeTrackingEnum(value) {
+  const normalized = clean(value).toUpperCase();
+  return /^[A-Z][A-Z0-9_]{0,99}$/.test(normalized) ? normalized : '';
+}
+
+function summarizeAdsetConversionTracking(value) {
+  const adset = asObject(value);
+  const promotedObject = asObject(adset.promoted_object);
+  const promotedKeys = Object.keys(promotedObject)
+    .filter((key) => /^[a-z_]{1,80}$/i.test(key))
+    .sort();
+  const pixelConfigured = Boolean(clean(promotedObject.pixel_id));
+  const customEventType = safeTrackingEnum(promotedObject.custom_event_type);
+  const customConversionConfigured = Boolean(clean(promotedObject.custom_conversion_id));
+  const offlineDatasetConfigured = Boolean(clean(promotedObject.offline_conversion_data_set_id));
+  const attributionRules = safeArray(adset.attribution_spec);
+  const websiteEventConfigured = pixelConfigured && Boolean(customEventType || customConversionConfigured);
+  return {
+    billing_event: safeTrackingEnum(adset.billing_event),
+    optimization_goal: safeTrackingEnum(adset.optimization_goal),
+    destination_type: safeTrackingEnum(adset.destination_type),
+    attribution_spec: {
+      configured: attributionRules.length > 0,
+      rule_count: Math.min(attributionRules.length, 20),
+    },
+    promoted_object: {
+      present: promotedKeys.length > 0,
+      keys: promotedKeys,
+      pixel_configured: pixelConfigured,
+      custom_event_type: customEventType,
+      custom_conversion_configured: customConversionConfigured,
+      offline_conversion_dataset_configured: offlineDatasetConfigured,
+    },
+    website_event: {
+      configured: websiteEventConfigured,
+    },
+    offline_event_dataset: {
+      configured: offlineDatasetConfigured,
+    },
+  };
+}
+
 function isAllowedHostname(hostname, allowedHosts) {
   const normalized = clean(hostname).replace(/\.$/, '').toLowerCase();
   return normalizeHosts(allowedHosts).some((host) => normalized === host || normalized.endsWith(`.${host}`));
@@ -2198,6 +2329,7 @@ export const __test = Object.freeze({
   creativeReadFields: CREATIVE_READ_FIELDS,
   campaignReadFields: CAMPAIGN_READ_FIELDS,
   adsetPlacementFields: ADSET_PLACEMENT_FIELDS,
+  adsetConversionContractFields: ADSET_CONVERSION_CONTRACT_FIELDS,
   adsetReadFields: ADSET_READ_FIELDS,
   graphRequest,
   graphVideoUrl,
@@ -2209,7 +2341,11 @@ export const __test = Object.freeze({
   normalizeVideoOffset,
   normalizeVideoUploadResponse,
   normalizeMetaError,
+  normalizeTrackingContract,
+  normalizeUrlTags,
+  readAdsetConversionContract,
   retryDelayMs,
+  readAdsetPlacements,
   normalizeLandingPageMap,
   operationHashInput,
   startVideoUpload,
@@ -2219,6 +2355,7 @@ export const __test = Object.freeze({
   parseLandingUrl,
   previousStatePayload,
   sanitizeGraphValue,
+  summarizeAdsetConversionTracking,
   stageBatch,
   stableStringify,
   validateAdPayload,

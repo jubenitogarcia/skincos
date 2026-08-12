@@ -1846,8 +1846,12 @@ for (const group of groupedCreatives) {
       token_id: safeString(destination.token_id),
       allowed_link_hosts: safeArray(destination.allowed_link_hosts),
       landing_pages_by_creative_group: deepClone(destination.landing_pages_by_creative_group || {}),
+      tracking_contract: deepClone(destination.tracking_contract || {}),
       landing_page_validation: deepClone(destination.landing_page_validation || {}),
       placement_eligibility: deepClone(placementCheck || {}),
+      // This is a reduced Graph readback: it contains only contract booleans
+      // and safe enums, never Pixel, custom-conversion or dataset IDs.
+      conversion_tracking: deepClone(placementCheck && placementCheck.conversion_tracking || {}),
       freshness_window_days: Number(destination.freshness_window_days || 7),
       // Live ad-set data wins over an optional Token Vault metadata mirror.
       // In particular, OUTCOME_LEADS dynamic creatives cannot stage BOOK_NOW.
@@ -1987,8 +1991,10 @@ for (const group of groupedCreatives) {
         token_id: destination.token_id,
         allowed_link_hosts: destination.allowed_link_hosts,
         landing_pages_by_creative_group: destination.landing_pages_by_creative_group,
+        tracking_contract: destination.tracking_contract,
         landing_page_validation: destination.landing_page_validation,
         placement_eligibility: destination.placement_eligibility,
+        conversion_tracking: destination.conversion_tracking,
         freshness_window_days: destination.freshness_window_days,
         campaign_objective: destination.campaign_objective,
         optimization_goal: destination.optimization_goal,

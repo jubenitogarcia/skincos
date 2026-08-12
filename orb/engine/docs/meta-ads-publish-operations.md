@@ -23,7 +23,7 @@ arquivos em `workflow-src/meta-ads-publish/`.
    `Orb Validate` é a verificação ampla após alterações de infraestrutura.
 4. A definição rastreada é `workflows/meta-ads-publish.current.json`. Ela é
    uma exportação sanitizada: não inclui execução, pin data, contadores nem
-   versão runtime. Cada um dos 49 Code nodes tem uma fonte em
+   versão runtime. Cada Code node tem uma fonte em
    `workflow-src/meta-ads-publish/`, listada uma única vez em
    `scripts/lib/meta-ads-publish-code-sources.js`.
 
@@ -55,6 +55,28 @@ canônica, o checkpoint de run e o preflight na mesma revisão.
 Antes do primeiro deploy em um ambiente, aplique as migrations do Token Vault
 com `npm run d1:migrate`. A migration `0002_meta_ads_publish_journal.sql`
 versiona o journal, operações e locks idempotentes já usados pelo gateway.
+
+## Conversão e parâmetros de URL
+
+- A fonte de conversão é uma propriedade do conjunto de anúncios
+  (`promoted_object`); o publicador a observa por Graph `GET`, mas nunca a
+  cria ou altera durante uma publicação de criativo. A configuração de Pixel,
+  evento ou dataset offline exige uma reconciliação específica, com leitura
+  antes/depois e uma decisão comercial explícita.
+- Para destinos de site, o publicador exige que a leitura confirme Pixel mais
+  evento (ou conversão personalizada) e que a configuração privada do destino
+  declare `tracking_contract.url_tags` como um fragmento UTM seguro. Ele aplica
+  esse valor somente no nível raiz de `AdCreative` e o confirma por `GET`
+  antes do stage do anúncio.
+- Destinos WhatsApp permanecem `not_applicable`: o fluxo não infere Pixel,
+  dataset offline ou `url_tags`, nem troca objetivo ou otimização por causa de
+  uma configuração de site.
+- Para diagnosticar o estado atual sem mutar a Graph, rode no runtime Orb que
+  possui a credencial privada
+  `scripts/run-meta-ads-conversion-contract-readback.sh`. A rotina abre um
+  run técnico isolado, executa apenas `read_adset_conversion_contract` (Graph `GET`) para os dois
+  destinos e o encerra imediatamente; o resultado é sanitizado e não contém
+  IDs, URLs ou tokens.
 
 ## Regras que evitam recorrência
 
