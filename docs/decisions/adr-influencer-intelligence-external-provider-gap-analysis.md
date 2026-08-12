@@ -96,12 +96,11 @@ implicitly.
 - Validation: focused architecture/M13 tests 19/19 using
   `node --test social/influencer-intelligence/tests/external-provider-gap-analysis.test.mjs social/influencer-intelligence/tests/architecture.test.mjs`;
   full Influencer Intelligence suite 166/166 using `node --test` from
-  `social/influencer-intelligence`; PR #1365 final head
-  `63c5fc931f5f20d305c33d1f468177b1ae8b94ba` technical checks green, including
-  M13 contract run `31567103832`, architecture run `31567103859`, calibration
-  run `31567103845`, CodeQL run `31567103876`, Semgrep/security run
-  `31567103826`, autonomy run `31567103858`, CI smoke run `31567103861`, lint
-  run `31567103795`, and integration gate run `31567103021`.
+  `social/influencer-intelligence`; the GitHub PR/check records and the
+  global-merge-authority readback are the authoritative exact-head evidence
+  for PR #1365. Required architecture, M13 contract, calibration, integration,
+  CodeQL, Semgrep, secrets, lint, CI smoke, and autonomy checks must be green
+  on that same head before the single merge mutation.
 - Rollback: the candidate was based on parent
   `aa388342d4c3bb457faa33ad2b449061002c0b29`; before merge, discard the
   candidate branch. After the governed squash merge, revert that single M13
