@@ -46,8 +46,9 @@ interface AuthContextValue {
   isAuthenticated: boolean
 }
 
+const hotAuthData = import.meta.hot?.data as { AuthCtx?: React.Context<AuthContextValue | undefined> } | undefined
 const AuthContext: React.Context<AuthContextValue | undefined> =
-  (import.meta.hot?.data.AuthCtx as React.Context<AuthContextValue | undefined> | undefined) ??
+  hotAuthData?.AuthCtx ??
   createContext<AuthContextValue | undefined>(undefined)
 if (import.meta.hot) {
   import.meta.hot.dispose(d => { d.AuthCtx = AuthContext })

@@ -1052,7 +1052,7 @@ export default function AppFunctionalNeatlab() {
     const moduleAccessContext = useMemo(() => ({
         role: roleKey,
         allowedModules: user?.allowedModules,
-        grants: new Set(user?.grants || []),
+        grants: new Set<string>(user?.grants || []),
         featureFlags: user?.featureFlags || {},
         enabledModuleKeys: UNLOCKED_MODULE_KEYS,
         maintenanceModuleKeys,
