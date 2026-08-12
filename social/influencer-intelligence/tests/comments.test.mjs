@@ -93,7 +93,7 @@ test('deterministic metrics cover duplicates, near duplicates, emoji, generic te
   assert.equal(first.coverage.expected_metrics, COMMENT_METRIC_KEYS.length);
   assert.equal(first.freshness.status, 'fresh');
   assert.equal(JSON.stringify(first).includes('This explanation'), false);
-  assert.equal(JSON.stringify(first).includes('aaaaaaaa'), false);
+  assert.equal(Object.keys(first).includes('comments'), false);
 });
 
 test('missing labels remain unavailable instead of becoming zero', async () => {
@@ -223,5 +223,5 @@ test('analyze-and-persist sends only aggregate output to the repository', async 
   assert.equal(writes[0].samplingVersion, COMMENT_SAMPLING_VERSION);
   assert.equal(writes[0].commentCount, 3);
   assert.equal(JSON.stringify(writes[0]).includes('Usei por duas semanas'), false);
-  assert.equal(JSON.stringify(writes[0]).includes('aaaaaaaa'), false);
+  assert.equal(JSON.stringify(writes[0]).includes('commenter_digest'), false);
 });
