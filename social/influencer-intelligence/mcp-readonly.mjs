@@ -387,7 +387,7 @@ function sanitizeText(value) {
   return text.length > 800 ? `${text.slice(0, 800)}…[truncated]` : text;
 }
 
-function sanitizeValue(value, depth = 0, seen = new Set()) {
+function sanitizeValue(value, depth = 0, seen = new Set(), { redactPublicNames = false } = {}) {
   if (depth > 8) return '[truncated-depth]';
   if (typeof value === 'string') return sanitizeText(value);
   if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value;
@@ -396,12 +396,13 @@ function sanitizeValue(value, depth = 0, seen = new Set()) {
   if (seen.has(value)) throw fail('SANITIZATION_FAILED');
   seen.add(value);
   try {
-    if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeValue(item, depth + 1, seen));
+    if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeValue(item, depth + 1, seen, { redactPublicNames }));
     const output = {};
     for (const [key, child] of Object.entries(value).slice(0, 100)) {
       if (SENSITIVE_OUTPUT_KEY.test(key)) continue;
+      if (redactPublicNames && key === 'name') continue;
       const safeKey = sanitizeText(key).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 120);
-      output[safeKey] = sanitizeValue(child, depth + 1, seen);
+      output[safeKey] = sanitizeValue(child, depth + 1, seen, { redactPublicNames });
     }
     return output;
   } finally {
@@ -416,7 +417,7 @@ function assertNoSensitiveOutput(value) {
   return value;
 }
 
-function normalizeServiceResult(raw, requestId, clock) {
+function normalizeServiceResult(raw, requestId, clock, { redactPublicNames = false } = {}) {
   assertCondition(isRecord(raw), 'INVALID_SERVICE_RESPONSE');
   assertCondition(Object.prototype.hasOwnProperty.call(raw, 'data'), 'INVALID_SERVICE_RESPONSE');
   const dataClassification = normalizeDataClassification(raw.data_classification ?? raw.dataClassification);
@@ -437,7 +438,7 @@ function normalizeServiceResult(raw, requestId, clock) {
   const provenance = normalizeProvenance(raw.provenance);
   const limitations = normalizeLimitations(raw.limitations);
   const errors = raw.errors === undefined ? [] : normalizeLimitations(raw.errors);
-  const data = sanitizeValue(raw.data);
+  const data = sanitizeValue(raw.data, 0, new Set(), { redactPublicNames });
   assertNoSensitiveOutput(data);
   const generatedAt = new Date(clock()).toISOString();
   return {
@@ -568,7 +569,9 @@ export function createInfluencerIntelligenceMcpGateway({
       });
       const raw = await Promise.race([resultPromise, timeoutPromise]);
       try {
-        return normalizeServiceResult(raw, requestId, clock);
+        return normalizeServiceResult(raw, requestId, clock, {
+          redactPublicNames: toolName === 'search_creators' || toolName === 'get_creator_profile',
+        });
       } catch (error) {
         if (error?.code === 'INVALID_SERVICE_RESPONSE') throw error;
         throw fail('INVALID_SERVICE_RESPONSE');
