@@ -655,6 +655,7 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage }) =
       }
       continue;
     }
+    assertObservedPontoSource(releaseSha, String(run?.head_sha || "").trim().toLowerCase());
     if (
       workflow?.state !== "active"
       || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
@@ -666,7 +667,6 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage }) =
       || run?.conclusion != null
       || run?.event !== "workflow_dispatch"
       || run?.head_branch !== "main"
-      || run?.head_sha !== releaseSha
       || run?.name !== `Ponto ${stage} ${releaseSha} orchestrator=${orchestratorRunId}`
       || run?.repository?.full_name !== repository
       || String(run?.repository?.id || "") !== repositoryId

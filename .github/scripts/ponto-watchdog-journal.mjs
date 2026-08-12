@@ -242,7 +242,7 @@ export async function reconstructWatchdogJournal({
     || ![".github/workflows/ponto-progressive-release.yml", ".github/workflows/ponto-progressive-release.yml@refs/heads/main"].includes(coordinator?.path)
     || coordinator?.event !== "workflow_dispatch"
     || coordinator?.head_branch !== "main"
-    || String(coordinator?.head_sha || "").toLowerCase() !== releaseSha
+    || !pontoSourceClosureMatches(releaseSha, String(coordinator?.head_sha || "").trim().toLowerCase())
     || coordinator?.repository?.full_name !== repository
     || coordinator?.head_repository?.full_name !== repository
     || !Number.isFinite(coordinatorCreated)
