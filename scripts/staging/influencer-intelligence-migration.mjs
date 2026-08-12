@@ -16,7 +16,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = path.resolve(import.meta.dirname, '../..')
 const MIGRATIONS_ROOT = path.join(ROOT, 'social/influencer-intelligence/migrations')
-const FIXED_ENV_FILE = '/etc/skincos/influencer-intelligence-staging-migrator.env'
+// Reuse the canonical staging database migrator custody already provisioned
+// for the CRM. Do not duplicate the password into an analytics-specific file;
+// the destination and role assertions below still bind this operation to the
+// exact staging database contract.
+const FIXED_ENV_FILE = '/etc/skincos/crm-atendimento-staging-migrator.env'
 
 export const INFLUENCER_INTELLIGENCE_MIGRATION_RUNNER_VERSION = 'influencer-intelligence/staging-migrations/v1'
 export const INFLUENCER_INTELLIGENCE_STAGING_TARGET = Object.freeze({
@@ -663,6 +667,7 @@ if (isDirectExecution) {
 export const __testables = {
     ROOT,
     MIGRATIONS_ROOT,
+    FIXED_ENV_FILE,
     MIGRATION_PLAN,
     EXPECTED_RELATIONS,
     APPEND_ONLY_RELATIONS,
