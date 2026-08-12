@@ -104,6 +104,7 @@ test('dry-run proves identity, minimum grants, lock and timeout without migratio
     assert.match(roleProofQuery, /\$1::name/)
     const runtimePrivilegeQuery = fake.queries.find(({ sql }) => sql.includes('role_name'))?.sql || ''
     assert.match(runtimePrivilegeQuery, /\$1::name/)
+    assert.match(runtimePrivilegeQuery, /pg_namespace/)
     assert.equal(fake.queries.filter(({ sql }) => sql.includes('insert into')).length, 0)
 })
 

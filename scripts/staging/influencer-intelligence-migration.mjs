@@ -390,8 +390,10 @@ async function collectRuntimePrivilegeState(client) {
             $1::name as role_name,
             exists(select 1 from pg_roles where rolname = $1::name) as role_present,
             case when exists(select 1 from pg_roles where rolname = $1::name)
+              and exists(select 1 from pg_namespace where nspname = $2::name)
               then has_schema_privilege($1::name, $2::name, 'USAGE') else false end as schema_usage,
             case when exists(select 1 from pg_roles where rolname = $1::name)
+              and exists(select 1 from pg_namespace where nspname = $2::name)
               then has_schema_privilege($1::name, $2::name, 'CREATE') else false end as schema_create,
             case when exists(select 1 from pg_roles where rolname = $1::name)
               then exists(
