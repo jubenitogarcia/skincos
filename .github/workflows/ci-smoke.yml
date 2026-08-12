@@ -132,6 +132,12 @@ jobs:
             exit 1
           fi
 
+      - name: Setup Node for supervised Codex continuity
+        if: ${{ needs.changes.outputs.codex == 'true' || needs.changes.outputs.all == 'true' }}
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+
       - name: Validate supervised Codex continuity
         if: ${{ needs.changes.outputs.codex == 'true' || needs.changes.outputs.all == 'true' }}
         run: |
@@ -141,6 +147,7 @@ jobs:
           python3 -m unittest discover -s .codex/hooks/tests -p 'test_*.py' -v
           bash skills/skincos-project-orchestrator/scripts/test-behavior.sh
           bash .codex/hooks/tests/test-host-wrappers.sh
+          node --test scripts/tests/codex-thread-worktree-router.test.mjs
 
       - name: Setup Node
         if: ${{ needs.changes.outputs.node == 'true' }}
@@ -235,6 +242,8 @@ jobs:
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-host-wrappers.ps1
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-rollback.ps1
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-skill-installer.ps1
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\tests\codex-thread-worktree-router.test.ps1
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\tests\codex-thread-routing-hook.test.ps1
 
       - name: Verify storage governance contracts
         if: ${{ needs.changes.outputs.storage_governance == 'true' || needs.changes.outputs.all == 'true' }}

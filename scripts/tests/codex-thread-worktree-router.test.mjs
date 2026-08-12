@@ -14,6 +14,7 @@ const routingState = read('scripts/codex-thread-routing-state.ps1')
 const promptHook = read('.codex/hooks/invoke-codex-thread-routing.ps1')
 const guardHook = read('.codex/hooks/invoke-codex-thread-routing-guard.ps1')
 const routingDocs = read('docs/codex-thread-bootstrap.md')
+const ciSmoke = read('.github/workflows/ci-smoke.yml')
 
 test('resolver exposes the fail-closed routing contract', () => {
   for (const state of ['ready', 'replace', 'ambiguous', 'manual_registration_required', 'blocked']) {
@@ -85,4 +86,11 @@ test('routing documentation records the managed App perimeter and separate prima
   assert.match(routingDocs, /C:\\CodexShared\\Worktrees\\skincos\\admin\\canonical\\crm\\users/)
   assert.match(routingDocs, /C:\\CodexShared\\Worktrees\\skincos\\admin\\canonical\\orb\\meta-ads-publish/)
   assert.match(routingDocs, /threadId`, cookies ou segredos/)
+})
+
+test('CI executes the routing contracts on Linux and Windows', () => {
+  assert.match(ciSmoke, /Setup Node for supervised Codex continuity/)
+  assert.match(ciSmoke, /node --test scripts\/tests\/codex-thread-worktree-router\.test\.mjs/)
+  assert.match(ciSmoke, /scripts\\tests\\codex-thread-worktree-router\.test\.ps1/)
+  assert.match(ciSmoke, /scripts\\tests\\codex-thread-routing-hook\.test\.ps1/)
 })
