@@ -304,8 +304,10 @@ ratio.
   `suspicious_growth_pattern` with confidence, coverage, provenance, and the
   algorithm/model version.
 - Comments intelligence stores aggregate, minimized signals (for example
-  topic, sentiment, safety, and spam proportions) rather than an unbounded
-  comment archive. Raw text retention requires a separate privacy decision.
+  topic, sentiment, safety, spam proportions, duplicate ratios, language
+  coverage, and bounded comment quality) rather than an unbounded comment
+  archive. Raw text retention requires a separate privacy decision. M9's
+  formulas and semantic schema are documented in [`COMMENTS.md`](./COMMENTS.md).
 - A score is not complete without score, confidence, coverage, provenance,
   timestamp, provider identifiers, evidence state, and algorithm version.
 
@@ -340,7 +342,7 @@ production configuration.
 | M6 | Authenticated, sanitized, rate-limited read-only MCP | Source adapter and protocol tests implemented; runtime registration pending |
 | M7 | `skincos-influencer-intelligence` Codex skill | Versioned skill, UI metadata and contract tests implemented; runtime/user access remains governed |
 | M8 | Read-only CRM contracts and dashboard | Source implemented; gated shadow UI, upstream/runtime off |
-| M9 | Minimized comments intelligence | Pending |
+| M9 | Minimized comments intelligence | Source implemented; additive quality/sampling migration and synthetic tests; runtime/provider wiring remains off |
 | M10 | Semantic content and Reels signals | Pending |
 | M11 | Campaign and brand fit | Pending |
 | M12 | Synthetic validation and calibration | Pending |
