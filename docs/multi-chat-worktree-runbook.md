@@ -122,6 +122,22 @@ Uma candidata temporária só é comprovada quando o `TaskSlug` coincide
 exatamente; o texto do objetivo não seleciona worktrees existentes por
 semelhança.
 
+No piloto, registrar manualmente no Codex App estes cinco projetos, usando os
+caminhos completos abaixo:
+
+```text
+C:\CodexShared\Worktrees\skincos\admin\canonical\crm\users
+C:\CodexShared\Worktrees\skincos\admin\canonical\crm\atendimento
+C:\CodexShared\Worktrees\skincos\admin\canonical\crm\clientes
+C:\CodexShared\Worktrees\skincos\admin\canonical\orb\livia
+C:\CodexShared\Worktrees\skincos\admin\canonical\orb\meta-ads-publish
+```
+
+Depois do registro, confirme os projetos no Codex App antes de usar preview ou
+qualificação. Se um caminho não estiver registrado, o resolver retorna
+`manual_registration_required`; ele não seleciona outro projeto por nome,
+proximidade ou histórico da thread.
+
 O contexto transferido para uma thread substituta contém somente objetivo,
 restrições, SHA, checkout e resultado do resolver. A thread original é
 arquivada somente depois da criação bem-sucedida; exclusão permanente de
