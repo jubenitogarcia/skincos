@@ -124,7 +124,10 @@ try {
         topologyId = 'skincos-canonical-worktrees'
         worktree = [ordered]@{ canonicalRelativeRoot = 'admin\canonical' }
         crm = [ordered]@{
-            surfaces = @([ordered]@{ id = 'users'; label = 'Usuários'; route = '/?module=users'; source = 'fixture' })
+            surfaces = @(
+                [ordered]@{ id = 'users'; label = 'Usuários'; route = '/?module=users'; source = 'fixture' },
+                [ordered]@{ id = 'clientes'; label = 'Clientes'; route = '/?module=clientes'; source = 'fixture' }
+            )
         }
         orb = [ordered]@{ families = @() }
     }
@@ -132,9 +135,9 @@ try {
 
     $taskPath = Join-Path $worktreeRoot 'admin\users-routing'
     $otherPath = Join-Path $worktreeRoot 'admin\other-routing'
-    $tiePath = Join-Path $worktreeRoot 'admin-alt\users-routing'
+    $outsideOperatorPath = Join-Path $worktreeRoot 'admin-alt\users-routing'
     $canonicalPath = Join-Path $worktreeRoot 'admin\canonical\crm\users'
-    New-Item -ItemType Directory -Path (Split-Path -Parent $taskPath), (Split-Path -Parent $otherPath), (Split-Path -Parent $tiePath), (Split-Path -Parent $canonicalPath) -Force | Out-Null
+    New-Item -ItemType Directory -Path (Split-Path -Parent $taskPath), (Split-Path -Parent $otherPath), (Split-Path -Parent $outsideOperatorPath), (Split-Path -Parent $canonicalPath) -Force | Out-Null
     Invoke-FixtureGit -Arguments @('worktree', 'add', '-b', 'codex/admin/users-routing', $taskPath, 'HEAD') | Out-Null
     $createdWorktrees += $taskPath
     Invoke-FixtureGit -Arguments @('worktree', 'add', '-b', 'codex/admin/other-routing', $otherPath, 'HEAD') | Out-Null
@@ -163,11 +166,16 @@ try {
     Assert-Equal -Actual $handoff.nativeAction -Expected 'handoff_thread' -Message 'matching task worktree should use handoff'
     Assert-PathEqual -Actual $handoff.recommendedCheckout -Expected $taskPath -Message 'handoff should target the exact task worktree'
 
-    Invoke-FixtureGit -Arguments @('worktree', 'add', '-b', 'codex/admin/users-routing-alt', $tiePath, 'HEAD') | Out-Null
-    $createdWorktrees += $tiePath
-    $taskAmbiguous = Invoke-ResolverFixture -ProjectRoot $otherPath -TaskBrief 'corrigir usuários' -TaskSlug 'users-routing' -Intent edit
-    Assert-Equal -Actual $taskAmbiguous.state -Expected 'ambiguous' -Message 'duplicate task identities should be ambiguous'
-    Assert-Contains -Collection $taskAmbiguous.reasonCodes -Expected 'multiple_matching_task_worktrees' -Message 'duplicate task identities should be explained'
+    Invoke-FixtureGit -Arguments @('worktree', 'add', '-b', 'codex/admin/users-routing-alt', $outsideOperatorPath, 'HEAD') | Out-Null
+    $createdWorktrees += $outsideOperatorPath
+    $outsideOperator = Invoke-ResolverFixture -ProjectRoot $otherPath -TaskBrief 'corrigir usuários' -TaskSlug 'users-routing' -Intent edit
+    Assert-Equal -Actual $outsideOperator.state -Expected 'replace' -Message 'a worktree outside the registered operator root must not become a candidate'
+    Assert-Equal -Actual $outsideOperator.nativeAction -Expected 'handoff_thread' -Message 'the registered operator worktree remains the only candidate'
+    Assert-Equal -Actual @($outsideOperator.candidates).Count -Expected 1 -Message 'the outside-operator worktree must be ignored'
+
+    $surfaceAmbiguous = Invoke-ResolverFixture -ProjectRoot $otherPath -TaskBrief 'corrigir usuários e clientes' -TaskSlug '' -Intent edit
+    Assert-Equal -Actual $surfaceAmbiguous.state -Expected 'ambiguous' -Message 'multiple catalog surfaces should remain fail-closed'
+    Assert-Contains -Collection $surfaceAmbiguous.reasonCodes -Expected 'multiple_surfaces_match_task_brief' -Message 'surface ambiguity should be explained'
 
     $noTaskIdentity = Invoke-ResolverFixture -ProjectRoot $repositoryRoot -TaskBrief 'corrigir usuários' -TaskSlug '' -Intent edit
     Assert-Equal -Actual $noTaskIdentity.state -Expected 'replace' -Message 'missing task identity should create a fresh safe thread'

@@ -8,8 +8,10 @@ param(
     [string]$SurfaceId,
     [string]$TaskSlug,
     [string]$WorktreeRoot = 'C:\CodexShared\Worktrees\skincos',
+    [string]$CodexManagedWorktreeRoot = 'C:\CodexShared\Worktrees\skincos\admin\managed',
     [string]$RuntimeRegistryRoot = 'C:\CodexRuntime\operator\admin\skincos\worktree-registry',
     [string]$TopologyPath,
+    [string]$RoutingStateScript,
     [string]$Repository = 'jubenitogarcia/skincos',
     [switch]$SkipGitHub,
     [switch]$SkipProcessScan,
@@ -224,7 +226,8 @@ function Get-WorktreeRecords {
         $dirtyCount = $null
         $dirtySample = @()
         if ($IncludeStatus -and $record.exists) {
-            $status = @(Invoke-GitSafe -RepoPath $record.path -Arguments @('status', '--porcelain=v1')).output
+            $statusResult = Invoke-GitSafe -RepoPath $record.path -Arguments @('status', '--porcelain=v1')
+            $status = @($statusResult.output)
             $dirtyCount = @($status | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
             $dirtySample = @($status | Select-Object -First 10)
         }
@@ -242,7 +245,8 @@ function Get-WorktreeStatus {
         return [pscustomobject]@{ dirtyCount = $null; dirtySample = @(); status = 'missing' }
     }
 
-    $status = @(Invoke-GitSafe -RepoPath $Path -Arguments @('status', '--porcelain=v1')).output
+    $statusResult = Invoke-GitSafe -RepoPath $Path -Arguments @('status', '--porcelain=v1')
+    $status = @($statusResult.output)
     return [pscustomobject]@{
         dirtyCount = @($status | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
         dirtySample = @($status | Select-Object -First 10)
@@ -263,6 +267,54 @@ function Read-JsonOrNull {
     catch {
         return $null
     }
+}
+
+function Invoke-RoutingState {
+    param(
+        [Parameter(Mandatory = $true)][string]$StateAction,
+        [hashtable]$Arguments = @{}
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RoutingStateScript) -or -not (Test-Path -LiteralPath $RoutingStateScript -PathType Leaf)) {
+        return [pscustomobject]@{ state = 'missing'; reasonCodes = @('routing_state_script_missing'); record = $null; binding = $null }
+    }
+
+    $invocation = @{
+        Action = $StateAction
+        RuntimeRegistryRoot = $RuntimeRegistryRoot
+        CodexManagedWorktreeRoot = $CodexManagedWorktreeRoot
+    }
+    foreach ($entry in $Arguments.GetEnumerator()) {
+        if ($null -eq $entry.Value -or [string]::IsNullOrWhiteSpace([string]$entry.Value)) {
+            continue
+        }
+        $invocation[$entry.Key] = $entry.Value
+    }
+
+    try {
+        $raw = @(& $RoutingStateScript @invocation 2>$null | ForEach-Object { [string]$_ })
+        if ($LASTEXITCODE -ne 0 -or $raw.Count -eq 0) {
+            return [pscustomobject]@{ state = 'blocked'; reasonCodes = @('routing_state_lookup_failed'); record = $null; binding = $null }
+        }
+        return (($raw -join "`n") | ConvertFrom-Json)
+    }
+    catch {
+        return [pscustomobject]@{ state = 'blocked'; reasonCodes = @('routing_state_lookup_failed'); record = $null; binding = $null }
+    }
+}
+
+function Test-GitCommitAncestor {
+    param(
+        [string]$RepoPath,
+        [string]$Ancestor,
+        [string]$Descendant
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Ancestor) -or [string]::IsNullOrWhiteSpace($Descendant)) {
+        return $false
+    }
+    $result = Invoke-GitSafe -RepoPath $RepoPath -Arguments @('merge-base', '--is-ancestor', $Ancestor, $Descendant)
+    return $result.exitCode -eq 0
 }
 
 function Get-TopologyDefinitions {
@@ -491,7 +543,7 @@ function Get-WorktreeTaskSlug {
     }
     $relative = $normalizedPath.Substring($normalizedRoot.Length).TrimStart([char[]]'\')
     $segments = @($relative.Split([char[]]'\', [StringSplitOptions]::RemoveEmptyEntries))
-    if ($segments.Count -ne 2) {
+    if ($segments.Count -ne 2 -or $segments[0].ToLowerInvariant() -ne 'admin') {
         return $null
     }
     return $segments[1]
@@ -552,6 +604,9 @@ function Get-MatchingTaskCandidates {
     foreach ($record in $Worktrees) {
         if (-not $record.exists) { continue }
         $pathTaskSlug = Get-WorktreeTaskSlug -Path $record.path -Root $WorktreeRoot
+        if ([string]::IsNullOrWhiteSpace($pathTaskSlug)) { continue }
+        $candidateSurfaceIds = @(Get-IdentitySurfaceIds -Definitions $Definitions -Text "$($record.path) $($record.branch)")
+        if ($candidateSurfaceIds -notcontains $RequestedDefinition.surfaceId) { continue }
         $branchSegments = ([string]$record.branch).Split([char[]]'/', [StringSplitOptions]::RemoveEmptyEntries)
         $branchTaskSlug = if ($branchSegments.Count -gt 0) { Normalize-SearchText -Value $branchSegments[$branchSegments.Count - 1] } else { '' }
         $pathTaskSlugNeedle = Normalize-SearchText -Value $pathTaskSlug
@@ -602,6 +657,9 @@ function Emit-Result {
 
 try {
     $root = Resolve-RepositoryRoot -RequestedPath $ProjectRoot
+    if ([string]::IsNullOrWhiteSpace($RoutingStateScript)) {
+        $RoutingStateScript = Join-Path $root 'scripts\codex-thread-routing-state.ps1'
+    }
     if ([string]::IsNullOrWhiteSpace($TopologyPath)) {
         $TopologyPath = Join-Path $root 'ops\codex\worktree-topology.json'
     }
@@ -623,9 +681,21 @@ try {
     $currentDirtyCount = if ($null -ne $currentStatus.dirtyCount) { [int]$currentStatus.dirtyCount } else { 0 }
     $sharedRoot = if (Test-Path -LiteralPath 'C:\CodexShared\Projetos\skincos') { (Resolve-Path -LiteralPath 'C:\CodexShared\Projetos\skincos').Path } else { $null }
     $currentIsShared = $null -ne $sharedRoot -and (Test-PathEqual -Left $root -Right $sharedRoot)
+    $currentUnderManagedWorktreeRoot = Test-PathWithinRoot -Path $root -Root $CodexManagedWorktreeRoot
+    $currentBinding = if ($currentUnderManagedWorktreeRoot) {
+        Invoke-RoutingState -StateAction 'get-binding' -Arguments @{ Checkout = $root }
+    }
+    else {
+        [pscustomobject]@{ state = 'not_applicable'; reasonCodes = @(); binding = $null }
+    }
 
-    $surface = Resolve-Surface -Definitions $definitions -RequestedType $SurfaceType -RequestedId $SurfaceId -Brief $TaskBrief -CurrentPath $root
-    $definition = $surface.definition
+    $surfaceResults = @(Resolve-Surface -Definitions $definitions -RequestedType $SurfaceType -RequestedId $SurfaceId -Brief $TaskBrief -CurrentPath $root)
+    $surface = @($surfaceResults | Where-Object { $null -ne $_ -and $null -ne $_.PSObject.Properties['state'] } | Select-Object -Last 1)
+    if ($surface.Count -ne 1) {
+        throw 'A resolução da superfície retornou um contrato incompatível.'
+    }
+    $surface = $surface[0]
+    $definition = if ($null -ne $surface.PSObject.Properties['definition']) { $surface.definition } else { $null }
     $surfaceIdResult = if ($null -ne $definition) { [string]$definition.surfaceId } else { $null }
     $surfaceTypeResult = if ($null -ne $definition) { [string]$definition.surfaceType } else { $null }
     $baseResult = [ordered]@{
@@ -642,14 +712,18 @@ try {
         currentTaskSlug = Get-WorktreeTaskSlug -Path $root -Root $WorktreeRoot
         currentRegistered = ($currentRecord.Count -eq 1)
         currentUnderWorktreeRoot = (Test-PathWithinRoot -Path $root -Root $WorktreeRoot)
+        currentUnderManagedWorktreeRoot = $currentUnderManagedWorktreeRoot
         currentDetached = $currentDetached
         currentDirtyCount = $currentDirtyCount
+        currentBinding = $currentBinding.binding
         recommendedCheckout = $null
         candidateType = $null
         targetCommit = $null
         reasonCodes = @($surface.reasonCodes)
         nativeAction = 'none'
+        currentThreadAction = 'none'
         nativeProjectRegistered = [bool]$NativeProjectRegistered
+        nativeProjectRegistration = $null
         preservationReasons = @()
         candidates = @()
         canonical = $null
@@ -665,6 +739,14 @@ try {
     $currentPullRequest = Get-PullRequestState -Branch $currentBranch
     $baseResult.currentPullRequest = $currentPullRequest
     $canonical = Get-CanonicalInfo -Definition $definition -Worktrees $worktrees -Registry $registry -ManifestReferences $manifestReferences
+    $nativeProjectRegistration = Invoke-RoutingState -StateAction 'get-native-project-registration' -Arguments @{ NativeProjectPath = $canonical.expectedPath }
+    $nativeProjectRegistered = [bool]$NativeProjectRegistered -or $nativeProjectRegistration.state -eq 'ready'
+    $baseResult.nativeProjectRegistered = $nativeProjectRegistered
+    $baseResult.nativeProjectRegistration = [pscustomobject]@{
+        state = [string]$nativeProjectRegistration.state
+        reasonCodes = @($nativeProjectRegistration.reasonCodes)
+        checkout = if ($null -ne $nativeProjectRegistration.record) { [string]$nativeProjectRegistration.record.checkout } else { $null }
+    }
     $baseResult.canonical = [pscustomobject]@{
         expectedPath = $canonical.expectedPath
         recordCount = $canonical.recordCount
@@ -690,18 +772,52 @@ try {
     if ($canonical.process.active) { $baseResult.preservationReasons += 'canonical_active_process_preserved' }
     if ($currentIsShared) { $baseResult.preservationReasons += 'shared_clone_preserved_as_context' }
     if ($currentDirtyCount -gt 0) { $baseResult.preservationReasons += 'current_dirty_changes_preserved' }
-    if ($currentDetached -and -not (Test-PathEqual -Left $root -Right $definition.expectedPath)) { $baseResult.preservationReasons += 'current_detached_fixture_preserved' }
+    if ($currentDetached -and -not (Test-PathEqual -Left $root -Right $definition.expectedPath) -and -not $currentUnderManagedWorktreeRoot) { $baseResult.preservationReasons += 'current_detached_fixture_preserved' }
     if ($currentPullRequest.open -eq $true) { $baseResult.preservationReasons += 'current_open_pr_preserved' }
 
     if ($Intent -eq 'edit') {
+        if ($currentUnderManagedWorktreeRoot) {
+            $binding = $currentBinding.binding
+            $bindingSurfaceMatches = $null -ne $binding -and
+                [string]$binding.surfaceType -eq $definition.surfaceType -and
+                [string]$binding.surfaceId -eq $definition.surfaceId -and
+                [string]$binding.intent -eq 'edit'
+            $bindingLineageMatches = $bindingSurfaceMatches -and
+                (Test-GitCommitAncestor -RepoPath $root -Ancestor ([string]$binding.targetCommit) -Descendant $currentSha)
+            $managedCurrentReady = $currentRecord.Count -eq 1 -and -not $currentIsShared -and $currentDetached -and
+                $currentBinding.state -eq 'ready' -and $bindingSurfaceMatches -and $bindingLineageMatches
+            if ($managedCurrentReady) {
+                $baseResult.state = 'ready'
+                $baseResult.recommendedCheckout = $root
+                $baseResult.candidateType = 'codex-managed'
+                $baseResult.targetCommit = $currentSha
+                $baseResult.nativeAction = 'none'
+                $baseResult.currentThreadAction = 'none'
+                $baseResult.reasonCodes += 'current_bound_managed_worktree_ready'
+                Emit-Result -Value ([pscustomobject]$baseResult)
+                exit 0
+            }
+
+            $baseResult.state = 'blocked'
+            $baseResult.candidateType = 'codex-managed'
+            $baseResult.reasonCodes += 'current_managed_worktree_binding_required'
+            if ($currentBinding.state -ne 'ready') { $baseResult.reasonCodes += 'current_managed_worktree_binding_missing_or_invalid' }
+            if ($null -ne $binding -and -not $bindingSurfaceMatches) { $baseResult.reasonCodes += 'current_managed_worktree_surface_mismatch' }
+            if ($null -ne $binding -and -not $bindingLineageMatches) { $baseResult.reasonCodes += 'current_managed_worktree_target_lineage_mismatch' }
+            $baseResult.preservationReasons += 'current_managed_worktree_preserved'
+            Emit-Result -Value ([pscustomobject]$baseResult)
+            exit 0
+        }
+
         $currentIdentitySurfaces = @(Get-IdentitySurfaceIds -Definitions $definitions -Text "$root $currentBranch")
-        $currentSurfaceMatches = $currentIdentitySurfaces.Count -eq 0 -or $currentIdentitySurfaces -contains $definition.surfaceId
+        $currentSurfaceMatches = $currentIdentitySurfaces -contains $definition.surfaceId
         $currentTaskSlug = Get-WorktreeTaskSlug -Path $root -Root $WorktreeRoot
         $taskIdentityMatches = -not [string]::IsNullOrWhiteSpace($currentTaskSlug) -and
             ([string]::IsNullOrWhiteSpace($TaskSlug) -or
                 (Normalize-SearchText -Value $currentTaskSlug) -eq (Normalize-SearchText -Value $TaskSlug))
         if (-not $baseResult.currentUnderWorktreeRoot) { $baseResult.reasonCodes += 'current_checkout_outside_operator_worktree_root' }
         if ([string]::IsNullOrWhiteSpace($currentTaskSlug)) { $baseResult.reasonCodes += 'current_checkout_has_no_task_worktree_identity' }
+        if (-not $currentSurfaceMatches) { $baseResult.reasonCodes += 'current_checkout_surface_identity_missing_or_mismatched' }
         if (-not $taskIdentityMatches) { $baseResult.reasonCodes += 'current_task_identity_mismatch' }
         $currentPrivateRegistered = $currentRecord.Count -eq 1 -and $baseResult.currentUnderWorktreeRoot -and -not $currentIsShared -and -not $currentDetached -and $currentSurfaceMatches -and $taskIdentityMatches
         if ($currentPrivateRegistered) {
@@ -710,6 +826,7 @@ try {
             $baseResult.candidateType = 'temporary'
             $baseResult.targetCommit = $currentSha
             $baseResult.nativeAction = 'none'
+            $baseResult.currentThreadAction = 'none'
             $baseResult.reasonCodes += 'current_registered_task_worktree'
             Emit-Result -Value ([pscustomobject]$baseResult)
             exit 0
@@ -725,7 +842,8 @@ try {
             $baseResult.candidateType = 'temporary'
             $baseResult.targetCommit = $candidate.head
             $baseResult.nativeAction = 'handoff_thread'
-            $baseResult.reasonCodes += 'matching_task_worktree_found'
+            $baseResult.currentThreadAction = 'handoff_other_thread'
+            $baseResult.reasonCodes += 'matching_task_worktree_requires_verified_other_thread'
             Emit-Result -Value ([pscustomobject]$baseResult)
             exit 0
         }
@@ -747,6 +865,7 @@ try {
         $baseResult.candidateType = 'codex-managed'
         $baseResult.targetCommit = $baseCommit
         $baseResult.nativeAction = 'create_thread'
+        $baseResult.currentThreadAction = 'create_replacement_thread'
         $baseResult.reasonCodes += 'current_checkout_not_eligible_for_edit'
         Emit-Result -Value ([pscustomobject]$baseResult)
         exit 0
@@ -761,16 +880,18 @@ try {
         $baseResult.state = if ($protectedCanonical) { 'blocked' } else { 'manual_registration_required' }
         $baseResult.reasonCodes += 'canonical_surface_not_ready'
         $baseResult.nativeAction = 'manual_open_project'
+        $baseResult.currentThreadAction = 'manual_registration_required'
         Emit-Result -Value ([pscustomobject]$baseResult)
         exit 0
     }
 
-    if (-not $NativeProjectRegistered) {
+    if (-not $nativeProjectRegistered) {
         $baseResult.state = 'manual_registration_required'
         $baseResult.recommendedCheckout = $canonical.expectedPath
         $baseResult.candidateType = 'canonical'
         $baseResult.targetCommit = $canonical.record.head
         $baseResult.nativeAction = 'manual_open_project'
+        $baseResult.currentThreadAction = 'manual_registration_required'
         $baseResult.reasonCodes += 'canonical_project_not_registered_in_codex_app'
         Emit-Result -Value ([pscustomobject]$baseResult)
         exit 0
@@ -782,6 +903,7 @@ try {
         $baseResult.candidateType = 'canonical'
         $baseResult.targetCommit = $canonical.record.head
         $baseResult.nativeAction = 'none'
+        $baseResult.currentThreadAction = 'none'
         $baseResult.reasonCodes += 'current_canonical_worktree_ready'
     }
     else {
@@ -790,6 +912,7 @@ try {
         $baseResult.candidateType = 'canonical'
         $baseResult.targetCommit = $canonical.record.head
         $baseResult.nativeAction = 'handoff_thread'
+        $baseResult.currentThreadAction = 'handoff_other_thread'
         $baseResult.reasonCodes += 'current_checkout_is_not_canonical_for_surface'
     }
 
@@ -811,14 +934,18 @@ catch {
         currentTaskSlug = $null
         currentRegistered = $false
         currentUnderWorktreeRoot = $false
+        currentUnderManagedWorktreeRoot = $false
         currentDetached = $false
         currentDirtyCount = $null
+        currentBinding = $null
         recommendedCheckout = $null
         candidateType = $null
         targetCommit = $null
         reasonCodes = @('resolver_error')
         nativeAction = 'none'
+        currentThreadAction = 'none'
         nativeProjectRegistered = [bool]$NativeProjectRegistered
+        nativeProjectRegistration = $null
         preservationReasons = @('fail_closed_after_resolver_error')
         candidates = @()
         canonical = $null

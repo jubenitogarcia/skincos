@@ -100,8 +100,9 @@ ser usado como `cwd` de serviço.
 
 ## Roteamento de novas threads
 
-No primeiro turno de uma thread, o agente executa o resolver com o objetivo
-recebido:
+No primeiro turno, o hook `UserPromptSubmit` entrega o objetivo recebido ao
+resolver. Mensagens normais sempre usam intenção `edit`; `preview` e `qualify`
+são ações explícitas, jamais inferidas por palavras da mensagem:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\resolve-codex-thread-worktree.ps1 `
@@ -111,19 +112,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\resolve-codex-thre
   -Intent edit
 ```
 
-O resolver é somente-leitura. `ready` permite continuar; `replace` orienta a
-camada nativa do Codex App a usar `create_thread` ou `handoff_thread`;
+O resolver é somente-leitura. `ready` permite continuar;
+`replace/currentThreadAction=create_replacement_thread` orienta a camada nativa
+do Codex App a criar uma task substituta; `handoff_other_thread` só autoriza
+handoff para uma task diferente, já identificada com segurança.
 `manual_registration_required`, `ambiguous` e `blocked` interrompem a escolha
-automática. A thread chamadora não altera o próprio `cwd` e o script nunca
-recebe ou infere `threadId`.
+automática. A task chamadora não altera o próprio `cwd`, não faz handoff de si
+mesma e o script nunca recebe ou infere `threadId`.
 
 Para preview/qualificação, o slot canônico precisa estar registrado como
 projeto no Codex App. O registro de projeto é uma operação do aplicativo, não
-um fallback do PowerShell. Para edição, a thread substituta usa uma worktree
-gerenciada pelo App ou uma candidata de tarefa comprovadamente correspondente.
-Uma candidata temporária só é comprovada quando o `TaskSlug` coincide
-exatamente; o texto do objetivo não seleciona worktrees existentes por
-semelhança.
+um fallback do PowerShell. Para edição, a task substituta usa uma worktree
+gerenciada pelo App dentro de
+`C:\CodexShared\Worktrees\skincos\admin\managed`, ou uma candidata de tarefa
+comprovadamente correspondente. Uma candidata temporária só é comprovada quando
+o `TaskSlug` coincide exatamente; o texto do objetivo não seleciona worktrees
+existentes por semelhança.
 
 No piloto, registrar manualmente no Codex App estes cinco projetos, usando os
 caminhos completos abaixo:
@@ -137,14 +141,19 @@ C:\CodexShared\Worktrees\skincos\admin\canonical\orb\meta-ads-publish
 ```
 
 Depois do registro, confirme os projetos no Codex App antes de usar preview ou
-qualificação. Se um caminho não estiver registrado, o resolver retorna
-`manual_registration_required`; ele não seleciona outro projeto por nome,
-proximidade ou histórico da thread.
+qualificação e grave a confirmação privada com
+`codex-thread-routing-state.ps1 -Action register-native-project`. Se um caminho
+não estiver registrado, o resolver retorna `manual_registration_required`; ele
+não seleciona outro projeto por nome, proximidade ou histórico da task.
 
-O contexto transferido para uma thread substituta contém somente objetivo,
-restrições, SHA, checkout e resultado do resolver. A thread original é
-arquivada somente depois da criação bem-sucedida; exclusão permanente de
-histórico não é suportada pela API atual.
+Quando a task precisa ser substituída, o hook reserva antes um nonce privado
+com checkout, superfície, SHA e validade curta. A task substituta deve colocar
+o marcador emitido na primeira linha do seu primeiro prompt; o vínculo é aceito
+somente uma vez, no worktree gerenciado, detached e no SHA esperado. O contexto
+transferido contém somente objetivo, restrições, SHA, checkout e decisão do
+resolver — nunca IDs de task, cookies ou segredos. A task original é arquivada
+somente depois de a substituta estar pronta; exclusão permanente de histórico
+não é suportada pela API atual.
 
 ## Checklist de encerramento por chat
 - Branch/worktree limpos (`git status` sem alteracoes locais).

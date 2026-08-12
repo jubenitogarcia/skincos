@@ -165,6 +165,13 @@ necessário informar `threadId`, escolher outro worktree ou usar um checkout
 fixo; a ação não abre picker. Não execute `Set-Location` para o clone
 compartilhado antes do clique.
 
+Para tasks criadas automaticamente, configure **Settings > Worktrees** com o
+root `C:\CodexShared\Worktrees\skincos\admin\managed`. O vínculo da task nova
+é privado e efêmero: inclui somente checkout, superfície, SHA e nonce; nunca
+armazena `threadId`, cookies ou segredos. A criação, espera, navegação e
+arquivamento pertencem à camada nativa do Codex App; o hook apenas fornece a
+decisão e bloqueia escrita na origem enquanto a substituição estiver pendente.
+
 Se o cwd for `C:\CodexShared\Projetos\skincos`, a ação falha de forma
 controlada e orienta abrir o worktree da thread. O clone compartilhado não
 recebe o `threadId` do Codex App e não pode inferir com segurança qual thread

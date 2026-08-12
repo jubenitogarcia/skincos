@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-runner="$root/.codex/hooks/invoke-codex-thread-routing.ps1"
+runner="$root/.codex/hooks/invoke-codex-thread-routing-guard.ps1"
 [ -f "$runner" ] || exit 0
 command -v powershell.exe >/dev/null 2>&1 || exit 0
 
