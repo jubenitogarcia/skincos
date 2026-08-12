@@ -20,6 +20,7 @@ import { canonicalJson } from "../ops/governance/global-coordination-core.mjs";
 export const ROOT = path.resolve(import.meta.dirname, "..");
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const DIGEST = /^[0-9a-f]{64}$/i;
+const RETRYABLE_ACQUIRE_REASONS = new Set(["resource-lease-held"]);
 
 function argument(args, name, fallback = null) {
   const index = args.indexOf(name);
@@ -35,6 +36,22 @@ function requiredArgument(args, name) {
 function jsonFile(args, name, fallback = null) {
   const value = argument(args, name);
   return value ? JSON.parse(fs.readFileSync(path.resolve(value), "utf8")) : fallback;
+}
+
+function boundedNonNegativeIntegerArgument(args, name, fallback, maximum) {
+  const value = argument(args, name, String(fallback));
+  if (!/^[0-9]+$/.test(String(value || ""))) throw new Error(`${name} must be a non-negative integer`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed > maximum) {
+    throw new Error(`${name} must be between 0 and ${maximum}`);
+  }
+  return parsed;
+}
+
+function boundedPositiveIntegerArgument(args, name, fallback, maximum) {
+  const parsed = boundedNonNegativeIntegerArgument(args, name, fallback, maximum);
+  if (parsed < 1) throw new Error(`${name} must be between 1 and ${maximum}`);
+  return parsed;
 }
 
 function safeIdSegment(value, fallback) {
@@ -200,6 +217,35 @@ export function buildWorkflowLeaseRequest({
   };
 }
 
+// A cancelled GitHub job cannot reliably execute its final release step.  A
+// separate, already-latched recovery job may therefore wait only for the
+// coordinator's finite remote lease to expire.  It never retries ambiguity,
+// custody, or authorization failures, and callers must opt in explicitly.
+export async function acquireWorkflowLease({
+  request,
+  url,
+  maxWaitMs = 0,
+  pollMs = 5_000,
+  acquireImpl = acquireGlobalLease,
+  now = () => Date.now(),
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+}) {
+  if (!Number.isSafeInteger(maxWaitMs) || maxWaitMs < 0 || maxWaitMs > 1_200_000) {
+    throw new Error("global coordination acquire wait must be between 0 and 1200000 milliseconds");
+  }
+  if (!Number.isSafeInteger(pollMs) || pollMs < 1 || pollMs > 60_000) {
+    throw new Error("global coordination acquire poll must be between 1 and 60000 milliseconds");
+  }
+  const deadline = now() + maxWaitMs;
+  let result;
+  while (true) {
+    result = await acquireImpl({ request, url });
+    if (result?.passed === true && result.lease) return result;
+    if (!RETRYABLE_ACQUIRE_REASONS.has(String(result?.reason || "")) || now() >= deadline) return result;
+    await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
+  }
+}
+
 function writeProof(file, lease) {
   const proof = proofForLease(lease);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -253,7 +299,14 @@ async function main(args) {
         ? jsonFile(args, "--release-identity-file")
         : null,
     });
-    const result = await acquireGlobalLease({ request, url: urlFor(args) });
+    const maxWaitSeconds = boundedNonNegativeIntegerArgument(args, "--max-wait-seconds", 0, 1_200);
+    const pollSeconds = boundedPositiveIntegerArgument(args, "--poll-seconds", 5, 60);
+    const result = await acquireWorkflowLease({
+      request,
+      url: urlFor(args),
+      maxWaitMs: maxWaitSeconds * 1_000,
+      pollMs: pollSeconds * 1_000,
+    });
     if (result.passed === true && result.lease) writeProof(proofPath(args), result.lease);
     output(result, resultFile(args));
     if (result.passed !== true) process.exitCode = 2;

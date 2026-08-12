@@ -1823,7 +1823,10 @@ jobs:
     needs: orchestrate
     if: ${{ always() && contains(fromJSON('["failure","cancelled"]'), needs.orchestrate.result) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The broker latch is written before recovery lease acquisition.  This job
+    # may then wait for one finite coordinator lease expiry without reopening
+    # the affected surface.
+    timeout-minutes: 30
     concurrency:
       group: ponto-emergency-latch-${{ inputs.stage == 'staging' && 'staging' || 'production' }}
       cancel-in-progress: false
@@ -1836,6 +1839,16 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+      - name: Monotonically latch Ponto closed outside the surface mutex
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: ${{ inputs.stage == 'staging' && 'staging' || 'production' }}
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ github.run_id }}
+          PONTO_EMERGENCY_LATCH_REPORT: ${{ runner.temp }}/ponto-ordinary-recovery/latch.json
+        run: node .github/scripts/ponto-emergency-latch-write.mjs
       - name: Acquire global recovery lease
         uses: ./.github/actions/global-coordination-acquire
         with:
@@ -1848,28 +1861,8 @@ jobs:
           module: ponto
           source_sha: ${{ inputs.release_sha }}
           proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
-      - name: Check global recovery lease before latching closed
-        uses: ./.github/actions/global-coordination-check
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
-          resource: release:ponto
-          module: ponto
-          source_sha: ${{ inputs.release_sha }}
-          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
-          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
-      - name: Monotonically latch Ponto closed outside the surface mutex
-        env:
-          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
-          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
-          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
-          PONTO_EMERGENCY_TARGET: ${{ inputs.stage == 'staging' && 'staging' || 'production' }}
-          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
-          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ github.run_id }}
-          PONTO_EMERGENCY_LATCH_REPORT: ${{ runner.temp }}/ponto-ordinary-recovery/latch.json
-        run: node .github/scripts/ponto-emergency-latch-write.mjs
+          wait_timeout_seconds: '960'
+          retry_interval_seconds: '10'
       - name: Check global recovery lease before overlay propagation
         uses: ./.github/actions/global-coordination-check
         with:

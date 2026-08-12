@@ -62,6 +62,28 @@ test("watchdog accepts only an exact failed first-attempt coordinator from main"
   assert.equal(context.releaseSha, sha);
 });
 
+test("watchdog defers a duplicate failure to an exact active coordinator", async () => {
+  const peer = {
+    ...run,
+    id: 100,
+    status: "in_progress",
+    conclusion: null,
+    name: `Ponto staging ${sha} orchestrator=100`,
+    display_title: `Ponto staging ${sha} orchestrator=100`,
+  };
+  const context = await validateWatchdogContext(input({
+    request: async (pathname) => {
+      if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+      if (pathname.endsWith("/jobs?per_page=100")) return jobs;
+      if (pathname.includes("/runs?")) return { workflow_runs: [peer] };
+      return run;
+    },
+  }));
+  assert.equal(context.requiresClose, false);
+  assert.equal(context.activePeerCoordinatorRunId, "100");
+  assert.equal(context.activePeerDiscovery, "verified-peer");
+});
+
 test("watchdog accepts a closure-compatible main revision for an immutable release", async () => {
   const observedSha = "b".repeat(40);
   const sourceChecks = [];
@@ -210,6 +232,9 @@ test("watchdog never rolls back after failed child reconciliation", () => {
     workflowText.indexOf("  reconcile:"),
   );
   assert.match(failClose, /needs:\s*\[context, latch, reconcile\]/);
+  assert.match(failClose, /timeout-minutes: 30/);
+  assert.match(failClose, /wait_timeout_seconds: '960'/);
+  assert.match(failClose, /retry_interval_seconds: '10'/);
   assert.match(failClose, /needs\.latch\.result == 'success'/);
   assert.doesNotMatch(failClose, /needs\.reconcile\.result == 'success'/);
   assert.match(latch, /Attempt external overlay propagation before reconciliation/);
@@ -231,4 +256,21 @@ test("watchdog never rolls back after failed child reconciliation", () => {
   assert.match(rollback, /needs:\s*\[context, latch, reconcile, fail-close\]/);
   assert.match(rollback, /needs\.reconcile\.result == 'success'/);
   assert.match(rollback, /needs\.fail-close\.result == 'success'/);
+});
+
+test("ordinary recovery latches before it waits for a stale coordinator lease", () => {
+  const workflowText = fs.readFileSync(
+    new URL("../workflows/ponto-progressive-release.yml", import.meta.url),
+    "utf8",
+  );
+  const start = workflowText.indexOf("  recovery-latch:");
+  const end = workflowText.indexOf("  recovery-reconcile:");
+  const recoveryLatch = workflowText.slice(start, end);
+  assert.match(recoveryLatch, /timeout-minutes: 30/);
+  assert.ok(
+    recoveryLatch.indexOf("Monotonically latch Ponto closed outside the surface mutex")
+      < recoveryLatch.indexOf("Acquire global recovery lease"),
+  );
+  assert.match(recoveryLatch, /wait_timeout_seconds: '960'/);
+  assert.match(recoveryLatch, /retry_interval_seconds: '10'/);
 });
