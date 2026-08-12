@@ -5,6 +5,7 @@ import { handleRequest } from '../src/index.js';
 const encoder = new TextEncoder();
 const TEST_API_TOKEN = ['unit', 'auth', 'token'].join('-');
 const TEST_OPERATIONAL_TOKEN = ['unit', 'operational', 'token'].join('-');
+const TEST_ANALYTICS_TOKEN = ['unit', 'analytics', 'token'].join('-');
 const TEST_ENCRYPTION_KEY = ['unit', 'encryption', 'key', 'with', 'enough', 'length'].join('-');
 const THREADS_TOKEN = ['threads', 'fixture', 'token'].join('-');
 const FACEBOOK_TOKEN = ['facebook', 'fixture', 'token'].join('-');
@@ -75,6 +76,7 @@ function env(db) {
     TOKEN_VAULT_DB: db,
     TOKEN_VAULT_API_TOKEN: TEST_API_TOKEN,
     TOKEN_VAULT_N8N_API_TOKEN: TEST_OPERATIONAL_TOKEN,
+    TOKEN_VAULT_ANALYTICS_API_TOKEN: TEST_ANALYTICS_TOKEN,
     TOKEN_VAULT_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
     REQUIRE_AUTH: 'true',
     WORKER_AUTH_HEADER_NAME: 'Authorization',

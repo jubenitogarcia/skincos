@@ -3,6 +3,7 @@ import {
   isMetaAdsPublishPath,
 } from './meta-ads-publish.js';
 import { handleSocialPublishOperation } from './social-publish.js';
+import { handleAnalyticsReadonlyRequest } from './analytics-readonly.js';
 
 const TOKEN_PREFIX = '/internal/token-vault';
 const JSON_HEADERS = {
@@ -48,6 +49,13 @@ export async function handleRequest(request, env) {
       return handleSocialPublishOperation({ request, env, requestId, decryptToken, writeAudit });
     }
 
+    if (request.method === 'POST' && pathname === '/v1/analytics/operations') {
+      if (auth.role !== 'admin' && auth.role !== 'analytics') {
+        return json({ ok: false, error: 'analytics_credential_required', requestId }, { status: 403 });
+      }
+      return handleAnalyticsReadonlyRequest({ request, env, requestId, decryptToken, writeAudit });
+    }
+
     if (request.method === 'GET' && pathname === '/v1/tokens') {
       if (auth.role !== 'admin') return adminOnly(requestId);
       return listTokens(url, env, requestId);
@@ -91,6 +99,7 @@ async function health(env, requestId) {
   const checks = {
     d1: Boolean(env.TOKEN_VAULT_DB),
     apiToken: Boolean(safeString(env.TOKEN_VAULT_API_TOKEN)),
+    analyticsApiToken: Boolean(safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN)),
     encryptionKey: Boolean(safeString(env.TOKEN_VAULT_ENCRYPTION_KEY)),
   };
 
@@ -98,7 +107,7 @@ async function health(env, requestId) {
     await env.TOKEN_VAULT_DB.prepare('SELECT 1 AS ok').first();
   }
 
-  const ok = Object.values(checks).every(Boolean);
+  const ok = checks.d1 && checks.apiToken && checks.encryptionKey;
   return json({
     ok,
     service: 'skincos-token-vault',
@@ -351,7 +360,10 @@ function authorizeRequest(request, env) {
 
   const adminToken = safeString(env.TOKEN_VAULT_API_TOKEN);
   const operationalToken = safeString(env.TOKEN_VAULT_N8N_API_TOKEN);
-  if (!adminToken && !operationalToken) return { ok: false, status: 500, reason: 'missing_worker_secret' };
+  const analyticsToken = safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN);
+  if (!adminToken && !operationalToken && !analyticsToken) {
+    return { ok: false, status: 500, reason: 'missing_worker_secret' };
+  }
 
   const headerName = safeString(env.WORKER_AUTH_HEADER_NAME || 'Authorization') || 'Authorization';
   const scheme = safeString(env.WORKER_AUTH_SCHEME || 'Bearer') || 'Bearer';
@@ -360,6 +372,9 @@ function authorizeRequest(request, env) {
 
   if (adminToken && constantTimeEqual(authHeader, `${scheme} ${adminToken}`.trim())) {
     return { ok: true, role: 'admin' };
+  }
+  if (analyticsToken && constantTimeEqual(authHeader, `${scheme} ${analyticsToken}`.trim())) {
+    return { ok: true, role: 'analytics' };
   }
   if (operationalToken && constantTimeEqual(authHeader, `${scheme} ${operationalToken}`.trim())) {
     return { ok: true, role: 'operational' };
@@ -422,11 +437,14 @@ function contract(requestId) {
       listTokens: 'GET /internal/token-vault/v1/tokens?provider=threads|instagram|facebook&active=true',
       createToken: 'POST /internal/token-vault/v1/tokens',
       updateToken: 'PATCH /internal/token-vault/v1/tokens/:id',
+      analyticsOperation: 'POST /internal/token-vault/v1/analytics/operations',
     },
     auth: {
       header: 'Authorization',
       scheme: 'Bearer',
       secret: 'TOKEN_VAULT_API_TOKEN',
+      analytics_secret: 'TOKEN_VAULT_ANALYTICS_API_TOKEN',
+      analytics_scope: 'influencer-intelligence',
     },
     storage: {
       d1_binding: 'TOKEN_VAULT_DB',
