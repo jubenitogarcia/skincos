@@ -569,7 +569,12 @@ function Test-OpenPullRequest {
     $exitCode = $LASTEXITCODE
     $ErrorActionPreference = $oldPreference
     if ($exitCode -ne 0) { return [pscustomobject]@{ status = 'error'; open = $null; output = $raw } }
-    try { $rows = @($raw -join "`n" | ConvertFrom-Json) } catch { return [pscustomobject]@{ status = 'error'; open = $null; output = $raw } }
+    try {
+        $jsonText = $raw -join "`n"
+        $document = $jsonText | ConvertFrom-Json
+        $rows = if ($null -eq $document) { @() } else { @($document) }
+    }
+    catch { return [pscustomobject]@{ status = 'error'; open = $null; output = $raw } }
     return [pscustomobject]@{ status = 'ok'; open = $rows.Count -gt 0; pullRequests = @($rows) }
 }
 
