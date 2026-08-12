@@ -1297,6 +1297,90 @@ export async function handleAdminRoutes({
     }
   }
 
+  // A retryable, server-only boundary for records that predate a successful
+  // Workforce provisioning. It deliberately does not issue, revoke, or send
+  // an invite: an operator must make the binding healthy before a delivery
+  // action can be attempted.
+  const reconcileWorkforceMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/workforce\/reconcile$/);
+  if (reconcileWorkforceMatch && request.method === 'POST') {
+    let onboardingId = '';
+    let onboarding = null;
+    let units = [];
+    let requestId = '';
+    try {
+      onboardingId = decodeURIComponent(reconcileWorkforceMatch[1] || '').trim();
+      onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      units = normalizeAllowedUnits(onboarding.units_json);
+      const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units });
+      if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite reconciliar este vínculo', code: hierarchyDenied }), { status: 403 }, appOrigin);
+      const accountStatus = normalizeAccountState(onboarding.account_status);
+      if (!['INVITED', 'PENDING_ACCESS'].includes(accountStatus)) return withCORS(JSON.stringify({ success: false, error: 'Somente acessos pendentes podem reconciliar o Workforce', code: 'TEAM_WORKFORCE_RECONCILE_NOT_PENDING' }), { status: 409 }, appOrigin);
+
+      requestId = String(request.headers.get('x-request-id') || `identity-workforce-reconcile-${onboardingId}`).slice(0, 180);
+      const existingEmployeeId = String(onboarding.workforce_employee_id || '').trim();
+      let workforceEmployeeId = existingEmployeeId;
+      let workforceReconciled = false;
+      if (!workforceEmployeeId) {
+        const workforce = await syncIdentityWorkforceOnboarding(env, {
+          onboardingId,
+          fullName: String(onboarding.full_name || '').trim(),
+          corporateEmail: String(onboarding.corporate_email || '').trim(),
+          mobilePhoneHash: String(onboarding.mobile_phone_hash || '').trim(),
+          units,
+          profile: String(onboarding.profile || '').trim().toUpperCase(),
+          accountStatus,
+          jobTitle: String(onboarding.job_title || displayJobTitle(onboarding.profile)).trim(),
+          department: String(onboarding.department_name || '').trim(),
+          createdBy: String(auth?.user?.username || ''),
+        }, requestId);
+        workforceEmployeeId = String(workforce?.employeeId || '').trim();
+        if (!workforceEmployeeId) throw new Error('WORKFORCE_EMPLOYEE_ID_REQUIRED');
+        workforceReconciled = true;
+      }
+
+      const existingTeam = await env.DB.prepare('SELECT workforce_employee_id FROM crm_employee_team WHERE onboarding_id=? LIMIT 1').bind(onboardingId).first();
+      if (existingTeam?.workforce_employee_id && String(existingTeam.workforce_employee_id).trim() !== workforceEmployeeId) {
+        return withCORS(JSON.stringify({ success: false, error: 'O vínculo Workforce existente diverge do onboarding', code: 'TEAM_WORKFORCE_BINDING_CONFLICT' }), { status: 409 }, appOrigin);
+      }
+      const existingEmployeeOwner = await env.DB.prepare('SELECT onboarding_id FROM crm_employee_team WHERE workforce_employee_id=? LIMIT 1').bind(workforceEmployeeId).first();
+      if (existingEmployeeOwner?.onboarding_id && String(existingEmployeeOwner.onboarding_id).trim() !== onboardingId) {
+        return withCORS(JSON.stringify({ success: false, error: 'A identidade Workforce já pertence a outro onboarding', code: 'TEAM_WORKFORCE_BINDING_CONFLICT' }), { status: 409 }, appOrigin);
+      }
+
+      const now = new Date().toISOString();
+      const provisioningState = accountStatus === 'INVITED' ? 'INVITE_PENDING' : 'WORKFORCE_SYNCED';
+      const localStatements = [
+        env.DB.prepare('UPDATE crm_employee_onboarding SET workforce_employee_id=?, provisioning_state=?, compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?').bind(workforceEmployeeId, provisioningState, now, onboardingId),
+      ];
+      if (!existingTeam?.workforce_employee_id) {
+        localStatements.push(
+          env.DB.prepare(`INSERT INTO crm_employee_team
+            (workforce_employee_id, onboarding_id, schedule_professional_id, schedule_status, schedule_role, schedule_shift, schedule_nickname, schedule_instagram, schedule_color, units_json, created_by, created_at, updated_at)
+            VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?)`)
+            .bind(workforceEmployeeId, onboardingId, JSON.stringify(units), String(auth?.user?.username || ''), now, now)
+        );
+      }
+      await env.DB.batch(localStatements);
+
+      const updated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (String(updated?.workforce_employee_id || '').trim() !== workforceEmployeeId) throw new Error('TEAM_WORKFORCE_BINDING_CONFLICT');
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_WORKFORCE_RECONCILED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: units.join(','), before: { workforceEmployeeId: existingEmployeeId || null, accountStatus }, after: { workforceEmployeeId, accountStatus, provisioningState, workforceReconciled, inviteDeliveryChanged: false, requestId } });
+      await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_WORKFORCE_RECONCILED', actorRole: auth.user.role, itemCount: 1, unitCount: units.length });
+      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated), replayed: !workforceReconciled }), { status: 200 }, appOrigin);
+    } catch (error) {
+      const code = String(error?.message || 'TEAM_WORKFORCE_RECONCILE_FAILED').slice(0, 120);
+      const dependencyFailure = isOnboardingDependencyError(code) || /^(WORKFORCE_|IDENTITY_WORKFORCE_|TIMEKEEPING_|RELEASE_AFFINITY_|RUNTIME_BINDINGS_)/.test(code);
+      if (onboardingId && onboarding?.id && dependencyFailure) {
+        await env.DB.prepare("UPDATE crm_employee_onboarding SET provisioning_state='FAILED', last_error_code=?, updated_at=? WHERE id=?").bind(code, new Date().toISOString(), onboardingId).run().catch(() => {});
+      }
+      await Promise.resolve(appendAuditLog?.({ env, actor: auth?.user?.username || '', role: auth?.user?.role || '', ip, userAgent, action: 'EMPLOYEE_TEAM_WORKFORCE_RECONCILE_FAILED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId || null, unidade: units.join(','), after: { code, requestId: requestId || null, failClosed: true, inviteDeliveryChanged: false } })).catch(() => {});
+      const status = dependencyFailure ? 503 : (/(CONFLICT|REQUIRED|INVALID)/.test(code) ? 409 : 500);
+      return withCORS(JSON.stringify({ success: false, error: dependencyFailure ? 'Vínculo Workforce pendente' : 'Não foi possível reconciliar o vínculo Workforce', code }), { status }, appOrigin);
+    }
+  }
+
   const resendInviteMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/invite\/resend$/);
   if (resendInviteMatch && request.method === 'POST') {
     try {
@@ -1308,6 +1392,7 @@ export async function handleAdminRoutes({
       const hierarchyDenied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
       if (hierarchyDenied) return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite reenviar este convite', code: hierarchyDenied }), { status: 403 }, appOrigin);
       if (!['INVITED', 'PENDING_ACCESS'].includes(normalizeAccountState(onboarding.account_status))) return withCORS(JSON.stringify({ success: false, error: 'Somente convites pendentes podem ser reenviados', code: 'TEAM_INVITE_NOT_PENDING' }), { status: 409 }, appOrigin);
+      if (!String(onboarding.workforce_employee_id || '').trim()) return withCORS(JSON.stringify({ success: false, error: 'Reconcilie o vínculo Workforce antes de reenviar o convite', code: 'TEAM_WORKFORCE_BINDING_REQUIRED' }), { status: 409 }, appOrigin);
 
       const personalEmail = await decryptOnboardingToken(env, onboarding.personal_email_encrypted);
       if (!personalEmail) return withCORS(JSON.stringify({ success: false, error: 'E-mail pessoal indisponível para o convite', code: 'INVITEE_EMAIL_UNAVAILABLE' }), { status: 503 }, appOrigin);
@@ -1745,7 +1830,7 @@ export async function handleAdminRoutes({
     const requestId = String(request.headers.get('x-request-id') || `identity-team-update-${teamMemberMatch[1] || ''}`).slice(0, 180);
     try {
       onboardingId = decodeURIComponent(teamMemberMatch[1] || '').trim();
-      current = await env.DB.prepare(`SELECT o.*, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json, a.id AS crm_account_link_id, a.crm_username AS crm_account_username, a.review_status AS crm_account_review_status
+      current = await env.DB.prepare(`SELECT o.*, t.workforce_employee_id AS team_workforce_employee_id, t.schedule_professional_id, t.schedule_status, t.schedule_role, t.schedule_shift, t.schedule_nickname, t.schedule_instagram, t.schedule_color, t.units_json AS schedule_units_json, a.id AS crm_account_link_id, a.crm_username AS crm_account_username, a.review_status AS crm_account_review_status
         FROM crm_employee_onboarding o LEFT JOIN crm_employee_team t ON t.onboarding_id=o.id
         LEFT JOIN crm_employee_account_links a ON a.onboarding_id=o.id WHERE o.id=? LIMIT 1`).bind(onboardingId).first();
       if (!current) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
@@ -1806,7 +1891,7 @@ export async function handleAdminRoutes({
       const accountScopeChanged = accountScope.state === 'CONFIRMED'
         && JSON.stringify(normalizeAllowedUnits(accountScope.crmUser.allowed_units_json)) !== JSON.stringify(nextAccountUnits);
 
-      await syncIdentityWorkforceOnboarding(env, {
+      const workforce = await syncIdentityWorkforceOnboarding(env, {
         onboardingId,
         fullName: nextName,
         corporateEmail: current.corporate_email,
@@ -1818,12 +1903,20 @@ export async function handleAdminRoutes({
         department: nextDepartment,
         createdBy: String(auth?.user?.username || ''),
       }, requestId);
+      const workforceEmployeeId = String(workforce?.employeeId || current.workforce_employee_id || '').trim();
+      if (!workforceEmployeeId) throw new Error('WORKFORCE_EMPLOYEE_ID_REQUIRED');
+      if (String(current.workforce_employee_id || '').trim() && String(current.workforce_employee_id).trim() !== workforceEmployeeId) throw new Error('TEAM_WORKFORCE_BINDING_CONFLICT');
+      if (String(current.team_workforce_employee_id || '').trim() && String(current.team_workforce_employee_id).trim() !== workforceEmployeeId) throw new Error('TEAM_WORKFORCE_BINDING_CONFLICT');
       workforceSynchronized = true;
 
       localPersistenceStage = 'ONBOARDING_TEAM_SCOPE_UPDATE';
       const localAt = new Date().toISOString();
       const sets = ['full_name=?', 'profile=?', 'job_title=?', 'department_name=?', 'units_json=?', 'updated_at=?'];
       const values = [nextName, nextProfile.profile || nextProfile, displayJobTitle(nextProfile.profile || nextProfile), nextDepartment, JSON.stringify(nextUnits), localAt];
+      if (!String(current.workforce_employee_id || '').trim()) {
+        sets.push('workforce_employee_id=?');
+        values.push(workforceEmployeeId);
+      }
       if (nextPersonalEmail) {
         sets.push('personal_email_encrypted=?', 'personal_email_hash=?');
         values.push(nextPersonalEmailEncrypted, nextPersonalEmailHash);
@@ -1837,8 +1930,8 @@ export async function handleAdminRoutes({
       const nextScheduleProfessionalId = scheduleEnabled ? (teamData.professionalId || current.schedule_professional_id || null) : (current.schedule_professional_id || null);
       const localStatements = [
         env.DB.prepare(`UPDATE crm_employee_onboarding SET ${sets.join(', ')} WHERE id=?`).bind(...values),
-        env.DB.prepare(`UPDATE crm_employee_team SET schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
-        nextScheduleProfessionalId, teamData.status || null, teamData.role || null, teamData.shift || null,
+        env.DB.prepare(`UPDATE crm_employee_team SET workforce_employee_id=?, schedule_professional_id=?, schedule_status=?, schedule_role=?, schedule_shift=?, schedule_nickname=?, schedule_instagram=?, schedule_color=?, units_json=?, updated_at=? WHERE onboarding_id=?`).bind(
+        workforceEmployeeId, nextScheduleProfessionalId, teamData.status || null, teamData.role || null, teamData.shift || null,
         teamData.nickname || null, teamData.instagram || null, teamData.color || null, JSON.stringify(teamData.units), localAt, onboardingId,
         ),
       ];
