@@ -169,6 +169,7 @@ export const DATA_MODEL = deepFreeze({
     additiveMigrations: [
       'migrations/20260812_influencer_intelligence_comments_v1.up.sql',
       'migrations/20260812_influencer_intelligence_campaign_fit_v1.up.sql',
+      'migrations/20260812_influencer_intelligence_snapshot_fencing_v1.up.sql',
     ],
     dependsOn: 'migrations/20260810_influencer_intelligence_registry_v1.up.sql',
     artifactStatus: 'source-controlled additive artifacts; not applied by this milestone',
