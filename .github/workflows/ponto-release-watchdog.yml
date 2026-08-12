@@ -158,7 +158,10 @@ jobs:
     needs: [context, latch, reconcile]
     if: ${{ always() && needs.context.result == 'success' && needs.context.outputs.requires_close == 'true' && needs.latch.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The emergency latch is already true.  Permit one bounded, natural lease
+    # expiry (15 minutes) plus broker materialization; never fence or revoke a
+    # still-held coordinator lease from this watchdog.
+    timeout-minutes: 30
     permissions:
       actions: read
       contents: read
@@ -186,6 +189,8 @@ jobs:
           module: ponto
           source_sha: ${{ needs.context.outputs.release_sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-watchdog-close.json
+          wait_timeout_seconds: '960'
+          retry_interval_seconds: '10'
       - name: Check global Ponto recovery lease before maintenance write
         uses: ./.github/actions/global-coordination-check
         with:

@@ -33,6 +33,14 @@ inputs:
     description: Optional JSON inputs bound into the immutable lease intent
     required: false
     default: '{}'
+  wait_timeout_seconds:
+    description: Opt-in bounded wait for an already-held lease to expire
+    required: false
+    default: '0'
+  retry_interval_seconds:
+    description: Poll interval for an opted-in held-lease wait
+    required: false
+    default: '5'
 runs:
   using: composite
   steps:
@@ -51,6 +59,8 @@ runs:
         GLOBAL_SOURCE_SHA: ${{ inputs.source_sha }}
         GLOBAL_PROOF_FILE: ${{ inputs.proof_file }}
         GLOBAL_INPUTS_JSON: ${{ inputs.inputs_json }}
+        GLOBAL_WAIT_TIMEOUT_SECONDS: ${{ inputs.wait_timeout_seconds }}
+        GLOBAL_RETRY_INTERVAL_SECONDS: ${{ inputs.retry_interval_seconds }}
         GLOBAL_IDEMPOTENCY_KEY: github:${{ github.repository }}:${{ github.run_id }}:${{ github.run_attempt }}:${{ inputs.resource }}
       run: |
         set -euo pipefail
@@ -58,6 +68,8 @@ runs:
         [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" && -n "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" ]] || { echo 'Global coordination custody is unavailable'; exit 1; }
         [[ "$GLOBAL_SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Global coordination source SHA is invalid'; exit 1; }
         [[ "$GLOBAL_PROOF_FILE" != "$GITHUB_WORKSPACE"/* ]] || { echo 'Global coordination proof must live outside the repository'; exit 1; }
+        [[ "$GLOBAL_WAIT_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] && (( 10#$GLOBAL_WAIT_TIMEOUT_SECONDS <= 1200 )) || { echo 'Global coordination acquire wait must be an integer between 0 and 1200 seconds'; exit 1; }
+        [[ "$GLOBAL_RETRY_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] && (( 10#$GLOBAL_RETRY_INTERVAL_SECONDS >= 1 && 10#$GLOBAL_RETRY_INTERVAL_SECONDS <= 60 )) || { echo 'Global coordination acquire retry interval must be an integer between 1 and 60 seconds'; exit 1; }
         mkdir -p "$(dirname "$GLOBAL_PROOF_FILE")"
         inputs_file="$RUNNER_TEMP/skincos-global-coordination-inputs.json"
         printf '%s' "$GLOBAL_INPUTS_JSON" > "$inputs_file"
@@ -75,4 +87,6 @@ runs:
             --source "$GLOBAL_SOURCE_SHA" \
             --proof-file "$GLOBAL_PROOF_FILE" \
             --inputs-file "$inputs_file" \
+            --max-wait-seconds "$GLOBAL_WAIT_TIMEOUT_SECONDS" \
+            --poll-seconds "$GLOBAL_RETRY_INTERVAL_SECONDS" \
             --idempotency-key "$GLOBAL_IDEMPOTENCY_KEY"

@@ -11,6 +11,7 @@ import {
   HIGH_RISK_WORKFLOWS,
   isBodylessResponseStatus,
   isInventoryWorkflowState,
+  isWithinEmergencyCoordinatorScope,
   loadCanonicalHighRiskWorkflows,
   isWithinCoordinatorWindow,
   parseCoordinator,
@@ -85,6 +86,12 @@ test("coordinator discovery accepts only exact canonical correlated runs", () =>
   assert.equal(parseCoordinator(run("pilot", { display_title: `Ponto pilot ${sha} orchestrator=999` }), { repository, workflowId, target: "production" }), null);
 });
 
+test("an exact watchdog event never widens reconciliation to another coordinator", () => {
+  assert.equal(isWithinEmergencyCoordinatorScope({ runId: "8001" }, "8001"), true);
+  assert.equal(isWithinEmergencyCoordinatorScope({ runId: "8002" }, "8001"), false);
+  assert.equal(isWithinEmergencyCoordinatorScope({ runId: "8002" }), true);
+});
+
 test("GitHub cancellation acknowledgements are treated as bodyless success", () => {
   assert.equal(isBodylessResponseStatus(202), true);
   assert.equal(isBodylessResponseStatus(204), true);
@@ -148,6 +155,8 @@ test("emergency inventory accepts exact active and disabled canonical workflow s
 test("emergency reconciliation and latch reset ignore every uncorrelated canonical run", async () => {
   const emergency = fs.readFileSync(new URL("./ponto-emergency-stop.mjs", import.meta.url), "utf8");
   const idle = fs.readFileSync(new URL("./ponto-assert-idle.mjs", import.meta.url), "utf8");
+  assert.match(emergency, /isWithinEmergencyCoordinatorScope\(parsed, exactCoordinatorRunId\)/);
+  assert.match(emergency, /if \(!exactCoordinatorRunId && !completedCoordinatorDiscoveryDone\)/);
   assert.match(emergency, /isCorrelatedChild\(run, \{/);
   assert.match(emergency, /const classified = classifyHighRiskRun\(run, \{/);
   assert.match(emergency, /isWithinCoordinatorWindow\(run, coordinator\.live\)/);

@@ -5,6 +5,7 @@ import { assertPontoSourceClosureUnchanged } from "./ponto-source-closure.mjs";
 
 const TITLE = /^Ponto (preview|staging|pilot|canary|production|rollback) ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/;
 const FAILURE_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out"]);
+const NON_TERMINAL_STATUSES = ["queued", "in_progress", "waiting", "pending", "requested"];
 
 function sourceMatchesImmutableRelease(releaseSha, observedSha, assertSource) {
   const release = String(releaseSha || "").trim().toLowerCase();
@@ -23,6 +24,72 @@ export const targetForStage = (stage) => {
   if (stage === "preview") return null;
   return stage === "staging" ? "staging" : "production";
 };
+
+export function parseActivePeerCoordinator(run, {
+  coordinatorRunId,
+  workflow,
+  repository,
+  repositoryId,
+  stage,
+  releaseSha,
+  assertReleaseSource = assertPontoSourceClosureUnchanged,
+}) {
+  const match = TITLE.exec(String(run?.display_title || ""));
+  if (
+    !match
+    || String(run?.id || "") === String(coordinatorRunId)
+    || !NON_TERMINAL_STATUSES.includes(String(run?.status || ""))
+    || run?.workflow_id !== workflow?.id
+    || ![workflow?.path, `${workflow?.path}@refs/heads/main`].includes(run?.path)
+    || run?.event !== "workflow_dispatch"
+    || run?.head_branch !== "main"
+    || run?.name !== `Ponto ${match[1]} ${match[2]} orchestrator=${match[3]}`
+    || String(run?.id || "") !== match[3]
+    || match[1] !== stage
+    || match[2] !== releaseSha
+    || Number(run?.run_attempt) !== 1
+    || run?.repository?.full_name !== repository
+    || String(run?.repository?.id || "") !== String(repositoryId)
+    || run?.head_repository?.full_name !== repository
+    || String(run?.head_repository?.id || "") !== String(repositoryId)
+    || !sourceMatchesImmutableRelease(releaseSha, run?.head_sha, assertReleaseSource)
+  ) return null;
+  return {
+    runId: String(run.id),
+    status: String(run.status),
+  };
+}
+
+async function findActivePeerCoordinator({
+  request,
+  coordinatorRunId,
+  workflow,
+  repository,
+  repositoryId,
+  stage,
+  releaseSha,
+  assertReleaseSource,
+}) {
+  for (const status of NON_TERMINAL_STATUSES) {
+    const payload = await request(
+      `/repos/${repository}/actions/workflows/${workflow.id}/runs?event=workflow_dispatch&status=${encodeURIComponent(status)}&per_page=100&page=1`,
+    );
+    const runs = Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : [];
+    for (const candidate of runs) {
+      const peer = parseActivePeerCoordinator(candidate, {
+        coordinatorRunId,
+        workflow,
+        repository,
+        repositoryId,
+        stage,
+        releaseSha,
+        assertReleaseSource,
+      });
+      if (peer) return peer;
+    }
+  }
+  return null;
+}
 
 export async function validateWatchdogContext({
   event,
@@ -112,9 +179,33 @@ export async function validateWatchdogContext({
   // fail-closed and preserves the existing recovery behavior.
   const coordinatorStarted = !Array.isArray(jobs?.jobs)
     || jobs.jobs.some((job) => job?.name === "orchestrate");
-  const requiresClose = stage !== "preview"
+  const closeCandidate = stage !== "preview"
     && coordinatorStarted
     && (unauthorizedReplay || FAILURE_CONCLUSIONS.has(run.conclusion));
+  let activePeer = null;
+  let activePeerDiscovery = "not-required";
+  // A cancelled duplicate must never close or reconcile the surface while an
+  // exact, first-attempt coordinator still owns the same immutable release.
+  // Unauthorized reruns remain fail-closed even if another run is active.
+  if (closeCandidate && !unauthorizedReplay) {
+    try {
+      activePeer = await findActivePeerCoordinator({
+        request,
+        coordinatorRunId: String(run.id),
+        workflow,
+        repository,
+        repositoryId,
+        stage,
+        releaseSha: match[2],
+        assertReleaseSource,
+      });
+      activePeerDiscovery = activePeer ? "verified-peer" : "no-eligible-peer";
+    } catch {
+      // If GitHub cannot prove an eligible peer, retain the fail-closed path.
+      activePeerDiscovery = "unavailable";
+    }
+  }
+  const requiresClose = closeCandidate && !activePeer;
   return {
     schemaVersion: 1,
     coordinatorRunId: String(run.id),
@@ -125,6 +216,8 @@ export async function validateWatchdogContext({
     conclusion: run.conclusion,
     runAttempt,
     unauthorizedReplay,
+    activePeerCoordinatorRunId: activePeer?.runId || null,
+    activePeerDiscovery,
     requiresClose,
     passed: true,
   };
