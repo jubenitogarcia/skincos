@@ -46,6 +46,7 @@ export interface ProviderSpecificEvidence {
   fields?: readonly string[];
   endpoint_family?: string;
   coverage_code?: string;
+  model_version?: string;
 }
 
 export interface ProviderAttempt {

@@ -393,7 +393,7 @@ export function createProviderRouter({
             handle: request.canonical_handle,
             observedAt: request.observed_at,
             retrievedAt: request.retrieved_at,
-          })
+          }, { signal: controller.signal, attempt })
           : handler(request, { signal: controller.signal, attempt })),
         timeout,
       ]);

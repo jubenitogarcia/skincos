@@ -161,7 +161,7 @@ export function createProfileProvider({
     id: providerId,
     officialFirst,
     capabilities: Object.freeze(['profile']),
-    async collect(input = {}) {
+    async collect(input = {}, context = {}) {
       if (!isRecord(input)) throw new ProviderAdapterError('provider collection input must be an object');
       const creatorKey = normalizeCreatorKey(input.creatorKey);
       const requestedHandle = normalizeCanonicalHandle(input.handle);
@@ -181,7 +181,7 @@ export function createProfileProvider({
       });
       let projection;
       try {
-        projection = await readProfile(request);
+        projection = await readProfile(request, context);
       } catch (error) {
         if (error instanceof ProviderGapError || error instanceof ProviderCollectionError) throw error;
         throw new ProviderCollectionError('transport_error');

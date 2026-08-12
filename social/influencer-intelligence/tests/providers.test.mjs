@@ -13,6 +13,7 @@ import {
   META_GRAPH_PROFILE_FIELDS,
 } from '../providers/meta-graph-adapter.mjs';
 import {
+  createProfileProvider,
   ProviderCollectionError,
   ProviderGapError,
 } from '../providers/profile-provider.mjs';
@@ -105,6 +106,29 @@ test('adapter rejects sensitive or raw provider fields before the contract bound
     provider.collect(collectionInput),
     (error) => error instanceof ProviderCollectionError && error.reasonCode === 'policy_block',
   );
+});
+
+test('legacy profile provider receives the router abort signal', async () => {
+  let aborted = false;
+  const controller = new AbortController();
+  const provider = createProfileProvider({
+    provider: 'meta-graph',
+    officialFirst: true,
+    sourceRefPrefix: 'meta-graph',
+    requestFields: ['username'],
+    readProfile: async (_request, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        aborted = true;
+        reject(new Error('legacy transport aborted'));
+      }, { once: true });
+    }),
+  });
+
+  const pending = provider.collect(collectionInput, { signal: controller.signal, attempt: 1 });
+  controller.abort();
+
+  await assert.rejects(pending, (error) => error instanceof ProviderCollectionError && error.reasonCode === 'transport_error');
+  assert.equal(aborted, true);
 });
 
 test('router tries Meta first and falls back only for an explicit coverage gap', async () => {
