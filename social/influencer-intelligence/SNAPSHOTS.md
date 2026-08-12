@@ -24,7 +24,12 @@ owns cadence, queueing, concurrency and resume policy.
 - Artifact `ingest_key` values include creator, provider, media (when
   applicable), observed-time bucket and operation. Repeating a request in the
   same bucket is a no-op; a later bucket creates a new historical row. Existing
-  rows are never rewritten to reflect changed metrics.
+  rows are never rewritten to reflect changed metrics. Evidence keys are
+  attempt-scoped on retries, so a new provider response cannot point at an
+  immutable evidence row left by a failed partial attempt.
+- Fenced evidence, identity and snapshot writes lock the collector lease row
+  before checking its token. Reclamation and persistence therefore serialize;
+  a superseded worker cannot win a write race after a retry takes ownership.
 - `null` is used for a missing metric. Zero is persisted only when the provider
   explicitly returns zero.
 - The operation uses the provider's observed timestamp and never synthesizes a

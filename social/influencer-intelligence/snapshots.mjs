@@ -397,12 +397,18 @@ function providerEvidence(result, fallbackProvider, operation) {
   };
 }
 
-function artifactIds(kind, { creatorKey, provider, mediaKey, observedAt, bucketSeconds }) {
-  const artifactHash = shortHash({ kind, creatorKey, provider, mediaKey: mediaKey || null, bucket: bucketStart(observedAt, bucketSeconds) });
+function artifactIds(kind, { creatorKey, provider, mediaKey, observedAt, bucketSeconds, attemptToken = null }) {
+  const identity = { kind, creatorKey, provider, mediaKey: mediaKey || null, bucket: bucketStart(observedAt, bucketSeconds) };
+  const artifactHash = shortHash(identity);
+  // Snapshot identity remains bucket-based for idempotent replays. Evidence is
+  // attempt-scoped so a retry after a partial write cannot reuse an immutable
+  // evidence row that describes an earlier provider response.
+  const evidenceHash = shortHash({ ...identity, attemptToken: attemptToken || null });
   return {
     snapshotKey: `${kind}:${artifactHash}`,
     ingestKey: `${kind}:${artifactHash}`,
-    evidenceKey: `evidence:${kind}:${artifactHash}`,
+    evidenceKey: `evidence:${kind}:${evidenceHash}`,
+    evidenceIngestKey: `evidence-ingest:${kind}:${evidenceHash}`,
   };
 }
 
@@ -458,11 +464,12 @@ async function persistFailureEvidence({ repository, request, runKey, sourceType,
       mediaKey,
       observedAt,
       bucketSeconds: request.bucketSeconds,
+      attemptToken: request.attemptToken,
     });
-    const sourceRef = `${item.provider}:${operationKey(operation)}:failure:${shortHash({ runKey, mediaKey, code: item.code, index })}`;
+    const sourceRef = `${item.provider}:${operationKey(operation)}:failure:${shortHash({ runKey, attemptToken: request.attemptToken, mediaKey, code: item.code, index })}`;
     await repository.recordCollectorEvidence({
       evidenceKey: ids.evidenceKey,
-      ingestKey: ids.ingestKey,
+      ingestKey: ids.evidenceIngestKey,
       runKey,
       leaseKey: request.attemptToken,
       creatorKey: request.creatorKey,
@@ -491,10 +498,11 @@ async function persistObservedEvidence({ repository, request, runKey, sourceType
     mediaKey,
     observedAt,
     bucketSeconds: request.bucketSeconds,
+    attemptToken: request.attemptToken,
   });
   await repository.recordCollectorEvidence({
     evidenceKey: ids.evidenceKey,
-    ingestKey: ids.ingestKey,
+    ingestKey: ids.evidenceIngestKey,
     runKey,
     leaseKey: request.attemptToken,
     creatorKey: request.creatorKey,
@@ -705,6 +713,7 @@ async function runProfileSnapshot({ router, repository, request, run }) {
       provider,
       observedAt,
       bucketSeconds: request.bucketSeconds,
+      attemptToken: request.attemptToken,
     });
     const persisted = await repository.recordProfileSnapshot({
       snapshotKey: ids.snapshotKey,
@@ -751,6 +760,7 @@ async function runProfileSnapshot({ router, repository, request, run }) {
         provider: unavailableProvider,
         observedAt,
         bucketSeconds: request.bucketSeconds,
+        attemptToken: request.attemptToken,
       });
       const evidenceKey = failure.evidenceKey || ids.evidenceKey;
       const persisted = await repository.recordProfileSnapshot({
@@ -895,6 +905,7 @@ async function persistUnavailableMedia({ repository, request, runKey, provider, 
     mediaKey,
     observedAt,
     bucketSeconds: request.bucketSeconds,
+    attemptToken: request.attemptToken,
   });
   const persisted = await repository.recordMediaSnapshot({
     snapshotKey: ids.snapshotKey,
@@ -1116,6 +1127,7 @@ async function runMediaSnapshot({ router, repository, request, run }) {
       mediaKey,
       observedAt: metricsObservedAt,
       bucketSeconds: request.bucketSeconds,
+      attemptToken: request.attemptToken,
     });
     const persisted = await repository.recordMediaSnapshot({
       snapshotKey: ids.snapshotKey,

@@ -264,7 +264,7 @@ test('a stale running collector is reclaimed after the bounded lease, while a li
 
 test('unexpected persistence failure finalizes the collector run as failed for safe retry', async () => {
   const router = createRouter({
-    profile: okResult('get_profile', { followers_count: 100, following_count: 10, media_count: 3 }),
+    profile: (call) => okResult('get_profile', { followers_count: call === 1 ? 100 : 110, following_count: 10, media_count: 3 }),
   });
   const repository = createRepository();
   const originalRecordProfileSnapshot = repository.recordProfileSnapshot;
@@ -288,6 +288,12 @@ test('unexpected persistence failure finalizes the collector run as failed for s
   assert.equal(retry.collectorRun.reclaimed, true);
   assert.equal(run.attemptCount, 2);
   assert.equal(router.calls.profile, 2);
+  assert.equal(repository.state.evidence.size, 2);
+  assert.equal(repository.state.profiles.size, 1);
+  const evidenceKeys = [...repository.state.evidence.values()].map((row) => row.evidenceKey);
+  assert.equal(new Set(evidenceKeys).size, 2);
+  assert.equal([...repository.state.profiles.values()][0].followersCount, 110);
+  assert.equal([...repository.state.profiles.values()][0].evidenceKey, evidenceKeys[1]);
 });
 
 test('a superseded worker cannot persist or finalize after a stale run is reclaimed', async () => {

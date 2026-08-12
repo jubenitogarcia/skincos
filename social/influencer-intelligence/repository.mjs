@@ -285,6 +285,7 @@ export const SQL = Object.freeze({
       from influencer_intelligence.collector_run
       where run_key = $3
         and attempt_token = $15
+      for update
     )
     insert into influencer_intelligence.collector_evidence
       (evidence_key, ingest_key, run_key, creator_key, media_key, provider, source_type, evidence_state, observed_at, retrieved_at, source_ref, evidence_digest, gap_code, retention_policy_version)
@@ -298,6 +299,7 @@ export const SQL = Object.freeze({
       from influencer_intelligence.collector_run
       where run_key = $25
         and attempt_token = $26
+      for update
     )
     insert into influencer_intelligence.creator_profile_snapshot
       (snapshot_key, ingest_key, creator_key, identity_key, evidence_key, provider, provider_adapter_version, contract_version, evidence_state, observed_at, retrieved_at, source_ref, canonical_handle, followers_count, following_count, media_count, is_private, is_verified, normalized_metrics, retention_policy_version, coverage_available, coverage_expected, freshness_status, freshness_age_seconds)
@@ -311,6 +313,7 @@ export const SQL = Object.freeze({
       from influencer_intelligence.collector_run
       where run_key = $8
         and attempt_token = $9
+      for update
     )
     insert into influencer_intelligence.creator_media
       (media_key, creator_key, provider, provider_media_digest, media_kind, published_at, source_ref)
@@ -333,6 +336,7 @@ export const SQL = Object.freeze({
       from influencer_intelligence.collector_run
       where run_key = $26
         and attempt_token = $27
+      for update
     )
     insert into influencer_intelligence.creator_media_snapshot
       (snapshot_key, ingest_key, media_key, creator_key, evidence_key, provider, provider_adapter_version, contract_version, evidence_state, observed_at, retrieved_at, source_ref, likes_count, comments_count, shares_count, saves_count, views_count, reach_count, impressions_count, normalized_metrics, retention_policy_version, coverage_available, coverage_expected, freshness_status, freshness_age_seconds)
