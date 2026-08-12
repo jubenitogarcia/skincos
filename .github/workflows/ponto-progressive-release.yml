@@ -215,6 +215,21 @@ jobs:
           PONTO_EXPECTED_STAGE="$predecessor" PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
             node .github/scripts/ponto-release-evidence.mjs verify "$PONTO_ARTIFACT_DIR/predecessor/ponto-release-evidence.json"
           rm -f "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json"
+      # Hold the closure-scoped Ponto lease while required checks settle. The
+      # coordinator still admits a documented disjoint main merge, but delays
+      # one that changes the selected Ponto dependency closure.
+      - name: Acquire the composite Ponto release lease before gate settlement
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ env.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
       - name: Attest canonical merged PR and required checks for the immutable SHA
         if: ${{ inputs.stage != 'preview' }}
         env:
@@ -810,18 +825,6 @@ jobs:
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
           rm -f "$evidence_dir/artifact.zip"
-      - name: Acquire the composite Ponto release lease before candidate mutation
-        uses: ./.github/actions/global-coordination-acquire
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ env.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
-          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
-          resource: release:ponto
-          module: ponto
-          source_sha: ${{ inputs.release_sha }}
-          proof_file: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
       - name: Establish immutable Ponto release identity
         id: release_identity
         env:
