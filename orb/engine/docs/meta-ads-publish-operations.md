@@ -68,6 +68,14 @@ versiona o journal, operações e locks idempotentes já usados pelo gateway.
   Links opcionais do Advantage+ continuam sujeitos à allowlist.
 - Não publique na Meta para diagnosticar uma falha. Reproduza com testes e
   finalize com o preflight; uma rodada live exige autorização explícita.
+- Advantage+ possui duas evidências Graph por criativo: a leitura após a
+  estabilização inicial e outra 30 segundos após a ativação, antes de encerrar
+  o run. Ambas usam `get_creative` (Graph `GET`) e não criam, alteram, ativam,
+  republicam ou revertem recursos.
+- A segunda leitura registra `unchanged_graph_state_ui_unverified`,
+  `graph_state_drift_detected` ou `unavailable`. Essas categorias descrevem
+  apenas o que a Graph reporta em `creative_features_spec`; não comprovam o
+  estado exibido no Ads Manager e não acionam remediação automática.
 - Tokens de provedor não podem entrar nos itens do workflow. Meta Ads, Livia e
   Token Manager usam endpoints allowlisted do Token Vault com credencial n8n
   criptografada; `/v1/tokens` é uma interface exclusivamente administrativa.

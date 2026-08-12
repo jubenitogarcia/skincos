@@ -489,7 +489,7 @@
       "typeVersion": 4.3,
       "position": [
         15024,
-        1352
+        1448
       ],
       "id": "e8ac9e77-fbc6-4082-8358-f197ac53cf08",
       "name": "Inform Meta Publish Success (WhatsApp)",
@@ -498,33 +498,6 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "chatId": "7893126619",
-        "text": "={{ $json.event.payload.telegram_message }}",
-        "additionalFields": {
-          "appendAttribution": false,
-          "disable_web_page_preview": true,
-          "parse_mode": "HTML"
-        }
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        15024,
-        1544
-      ],
-      "id": "a64f575a-fcdf-4307-8caa-6f723490fcf9",
-      "name": "Inform Meta Publish Success (Telegram)",
-      "webhookId": "837f6d8f-f5bb-41e6-9323-fb074a1d43c1",
-      "retryOnFail": false,
-      "credentials": {
-        "telegramApi": {
-          "id": "9NlSo0dcxNrKtlWW",
-          "name": "Telegram – @espacofacial_bot"
-        }
-      }
     },
     {
       "parameters": {
@@ -815,7 +788,7 @@
     },
     {
       "parameters": {
-        "jsCode": "function text(value) { return String(value ?? '').trim(); }\nfunction list(value) { return Array.isArray(value) ? value : []; }\nfunction unique(values) { return [...new Set(list(values).map(text).filter(Boolean))]; }\n\nconst input = $input.first()?.json || {};\nlet runId = text(input.run_id);\nlet jobs = [];\nif (input.resume_drive_only === true) {\n  runId = text(input.run_id || input.run?.id);\n  jobs = list(input.run?.summary?.jobs);\n} else {\n  if (input.ok !== true || input.operation?.status !== 'completed') {\n    throw new Error(`Activate Ad Batch falhou: ${JSON.stringify(input.detail || input.error || input)}`);\n  }\n  const result = input.operation.result || {};\n  if (result.status !== 'meta_completed_drive_pending') {\n    throw new Error(`Activate Ad Batch retornou estado inesperado: ${JSON.stringify(result)}`);\n  }\n  runId = text(($items('Build Activate Batch')[0]?.json || {}).run_id);\n  jobs = list(result.jobs);\n}\nif (!runId || !jobs.length) throw new Error('Build Drive Finalization sem run_id ou jobs persistidos.');\n\nconst byFile = new Map();\nfor (const job of jobs) {\n  for (const file of list(job.files)) {\n    const id = text(file.id);\n    if (!id) continue;\n    if (!byFile.has(id)) byFile.set(id, { id, name: text(file.name), ratio: text(file.ratio), units: [], ad_ids: [], creative_ids: [], groups: [] });\n    const row = byFile.get(id);\n    row.units.push(job.destination_group);\n    row.ad_ids.push(job.ad_id);\n    row.creative_ids.push(job.creative_id);\n    row.groups.push(job.creative_group_key);\n  }\n}\nif (!byFile.size) throw new Error('Build Drive Finalization nao recuperou os arquivos do journal.');\n\nconst publishedAt = new Date().toISOString();\nconst summaries = jobs.map((job) => ({\n  creative_group_key: text(job.creative_group_key),\n  destination_group: text(job.destination_group),\n  action: text(job.action),\n  ad_id: text(job.ad_id),\n  creative_id: text(job.creative_id),\n  created_new: job.created_new === true,\n}));\nconst lines = [\n  'Meta Ads Publish concluido',\n  `Run: ${runId}`,\n  `Jobs Meta: ${summaries.length}`,\n  `Artes: ${byFile.size}`,\n  '',\n  ...summaries.map((job) => `- ${job.creative_group_key} | ${job.destination_group} | ${job.action} | ad ${job.ad_id}`),\n];\nconst message = lines.join('\\n');\n\nreturn [...byFile.values()].map((file) => ({\n  json: {\n    id: file.id,\n    fileName: file.name,\n    ratio: file.ratio,\n    run_id: runId,\n    published: true,\n    meta_ads_published_at: publishedAt,\n    meta_ads_execution_id: String($execution.id),\n    meta_ads_run_id: runId,\n    meta_ads_creative_group_key: unique(file.groups).join(', '),\n    meta_ads_units: unique(file.units).join(', '),\n    meta_ads_ad_ids: unique(file.ad_ids).join(', '),\n    meta_ads_creative_ids: unique(file.creative_ids).join(', '),\n    meta_publish_summary: summaries,\n    whatsapp_message: message,\n    telegram_message: message,\n  },\n}));"
+        "jsCode": "function text(value) { return String(value ?? '').trim(); }\nfunction list(value) { return Array.isArray(value) ? value : []; }\nfunction object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }\nfunction unique(values) { return [...new Set(list(values).map(text).filter(Boolean))]; }\n\nfunction compactDriftReport(value) {\n  const report = object(value);\n  if (!text(report.status)) return null;\n  return {\n    status: text(report.status),\n    graph_request_method: text(report.graph_request_method || 'GET'),\n    comparison_scope: text(report.comparison_scope),\n    graph_acknowledgement_is_not_ui_confirmation: report.graph_acknowledgement_is_not_ui_confirmation === true,\n    ui_confirmation_required: report.ui_confirmation_required === true,\n    automatic_remediation: text(report.automatic_remediation || 'none'),\n    creatives: list(report.creatives).map((creative) => ({\n      creative_id: text(creative && creative.creative_id),\n      destination_group: text(creative && creative.destination_group),\n      creative_group_key: text(creative && creative.creative_group_key),\n      status: text(creative && creative.status),\n      checked_at: text(creative && creative.checked_at),\n      lost_opt_in: unique(creative && creative.lost_opt_in),\n      not_reported_after_ack: unique(creative && creative.not_reported_after_ack),\n      new_opt_in: unique(creative && creative.new_opt_in),\n    })),\n  };\n}\n\nconst input = $input.first()?.json || {};\nlet runId = text(input.run_id);\nlet jobs = [];\nlet advantagePlusGraphDrift = null;\nif (input.resume_drive_only === true) {\n  runId = text(input.run_id || input.run?.id);\n  jobs = list(input.run?.summary?.jobs);\n  advantagePlusGraphDrift = compactDriftReport(input.run?.summary?.advantage_plus_graph_drift);\n} else {\n  const activation = object(($items('Activate Ad Batch')[0] || {}).json || input.activation_response || input);\n  if (activation.ok !== true || activation.operation?.status !== 'completed') {\n    throw new Error(`Activate Ad Batch falhou: ${JSON.stringify(activation.detail || activation.error || activation)}`);\n  }\n  const result = activation.operation.result || {};\n  if (result.status !== 'meta_completed_drive_pending') {\n    throw new Error(`Activate Ad Batch retornou estado inesperado: ${JSON.stringify(result)}`);\n  }\n  runId = text(($items('Build Activate Batch')[0]?.json || {}).run_id);\n  jobs = list(result.jobs);\n  advantagePlusGraphDrift = compactDriftReport(input.advantage_plus_graph_drift);\n}\nif (!runId || !jobs.length) throw new Error('Build Drive Finalization sem run_id ou jobs persistidos.');\n\nconst byFile = new Map();\nfor (const job of jobs) {\n  for (const file of list(job.files)) {\n    const id = text(file.id);\n    if (!id) continue;\n    if (!byFile.has(id)) byFile.set(id, { id, name: text(file.name), ratio: text(file.ratio), units: [], ad_ids: [], creative_ids: [], groups: [] });\n    const row = byFile.get(id);\n    row.units.push(job.destination_group);\n    row.ad_ids.push(job.ad_id);\n    row.creative_ids.push(job.creative_id);\n    row.groups.push(job.creative_group_key);\n  }\n}\nif (!byFile.size) throw new Error('Build Drive Finalization nao recuperou os arquivos do journal.');\n\nconst publishedAt = new Date().toISOString();\nconst summaries = jobs.map((job) => ({\n  creative_group_key: text(job.creative_group_key),\n  destination_group: text(job.destination_group),\n  action: text(job.action),\n  ad_id: text(job.ad_id),\n  creative_id: text(job.creative_id),\n  created_new: job.created_new === true,\n}));\nconst lines = [\n  'Meta Ads Publish concluido',\n  `Run: ${runId}`,\n  `Jobs Meta: ${summaries.length}`,\n  `Artes: ${byFile.size}`,\n  ...(advantagePlusGraphDrift ? [`Advantage+ Graph pos-ativacao: ${advantagePlusGraphDrift.status} (nao confirma o Ads Manager)`] : []),\n  '',\n  ...summaries.map((job) => `- ${job.creative_group_key} | ${job.destination_group} | ${job.action} | ad ${job.ad_id}`),\n];\nconst message = lines.join('\\n');\n\nreturn [...byFile.values()].map((file) => ({\n  json: {\n    id: file.id,\n    fileName: file.name,\n    ratio: file.ratio,\n    run_id: runId,\n    published: true,\n    meta_ads_published_at: publishedAt,\n    meta_ads_execution_id: String($execution.id),\n    meta_ads_run_id: runId,\n    meta_ads_creative_group_key: unique(file.groups).join(', '),\n    meta_ads_units: unique(file.units).join(', '),\n    meta_ads_ad_ids: unique(file.ad_ids).join(', '),\n    meta_ads_creative_ids: unique(file.creative_ids).join(', '),\n    meta_publish_summary: summaries,\n    advantage_plus_graph_drift: advantagePlusGraphDrift,\n    whatsapp_message: message,\n    telegram_message: message,\n  },\n}));"
       },
       "id": "meta-publish-drive-finalization",
       "name": "Build Drive Finalization",
@@ -875,7 +848,7 @@
     },
     {
       "parameters": {
-        "jsCode": "function text(value) { return String(value ?? '').trim(); }\nfunction pairedIndex(item, fallback) {\n  const paired = item && item.pairedItem;\n  if (Array.isArray(paired) && paired.length) return Number(paired[0].item ?? fallback);\n  if (paired && typeof paired === 'object') return Number(paired.item ?? fallback);\n  return Number(fallback);\n}\n\nconst prepared = $items('Prepare Drive Read') || [];\nconst verified = [];\nfor (const [index, item] of $input.all().entries()) {\n  const sourceIndex = pairedIndex(item, index);\n  const expected = (prepared[sourceIndex] || {}).json || {};\n  const actual = item.json || {};\n  const properties = actual.properties || {};\n  const checks = {\n    published: text(properties.published) === 'true',\n    run_id: text(properties.meta_ads_run_id) === text(expected.run_id),\n    groups: text(properties.meta_ads_creative_group_key) === text(expected.meta_ads_creative_group_key),\n  };\n  if (!checks.published || !checks.run_id || !checks.groups) {\n    throw new Error(`Drive readback falhou para ${expected.id}: ${JSON.stringify(checks)}`);\n  }\n  verified.push(expected);\n}\nif (verified.length !== prepared.length) throw new Error(`Drive readback incompleto: ${verified.length}/${prepared.length}.`);\n\nconst first = verified[0];\nreturn [{\n  json: {\n    run_id: text(first.run_id),\n    verified_file_count: verified.length,\n    files: verified.map((item) => ({ id: text(item.id), name: text(item.fileName) })),\n    meta_publish_summary: first.meta_publish_summary,\n    whatsapp_message: text(first.whatsapp_message),\n    telegram_message: text(first.telegram_message),\n    completion_request: {\n      status: 'completed',\n      summary: {\n        verified_file_count: verified.length,\n        jobs: first.meta_publish_summary,\n      },\n    },\n  },\n}];"
+        "jsCode": "function text(value) { return String(value ?? '').trim(); }\nfunction pairedIndex(item, fallback) {\n  const paired = item && item.pairedItem;\n  if (Array.isArray(paired) && paired.length) return Number(paired[0].item ?? fallback);\n  if (paired && typeof paired === 'object') return Number(paired.item ?? fallback);\n  return Number(fallback);\n}\n\nconst prepared = $items('Prepare Drive Read') || [];\nconst verified = [];\nfor (const [index, item] of $input.all().entries()) {\n  const sourceIndex = pairedIndex(item, index);\n  const expected = (prepared[sourceIndex] || {}).json || {};\n  const actual = item.json || {};\n  const properties = actual.properties || {};\n  const checks = {\n    published: text(properties.published) === 'true',\n    run_id: text(properties.meta_ads_run_id) === text(expected.run_id),\n    groups: text(properties.meta_ads_creative_group_key) === text(expected.meta_ads_creative_group_key),\n  };\n  if (!checks.published || !checks.run_id || !checks.groups) {\n    throw new Error(`Drive readback falhou para ${expected.id}: ${JSON.stringify(checks)}`);\n  }\n  verified.push(expected);\n}\nif (verified.length !== prepared.length) throw new Error(`Drive readback incompleto: ${verified.length}/${prepared.length}.`);\n\nconst first = verified[0];\nreturn [{\n  json: {\n    run_id: text(first.run_id),\n    verified_file_count: verified.length,\n    files: verified.map((item) => ({ id: text(item.id), name: text(item.fileName) })),\n    meta_publish_summary: first.meta_publish_summary,\n    advantage_plus_graph_drift: first.advantage_plus_graph_drift || null,\n    whatsapp_message: text(first.whatsapp_message),\n    telegram_message: text(first.telegram_message),\n    completion_request: {\n      status: 'completed',\n      summary: {\n        verified_file_count: verified.length,\n        jobs: first.meta_publish_summary,\n        advantage_plus_graph_drift: first.advantage_plus_graph_drift || null,\n      },\n    },\n  },\n}];"
       },
       "id": "meta-publish-verify-drive",
       "name": "Verify Drive Finalization",
@@ -2177,7 +2150,7 @@
     },
     {
       "parameters": {
-        "url": "={{ 'http://127.0.0.1:8099/api/atendimento/internal/commercial/catalog?unit=' + encodeURIComponent($json.crm_unit) }}",
+        "url": "={{ 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit=' + encodeURIComponent($json.crm_unit) }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBearerAuth",
         "options": {
@@ -2210,6 +2183,77 @@
       "position": [
         7136,
         1464
+      ]
+    },
+    {
+      "id": "meta-publish-advantage-post-activation-stabilization-wait",
+      "name": "Wait Advantage+ Post-Activation Stabilization",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "parameters": {
+        "amount": 30
+      },
+      "position": [
+        13232,
+        1272
+      ]
+    },
+    {
+      "id": "meta-publish-prepare-advantage-drift-readback",
+      "name": "Prepare Advantage+ Drift Readback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "function text(value) { return String(value ?? '').trim(); }\nfunction list(value) { return Array.isArray(value) ? value : []; }\nfunction object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }\nfunction unique(values) { return [...new Set(list(values).map(text).filter(Boolean))]; }\nfunction key(value) { return text(value).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^A-Za-z0-9_.:-]+/g, '_').slice(0, 190); }\n\nfunction baselineFor(source) {\n  const verification = object(source.advantage_plus_verification);\n  const requested = unique(verification.requested_features || source.advantage_plus_requested_features);\n  const optIn = unique(verification.reported_opt_in || verification.graph_acknowledged_features);\n  const reportedNonOptIn = unique(verification.removed_or_ineligible || verification.removed_features);\n  const notReported = unique(verification.not_reported);\n  const available = verification.graph_acknowledgement_is_not_ui_confirmation === true\n    && Boolean(verification.checked_at)\n    && requested.length > 0;\n  return {\n    available,\n    status: text(verification.status || 'unavailable'),\n    checked_at: text(verification.checked_at),\n    requested_features: requested,\n    reported_opt_in: optIn,\n    reported_non_opt_in: reportedNonOptIn,\n    not_reported: notReported,\n    graph_request_method: 'GET',\n    graph_acknowledgement_is_not_ui_confirmation: true,\n  };\n}\n\nconst activation = object($input.first()?.json);\nif (activation.ok !== true || activation.operation?.status !== 'completed' || activation.operation?.result?.status !== 'meta_completed_drive_pending') {\n  throw new Error(`Prepare Advantage+ Drift Readback recebeu ativacao invalida: ${JSON.stringify(activation.detail || activation.error || activation)}`);\n}\n\nconst runId = text(($items('Build Activate Batch')[0]?.json || {}).run_id || activation.run_id);\nconst jobs = list(activation.operation?.result?.jobs);\nconst initialReadbacks = $items('Attach Advantage+ Verification') || [];\nconst byCreativeId = new Map(initialReadbacks.map((item) => [text(item?.json?.creative_id), object(item?.json)]).filter(([creativeId]) => creativeId));\nif (!runId || !jobs.length) throw new Error('Prepare Advantage+ Drift Readback sem run_id ou jobs ativados.');\n\nreturn jobs.map((job, index) => {\n  const creativeId = text(job.creative_id);\n  const source = object(byCreativeId.get(creativeId));\n  if (!creativeId || !text(source.token_id) || !text(source.account_id)) {\n    throw new Error(`Prepare Advantage+ Drift Readback sem contexto seguro para creative ${creativeId || index}.`);\n  }\n  return {\n    json: {\n      run_id: runId,\n      creative_id: creativeId,\n      destination_group: text(job.destination_group || source.destination_group),\n      creative_group_key: text(job.creative_group_key || source.creative_group_key),\n      baseline: baselineFor(source),\n      gateway_request: {\n        action: 'get_creative',\n        operation_key: key(`verify-post-activation:${runId}:${creativeId}`),\n        token_id: text(source.token_id),\n        account_id: text(source.account_id),\n        api_version: text(source.api_version || 'v25.0'),\n        object_id: creativeId,\n      },\n    },\n    pairedItem: { item: index },\n  };\n});"
+      },
+      "position": [
+        13456,
+        1272
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($vars.TOKEN_VAULT_BASE_URL || 'https://api.skincos.com.br/internal/token-vault') + '/v1/meta-ads-publish/runs/' + $json.run_id + '/operations' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.gateway_request }}",
+        "options": {
+          "timeout": 330000
+        }
+      },
+      "id": "meta-publish-verify-advantage-drift-readback",
+      "name": "Verify Advantage+ Drift Readback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        13680,
+        1272
+      ],
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 10000,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "metaPublishGatewayBearer",
+          "name": "Meta Ads Publish - Gateway Bearer"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "id": "meta-publish-classify-advantage-graph-drift",
+      "name": "Classify Advantage+ Graph Drift",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "function text(value) { return String(value ?? '').trim(); }\nfunction list(value) { return Array.isArray(value) ? value : []; }\nfunction object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }\nfunction unique(values) { return [...new Set(list(values).map(text).filter(Boolean))]; }\nfunction pairedIndex(item, fallback) {\n  const paired = item && item.pairedItem;\n  if (Array.isArray(paired) && paired.length) return Number(paired[0].item ?? fallback);\n  if (paired && typeof paired === 'object') return Number(paired.item ?? fallback);\n  return Number(fallback);\n}\n\nfunction featureSnapshot(creative, requested) {\n  const features = object(object(creative.degrees_of_freedom_spec).creative_features_spec);\n  const reportedOptIn = [];\n  const reportedNonOptIn = [];\n  const notReported = [];\n  for (const feature of requested) {\n    if (!Object.prototype.hasOwnProperty.call(features, feature)) {\n      notReported.push(feature);\n    } else if (text(features[feature] && features[feature].enroll_status).toUpperCase() === 'OPT_IN') {\n      reportedOptIn.push(feature);\n    } else {\n      reportedNonOptIn.push(feature);\n    }\n  }\n  return {\n    reported_opt_in: reportedOptIn,\n    reported_non_opt_in: reportedNonOptIn,\n    not_reported: notReported,\n  };\n}\n\nfunction unavailable(prepared, response) {\n  const detail = object(response && (response.detail || response.error));\n  return {\n    creative_id: text(prepared.creative_id),\n    destination_group: text(prepared.destination_group),\n    creative_group_key: text(prepared.creative_group_key),\n    status: 'unavailable',\n    checked_at: new Date().toISOString(),\n    comparison_scope: 'requested_features_only:degrees_of_freedom_spec.creative_features_spec',\n    graph_request_method: 'GET',\n    graph_acknowledgement_is_not_ui_confirmation: true,\n    baseline: object(prepared.baseline),\n    current: null,\n    error_code: text(detail.code || response?.status || response?.error || 'graph_readback_unavailable'),\n    error_subcode: text(detail.error_subcode),\n    lost_opt_in: [],\n    not_reported_after_ack: [],\n    new_opt_in: [],\n  };\n}\n\nconst preparedItems = $items('Prepare Advantage+ Drift Readback') || [];\nconst reports = [];\nfor (const [index, item] of $input.all().entries()) {\n  const sourceIndex = pairedIndex(item, index);\n  const prepared = object(preparedItems[sourceIndex] && preparedItems[sourceIndex].json);\n  const response = object(item.json);\n  const baseline = object(prepared.baseline);\n  if (!prepared.creative_id || response.ok !== true || response.operation?.status !== 'completed' || !baseline.available) {\n    reports.push(unavailable(prepared, response));\n    continue;\n  }\n  const creative = object(response.operation.result);\n  const requested = unique(baseline.requested_features);\n  const current = featureSnapshot(creative, requested);\n  const baselineOptIn = new Set(unique(baseline.reported_opt_in));\n  const currentOptIn = new Set(current.reported_opt_in);\n  const currentNonOptIn = new Set(current.reported_non_opt_in);\n  const currentNotReported = new Set(current.not_reported);\n  const lostOptIn = requested.filter((feature) => baselineOptIn.has(feature) && currentNonOptIn.has(feature));\n  const notReportedAfterAck = requested.filter((feature) => baselineOptIn.has(feature) && currentNotReported.has(feature));\n  const newOptIn = requested.filter((feature) => !baselineOptIn.has(feature) && currentOptIn.has(feature));\n  const driftDetected = lostOptIn.length || notReportedAfterAck.length || newOptIn.length;\n  reports.push({\n    creative_id: text(prepared.creative_id || creative.id),\n    destination_group: text(prepared.destination_group),\n    creative_group_key: text(prepared.creative_group_key),\n    status: driftDetected ? 'graph_state_drift_detected' : 'unchanged_graph_state_ui_unverified',\n    checked_at: new Date().toISOString(),\n    comparison_scope: 'requested_features_only:degrees_of_freedom_spec.creative_features_spec',\n    graph_request_method: 'GET',\n    graph_acknowledgement_is_not_ui_confirmation: true,\n    baseline: {\n      checked_at: text(baseline.checked_at),\n      requested_features: requested,\n      reported_opt_in: unique(baseline.reported_opt_in),\n      reported_non_opt_in: unique(baseline.reported_non_opt_in),\n      not_reported: unique(baseline.not_reported),\n    },\n    current,\n    lost_opt_in: lostOptIn,\n    not_reported_after_ack: notReportedAfterAck,\n    new_opt_in: newOptIn,\n  });\n}\n\nconst hasDrift = reports.some((report) => report.status === 'graph_state_drift_detected');\nconst hasUnavailable = reports.some((report) => report.status === 'unavailable');\nconst status = hasDrift\n  ? 'graph_state_drift_detected'\n  : hasUnavailable\n    ? 'unavailable'\n    : 'unchanged_graph_state_ui_unverified';\n\nreturn [{\n  json: {\n    run_id: text((preparedItems[0] || {}).json?.run_id),\n    advantage_plus_graph_drift: {\n      status,\n      graph_request_method: 'GET',\n      comparison_scope: 'requested_features_only:degrees_of_freedom_spec.creative_features_spec',\n      graph_acknowledgement_is_not_ui_confirmation: true,\n      ui_confirmation_required: true,\n      automatic_remediation: 'none',\n      creatives: reports,\n    },\n  },\n}];"
+      },
+      "position": [
+        13904,
+        1272
       ]
     }
   ],
@@ -2594,7 +2638,7 @@
           {
             "type": "main",
             "index": 0,
-            "node": "Build Drive Finalization"
+            "node": "Wait Advantage+ Post-Activation Stabilization"
           }
         ]
       ]
@@ -2683,11 +2727,6 @@
             "type": "main",
             "index": 0,
             "node": "Inform Meta Publish Success (WhatsApp)"
-          },
-          {
-            "type": "main",
-            "index": 0,
-            "node": "Inform Meta Publish Success (Telegram)"
           }
         ],
         []
@@ -3464,6 +3503,50 @@
         [
           {
             "node": "Livia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Advantage+ Post-Activation Stabilization": {
+      "main": [
+        [
+          {
+            "node": "Prepare Advantage+ Drift Readback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Advantage+ Drift Readback": {
+      "main": [
+        [
+          {
+            "node": "Verify Advantage+ Drift Readback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Advantage+ Drift Readback": {
+      "main": [
+        [
+          {
+            "node": "Classify Advantage+ Graph Drift",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Advantage+ Graph Drift": {
+      "main": [
+        [
+          {
+            "node": "Build Drive Finalization",
             "type": "main",
             "index": 0
           }

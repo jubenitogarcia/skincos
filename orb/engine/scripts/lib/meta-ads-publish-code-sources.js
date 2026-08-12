@@ -48,6 +48,8 @@ const CODE_SOURCES = Object.freeze({
   'Prepare Creative Operation': 'prepare-creative-operation.js',
   'Attach Creative Result': 'attach-creative-result.js',
   'Attach Advantage+ Verification': 'attach-advantage-plus-verification.js',
+  'Prepare Advantage+ Drift Readback': 'prepare-advantage-plus-drift-readback.js',
+  'Classify Advantage+ Graph Drift': 'classify-advantage-plus-graph-drift.js',
   'Build Stage Batch': 'build-stage-batch.js',
   'Build Activate Batch': 'build-activate-batch.js',
   'Build Drive Finalization': 'build-drive-finalization.js',

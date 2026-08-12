@@ -10,6 +10,7 @@ const path = require('path');
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
 const { validate: validateCrmContextPrefetch } = require('./patch-meta-ads-crm-context-prefetch');
+const { validate: validateAdvantagePlusDriftReadback } = require('./patch-meta-ads-advantage-plus-drift-readback');
 const args = new Set(process.argv.slice(2));
 const sourcePath = [...args].find((value) => value.endsWith('.json'));
 const expectedVersion = [...args].find((value) => value.startsWith('--expected-version='))?.slice('--expected-version='.length);
@@ -59,6 +60,7 @@ function assertCandidate(candidate) {
     throw new Error('Candidate does not fail closed on Token Vault workflow contract revision drift.');
   }
   validateVideoUploadReplay(candidate);
+  validateAdvantagePlusDriftReadback(candidate);
 }
 
 async function main() {
