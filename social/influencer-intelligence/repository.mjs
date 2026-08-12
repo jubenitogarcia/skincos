@@ -332,19 +332,21 @@ export const SQL = Object.freeze({
     on conflict (ingest_key) do nothing
     returning component_key, ingest_key, score_key, component_name, evidence_state`,
   upsertCampaign: `
-    insert into influencer_intelligence.campaign
+    insert into influencer_intelligence.campaign as target
       (campaign_key, campaign_version, status, criteria_version, criteria)
     values ($1, $2, $3, $4, $5::jsonb)
     on conflict (campaign_key, campaign_version) do update
       set status = excluded.status,
-          criteria_version = excluded.criteria_version,
-          criteria = excluded.criteria,
-          updated_at = now()
+           criteria_version = excluded.criteria_version,
+           criteria = excluded.criteria,
+           updated_at = now()
+     where target.criteria = excluded.criteria
+       and target.criteria_version = excluded.criteria_version
     returning campaign_key, campaign_version, status`,
   recordCampaignFit: `
     insert into influencer_intelligence.campaign_creator_fit
-      (fit_key, ingest_key, campaign_key, campaign_version, creator_key, score, confidence, coverage_available, coverage_expected, evidence_state, algorithm_version, model_version, providers, input_fingerprint, provenance, computed_at, retention_policy_version)
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::text[], $14, $15::jsonb, $16::timestamptz, $17)
+      (fit_key, ingest_key, campaign_key, campaign_version, creator_key, score, confidence, coverage_available, coverage_expected, evidence_state, algorithm_version, model_version, providers, input_fingerprint, provenance, computed_at, retention_policy_version, weights_version, components)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::text[], $14, $15::jsonb, $16::timestamptz, $17, $18, $19::jsonb)
     on conflict (ingest_key) do nothing
     returning fit_key, ingest_key, campaign_key, campaign_version, creator_key, score, evidence_state, computed_at`,
   latestProfileSnapshot: `
@@ -655,6 +657,11 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
     async recordCampaignFit(input) {
       safeInput(input, 'campaignCreatorFit');
       const evidenceState = requiredString(input.evidenceState, 'evidenceState', /^(derived|inferred|unavailable)$/);
+      const algorithmVersion = version(input.algorithmVersion, 'algorithmVersion');
+      const weightsVersion = optionalString(input.weightsVersion ?? input.weights_version, 'weightsVersion', VERSION_PATTERN);
+      if (algorithmVersion.startsWith('influencer-intelligence-campaign-fit/') && !weightsVersion) {
+        fail('CAMPAIGN_FIT_WEIGHTS_VERSION_REQUIRED');
+      }
       const score = decimal(input.score, 'score', { minimum: 0, maximum: 100 });
       if (evidenceState === 'unavailable' && score !== null) fail('UNAVAILABLE_FIT_MUST_BE_NULL');
       if (evidenceState !== 'unavailable' && score === null) fail('AVAILABLE_FIT_REQUIRED');
@@ -663,16 +670,20 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
       ensureAvailableEvidence({ evidenceState, providers, provenance: provenanceEntries, label: 'campaignFit' });
       const confidence = decimal(input.confidence ?? (evidenceState === 'unavailable' ? 0 : undefined), 'confidence', { required: true, minimum: 0, maximum: 1 });
       if (evidenceState === 'unavailable' && confidence !== 0) fail('UNAVAILABLE_FIT_CONFIDENCE_INVALID');
+      const modelVersion = optionalString(input.modelVersion, 'modelVersion', VERSION_PATTERN);
+      if (evidenceState === 'inferred' && !modelVersion) fail('CAMPAIGN_FIT_MODEL_VERSION_REQUIRED');
       const coverageAvailable = integer(input.coverageAvailable, 'coverageAvailable', { required: true });
       const coverageExpected = integer(input.coverageExpected, 'coverageExpected', { required: true, minimum: 1 });
       ensureCoverage(coverageAvailable, coverageExpected, 'campaignFit');
+      const components = normalizeSafeJson(input.components ?? input.campaignFitComponents ?? {}, 'components', { maxDepth: 6 });
       const row = await insertReturning(queryable, SQL.recordCampaignFit, [
          requiredString(input.fitKey, 'fitKey'), requiredString(input.ingestKey, 'ingestKey'), requiredString(input.campaignKey, 'campaignKey'),
          integer(input.campaignVersion, 'campaignVersion', { required: true, minimum: 1 }), requiredString(input.creatorKey, 'creatorKey'), score,
          confidence, coverageAvailable,
-         coverageExpected, evidenceState, version(input.algorithmVersion, 'algorithmVersion'),
-         optionalString(input.modelVersion, 'modelVersion', VERSION_PATTERN), providers, digest(input.inputFingerprint, 'inputFingerprint'),
+         coverageExpected, evidenceState, algorithmVersion,
+         modelVersion, providers, digest(input.inputFingerprint, 'inputFingerprint'),
          { entries: provenanceEntries }, timestamp(input.computedAt, 'computedAt'), version(input.retentionPolicyVersion, 'retentionPolicyVersion'),
+         weightsVersion, JSON.stringify(components),
       ].map((item) => (item && typeof item === 'object' && !Array.isArray(item) ? JSON.stringify(item) : item)));
       return { inserted: Boolean(row), row };
     },

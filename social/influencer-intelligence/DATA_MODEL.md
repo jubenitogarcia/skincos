@@ -50,6 +50,8 @@ provider contract still controls which providers may be used by the runtime.
 - Derived records carry `algorithm_version`, coverage, confidence, providers,
   input fingerprint, and structured provenance. Scores are not based on raw
   follower count as a quality judgment.
+- Campaign Fit rows also carry `weights_version` and bounded component JSON;
+  read requests return persisted fits and never compute implicitly.
 - Comment intelligence is aggregate-only (`topic_key`, sentiment/safety
   labels, counts, ratios, and bounded metrics). Indirect growth signals must be
   labeled `inferred`; they cannot be stated as proof of fake followers.
@@ -92,8 +94,8 @@ production apply. A future runner must:
 1. prove the exact PostgreSQL database and migrator/owner roles;
 2. take and retain a restore-verified checkpoint;
 3. set lock and statement timeouts and serialize the migration;
-4. apply the M1 registry, then the data model and snapshot metadata migrations
-   in one controlled destination;
+4. apply the M1 registry, then the data model, snapshot metadata, comments, and
+   Campaign Fit additive migrations in one controlled destination;
 5. verify relations, constraints, indexes, append-only triggers, migration
    identity, and least-privilege runtime access;
 6. record a rollback identity. Rollback is operationally fail-closed: disable
