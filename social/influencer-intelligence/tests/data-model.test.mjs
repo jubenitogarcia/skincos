@@ -96,7 +96,7 @@ test('defines the complete additive PostgreSQL model with immutable evidence', (
   assert.match(migration, /creator_key, observed_at DESC/);
   assert.match(migration, /creator_key, computed_at DESC/);
   assert.match(migration, /provider ~ '\^\[a-z\]/);
-  assert.doesNotMatch(migration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(migration, /\bDROP\s+/i);
   assert.doesNotMatch(migration, /GRANT\s+PUBLIC/i);
   assert.doesNotMatch(migration, /\b(?:access_token|refresh_token|password|secret|email|phone|caption|biography|raw_text)\b/i);
 });
@@ -119,7 +119,8 @@ test('defines additive score weights version metadata without destructive DDL', 
   assert.match(scoringMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
   assert.match(scoringMigration, /ADD COLUMN IF NOT EXISTS weights_version/);
   assert.match(scoringMigration, /creator_score/);
-  assert.doesNotMatch(scoringMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(scoringMigration, /\bDROP\s+/i);
+  assert.doesNotMatch(scoringMigration, /INSERT\s+INTO\s+public\.schema_migrations/i);
   assert.doesNotMatch(scoringMigration, /TRUNCATE\s+/i);
   assert.match(scoringMigration, /COMMIT;\s*$/);
 });
