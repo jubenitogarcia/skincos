@@ -606,6 +606,13 @@ test("consume-check maps the direct parent issuer into the delegated snapshot sh
   );
 });
 
+test("direct root issuers rely on the closure attestation while delegated issuers stay SHA-pinned", () => {
+  const source = fs.readFileSync(script, "utf8");
+  assert.match(source, /assertObservedPontoSource\(releaseSha, String\(run\?\.head_sha/);
+  assert.match(source, /\(delegatedIssuer && issuer\?\.head_sha !== releaseSha\)/);
+  assert.doesNotMatch(source, /\|\| issuer\?\.head_sha !== releaseSha/);
+});
+
 test("every orchestrated secret or mutation job revalidates the coordinator after checkout and before secrets", () => {
   const guardedJobs = [
     ["deploy-timekeeping.yml", "release"],
