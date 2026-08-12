@@ -1,7 +1,9 @@
 # Influencer Intelligence data model v1
 
-Status: source-controlled additive PostgreSQL artifact; not applied to local,
-staging, or production by this milestone.
+Status: source-controlled additive PostgreSQL artifact; the staging-only
+runner is implemented, but no staging or production application is claimed
+until a terminal run records the identity, checkpoint, grants and post-
+validation evidence.
 
 The canonical schema is `influencer_intelligence`. The base migration is
 `migrations/20260811_influencer_intelligence_data_model_v1.up.sql` and depends
@@ -89,10 +91,11 @@ separate reviewed operation; it must not silently rewrite historical evidence.
 ## Migration and access gates
 
 This PR adds no database connection, seed row, grant, runtime registration, or
-production apply. A future runner must:
+production apply. The staging runner must:
 
 1. prove the exact PostgreSQL database and migrator/owner roles;
-2. take and retain a restore-verified checkpoint;
+2. take and retain a private pre-apply checkpoint; a restore-verified backup is
+   still required before any future production decision;
 3. set lock and statement timeouts and serialize the migration;
 4. apply the M1 registry, then the data model, snapshot metadata, comments, and
    Campaign Fit additive migrations in one controlled destination;
@@ -103,5 +106,7 @@ production apply. A future runner must:
 
 The repository module uses parameterized SQL and an injected PostgreSQL
 `query`/client boundary. It does not load `DATABASE_URL`, secrets, shell
-commands, or provider transports. The module is ready for a later controlled
-runner and remains inactive by default.
+commands, or provider transports. The separate
+`scripts/staging/influencer-intelligence-migration.mjs` runner loads only the
+fixed private staging environment file, never accepts a URL on argv, and is
+staging-only; the domain remains inactive by default.

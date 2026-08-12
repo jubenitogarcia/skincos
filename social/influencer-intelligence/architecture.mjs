@@ -2,7 +2,9 @@
  * Versioned, runtime-free architecture contract for Influencer Intelligence.
  *
  * This file describes boundaries and future interfaces only. It deliberately
- * does not register routes, providers, jobs, migrations, grants, or secrets.
+ * does not register routes, providers, jobs, grants, or secrets. The separate
+ * staging migration runner is an operational tool and is not a runtime
+ * registration or activation path.
  */
 
 const deepFreeze = (value, seen = new Set()) => {
@@ -355,6 +357,9 @@ export const RELEASE_CONTRACT = deepFreeze({
     analyticsTransportSourceAdded: true,
     analyticsTransportStagingDeployed: false,
     analyticsRuntimeProviderCalls: false,
+    migrationRunnerSourceAdded: true,
+    migrationStagingApplied: false,
+    migrationRuntimeGrant: false,
     commentsSourceAdded: true,
     commentsMigrationArtifactAdded: true,
     commentsRuntimeWired: false,
@@ -391,7 +396,7 @@ export const OBSERVABILITY_CONTRACT = deepFreeze({
 export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'architecture', title: 'Canonical architecture v1', status: 'merged #1310; runtime-free manifest', acceptance: ['ADR and manifest agree', 'boundaries and non-goals are explicit', 'no runtime or migration change'] },
   { id: 'M0', title: 'Normalized contracts', status: 'merged #1303', acceptance: ['pure versioned evidence, provenance, coverage, signal, and score envelopes'] },
-  { id: 'M1', title: 'Creator registry and additive PostgreSQL artifact', status: 'merged #1304; registry artifact unapplied', acceptance: ['minimal pseudonymous registry', 'additive/idempotent SQL', 'destination and grant gates before apply'] },
+  { id: 'M1', title: 'Creator registry and additive PostgreSQL artifact', status: 'merged #1304; staging-only governed runner source added; artifact unapplied pending terminal staging evidence', acceptance: ['minimal pseudonymous registry', 'additive/idempotent SQL', 'destination and grant gates before apply'] },
   { id: 'M2', title: 'Official-first provider router and bounded collectors', status: 'canonical router merged #1324 (supersedes #1305); transport gate source implemented, staging credential/deployment pending', acceptance: ['Meta first', 'controlled instagrapi fallback', 'fail-closed classification', 'no duplicate scraper'] },
   { id: 'M3', title: 'Append-only snapshots, retention, and Orb job contract', status: 'data model #1322, snapshots #1331, and scheduler #1335 merged; artifacts/import/runtime pending', acceptance: ['new additive tables', 'immutable evidence lifecycle', 'bounded snapshot_creator and snapshot_creator_media operations', 'inactive dry-run/shadow scheduling', 'resume/recovery with idempotent service calls', 'no live workflow import'] },
   { id: 'M4', title: 'Robust analytics', status: 'merged #1333; synthetic source/tests only', acceptance: ['time windows', 'viral-outlier resistance', 'explicit unavailable coverage'] },
