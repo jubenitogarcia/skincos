@@ -176,12 +176,13 @@ test("the staging RBAC journey recovers synthetic teardown under a fresh lease",
   assert.match(workflow, /refusing a non-staging D1 target/);
 });
 
-test("the Ponto composite lease starts before candidate mutation, selects the correct authority, and spans the orchestrator", () => {
+test("the Ponto composite lease starts before gate settlement, selects the correct authority, and spans the orchestrator", () => {
   const workflow = read(".github/workflows/ponto-progressive-release.yml");
-  const acquire = workflow.indexOf("Acquire the composite Ponto release lease before candidate mutation");
+  const acquire = workflow.indexOf("Acquire the composite Ponto release lease before gate settlement");
+  const requiredChecks = workflow.indexOf("Attest canonical merged PR and required checks for the immutable SHA");
   const firstDispatch = workflow.indexOf("node .github/scripts/ponto-dispatch-workflow.mjs");
   const release = workflow.indexOf("Release the composite Ponto release lease");
-  assert.ok(acquire >= 0 && firstDispatch > acquire && release > firstDispatch);
+  assert.ok(acquire >= 0 && requiredChecks > acquire && firstDispatch > acquire && release > firstDispatch);
   assert.match(workflow, /SKINCOS_GLOBAL_COORDINATOR_URL: \$\{\{ contains\(fromJSON\('\["preview","staging"\]'\)/);
   assert.match(workflow, /coordinator_url: \$\{\{ env\.SKINCOS_GLOBAL_COORDINATOR_URL \}\}/);
   assert.match(read(".github/scripts/ponto-dispatch-workflow.mjs"), /revalidatePontoCompositeLease/);
@@ -203,7 +204,7 @@ test("Ponto child dispatch is pinned to the immutable release identity", () => {
   const workflow = read(".github/workflows/ponto-progressive-release.yml");
   const dispatcher = read(".github/scripts/ponto-dispatch-workflow.mjs");
   const identity = read(".github/scripts/ponto-release-identity.mjs");
-  const acquire = workflow.indexOf("Acquire the composite Ponto release lease before candidate mutation");
+  const acquire = workflow.indexOf("Acquire the composite Ponto release lease before gate settlement");
   const establish = workflow.indexOf("Establish immutable Ponto release identity");
   const dispatch = workflow.indexOf("node .github/scripts/ponto-dispatch-workflow.mjs");
   assert.ok(acquire >= 0 && establish > acquire && dispatch > establish);
