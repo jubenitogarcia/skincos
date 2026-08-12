@@ -42,11 +42,19 @@ unavailable until a governed SKINCOS calibration dataset exists.
 history, comment sample size, freshness, provider reliability, official-provider
 availability, and analytics metric coverage. A one-snapshot or stale fallback
 result therefore cannot receive high confidence even if a component can be
-computed.
+computed. More specifically, fewer than two profile snapshots or fewer than
+two media snapshots applies the versioned `shortHistoryConfidenceCap` of 0.55
+(55/100). Missing risk signals remain unavailable: a penalty is calculated only
+from the outlier or anomaly series that actually exists.
 
 `data_coverage` combines analytics metric coverage (65%) with the configured
 weight of components that have usable evidence (35%). `null` and
 `unavailable` remain distinct from observed numeric zero.
+
+The input fingerprint binds the analytics evidence state, coverage, providers,
+provenance, snapshot keys, and each component's value, confidence, model
+version, weight, contribution, explanation, and evidence references. A change
+to audit metadata therefore creates a distinct score artifact.
 
 ## Safety and explanations
 

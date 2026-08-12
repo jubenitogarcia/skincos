@@ -45,6 +45,7 @@ export const SCORE_THRESHOLDS = Object.freeze({
   minimumProfileHistory: 6,
   minimumMediaHistory: 12,
   commentSampleConfidenceSize: 100,
+  shortHistoryConfidenceCap: 0.55,
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -327,15 +328,17 @@ function risk(analytics, weight) {
   if (anomalyRatio === null && likesOutlierRatio === null && viewsOutlierRatio === null) {
     return unavailableComponent('risk', weight, 'risk_signals_unavailable');
   }
-  const growthPenalty = anomalyRatio === null ? 0 : clamp(anomalyRatio, 0, 1) * 70;
-  const outlierPenalty = Math.max(likesOutlierRatio ?? 0, viewsOutlierRatio ?? 0) * 20;
-  const score = clamp(100 - growthPenalty - outlierPenalty);
+  const growthPenalty = anomalyRatio === null ? null : clamp(anomalyRatio, 0, 1) * 70;
+  const outlierRatios = [likesOutlierRatio, viewsOutlierRatio].filter((value) => value !== null);
+  const outlierPenalty = outlierRatios.length === 0 ? null : Math.max(...outlierRatios) * 20;
+  const penalties = [growthPenalty, outlierPenalty].filter((value) => value !== null);
+  const score = clamp(100 - penalties.reduce((sum, value) => sum + value, 0));
   const availableSignals = [anomalyRatio, likesOutlierRatio, viewsOutlierRatio].filter((value) => value !== null).length;
   const confidence = clamp(availableSignals / 3);
   return derivedComponent(
     'risk', weight, score, confidence, sourceRefs(analytics),
     'bounded_pattern_risk_not_fake_followers_claim',
-    { growth_anomaly_ratio: anomalyRatio, likes_viral_outlier_ratio: likesOutlierRatio, views_viral_outlier_ratio: viewsOutlierRatio },
+    { growth_anomaly_ratio: anomalyRatio, growth_penalty: growthPenalty, likes_viral_outlier_ratio: likesOutlierRatio, views_viral_outlier_ratio: viewsOutlierRatio, outlier_penalty: outlierPenalty },
     ['pattern_signals_are_not_a_fake_followers_determination'],
   );
 }
@@ -418,8 +421,14 @@ function confidenceScore(analytics, components, signals) {
     + (official * 0.10)
     + (metricCoverage * 0.16)
   );
+  const shortHistory = profileHistoryLength(analytics) < 2 || mediaHistoryLength(analytics) < 2;
+  const historyGate = shortHistory ? SCORE_THRESHOLDS.shortHistoryConfidenceCap : 1;
   const available = Object.values(components).filter((component) => component.score !== null).length;
-  return { score: round(clamp(weighted * 100)), factors, available_components: available };
+  return {
+    score: round(clamp(Math.min(weighted, historyGate) * 100)),
+    factors: { ...factors, short_history_gate: historyGate },
+    available_components: available,
+  };
 }
 
 function dataCoverage(analytics, components) {
@@ -433,11 +442,22 @@ function inputFingerprint(analytics, components) {
     creatorKey: analytics.creatorKey,
     algorithmVersion: analytics.algorithmVersion || null,
     computedAt: analytics.calculatedAt,
+    evidenceState: analytics.evidenceState,
+    coverage: analytics.coverage,
+    providers: [...(analytics.providers || [])].sort(),
+    provenance: analytics.provenance || [],
+    window: analytics.window || null,
     snapshots: [...(analytics.inputSnapshotKeys || [])].sort(),
     components: Object.values(components).map((component) => ({
       component_name: component.component_name,
       score: component.score,
       evidence_state: component.evidence_state,
+      confidence: component.confidence,
+      model_version: component.model_version || null,
+      weight: component.weight,
+      effective_weight: component.effective_weight || null,
+      contribution: component.contribution ?? null,
+      explanation: component.explanation,
       evidence_refs: component.evidence_refs,
     })),
   });
