@@ -374,11 +374,13 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
         && conflictFit.campaign_fit_components.competitor_conflict.score === 0
         && missingDemographicsFit.campaign_fit_confidence < goodFit.campaign_fit_confidence
         && missingDemographicsFit.campaign_fit_components.audience_fit.evidence_state === 'unavailable'
-        && highSaturationFit.campaign_fit_score < goodFit.campaign_fit_score
+        && highSaturationFit.campaign_fit_score < missingDemographicsFit.campaign_fit_score
         && !Object.prototype.hasOwnProperty.call(goodFit, 'overall_score'),
       [
         ...goodFit.provenance.map((item) => item.source_ref),
         ...conflictFit.provenance.map((item) => item.source_ref),
+        ...missingDemographicsFit.provenance.map((item) => item.source_ref),
+        ...highSaturationFit.provenance.map((item) => item.source_ref),
       ],
     ),
   ];
