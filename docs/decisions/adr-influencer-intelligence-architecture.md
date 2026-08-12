@@ -412,7 +412,7 @@ source-controlled migration artifacts; they do not apply them.
 | M5 | Deterministic score/confidence/provenance engine | Merged in PR #1334; versioned algorithms and golden evidence |
 | M6 | Hardened authenticated read-only MCP domain adapter | Tool schema, auth/grant, sanitization, limits, timeout, audit contract, read-only service delegation; runtime registration remains pending |
 | M7 | `skincos-influencer-intelligence` skill | Versioned trigger/output/boundary instructions and contract test use only the approved MCP; runtime/user access remains governed |
-| M8 | Read-only CRM API/dashboard | Server-side flag/grant, module catalog, shadow UI, direct-provider negative tests |
+| M8 | Read-only CRM API/dashboard | Implemented in source: bounded internal Pages proxy, typed client, gated shadow dashboard, server-side flag/grant and direct-provider negative tests; upstream remains unconfigured/off |
 | M9 | Minimized comments intelligence | Aggregate-only topics/sentiment/safety/spam signals and retention evidence |
 | M10 | Semantic content and Reels signals | Approved bounded media projection and model provenance |
 | M11 | Campaign/brand fit | Structured criteria, deterministic base, labeled inferred signals |

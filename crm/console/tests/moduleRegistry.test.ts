@@ -39,6 +39,14 @@ describe('CRM module registry', () => {
     expect(moduleAvailability(insumos, { role: 'GESTOR', allowedModules: [], enabledModuleKeys: enabled, maintenanceModuleKeys: maintenance, financeEnabled: false })).toEqual({ available: true, state: 'available' })
   })
 
+  it('keeps Influencer Intelligence fail-closed on both flag and grant', () => {
+    const influencer = crmModuleRegistry.find((entry) => entry.key === 'influencer-intelligence')!
+    const enabled = new Set(['influencer-intelligence'])
+    expect(moduleAvailability(influencer, { role: 'GESTOR', allowedModules: ['influencer-intelligence'], enabledModuleKeys: enabled, financeEnabled: false })).toEqual({ available: false, state: 'unreleased', reason: 'Este módulo aguarda ativação server-side.' })
+    expect(moduleAvailability(influencer, { role: 'GESTOR', allowedModules: ['influencer-intelligence'], enabledModuleKeys: enabled, featureFlags: { INFLUENCER_INTELLIGENCE_ENABLED: true }, financeEnabled: false })).toEqual({ available: false, state: 'forbidden', reason: 'Você não possui o grant necessário para este módulo.' })
+    expect(moduleAvailability(influencer, { role: 'GESTOR', allowedModules: ['influencer-intelligence'], enabledModuleKeys: enabled, grants: new Set(['module.influencer-intelligence.access']), featureFlags: { INFLUENCER_INTELLIGENCE_ENABLED: true }, financeEnabled: false })).toEqual({ available: true, state: 'available' })
+  })
+
   it('turns a rendering exception into an isolated module recovery state', () => {
     expect(ModuleErrorBoundary.getDerivedStateFromError()).toEqual({ error: true })
   })

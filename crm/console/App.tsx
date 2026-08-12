@@ -1049,7 +1049,15 @@ export default function AppFunctionalNeatlab() {
     )
 
     const maintenanceModuleKeys = useMemo(configuredMaintenanceModuleKeys, [])
-    const moduleAccessContext = useMemo(() => ({ role: roleKey, allowedModules: user?.allowedModules, enabledModuleKeys: UNLOCKED_MODULE_KEYS, maintenanceModuleKeys, financeEnabled }), [UNLOCKED_MODULE_KEYS, financeEnabled, maintenanceModuleKeys, roleKey, user?.allowedModules])
+    const moduleAccessContext = useMemo(() => ({
+        role: roleKey,
+        allowedModules: user?.allowedModules,
+        grants: new Set(user?.grants || []),
+        featureFlags: user?.featureFlags || {},
+        enabledModuleKeys: UNLOCKED_MODULE_KEYS,
+        maintenanceModuleKeys,
+        financeEnabled,
+    }), [UNLOCKED_MODULE_KEYS, financeEnabled, maintenanceModuleKeys, roleKey, user?.allowedModules, user?.featureFlags, user?.grants])
     const activeModuleManifest = crmModuleByKey.get(active)
     const activeModuleAvailability = activeModuleManifest ? moduleAvailability(activeModuleManifest, moduleAccessContext) : { available: false, state: 'unreleased' as const, reason: 'O módulo solicitado não está registrado.' }
     const availableModuleKeys = useMemo(

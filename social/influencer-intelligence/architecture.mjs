@@ -244,6 +244,14 @@ export const API_CONTRACT = deepFreeze({
   routes: [
     {
       method: 'POST',
+      path: '/internal/influencer-intelligence/v1/creators',
+      readOnly: false,
+      caller: 'CRM-authenticated registry request',
+      purpose: 'Register a bounded canonical handle as a creator candidate; no provider resolution or collection is started by this request.',
+      controls: ['server-side flag', 'explicit grant', 'internal authentication', 'handle allowlist', 'idempotency', 'redacted audit'],
+    },
+    {
+      method: 'POST',
       path: '/internal/influencer-intelligence/v1/snapshots',
       readOnly: false,
       caller: 'Orb-only controlled collection operation',
@@ -278,7 +286,7 @@ export const API_CONTRACT = deepFreeze({
   requestRules: {
     maxCreatorsPerRequest: 20,
     maxWindowDays: 365,
-    acceptedIdentity: ['opaque creatorKey', 'approved canonical handle resolver'],
+    acceptedIdentity: ['opaque creatorKey', 'approved canonical handle resolver', 'bounded canonical handle registration'],
     rejectedInput: ['provider account ids', 'credential material', 'raw comment text', 'raw media', 'arbitrary query fragments'],
   },
   errorCodes: ['AUTH_REQUIRED', 'GRANT_REQUIRED', 'INVALID_INPUT', 'NOT_FOUND', 'UNAVAILABLE', 'RATE_LIMITED', 'UPSTREAM_GAP', 'INTERNAL'],
@@ -328,6 +336,10 @@ export const RELEASE_CONTRACT = deepFreeze({
     schedulerMigrationArtifactAdded: true,
     mcpSourceAdded: true,
     mcpRuntimeRegistered: false,
+    crmSourceAdded: true,
+    crmRuntimeEnabled: false,
+    crmUpstreamConfigured: false,
+    crmFeatureFlagDefault: false,
   },
 });
 
@@ -358,7 +370,7 @@ export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'M5', title: 'Deterministic scores and confidence', status: 'merged #1334; synthetic source/tests only', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
   { id: 'M6', title: 'Hardened read-only MCP', status: 'source adapter and protocol tests implemented; runtime registration pending', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
   { id: 'M7', title: 'Codex skill', status: 'versioned skill and contract tests implemented; MCP/runtime registration remains governed by later gates', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
-  { id: 'M8', title: 'CRM read-only surface', status: 'pending', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
+  { id: 'M8', title: 'CRM read-only surface', status: 'internal proxy, typed client, gated shadow dashboard, and synthetic UI tests implemented; upstream/runtime remains off', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
   { id: 'M9', title: 'Comments intelligence', status: 'pending', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
   { id: 'M10', title: 'Semantic content and Reels signals', status: 'pending', acceptance: ['approved media projection', 'no raw media archive by default', 'versioned inference'] },
   { id: 'M11', title: 'Campaign and brand fit', status: 'pending', acceptance: ['structured criteria', 'explainable deterministic base', 'inferred signals labeled'] },

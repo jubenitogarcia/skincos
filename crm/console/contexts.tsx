@@ -22,6 +22,8 @@ export interface AuthUser {
   role?: string
   allowedUnits?: string[]
   allowedModules?: string[]
+  grants?: string[]
+  featureFlags?: Record<string, boolean>
   localFocusModule?: string
   createdAt: string
   avatarUrl?: string
@@ -108,6 +110,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role: insumosUser.role ? normalizeCrmRole(insumosUser.role) : undefined,
       allowedUnits: Array.isArray(insumosUser.allowedUnits) ? insumosUser.allowedUnits : undefined,
       allowedModules: effectiveAllowedModules(insumosUser.role, insumosUser.allowedModules),
+      grants: Array.isArray(insumosUser.grants) ? insumosUser.grants.map(String).filter(Boolean) : undefined,
+      featureFlags: insumosUser.featureFlags && typeof insumosUser.featureFlags === 'object'
+        ? Object.fromEntries(Object.entries(insumosUser.featureFlags).map(([key, value]) => [key, value === true]))
+        : undefined,
       localFocusModule: insumosUser.localFocusModule ? String(insumosUser.localFocusModule) : undefined,
       createdAt: String(insumosUser.createdAt || new Date().toISOString()),
       avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
