@@ -130,9 +130,45 @@ export type InfluencerComparison = {
   calculatedAt: string | null
 }
 
+export type InfluencerCampaignFitComponent = {
+  key: string
+  score: number | null
+  confidence: number
+  evidenceState: InfluencerEvidenceState
+  explanation: string
+  sourceRefs: string[]
+  conflicts?: string[]
+}
+
+export type InfluencerCampaignFit = {
+  campaignKey: string
+  campaignVersion: number
+  creatorKey: string
+  campaignFitScore: number | null
+  campaignFitConfidence: number
+  dataCoverage: number
+  evidenceState: InfluencerEvidenceState
+  algorithmVersion: string | null
+  weightsVersion: string | null
+  calculatedAt: string | null
+  providers: string[]
+  components: InfluencerCampaignFitComponent[]
+  competitorConflicts: string[]
+  limitations: string[]
+}
+
+export type InfluencerCampaignFitResponse = {
+  campaignKey: string
+  campaignVersion: number
+  fits: InfluencerCampaignFit[]
+  freshness: InfluencerFreshness
+  limitations: string[]
+}
+
 export type InfluencerIntelligenceClient = {
   searchCreators: (query: string) => Promise<InfluencerSearchResponse>
   addCreator: (handle: string) => Promise<InfluencerCreatorSummary>
   getCreatorDashboard: (creatorKey: string) => Promise<InfluencerCreatorDashboard>
   compareCreators: (creatorKeys: string[]) => Promise<InfluencerComparison>
+  getCampaignFit: (campaignKey: string, creatorKeys?: string[], campaignVersion?: number) => Promise<InfluencerCampaignFitResponse>
 }

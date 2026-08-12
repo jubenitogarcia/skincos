@@ -17,8 +17,11 @@ the scoring formula.
    resolve every creator and keep identities distinct.
 2. Read `get_creator_profile`, `get_creator_snapshots`, `get_creator_media`,
    `get_creator_analytics`, and `get_creator_score` as needed. Use
-   `compare_creators` for a bounded comparison. Use the Campaign Fit tool only
-   when it is explicitly registered and the user supplied a campaign brief.
+    `compare_creators` for a bounded comparison. When a campaign key/version is
+    explicitly supplied and `get_campaign_fit` is registered, read that
+    persisted projection; the MCP does not accept the brief or compute a fit
+    implicitly. Show campaign-fit components, conflicts, confidence, coverage,
+    versions, freshness, and limitations separately from the general score.
 3. Treat `stale`, `not_computed`, and `unavailable` as meaningful states. If an
    analysis is absent or stale, report the limitation and do not invent a
    number, backfill history, or silently start an expensive operation.
