@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 
 export const SCORING_CONTRACT_VERSION = 'influencer-intelligence/scoring/v0';
-export const SCORING_ALGORITHM_VERSION = 'influencer-intelligence-scoring/v0';
+export const SCORING_ALGORITHM_VERSION = 'influencer-intelligence-scoring/v0.1';
 export const SCORING_WEIGHTS_VERSION = 'influencer-intelligence-scoring-weights/v0';
 
 export const SCORE_COMPONENTS = Object.freeze([
@@ -239,15 +239,17 @@ function normalizeStructuredSignal(name, signal, weight) {
 
 function profileHistoryLength(analytics) {
   return Array.isArray(analytics.provenance)
-    ? new Set(analytics.provenance.filter((item) => item.sourceType === 'profile').map((item) => item.sourceRef)).size
+    ? new Set(analytics.provenance
+      .filter((item) => item.sourceType === 'profile' && item.evidenceState === 'observed')
+      .map((item) => item.sourceRef)).size
     : 0;
 }
 
 function mediaHistoryLength(analytics) {
-  const publicationCount = get(analytics, 'postingCadence.publicationCount');
-  if (Number.isInteger(publicationCount)) return publicationCount;
   return Array.isArray(analytics.provenance)
-    ? new Set(analytics.provenance.filter((item) => item.sourceType === 'media').map((item) => item.sourceRef)).size
+    ? new Set(analytics.provenance
+      .filter((item) => item.sourceType === 'media' && item.evidenceState === 'observed')
+      .map((item) => item.sourceRef)).size
     : 0;
 }
 
@@ -437,14 +439,14 @@ function dataCoverage(analytics, components) {
   return { score: round(clamp(ratio * 100)), analytics_ratio: analytics.coverageRatio, component_weight_ratio: round(availableWeight) };
 }
 
-function inputFingerprint(analytics, components) {
+function inputFingerprint(analytics, components, providers) {
   const canonical = JSON.stringify({
     creatorKey: analytics.creatorKey,
     algorithmVersion: analytics.algorithmVersion || null,
     computedAt: analytics.calculatedAt,
     evidenceState: analytics.evidenceState,
     coverage: analytics.coverage,
-    providers: [...(analytics.providers || [])].sort(),
+    providers: [...(providers || [])].sort(),
     provenance: analytics.provenance || [],
     window: analytics.window || null,
     snapshots: [...(analytics.inputSnapshotKeys || [])].sort(),
@@ -516,7 +518,7 @@ export function computeInfluencerScore(input) {
     provenance,
     input_snapshot_keys: [...(analytics.inputSnapshotKeys || [])].sort(),
     input_evidence_refs: sourceRefs(analytics, Object.values(structuredSignals).flatMap((signal) => signal?.evidence_refs || signal?.evidenceRefs || [])),
-    input_fingerprint: inputFingerprint(analytics, components),
+    input_fingerprint: inputFingerprint(analytics, components, providers),
     explanations: Object.values(components).map((component) => ({
       component_name: component.component_name,
       code: component.explanation.code,

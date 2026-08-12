@@ -174,6 +174,49 @@ test('input fingerprint binds confidence and evidence metadata, not only compone
   assert.notEqual(base.input_fingerprint, changed.input_fingerprint);
 });
 
+test('input fingerprint binds structured-signal provider provenance', () => {
+  const fixture = GOLDEN_FIXTURES.smallStable;
+  const base = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'derived',
+        confidence: 0.62,
+        evidence_refs: ['comment-sample-001'],
+        providers: ['comments-engine'],
+        sample_size: 50,
+      },
+    },
+  });
+  const changed = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'derived',
+        confidence: 0.62,
+        evidence_refs: ['comment-sample-001'],
+        providers: ['alternate-comments-engine'],
+        sample_size: 50,
+      },
+    },
+  });
+
+  assert.notEqual(base.input_fingerprint, changed.input_fingerprint);
+});
+
+test('unavailable profile and media provenance cannot satisfy the short-history gate', () => {
+  const fixture = structuredClone(GOLDEN_FIXTURES.fewPosts);
+  fixture.profileSnapshots = [
+    ...fixture.profileSnapshots,
+    { ...fixture.profileSnapshots[0], snapshotKey: 'profile-unavailable-1', evidenceState: 'unavailable', followersCount: null, followingCount: null, mediaCount: null },
+    { ...fixture.profileSnapshots[0], snapshotKey: 'profile-unavailable-2', evidenceState: 'unavailable', followersCount: null, followingCount: null, mediaCount: null },
+  ];
+  const result = scoreFor(fixture);
+
+  assert.equal(result.confidence_factors.short_history_gate, SCORE_THRESHOLDS.shortHistoryConfidenceCap);
+  assert.ok(result.confidence_score <= SCORE_THRESHOLDS.shortHistoryConfidenceCap * 100);
+});
+
 test('unavailable analytics cannot produce an overall score or confidence', () => {
   const analytics = analyticsFor({
     creatorKey: 'creator-unavailable',
