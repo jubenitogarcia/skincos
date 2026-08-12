@@ -217,6 +217,20 @@ test('rejects an unavailable envelope that claims available metrics', async () =
   assert.equal(errorCode(response), 'INVALID_SERVICE_RESPONSE');
 });
 
+test('rejects a classification that hides more optimistic provenance evidence', async () => {
+  const service = fixtureService({
+    async getCreatorProfile() {
+      return envelope({ creator_key: 'creator-1' }, {
+        data_classification: 'observed',
+        provenance: provenance('profile').map((entry) => ({ ...entry, evidence_state: 'inferred' })),
+      });
+    },
+  });
+  const { gateway } = createHarness({ service });
+  const response = await call(gateway, 'get_creator_profile', { creator_key: 'creator-1' });
+  assert.equal(errorCode(response), 'INVALID_SERVICE_RESPONSE');
+});
+
 test('sanitizes raw payload, PII and credential-like output before returning it', async () => {
   const service = fixtureService({
     async getCreatorProfile() {

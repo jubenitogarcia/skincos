@@ -48,6 +48,7 @@ export const MCP_ERROR_CODES = Object.freeze([
 ]);
 
 const DATA_CLASSIFICATIONS = new Set(['observed', 'derived', 'inferred', 'unavailable']);
+const EVIDENCE_STATE_RANK = Object.freeze({ observed: 0, derived: 1, inferred: 2, unavailable: -1 });
 const FRESHNESS_STATES = new Set(['fresh', 'stale', 'unknown']);
 const REGISTRY_STATES = new Set(['candidate', 'paused', 'unavailable']);
 const SUPPORTED_SOURCE_TYPES = new Set([
@@ -353,6 +354,35 @@ function normalizeProvenance(value) {
   });
 }
 
+function assertClassificationEvidenceConsistency(dataClassification, provenance) {
+  const evidenceStates = provenance.map((entry) => entry.evidence_state);
+  if (dataClassification === 'unavailable') {
+    assertCondition(
+      evidenceStates.every((state) => state === 'unavailable'),
+      'INVALID_SERVICE_RESPONSE',
+      'unavailable data cannot carry available evidence',
+    );
+    return;
+  }
+
+  const highestEvidenceRank = evidenceStates.reduce(
+    (highest, state) => Math.max(highest, EVIDENCE_STATE_RANK[state]),
+    -1,
+  );
+  assertCondition(
+    highestEvidenceRank <= EVIDENCE_STATE_RANK[dataClassification],
+    'INVALID_SERVICE_RESPONSE',
+    'data_classification cannot be more optimistic than provenance evidence',
+  );
+  if (dataClassification === 'inferred') {
+    assertCondition(
+      evidenceStates.includes('inferred'),
+      'INVALID_SERVICE_RESPONSE',
+      'inferred data requires inferred provenance evidence',
+    );
+  }
+}
+
 function normalizeLimitations(value) {
   assertCondition(Array.isArray(value), 'INVALID_SERVICE_RESPONSE', 'limitations are required');
   assertCondition(value.length <= 32, 'INVALID_SERVICE_RESPONSE', 'limitations are too large');
@@ -436,6 +466,7 @@ function normalizeServiceResult(raw, requestId, clock, { redactPublicNames = fal
   }
   const providers = normalizeProviders(raw.providers);
   const provenance = normalizeProvenance(raw.provenance);
+  assertClassificationEvidenceConsistency(dataClassification, provenance);
   const limitations = normalizeLimitations(raw.limitations);
   const errors = raw.errors === undefined ? [] : normalizeLimitations(raw.errors);
   const data = sanitizeValue(raw.data, 0, new Set(), { redactPublicNames });
