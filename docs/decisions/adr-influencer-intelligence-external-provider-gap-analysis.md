@@ -1,6 +1,6 @@
 # ADR: Influencer Intelligence external-provider gap analysis
 
-- Status: Accepted analysis; no external provider integrated
+- Status: Accepted source-level analysis; live coverage decision pending runtime evidence; no external provider integrated
 - Date: 2026-08-12
 - Scope: `social/influencer-intelligence`
 - Related architecture: `docs/decisions/adr-influencer-intelligence-architecture.md`
@@ -11,9 +11,11 @@ Influencer Intelligence already has an official-first provider contract,
 controlled instagrapi fallback, append-only snapshots, deterministic analytics,
 versioned scoring, Campaign Fit, comments/content projections, and a read-only
 MCP/CRM boundary. The source is still off by default and runtime/provider
-collection is governed. Adding a scraper or vendor before identifying a
-measured gap would duplicate infrastructure, weaken provenance, and create a
-new compliance and cost surface.
+collection is governed. Adding a scraper or vendor before identifying and
+measuring a use-case gap would duplicate infrastructure, weaken provenance, and
+create a new compliance and cost surface. This ADR therefore records
+source-level capability gaps; it does not assert live provider coverage,
+accuracy, or commercial lift.
 
 The existing Instagram module also contains an Instaloader content-download
 path. That legacy capability is not an approved Influencer Intelligence
@@ -30,8 +32,9 @@ provider and is not promoted into the router.
 4. Build SKINCOS-owned history and bounded derived signals first. Missing
    audience demographics, verified reach, or pre-first-snapshot history remain
    `unavailable`; they are not inferred from follower count or content text.
-5. If a professional use case proves a material gap, evaluate Modash first for
-   audience/discovery/overlap and HypeAuditor separately for authenticity. Each
+5. If a professional use case proves a material gap with governed runtime
+   evidence, evaluate Modash first for audience/discovery/overlap and
+   HypeAuditor separately for authenticity. Each
    evaluation must be a shadow-only, read-only, time-boxed POC with its own
    contract and calibration decision.
 

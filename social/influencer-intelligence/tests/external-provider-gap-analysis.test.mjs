@@ -11,9 +11,10 @@ const report = fs.readFileSync(path.join(domainRoot, 'EXTERNAL_PROVIDER_GAP_ANAL
 const adr = fs.readFileSync(path.resolve(domainRoot, '..', '..', 'docs', 'decisions', 'adr-influencer-intelligence-external-provider-gap-analysis.md'), 'utf8');
 const normalizedReport = report.replace(/\s+/g, ' ');
 
-test('M13 records a measured gap analysis without widening the runtime provider allowlist', () => {
+test('M13 records a source-level gap analysis without widening the runtime provider allowlist', () => {
   const milestone = ARCHITECTURE_MANIFEST.implementationPlan.find((item) => item.id === 'M13');
   assert.match(milestone.status, /source implemented/i);
+  assert.match(milestone.status, /live coverage decision pending runtime evidence/i);
   assert.equal(ARCHITECTURE_MANIFEST.release.currentSourceScope.gapAnalysisSourceAdded, true);
   assert.equal(ARCHITECTURE_MANIFEST.release.currentSourceScope.externalProviderIntegrated, false);
   assert.deepEqual(ARCHITECTURE_MANIFEST.providerInterface.providerIdentity.allowed, ['meta-graph', 'instagrapi']);
@@ -44,6 +45,8 @@ test('gap report rejects duplicate scraping and keeps missing values unavailable
   assert.match(report, /Do not add or call from this domain/i);
   assert.match(report, /unavailable when absent/i);
   assert.match(report, /no automatic score inputs/i);
+  assert.match(report, /not a live\s+coverage study/i);
+  assert.match(report, /approved real creator identities/i);
   assert.doesNotMatch(report, /integrate Apify.*now/i);
 });
 

@@ -1,7 +1,9 @@
 # Influencer Intelligence external-provider gap analysis
 
 Status: source-only analysis. No external provider is integrated, configured, or
-called by this milestone.
+called by this milestone. This is a source-level capability review, not a live
+coverage study; observed coverage rates and commercial decision impact remain
+unproven until the governed collector/runtime exists.
 
 Review date: 2026-08-12.
 
@@ -59,10 +61,12 @@ Instagram API documentation](https://www.postman.com/meta/instagram/documentatio
 and its [Insights collection](https://www.postman.com/meta/instagram/folder/23987686-f659d7d1-74ec-44e4-9192-9b1e8694c511)
 (reviewed 2026-08-12).
 
-## Real gaps
+## Source-level gaps and what remains unproven
 
-Priority means the impact on a professional creator decision, not how easy the
-gap is to purchase.
+“Gap” here means that the current source/contracts cannot guarantee the
+capability. Priority means the impact on a professional creator decision, not
+how easy the gap is to purchase. This report does not claim live coverage
+percentages, vendor accuracy, or commercial lift.
 
 | Gap | Priority | Can be resolved by SKINCOS history? | Derived metric? | Official API? | Apify | HypeAuditor | Modash | Recommendation |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -116,7 +120,7 @@ and [JavaScript API examples](https://docs.apify.com/api/client/js/docs/guides/e
 | --- | --- | --- | --- | --- |
 | Now | Keep Meta official-first, existing isolated instagrapi fallback, append-only SKINCOS history, deterministic analytics/scoring, bounded comments/content intelligence | Complete runtime/service/Token Vault/staging gates and calibration evidence before commercial use | Better provenance, longitudinal stability, and lower compliance risk | No new scraper, no external call, no score activation |
 | Now | Add collection observability and coverage dashboards for the gaps already modeled as unavailable | Runtime must expose provider attempts, latency, gap codes, freshness, partial coverage, and audit | Distinguishes a data gap from a bad creator | No imputation and no benchmark invention |
-| Conditional POC A | Evaluate Modash for audience demographics, audience overlap, discovery, and collaboration history | 20–50 approved/synthetic identities; read-only shadow adapter; Token Vault; cost/rate budget; field-level provenance; agreement study against Meta/own history; no score weight changes | Tests the most material current campaign-fit gaps | No production routing, no silent fallback, no automatic score inputs |
+| Conditional POC A | Evaluate Modash for audience demographics, audience overlap, discovery, and collaboration history | 20–50 approved real creator identities; synthetic identities only for adapter/contract tests; read-only shadow adapter; Token Vault; cost/rate budget; field-level provenance; agreement study against Meta/own history; no score weight changes | Tests the most material current campaign-fit gaps | No production routing, no silent fallback, no automatic score inputs |
 | Conditional POC B | Evaluate HypeAuditor for audience credibility/authenticity and professional reports | Contract/API access, DPA/legal review, model definitions, false-positive/ground-truth protocol, retention and deletion contract | Tests the highest-value unresolved integrity signal | Never label a creator or follower as fake based only on a vendor score |
 | Later | Evaluate cross-platform provider | Product scope and campaign demand explicitly expand beyond Instagram | Potential broader creator universe | No cross-platform schema expansion by assumption |
 | Reject | Generic Apify actor or new Instaloader path | None; reject for current MVP | Low incremental value relative to risk and duplication | No unbounded scraping or actor-specific payloads |
@@ -124,16 +128,18 @@ and [JavaScript API examples](https://docs.apify.com/api/client/js/docs/guides/e
 ## External-provider admission gate
 
 An external provider may be added only if every item below is evidenced in a
-separate, single-purpose change:
+   separate, single-purpose change:
 
 1. A named gap remains after Meta official, SKINCOS history, and deterministic
    derived metrics are measured against the requested use case.
 2. The provider is explicitly configured and allowlisted; default is disabled.
 3. Credentials are held by `platform/security/token-vault`; no token or session
    enters the router, MCP, CRM, Orb payload, logs, fixtures, or evidence.
-4. The provider implements the existing typed operation/result contract,
+   4. The provider implements the existing typed operation/result contract,
    including provider, retrieval time, classification, freshness, limitations,
-   evidence, timeout, retry policy, circuit state, and structured errors.
+   evidence, and structured errors. Timeout, safe retry, circuit state, and
+   attempt classification remain router/observability responsibilities and must
+   be exposed by that envelope rather than silently added to provider data.
 5. Inputs and outputs are bounded, read-only, auditable, and retention-reviewed;
    raw provider payloads and unnecessary PII are not persisted.
 6. The provider is shadow-only until coverage, disagreement, false-positive,

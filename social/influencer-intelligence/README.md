@@ -367,7 +367,7 @@ production configuration.
 | M10 | Semantic content and Reels signals | Source implemented; bounded feature projection, closed semantic schema, fixtures and persistence boundary; media/runtime adapter remains off |
 | M11 | Campaign and brand fit | Source implemented; deterministic engine, additive fit metadata, persisted MCP read, CRM query surface, and golden tests; compute/runtime remains off |
 | M12 | Synthetic validation and calibration | Source implemented; versioned golden dataset, deterministic report, outlier/missing-data/confidence/campaign-fit guardrails, and focused tests; no live provider calls |
-| M13 | Optional provider gap analysis | Source implemented; measured gap matrix/ADR; no external provider integrated |
+| M13 | Optional provider gap analysis | Source implemented; source-level gap matrix/ADR; live coverage decision pending runtime evidence; no external provider integrated |
 
 ## M12 decision: synthetic calibration before commercial use
 
