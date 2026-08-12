@@ -41,3 +41,184 @@ jobs:
           set -euo pipefail
           command -v jq >/dev/null 2>&1 || (sudo apt-get update -y && sudo apt-get install -y jq)
           bash backend/scripts/cloudflare-audit.sh
+
+  hellenmelo_d1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Checkout audited source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Verify protected Cloudflare channel
+        run: |
+          set -euo pipefail
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || {
+            echo 'Protected Cloudflare secrets are not available to this run.'
+            exit 1
+          }
+
+      - name: Read only Hellenmelo production D1 state
+        env:
+          RAW_RESULT: ${{ runner.temp }}/hellenmelo-d1-raw.json
+          AUDIT_RESULT: ${{ runner.temp }}/hellenmelo-d1-audit.json
+        run: |
+          set -euo pipefail
+          query="$(cat <<'SQL'
+          SELECT
+            o.id AS onboarding_id,
+            o.requested_username,
+            o.workforce_employee_id,
+            o.units_json AS onboarding_units_json,
+            o.account_status,
+            o.invite_id,
+            o.provisioning_state,
+            o.compensation_state,
+            o.last_error_code,
+            o.correlation_id,
+            o.created_at AS onboarding_created_at,
+            o.updated_at AS onboarding_updated_at,
+            t.units_json AS team_units_json,
+            a.id AS account_link_id,
+            a.crm_username,
+            a.link_method,
+            a.review_status,
+            u.username AS crm_user_username,
+            u.allowed_units_json AS crm_user_units_json,
+            u.ativo AS crm_user_active,
+            u.session_version AS crm_user_session_version,
+            requested_u.username AS requested_crm_user_username,
+            requested_u.allowed_units_json AS requested_crm_user_units_json,
+            requested_u.ativo AS requested_crm_user_active,
+            CASE WHEN COALESCE(TRIM(requested_u.password_hash), '') <> '' THEN 1 ELSE 0 END AS requested_crm_user_has_password,
+            requested_u.session_version AS requested_crm_user_session_version,
+            i.allowed_units_json AS invite_units_json,
+            i.id AS invite_row_id,
+            i.requested_username AS invite_requested_username,
+            i.corporate_email AS invite_corporate_email,
+            i.created_at AS invite_created_at,
+            i.expires_at AS invite_expires_at,
+            i.revoked AS invite_revoked,
+            i.uses_count AS invite_uses_count
+          FROM crm_employee_onboarding o
+          LEFT JOIN crm_employee_team t ON t.onboarding_id = o.id
+          LEFT JOIN crm_employee_account_links a ON a.onboarding_id = o.id
+          LEFT JOIN crm_users u ON LOWER(u.username) = LOWER(a.crm_username)
+          LEFT JOIN crm_users requested_u ON LOWER(requested_u.username) = LOWER(o.requested_username)
+          LEFT JOIN crm_invites i ON i.id = o.invite_id
+          WHERE o.id = '3e2439ddde553be7412eb58b58b366274d3f607cb040a46b5dc83b5e6d380d6a'
+             OR LOWER(o.requested_username) = 'hellenmelo'
+             OR LOWER(u.username) = 'hellenmelo';
+          SQL
+          )"
+          audit_query="$(cat <<'SQL'
+          SELECT id, ts, action, entity, entity_id, before_json, after_json
+          FROM audit_log
+          WHERE ts >= '2026-08-12T14:55:00Z'
+            AND (action LIKE '%INVITE%' OR action LIKE '%ONBOARDING%')
+          ORDER BY ts ASC, id ASC
+          LIMIT 100;
+          SQL
+          )"
+          npx --yes wrangler@4.114.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --json --command "$query" > "$RAW_RESULT"
+          npx --yes wrangler@4.114.0 d1 execute skincos-db --remote --config inventory/wrangler.toml --json --command "$audit_query" > "${RAW_RESULT%.json}-audit.json"
+          node - "$RAW_RESULT" "${RAW_RESULT%.json}-audit.json" "$AUDIT_RESULT" <<'NODE'
+          const fs = require('node:fs');
+          const [rawPath, auditRawPath, outputPath] = process.argv.slice(2);
+          const parsed = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+          const auditParsed = JSON.parse(fs.readFileSync(auditRawPath, 'utf8'));
+          const rows = Array.isArray(parsed)
+            ? parsed.flatMap((item) => Array.isArray(item?.results) ? item.results : [])
+            : Array.isArray(parsed?.results) ? parsed.results : [];
+          const auditRows = Array.isArray(auditParsed)
+            ? auditParsed.flatMap((item) => Array.isArray(item?.results) ? item.results : [])
+            : Array.isArray(auditParsed?.results) ? auditParsed.results : [];
+          const onboardingId = '3e2439ddde553be7412eb58b58b366274d3f607cb040a46b5dc83b5e6d380d6a';
+          const currentInviteIds = new Set(rows.map((row) => row.invite_id).filter(Boolean));
+          const parseJson = (value) => {
+            try {
+              const parsedValue = value ? JSON.parse(value) : {};
+              return parsedValue && typeof parsedValue === 'object' ? parsedValue : {};
+            } catch { return {}; }
+          };
+          const safeAudit = auditRows.map((row) => {
+            const before = parseJson(row.before_json);
+            const after = parseJson(row.after_json);
+            return {
+              id: row.id == null ? null : Number(row.id),
+              ts: row.ts || null,
+              action: row.action || null,
+              entity: row.entity || null,
+              entityIdMatchesOnboarding: row.entity_id === onboardingId,
+              entityIdMatchesCurrentInvite: currentInviteIds.has(row.entity_id),
+              beforeAccountStatus: before.accountStatus || null,
+              afterAccountStatus: after.accountStatus || null,
+              inviteIssued: after.inviteIssued == null ? null : Boolean(after.inviteIssued),
+              inviteRevoked: after.inviteRevoked == null ? null : Boolean(after.inviteRevoked),
+              stage: after.stage || null,
+              workforceAccessState: after.workforceAccessState || null,
+              failClosed: after.failClosed == null ? null : Boolean(after.failClosed),
+              requestIdPresent: Boolean(after.requestId),
+            };
+          });
+          const safe = rows.map((row) => ({
+            onboardingId: row.onboarding_id || null,
+            requestedUsername: row.requested_username || null,
+            workforceEmployeeId: row.workforce_employee_id || null,
+            onboardingUnitsJson: row.onboarding_units_json || null,
+            accountStatus: row.account_status || null,
+            inviteId: row.invite_id || null,
+            provisioningState: row.provisioning_state || null,
+            compensationState: row.compensation_state || null,
+            lastErrorCode: row.last_error_code || null,
+            correlationIdPresent: Boolean(row.correlation_id),
+            onboardingCreatedAt: row.onboarding_created_at || null,
+            onboardingUpdatedAt: row.onboarding_updated_at || null,
+            teamUnitsJson: row.team_units_json || null,
+            accountLinkId: row.account_link_id || null,
+            crmUsername: row.crm_username || null,
+            linkMethod: row.link_method || null,
+            reviewStatus: row.review_status || null,
+            crmUserUsername: row.crm_user_username || null,
+            crmUserUnitsJson: row.crm_user_units_json || null,
+            crmUserActive: row.crm_user_active == null ? null : Boolean(Number(row.crm_user_active)),
+            crmUserSessionVersion: row.crm_user_session_version == null ? null : Number(row.crm_user_session_version),
+            requestedCrmUserUsername: row.requested_crm_user_username || null,
+            requestedCrmUserUnitsJson: row.requested_crm_user_units_json || null,
+            requestedCrmUserActive: row.requested_crm_user_active == null ? null : Boolean(Number(row.requested_crm_user_active)),
+            requestedCrmUserHasPassword: Boolean(Number(row.requested_crm_user_has_password || 0)),
+            requestedCrmUserSessionVersion: row.requested_crm_user_session_version == null ? null : Number(row.requested_crm_user_session_version),
+            inviteUnitsJson: row.invite_units_json || null,
+            inviteRowId: row.invite_row_id || null,
+            inviteRequestedUsername: row.invite_requested_username || null,
+            inviteCorporateEmailPresent: Boolean(row.invite_corporate_email),
+            inviteCreatedAt: row.invite_created_at || null,
+            inviteExpiresAt: row.invite_expires_at || null,
+            inviteRevoked: row.invite_revoked == null ? null : Boolean(Number(row.invite_revoked)),
+            inviteUsesCount: row.invite_uses_count == null ? null : Number(row.invite_uses_count),
+          }));
+          fs.writeFileSync(outputPath, `${JSON.stringify({
+            schemaVersion: 2,
+            mode: 'read-only',
+            target: 'production',
+            subject: 'hellenmelo',
+            rowCount: safe.length,
+            rows: safe,
+            auditRowCount: safeAudit.length,
+            audit: safeAudit,
+          }, null, 2)}\n`);
+          NODE
+          rm -f "$RAW_RESULT"
+          rm -f "${RAW_RESULT%.json}-audit.json"
+
+      - name: Upload private audit evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: codex-hellenmelo-d1-audit
+          path: ${{ runner.temp }}/hellenmelo-d1-audit.json
+          retention-days: 1
