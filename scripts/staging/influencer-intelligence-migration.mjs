@@ -292,11 +292,11 @@ function assertTimeoutContract(identity) {
 
 async function inspectRoleProof(client) {
     const row = await queryValue(client, `select
-        pg_has_role(current_user, $1, 'member') as can_set_owner,
+        pg_has_role(current_user, $1::name, 'member') as can_set_owner,
         has_database_privilege(current_user, current_database(), 'CONNECT') as migrator_connect,
-        has_database_privilege($1, current_database(), 'CONNECT') as owner_connect,
-        has_database_privilege($1, current_database(), 'CREATE') as owner_create,
-        coalesce((select not rolcanlogin and not rolinherit from pg_roles where rolname = $1), false) as owner_role_shape`, [INFLUENCER_INTELLIGENCE_STAGING_TARGET.ownerRole])
+        has_database_privilege($1::name, current_database(), 'CONNECT') as owner_connect,
+        has_database_privilege($1::name, current_database(), 'CREATE') as owner_create,
+        coalesce((select not rolcanlogin and not rolinherit from pg_roles where rolname = $1::name), false) as owner_role_shape`, [INFLUENCER_INTELLIGENCE_STAGING_TARGET.ownerRole])
     if (![row.can_set_owner, row.migrator_connect, row.owner_connect, row.owner_create, row.owner_role_shape].every((value) => value === true || value === 't')) {
         throw migrationError('II_MIGRATION_MINIMUM_GRANTS_UNPROVEN')
     }
@@ -387,13 +387,13 @@ async function collectRuntimePrivilegeState(client) {
     const rows = []
     for (const role of INFLUENCER_INTELLIGENCE_STAGING_TARGET.runtimeRoles) {
         const row = await queryValue(client, `select
-            $1 as role_name,
-            exists(select 1 from pg_roles where rolname = $1) as role_present,
-            case when exists(select 1 from pg_roles where rolname = $1)
-              then has_schema_privilege($1, $2, 'USAGE') else false end as schema_usage,
-            case when exists(select 1 from pg_roles where rolname = $1)
-              then has_schema_privilege($1, $2, 'CREATE') else false end as schema_create,
-            case when exists(select 1 from pg_roles where rolname = $1)
+            $1::name as role_name,
+            exists(select 1 from pg_roles where rolname = $1::name) as role_present,
+            case when exists(select 1 from pg_roles where rolname = $1::name)
+              then has_schema_privilege($1::name, $2::name, 'USAGE') else false end as schema_usage,
+            case when exists(select 1 from pg_roles where rolname = $1::name)
+              then has_schema_privilege($1::name, $2::name, 'CREATE') else false end as schema_create,
+            case when exists(select 1 from pg_roles where rolname = $1::name)
               then exists(
                 select 1 from unnest($3::text[]) as relation_name
                 where to_regclass(format('%I.%I', $2, relation_name)) is not null
