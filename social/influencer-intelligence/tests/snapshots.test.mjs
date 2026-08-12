@@ -106,23 +106,27 @@ function createRepository() {
     async createCollectorRun(row) {
       const existing = state.runs.get(row.idempotencyKey);
       if (existing) return { inserted: false, row: existing };
-      const stored = { ...row, status: row.status };
+      const stored = { ...row, attemptToken: row.leaseKey, status: row.status };
       state.runs.set(row.idempotencyKey, stored);
       return { inserted: true, row: stored };
     },
     async updateCollectorRun(row) {
       const existing = [...state.runs.values()].find((item) => item.runKey === row.runKey);
       assert.ok(existing, 'collector run must exist before finalization');
+      assert.equal(existing.attemptToken, row.leaseKey, 'stale collector attempt must not finalize a reclaimed run');
       Object.assign(existing, row);
       state.updates.push({ ...row });
       return existing;
     },
     async reclaimStaleCollectorRun(row) {
       const existing = state.runs.get(row.idempotencyKey);
-      if (!existing || existing.status !== 'running') return { reclaimed: false, row: null };
-      if (Date.parse(existing.startedAt) > Date.parse(row.staleBefore)) return { reclaimed: false, row: null };
+      if (!existing) return { reclaimed: false, row: null };
+      const staleRunning = existing.status === 'running' && Date.parse(existing.startedAt) <= Date.parse(row.staleBefore);
+      const retryableFailure = existing.status === 'failed' && (existing.attemptCount || 1) < row.maxAttempts;
+      if (!staleRunning && !retryableFailure) return { reclaimed: false, row: null };
       Object.assign(existing, {
         status: 'running',
+        attemptToken: row.leaseKey,
         startedAt: row.startedAt,
         finishedAt: null,
         attemptCount: (existing.attemptCount || 1) + 1,
@@ -130,6 +134,8 @@ function createRepository() {
       return { reclaimed: true, row: existing };
     },
     async recordCollectorEvidence(row) {
+      const run = [...state.runs.values()].find((item) => item.runKey === row.runKey);
+      assert.equal(run?.attemptToken, row.leaseKey, 'stale collector attempt must not write evidence');
       const existing = state.evidence.get(row.ingestKey);
       if (existing) return { inserted: false, row: existing };
       const stored = { ...row };
@@ -137,16 +143,22 @@ function createRepository() {
       return { inserted: true, row: { evidence_key: row.evidenceKey, ...stored } };
     },
     async recordProfileSnapshot(row) {
+      const run = [...state.runs.values()].find((item) => item.runKey === row.runKey);
+      assert.equal(run?.attemptToken, row.leaseKey, 'stale collector attempt must not write profile snapshots');
       const existing = state.profiles.get(row.ingestKey);
       if (existing) return { inserted: false, row: existing };
       state.profiles.set(row.ingestKey, { ...row });
       return { inserted: true, row: { snapshot_key: row.snapshotKey, ...row } };
     },
     async upsertMedia(row) {
+      const run = [...state.runs.values()].find((item) => item.runKey === row.runKey);
+      assert.equal(run?.attemptToken, row.leaseKey, 'stale collector attempt must not rewrite media identity');
       state.mediaIdentity.set(row.mediaKey, { ...row });
       return { ...row };
     },
     async recordMediaSnapshot(row) {
+      const run = [...state.runs.values()].find((item) => item.runKey === row.runKey);
+      assert.equal(run?.attemptToken, row.leaseKey, 'stale collector attempt must not write media snapshots');
       const existing = state.mediaSnapshots.get(row.ingestKey);
       if (existing) return { inserted: false, row: existing };
       state.mediaSnapshots.set(row.ingestKey, { ...row });
@@ -240,11 +252,12 @@ test('a stale running collector is reclaimed after the bounded lease, while a li
   const storedRun = repository.state.runs.values().next().value;
   storedRun.status = 'running';
   storedRun.startedAt = new Date(Date.parse(now) - ((SNAPSHOT_RUN_LEASE_SECONDS + 1) * 1000)).toISOString();
-  const reclaimed = await operations.snapshot_creator({ ...input, retrievedAt: '2026-08-11T14:30:05.000Z' });
+  const reclaimed = await operations.snapshot_creator({ ...input, runKey: 'run-retry', retrievedAt: '2026-08-11T14:30:05.000Z' });
 
   assert.equal(first.status, 'completed');
   assert.equal(reclaimed.status, 'completed');
   assert.equal(reclaimed.collectorRun.reclaimed, true);
+  assert.equal(reclaimed.collectorRun.runKey, storedRun.runKey);
   assert.equal(router.calls.profile, 2);
   assert.equal(storedRun.status, 'completed');
 });
@@ -254,13 +267,48 @@ test('unexpected persistence failure finalizes the collector run as failed for s
     profile: okResult('get_profile', { followers_count: 100, following_count: 10, media_count: 3 }),
   });
   const repository = createRepository();
-  repository.recordProfileSnapshot = async () => { throw new Error('synthetic persistence failure'); };
+  const originalRecordProfileSnapshot = repository.recordProfileSnapshot;
+  let failOnce = true;
+  repository.recordProfileSnapshot = async (row) => {
+    if (failOnce) {
+      failOnce = false;
+      throw new Error('synthetic persistence failure');
+    }
+    return originalRecordProfileSnapshot(row);
+  };
   const { operations } = service(router, repository);
 
   await assert.rejects(operations.snapshot_creator(input), /synthetic persistence failure/);
   const run = repository.state.runs.values().next().value;
   assert.equal(run.status, 'failed');
   assert.equal(run.failureCount, 1);
+
+  const retry = await operations.snapshot_creator({ ...input, retrievedAt: '2026-08-11T14:30:05.000Z' });
+  assert.equal(retry.status, 'completed');
+  assert.equal(retry.collectorRun.reclaimed, true);
+  assert.equal(run.attemptCount, 2);
+  assert.equal(router.calls.profile, 2);
+});
+
+test('a superseded worker cannot persist or finalize after a stale run is reclaimed', async () => {
+  let releaseOld;
+  const router = createRouter({
+    profile: (call) => call === 1
+      ? new Promise((resolve) => { releaseOld = () => resolve(okResult('get_profile', { followers_count: 100, following_count: 10, media_count: 3 })); })
+      : okResult('get_profile', { followers_count: 110, following_count: 10, media_count: 3 }),
+  });
+  const repository = createRepository();
+  const operations = createSnapshotOperations({ router, repository, clock: () => '2026-08-11T14:30:00.000Z' });
+  const oldAttempt = operations.snapshot_creator(input);
+  await new Promise((resolve) => setImmediate(resolve));
+  const storedRun = repository.state.runs.values().next().value;
+  storedRun.status = 'running';
+  storedRun.startedAt = new Date(Date.parse('2026-08-11T14:30:00.000Z') - ((SNAPSHOT_RUN_LEASE_SECONDS + 1) * 1000)).toISOString();
+
+  const retry = await operations.snapshot_creator({ ...input, retrievedAt: '2026-08-11T14:30:05.000Z' });
+  assert.equal(retry.status, 'completed');
+  releaseOld();
+  await assert.rejects(oldAttempt, /stale collector attempt|lease/i);
 });
 
 test('replay identity stays stable when the caller corrects handle or mode in the same bucket', async () => {

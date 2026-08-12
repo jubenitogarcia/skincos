@@ -176,6 +176,7 @@ test('records M11 Campaign Fit as source-complete while keeping compute and runt
   assert.equal(RELEASE_CONTRACT.currentSourceScope.campaignFitMigrationArtifactAdded, true);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.campaignFitRuntimeWired, false);
   assert.ok(DATA_MODEL.persistence.additiveMigrations.some((path) => path.includes('campaign_fit_v1')));
+  assert.ok(DATA_MODEL.persistence.additiveMigrations.some((path) => path.includes('snapshot_fencing_v1')));
 });
 
 test('records M12 calibration as source-complete without live runtime calls', () => {

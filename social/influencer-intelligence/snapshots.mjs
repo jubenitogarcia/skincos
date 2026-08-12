@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   assertNoSensitiveFields,
@@ -23,6 +23,7 @@ export const MAX_MEDIA_LIMIT = 50;
 // clearly stale run lets the same idempotency key recover from a crashed
 // worker without allowing a concurrent live collection to run twice.
 export const SNAPSHOT_RUN_LEASE_SECONDS = 180;
+export const SNAPSHOT_MAX_ATTEMPTS = 3;
 export const PROFILE_METRIC_FIELDS = Object.freeze([
   'followers_count',
   'following_count',
@@ -463,6 +464,7 @@ async function persistFailureEvidence({ repository, request, runKey, sourceType,
       evidenceKey: ids.evidenceKey,
       ingestKey: ids.ingestKey,
       runKey,
+      leaseKey: request.attemptToken,
       creatorKey: request.creatorKey,
       ...(mediaKey ? { mediaKey } : {}),
       provider: item.provider,
@@ -494,6 +496,7 @@ async function persistObservedEvidence({ repository, request, runKey, sourceType
     evidenceKey: ids.evidenceKey,
     ingestKey: ids.ingestKey,
     runKey,
+    leaseKey: request.attemptToken,
     creatorKey: request.creatorKey,
     ...(mediaKey ? { mediaKey } : {}),
     provider,
@@ -510,6 +513,7 @@ async function persistObservedEvidence({ repository, request, runKey, sourceType
 
 async function beginRun(repository, request) {
   const startedAt = clockIso(request.clock);
+  const attemptToken = randomUUID();
   const result = await repository.createCollectorRun({
     runKey: request.runKey,
     idempotencyKey: request.idempotencyKey,
@@ -520,29 +524,40 @@ async function beginRun(repository, request) {
     correlationId: request.correlationId,
     attemptCount: 1,
     startedAt,
+    leaseKey: attemptToken,
   });
   if (!result?.inserted) {
     const existing = result?.row || {};
     const existingStartedAt = existing.started_at || existing.startedAt || null;
     const existingStatus = existing.status || 'in_progress';
+    const existingAttemptCount = Number.isInteger(existing.attempt_count)
+      ? existing.attempt_count
+      : (Number.isInteger(existing.attemptCount) ? existing.attemptCount : 1);
     const startedMs = Date.parse(startedAt);
     const existingStartedMs = existingStartedAt ? Date.parse(existingStartedAt) : NaN;
-    if (existingStatus === 'running'
+    const staleRunning = existingStatus === 'running'
       && Number.isFinite(startedMs)
       && Number.isFinite(existingStartedMs)
-      && (startedMs - existingStartedMs) > (SNAPSHOT_RUN_LEASE_SECONDS * 1000)) {
+      && (startedMs - existingStartedMs) > (SNAPSHOT_RUN_LEASE_SECONDS * 1000);
+    const retryableFailure = existingStatus === 'failed' && existingAttemptCount < SNAPSHOT_MAX_ATTEMPTS;
+    if (staleRunning || retryableFailure) {
       const staleBefore = new Date(startedMs - (SNAPSHOT_RUN_LEASE_SECONDS * 1000)).toISOString();
       const reclaimed = await repository.reclaimStaleCollectorRun({
         idempotencyKey: request.idempotencyKey,
+        leaseKey: attemptToken,
         startedAt,
         staleBefore,
+        maxAttempts: SNAPSHOT_MAX_ATTEMPTS,
       });
       if (reclaimed?.reclaimed) {
+        const row = reclaimed.row || existing;
         return {
           inserted: true,
           reclaimed: true,
           status: 'running',
-          row: reclaimed.row || existing,
+          row,
+          runKey: row.run_key || row.runKey || request.runKey,
+          attemptToken: row.attempt_token || row.attemptToken || attemptToken,
           startedAt,
         };
       }
@@ -550,24 +565,34 @@ async function beginRun(repository, request) {
     return {
       inserted: false,
       status: existingStatus,
-      row: result?.row || null,
+      row: existing,
+      runKey: existing.run_key || existing.runKey || request.runKey,
+      attemptToken: existing.attempt_token || existing.attemptToken || null,
       startedAt,
     };
   }
-  return { inserted: true, status: 'running', row: result.row || null, startedAt };
+  const row = result.row || null;
+  return {
+    inserted: true,
+    status: 'running',
+    row,
+    runKey: row?.run_key || row?.runKey || request.runKey,
+    attemptToken: row?.attempt_token || row?.attemptToken || attemptToken,
+    startedAt,
+  };
 }
 
-async function finishRun(repository, runKey, status, startedAt, clock, metadata = {}) {
+async function finishRun(repository, runKey, attemptToken, status, startedAt, clock, metadata = {}) {
   const now = clockIso(clock);
   const finishedAt = Date.parse(now) >= Date.parse(startedAt) ? now : startedAt;
-  await repository.updateCollectorRun({ runKey, status, finishedAt, ...metadata });
+  await repository.updateCollectorRun({ runKey, leaseKey: attemptToken, status, finishedAt, ...metadata });
   return { status, finishedAt };
 }
 
 function collectorRunView(request, run, finalStatus, finishedAt, extra = {}) {
   return {
     contractVersion: SNAPSHOT_OPERATION_CONTRACT_VERSION,
-    runKey: request.runKey,
+    runKey: run.runKey || request.runKey,
     idempotencyKey: request.idempotencyKey,
     status: finalStatus,
     inserted: run.inserted,
@@ -706,6 +731,8 @@ async function runProfileSnapshot({ router, repository, request, run }) {
       freshnessStatus: freshness.status,
       freshnessAgeSeconds: freshness.age_seconds,
       retentionPolicyVersion: request.retentionPolicyVersion,
+      runKey: request.runKey,
+      leaseKey: request.attemptToken,
     });
     persistedSnapshots.push({
       kind: 'profile',
@@ -744,6 +771,8 @@ async function runProfileSnapshot({ router, repository, request, run }) {
         freshnessStatus: freshness.status,
         freshnessAgeSeconds: freshness.age_seconds,
         retentionPolicyVersion: request.retentionPolicyVersion,
+        runKey: request.runKey,
+        leaseKey: request.attemptToken,
       });
       persistedSnapshots.push({
         kind: 'profile',
@@ -758,7 +787,7 @@ async function runProfileSnapshot({ router, repository, request, run }) {
   const partial = result.status !== 'ok' || coverage.available < coverage.expected
     || limitations.length > 0 || failures.length > 0;
   const status = providerError ? 'failed' : result.status !== 'ok' ? 'unavailable' : partial ? 'partial' : 'completed';
-  const finished = await finishRun(repository, request.runKey, status, run.startedAt, request.clock, {
+  const finished = await finishRun(repository, request.runKey, request.attemptToken, status, run.startedAt, request.clock, {
     coverageAvailable: coverage.available,
     coverageExpected: coverage.expected,
     failureCount: failures.length,
@@ -885,6 +914,8 @@ async function persistUnavailableMedia({ repository, request, runKey, provider, 
     freshnessStatus: freshness.status,
     freshnessAgeSeconds: freshness.age_seconds,
     retentionPolicyVersion: request.retentionPolicyVersion,
+    runKey: request.runKey,
+    leaseKey: request.attemptToken,
   });
   return {
     mediaKey,
@@ -925,7 +956,7 @@ async function runMediaSnapshot({ router, repository, request, run }) {
       status: 'unknown',
       age_seconds: null,
     };
-    const finished = await finishRun(repository, request.runKey, status, run.startedAt, request.clock, {
+    const finished = await finishRun(repository, request.runKey, request.attemptToken, status, run.startedAt, request.clock, {
       coverageAvailable: 0,
       coverageExpected: 0,
       failureCount: recentFailures.length,
@@ -967,7 +998,7 @@ async function runMediaSnapshot({ router, repository, request, run }) {
   const selectedKeys = discovered.map((item) => item.mediaKey);
   if (selectedKeys.length === 0) {
     const recentFreshness = recentResult ? resultFreshness(recentResult) : { status: 'unknown', age_seconds: null };
-    const finished = await finishRun(repository, request.runKey, 'completed', run.startedAt, request.clock, {
+    const finished = await finishRun(repository, request.runKey, request.attemptToken, 'completed', run.startedAt, request.clock, {
       coverageAvailable: 0,
       coverageExpected: 0,
       failureCount: recentFailures.length,
@@ -1033,6 +1064,8 @@ async function runMediaSnapshot({ router, repository, request, run }) {
       mediaKind: item.mediaKind,
       publishedAt: item.publishedAt,
       sourceRef: recentEvidence?.sourceRef || `${identityProvider}:media:${shortHash(mediaKey)}`,
+      runKey: request.runKey,
+      leaseKey: request.attemptToken,
     });
 
     const metricItem = metricsByKey.get(mediaKey);
@@ -1118,6 +1151,8 @@ async function runMediaSnapshot({ router, repository, request, run }) {
       freshnessStatus: resultFreshness(metricsResult).status,
       freshnessAgeSeconds: resultFreshness(metricsResult).age_seconds,
       retentionPolicyVersion: request.retentionPolicyVersion,
+      runKey: request.runKey,
+      leaseKey: request.attemptToken,
     });
     persistedSnapshots.push({
       kind: 'media',
@@ -1151,7 +1186,7 @@ async function runMediaSnapshot({ router, repository, request, run }) {
     || limitations.length > 0;
   const status = metricsError ? 'failed' : partial ? 'partial' : 'completed';
   const metricFreshness = resultFreshness(metricsResult);
-  const finished = await finishRun(repository, request.runKey, status, run.startedAt, request.clock, {
+  const finished = await finishRun(repository, request.runKey, request.attemptToken, status, run.startedAt, request.clock, {
     coverageAvailable: metricFieldsAvailable,
     coverageExpected: metricFieldsExpected,
     failureCount: recentFailures.length + metricFailures.length,
@@ -1205,17 +1240,23 @@ export function createSnapshotOperations({ router, repository, clock = () => Dat
     const request = Object.freeze({ ...normalized, clock });
     const run = await beginRun(repository, request);
     if (!run.inserted) return deduplicatedResult(request, run);
+    const activeRequest = Object.freeze({
+      ...request,
+      runKey: run.runKey || request.runKey,
+      attemptToken: run.attemptToken,
+    });
+    const activeRun = Object.freeze({ ...run, runKey: activeRequest.runKey, attemptToken: activeRequest.attemptToken });
     try {
       if (operation === 'snapshot_creator') {
-        return await runProfileSnapshot({ router, repository, request, run });
+        return await runProfileSnapshot({ router, repository, request: activeRequest, run: activeRun });
       }
-      return await runMediaSnapshot({ router, repository, request, run });
+      return await runMediaSnapshot({ router, repository, request: activeRequest, run: activeRun });
     } catch (error) {
       // Provider failures are handled inside the operation. This guard covers
       // unexpected repository/service faults so a retry cannot be trapped
       // behind an indefinitely running collector row.
       try {
-        await finishRun(repository, request.runKey, 'failed', run.startedAt, request.clock, {
+        await finishRun(repository, activeRequest.runKey, activeRequest.attemptToken, 'failed', activeRun.startedAt, activeRequest.clock, {
           failureCount: 1,
           freshnessStatus: 'unknown',
           freshnessAgeSeconds: null,

@@ -14,11 +14,13 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_data_model_v1.up.sql');
 const snapshotMetadataMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_snapshots_v1.up.sql');
+const snapshotFencingMigrationPath = path.join(here, '..', 'migrations', '20260812_influencer_intelligence_snapshot_fencing_v1.up.sql');
 const scoringMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_scoring_v0.up.sql');
 const commentsMigrationPath = path.join(here, '..', 'migrations', '20260812_influencer_intelligence_comments_v1.up.sql');
 const campaignFitMigrationPath = path.join(here, '..', 'migrations', '20260812_influencer_intelligence_campaign_fit_v1.up.sql');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const snapshotMetadataMigration = fs.readFileSync(snapshotMetadataMigrationPath, 'utf8');
+const snapshotFencingMigration = fs.readFileSync(snapshotFencingMigrationPath, 'utf8');
 const scoringMigration = fs.readFileSync(scoringMigrationPath, 'utf8');
 const commentsMigration = fs.readFileSync(commentsMigrationPath, 'utf8');
 const campaignFitMigration = fs.readFileSync(campaignFitMigrationPath, 'utf8');
@@ -115,6 +117,16 @@ test('defines additive durable coverage and freshness metadata for snapshot coll
   assert.doesNotMatch(snapshotMetadataMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
   assert.doesNotMatch(snapshotMetadataMigration, /TRUNCATE\s+/i);
   assert.match(snapshotMetadataMigration, /COMMIT;\s*$/);
+});
+
+test('defines additive collector attempt fencing without destructive DDL', () => {
+  assert.match(snapshotFencingMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
+  assert.match(snapshotFencingMigration, /ADD COLUMN IF NOT EXISTS attempt_token/);
+  assert.match(snapshotFencingMigration, /collector_run_attempt_token_check/);
+  assert.match(snapshotFencingMigration, /collector_run_attempt_token_idx/);
+  assert.doesNotMatch(snapshotFencingMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(snapshotFencingMigration, /TRUNCATE\s+/i);
+  assert.match(snapshotFencingMigration, /COMMIT;\s*$/);
 });
 
 test('defines additive score weights version metadata without destructive DDL', () => {
@@ -217,6 +229,8 @@ test('profile snapshots preserve provenance and reject reversed timestamps or ra
     isPrivate: false,
     isVerified: true,
     retentionPolicyVersion: 'retention/v1',
+    runKey: 'run-1',
+    leaseKey: 'attempt-token-0001',
   });
   const values = queryable.calls[0].values;
   assert.equal(values[2], 'creator-1');
@@ -229,6 +243,7 @@ test('profile snapshots preserve provenance and reject reversed timestamps or ra
       snapshotKey: 'snapshot-2', ingestKey: 'profile-ingest-2', creatorKey: 'creator-1', identityKey: 'identity-1', evidenceKey: 'evidence-1',
       provider: 'tiktok', providerAdapterVersion: 'adapter/v1', contractVersion: 'contract/v1', evidenceState: 'observed',
       observedAt: retrievedAt, retrievedAt: observedAt, sourceRef: 'synthetic-fixture/profile', retentionPolicyVersion: 'retention/v1',
+      runKey: 'run-1', leaseKey: 'attempt-token-0001',
     }),
     (error) => error.code === 'SNAPSHOT_TIMESTAMP_ORDER_INVALID',
   );
@@ -237,6 +252,7 @@ test('profile snapshots preserve provenance and reject reversed timestamps or ra
       snapshotKey: 'snapshot-3', ingestKey: 'profile-ingest-3', creatorKey: 'creator-1', identityKey: 'identity-1', evidenceKey: 'evidence-1',
       provider: 'tiktok', providerAdapterVersion: 'adapter/v1', contractVersion: 'contract/v1', evidenceState: 'observed',
       observedAt, retrievedAt, sourceRef: 'synthetic-fixture/profile', normalizedMetrics: { caption: 'do not persist' }, retentionPolicyVersion: 'retention/v1',
+      runKey: 'run-1', leaseKey: 'attempt-token-0001',
     }),
     /not permitted|KEY_INVALID|FIELD_FORBIDDEN/,
   );
