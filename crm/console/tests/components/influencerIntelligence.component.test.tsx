@@ -71,7 +71,7 @@ describe('Influencer Intelligence CRM panel', () => {
 
     expect(await screen.findByTestId('influencer-campaign-fit')).toBeVisible()
     expect(screen.getByText('Campaign Fit · campaign-1 v1')).toBeVisible()
-    expect(screen.getByText(/não é uma substituição do Influencer Score geral/i)).toBeVisible()
+    expect(screen.getByText(/projeção separada do Influencer Score geral/i)).toBeVisible()
     expect(screen.getByText('82 / 100')).toBeVisible()
   })
 })
