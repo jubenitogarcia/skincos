@@ -37,7 +37,7 @@ export const BOUNDARIES = deepFreeze([
   {
     id: 'influencer-intelligence',
     owner: DOMAIN_ROOT,
-    owns: ['normalized evidence contracts', 'creator registry', 'append-only snapshots', 'analytics', 'scores', 'campaign-fit projections', 'provenance'],
+    owns: ['normalized evidence contracts', 'creator registry', 'append-only snapshots', 'bounded content features', 'analytics', 'scores', 'campaign-fit projections', 'provenance'],
     mayConsume: ['approved provider adapters', 'PostgreSQL read/write roles introduced by later milestones'],
     mustNotConsumeDirectly: ['provider credentials', 'raw provider payloads', 'raw comments or media', 'shell commands', 'live workflow JSON'],
   },
@@ -147,6 +147,11 @@ export const DATA_MODEL = deepFreeze({
       name: 'analytics_results',
       lifecycle: 'append-only derived artifact; recomputation creates a new version',
       fields: ['analysisKey', 'creatorKey', 'window', 'inputSnapshotKeys', 'algorithmVersion', 'coverage', 'provenance', 'computedAt'],
+    },
+    {
+      name: 'content_analysis_features',
+      lifecycle: 'append-only derived projection stored inside creator_analysis.analysis_metrics',
+      fields: ['sampleKey', 'contentKeys', 'topics', 'productCategories', 'brandsMentioned', 'competitors', 'sponsoredSignal', 'promotionCouponSignal', 'skincareAffinity', 'educationVsEntertainment', 'claimTypes', 'contentFormat', 'brandSafetyFlags', 'algorithmVersion', 'modelVersion', 'evidenceRefs'],
     },
     {
       name: 'score_snapshots',
@@ -344,12 +349,14 @@ export const RELEASE_CONTRACT = deepFreeze({
     commentsSourceAdded: true,
     commentsMigrationArtifactAdded: true,
     commentsRuntimeWired: false,
+    contentSourceAdded: true,
+    contentRuntimeWired: false,
   },
 });
 
 export const PRIVACY_CONTRACT = deepFreeze({
-  retained: ['opaque creator key', 'optional normalized public handle', 'scalar metric observations', 'aggregate comments signals', 'provider account digest', 'bounded provenance and audit metadata'],
-  neverPersisted: ['raw provider account identity', 'raw profile payload', 'direct contact fields', 'credential material', 'cookies or sessions', 'raw comment text by default', 'raw media or binaries', 'unbounded model prompts or completions', 'simulator output as observed evidence'],
+  retained: ['opaque creator key', 'optional normalized public handle', 'scalar metric observations', 'aggregate comments signals', 'bounded content features', 'provider account digest', 'bounded provenance and audit metadata'],
+  neverPersisted: ['raw provider account identity', 'raw profile payload', 'direct contact fields', 'credential material', 'cookies or sessions', 'raw comment text by default', 'raw captions or transcripts', 'raw media, frame binaries, or download paths', 'unbounded model prompts or completions', 'simulator output as observed evidence'],
   comments: 'store bounded topic, sentiment, safety, spam, and coverage aggregates; raw text requires a separate privacy decision',
   retention: 'every historical artifact names a reviewed retentionPolicyVersion and finite retention class; no indefinite raw cache',
   deletion: 'privacy deletion or tombstoning is a separate controlled policy; it must not rewrite historical evidence silently',
@@ -376,7 +383,7 @@ export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'M7', title: 'Codex skill', status: 'versioned skill and contract tests implemented; MCP/runtime registration remains governed by later gates', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
   { id: 'M8', title: 'CRM read-only surface', status: 'internal proxy, typed client, gated shadow dashboard, and synthetic UI tests implemented; upstream/runtime remains off', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
   { id: 'M9', title: 'Comments intelligence', status: 'source implemented; aggregate-only analyzer, additive persistence metadata, and synthetic tests; runtime/provider wiring remains off', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
-  { id: 'M10', title: 'Semantic content and Reels signals', status: 'pending', acceptance: ['approved media projection', 'no raw media archive by default', 'versioned inference'] },
+  { id: 'M10', title: 'Semantic content and Reels signals', status: 'source implemented; bounded feature projection and closed semantic interface; runtime/media adapter remains off', acceptance: ['approved media projection', 'no raw media archive by default', 'versioned inference'] },
   { id: 'M11', title: 'Campaign and brand fit', status: 'pending', acceptance: ['structured criteria', 'explainable deterministic base', 'inferred signals labeled'] },
   { id: 'M12', title: 'Synthetic validation and calibration', status: 'pending', acceptance: ['fixtures', 'outlier tests', 'coverage/confidence calibration', 'negative policy tests'] },
   { id: 'M13', title: 'Optional provider gap analysis', status: 'pending', acceptance: ['measured gap report', 'cost/risk/privacy review', 'new provider only after approval'] },

@@ -2,9 +2,10 @@
 
 Status: architecture v1 defined; M2 provider boundary, M4 deterministic
 analytics, M5 deterministic scoring, M6 read-only MCP adapter, M7 Codex skill,
-and M8 CRM contract/dashboard source are implemented in source control. Data
-model v1 plus scoring metadata remain additive, unapplied artifacts, and all
-Influencer Intelligence runtime/upstream registrations remain off.
+M8 CRM contract/dashboard source, M9 comments intelligence, and M10 bounded
+content analysis are implemented in source control. Data model v1 plus scoring
+metadata remain additive, unapplied artifacts, and all Influencer Intelligence
+runtime/upstream registrations remain off.
 The domain remains
 experimental, not exposed, and off by default.
 
@@ -311,6 +312,24 @@ ratio.
 - A score is not complete without score, confidence, coverage, provenance,
   timestamp, provider identifiers, evidence state, and algorithm version.
 
+## M10 decision: bounded semantic content analysis
+
+[`content-analysis.mjs`](./content-analysis.mjs) selects a bounded recent media
+sample and emits versioned features for topics, product categories, brand and
+competitor mentions, sponsorship/promotion signals, skincare affinity,
+education versus entertainment, claim types, format, and brand safety. The
+full contract and retention decisions are documented in
+[`CONTENT_ANALYSIS.md`](./CONTENT_ANALYSIS.md).
+
+The baseline is deterministic and controlled-vocabulary based. A future
+approved analyzer may be injected only through the closed structured semantic
+schema; it returns features and evidence, never an Influencer Score. Captions
+and transcripts are ephemeral inputs, while only safe features, bounded media
+keys, model metadata, and evidence references reach the existing append-only
+`creator_analysis` repository boundary. Existing Agent Zero Whisper/vision and
+Meta Ads workflow capabilities were inspected but are not connected because
+they are different runtime boundaries and may own media processing.
+
 ## Rollout and access
 
 The planned module flag is `INFLUENCER_INTELLIGENCE_ENABLED=false`. M0 through
@@ -343,7 +362,7 @@ production configuration.
 | M7 | `skincos-influencer-intelligence` Codex skill | Versioned skill, UI metadata and contract tests implemented; runtime/user access remains governed |
 | M8 | Read-only CRM contracts and dashboard | Source implemented; gated shadow UI, upstream/runtime off |
 | M9 | Minimized comments intelligence | Source implemented; additive quality/sampling migration and synthetic tests; runtime/provider wiring remains off |
-| M10 | Semantic content and Reels signals | Pending |
+| M10 | Semantic content and Reels signals | Source implemented; bounded feature projection, closed semantic schema, fixtures and persistence boundary; media/runtime adapter remains off |
 | M11 | Campaign and brand fit | Pending |
 | M12 | Synthetic validation and calibration | Pending |
 | M13 | Optional provider gap analysis | Pending; only if a measured gap remains |
