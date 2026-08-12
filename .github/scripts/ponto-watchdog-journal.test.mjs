@@ -115,8 +115,8 @@ test("watchdog reconstructs exact surface run files and a bounded artifact manif
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-watchdog-journal-"));
   const rows = [
     run(10, "deploy-timekeeping.yml", `Timekeeping staging ${sha} orchestrator=99 nonce=${"1".repeat(32)}`),
-    run(11, "deploy-core-workers.yml", `Core inventory staging ${sha} orchestrator=99 nonce=${"2".repeat(32)}`),
-    run(12, "deploy-core-workers.yml", `Core api staging ${sha} orchestrator=99 nonce=${"3".repeat(32)}`),
+    run(11, "deploy-core-workers.yml", `Core inventory staging team=true ${sha} orchestrator=99 nonce=${"2".repeat(32)}`),
+    run(12, "deploy-core-workers.yml", `Core api staging team=false ${sha} orchestrator=99 nonce=${"3".repeat(32)}`),
     run(13, "deploy-crm-pages.yml", `CRM Pages staging ${sha} orchestrator=99 nonce=${"4".repeat(32)}`),
   ];
   anchor(root, "timekeeping.json", "deploy-timekeeping.yml", 501, 10);
@@ -314,7 +314,7 @@ test("watchdog accepts an exact terminal coordination-gate failure with no mutat
   const child = run(
     10,
     "deploy-core-workers.yml",
-    `Core inventory staging ${sha} orchestrator=99 nonce=${"1".repeat(32)}`,
+    `Core inventory staging team=true ${sha} orchestrator=99 nonce=${"1".repeat(32)}`,
   );
   child.conclusion = "failure";
   const request = scopedRequest([child], async (pathname) => {
