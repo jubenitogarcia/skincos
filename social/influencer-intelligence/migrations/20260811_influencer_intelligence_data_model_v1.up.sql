@@ -454,10 +454,30 @@ BEGIN
     'creator_score_component',
     'campaign_creator_fit'
   ] LOOP
-    EXECUTE format('DROP TRIGGER IF EXISTS %I_append_only ON influencer_intelligence.%I', table_name, table_name);
-    EXECUTE format('CREATE TRIGGER %I_append_only BEFORE UPDATE OR DELETE ON influencer_intelligence.%I FOR EACH ROW EXECUTE FUNCTION influencer_intelligence.prevent_append_only_mutation()', table_name, table_name);
-    EXECUTE format('DROP TRIGGER IF EXISTS %I_no_truncate ON influencer_intelligence.%I', table_name, table_name);
-    EXECUTE format('CREATE TRIGGER %I_no_truncate BEFORE TRUNCATE ON influencer_intelligence.%I FOR EACH STATEMENT EXECUTE FUNCTION influencer_intelligence.prevent_append_only_mutation()', table_name, table_name);
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_trigger trigger_row
+      JOIN pg_class relation ON relation.oid = trigger_row.tgrelid
+      JOIN pg_namespace namespace_row ON namespace_row.oid = relation.relnamespace
+      WHERE trigger_row.tgname = table_name || '_append_only'
+        AND relation.relname = table_name
+        AND namespace_row.nspname = 'influencer_intelligence'
+        AND NOT trigger_row.tgisinternal
+    ) THEN
+      EXECUTE format('CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON influencer_intelligence.%I FOR EACH ROW EXECUTE FUNCTION influencer_intelligence.prevent_append_only_mutation()', table_name || '_append_only', table_name);
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_trigger trigger_row
+      JOIN pg_class relation ON relation.oid = trigger_row.tgrelid
+      JOIN pg_namespace namespace_row ON namespace_row.oid = relation.relnamespace
+      WHERE trigger_row.tgname = table_name || '_no_truncate'
+        AND relation.relname = table_name
+        AND namespace_row.nspname = 'influencer_intelligence'
+        AND NOT trigger_row.tgisinternal
+    ) THEN
+      EXECUTE format('CREATE TRIGGER %I BEFORE TRUNCATE ON influencer_intelligence.%I FOR EACH STATEMENT EXECUTE FUNCTION influencer_intelligence.prevent_append_only_mutation()', table_name || '_no_truncate', table_name);
+    END IF;
   END LOOP;
 END
 $$;
