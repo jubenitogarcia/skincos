@@ -24,11 +24,15 @@ boundary, append-only data model, provenance and score envelopes, internal API,
 read-only MCP tools, release/flag model, privacy rules, observability, and the
 M0--M13 implementation gates.
 
-The architecture and M0-M7 source milestones do not add provider transports,
-live MCP registration, Orb workflow imports, or activation. M8 adds only the
-bounded, authenticated CRM proxy/client/dashboard boundary; the upstream
-target is not configured, `INFLUENCER_INTELLIGENCE_ENABLED` remains `false`,
-and the domain stays off until later milestones prove their own gates.
+The architecture and M0-M7 source milestones were source-only and did not add
+provider transports, live MCP registration, Orb workflow imports, or
+activation. The current transport gate adds the separate Token Vault analytics
+adapter and official Meta Graph read projection described in
+[`TRANSPORTS.md`](./TRANSPORTS.md); it still does not add live registrations or
+activation. M8 adds only the bounded, authenticated CRM proxy/client/dashboard
+boundary; the upstream target is not configured,
+`INFLUENCER_INTELLIGENCE_ENABLED` remains `false`, and the domain stays off
+until later milestones prove their own gates.
 
 ## M0 decision
 
@@ -93,14 +97,14 @@ interfaces only until they are explicitly enabled and allowlisted after a
 measured gap review. No new scraper, Instaloader path, or duplicate instagrapi
 implementation is introduced.
 
-The original M2 boundary is merged as PR #1305. The Meta adapter remains a
-boundary around the existing official CRM integration, not a second HTTP
-client; the instagrapi adapter remains a narrow boundary around the existing
-`social/instagram` read path. This milestone continues to use synthetic,
-injected transports only: it does not call Graph, instagrapi, Token Vault,
-PostgreSQL, Orb, or any runtime endpoint. A future transport must establish a
-separate read-only analytics allowlist and Token Vault custody before it can be
-connected.
+The original M2 boundary is merged as PR #1305. The current transport gate
+adds a separate Token Vault analytics action and
+[`provider-runtime.mjs`](./provider-runtime.mjs): Meta Graph is connected
+first through the official read-only projection, while instagrapi remains a
+narrow injected fallback around the existing `social/instagram` read path.
+Neither adapter exposes credentials or raw provider payloads. Source tests use
+fixtures; staging deployment and a scoped staging credential are still
+required before a live read is considered proven.
 
 ## Data model v1 decision
 
@@ -172,9 +176,10 @@ remains off.
 The operation tests use only injected fixtures and cover first collection,
 replay, metric changes, fallback/partial coverage, timeout, nonexistent and
 private profiles, unavailable media metrics, provenance classification and
-credential rejection. Token Vault transport wiring, migration application,
-service route mounting, live Orb import and real provider calls remain later
-operational gates.
+credential rejection. PostgreSQL migration application, internal service route
+mounting, live MCP/CRM registration, Orb import and real bulk collection remain
+later operational gates. The Token Vault analytics transport itself is
+source-complete but must pass the staging gate in [`TRANSPORTS.md`](./TRANSPORTS.md).
 
 ## Concrete target architecture
 
@@ -242,19 +247,19 @@ MCP/runtime registration and user grants remain governed by later gates.
 
 ### Incumbent integrations to reuse
 
-- Official-first collection will wrap the existing CRM Graph adapter in
-  `crm/console/functions/_lib/instagramGraph.ts` and its authenticated
-  connection boundary in `instagramStore.ts`; M2 only defines the injected
-  projection boundary, and the CRM UI must not call Graph or instagrapi
+- Official-first collection now uses the dedicated Token Vault analytics
+  action, which owns the existing Meta credential and makes fixed Graph GETs.
+  The CRM Graph helper remains an inspected incumbent integration, not a
+  credential or analytics gateway; the CRM UI must not call Graph or instagrapi
   directly.
 - The controlled fallback will reuse the existing
   `social/instagram/module/instagram_site_sync.py` and its vendored instagrapi
   session path. It will not duplicate that implementation.
 - Credentials belong in `platform/security/token-vault`. Clear tokens,
   cookies, authorization headers, and connection payloads never cross this
-  contract. The existing Token Vault publish gateway is not silently treated
-  as an analytics gateway; M2 must establish a separate read-only analytics
-  allowlist/adapter before collection is implemented.
+  contract. The existing Token Vault publish gateway remains isolated; the
+  dedicated analytics allowlist/adapter is the only transport path for this
+  domain.
 - Orb/n8n will schedule and resume jobs after the service contract exists. It
   will not become a provider, scoring engine, shell bridge, or arbitrary SQL
   executor.
