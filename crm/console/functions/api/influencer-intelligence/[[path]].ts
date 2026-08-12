@@ -96,7 +96,11 @@ function validateBody(path: string, body: unknown): body is JsonRecord {
   if (path === '/campaign-fit') {
     if (keys.some((key) => !['campaignKey', 'campaignVersion', 'creatorKeys'].includes(key))) return false
     if (typeof record.campaignKey !== 'string' || !SAFE_CREATOR_KEY.test(record.campaignKey)) return false
-    if (record.campaignVersion !== undefined && (!Number.isSafeInteger(record.campaignVersion) || record.campaignVersion < 1 || record.campaignVersion > 100_000)) return false
+    const campaignVersion = record.campaignVersion
+    if (campaignVersion !== undefined) {
+      if (typeof campaignVersion !== 'number' || !Number.isSafeInteger(campaignVersion)) return false
+      if (campaignVersion < 1 || campaignVersion > 100_000) return false
+    }
     if (record.creatorKeys !== undefined) {
       if (!Array.isArray(record.creatorKeys) || record.creatorKeys.length > 20 || new Set(record.creatorKeys).size !== record.creatorKeys.length) return false
       if (!record.creatorKeys.every((key) => typeof key === 'string' && SAFE_CREATOR_KEY.test(key))) return false
