@@ -41,7 +41,13 @@ try {
     Invoke-GitFixture @('-C', $fixtureRepo, 'config', 'user.email', 'fixture@example.invalid')
     Invoke-GitFixture @('-C', $fixtureRepo, 'config', 'user.name', 'Fixture')
     Set-Content -LiteralPath (Join-Path $fixtureRepo 'README.md') -Value "fixture`n" -Encoding utf8
-    Invoke-GitFixture @('-C', $fixtureRepo, 'add', 'README.md')
+    foreach ($requiredPath in @('ops/codex/worktree-topology.json', 'scripts/resolve-codex-thread-worktree.ps1', '.codex/hooks.json', '.codex/environments/environment.toml')) {
+        $requiredFile = Join-Path $fixtureRepo ($requiredPath -replace '/', '\')
+        New-Item -ItemType Directory -Path (Split-Path -Parent $requiredFile) -Force | Out-Null
+        Set-Content -LiteralPath $requiredFile -Value "fixture $requiredPath`n" -Encoding utf8
+    }
+    Set-Content -LiteralPath (Join-Path $fixtureRepo 'scripts/invoke-skincos-wsl.ps1') -Value "exit 1`n" -Encoding utf8
+    Invoke-GitFixture @('-C', $fixtureRepo, 'add', '.')
     Invoke-GitFixture @('-C', $fixtureRepo, 'commit', '--quiet', '-m', 'fixture')
     $target = (& git -C $fixtureRepo rev-parse HEAD).Trim()
 
@@ -69,6 +75,7 @@ try {
 
     $ready = Invoke-Coordinator @{ Action = 'inventory' }
     if ($ready.surfaces[0].status -ne 'ready' -or $ready.presentCount -ne 1 -or -not $ready.surfaces[0].worktrees[0].detached) { throw 'Created canonical slot was not reported ready and detached.' }
+    $canonicalPath = Join-Path $fixtureWorktrees 'admin\canonical\crm\users'
 
     $registryPath = Join-Path $fixtureRegistry 'canonical-registry.json'
     $registry = Get-Content -Raw -LiteralPath $registryPath | ConvertFrom-Json
@@ -78,6 +85,15 @@ try {
     if ($mismatch.surfaces[0].status -ne 'registry_mismatch' -or -not $mismatch.surfaces[0].registryMismatch) { throw 'Registry/SHA mismatch was not reported.' }
     $repaired = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'crm-module'; SurfaceId = 'users'; TargetCommit = $target; Apply = $true }
     if ($repaired.action -ne 'reused') { throw 'Existing canonical slot was not safely reused after registry repair.' }
+
+    Add-Content -LiteralPath (Join-Path $fixtureRepo 'README.md') -Value "requalified`n"
+    Invoke-GitFixture @('-C', $fixtureRepo, 'add', 'README.md')
+    Invoke-GitFixture @('-C', $fixtureRepo, 'commit', '--quiet', '-m', 'fixture requalification')
+    $targetRefresh = (& git -C $fixtureRepo rev-parse HEAD).Trim()
+    $refreshed = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'crm-module'; SurfaceId = 'users'; TargetCommit = $targetRefresh; Apply = $true; RefreshExisting = $true }
+    if ($refreshed.action -ne 'refreshed' -or $refreshed.targetCommit -ne $targetRefresh) { throw 'Canonical slot was not requalified at the explicit routing SHA.' }
+    $readyAfterRefresh = Invoke-Coordinator @{ Action = 'inventory' }
+    if ($readyAfterRefresh.surfaces[0].worktrees[0].head -ne $targetRefresh) { throw 'Requalified canonical slot did not publish the new SHA.' }
 
     $claimed = Invoke-Coordinator @{ Action = 'claim'; SurfaceType = 'crm-module'; SurfaceId = 'users'; Owner = 'fixture-owner'; Apply = $true }
     if ($claimed.action -ne 'claimed' -or [string]::IsNullOrWhiteSpace($claimed.token)) { throw 'Canonical claim did not create a lease token.' }
@@ -112,7 +128,6 @@ try {
     $released = Invoke-Coordinator @{ Action = 'release'; SurfaceType = 'crm-module'; SurfaceId = 'users'; Owner = 'fixture-owner'; LeaseToken = $claimed.token; Apply = $true }
     if ($released.action -ne 'released') { throw 'Canonical release did not remove the lease.' }
 
-    $canonicalPath = Join-Path $fixtureWorktrees 'admin\canonical\crm\users'
     Add-Content -LiteralPath (Join-Path $canonicalPath 'README.md') -Value "dirty`n"
     $dirty = Invoke-Coordinator @{ Action = 'inventory' }
     if ($dirty.surfaces[0].status -ne 'blocked_dirty') { throw 'Dirty canonical slot was not preserved as blocked.' }

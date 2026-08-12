@@ -153,15 +153,17 @@ pertencente àquele worktree.
 
 ### CRM – Prévia Usuários Equipe Thread
 
-Atalho direto para a prévia isolada do módulo `Usuários`, já com a persona
-Gestor e a flag local de equipe unificada habilitadas. Ele reutiliza a mesma
-proveniência e a mesma faixa privada da prévia da thread, mas não envia
-convites reais nem altera o banco remoto.
+Atalho de roteamento para a prévia isolada do módulo `Usuários`, já com a
+superfície `crm-module/users` identificada. Ele resolve o worktree atual e
+emite o contrato JSON que a camada nativa do Codex App usa para abrir a thread
+correta; a execução da prévia ocorre somente depois que essa thread estiver
+pronta. Nenhum convite real é enviado e nenhum banco remoto é alterado.
 
 Quando a ação é acionada pelo Codex App com a thread aberta no worktree correto,
-o launcher usa diretamente esse worktree pelo caminho relativo da ação. Não é
+o resolver usa diretamente esse worktree pelo caminho relativo da ação. Não é
 necessário informar `threadId`, escolher outro worktree ou usar um checkout
-fixo. Não execute `Set-Location` para o clone compartilhado antes do clique.
+fixo; a ação não abre picker. Não execute `Set-Location` para o clone
+compartilhado antes do clique.
 
 Se o cwd for `C:\CodexShared\Projetos\skincos`, a ação falha de forma
 controlada e orienta abrir o worktree da thread. O clone compartilhado não

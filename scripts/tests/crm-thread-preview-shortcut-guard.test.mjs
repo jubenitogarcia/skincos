@@ -23,14 +23,14 @@ test('thread preview launcher uses the invoking registered worktree', () => {
   assert.doesNotMatch(launcher, /users-production-flag-20260810/)
 })
 
-test('Codex App uses the current worktree launcher relatively', () => {
+test('Codex App resolves the current worktree relatively', () => {
   const usersAction = environment.match(
     /name = "CRM – Prévia Usuários Equipe Thread"\r?\nicon = "[^"]+"\r?\ncommand = "([^"]+)"/,
   )
   assert.ok(usersAction)
   assert.equal(
     usersAction[1],
-    'powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmUsersThreadPreview',
+    'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/resolve-codex-thread-worktree.ps1 -Intent preview -SurfaceType crm-module -SurfaceId users -SkipGitHub',
   )
   assert.doesNotMatch(usersAction[1], /CodexShared[\\/]Worktrees/)
 })

@@ -38,5 +38,7 @@ test('Codex App registers SessionStart routing and a relative diagnostic action'
   assert.match(hooks, /invoke-codex-session-start\.ps1/)
   assert.match(environment, /name = "Thread – Resolver Worktree"/)
   assert.match(environment, /-File \.\/scripts\/resolve-codex-thread-worktree\.ps1 -Interactive/)
+  assert.match(environment, /name = "CRM – Prévia Usuários Equipe Thread"[\s\S]*-File \.\/scripts\/resolve-codex-thread-worktree\.ps1 -Intent preview -SurfaceType crm-module -SurfaceId users/)
+  assert.doesNotMatch(environment, /name = "CRM – Prévia Usuários Equipe Thread"[\s\S]*run-shared-codex-shortcut\.ps1 -Action CrmUsersThreadPreview/)
   assert.doesNotMatch(environment, /C:\\CodexShared\\Worktrees/)
 })
