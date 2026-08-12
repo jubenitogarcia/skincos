@@ -9,6 +9,10 @@ owns cadence, queueing, concurrency and resume policy.
 
 - A collector run is created before a provider call and finalized as
   `completed`, `partial`, `unavailable` or `failed`.
+- A crashed worker cannot leave a run permanently claimable: an unexpected
+  operation failure finalizes the run as `failed`, and a still-`running` row is
+  reclaimable only after the bounded 180-second lease expires. A live run is
+  still deduplicated and is never run concurrently under the same key.
 - Provider attempts that fail are recorded as `collector_evidence` with a
   normalized gap code. A failure never becomes a metric value.
 - Successful profile and media observations are written through the repository

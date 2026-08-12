@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   MEDIA_METRIC_FIELDS,
   SNAPSHOT_OPERATION_CONTRACT_VERSION,
+  SNAPSHOT_RUN_LEASE_SECONDS,
   createSnapshotOperations,
 } from '../snapshots.mjs';
 
@@ -116,6 +117,18 @@ function createRepository() {
       state.updates.push({ ...row });
       return existing;
     },
+    async reclaimStaleCollectorRun(row) {
+      const existing = state.runs.get(row.idempotencyKey);
+      if (!existing || existing.status !== 'running') return { reclaimed: false, row: null };
+      if (Date.parse(existing.startedAt) > Date.parse(row.staleBefore)) return { reclaimed: false, row: null };
+      Object.assign(existing, {
+        status: 'running',
+        startedAt: row.startedAt,
+        finishedAt: null,
+        attemptCount: (existing.attemptCount || 1) + 1,
+      });
+      return { reclaimed: true, row: existing };
+    },
     async recordCollectorEvidence(row) {
       const existing = state.evidence.get(row.ingestKey);
       if (existing) return { inserted: false, row: existing };
@@ -214,6 +227,40 @@ test('repeated collection in the same time bucket is idempotent and does not cal
   assert.equal(router.calls.profile, 1);
   assert.equal(repository.state.profiles.size, 1);
   assert.equal(repository.state.runs.size, 1);
+});
+
+test('a stale running collector is reclaimed after the bounded lease, while a live run remains deduplicated', async () => {
+  const router = createRouter({
+    profile: okResult('get_profile', { followers_count: 100, following_count: 10, media_count: 3 }),
+  });
+  const repository = createRepository();
+  let now = '2026-08-11T14:30:00.000Z';
+  const operations = createSnapshotOperations({ router, repository, clock: () => now });
+  const first = await operations.snapshot_creator(input);
+  const storedRun = repository.state.runs.values().next().value;
+  storedRun.status = 'running';
+  storedRun.startedAt = new Date(Date.parse(now) - ((SNAPSHOT_RUN_LEASE_SECONDS + 1) * 1000)).toISOString();
+  const reclaimed = await operations.snapshot_creator({ ...input, retrievedAt: '2026-08-11T14:30:05.000Z' });
+
+  assert.equal(first.status, 'completed');
+  assert.equal(reclaimed.status, 'completed');
+  assert.equal(reclaimed.collectorRun.reclaimed, true);
+  assert.equal(router.calls.profile, 2);
+  assert.equal(storedRun.status, 'completed');
+});
+
+test('unexpected persistence failure finalizes the collector run as failed for safe retry', async () => {
+  const router = createRouter({
+    profile: okResult('get_profile', { followers_count: 100, following_count: 10, media_count: 3 }),
+  });
+  const repository = createRepository();
+  repository.recordProfileSnapshot = async () => { throw new Error('synthetic persistence failure'); };
+  const { operations } = service(router, repository);
+
+  await assert.rejects(operations.snapshot_creator(input), /synthetic persistence failure/);
+  const run = repository.state.runs.values().next().value;
+  assert.equal(run.status, 'failed');
+  assert.equal(run.failureCount, 1);
 });
 
 test('replay identity stays stable when the caller corrects handle or mode in the same bucket', async () => {

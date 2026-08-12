@@ -232,9 +232,20 @@ export const SQL = Object.freeze({
     on conflict (idempotency_key) do nothing
     returning run_key, idempotency_key, request_fingerprint, status`,
   readCollectorRun: `
-    select run_key, idempotency_key, request_fingerprint, status
+    select run_key, idempotency_key, request_fingerprint, status, started_at, updated_at
     from influencer_intelligence.collector_run
     where idempotency_key = $1`,
+  reclaimStaleCollectorRun: `
+    update influencer_intelligence.collector_run
+    set status = 'running',
+        started_at = $2::timestamptz,
+        finished_at = null,
+        attempt_count = attempt_count + 1,
+        updated_at = now()
+    where idempotency_key = $1
+      and status = 'running'
+      and started_at <= $3::timestamptz
+    returning run_key, idempotency_key, request_fingerprint, status, started_at, updated_at`,
   updateCollectorRun: `
     update influencer_intelligence.collector_run
     set status = $2,
@@ -426,6 +437,16 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
       ]);
       if (!row) fail('COLLECTOR_RUN_NOT_FOUND');
       return row;
+    },
+
+    async reclaimStaleCollectorRun(input) {
+      safeInput(input, 'collectorRunReclaim');
+      const idempotencyKey = requiredString(input.idempotencyKey, 'idempotencyKey');
+      const startedAt = timestamp(input.startedAt, 'startedAt');
+      const staleBefore = timestamp(input.staleBefore, 'staleBefore');
+      if (Date.parse(staleBefore) >= Date.parse(startedAt)) fail('COLLECTOR_RUN_RECLAIM_WINDOW_INVALID');
+      const row = await insertReturning(queryable, SQL.reclaimStaleCollectorRun, [idempotencyKey, startedAt, staleBefore]);
+      return row ? { reclaimed: true, row } : { reclaimed: false, row: null };
     },
 
     async upsertCreatorIdentity(input) {

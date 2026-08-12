@@ -19,6 +19,10 @@ export const SNAPSHOT_OPERATIONS = Object.freeze([
 export const DEFAULT_SNAPSHOT_BUCKET_SECONDS = 60 * 60;
 export const DEFAULT_MEDIA_LIMIT = 20;
 export const MAX_MEDIA_LIMIT = 50;
+// The router and scheduler are bounded below this lease. Reclaiming only a
+// clearly stale run lets the same idempotency key recover from a crashed
+// worker without allowing a concurrent live collection to run twice.
+export const SNAPSHOT_RUN_LEASE_SECONDS = 180;
 export const PROFILE_METRIC_FIELDS = Object.freeze([
   'followers_count',
   'following_count',
@@ -296,6 +300,7 @@ function ensureDependencies({ router, repository }, operation) {
   const methods = [
     'createCollectorRun',
     'updateCollectorRun',
+    'reclaimStaleCollectorRun',
     'recordCollectorEvidence',
     'recordProfileSnapshot',
     'upsertMedia',
@@ -517,9 +522,34 @@ async function beginRun(repository, request) {
     startedAt,
   });
   if (!result?.inserted) {
+    const existing = result?.row || {};
+    const existingStartedAt = existing.started_at || existing.startedAt || null;
+    const existingStatus = existing.status || 'in_progress';
+    const startedMs = Date.parse(startedAt);
+    const existingStartedMs = existingStartedAt ? Date.parse(existingStartedAt) : NaN;
+    if (existingStatus === 'running'
+      && Number.isFinite(startedMs)
+      && Number.isFinite(existingStartedMs)
+      && (startedMs - existingStartedMs) > (SNAPSHOT_RUN_LEASE_SECONDS * 1000)) {
+      const staleBefore = new Date(startedMs - (SNAPSHOT_RUN_LEASE_SECONDS * 1000)).toISOString();
+      const reclaimed = await repository.reclaimStaleCollectorRun({
+        idempotencyKey: request.idempotencyKey,
+        startedAt,
+        staleBefore,
+      });
+      if (reclaimed?.reclaimed) {
+        return {
+          inserted: true,
+          reclaimed: true,
+          status: 'running',
+          row: reclaimed.row || existing,
+          startedAt,
+        };
+      }
+    }
     return {
       inserted: false,
-      status: result?.row?.status || 'in_progress',
+      status: existingStatus,
       row: result?.row || null,
       startedAt,
     };
@@ -542,6 +572,7 @@ function collectorRunView(request, run, finalStatus, finishedAt, extra = {}) {
     status: finalStatus,
     inserted: run.inserted,
     deduplicated: !run.inserted,
+    ...(run.reclaimed ? { reclaimed: true } : {}),
     ...(finishedAt ? { finishedAt } : {}),
     ...extra,
   };
@@ -1174,10 +1205,27 @@ export function createSnapshotOperations({ router, repository, clock = () => Dat
     const request = Object.freeze({ ...normalized, clock });
     const run = await beginRun(repository, request);
     if (!run.inserted) return deduplicatedResult(request, run);
-    if (operation === 'snapshot_creator') {
-      return runProfileSnapshot({ router, repository, request, run });
+    try {
+      if (operation === 'snapshot_creator') {
+        return await runProfileSnapshot({ router, repository, request, run });
+      }
+      return await runMediaSnapshot({ router, repository, request, run });
+    } catch (error) {
+      // Provider failures are handled inside the operation. This guard covers
+      // unexpected repository/service faults so a retry cannot be trapped
+      // behind an indefinitely running collector row.
+      try {
+        await finishRun(repository, request.runKey, 'failed', run.startedAt, request.clock, {
+          failureCount: 1,
+          freshnessStatus: 'unknown',
+          freshnessAgeSeconds: null,
+        });
+      } catch {
+        // Preserve the original failure; the repository boundary remains the
+        // source of truth for whether finalization succeeded.
+      }
+      throw error;
     }
-    return runMediaSnapshot({ router, repository, request, run });
   }
 
   return Object.freeze({
