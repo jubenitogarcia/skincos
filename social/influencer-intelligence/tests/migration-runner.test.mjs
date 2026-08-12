@@ -100,6 +100,10 @@ test('dry-run proves identity, minimum grants, lock and timeout without migratio
     assert.ok(fake.queries.some(({ sql }) => sql.includes('lock_timeout')))
     assert.ok(fake.queries.some(({ sql }) => sql.includes('statement_timeout')))
     assert.ok(fake.queries.some(({ sql }) => sql.includes('pg_try_advisory_xact_lock')))
+    const roleProofQuery = fake.queries.find(({ sql }) => sql.includes('pg_has_role'))?.sql || ''
+    assert.match(roleProofQuery, /\$1::name/)
+    const runtimePrivilegeQuery = fake.queries.find(({ sql }) => sql.includes('role_name'))?.sql || ''
+    assert.match(runtimePrivilegeQuery, /\$1::name/)
     assert.equal(fake.queries.filter(({ sql }) => sql.includes('insert into')).length, 0)
 })
 
