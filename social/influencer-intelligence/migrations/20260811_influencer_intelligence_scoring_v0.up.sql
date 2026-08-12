@@ -17,8 +17,4 @@ ALTER TABLE influencer_intelligence.creator_score
 COMMENT ON COLUMN influencer_intelligence.creator_score.weights_version IS
   'Immutable identifier for the versioned deterministic scoring weights/configuration.';
 
-INSERT INTO public.schema_migrations (version, applied_at)
-VALUES ('20260811_influencer_intelligence_scoring_v0', now())
-ON CONFLICT (version) DO NOTHING;
-
 COMMIT;
