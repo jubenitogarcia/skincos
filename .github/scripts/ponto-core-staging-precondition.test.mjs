@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -11,6 +12,21 @@ import {
 const sourceSha = '6daa6eaee7c4c49f047e97944e70ea1aa320ca61';
 const deploymentId = '2688c47a-efbb-4b97-98f7-6a1734eac354';
 const versionId = 'e71704e3-0d6d-4327-83cf-3121010995b1';
+
+const attestedIncumbent = {
+  sourceSha: 'e25c31d673a1cb0b7247e54da0d8b0dc80abd161',
+  workflowRunId: '31635557484',
+  releaseEvidenceArtifact: {
+    id: '9157683333',
+    name: 'ponto-release-evidence-staging-e25c31d673a1cb0b7247e54da0d8b0dc80abd161',
+    digest: 'sha256:b05ca7629da3e7c12eddf8489f5d03989b91fa735cf5258fddc088bece297ddb',
+  },
+  surface: {
+    worker: 'skincos-ponto-core-staging',
+    deploymentId: 'fe4560bd-109e-4da6-82ea-37de2434794f',
+    versionId: '883a931a-518f-49d0-b753-f3afc84d4e24',
+  },
+};
 
 function catalog() {
   return {
@@ -82,6 +98,23 @@ test('accepts a source-bound staging incumbent catalog entry', () => {
   const expected = validateStagingIncumbentCatalog({ catalog: catalog() });
   assert.equal(expected.sourceSha, sourceSha);
   assert.equal(expected.surface.versionId, versionId);
+});
+
+test('pins the repository staging incumbent to the last passed immutable Core release', () => {
+  const repositoryCatalog = JSON.parse(readFileSync(
+    new URL('../../platform/deploy/operational-units.json', import.meta.url),
+    'utf8',
+  ));
+  const incumbent = validateStagingIncumbentCatalog({ catalog: repositoryCatalog });
+  assert.deepEqual(
+    {
+      sourceSha: incumbent.sourceSha,
+      workflowRunId: incumbent.workflowRunId,
+      releaseEvidenceArtifact: incumbent.releaseEvidenceArtifact,
+      surface: incumbent.surface,
+    },
+    attestedIncumbent,
+  );
 });
 
 test('accepts the live incumbent only at 100% and with private exposure', () => {
