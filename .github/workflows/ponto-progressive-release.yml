@@ -835,6 +835,14 @@ jobs:
             ponto \
             "$RELEASE_SHA" \
             "$PONTO_ARTIFACT_DIR/release-identity.json"
+      - name: Dispatch exact immutable required checks on the release tag
+        if: ${{ inputs.stage == 'preview' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-required-check-dispatch.mjs \
+            "$PONTO_ARTIFACT_DIR/runs/required-check-workflows.json"
       - name: Prove selected root separation before any candidate mutation
         if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
         env:
