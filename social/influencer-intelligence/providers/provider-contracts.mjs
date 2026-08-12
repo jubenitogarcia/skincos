@@ -568,7 +568,7 @@ export function normalizeProviderCandidate({
       sourceRef: sourceRef || `${normalizedProvider}:${normalizedOperation}:${request.creator_key || 'unresolved'}`,
     },
   );
-  if (dataClassification === 'inferred' && !evidence.model_version) {
+  if (status === 'ok' && dataClassification === 'inferred' && !evidence.model_version) {
     fail('invalid_response', 'inferred provider data requires model version evidence');
   }
   return deepFreeze({

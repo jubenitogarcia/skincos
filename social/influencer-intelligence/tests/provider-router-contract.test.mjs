@@ -392,6 +392,24 @@ test('malformed provider model-version evidence is classified as invalid respons
   );
 });
 
+test('unavailable inferred provider results remain explicit gaps without model evidence', async () => {
+  const meta = createMetaGraphProvider({
+    operations: {
+      get_profile: async () => ({
+        status: 'unavailable',
+        data: null,
+        data_classification: 'inferred',
+      }),
+    },
+  });
+  const router = createProviderRouter({ providers: { 'meta-graph': meta } });
+
+  const result = await router.get_profile(baseRequest);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.data, null);
+  assert.equal(result.data_classification, 'observed');
+});
+
 test('future external providers require explicit opt-in and still use the same contract', async () => {
   const meta = createMetaGraphProvider({
     operations: {
