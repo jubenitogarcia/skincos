@@ -264,6 +264,10 @@ test('media identity reconciliation does not rewrite historical metric snapshots
   assert.doesNotMatch(SQL.recordMediaSnapshot, /on conflict \(media_key\) do update/i);
 });
 
+test('stale-run reclamation is bounded by the same attempt cap as failed retries', () => {
+  assert.match(SQL.reclaimStaleCollectorRun, /status = 'running'[\s\S]*attempt_count < \$5/i);
+});
+
 test('fenced snapshot writes lock the collector lease before inserting', () => {
   for (const statement of [SQL.recordEvidence, SQL.recordProfileSnapshot, SQL.upsertMedia, SQL.recordMediaSnapshot]) {
     assert.match(statement, /select run_key[\s\S]*for update/i);

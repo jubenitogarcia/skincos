@@ -299,6 +299,9 @@ function ensureDependencies({ router, repository }, operation) {
     fail('ROUTER_REQUIRED', operation);
   }
   const methods = [
+    'readCollectorRun',
+    'readProfileSnapshot',
+    'readMediaSnapshot',
     'createCollectorRun',
     'updateCollectorRun',
     'reclaimStaleCollectorRun',
@@ -379,6 +382,62 @@ function coverageFor(fields, data) {
     available: fields.length - missing.length,
     expected: fields.length,
     missing,
+  };
+}
+
+function rowField(row, snake, camel = snake) {
+  return row?.[snake] ?? row?.[camel] ?? null;
+}
+
+function rowMetrics(row) {
+  const metrics = row?.normalized_metrics ?? row?.normalizedMetrics;
+  return isRecord(metrics) ? metrics : {};
+}
+
+function coverageFromRow(row, fields, fallback) {
+  const metrics = rowMetrics(row);
+  const available = Number.isInteger(rowField(row, 'coverage_available', 'coverageAvailable'))
+    ? rowField(row, 'coverage_available', 'coverageAvailable')
+    : fallback.available;
+  const expected = Number.isInteger(rowField(row, 'coverage_expected', 'coverageExpected'))
+    ? rowField(row, 'coverage_expected', 'coverageExpected')
+    : fallback.expected;
+  const missing = Array.isArray(metrics.missing_metrics)
+    ? metrics.missing_metrics.filter((field) => fields.includes(field))
+    : fields.filter((field) => rowField(row, field, field) === null);
+  return { available, expected, missing };
+}
+
+function profileFromRow(row, fallbackHandle = null) {
+  return {
+    canonical_handle: rowField(row, 'canonical_handle', 'canonicalHandle') ?? fallbackHandle,
+    followers_count: rowField(row, 'followers_count', 'followersCount'),
+    following_count: rowField(row, 'following_count', 'followingCount'),
+    media_count: rowField(row, 'media_count', 'mediaCount'),
+    is_private: rowField(row, 'is_private', 'isPrivate'),
+    is_verified: rowField(row, 'is_verified', 'isVerified'),
+  };
+}
+
+function mediaFromRow(row, fallback) {
+  const metrics = {};
+  for (const field of MEDIA_METRIC_FIELDS) metrics[field] = rowField(row, field, field);
+  const normalized = rowMetrics(row);
+  return {
+    mediaKey: rowField(row, 'media_key', 'mediaKey') ?? fallback.mediaKey,
+    mediaKind: fallback.mediaKind,
+    publishedAt: normalized.publication_timestamp ?? fallback.publishedAt,
+    metrics,
+    evidenceState: rowField(row, 'evidence_state', 'evidenceState') || 'unavailable',
+    provider: rowField(row, 'provider', 'provider') ?? fallback.provider,
+    coverage: coverageFromRow(row, MEDIA_METRIC_FIELDS, fallback.coverage),
+    freshness: {
+      status: rowField(row, 'freshness_status', 'freshnessStatus') || fallback.freshness.status,
+      observed_at: rowField(row, 'observed_at', 'observedAt') || fallback.freshness.observed_at || null,
+      retrieved_at: rowField(row, 'retrieved_at', 'retrievedAt') || fallback.freshness.retrieved_at || null,
+      age_seconds: rowField(row, 'freshness_age_seconds', 'freshnessAgeSeconds'),
+      max_age_seconds: normalized.freshness_max_age_seconds ?? fallback.freshness.max_age_seconds ?? null,
+    },
   };
 }
 
@@ -569,6 +628,17 @@ async function beginRun(repository, request) {
           startedAt,
         };
       }
+      const refreshed = await repository.readCollectorRun({ idempotencyKey: request.idempotencyKey });
+      if (refreshed) {
+        return {
+          inserted: false,
+          status: refreshed.status || 'in_progress',
+          row: refreshed,
+          runKey: refreshed.run_key || refreshed.runKey || request.runKey,
+          attemptToken: refreshed.attempt_token || refreshed.attemptToken || null,
+          startedAt,
+        };
+      }
     }
     return {
       inserted: false,
@@ -678,36 +748,17 @@ async function runProfileSnapshot({ router, repository, request, run }) {
     operation: 'get_profile',
     result,
   });
-  const provider = resultProvider(result);
-  const observations = provider ? result.data || {} : {};
+  let provider = resultProvider(result);
+  let observations = provider ? result.data || {} : {};
   const limitations = resultLimitations(result);
-  const observedAt = resultObservation(result, request);
-  const retrievedAt = resultRetrieved(result, request);
-  const freshness = resultFreshness(result);
-  const coverage = coverageFor(PROFILE_METRIC_FIELDS, observations);
+  let observedAt = resultObservation(result, request);
+  let retrievedAt = resultRetrieved(result, request);
+  let freshness = resultFreshness(result);
+  let coverage = coverageFor(PROFILE_METRIC_FIELDS, observations);
+  let snapshotEvidenceState = result.status === 'ok' && !providerError ? 'observed' : 'unavailable';
   const persistedSnapshots = [];
 
   if (result.status === 'ok' && provider && !providerError) {
-    const evidence = await persistObservedEvidence({
-      repository,
-      request,
-      runKey: request.runKey,
-      sourceType: 'profile',
-      operation: 'get_profile',
-      result,
-      provider,
-      data: observations,
-    });
-    const metricState = {
-      data_classification: result.data_classification,
-      freshness_status: freshness.status,
-      freshness_age_seconds: freshness.age_seconds,
-      freshness_max_age_seconds: freshness.max_age_seconds,
-      coverage_available: coverage.available,
-      coverage_expected: coverage.expected,
-      missing_metrics: coverage.missing,
-      limitations,
-    };
     const ids = artifactIds('profile', {
       creatorKey: request.creatorKey,
       provider,
@@ -715,41 +766,43 @@ async function runProfileSnapshot({ router, repository, request, run }) {
       bucketSeconds: request.bucketSeconds,
       attemptToken: request.attemptToken,
     });
-    const persisted = await repository.recordProfileSnapshot({
-      snapshotKey: ids.snapshotKey,
-      ingestKey: ids.ingestKey,
-      creatorKey: request.creatorKey,
-      identityKey: request.identityKey,
-      evidenceKey: evidence.evidenceKey,
-      provider,
-      providerAdapterVersion: evidence.evidence.adapterVersion,
-      contractVersion: result.contract_version || SNAPSHOT_OPERATION_CONTRACT_VERSION,
-      evidenceState: 'observed',
-      observedAt,
-      retrievedAt,
-      sourceRef: evidence.evidence.sourceRef,
-      canonicalHandle: observations.canonical_handle ?? request.canonicalHandle,
-      followersCount: metricValue(observations, 'followers_count'),
-      followingCount: metricValue(observations, 'following_count'),
-      mediaCount: metricValue(observations, 'media_count'),
-      isPrivate: booleanValue(observations, 'is_private'),
-      isVerified: booleanValue(observations, 'is_verified'),
-      normalizedMetrics: metricState,
-      coverageAvailable: coverage.available,
-      coverageExpected: coverage.expected,
-      freshnessStatus: freshness.status,
-      freshnessAgeSeconds: freshness.age_seconds,
-      retentionPolicyVersion: request.retentionPolicyVersion,
-      runKey: request.runKey,
-      leaseKey: request.attemptToken,
-    });
-    persistedSnapshots.push({
-      kind: 'profile',
-      provider,
-      snapshotKey: ids.snapshotKey,
-      ingestKey: ids.ingestKey,
-      inserted: Boolean(persisted?.inserted),
-    });
+    const existing = await repository.readProfileSnapshot({ ingestKey: ids.ingestKey });
+    if (existing) {
+      provider = safeProvider(rowField(existing, 'provider', 'provider') || provider, 'snapshotProvider');
+      observations = profileFromRow(existing, request.canonicalHandle);
+      observedAt = rowField(existing, 'observed_at', 'observedAt') || observedAt;
+      retrievedAt = rowField(existing, 'retrieved_at', 'retrievedAt') || retrievedAt;
+      freshness = { ...freshness, status: rowField(existing, 'freshness_status', 'freshnessStatus') || freshness.status, age_seconds: rowField(existing, 'freshness_age_seconds', 'freshnessAgeSeconds') };
+      coverage = coverageFromRow(existing, PROFILE_METRIC_FIELDS, coverage);
+      snapshotEvidenceState = rowField(existing, 'evidence_state', 'evidenceState') || snapshotEvidenceState;
+      persistedSnapshots.push({ kind: 'profile', provider, snapshotKey: rowField(existing, 'snapshot_key', 'snapshotKey') || ids.snapshotKey, ingestKey: ids.ingestKey, inserted: false, resumed: true });
+    } else {
+      const evidence = await persistObservedEvidence({
+        repository, request, runKey: request.runKey, sourceType: 'profile', operation: 'get_profile', result, provider, data: observations,
+      });
+      const metricState = {
+        data_classification: result.data_classification,
+        freshness_status: freshness.status,
+        freshness_age_seconds: freshness.age_seconds,
+        freshness_max_age_seconds: freshness.max_age_seconds,
+        coverage_available: coverage.available,
+        coverage_expected: coverage.expected,
+        missing_metrics: coverage.missing,
+        limitations,
+      };
+      const persisted = await repository.recordProfileSnapshot({
+        snapshotKey: ids.snapshotKey, ingestKey: ids.ingestKey, creatorKey: request.creatorKey, identityKey: request.identityKey,
+        evidenceKey: evidence.evidenceKey, provider, providerAdapterVersion: evidence.evidence.adapterVersion,
+        contractVersion: result.contract_version || SNAPSHOT_OPERATION_CONTRACT_VERSION, evidenceState: 'observed', observedAt, retrievedAt,
+        sourceRef: evidence.evidence.sourceRef, canonicalHandle: observations.canonical_handle ?? request.canonicalHandle,
+        followersCount: metricValue(observations, 'followers_count'), followingCount: metricValue(observations, 'following_count'),
+        mediaCount: metricValue(observations, 'media_count'), isPrivate: booleanValue(observations, 'is_private'), isVerified: booleanValue(observations, 'is_verified'),
+        normalizedMetrics: metricState, coverageAvailable: coverage.available, coverageExpected: coverage.expected,
+        freshnessStatus: freshness.status, freshnessAgeSeconds: freshness.age_seconds, retentionPolicyVersion: request.retentionPolicyVersion,
+        runKey: request.runKey, leaseKey: request.attemptToken,
+      });
+      persistedSnapshots.push({ kind: 'profile', provider, snapshotKey: ids.snapshotKey, ingestKey: ids.ingestKey, inserted: Boolean(persisted?.inserted) });
+    }
   } else {
     for (const failure of failures.length > 0
       ? failures
@@ -763,7 +816,8 @@ async function runProfileSnapshot({ router, repository, request, run }) {
         attemptToken: request.attemptToken,
       });
       const evidenceKey = failure.evidenceKey || ids.evidenceKey;
-      const persisted = await repository.recordProfileSnapshot({
+      const existing = await repository.readProfileSnapshot({ ingestKey: ids.ingestKey });
+      const persisted = existing ? { inserted: false, row: existing } : await repository.recordProfileSnapshot({
         snapshotKey: ids.snapshotKey,
         ingestKey: ids.ingestKey,
         creatorKey: request.creatorKey,
@@ -790,6 +844,7 @@ async function runProfileSnapshot({ router, repository, request, run }) {
         snapshotKey: ids.snapshotKey,
         ingestKey: ids.ingestKey,
         inserted: Boolean(persisted?.inserted),
+        ...(existing ? { resumed: true } : {}),
       });
     }
   }
@@ -811,7 +866,7 @@ async function runProfileSnapshot({ router, repository, request, run }) {
     collectorRun: collectorRunView(request, run, status, finished.finishedAt),
     creatorKey: request.creatorKey,
     provider: provider || null,
-    evidenceState: result.status === 'ok' && !providerError ? 'observed' : 'unavailable',
+    evidenceState: snapshotEvidenceState,
     dataClassification: result.data_classification,
     retrievedAt,
     freshness,
@@ -1067,6 +1122,35 @@ async function runMediaSnapshot({ router, repository, request, run }) {
   for (const item of discovered) {
     const mediaKey = item.mediaKey;
     if (item.publishedAt) publicationAvailable += 1;
+    const metricItem = metricsByKey.get(mediaKey);
+    const coverage = metricCoverageFor(metricItem);
+    const snapshotProvider = !metricItem || coverage.available === 0 || metricsResult.status !== 'ok'
+      ? (metricsProvider || 'meta-graph')
+      : metricsProvider;
+    const snapshotIds = artifactIds('media', {
+      creatorKey: request.creatorKey,
+      provider: snapshotProvider,
+      mediaKey,
+      observedAt: metricsObservedAt,
+      bucketSeconds: request.bucketSeconds,
+      attemptToken: request.attemptToken,
+    });
+    const existing = await repository.readMediaSnapshot({ ingestKey: snapshotIds.ingestKey });
+    if (existing) {
+      const resumed = mediaFromRow(existing, {
+        mediaKey,
+        mediaKind: item.mediaKind,
+        publishedAt: item.publishedAt,
+        provider: snapshotProvider,
+        coverage,
+        freshness: resultFreshness(metricsResult),
+      });
+      metricFieldsAvailable += resumed.coverage.available;
+      persistedSnapshots.push({ kind: 'media', mediaKey, provider: resumed.provider, snapshotKey: rowField(existing, 'snapshot_key', 'snapshotKey') || snapshotIds.snapshotKey, ingestKey: snapshotIds.ingestKey, inserted: false, resumed: true });
+      outputMedia.push(resumed);
+      continue;
+    }
+
     await repository.upsertMedia({
       mediaKey,
       creatorKey: request.creatorKey,
@@ -1079,8 +1163,6 @@ async function runMediaSnapshot({ router, repository, request, run }) {
       leaseKey: request.attemptToken,
     });
 
-    const metricItem = metricsByKey.get(mediaKey);
-    const coverage = metricCoverageFor(metricItem);
     metricFieldsAvailable += coverage.available;
     if (!metricItem || coverage.available === 0 || metricsResult.status !== 'ok') {
       const unavailableProvider = metricsProvider || 'meta-graph';
@@ -1121,14 +1203,7 @@ async function runMediaSnapshot({ router, repository, request, run }) {
       mediaKey,
       data: metricItem,
     });
-    const ids = artifactIds('media', {
-      creatorKey: request.creatorKey,
-      provider: metricsProvider,
-      mediaKey,
-      observedAt: metricsObservedAt,
-      bucketSeconds: request.bucketSeconds,
-      attemptToken: request.attemptToken,
-    });
+    const ids = snapshotIds;
     const persisted = await repository.recordMediaSnapshot({
       snapshotKey: ids.snapshotKey,
       ingestKey: ids.ingestKey,

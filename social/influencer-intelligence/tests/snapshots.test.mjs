@@ -110,6 +110,15 @@ function createRepository() {
       state.runs.set(row.idempotencyKey, stored);
       return { inserted: true, row: stored };
     },
+    async readCollectorRun({ idempotencyKey }) {
+      return state.runs.get(idempotencyKey) || null;
+    },
+    async readProfileSnapshot({ ingestKey }) {
+      return state.profiles.get(ingestKey) || null;
+    },
+    async readMediaSnapshot({ ingestKey }) {
+      return state.mediaSnapshots.get(ingestKey) || null;
+    },
     async updateCollectorRun(row) {
       const existing = [...state.runs.values()].find((item) => item.runKey === row.runKey);
       assert.ok(existing, 'collector run must exist before finalization');
@@ -294,6 +303,35 @@ test('unexpected persistence failure finalizes the collector run as failed for s
   assert.equal(new Set(evidenceKeys).size, 2);
   assert.equal([...repository.state.profiles.values()][0].followersCount, 110);
   assert.equal([...repository.state.profiles.values()][0].evidenceKey, evidenceKeys[1]);
+});
+
+test('retry resumes a snapshot persisted before finalization failed', async () => {
+  const router = createRouter({
+    profile: (call) => okResult('get_profile', { followers_count: call === 1 ? 100 : 110, following_count: 10, media_count: 3 }),
+  });
+  const repository = createRepository();
+  const originalUpdateCollectorRun = repository.updateCollectorRun;
+  let failFinalizationOnce = true;
+  repository.updateCollectorRun = async (row) => {
+    if (failFinalizationOnce && row.status === 'completed') {
+      failFinalizationOnce = false;
+      throw new Error('synthetic finalization failure');
+    }
+    return originalUpdateCollectorRun(row);
+  };
+  const { operations } = service(router, repository);
+
+  await assert.rejects(operations.snapshot_creator(input), /synthetic finalization failure/);
+  assert.equal(repository.state.profiles.size, 1);
+  assert.equal(repository.state.evidence.size, 1);
+
+  const retry = await operations.snapshot_creator({ ...input, retrievedAt: '2026-08-11T14:30:05.000Z' });
+  assert.equal(retry.status, 'completed');
+  assert.equal(retry.profile.followersCount, 100);
+  assert.equal(retry.persistence.snapshots[0].resumed, true);
+  assert.equal(repository.state.profiles.size, 1);
+  assert.equal(repository.state.evidence.size, 1);
+  assert.equal(router.calls.profile, 2);
 });
 
 test('a superseded worker cannot persist or finalize after a stale run is reclaimed', async () => {

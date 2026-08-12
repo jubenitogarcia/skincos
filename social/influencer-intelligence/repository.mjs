@@ -236,6 +236,21 @@ export const SQL = Object.freeze({
     select run_key, idempotency_key, request_fingerprint, status, attempt_count, attempt_token, started_at, finished_at, updated_at
     from influencer_intelligence.collector_run
     where idempotency_key = $1`,
+  readProfileSnapshotByIngest: `
+    select snapshot_key, ingest_key, creator_key, provider, provider_adapter_version, contract_version,
+           evidence_key, evidence_state, observed_at, retrieved_at, source_ref, canonical_handle,
+           followers_count, following_count, media_count, is_private, is_verified,
+           normalized_metrics, coverage_available, coverage_expected, freshness_status, freshness_age_seconds
+    from influencer_intelligence.creator_profile_snapshot
+    where ingest_key = $1`,
+  readMediaSnapshotByIngest: `
+    select snapshot_key, ingest_key, media_key, creator_key, provider, provider_adapter_version,
+           contract_version, evidence_key, evidence_state, observed_at, retrieved_at, source_ref,
+           likes_count, comments_count, shares_count, saves_count, views_count, reach_count,
+           impressions_count, normalized_metrics, coverage_available, coverage_expected,
+           freshness_status, freshness_age_seconds
+    from influencer_intelligence.creator_media_snapshot
+    where ingest_key = $1`,
   reclaimStaleCollectorRun: `
     update influencer_intelligence.collector_run
     set status = 'running',
@@ -246,7 +261,7 @@ export const SQL = Object.freeze({
         updated_at = now()
     where idempotency_key = $1
       and (
-        (status = 'running' and started_at <= $4::timestamptz)
+        (status = 'running' and started_at <= $4::timestamptz and attempt_count < $5)
         or (status = 'failed' and attempt_count < $5)
       )
     returning run_key, idempotency_key, request_fingerprint, status, attempt_count, attempt_token, started_at, updated_at`,
@@ -422,6 +437,24 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
   requireQueryable(queryable);
 
   return Object.freeze({
+    async readCollectorRun(input) {
+      safeInput(input, 'collectorRunRead');
+      const idempotencyKey = requiredString(input.idempotencyKey, 'idempotencyKey');
+      return (await queryable.query(SQL.readCollectorRun, [idempotencyKey])).rows?.[0] || null;
+    },
+
+    async readProfileSnapshot(input) {
+      safeInput(input, 'profileSnapshotRead');
+      const ingestKey = requiredString(input.ingestKey, 'ingestKey');
+      return (await queryable.query(SQL.readProfileSnapshotByIngest, [ingestKey])).rows?.[0] || null;
+    },
+
+    async readMediaSnapshot(input) {
+      safeInput(input, 'mediaSnapshotRead');
+      const ingestKey = requiredString(input.ingestKey, 'ingestKey');
+      return (await queryable.query(SQL.readMediaSnapshotByIngest, [ingestKey])).rows?.[0] || null;
+    },
+
     async createCollectorRun(input) {
       safeInput(input, 'collectorRun');
       const values = {
