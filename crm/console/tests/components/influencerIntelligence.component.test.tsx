@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { InfluencerIntelligencePanel } from '../../InfluencerIntelligenceModule'
 import type { InfluencerCreatorDashboard, InfluencerIntelligenceClient, InfluencerMetric } from '../../influencerIntelligenceTypes'
 
@@ -34,6 +34,8 @@ function client(): InfluencerIntelligenceClient {
 }
 
 describe('Influencer Intelligence CRM panel', () => {
+  afterEach(() => cleanup())
+
   it('renders explicit evidence states and keeps unavailable metrics distinct from zero', async () => {
     const user = userEvent.setup()
     render(<InfluencerIntelligencePanel client={client()} enabled granted />)
