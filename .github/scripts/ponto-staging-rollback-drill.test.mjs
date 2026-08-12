@@ -222,6 +222,8 @@ test("heterogeneous incumbent health accepts a safe affinity mismatch without tr
 class FakeRuntime {
   constructor(failAt = "", candidateSourceSha = config.releaseSha, incumbents = incumbentEvidence) {
     this.calls = [];
+    this.moduleStateDetails = new Map();
+    this.journeyExpected = new Map();
     this.failAt = failAt;
     this.candidateSourceSha = candidateSourceSha;
     this.incumbents = incumbents;
@@ -289,6 +291,7 @@ class FakeRuntime {
   async setModuleState(state, details, phase) {
     const call = `module:${phase}:${state}`;
     this.calls.push(call);
+    this.moduleStateDetails.set(phase, { ...details });
     this.maybeFail(call);
     return {
       passed: true,
@@ -341,6 +344,7 @@ class FakeRuntime {
   async runJourney(handle, _url, expected) {
     const call = `fixture:${handle.label}:journey`;
     this.calls.push(call);
+    this.journeyExpected.set(handle.label, { ...expected });
     this.maybeFail(call);
     return {
       passed: true,
@@ -481,6 +485,9 @@ test("a coherent incumbent bundle receives the authenticated rollback journey", 
   assert.equal(report.functionalValidation.incumbentCompatibility.attempted, false);
   assert.equal(report.teardown.incumbent.passed, true);
   assert(runtime.calls.includes("fixture:incumbent:journey"));
+  assert.equal(runtime.moduleStateDetails.get("incumbent-active").releaseSha, "b".repeat(40));
+  assert.equal(runtime.journeyExpected.get("incumbent").releaseSha, "b".repeat(40));
+  assert.equal(runtime.journeyExpected.get("incumbent").sourceSha, "b".repeat(40));
 });
 
 test("a restoration failure attempts every remaining compensation and does not open the candidate", async () => {
