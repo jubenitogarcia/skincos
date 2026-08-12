@@ -67,8 +67,10 @@ C:\CodexShared\Worktrees\skincos\admin\canonical\orb\<workflow-family>
 Inventário e plano não alteram Git:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 -Action inventory
-powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 -Action plan
+powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
+  -Action inventory -ProjectRoot (Get-Location).Path
+powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
+  -Action plan -ProjectRoot (Get-Location).Path
 ```
 
 Criar ou reivindicar um slot exige SHA explícito e `-Apply`; não existe
@@ -77,9 +79,10 @@ fallback automático para outro worktree:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
   -Action ensure-canonical -SurfaceType crm-module -SurfaceId users `
-  -TargetCommit <sha> -Apply
+  -TargetCommit <sha> -ProjectRoot (Get-Location).Path -Apply
 powershell -ExecutionPolicy Bypass -File .\scripts\manage-canonical-worktrees.ps1 `
-  -Action claim -SurfaceType crm-module -SurfaceId users -Apply
+  -Action claim -SurfaceType crm-module -SurfaceId users `
+  -ProjectRoot (Get-Location).Path -Apply
 ```
 
 O estado de owners e leases fica no runtime privado em
