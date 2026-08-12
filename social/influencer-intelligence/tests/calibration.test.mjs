@@ -65,7 +65,7 @@ test('calibration records versioned algorithms and does not tune weights or use 
   const report = runInfluencerCalibration();
 
   assert.equal(report.algorithms.analytics, 'influencer-intelligence-analytics/v1');
-  assert.equal(report.algorithms.scoring, 'influencer-intelligence-scoring/v0');
+  assert.equal(report.algorithms.scoring, 'influencer-intelligence-scoring/v0.1');
   assert.equal(report.algorithms.scoring_weights, 'influencer-intelligence-scoring-weights/v0');
   assert.equal(report.algorithms.campaign_fit, 'influencer-intelligence-campaign-fit/v1');
   assert.equal(report.algorithms.campaign_fit_weights, 'influencer-intelligence-campaign-fit-weights/v1');
