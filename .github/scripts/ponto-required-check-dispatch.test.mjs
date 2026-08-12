@@ -31,6 +31,13 @@ function inputs(runsByWorkflow = {}) {
   return { repository, releaseSha, releaseTag, runsByWorkflow };
 }
 
+test("immutable required-check mapping covers the policy exactly once", () => {
+  const policy = JSON.parse(fs.readFileSync(new URL("../governance/progressive-release-policy.json", import.meta.url), "utf8"));
+  const mappedChecks = REQUIRED_CHECK_WORKFLOWS.flatMap(({ checks }) => checks);
+  assert.deepEqual([...mappedChecks].sort(), [...policy.governance.requiredChecks].sort());
+  assert.equal(new Set(mappedChecks).size, mappedChecks.length);
+});
+
 test("plans one exact immutable workflow dispatch for each missing required check workflow", () => {
   const plan = planRequiredCheckDispatches(inputs());
   assert.deepEqual(plan.map(({ workflow, state }) => ({ workflow, state })), REQUIRED_CHECK_WORKFLOWS.map(({ workflow }) => ({ workflow, state: "dispatch" })));
@@ -39,11 +46,13 @@ test("plans one exact immutable workflow dispatch for each missing required chec
 test("reuses exactly one successful or active tag-pinned required-check workflow", () => {
   const plan = planRequiredCheckDispatches(inputs({
     "ci-smoke.yml": [run("ci-smoke.yml")],
+    "central-e2e-smoke.yml": [run("central-e2e-smoke.yml", { id: 104 })],
     "lint-format-static.yml": [run("lint-format-static.yml", { id: 102, status: "in_progress", conclusion: null })],
     "security-secrets-audit.yml": [run("security-secrets-audit.yml", { id: 103 })],
   }));
   assert.deepEqual(plan.map(({ workflow, state, runId }) => ({ workflow, state, runId })), [
     { workflow: "ci-smoke.yml", state: "reused-success", runId: "101" },
+    { workflow: "central-e2e-smoke.yml", state: "reused-success", runId: "104" },
     { workflow: "lint-format-static.yml", state: "reused-active", runId: "102" },
     { workflow: "security-secrets-audit.yml", state: "reused-success", runId: "103" },
   ]);
@@ -79,10 +88,11 @@ test("dispatches only missing workflows at the exact immutable tag", async () =>
   const report = await ensureRequiredCheckDispatches({ repository, releaseSha, releaseTag, request });
   assert.deepEqual(report.workflows.map(({ workflow, state }) => ({ workflow, state })), [
     { workflow: "ci-smoke.yml", state: "reused-success" },
+    { workflow: "central-e2e-smoke.yml", state: "requested" },
     { workflow: "lint-format-static.yml", state: "requested" },
     { workflow: "security-secrets-audit.yml", state: "requested" },
   ]);
-  assert.equal(requests.filter(({ pathname }) => pathname.endsWith("/dispatches")).length, 2);
+  assert.equal(requests.filter(({ pathname }) => pathname.endsWith("/dispatches")).length, 3);
 });
 
 test("preview wires immutable required-check dispatch immediately after tag identity creation", () => {

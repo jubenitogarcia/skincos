@@ -13,6 +13,10 @@ export const REQUIRED_CHECK_WORKFLOWS = Object.freeze([
     checks: ["CI Smoke (Assert)"],
   },
   {
+    workflow: "central-e2e-smoke.yml",
+    checks: ["Central E2E Smoke"],
+  },
+  {
     workflow: "lint-format-static.yml",
     checks: ["JS/TS Checks (workspace)"],
   },
