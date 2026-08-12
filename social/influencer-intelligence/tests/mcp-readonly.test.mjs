@@ -220,7 +220,7 @@ test('rejects an unavailable envelope that claims available metrics', async () =
 test('sanitizes raw payload, PII and credential-like output before returning it', async () => {
   const service = fixtureService({
     async getCreatorProfile() {
-      return envelope({ creator_key: 'creator-1', followers_count: 3, email: 'person@example.test', display_name: 'Person Public', location: 'São Paulo', raw_comment_text: 'hello', nested: { access_token: 'Bearer fake-token-value' }, safe: 'kept' });
+      return envelope({ creator_key: 'creator-1', followers_count: 3, name: 'Person Public', email: 'person@example.test', display_name: 'Person Public', location: 'São Paulo', raw_comment_text: 'hello', nested: { access_token: 'Bearer fake-token-value' }, safe: 'kept' });
     },
   });
   const { gateway } = createHarness({ service });
@@ -228,6 +228,7 @@ test('sanitizes raw payload, PII and credential-like output before returning it'
   const data = response.result.structuredContent.data;
   assert.equal(data.safe, 'kept');
   assert.equal(Object.hasOwn(data, 'email'), false);
+  assert.equal(Object.hasOwn(data, 'name'), false);
   assert.equal(Object.hasOwn(data, 'raw_comment_text'), false);
   assert.equal(Object.hasOwn(data, 'display_name'), false);
   assert.equal(Object.hasOwn(data, 'location'), false);
