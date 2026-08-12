@@ -9,7 +9,7 @@ export const COMMENT_FIXTURES = Object.freeze({
     { text: 'This explanation helped me understand the ingredient.', commenterDigest: digestA, languageCode: 'en', likeCount: 3 },
     { text: 'Amei a explica??o e vou testar na rotina.', commenterDigest: digestB, languageCode: 'pt-BR', likeCount: 1 },
     { text: 'This explanation helped me understand the ingredient.', commenterDigest: digestA, languageCode: 'en', likeCount: 3 },
-    { text: '??', commenterDigest: digestC, languageCode: 'en', likeCount: 0 },
+    { text: '🔥', commenterDigest: digestC, languageCode: 'en', likeCount: 0 },
     { text: 'nice post', commenterDigest: digestC, languageCode: 'en' },
     { text: 'This explanation helped me understand the ingredients!', commenterDigest: digestB, languageCode: 'en', likeCount: 10 },
     { text: 'La textura parece ligera para piel sensible.', languageCode: 'es', likeCount: 2 },
