@@ -105,7 +105,7 @@ test('committed calibration report matches generated actual values', () => {
   const spike = actual.get('follower-spike-pattern-only');
   contains(`Anomaly ratio ${tick}${spike.anomaly_ratio}${tick}; interpretation`, 'spike row drifted');
   const partial = actual.get('partial-and-missing-metrics');
-  contains(`No-views coverage ${tick}${partial.no_views.data_coverage}${tick}; incomplete-series coverage ${tick}${partial.incomplete.data_coverage}${tick}`, 'partial row drifted');
+  contains(`No-views score coverage ${tick}${partial.no_views.data_coverage}${tick}, views/follower metric coverage ${tick}${partial.no_views.views_follower_coverage}${tick}; matching with-views control reaches ${tick}${partial.with_views.views_follower_coverage}${tick}; incomplete-series coverage ${tick}${partial.incomplete.data_coverage}${tick}`, 'partial row drifted');
   const short = actual.get('short-history-confidence');
   contains(`Confidence ${tick}${short.confidence_score}${tick}, coverage ${tick}${short.data_coverage}${tick}`, 'short history row drifted');
   const irregular = actual.get('irregular-engagement-volatility');

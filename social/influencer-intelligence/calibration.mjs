@@ -75,6 +75,17 @@ function scaleFollowerFixture(fixture, factor) {
   return scaled;
 }
 
+function withViewsFixture(fixture) {
+  const withViews = clone(fixture);
+  withViews.creatorKey = `${withViews.creatorKey}-with-views`;
+  withViews.mediaSnapshots = withViews.mediaSnapshots.map((snapshot, index) => ({
+    ...snapshot,
+    viewsCount: 900 + (index * 50),
+    reachCount: 950 + (index * 50),
+  }));
+  return withViews;
+}
+
 function componentScoreDelta(left, right) {
   return Math.max(...Object.keys(left.score.component_scores).map((key) => {
     const leftScore = left.score.component_scores[key].score;
@@ -216,6 +227,7 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
   const incomplete = analyze(CALIBRATION_FIXTURES.incompleteSeries);
   const irregular = analyze(CALIBRATION_FIXTURES.irregularEngagement);
   const noViews = analyze(CALIBRATION_FIXTURES.noViews);
+  const withViews = analyze(withViewsFixture(CALIBRATION_FIXTURES.noViews));
   const fewPosts = analyze(CALIBRATION_FIXTURES.fewPosts);
   const zeroDenominator = analyze(CALIBRATION_FIXTURES.zeroDenominator);
   const sparseHighSignal = {
@@ -330,7 +342,13 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
           video_views_state: noViews.analytics.videoPerformance.views.evidenceState,
           video_views_median: noViews.analytics.videoPerformance.views.median,
           views_follower_ratio: noViews.analytics.engagement.viewsFollowerRatio.median,
+          views_follower_coverage: noViews.analytics.engagement.viewsFollowerRatio.coverage.ratio,
           data_coverage: noViews.score.data_coverage,
+        },
+        with_views: {
+          video_views_state: withViews.analytics.videoPerformance.views.evidenceState,
+          views_follower_coverage: withViews.analytics.engagement.viewsFollowerRatio.coverage.ratio,
+          data_coverage: withViews.score.data_coverage,
         },
         incomplete: {
           engagement_state: incomplete.analytics.engagement.evidenceState,
@@ -341,7 +359,8 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
       noViews.analytics.videoPerformance.views.evidenceState === 'unavailable'
         && noViews.analytics.videoPerformance.views.median === null
         && noViews.analytics.engagement.viewsFollowerRatio.median === null
-        && noViews.score.data_coverage < small.score.data_coverage
+        && noViews.analytics.engagement.viewsFollowerRatio.coverage.ratio < withViews.analytics.engagement.viewsFollowerRatio.coverage.ratio
+        && withViews.analytics.videoPerformance.views.evidenceState === 'derived'
         && incomplete.analytics.engagement.evidenceState === 'unavailable'
         && incomplete.analytics.engagement.engagementRate.mean === null,
       [...noViews.score.input_snapshot_keys, ...incomplete.score.input_snapshot_keys],
