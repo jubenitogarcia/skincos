@@ -191,6 +191,45 @@ test('dedicated Ponto entrypoint gives authenticated Timekeeping writes a bounde
     resetBoundServiceResilienceForTest();
 });
 
+test('dedicated Ponto readiness preserves the authoritative maintenance contract', async () => {
+    resetBoundServiceResilienceForTest();
+    let bindingCalls = 0;
+    const response = await pontoCoreWorker.fetch(new Request('https://ponto-core.invalid/api/ponto/readiness'), {
+        PONTO_ROUTE_ONLY: 'true',
+        TIMEKEEPING: {
+            fetch: async () => {
+                bindingCalls += 1;
+                return new Response(JSON.stringify({
+                    service: 'workforce-timekeeping',
+                    ok: false,
+                    ready: false,
+                    code: 'MODULE_MAINTENANCE',
+                    availability: { state: 'maintenance', source: 'control' },
+                    versionMetadata: { releaseSha: 'a'.repeat(40) },
+                }), {
+                    status: 503,
+                    headers: { 'content-type': 'application/json; charset=utf-8' },
+                });
+            },
+        },
+        APP_VERSION: 'a'.repeat(40),
+        ENVIRONMENT: 'staging',
+        TIMEKEEPING_VERSION_ID: '33333333-3333-4333-8333-333333333333',
+        CF_VERSION_METADATA: { id: '22222222-2222-4222-8222-222222222222' },
+    }, {});
+
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('x-skincos-dependency-status'), 'live');
+    const body = await response.json();
+    assert.equal(body.service, 'workforce-timekeeping');
+    assert.equal(body.ready, false);
+    assert.equal(body.code, 'MODULE_MAINTENANCE');
+    assert.equal(body.availability.state, 'maintenance');
+    assert.equal(body.versionMetadata.releaseSha, 'a'.repeat(40));
+    assert.equal(bindingCalls, 1);
+    resetBoundServiceResilienceForTest();
+});
+
 test('dedicated Ponto Wrangler config has private, independent staging and production services', async () => {
     const config = await readFile(new URL('../wrangler.ponto.toml', import.meta.url), 'utf8');
     assert.match(config, /^name = "skincos-ponto-core"$/m);
