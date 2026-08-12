@@ -57,3 +57,16 @@ test('ADR carries the no-integration decision and future admission gates', () =>
   assert.match(adr, /shadow evaluation/i);
   assert.match(adr, /disable\/rollback evidence/i);
 });
+
+test('M13 records its own delivery and rollback evidence', () => {
+  for (const term of [
+    'M13 delivery record',
+    'Risk:',
+    'Surfaces:',
+    'Migration: none',
+    'Flag/grant:',
+    'Validation:',
+    'Rollback:',
+    'aa388342d4c3bb457faa33ad2b449061002c0b29',
+  ]) assert.match(adr, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+});

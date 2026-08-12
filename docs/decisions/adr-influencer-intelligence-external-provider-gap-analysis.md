@@ -81,6 +81,32 @@ retention review; shadow evaluation; calibration; feature-flagged rollout; and
 disable/rollback evidence. It must not change score weights or start a workflow
 implicitly.
 
+## M13 delivery record
+
+- Risk: medium. The change is documentation, architecture metadata, and static
+  contract tests; it does not add network, provider, database, workflow, or
+  user-facing runtime behavior. The main residual risk is future readers
+  mistaking a source-level gap for measured live coverage.
+- Surfaces: `social/influencer-intelligence/EXTERNAL_PROVIDER_GAP_ANALYSIS.md`,
+  its test, `architecture.mjs`, the Influencer Intelligence architecture test
+  list, the README, and the two ADRs.
+- Migration: none. No PostgreSQL file is added or applied.
+- Flag/grant: unchanged. The module remains off by default; no provider,
+  scheduler, MCP, CRM, or external service is registered or called.
+- Validation: focused architecture/M13 tests 18/18; full Influencer
+  Intelligence suite 165/165; PR #1365 technical checks green, including
+  architecture, calibration, integration, CodeQL, Semgrep, secrets, and
+  autonomy gates.
+- Rollback: the candidate was based on parent
+  `aa388342d4c3bb457faa33ad2b449061002c0b29`; before merge, discard the
+  candidate branch. After the governed squash merge, revert that single M13
+  merge commit if required. Rollback does not touch migrations, runtime flags,
+  provider credentials, or historical data.
+
+The delivery record is evidence for the source change only; it is not evidence
+that the live collector, provider permissions, coverage rates, or commercial
+accuracy are proven.
+
 ## Evidence
 
 External product capabilities and API surfaces were checked on 2026-08-12:

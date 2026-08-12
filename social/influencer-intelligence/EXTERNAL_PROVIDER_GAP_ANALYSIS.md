@@ -137,9 +137,10 @@ An external provider may be added only if every item below is evidenced in a
    enters the router, MCP, CRM, Orb payload, logs, fixtures, or evidence.
    4. The provider implements the existing typed operation/result contract,
    including provider, retrieval time, classification, freshness, limitations,
-   evidence, and structured errors. Timeout, safe retry, circuit state, and
-   attempt classification remain router/observability responsibilities and must
-   be exposed by that envelope rather than silently added to provider data.
+   evidence, and data. Structured errors, timeout, safe retry, circuit state,
+   and attempt classification remain the separate router/observability response
+   contract; they must not be implied as fields of provider data or silently
+   dropped at the adapter boundary.
 5. Inputs and outputs are bounded, read-only, auditable, and retention-reviewed;
    raw provider payloads and unnecessary PII are not persisted.
 6. The provider is shadow-only until coverage, disagreement, false-positive,
