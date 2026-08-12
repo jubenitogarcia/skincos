@@ -144,6 +144,14 @@ test('same inputs and calculated timestamp are bit-for-bit deterministic', () =>
   assert.deepEqual(computeInfluencerScore(input), computeInfluencerScore(structuredClone(input)));
 });
 
+test('rejects derived analytics without input evidence references', () => {
+  const analytics = structuredClone(analyticsFor(GOLDEN_FIXTURES.smallStable));
+  analytics.provenance = [];
+  analytics.inputSnapshotKeys = [];
+
+  assert.throws(() => computeInfluencerScore({ analytics }), (error) => error.code === 'INVALID_ANALYTICS_EVIDENCE');
+});
+
 test('input fingerprint binds confidence and evidence metadata, not only component values', () => {
   const fixture = GOLDEN_FIXTURES.smallStable;
   const base = scoreFor(fixture, {
