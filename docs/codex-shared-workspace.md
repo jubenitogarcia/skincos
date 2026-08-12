@@ -129,15 +129,16 @@ atalhos de agrupamento abrem menus curtos por domínio.
 ### CRM – Local
 
 Inicia o CRM completo como Gestor, com build automático por impressão,
-Insumos, Timekeeping, adaptador do WhatsApp, Pages Functions, gate dos 14
-módulos e navegador somente depois da aprovação.
+Insumos, Timekeeping, adaptador do WhatsApp, Pages Functions, gate do catálogo
+CRM e navegador somente depois da aprovação.
 
 ### CRM – Módulos
 
-Permite escolher somente papel e módulo. O instalador também cria 16 atalhos
-diretos na subpasta `CRM – Módulos`: 14 módulos para Gestor e Atendimento/Ponto
-para Consultor. Portas, PIDs, logs, estado, autenticação e perfil de navegador
-são privados por combinação.
+Permite escolher somente papel e módulo conforme o catálogo local e a política
+de papéis. O instalador cria os atalhos diretos correspondentes às combinações
+válidas para Gestor e Consultor; superfícies gated permanecem desativadas até
+que sua dependência e autorização sejam liberadas. Portas, PIDs, logs, estado,
+autenticação e perfil de navegador são privados por combinação.
 
 ### CRM – Prévia da Thread
 
