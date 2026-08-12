@@ -1,5 +1,5 @@
 import React from 'react'
-import { Ban, Check, CircleAlert, Link2, ListChecks, Mail, Pencil, Power, RefreshCw, Search, ShieldCheck, UsersRound, X } from 'lucide-react'
+import { Ban, CircleAlert, ListChecks, Mail, Pencil, Power, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { addEscalaProfessional, updateEscalaProfessional } from '@/escalaApi'
 import { Badge as BaseBadge } from '@/badge'
@@ -17,8 +17,7 @@ type Me = { success?: boolean; user?: { username?: string; role?: string; allowe
 type Onboarding = { id: string; fullName: string; username?: string | null; corporateEmail: string; workforceEmployeeId?: string | null; profile: string; jobTitle: string; department: string; units: string[]; accountStatus: string; createdAt?: string; updatedAt?: string }
 type ApiError = { error?: string; message?: string; code?: string }
 type RequestOptions = { method?: string; body?: unknown; csrf?: string | null; headers?: Record<string, string> }
-type TeamPendingItem = { memberId: string; kind: 'PROVISIONING' | 'COMPENSATION' | 'CRM_ACCOUNT_LINK' | 'IDENTITY_LINK' | 'ESCALA_LINK' | 'ESCALA_SYNC'; source?: string; status: string }
-type TeamSummary = { members?: number; pendingLinks?: number; pendingProvisioning?: number; pendingInvites?: number; pendingAccountLinks?: number; pendingItems?: TeamPendingItem[] }
+type TeamSummary = { members?: number; pendingInvites?: number }
 
 function Badge({ variant, className, style, ...props }: React.ComponentProps<typeof BaseBadge>) {
   const accessibleColors = variant === 'success'
@@ -204,20 +203,6 @@ function statusLabel(status: string) {
   return ({ INVITED: 'Convite enviado', ACTIVE: 'Ativo', SUSPENDED: 'Suspenso', TERMINATED: 'Desativado', PENDING_ACCESS: 'Aguardando acesso' } as Record<string, string>)[status] || status
 }
 
-function crmAccountLabel(row: Pick<UnifiedTeamMember, 'crmAccountLinked' | 'crmAccountUsername' | 'crmAccountReviewStatus'>) {
-  if (row.crmAccountLinked) return 'CRM vinculado'
-  if (row.crmAccountReviewStatus === 'CONFIRMED' && !row.crmAccountUsername) return 'CRM inconsistente'
-  if (row.crmAccountReviewStatus === 'REJECTED') return 'CRM rejeitado'
-  return 'CRM pendente'
-}
-
-function crmAccountBadgeVariant(row: Pick<UnifiedTeamMember, 'crmAccountLinked' | 'crmAccountUsername' | 'crmAccountReviewStatus'>): BadgeVariant {
-  if (row.crmAccountLinked) return 'success'
-  if (row.crmAccountReviewStatus === 'CONFIRMED' && !row.crmAccountUsername) return 'destructive'
-  if (row.crmAccountReviewStatus === 'REJECTED') return 'destructive'
-  return 'warning'
-}
-
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' | 'premium'
 
 // The desktop table keeps compact columns at the dashboard width. Badges must
@@ -248,15 +233,6 @@ function memberInitials(fullName: string) {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() || '')
     .join('') || '?'
-}
-
-function pendingItemLabel(item: TeamPendingItem) {
-  if (item.kind === 'IDENTITY_LINK') return item.source === 'ATENDIMENTO' ? 'Vínculo do Atendimento' : 'Vínculo da Escala'
-  if (item.kind === 'COMPENSATION') return 'Sincronização de acesso'
-  if (item.kind === 'CRM_ACCOUNT_LINK') return 'Vínculo da conta CRM'
-  if (item.kind === 'PROVISIONING') return 'Provisionamento'
-  if (item.kind === 'ESCALA_SYNC') return item.status === 'FAILED' || item.status === 'BLOCKED' ? 'Sincronização da Escala com erro' : 'Sincronização da Escala pendente'
-  return 'Vínculo da Escala'
 }
 
 function scheduleSyncLabel(state?: string) {
@@ -292,14 +268,8 @@ export function UsersModule() {
   const [pagination, setPagination] = React.useState<UnifiedTeamPagination | null>(null)
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
   const [bulkSaving, setBulkSaving] = React.useState(false)
-  const [linkSource, setLinkSource] = React.useState<'ESCALA' | 'ATENDIMENTO'>('ESCALA')
-  const [linkSourceId, setLinkSourceId] = React.useState('')
-  const [linkSaving, setLinkSaving] = React.useState(false)
-  const [linkReviewingId, setLinkReviewingId] = React.useState<string | null>(null)
-  const [crmUsernameInput, setCrmUsernameInput] = React.useState('')
-  const [crmLinkSaving, setCrmLinkSaving] = React.useState(false)
-  const [crmLinkReviewing, setCrmLinkReviewing] = React.useState(false)
   const [activationRetryingId, setActivationRetryingId] = React.useState<string | null>(null)
+  const [submitBlockedMessage, setSubmitBlockedMessage] = React.useState('')
   const usernameWasEdited = React.useRef(false)
   const loadSequence = React.useRef(0)
 
@@ -344,12 +314,12 @@ export function UsersModule() {
         if (searchQuery.trim()) params.set('q', searchQuery.trim())
         params.set('page', String(page))
         params.set('limit', String(TEAM_PAGE_SIZE))
-        const result = await api<{ success?: boolean; data?: UnifiedTeamMember[]; summary?: TeamSummary; pendingItems?: TeamPendingItem[]; pagination?: UnifiedTeamPagination }>(`/admin/team?${params.toString()}`, { csrf: auth.csrfToken })
+        const result = await api<{ success?: boolean; data?: UnifiedTeamMember[]; summary?: TeamSummary; pagination?: UnifiedTeamPagination }>(`/admin/team?${params.toString()}`, { csrf: auth.csrfToken })
         if (sequence !== loadSequence.current) return
         const members = Array.isArray(result?.data) ? result!.data! : []
         setTeamRows(members)
         setSelectedIds((current) => current.filter((id) => members.some((member) => member.id === id)))
-        setSummary({ ...(result?.summary || { members: members.length }), pendingItems: result?.pendingItems || result?.summary?.pendingItems || [] })
+        setSummary(result?.summary || { members: members.length })
         setPagination(result?.pagination || { page, limit: TEAM_PAGE_SIZE, total: members.length, pages: 1, hasMore: false })
       } else {
         const params = new URLSearchParams({ status: statusFilter || 'ALL' })
@@ -387,8 +357,8 @@ export function UsersModule() {
     setEditingId(null)
     setEditingOriginalName('')
     setCollisionRequired(false)
+    setSubmitBlockedMessage('')
     usernameWasEdited.current = false
-    setCrmUsernameInput('')
     setForm({
       ...initialForm,
       jobTitle: defaultTitle,
@@ -402,8 +372,8 @@ export function UsersModule() {
     setEditingId(row.id)
     setEditingOriginalName(row.fullName)
     setCollisionRequired(false)
+    setSubmitBlockedMessage('')
     usernameWasEdited.current = true
-    setCrmUsernameInput(row.crmAccountReviewStatus === 'REJECTED' ? (row.crmAccountUsername || '') : '')
     setForm(emptyTeamForm(row))
     setOpen(true)
   }
@@ -425,7 +395,7 @@ export function UsersModule() {
       await api(`/admin/team/${encodeURIComponent(member.id)}/links`, {
         method: 'POST',
         csrf: me?.csrfToken,
-        body: { source: 'ESCALA', sourceId: professionalId, matchMethod: 'EXPLICIT_WORKFORCE_ID', confidence: 'HIGH', reviewStatus: 'CONFIRMED' },
+          body: { source: 'ESCALA', sourceId: professionalId, matchMethod: 'AUTO_ESCALA_PROFESSIONAL_ID', confidence: 'HIGH', reviewStatus: 'CONFIRMED' },
       })
       return true
     } catch (error: any) {
@@ -450,104 +420,8 @@ export function UsersModule() {
     }
   }
 
-  const addIdentityLink = async () => {
-    if (!editingRow || !linkSourceId.trim() || !canManage) return
-    setLinkSaving(true)
-    try {
-      await api(`/admin/team/${encodeURIComponent(editingRow.id)}/links`, {
-        method: 'POST',
-        csrf: me?.csrfToken,
-        body: {
-          source: linkSource,
-          sourceId: linkSourceId.trim(),
-          matchMethod: 'EXPLICIT_WORKFORCE_ID',
-          confidence: 'HIGH',
-          reviewStatus: 'PENDING_REVIEW',
-        },
-      })
-      setLinkSourceId('')
-      toast.success('Vínculo registrado para revisão.')
-      await load()
-    } catch (error: any) {
-      toast.error(requestErrorMessage(error, 'Não foi possível registrar o vínculo.'))
-    } finally {
-      setLinkSaving(false)
-    }
-  }
-
-  const reviewIdentityLink = async (link: NonNullable<UnifiedTeamMember['identityLinks']>[number], reviewStatus: 'CONFIRMED' | 'REJECTED') => {
-    if (!editingRow || !link.id || !canManage) return
-    const reason = reviewStatus === 'REJECTED'
-      ? window.prompt('Informe o motivo da rejeição (obrigatório):', '')?.trim() || ''
-      : ''
-    if (reviewStatus === 'REJECTED' && reason.length < 5) {
-      toast.error('Informe um motivo com pelo menos 5 caracteres para rejeitar o vínculo.')
-      return
-    }
-    if (reviewStatus === 'CONFIRMED' && !window.confirm(`Confirmar o vínculo ${link.sourceId} com ${link.source === 'ATENDIMENTO' ? 'o Atendimento' : 'a Escala'}?`)) return
-    setLinkReviewingId(link.id)
-    try {
-      await api(`/admin/team/${encodeURIComponent(editingRow.id)}/links/${encodeURIComponent(link.id)}/review`, {
-        method: 'POST',
-        csrf: me?.csrfToken,
-        body: { reviewStatus, ...(reason ? { reason } : {}) },
-      })
-      toast.success(reviewStatus === 'CONFIRMED' ? 'Vínculo confirmado.' : 'Vínculo rejeitado.')
-      await load()
-    } catch (error: any) {
-      toast.error(requestErrorMessage(error, 'Não foi possível atualizar a revisão do vínculo.'))
-    } finally {
-      setLinkReviewingId(null)
-    }
-  }
-
-  const proposeCrmAccountLink = async () => {
-    if (!editingRow || !crmUsernameInput.trim() || !canManage) return
-    setCrmLinkSaving(true)
-    try {
-      await api(`/admin/team/${encodeURIComponent(editingRow.id)}/account-link`, {
-        method: 'POST',
-        csrf: me?.csrfToken,
-        body: { crmUsername: crmUsernameInput.trim() },
-      })
-      setCrmUsernameInput('')
-      toast.success('Conta CRM registrada para revisão explícita.')
-      await load()
-    } catch (error: any) {
-      toast.error(requestErrorMessage(error, 'Não foi possível registrar o vínculo da conta CRM.'))
-    } finally {
-      setCrmLinkSaving(false)
-    }
-  }
-
-  const reviewCrmAccountLink = async (reviewStatus: 'CONFIRMED' | 'REJECTED') => {
-    if (!editingRow || !editingRow.crmAccountLinkId || !canManage) return
-    const reason = reviewStatus === 'REJECTED'
-      ? window.prompt('Informe o motivo da rejeição (obrigatório):', '')?.trim() || ''
-      : ''
-    if (reviewStatus === 'REJECTED' && reason.length < 5) {
-      toast.error('Informe um motivo com pelo menos 5 caracteres para rejeitar o vínculo da conta.')
-      return
-    }
-    if (reviewStatus === 'CONFIRMED' && !window.confirm(`Confirmar a conta CRM ${editingRow.crmAccountUsername || ''}?`)) return
-    setCrmLinkReviewing(true)
-    try {
-      await api(`/admin/team/${encodeURIComponent(editingRow.id)}/account-link/${encodeURIComponent(editingRow.crmAccountLinkId)}/review`, {
-        method: 'POST',
-        csrf: me?.csrfToken,
-        body: { reviewStatus, ...(reason ? { reason } : {}) },
-      })
-      toast.success(reviewStatus === 'CONFIRMED' ? 'Conta CRM confirmada.' : 'Vínculo da conta CRM rejeitado.')
-      await load()
-    } catch (error: any) {
-      toast.error(requestErrorMessage(error, 'Não foi possível atualizar a revisão da conta CRM.'))
-    } finally {
-      setCrmLinkReviewing(false)
-    }
-  }
-
   const syncEscala = async (member: UnifiedTeamMember, created: boolean) => {
-    if (!teamConfig.enabled || !member.workforceEmployeeId) return
+    if (!teamConfig.enabled || form.jobTitle !== 'Injetor' || !member.workforceEmployeeId) return true
     setSyncingEscala(true)
     try {
       const schedulePayload = {
@@ -598,6 +472,12 @@ export function UsersModule() {
 
   const submit = async () => {
     if (!canManage) return
+    if (!teamConfig.enabled) {
+      const message = 'A gestão centralizada está desligada neste ambiente. Nenhuma alteração foi enviada.'
+      setSubmitBlockedMessage(message)
+      toast.error(message)
+      return
+    }
     const username = form.username.trim() || suggestUsername(form.fullName, effectiveEmail)
     const normalizedMobilePhone = storedMobilePhone(form.mobilePhone)
     const mobileDigits = nationalMobileDigits(form.mobilePhone)
@@ -620,18 +500,20 @@ export function UsersModule() {
         department: form.department,
         jobTitle: form.jobTitle,
         units: form.units,
-        team: {
-          professionalId: form.scheduleProfessionalId,
-          status: form.scheduleStatus,
-          role: form.scheduleRole,
-          shift: form.scheduleShift,
-          nickname: form.scheduleNickname,
-          instagram: form.scheduleInstagram,
-          color: form.scheduleColor,
-          units: form.units,
-        },
+        ...(form.jobTitle === 'Injetor' ? {
+          team: {
+            professionalId: form.scheduleProfessionalId,
+            status: form.scheduleStatus,
+            role: form.scheduleRole,
+            shift: form.scheduleShift,
+            nickname: form.scheduleNickname,
+            instagram: form.scheduleInstagram,
+            color: form.scheduleColor,
+            units: form.units,
+          },
+        } : {}),
       }
-      const endpoint = teamConfig.enabled && editingId ? `/admin/team/${encodeURIComponent(editingId)}` : teamConfig.enabled ? '/admin/team' : '/admin/onboarding'
+      const endpoint = editingId ? `/admin/team/${encodeURIComponent(editingId)}` : '/admin/team'
       const result = await api<{ data?: Onboarding & UnifiedTeamMember; replayed?: boolean }>(endpoint, {
         method: editingId ? 'PUT' : 'POST',
         csrf: me?.csrfToken,
@@ -639,10 +521,11 @@ export function UsersModule() {
         body,
       })
       let escalaSynced = true
-      if (result.data && teamConfig.enabled && !result.replayed) {
+      if (result.data && teamConfig.enabled && form.jobTitle === 'Injetor' && !result.replayed) {
         escalaSynced = (await syncEscala(result.data as UnifiedTeamMember, !editingId)) !== false
       }
       setCollisionRequired(false)
+      setSubmitBlockedMessage('')
       setForm(initialForm)
       setEditingId(null)
       setOpen(false)
@@ -808,12 +691,11 @@ export function UsersModule() {
                     {(searchInput || searchQuery || statusFilter !== 'ACTIVE') && <Button type="button" variant="ghost" size="sm" onClick={() => { setSearchInput(''); setSearchQuery(''); setStatusFilter('ACTIVE'); setPage(1) }}>Limpar</Button>}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Total</p><p className="mt-1 text-lg font-semibold text-white">{pageTotal}</p></div>
                   <div className="rounded-xl border border-amber-300/15 bg-amber-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-amber-100/55">Convites</p><p className="mt-1 text-lg font-semibold text-amber-50">{summary.pendingInvites || 0}</p></div>
-                  <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-sky-100/55">Vínculos pendentes</p><p className="mt-1 text-lg font-semibold text-sky-50">{summary.pendingLinks || 0}</p></div>
-                  <div className="rounded-xl border border-rose-300/15 bg-rose-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-rose-100/55">Contas sem vínculo</p><p className="mt-1 text-lg font-semibold text-rose-50">{summary.pendingAccountLinks || 0}</p></div>
                   <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><p className="mt-1 text-lg font-semibold text-white">{unitCount}</p></div>
+                  <div className="rounded-xl border border-sky-300/15 bg-sky-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-sky-100/55">Gestão</p><p className="mt-1 text-lg font-semibold text-sky-50">Centralizada</p></div>
                 </div>
                 {canManage && bulkEligibleRows.length > 0 && (
                   <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
@@ -826,29 +708,6 @@ export function UsersModule() {
                       <Button type="button" size="sm" variant="outline" disabled={bulkSaving} onClick={() => void bulkChangeStatus('SUSPENDED')}><CircleAlert className="mr-2 size-4" aria-hidden="true" />Suspender</Button>
                     </div>}
                   </div>
-                )}
-                {(summary.pendingItems || []).length > 0 && (
-                  <section className="rounded-2xl border border-amber-200/15 bg-amber-300/[0.045] px-3 py-3" aria-labelledby="team-pending-title">
-                    <div className="flex items-start gap-2">
-                      <ListChecks className="mt-0.5 size-4 shrink-0 text-amber-200" aria-hidden="true" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <h2 id="team-pending-title" className="text-sm font-semibold text-amber-50">Pendências para revisão</h2>
-                          <span className="text-xs text-amber-100/60">{summary.pendingItems!.length} item{summary.pendingItems!.length === 1 ? '' : 's'}</span>
-                        </div>
-                        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                          {summary.pendingItems!.slice(0, 6).map((item) => {
-                            const member = teamRows.find((row) => row.id === item.memberId)
-                            if (!member) return null
-                            return <button key={`${item.memberId}-${item.kind}-${item.source || ''}`} type="button" className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-amber-100/10 bg-black/15 px-3 py-2 text-left transition hover:bg-amber-100/[0.08]" onClick={() => openEdit(member)}>
-                              <span className="min-w-0"><span className="block truncate text-xs font-medium text-amber-50">{member.fullName}</span><span className="mt-0.5 block truncate text-[11px] text-amber-100/55">{pendingItemLabel(item)}</span></span>
-                              <span className="shrink-0 text-[11px] text-amber-100/55">Revisar</span>
-                            </button>
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  </section>
                 )}
               </div>
             )}
@@ -863,7 +722,6 @@ export function UsersModule() {
                   <col className="w-[13%]" />
                   <col className="w-[14%]" />
                   <col className="w-[9%]" />
-                  <col className="w-[8%]" />
                 </colgroup>
                 <thead className="bg-black/25 text-[11px] uppercase tracking-[0.12em] text-blue-100/60">
                   <tr>
@@ -873,8 +731,7 @@ export function UsersModule() {
                     <th className="p-3 text-left" scope="col">Cargo</th>
                     <th className="p-3 text-left" scope="col">Departamento</th>
                     <th className="p-3 text-left" scope="col">Unidades</th>
-                    <th className="p-3 text-left" scope="col">Conta</th>
-                    <th className="p-3 text-left" scope="col">Escala</th>
+                    <th className="p-3 text-left" scope="col">Status</th>
                     <th className="p-3 text-right" scope="col">Ações</th>
                   </tr>
                 </thead>
@@ -903,8 +760,7 @@ export function UsersModule() {
                           )) : <Badge variant="outline" className={compactTableBadgeClass}>Sem unidade</Badge>}
                         </div>
                       </td>
-                      <td className="min-w-0 p-3 align-middle"><div className="flex min-w-0 flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className={compactTableBadgeClass}>{statusLabel(row.accountStatus)}</Badge><Badge variant={crmAccountBadgeVariant(row)} className={compactTableBadgeClass} title={row.crmAccountUsername ? `Conta ${row.crmAccountUsername}` : 'Conta ainda sem vínculo explícito'}>{crmAccountLabel(row)}</Badge></div></td>
-                      <td className="min-w-0 p-3 align-middle"><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className={compactTableBadgeClass}>{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></td>
+                      <td className="min-w-0 p-3 align-middle"><Badge variant={statusBadgeVariant(row.accountStatus)} className={compactTableBadgeClass}>{statusLabel(row.accountStatus)}</Badge></td>
                       <td className="p-3 text-right align-middle">
                         <TooltipButton label={`Editar ${row.fullName}`}>
                           <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full text-blue-100 hover:bg-white/[0.10]" aria-label={`Editar ${row.fullName}`} onClick={() => openEdit(row)}>
@@ -915,7 +771,7 @@ export function UsersModule() {
                     </tr>
                   ))}
                   {!teamRows.length && (
-                    <tr><td className="p-5 text-blue-100/70" colSpan={9}>{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
+                    <tr><td className="p-5 text-blue-100/70" colSpan={8}>{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -943,8 +799,7 @@ export function UsersModule() {
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Cargo</p><Badge variant={titleBadgeVariant(row.jobTitle)} className="px-2 py-1 text-[11px]">{row.jobTitle}</Badge></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Departamento</p><p className="text-blue-100/80">{row.department || '—'}</p></div>
                     <div className="col-span-2"><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><div className="flex flex-wrap gap-1">{row.units.length ? row.units.map((unit) => <Badge key={unit} variant="outline" className="px-2 py-1 text-[11px]">{unitLabels[unit] || unit}</Badge>) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}</div></div>
-                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Conta</p><div className="flex flex-wrap gap-1"><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge><Badge variant={crmAccountBadgeVariant(row)} className="px-2 py-1 text-[11px]">{crmAccountLabel(row)}</Badge></div></div>
-                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Escala</p><Badge variant={scheduleSyncBadgeVariant(row.scheduleSync?.state)} className="px-2 py-1 text-[11px]">{scheduleSyncLabel(row.scheduleSync?.state)}</Badge></div>
+                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Status</p><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge></div>
                   </div>
                 </article>
               ))}
@@ -967,13 +822,13 @@ export function UsersModule() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[calc(100vh-1rem)] max-w-4xl overflow-y-auto border-white/10 bg-corporate-900 px-4 py-5 text-white dark sm:px-6">
           <DialogHeader className="border-b border-white/10 pb-4">
-            <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
                 <DialogTitle>{editingId ? 'Editar membro da equipe' : 'Cadastro unificado de equipe'}</DialogTitle>
-                <DialogDescription className="mt-1 text-blue-100/70">{editingId ? 'Atualize identidade, unidades e operação. A senha continua sob controle do funcionário.' : 'O e-mail corporativo será calculado e o convite enviado ao e-mail pessoal. A senha é criada pelo funcionário.'}</DialogDescription>
+                <DialogDescription className="mt-1 text-blue-100/70">{editingId ? 'Atualize os dados do membro, cargo e unidades. A senha continua sob controle do funcionário.' : 'O e-mail corporativo será calculado e o convite enviado ao e-mail pessoal. A senha é criada pelo funcionário.'}</DialogDescription>
               </div>
               {editingId && editingRow && teamConfig.enabled && (
-                <div className="flex max-w-full flex-wrap items-center justify-end gap-2 rounded-xl border border-white/10 bg-black/20 p-2">
+                <div className="flex w-full shrink-0 flex-wrap items-center justify-start gap-2 rounded-xl border border-white/10 bg-black/20 p-2 sm:w-auto sm:justify-end">
                   <Badge variant={statusBadgeVariant(editingRow.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(editingRow.accountStatus)}</Badge>
                   {canManage && (editingRow.accountStatus === 'INVITED' || editingRow.accountStatus === 'PENDING_ACCESS') && <>
                     <TooltipButton label="Reenviar convite"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-amber-100 hover:bg-amber-200/10" aria-label="Reenviar convite" onClick={() => void changeInvite(editingRow, 'resend')}><Mail className="size-4" aria-hidden="true" /></Button></TooltipButton>
@@ -1030,12 +885,12 @@ export function UsersModule() {
             <div className="space-y-4 border-t border-white/10 pt-5">
 
             <div className="space-y-4">
-              {teamConfig.enabled ? <>
+              {teamConfig.enabled && form.jobTitle === 'Injetor' ? <>
                 <section className="rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby="team-schedule-title">
                   <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
                     <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-400/10 text-sky-200"><ListChecks className="size-4" aria-hidden="true" /></div>
-                    <div><h3 id="team-schedule-title" className="text-sm font-semibold text-white">Vínculo operacional da Escala</h3><p className="mt-1 text-xs text-blue-100/55">Agenda, função e identificação permanecem aqui; o vínculo usa o identificador do funcionário.</p></div>
+                    <div><h3 id="team-schedule-title" className="text-sm font-semibold text-white">Vínculo operacional da Escala</h3><p className="mt-1 text-xs text-blue-100/55">A configuração operacional é liberada somente para o cargo Injetor e sincronizada automaticamente.</p></div>
                     </div>
                     {editingRow && <div className="flex flex-wrap items-center justify-end gap-2" aria-live="polite">
                       <Badge variant={scheduleSyncBadgeVariant(editingRow.scheduleSync?.state)} className="px-2 py-1 text-[10px]">{scheduleSyncLabel(editingRow.scheduleSync?.state)}</Badge>
@@ -1064,39 +919,12 @@ export function UsersModule() {
                     <label className="space-y-1.5 text-sm">Cor<Input value={form.scheduleColor} disabled={formReadOnly} onChange={(event) => updateField('scheduleColor', event.target.value)} placeholder="#6d9eeb" /></label>
                  </div>
                </section>
-
-                <section className="rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby="team-account-link-title">
-                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-200"><Link2 className="size-4" aria-hidden="true" /></div>
-                      <div><h3 id="team-account-link-title" className="text-sm font-semibold text-white">Conta CRM vinculada</h3><p className="mt-1 text-xs text-blue-100/55">O vínculo usa somente o nome de usuário exato; nunca é resolvido por nome, e-mail ou semelhança.</p></div>
-                    </div>
-                    {editingRow && <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={crmAccountBadgeVariant(editingRow)} className="px-2 py-1 text-[10px]">{editingRow.crmAccountLinked ? 'Confirmada' : editingRow.crmAccountReviewStatus === 'CONFIRMED' && !editingRow.crmAccountUsername ? 'Inconsistente' : editingRow.crmAccountReviewStatus === 'REJECTED' ? 'Rejeitada' : editingRow.crmAccountReviewStatus === 'PENDING_REVIEW' ? 'Em revisão' : 'Sem vínculo'}</Badge>
-                      {editingRow.crmAccountUsername && <span className="font-mono text-[11px] text-blue-100/65">{editingRow.crmAccountUsername}</span>}
-                    </div>}
-                  </div>
-                  {editingRow?.crmAccountReviewStatus === 'PENDING_REVIEW' && canManage && <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/10 bg-amber-200/[0.04] px-3 py-2 text-xs text-amber-50/80"><span>Esta proposta aguarda confirmação humana antes de qualquer alteração de acesso.</span><div className="flex items-center gap-1"><TooltipButton label="Confirmar conta CRM"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-emerald-100 hover:bg-emerald-200/10" aria-label={`Confirmar conta CRM ${editingRow.crmAccountUsername || ''}`} disabled={crmLinkReviewing} onClick={() => void reviewCrmAccountLink('CONFIRMED')}><Check className="size-3.5" aria-hidden="true" /></Button></TooltipButton><TooltipButton label="Rejeitar conta CRM"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label={`Rejeitar conta CRM ${editingRow.crmAccountUsername || ''}`} disabled={crmLinkReviewing} onClick={() => void reviewCrmAccountLink('REJECTED')}><X className="size-3.5" aria-hidden="true" /></Button></TooltipButton></div></div>}
-                  {editingRow?.crmAccountReviewStatus === 'CONFIRMED' && !editingRow.crmAccountUsername && <div className="mb-3 rounded-xl border border-rose-200/15 bg-rose-300/[0.06] px-3 py-2 text-xs text-rose-50" role="alert">O vínculo CRM confirmado não possui um usuário explícito. O acesso permanece protegido; proponha novamente o nome exato da conta para corrigir este cadastro.</div>}
-                  {canManage && editingId && !editingRow?.crmAccountLinked && <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="space-y-1 text-xs text-blue-100/75">Nome de usuário da conta CRM<Input value={crmUsernameInput} onChange={(event) => setCrmUsernameInput(event.target.value)} placeholder="exato, por exemplo anareibeiro" autoComplete="off" /></label><Button type="button" disabled={crmLinkSaving || !crmUsernameInput.trim() || editingRow?.crmAccountReviewStatus === 'PENDING_REVIEW'} onClick={() => void proposeCrmAccountLink()}><Link2 className="mr-2 size-4" aria-hidden="true" />{crmLinkSaving ? 'Registrando…' : 'Propor vínculo'}</Button></div>}
-                  {!editingRow?.crmAccountUsername && <p className="text-xs text-blue-100/55">Nenhuma conta foi associada a este cadastro. Resolva a pendência antes de reativar ou desligar uma conta já operacional.</p>}
-                </section>
-
-                <section className="rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby="team-links-title">
-                  <div className="mb-4 flex items-start gap-3">
-                    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-violet-400/10 text-violet-200"><Link2 className="size-4" aria-hidden="true" /></div>
-                    <div><h3 id="team-links-title" className="text-sm font-semibold text-white">Vínculos de identidade</h3><p className="mt-1 text-xs text-blue-100/55">Atendimento e Escala só podem ser associados por identificador explícito. Casos novos ficam pendentes de revisão.</p></div>
-                  </div>
-                  <div className="space-y-2">
-                    {(editingRow?.identityLinks || []).length > 0 ? editingRow?.identityLinks?.map((link) => <div key={link.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2 text-xs"><div className="flex min-w-0 flex-wrap items-center gap-2"><span className="font-medium text-white">{link.source === 'ATENDIMENTO' ? 'Atendimento' : 'Escala'}</span><span className="max-w-[220px] truncate font-mono text-blue-100/70" title={link.sourceId}>{link.sourceId}</span><Badge variant={link.reviewStatus === 'CONFIRMED' ? 'success' : link.reviewStatus === 'REJECTED' ? 'destructive' : 'warning'} className="px-2 py-1 text-[10px]">{link.reviewStatus === 'CONFIRMED' ? 'Confirmado' : link.reviewStatus === 'REJECTED' ? 'Rejeitado' : 'Revisão pendente'}</Badge></div>{canManage && link.reviewStatus === 'PENDING_REVIEW' && <div className="flex items-center gap-1"><TooltipButton label="Confirmar vínculo"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-emerald-100 hover:bg-emerald-200/10" aria-label={`Confirmar vínculo ${link.sourceId}`} disabled={linkReviewingId === link.id} onClick={() => void reviewIdentityLink(link, 'CONFIRMED')}><Check className="size-3.5" aria-hidden="true" /></Button></TooltipButton><TooltipButton label="Rejeitar vínculo"><Button type="button" size="icon" variant="ghost" className="h-7 w-7 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label={`Rejeitar vínculo ${link.sourceId}`} disabled={linkReviewingId === link.id} onClick={() => void reviewIdentityLink(link, 'REJECTED')}><X className="size-3.5" aria-hidden="true" /></Button></TooltipButton></div>}</div>) : <p className="text-sm text-blue-100/60">Nenhum vínculo registrado.</p>}
-                  </div>
-                  {canManage && editingId && <div className="mt-4 grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)_auto] sm:items-end"><label className="space-y-1 text-xs text-blue-100/75">Origem<Select value={linkSource} onValueChange={(value: 'ESCALA' | 'ATENDIMENTO') => setLinkSource(value)}><SelectTrigger aria-label="Origem do vínculo"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ESCALA">Escala</SelectItem><SelectItem value="ATENDIMENTO">Atendimento</SelectItem></SelectContent></Select></label><label className="space-y-1 text-xs text-blue-100/75">Identificador<Input value={linkSourceId} onChange={(event) => setLinkSourceId(event.target.value)} placeholder="ID explícito do sistema de origem" /></label><Button type="button" disabled={linkSaving || !linkSourceId.trim()} onClick={() => void addIdentityLink()}><Link2 className="mr-2 size-4" aria-hidden="true" />{linkSaving ? 'Vinculando…' : 'Registrar vínculo'}</Button></div>}
-                </section>
-              </> : <div className="rounded-2xl border border-dashed border-white/15 p-4 text-sm text-blue-100/65">O vínculo operacional aparece após a liberação da centralização.</div>}
+              </> : !teamConfig.enabled ? <div className="rounded-2xl border border-dashed border-white/15 p-4 text-sm text-blue-100/65">O vínculo operacional aparece após a liberação da centralização.</div> : null}
             </div>
           </div>
           </div>
 
+          {submitBlockedMessage && <div className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-300/[0.06] px-3 py-3 text-sm text-amber-50" role="alert">{submitBlockedMessage}</div>}
           <DialogFooter className="border-t border-white/10 pt-4"><Button variant="outline" onClick={() => setOpen(false)}>Fechar</Button>{canManage ? <Button onClick={() => void submit()} disabled={saving}>{saving ? 'Salvando…' : editingId ? 'Salvar alterações' : 'Cadastrar e convidar'}</Button> : <span className="inline-flex items-center gap-2 text-xs text-blue-100/55"><ShieldCheck className="size-4" aria-hidden="true" />Somente leitura</span>}</DialogFooter>
         </DialogContent>
       </Dialog>
