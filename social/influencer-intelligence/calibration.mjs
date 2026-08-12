@@ -27,6 +27,7 @@ import {
   GOOD_CREATOR,
   HIGH_SATURATION_CREATOR,
   MISSING_DEMOGRAPHICS_CREATOR,
+  signal,
 } from './tests/fixtures/campaign-fit-golden-fixtures.mjs';
 import { CALIBRATION_FIXTURES } from './tests/fixtures/calibration-golden-fixtures.mjs';
 
@@ -40,6 +41,11 @@ const SPARSE_SIGNAL_REFS = Object.freeze({
   brand_fit: ['fixture:calibration:sparse-brand-fit'],
 });
 
+// The score contract itself contains policy labels such as
+// `not_a_fake_followers_determination`; only an unqualified occurrence is a
+// prohibited factual claim in this guard.
+const FACTUAL_FAKE_FOLLOWER_PATTERN = /\bfake[-_ ]followers?\b(?![_ ](?:claim|determination)\b)/i;
+
 function deepFreeze(value, seen = new Set()) {
   if (!value || typeof value !== 'object' || seen.has(value)) return value;
   seen.add(value);
@@ -49,6 +55,42 @@ function deepFreeze(value, seen = new Set()) {
 
 function clone(value) {
   return structuredClone(value);
+}
+
+function scaleFollowerFixture(fixture, factor) {
+  const scaled = clone(fixture);
+  scaled.creatorKey = `${scaled.creatorKey}-scale-${factor}`;
+  scaled.profileSnapshots = scaled.profileSnapshots.map((snapshot) => ({
+    ...snapshot,
+    followersCount: snapshot.followersCount === null ? null : snapshot.followersCount * factor,
+  }));
+  scaled.mediaSnapshots = scaled.mediaSnapshots.map((snapshot) => Object.fromEntries(
+    Object.entries(snapshot).map(([key, value]) => (
+      ['likesCount', 'commentsCount', 'viewsCount', 'reachCount', 'followersCount'].includes(key)
+        && typeof value === 'number'
+        ? [key, value * factor]
+        : [key, value]
+    )),
+  ));
+  return scaled;
+}
+
+function componentScoreDelta(left, right) {
+  return Math.max(...Object.keys(left.score.component_scores).map((key) => {
+    const leftScore = left.score.component_scores[key].score;
+    const rightScore = right.score.component_scores[key].score;
+    if (leftScore === null && rightScore === null) return 0;
+    if (leftScore === null || rightScore === null) return Infinity;
+    return Math.abs(leftScore - rightScore);
+  }));
+}
+
+function competitorControlCreator() {
+  const creator = clone(COMPETITOR_CONFLICT_CREATOR);
+  creator.creator_key = 'creator-competitor-control';
+  creator.signals.competitors = signal([], { key: 'competitors-control' });
+  creator.signals.brands_mentioned = signal([], { key: 'brands-mentioned-control' });
+  return creator;
 }
 
 function assertRecord(value, label) {
@@ -134,7 +176,7 @@ function makeCase(id, expectedBehavior, actualBehavior, passed, evidenceRefs = [
     expected_behavior: expectedBehavior,
     actual_behavior: actualBehavior,
     passed: Boolean(passed),
-    evidence_refs: [...new Set(evidenceRefs)].slice(0, 32),
+    evidence_refs: [...new Set(evidenceRefs)].slice(0, 64),
   };
 }
 
@@ -164,6 +206,7 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
   const normalizedCalculatedAt = validateCalculatedAt(calculatedAt);
   const small = analyze(CALIBRATION_FIXTURES.smallStable);
   const large = analyze(CALIBRATION_FIXTURES.largeCreator);
+  const scaledSmall = analyze(scaleFollowerFixture(CALIBRATION_FIXTURES.smallStable, 100));
   const viral = analyze(CALIBRATION_FIXTURES.viralPost);
   const viralWithoutLastPost = analyze({
     ...clone(CALIBRATION_FIXTURES.viralPost),
@@ -204,12 +247,15 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
     creator: clone(HIGH_SATURATION_CREATOR),
     calculated_at: normalizedCalculatedAt,
   });
+  const competitorControlFit = computeCampaignFit({
+    campaign: clone(CAMPAIGN_FIXTURE),
+    creator: competitorControlCreator(),
+    calculated_at: normalizedCalculatedAt,
+  });
 
   const stableFinite = finiteNumbers(small);
-  const largeQualityDelta = Math.abs(
-    small.score.component_scores.engagement_quality.score
-      - large.score.component_scores.engagement_quality.score,
-  );
+  const scaledScoreDelta = Math.abs(small.score.overall_score - scaledSmall.score.overall_score);
+  const scaledComponentDelta = componentScoreDelta(small, scaledSmall);
   const viralScoreDelta = Math.abs(viral.score.overall_score - viralWithoutLastPost.score.overall_score);
   const spikeText = JSON.stringify(spike);
   const cases = [
@@ -231,14 +277,16 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
       'follower-scale-normalization',
       'A large follower count must not by itself dominate quality; normalized engagement remains comparable and the score has no raw follower shortcut.',
       {
-        ...scoreSummary(large),
-        engagement_quality_delta_vs_small: largeQualityDelta,
-        raw_follower_field_present: Object.prototype.hasOwnProperty.call(large.score, 'followers'),
+        large_fixture: scoreSummary(large),
+        scale_transformed_fixture: scoreSummary(scaledSmall),
+        score_delta_vs_scale_transformed: scaledScoreDelta,
+        max_component_delta_vs_scale_transformed: scaledComponentDelta,
+        raw_follower_field_present: Object.prototype.hasOwnProperty.call(scaledSmall.score, 'followers'),
       },
-      largeQualityDelta <= 35
-        && large.score.overall_score <= small.score.overall_score + 20
-        && !Object.prototype.hasOwnProperty.call(large.score, 'followers'),
-      [...small.score.input_snapshot_keys, ...large.score.input_snapshot_keys],
+      scaledScoreDelta <= 0.000001
+        && scaledComponentDelta <= 0.000001
+        && !Object.prototype.hasOwnProperty.call(scaledSmall.score, 'followers'),
+      [...small.score.input_snapshot_keys, ...scaledSmall.score.input_snapshot_keys],
     ),
     makeCase(
       'viral-outlier-resistance',
@@ -264,14 +312,14 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
         ...scoreSummary(spike),
         anomaly_ratio: spike.analytics.growthAnomalies.anomalyRatio,
         anomaly_interpretations: spike.analytics.growthAnomalies.anomalies.map((item) => item.interpretation),
-        contains_factual_fake_follower_phrase: spikeText.toLowerCase().includes('fake follower'),
+        contains_factual_fake_follower_phrase: FACTUAL_FAKE_FOLLOWER_PATTERN.test(spikeText),
       },
       spike.analytics.growthAnomalies.anomalyRatio > 0
         && spike.analytics.growthAnomalies.anomalies.length > 0
         && spike.analytics.growthAnomalies.anomalies.every((item) => item.interpretation === 'growth_pattern_anomaly')
         && spike.score.component_scores.growth_integrity.score < 100
         && spike.score.component_scores.risk.score < 100
-        && !spikeText.toLowerCase().includes('fake follower'),
+        && !FACTUAL_FAKE_FOLLOWER_PATTERN.test(spikeText),
       spike.score.input_snapshot_keys,
     ),
     makeCase(
@@ -365,6 +413,7 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
       {
         good: campaignSummary(goodFit),
         conflict: campaignSummary(conflictFit),
+        competitor_control: campaignSummary(competitorControlFit),
         missing_demographics: campaignSummary(missingDemographicsFit),
         high_saturation: campaignSummary(highSaturationFit),
         has_overall_score_field: Object.prototype.hasOwnProperty.call(goodFit, 'overall_score'),
@@ -372,6 +421,8 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
       },
       goodFit.campaign_fit_score > conflictFit.campaign_fit_score
         && conflictFit.campaign_fit_components.competitor_conflict.score === 0
+        && conflictFit.campaign_fit_score < competitorControlFit.campaign_fit_score
+        && competitorControlFit.campaign_fit_components.competitor_conflict.score === 100
         && missingDemographicsFit.campaign_fit_confidence < goodFit.campaign_fit_confidence
         && missingDemographicsFit.campaign_fit_components.audience_fit.evidence_state === 'unavailable'
         && highSaturationFit.campaign_fit_score < missingDemographicsFit.campaign_fit_score
@@ -379,6 +430,7 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
       [
         ...goodFit.provenance.map((item) => item.source_ref),
         ...conflictFit.provenance.map((item) => item.source_ref),
+        ...competitorControlFit.provenance.map((item) => item.source_ref),
         ...missingDemographicsFit.provenance.map((item) => item.source_ref),
         ...highSaturationFit.provenance.map((item) => item.source_ref),
       ],
@@ -417,4 +469,10 @@ export function runInfluencerCalibration({ calculated_at: calculatedAt = CALIBRA
   });
 }
 
-export const __testing = Object.freeze({ finiteNumbers, sparseSignals, scoreSummary, campaignSummary });
+export const __testing = Object.freeze({
+  finiteNumbers,
+  sparseSignals,
+  scoreSummary,
+  campaignSummary,
+  factualFakeFollowerPattern: FACTUAL_FAKE_FOLLOWER_PATTERN,
+});

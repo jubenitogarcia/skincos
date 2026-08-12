@@ -23,7 +23,7 @@ database, workflow, or real-user data is used.
 | Case | Expected behavior | Actual behavior | Result |
 | --- | --- | --- | --- |
 | small-stable-baseline | Scoreable baseline, but sparse history and missing optional signals prevent high confidence. | Score `57.053`, confidence `65.5`, coverage `91.6`; derived and finite. | PASS |
-| follower-scale-normalization | Absolute followers do not dominate normalized quality. | Large creator score `54.698` vs small `57.053`; engagement-quality delta `8.530`; no raw follower shortcut. | PASS |
+| follower-scale-normalization | Absolute followers do not dominate normalized quality. | Scale-transformed score `57.053` vs base `57.053`; max component delta `0.000000`; large fixture `54.698` remains contextual only; no raw follower shortcut. | PASS |
 | viral-outlier-resistance | Viral post is visible, while robust summaries bound its effect. | Likes mean `104.182`, median `15`, trimmed mean `15.111`; score delta after removing viral post `7.261`. | PASS |
 | follower-spike-pattern-only | Spike is a growth-pattern anomaly, never a factual fake-follower conclusion. | Anomaly ratio `0.25`; interpretation `growth_pattern_anomaly`; risk `82.5`; no factual phrase. | PASS |
 | partial-and-missing-metrics | Missing views/engagement remain unavailable and reduce coverage. | No-views coverage `83.9`; incomplete-series coverage `52`; unavailable values remained `null`. | PASS |
@@ -31,7 +31,7 @@ database, workflow, or real-user data is used.
 | irregular-engagement-volatility | Irregular engagement produces explicit robust volatility/outlier signals. | Engagement CV `1.6524`, likes outlier ratio `0.125`, no non-finite values. | PASS |
 | zero-denominator-extreme | Observed zero remains zero; ratios with zero denominators are unavailable. | Likes mean `0`; engagement rate unavailable/null; growth rate unavailable/null. | PASS |
 | score-confidence-separation | A sparse score may be bounded without high confidence. | Score `88.485`, confidence `58.6`, coverage `88.1`; one media item and comment sample factor `0.01`. | PASS |
-| campaign-fit-separation-and-missing-demographics | Campaign Fit is separate; conflict/saturation reduce fit and missing demographics reduce confidence. | Good `84.650/95.280/100`; conflict `51.059/41.274/85`; missing demographics `57.867/40.149/75`; high saturation `49.422/40.149/75`. | PASS |
+| campaign-fit-separation-and-missing-demographics | Campaign Fit is separate; conflict/saturation reduce fit and missing demographics reduce confidence. | Good `84.650/95.280/100`; conflict `51.059/41.274/85`; control `62.824/41.274/85`; missing demographics `57.867/40.149/75`; high saturation `49.422/40.149/75`. | PASS |
 
 The machine-readable source of truth is `runInfluencerCalibration()` in
 `calibration.mjs`; the test suite asserts all cases, versions, determinism,
@@ -55,4 +55,3 @@ Run the focused suite with:
 ```text
 node --test social/influencer-intelligence/tests/calibration.test.mjs
 ```
-

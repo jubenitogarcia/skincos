@@ -8,8 +8,10 @@ import {
   CALIBRATION_CALCULATED_AT,
   CALIBRATION_CONTRACT_VERSION,
   CALIBRATION_DATASET_VERSION,
+  __testing,
   runInfluencerCalibration,
 } from '../calibration.mjs';
+import { CALIBRATION_FIXTURES } from './fixtures/calibration-golden-fixtures.mjs';
 
 const EXPECTED_CASES = [
   'small-stable-baseline',
@@ -72,6 +74,20 @@ test('calibration records versioned algorithms and does not tune weights or use 
   assert.equal(report.limitations.some((item) => item.includes('commercial predictive accuracy')), true);
 });
 
+test('calibration fixture graph is deeply frozen under its versioned dataset identity', () => {
+  assert.equal(Object.isFrozen(CALIBRATION_FIXTURES), true);
+  assert.equal(Object.isFrozen(CALIBRATION_FIXTURES.smallStable), true);
+  assert.equal(Object.isFrozen(CALIBRATION_FIXTURES.smallStable.profileSnapshots), true);
+  assert.equal(Object.isFrozen(CALIBRATION_FIXTURES.smallStable.profileSnapshots[0]), true);
+  assert.equal(Object.isFrozen(CALIBRATION_FIXTURES.sparseHighSignal.mediaSnapshots[0]), true);
+});
+
+test('fake-follower guard distinguishes factual wording from policy labels', () => {
+  assert.equal(__testing.factualFakeFollowerPattern.test('creator has fake-followers'), true);
+  assert.equal(__testing.factualFakeFollowerPattern.test('not_a_fake_followers_determination'), false);
+  assert.equal(__testing.factualFakeFollowerPattern.test('bounded_pattern_risk_not_fake_followers_claim'), false);
+});
+
 test('committed calibration report matches generated actual values', () => {
   const reportPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'CALIBRATION.md');
   const committedReport = fs.readFileSync(reportPath, 'utf8');
@@ -83,7 +99,7 @@ test('committed calibration report matches generated actual values', () => {
   const stable = actual.get('small-stable-baseline');
   contains(`Score ${tick}${stable.overall_score.toFixed(3)}${tick}, confidence ${tick}${stable.confidence_score}${tick}, coverage ${tick}${stable.data_coverage}${tick}`, 'small stable row drifted');
   const scale = actual.get('follower-scale-normalization');
-  contains(`Large creator score ${tick}${scale.overall_score.toFixed(3)}${tick} vs small ${tick}57.053${tick}; engagement-quality delta ${tick}${scale.engagement_quality_delta_vs_small.toFixed(3)}${tick}`, 'follower scale row drifted');
+  contains(`Scale-transformed score ${tick}${scale.scale_transformed_fixture.overall_score.toFixed(3)}${tick} vs base ${tick}57.053${tick}; max component delta ${tick}${scale.max_component_delta_vs_scale_transformed.toFixed(6)}${tick}`, 'follower scale row drifted');
   const viral = actual.get('viral-outlier-resistance');
   contains(`Likes mean ${tick}${viral.likes_mean.toFixed(3)}${tick}, median ${tick}${viral.likes_median}${tick}, trimmed mean ${tick}${viral.likes_trimmed_mean.toFixed(3)}${tick}; score delta after removing viral post ${tick}${viral.score_delta_without_viral_post.toFixed(3)}${tick}`, 'viral row drifted');
   const spike = actual.get('follower-spike-pattern-only');
@@ -99,5 +115,15 @@ test('committed calibration report matches generated actual values', () => {
   const separation = actual.get('score-confidence-separation');
   contains(`Score ${tick}${separation.overall_score.toFixed(3)}${tick}, confidence ${tick}${separation.confidence_score}${tick}, coverage ${tick}${separation.data_coverage}${tick}`, 'score confidence row drifted');
   const campaign = actual.get('campaign-fit-separation-and-missing-demographics');
-  contains(`Good ${tick}${campaign.good.campaign_fit_score.toFixed(3)}/${campaign.good.campaign_fit_confidence.toFixed(3)}/${campaign.good.data_coverage}${tick}; conflict ${tick}${campaign.conflict.campaign_fit_score.toFixed(3)}/${campaign.conflict.campaign_fit_confidence.toFixed(3)}/${campaign.conflict.data_coverage}${tick}`, 'campaign fit row drifted');
+  contains(`Good ${tick}${campaign.good.campaign_fit_score.toFixed(3)}/${campaign.good.campaign_fit_confidence.toFixed(3)}/${campaign.good.data_coverage}${tick}; conflict ${tick}${campaign.conflict.campaign_fit_score.toFixed(3)}/${campaign.conflict.campaign_fit_confidence.toFixed(3)}/${campaign.conflict.data_coverage}${tick}; control ${tick}${campaign.competitor_control.campaign_fit_score.toFixed(3)}/${campaign.competitor_control.campaign_fit_confidence.toFixed(3)}/${campaign.competitor_control.data_coverage}${tick}; missing demographics ${tick}${campaign.missing_demographics.campaign_fit_score.toFixed(3)}/${campaign.missing_demographics.campaign_fit_confidence.toFixed(3)}/${campaign.missing_demographics.data_coverage}${tick}; high saturation ${tick}${campaign.high_saturation.campaign_fit_score.toFixed(3)}/${campaign.high_saturation.campaign_fit_confidence.toFixed(3)}/${campaign.high_saturation.data_coverage}${tick}`, 'campaign fit row drifted');
+  const campaignCase = report.cases.find((item) => item.id === 'campaign-fit-separation-and-missing-demographics');
+  assert.equal(campaignCase.evidence_refs.length, 37);
+  for (const reference of [
+    'fixture:campaign-fit:competitors-control',
+    'fixture:campaign-fit:brands-mentioned-control',
+    'fixture:campaign-fit:topics-demographics',
+    'fixture:campaign-fit:commercial-saturation-high',
+  ]) {
+    assert.equal(campaignCase.evidence_refs.includes(reference), true, `${reference} missing from campaign evidence refs`);
+  }
 });

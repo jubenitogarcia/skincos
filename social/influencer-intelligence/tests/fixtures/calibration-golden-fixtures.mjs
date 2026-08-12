@@ -66,16 +66,24 @@ const SPARSE_HIGH_SIGNAL = Object.freeze({
   ],
 });
 
-export const CALIBRATION_FIXTURES = Object.freeze({
-  smallStable: GOLDEN_FIXTURES.smallStable,
-  largeCreator: GOLDEN_FIXTURES.largeCreator,
-  viralPost: GOLDEN_FIXTURES.viralPost,
-  followerSpike: GOLDEN_FIXTURES.followerSpike,
-  incompleteSeries: GOLDEN_FIXTURES.incompleteSeries,
-  irregularEngagement: GOLDEN_FIXTURES.irregularEngagement,
-  noViews: GOLDEN_FIXTURES.noViews,
-  fewPosts: GOLDEN_FIXTURES.fewPosts,
-  zeroDenominator: ZERO_DENOMINATOR,
-  sparseHighSignal: SPARSE_HIGH_SIGNAL,
-});
+function deepFreeze(value, seen = new Set()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) deepFreeze(child, seen);
+  return Object.freeze(value);
+}
 
+const clone = (value) => structuredClone(value);
+
+export const CALIBRATION_FIXTURES = deepFreeze({
+  smallStable: clone(GOLDEN_FIXTURES.smallStable),
+  largeCreator: clone(GOLDEN_FIXTURES.largeCreator),
+  viralPost: clone(GOLDEN_FIXTURES.viralPost),
+  followerSpike: clone(GOLDEN_FIXTURES.followerSpike),
+  incompleteSeries: clone(GOLDEN_FIXTURES.incompleteSeries),
+  irregularEngagement: clone(GOLDEN_FIXTURES.irregularEngagement),
+  noViews: clone(GOLDEN_FIXTURES.noViews),
+  fewPosts: clone(GOLDEN_FIXTURES.fewPosts),
+  zeroDenominator: clone(ZERO_DENOMINATOR),
+  sparseHighSignal: clone(SPARSE_HIGH_SIGNAL),
+});
