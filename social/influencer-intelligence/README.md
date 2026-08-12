@@ -2,10 +2,11 @@
 
 Status: architecture v1 defined; M2 provider boundary, M4 deterministic
 analytics, M5 deterministic scoring, M6 read-only MCP adapter, M7 Codex skill,
-M8 CRM contract/dashboard source, M9 comments intelligence, and M10 bounded
-content analysis are implemented in source control. Data model v1 plus scoring
-metadata remain additive, unapplied artifacts, and all Influencer Intelligence
-runtime/upstream registrations remain off.
+M8 CRM contract/dashboard source, M9 comments intelligence, M10 bounded content
+analysis, M11 Campaign Fit, and M12 synthetic calibration are implemented in
+source control. Data model v1 plus scoring metadata remain additive, unapplied
+artifacts, and all Influencer Intelligence runtime/upstream registrations remain
+off.
 The domain remains
 experimental, not exposed, and off by default.
 
@@ -365,8 +366,23 @@ production configuration.
 | M9 | Minimized comments intelligence | Source implemented; additive quality/sampling migration and synthetic tests; runtime/provider wiring remains off |
 | M10 | Semantic content and Reels signals | Source implemented; bounded feature projection, closed semantic schema, fixtures and persistence boundary; media/runtime adapter remains off |
 | M11 | Campaign and brand fit | Source implemented; deterministic engine, additive fit metadata, persisted MCP read, CRM query surface, and golden tests; compute/runtime remains off |
-| M12 | Synthetic validation and calibration | Pending |
+| M12 | Synthetic validation and calibration | Source implemented; versioned golden dataset, deterministic report, outlier/missing-data/confidence/campaign-fit guardrails, and focused tests; no live provider calls |
 | M13 | Optional provider gap analysis | Pending; only if a measured gap remains |
+
+## M12 decision: synthetic calibration before commercial use
+
+The pure [`calibration.mjs`](./calibration.mjs) harness runs the versioned
+golden dataset in [`tests/fixtures/calibration-golden-fixtures.mjs`](./tests/fixtures/calibration-golden-fixtures.mjs)
+and produces the report in [`CALIBRATION.md`](./CALIBRATION.md). It checks
+follower-scale normalization, viral-outlier resistance, bounded growth-spike
+interpretation, missing-data semantics, zero-denominator behavior, sparse
+history confidence, irregular volatility, and Campaign Fit separation.
+
+The report is a deterministic policy/calculation gate, not a population
+calibration or commercial accuracy claim. It deliberately makes no weight
+adjustment and does not use real creators or live provider calls. Internal
+follower-tier benchmarks remain unavailable until an approved representative
+dataset exists.
 
 ## M2 risk, validation, and rollback
 
