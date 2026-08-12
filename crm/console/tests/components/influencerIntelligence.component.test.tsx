@@ -52,8 +52,8 @@ describe('Influencer Intelligence CRM panel', () => {
     expect(screen.getByText('0', { exact: true })).toBeVisible()
   })
 
-  it('keeps the module closed when its gates are absent', () => {
-    render(<InfluencerIntelligencePanel client={client()} enabled={false} granted={false} />)
+  it('keeps the module closed when its gates are absent, including direct embedding defaults', () => {
+    render(<InfluencerIntelligencePanel client={client()} />)
     expect(screen.getByTestId('influencer-module-off')).toHaveTextContent(/desligado/i)
     expect(screen.queryByRole('button', { name: 'Buscar' })).not.toBeInTheDocument()
   })

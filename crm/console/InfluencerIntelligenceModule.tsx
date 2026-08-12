@@ -266,7 +266,7 @@ function getUiError(error: unknown): string {
   return 'Não foi possível consultar o serviço interno. Nenhum valor foi inferido.'
 }
 
-export function InfluencerIntelligencePanel({ client = createInfluencerIntelligenceApi(), enabled = true, granted = true }: PanelProps) {
+export function InfluencerIntelligencePanel({ client = createInfluencerIntelligenceApi(), enabled = false, granted = false }: PanelProps) {
   const [query, setQuery] = React.useState('')
   const [results, setResults] = React.useState<InfluencerCreatorSummary[]>([])
   const [selectedKeys, setSelectedKeys] = React.useState<string[]>([])
