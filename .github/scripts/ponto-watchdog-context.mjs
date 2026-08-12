@@ -58,9 +58,10 @@ export async function validateWatchdogContext({
   });
   const eventRun = event?.workflow_run;
   if (!Number.isInteger(eventRun?.id)) throw new Error("workflow_run event is absent");
-  const [workflow, run] = await Promise.all([
+  const [workflow, run, jobs] = await Promise.all([
     request(`/repos/${repository}/actions/workflows/ponto-progressive-release.yml`),
     request(`/repos/${repository}/actions/runs/${eventRun.id}`),
+    request(`/repos/${repository}/actions/runs/${eventRun.id}/jobs?per_page=100`),
   ]);
   const match = TITLE.exec(String(run?.display_title || ""));
   const sourceMatchesRelease = sourceMatchesImmutableRelease(
@@ -105,7 +106,14 @@ export async function validateWatchdogContext({
     || eventRun.conclusion !== run.conclusion
   ) throw new Error("failed coordinator provenance is invalid");
   const stage = match[1];
+  // Only an entered orchestrate job can acquire the composite release lease or
+  // dispatch mutable child capabilities.  An explicit empty job inventory is
+  // therefore safe to ignore; an unavailable or malformed inventory remains
+  // fail-closed and preserves the existing recovery behavior.
+  const coordinatorStarted = !Array.isArray(jobs?.jobs)
+    || jobs.jobs.some((job) => job?.name === "orchestrate");
   const requiresClose = stage !== "preview"
+    && coordinatorStarted
     && (unauthorizedReplay || FAILURE_CONCLUSIONS.has(run.conclusion));
   return {
     schemaVersion: 1,

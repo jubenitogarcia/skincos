@@ -36,7 +36,12 @@ const event = {
     conclusion: "failure",
   },
 };
-const request = async (pathname) => pathname.endsWith("ponto-progressive-release.yml") ? workflow : run;
+const jobs = { total_count: 1, jobs: [{ name: "orchestrate" }] };
+const request = async (pathname) => {
+  if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+  if (pathname.endsWith("/jobs?per_page=100")) return jobs;
+  return run;
+};
 const input = (overrides = {}) => ({
   event,
   repository,
@@ -62,9 +67,11 @@ test("watchdog accepts a closure-compatible main revision for an immutable relea
   const sourceChecks = [];
   const context = await validateWatchdogContext(input({
     event: { workflow_run: { ...event.workflow_run, head_sha: observedSha } },
-    request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
-      ? workflow
-      : { ...run, head_sha: observedSha },
+    request: async (pathname) => {
+      if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+      if (pathname.endsWith("/jobs?per_page=100")) return jobs;
+      return { ...run, head_sha: observedSha };
+    },
     assertReleaseSource: (releaseSha, currentSha) => {
       sourceChecks.push([releaseSha, currentSha]);
     },
@@ -84,9 +91,11 @@ test("watchdog closes both successful and failed unauthorized reruns", async () 
           conclusion,
         },
       },
-      request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
-        ? workflow
-        : replay,
+      request: async (pathname) => {
+        if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+        if (pathname.endsWith("/jobs?per_page=100")) return jobs;
+        return replay;
+      },
     }));
     assert.equal(context.unauthorizedReplay, true);
     assert.equal(context.runAttempt, 2);
@@ -111,9 +120,11 @@ test("watchdog audits a preview rerun without assigning a live target or closing
           conclusion,
         },
       },
-      request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
-        ? workflow
-        : replay,
+      request: async (pathname) => {
+        if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+        if (pathname.endsWith("/jobs?per_page=100")) return jobs;
+        return replay;
+      },
     }));
     assert.equal(context.stage, "preview");
     assert.equal(context.unauthorizedReplay, true);
@@ -131,9 +142,11 @@ test("watchdog treats first-attempt success as a no-op and rejects provenance dr
           conclusion: "success",
         },
       },
-      request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
-        ? workflow
-        : { ...run, conclusion: "success" },
+      request: async (pathname) => {
+        if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+        if (pathname.endsWith("/jobs?per_page=100")) return jobs;
+        return { ...run, conclusion: "success" };
+      },
     }));
     assert.equal(context.conclusion, "success");
     assert.equal(context.requiresClose, false);
@@ -141,9 +154,11 @@ test("watchdog treats first-attempt success as a no-op and rejects provenance dr
   });
   await t.test("wrong path", async () => {
     await assert.rejects(validateWatchdogContext(input({
-      request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
-        ? workflow
-        : { ...run, path: ".github/workflows/other.yml@refs/heads/main" },
+      request: async (pathname) => {
+        if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+        if (pathname.endsWith("/jobs?per_page=100")) return jobs;
+        return { ...run, path: ".github/workflows/other.yml@refs/heads/main" };
+      },
     })));
   });
   await assert.rejects(validateWatchdogContext(input({ gitRef: "refs/heads/feature" })));
@@ -154,6 +169,30 @@ test("watchdog treats first-attempt success as a no-op and rejects provenance dr
   await assert.rejects(validateWatchdogContext(input({
     event: { workflow_run: { ...event.workflow_run, run_attempt: 2 } },
   })));
+});
+
+test("watchdog does not close a coordinator cancelled before orchestrate started", async () => {
+  const context = await validateWatchdogContext(input({
+    request: async (pathname) => {
+      if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+      if (pathname.endsWith("/jobs?per_page=100")) return { total_count: 0, jobs: [] };
+      return { ...run, conclusion: "cancelled" };
+    },
+    event: { workflow_run: { ...event.workflow_run, conclusion: "cancelled" } },
+  }));
+  assert.equal(context.requiresClose, false);
+  assert.equal(context.passed, true);
+});
+
+test("watchdog preserves fail-close when the coordinator job inventory is ambiguous", async () => {
+  const context = await validateWatchdogContext(input({
+    request: async (pathname) => {
+      if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+      if (pathname.endsWith("/jobs?per_page=100")) return {};
+      return run;
+    },
+  }));
+  assert.equal(context.requiresClose, true);
 });
 
 test("watchdog never rolls back after failed child reconciliation", () => {
