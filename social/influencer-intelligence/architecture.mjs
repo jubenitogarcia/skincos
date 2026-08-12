@@ -357,7 +357,7 @@ export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'M4', title: 'Robust analytics', status: 'merged #1333; synthetic source/tests only', acceptance: ['time windows', 'viral-outlier resistance', 'explicit unavailable coverage'] },
   { id: 'M5', title: 'Deterministic scores and confidence', status: 'merged #1334; synthetic source/tests only', acceptance: ['versioned algorithms', 'score/confidence/coverage/provenance completeness', 'calibration fixtures'] },
   { id: 'M6', title: 'Hardened read-only MCP', status: 'source adapter and protocol tests implemented; runtime registration pending', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
-  { id: 'M7', title: 'Codex skill', status: 'pending', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
+  { id: 'M7', title: 'Codex skill', status: 'versioned skill and contract tests implemented; MCP/runtime registration remains governed by later gates', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
   { id: 'M8', title: 'CRM read-only surface', status: 'pending', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
   { id: 'M9', title: 'Comments intelligence', status: 'pending', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
   { id: 'M10', title: 'Semantic content and Reels signals', status: 'pending', acceptance: ['approved media projection', 'no raw media archive by default', 'versioned inference'] },

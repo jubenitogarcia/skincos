@@ -156,6 +156,14 @@ test('keeps API reads and MCP tools read-only while isolating Orb collection', (
   assert.match(MCP_CONTRACT.forbidden.join('\n'), /arbitrary SQL/i);
 });
 
+test('records the M7 skill as source-complete without enabling runtime access', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M7');
+  assert.match(milestone.status, /versioned skill and contract tests implemented/i);
+  assert.match(milestone.status, /later gates/i);
+  assert.equal(FEATURE_ACCESS.defaultValue, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, false);
+});
+
 test('keeps this architecture milestone off and runtime-free', () => {
   assert.equal(FEATURE_ACCESS.defaultValue, false);
   assert.equal(FEATURE_ACCESS.initialMode, 'off');
