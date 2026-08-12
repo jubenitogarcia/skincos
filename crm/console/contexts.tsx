@@ -451,8 +451,9 @@ interface IntegrationsContextValue {
   syncWhatsApp: () => Promise<void>
 }
 
+const hotIntegrationsData = import.meta.hot?.data as { IntegrationsCtx?: React.Context<IntegrationsContextValue | undefined> } | undefined
 const IntegrationsContext: React.Context<IntegrationsContextValue | undefined> =
-  (import.meta.hot?.data.IntegrationsCtx as React.Context<IntegrationsContextValue | undefined> | undefined) ??
+  hotIntegrationsData?.IntegrationsCtx ??
   createContext<IntegrationsContextValue | undefined>(undefined)
 if (import.meta.hot) {
   import.meta.hot.dispose(d => { d.IntegrationsCtx = IntegrationsContext })
@@ -660,8 +661,9 @@ interface NotificationContextType {
   getNotificationsByCategory: (category: string) => Notification[]
 }
 
+const hotNotificationData = import.meta.hot?.data as { NotificationCtx?: React.Context<NotificationContextType | undefined> } | undefined
 const NotificationContext: React.Context<NotificationContextType | undefined> =
-  (import.meta.hot?.data.NotificationCtx as React.Context<NotificationContextType | undefined> | undefined) ??
+  hotNotificationData?.NotificationCtx ??
   createContext<NotificationContextType | undefined>(undefined)
 if (import.meta.hot) {
   import.meta.hot.dispose(d => { d.NotificationCtx = NotificationContext })
