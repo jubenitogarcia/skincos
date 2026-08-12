@@ -62,6 +62,24 @@ function Normalize-SearchText {
     return ($withoutAccents.ToLowerInvariant() -replace '[^a-z0-9]+', ' ').Trim()
 }
 
+function Get-ObjectArrayProperty {
+    param(
+        [object]$Object,
+        [string]$Name
+    )
+
+    if ($null -eq $Object -or [string]::IsNullOrWhiteSpace($Name)) {
+        return @()
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return @()
+    }
+
+    return @($property.Value)
+}
+
 function Test-TokenMatch {
     param(
         [string]$Text,
@@ -349,7 +367,9 @@ function Get-TopologyDefinitions {
             label = [string]$family.label
             route = $null
             source = 'workflow-family'
-            workflowIds = @($family.mainWorkflowIds) + @($family.subworkflowIds) + @($family.relatedWorkflowIds)
+            workflowIds = @(Get-ObjectArrayProperty -Object $family -Name 'mainWorkflowIds') +
+                @(Get-ObjectArrayProperty -Object $family -Name 'subworkflowIds') +
+                @(Get-ObjectArrayProperty -Object $family -Name 'relatedWorkflowIds')
             expectedPath = Join-Path (Join-Path $canonicalRoot 'orb') $id
         }
     }

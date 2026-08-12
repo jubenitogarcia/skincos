@@ -160,7 +160,14 @@ try {
         topologyId = 'skincos-canonical-worktrees'
         worktree = [ordered]@{ canonicalRelativeRoot = 'admin\canonical' }
         crm = [ordered]@{ surfaces = @([ordered]@{ id = 'users'; label = 'Usuários'; route = '/?module=users'; source = 'fixture' }) }
-        orb = [ordered]@{ families = @() }
+        # `relatedWorkflowIds` is optional in the real topology. Keep a family
+        # without it here because the hook runs the resolver under StrictMode.
+        orb = [ordered]@{ families = @([ordered]@{
+                    id = 'livia'
+                    label = 'Livia'
+                    mainWorkflowIds = @('WGXr4vYkv9UoJ8zc')
+                    subworkflowIds = @()
+                }) }
     } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $topologyPath -Encoding utf8
 
     & git init -q -b main $repositoryRoot
