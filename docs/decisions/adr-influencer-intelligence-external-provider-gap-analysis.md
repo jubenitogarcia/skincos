@@ -89,14 +89,16 @@ implicitly.
   mistaking a source-level gap for measured live coverage.
 - Surfaces: `social/influencer-intelligence/EXTERNAL_PROVIDER_GAP_ANALYSIS.md`,
   its test, `architecture.mjs`, the Influencer Intelligence architecture test
-  list, the README, and the two ADRs.
+  list and documentation workflow, the README, and the two ADRs.
 - Migration: none. No PostgreSQL file is added or applied.
 - Flag/grant: unchanged. The module remains off by default; no provider,
   scheduler, MCP, CRM, or external service is registered or called.
-- Validation: focused architecture/M13 tests 18/18; full Influencer
-  Intelligence suite 165/165; PR #1365 technical checks green, including
-  architecture, calibration, integration, CodeQL, Semgrep, secrets, and
-  autonomy gates.
+- Validation: focused architecture/M13 tests 19/19 using
+  `node --test social/influencer-intelligence/tests/external-provider-gap-analysis.test.mjs social/influencer-intelligence/tests/architecture.test.mjs`;
+  full Influencer Intelligence suite 166/166 using `node --test` from
+  `social/influencer-intelligence`; PR #1365 head `a3194517c24a7823f6f0cc3d815699d4f4906a0c`
+  technical checks green, including architecture, calibration, integration,
+  CodeQL, Semgrep, secrets, and autonomy gates.
 - Rollback: the candidate was based on parent
   `aa388342d4c3bb457faa33ad2b449061002c0b29`; before merge, discard the
   candidate branch. After the governed squash merge, revert that single M13

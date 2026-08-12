@@ -387,7 +387,7 @@ dataset exists.
 ## M13 decision: no external provider in the current source scope
 
 [`EXTERNAL_PROVIDER_GAP_ANALYSIS.md`](./EXTERNAL_PROVIDER_GAP_ANALYSIS.md)
-records the measured coverage gaps and compares the existing official/private
+records source-level capability gaps and compares the existing official/private
 transport, SKINCOS history, content intelligence, and comment intelligence with
 Apify, HypeAuditor, and Modash. The result is deliberately source-only: Meta
 official remains first, the existing instagrapi path remains a controlled
