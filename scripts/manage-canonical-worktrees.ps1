@@ -506,6 +506,7 @@ function Ensure-Canonical {
     Assert-RoutingControlPlane -Commit $TargetCommit
 
     $matches = @($Worktrees | Where-Object { (Normalize-PathString -Path $_.path) -eq (Normalize-PathString -Path $Definition.expectedPath) })
+    $previousHead = if ($matches.Count -eq 1) { [string]$matches[0].head } else { $null }
     if ($matches.Count -gt 1) { throw "Slot canônico duplicado: $($Definition.surfaceType)/$($Definition.surfaceId)." }
     if ($matches.Count -eq 1) {
         $status = @(Invoke-Git -RepoPath $matches[0].path -Arguments @('status', '--porcelain=v1')).output
@@ -533,7 +534,7 @@ function Ensure-Canonical {
         $action = 'created'
     }
 
-    $entry = [pscustomobject]@{
+    $entry = [ordered]@{
         surfaceType = $Definition.surfaceType
         surfaceId = $Definition.surfaceId
         label = $Definition.label
@@ -541,10 +542,24 @@ function Ensure-Canonical {
         path = $Definition.expectedPath
         targetCommit = $TargetCommit.ToLowerInvariant()
         source = $Definition.source
+        controlPlane = 'codex-thread-routing'
         updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
+    if ($action -eq 'refreshed') {
+        $entry.baseCommit = $previousHead.ToLowerInvariant()
+        $entry.requalifiedAtUtc = $entry.updatedAtUtc
+    }
+    $entry = [pscustomobject]$entry
     Write-RegistryEntry -Entry $entry
-    return [pscustomobject]@{ action = $action; surfaceType = $Definition.surfaceType; surfaceId = $Definition.surfaceId; path = $Definition.expectedPath; targetCommit = $TargetCommit.ToLowerInvariant() }
+    return [pscustomobject]@{
+        action = $action
+        surfaceType = $Definition.surfaceType
+        surfaceId = $Definition.surfaceId
+        path = $Definition.expectedPath
+        targetCommit = $TargetCommit.ToLowerInvariant()
+        baseCommit = if ($action -eq 'refreshed') { $previousHead.ToLowerInvariant() } else { $null }
+        controlPlane = 'codex-thread-routing'
+    }
 }
 
 function Claim-Canonical {

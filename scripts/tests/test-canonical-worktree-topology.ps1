@@ -91,7 +91,7 @@ try {
     Invoke-GitFixture @('-C', $fixtureRepo, 'commit', '--quiet', '-m', 'fixture requalification')
     $targetRefresh = (& git -C $fixtureRepo rev-parse HEAD).Trim()
     $refreshed = Invoke-Coordinator @{ Action = 'ensure-canonical'; SurfaceType = 'crm-module'; SurfaceId = 'users'; TargetCommit = $targetRefresh; Apply = $true; RefreshExisting = $true }
-    if ($refreshed.action -ne 'refreshed' -or $refreshed.targetCommit -ne $targetRefresh) { throw 'Canonical slot was not requalified at the explicit routing SHA.' }
+    if ($refreshed.action -ne 'refreshed' -or $refreshed.targetCommit -ne $targetRefresh -or $refreshed.baseCommit -ne $target) { throw 'Canonical slot was not requalified at the explicit routing SHA.' }
     $readyAfterRefresh = Invoke-Coordinator @{ Action = 'inventory' }
     if ($readyAfterRefresh.surfaces[0].worktrees[0].head -ne $targetRefresh) { throw 'Requalified canonical slot did not publish the new SHA.' }
 
