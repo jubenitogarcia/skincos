@@ -575,7 +575,7 @@ export function createInfluencerIntelligenceMcpGateway({
       const measuredRequestBytes = requestByteLength(rpc ?? null);
       assertCondition(measuredRequestBytes <= MCP_READONLY_LIMITS.maxRequestBytes, 'INVALID_INPUT', 'request body exceeds the limit');
       if (requestBytes !== undefined) {
-        assertCondition(Number.isInteger(requestBytes) && requestBytes >= 0 && requestBytes === measuredRequestBytes, 'INVALID_INPUT', 'request body size metadata is invalid');
+        assertCondition(Number.isInteger(requestBytes) && requestBytes >= 0 && requestBytes <= MCP_READONLY_LIMITS.maxRequestBytes, 'INVALID_INPUT', 'request body size metadata is invalid');
       }
       validateRpc(rpc);
       normalizedContext = normalizeAuthContext(context);

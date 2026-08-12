@@ -142,6 +142,19 @@ test('measures request size when the transport does not provide byte metadata', 
   assert.equal(errorCode(response), 'INVALID_INPUT');
 });
 
+test('accepts independently encoded in-limit transport size metadata', async () => {
+  const { gateway } = createHarness();
+  const rpc = { jsonrpc: '2.0', id: 'encoded', method: 'ping', params: {} };
+  const response = await gateway.handleRpc({
+    rpc,
+    context: AUTH,
+    requestBytes: Buffer.byteLength(JSON.stringify(rpc), 'utf8') + 10,
+  });
+
+  assert.equal(response.error, undefined);
+  assert.deepEqual(response.result, {});
+});
+
 test('validates bounded windows, paging and comparison cardinality before the store', async () => {
   const { gateway, service } = createHarness();
   const tooLong = await call(gateway, 'get_creator_snapshots', { creator_key: 'creator-1', window: { start: '2024-01-01T00:00:00.000Z', end: NOW } });

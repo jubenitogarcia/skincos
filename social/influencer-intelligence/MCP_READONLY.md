@@ -41,7 +41,11 @@ opaque internal identifiers; provider ids, tokens, sessions, raw comments, and
 free-form provider payloads are not accepted.
 
 The adapter measures and enforces a 64 KiB serialized request limit even when a
-transport does not provide byte metadata, plus a 512 KiB sanitized response limit,
+transport does not provide byte metadata. If a transport provides its own byte
+count, both that count and the adapter's parsed-request measurement must be in
+limit; they are not required to be byte-identical because equivalent JSON may
+use different whitespace, escaping, or key ordering. The adapter also enforces a
+512 KiB sanitized response limit,
 50-item pages, at most 20 creators per comparison, at most a 365-day window,
 four concurrent calls, a 12-second timeout/abort, and a fixed 60 requests per
 minute per actor scope. Audit is mandatory and audit failure is fail-closed.
