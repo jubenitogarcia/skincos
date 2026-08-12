@@ -84,8 +84,9 @@ jobs:
           [[ "$AUTHORIZATION_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/#-]{2,119}$ ]] || { echo 'Authorization reference must be opaque'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" > "$RUNNER_TEMP/ponto-coordinator.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$WATCHDOG_RUN_ID" > "$RUNNER_TEMP/ponto-watchdog.json"
-          node - "$RUNNER_TEMP/ponto-coordinator.json" "$RUNNER_TEMP/ponto-watchdog.json" <<'NODE'
-          const fs = require("fs");
+          node --input-type=module - "$RUNNER_TEMP/ponto-coordinator.json" "$RUNNER_TEMP/ponto-watchdog.json" <<'NODE'
+          import fs from "node:fs";
+          import { pontoSourceClosureMatches } from "./.github/scripts/ponto-source-closure.mjs";
           const coordinator = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const watchdog = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           const repo = process.env.GITHUB_REPOSITORY;
@@ -96,7 +97,7 @@ jobs:
             coordinator.path !== ".github/workflows/ponto-progressive-release.yml"
             || coordinator.event !== "workflow_dispatch"
             || !isCompletedFailure(coordinator)
-            || coordinator.head_sha !== releaseSha
+            || !pontoSourceClosureMatches(releaseSha, String(coordinator.head_sha || "").toLowerCase())
             || coordinator.head_branch !== "main"
             || coordinator.repository?.full_name !== repo
             || watchdog.path !== ".github/workflows/ponto-release-watchdog.yml"
@@ -326,8 +327,9 @@ jobs:
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'Failed release is not reachable from main'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" > "$RUNNER_TEMP/ponto-coordinator.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$WATCHDOG_RUN_ID" > "$RUNNER_TEMP/ponto-watchdog.json"
-          node - "$RUNNER_TEMP/ponto-coordinator.json" "$RUNNER_TEMP/ponto-watchdog.json" <<'NODE'
-          const fs = require("fs");
+          node --input-type=module - "$RUNNER_TEMP/ponto-coordinator.json" "$RUNNER_TEMP/ponto-watchdog.json" <<'NODE'
+          import fs from "node:fs";
+          import { pontoSourceClosureMatches } from "./.github/scripts/ponto-source-closure.mjs";
           const coordinator = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const watchdog = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           const repo = process.env.GITHUB_REPOSITORY;
@@ -338,7 +340,7 @@ jobs:
             coordinator.path !== ".github/workflows/ponto-progressive-release.yml"
             || coordinator.event !== "workflow_dispatch"
             || !isCompletedFailure(coordinator)
-            || coordinator.head_sha !== releaseSha
+            || !pontoSourceClosureMatches(releaseSha, String(coordinator.head_sha || "").toLowerCase())
             || coordinator.head_branch !== "main"
             || coordinator.repository?.full_name !== repo
             || watchdog.path !== ".github/workflows/ponto-release-watchdog.yml"

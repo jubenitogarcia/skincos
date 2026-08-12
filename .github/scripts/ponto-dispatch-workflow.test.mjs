@@ -8,6 +8,7 @@ import {
   governedLeaseKeyFor,
   isBodylessResponseStatus,
   readGitHubResponse,
+  resolvePontoCoordinatorIdentity,
   verifyConsumedCapabilityCheck,
 } from "./ponto-dispatch-workflow.mjs";
 import {
@@ -83,6 +84,35 @@ test("child dispatch keeps an immutable release valid across unrelated main chan
     () => assertPontoDependencyClosureUnchanged(digest, "d".repeat(64)),
     /relevant dependency-closure input changed/,
   );
+});
+
+test("child dispatch separates the immutable release identity from the main workflow revision", () => {
+  const releaseSha = "a".repeat(40);
+  const workflowSha = "b".repeat(40);
+  assert.deepEqual(
+    resolvePontoCoordinatorIdentity({ releaseSha, workflowSha }),
+    { releaseSha, workflowSha },
+  );
+  assert.throws(
+    () => resolvePontoCoordinatorIdentity({ releaseSha, workflowSha: "not-a-sha" }),
+    /GITHUB_SHA must be a full immutable Ponto coordinator workflow SHA/,
+  );
+});
+
+test("Ponto recovery keeps provenance fail-closed while accepting a closure-equivalent coordinator revision", () => {
+  const read = (relative) => fs.readFileSync(new URL(relative, import.meta.url), "utf8");
+  const progressive = read("../workflows/ponto-progressive-release.yml");
+  const orchestratorLease = read("./ponto-orchestrator-lease.mjs");
+  const watchdogJournal = read("./ponto-watchdog-journal.mjs");
+  const recovery = read("../workflows/ponto-staging-recovery-rollback.yml");
+  assert.match(progressive, /PONTO_WORKFLOW_SHA=.*assertPontoSourceClosureUnchanged/s);
+  assert.doesNotMatch(progressive, /release_sha must equal the immutable main coordinator SHA/);
+  assert.match(orchestratorLease, /assertObservedPontoSource\(releaseSha, String\(run\?\.head_sha \|\| ""\)\.trim\(\)\.toLowerCase\(\)\)/);
+  assert.doesNotMatch(orchestratorLease, /run\?\.head_sha !== releaseSha/);
+  assert.match(watchdogJournal, /pontoSourceClosureMatches\(releaseSha, String\(coordinator\?\.head_sha \|\| ""\)\.trim\(\)\.toLowerCase\(\)\)/);
+  assert.doesNotMatch(watchdogJournal, /coordinator\?\.head_sha.*!== releaseSha/);
+  assert.match(recovery, /pontoSourceClosureMatches\(releaseSha, String\(coordinator\.head_sha \|\| ""\)\.toLowerCase\(\)\)/);
+  assert.doesNotMatch(recovery, /coordinator\.head_sha !== releaseSha/);
 });
 
 test("Ponto child mutations expose the canonical global resource and conflict scope", () => {

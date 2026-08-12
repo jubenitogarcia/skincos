@@ -35,10 +35,27 @@ import {
   releaseTagFor,
 } from "./ponto-release-identity.mjs";
 
+const FULL_SHA = /^[0-9a-f]{40}$/;
+
 export const isBodylessResponseStatus = (status) => status === 202 || status === 204;
 export const readGitHubResponse = (response) => (
   isBodylessResponseStatus(response.status) ? null : response.json()
 );
+
+export function resolvePontoCoordinatorIdentity({ releaseSha, workflowSha } = {}) {
+  const immutableReleaseSha = String(releaseSha || "").trim().toLowerCase();
+  const immutableWorkflowSha = String(workflowSha || "").trim().toLowerCase();
+  if (!FULL_SHA.test(immutableReleaseSha)) {
+    throw new Error("RELEASE_SHA must be a full immutable Ponto release SHA");
+  }
+  if (!FULL_SHA.test(immutableWorkflowSha)) {
+    throw new Error("GITHUB_SHA must be a full immutable Ponto coordinator workflow SHA");
+  }
+  return {
+    releaseSha: immutableReleaseSha,
+    workflowSha: immutableWorkflowSha,
+  };
+}
 
 export const minimumDispatchTimeoutMsByWorkflow = Object.freeze({
   "timekeeping-staging-journey.yml": 35 * 60 * 1000,
@@ -312,7 +329,8 @@ const token = String(process.env.GH_TOKEN || "").trim();
 const repository = String(process.env.GITHUB_REPOSITORY || "").trim();
 const output = String(process.env.GITHUB_OUTPUT || "").trim();
 const apiBase = String(process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
-const orchestratorHeadSha = String(process.env.GITHUB_SHA || "").trim().toLowerCase();
+const workflowSourceSha = String(process.env.GITHUB_SHA || "").trim().toLowerCase();
+const configuredReleaseSha = String(process.env.RELEASE_SHA || "").trim().toLowerCase();
 const repositoryId = String(process.env.GITHUB_REPOSITORY_ID || "").trim();
 const capabilityPrivateKey = String(process.env.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY || "");
 const capabilityPublicKeysJson = String(
@@ -327,11 +345,23 @@ const timeoutMs = dispatchTimeoutMsFor(workflow, configuredTimeoutMs);
 if (!workflow || !/^[0-9]+$/.test(correlation || "") || !inputsFile || !outputFile) {
   throw new Error("usage: ponto-dispatch-workflow.mjs <workflow> <correlation-run-id> <inputs.json> <output.json>");
 }
+const {
+  releaseSha: orchestratorHeadSha,
+  workflowSha: coordinatorWorkflowSha,
+} = resolvePontoCoordinatorIdentity({
+  releaseSha: configuredReleaseSha,
+  workflowSha: workflowSourceSha,
+});
 if (!Number.isFinite(configuredTimeoutMs) || configuredTimeoutMs < 5 * 60 * 1000 || configuredTimeoutMs > 90 * 60 * 1000) {
   throw new Error("PONTO_DISPATCH_TIMEOUT_MS must be between 5 and 90 minutes");
 }
-if (!token || !repository.includes("/") || !/^[0-9a-f]{40}$/.test(orchestratorHeadSha)) {
-  throw new Error("GH_TOKEN, GITHUB_REPOSITORY, and immutable orchestrator GITHUB_SHA are required");
+if (!token || !repository.includes("/")) {
+  throw new Error("GH_TOKEN and GITHUB_REPOSITORY are required for immutable Ponto child dispatch");
+}
+try {
+  assertPontoSourceClosureUnchanged(orchestratorHeadSha, coordinatorWorkflowSha);
+} catch {
+  throw new Error("Ponto coordinator workflow source is outside the immutable release dependency closure");
 }
 
 const request = async (pathname, init = {}) => {
@@ -492,7 +522,7 @@ if (leaseKey) {
     || parentRun?.conclusion != null
     || parentRun?.event !== "workflow_dispatch"
     || parentRun?.head_branch !== "main"
-    || parentRun?.head_sha !== orchestratorHeadSha
+    || String(parentRun?.head_sha || "").trim().toLowerCase() !== coordinatorWorkflowSha
     || String(parentRun?.repository?.id || "") !== repositoryId
     || parentRun?.repository?.full_name !== repository
     || parentRun?.head_repository?.full_name !== repository
