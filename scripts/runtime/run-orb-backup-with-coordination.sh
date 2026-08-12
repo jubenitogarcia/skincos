@@ -37,12 +37,35 @@ load_private_coordination_environment() {
     }
     key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
-    [[ "$key" == SKINCOS_GLOBAL_COORDINATOR_URL || "$key" == SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET ]] || {
+    [[ "$key" == SKINCOS_GLOBAL_COORDINATOR_URL || "$key" == SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET || "$key" == SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || "$key" == SKINCOS_GLOBAL_COORDINATION_KEY_ID ]] || {
       echo 'Orb backup coordination environment contains an unsupported key.' >&2
       exit 78
     }
     export "$key=$value"
   done < "$COORDINATION_ENV_FILE"
+  [[ -n "${SKINCOS_GLOBAL_COORDINATOR_URL:-}" ]] || {
+    echo 'Orb backup coordination environment has no coordinator URL.' >&2
+    exit 78
+  }
+  if [[ -n "${SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY:-}" || -n "${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" ]]; then
+    [[ -n "${SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY:-}" && -n "${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" ]] || {
+      echo 'Orb backup active coordination custody is incomplete.' >&2
+      exit 78
+    }
+    [[ "${SKINCOS_GLOBAL_COORDINATION_KEY_ID}" != 'legacy-v1' ]] || {
+      echo 'Orb backup active coordination custody cannot use the legacy key id.' >&2
+      exit 78
+    }
+    [[ -z "${SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:-}" ]] || {
+      echo 'Orb backup active coordination custody must not retain the legacy secret record.' >&2
+      exit 78
+    }
+  else
+    [[ -n "${SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:-}" ]] || {
+      echo 'Orb backup coordination environment has no secret custody.' >&2
+      exit 78
+    }
+  fi
 }
 
 load_private_coordination_environment

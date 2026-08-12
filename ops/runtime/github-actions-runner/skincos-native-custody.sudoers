@@ -1,5 +1,5 @@
 # Deliberately argumentless: the helper itself has a fixed target path and a
-# fixed two-line stdin contract. No additional privileged command is granted
+# fixed bounded stdin contract. No additional privileged command is granted
 # to the runner account.
 Cmnd_Alias SKINCOS_NATIVE_CUSTODY = /usr/local/sbin/skincos-provision-global-coordination
 skincos-actions ALL=(root) NOPASSWD: SKINCOS_NATIVE_CUSTODY

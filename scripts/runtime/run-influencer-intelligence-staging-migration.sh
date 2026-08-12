@@ -46,6 +46,7 @@ readonly COORDINATION_CLOSURE="$RELEASE_ROOT/.skincos-global-coordination-influe
 readonly COORDINATION_ADAPTER="$RELEASE_ROOT/scripts/runtime/global-coordination-native.sh"
 readonly COORDINATION_CLIENT="$RELEASE_ROOT/scripts/runtime/global-coordination-mini-pc.sh"
 readonly CHECKPOINT_ROOT='/var/backups/skincos/influencer-intelligence/staging'
+readonly COORDINATION_ENV_FILE='/etc/skincos/global-coordination/orb-backup.env'
 
 [[ "$RELEASE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || { echo 'Immutable staging release root is invalid.' >&2; exit 64; }
 run_sudo_clean /usr/bin/test -f "$RUNNER" || { echo 'Influencer Intelligence staging runner is unavailable in the immutable release.' >&2; exit 78; }
@@ -64,12 +65,81 @@ cleanup_coordination() {
   exit "$exit_status"
 }
 
+load_private_coordination_environment() {
+  [[ "$COORDINATION_ENV_FILE" == '/etc/skincos/global-coordination/orb-backup.env' ]] || {
+    echo 'Influencer Intelligence coordination environment path is not fixed.' >&2
+    exit 78
+  }
+  [[ -f "$COORDINATION_ENV_FILE" ]] || {
+    echo 'Influencer Intelligence coordination custody is unavailable.' >&2
+    exit 78
+  }
+  local mode line key value
+  local has_url=0 has_shared=0 has_active=0 has_key_id=0
+  mode="$(stat -c '%a' "$COORDINATION_ENV_FILE")"
+  [[ "$mode" == '600' || "$mode" == '640' ]] || {
+    echo 'Influencer Intelligence coordination custody has unsafe permissions.' >&2
+    exit 78
+  }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || {
+      echo 'Influencer Intelligence coordination custody contains an invalid record.' >&2
+      exit 78
+    }
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    case "$key" in
+      SKINCOS_GLOBAL_COORDINATOR_URL) has_url=1 ;;
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET) has_shared=1 ;;
+      SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY) has_active=1 ;;
+      SKINCOS_GLOBAL_COORDINATION_KEY_ID) has_key_id=1 ;;
+      *)
+        echo 'Influencer Intelligence coordination custody contains an unsupported key.' >&2
+        exit 78
+        ;;
+    esac
+    export "$key=$value"
+  done < "$COORDINATION_ENV_FILE"
+  [[ "$has_url" == '1' && -n "${SKINCOS_GLOBAL_COORDINATOR_URL:-}" ]] || {
+    echo 'Influencer Intelligence coordination custody has no coordinator URL.' >&2
+    exit 78
+  }
+  if [[ "$has_active" == '1' || "$has_key_id" == '1' ]]; then
+    [[ "$has_active" == '1' && "$has_key_id" == '1' && -n "${SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY:-}" && -n "${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" ]] || {
+      echo 'Influencer Intelligence active coordination custody is incomplete.' >&2
+      exit 78
+    }
+    [[ "${SKINCOS_GLOBAL_COORDINATION_KEY_ID}" != 'legacy-v1' ]] || {
+      echo 'Influencer Intelligence active coordination custody cannot use the legacy key id.' >&2
+      exit 78
+    }
+    [[ "$has_shared" == '0' ]] || {
+      echo 'Influencer Intelligence active coordination custody must not retain the legacy secret record.' >&2
+      exit 78
+    }
+  else
+    [[ "$has_shared" == '1' && -n "${SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:-}" ]] || {
+      echo 'Influencer Intelligence coordination custody has no secret.' >&2
+      exit 78
+    }
+  fi
+}
+
 checkpoint=''
 if [[ "$ACTION" == '--apply' ]]; then
   # A migration is a mutable database operation even though the application
   # and provider runtime remain OFF. The global lease binds the operation to
   # the exact release and its dependency closure before any checkpoint path
   # is created or the database runner is invoked.
+  load_private_coordination_environment
+  # The staging migration owns its coordination identity; callers cannot
+  # redirect the lease to another mission, thread or actor.
+  unset GLOBAL_COORDINATION_MISSION_ID GLOBAL_COORDINATION_THREAD_ID GLOBAL_COORDINATION_ACTOR
+  export GLOBAL_COORDINATION_MISSION_ID='codex:skincos:influencer-intelligence-staging'
+  export GLOBAL_COORDINATION_THREAD_ID="staging-migration:$RELEASE_SHA"
+  export GLOBAL_COORDINATION_ACTOR='native-staging-migration-runner'
   # shellcheck disable=SC1091
   source "$COORDINATION_ADAPTER"
   native_coordination_init mutate:influencer-intelligence:staging influencer-intelligence "$RELEASE_SHA" "$COORDINATION_CLOSURE" mutation

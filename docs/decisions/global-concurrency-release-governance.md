@@ -230,8 +230,9 @@ o contrato exige fail-closed antes de nova promoção.
   `skincos-native-custody`, instalado por
   `scripts/runtime/install-native-custody-runner.sh`. O runner aceita somente
   workflows dispatch-only da `main` e possui um único sudoers command para o
-  helper atômico de `/etc/skincos/global-coordination/orb-backup.env`; não há
-  mais ponte manual GitHub -> WSL para o secret existente.
+  helper atômico de `/etc/skincos/global-coordination/orb-backup.env`, com
+  custódia legada ou par active-key/key-id; não há mais ponte manual GitHub ->
+  WSL para o secret existente.
 
 Os ambientes dedicados `staging` e `production` do Worker usam Durable Object
 SQLite, secrets separados e `preview_urls = false`; nenhum deploy automático de

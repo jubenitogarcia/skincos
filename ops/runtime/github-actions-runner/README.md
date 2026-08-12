@@ -16,9 +16,9 @@ from the `skincos` service account and is never used by pull-request workflows.
 - the user may invoke only
   `/usr/local/sbin/skincos-provision-global-coordination` through passwordless
   sudo;
-- the helper accepts the coordinator URL and shared secret only through stdin,
-  validates the two-line contract, writes an atomic root-owned file, and never
-  prints either value;
+- the helper accepts the coordinator URL, one coordination secret and a public
+  key id only through stdin, validates the bounded contract, writes an atomic
+  root-owned file, and never prints any secret value;
 - the runner workspace and credentials stay on native Linux storage and are
   not copied to Windows, the repository, artifacts, or logs.
 
@@ -45,8 +45,8 @@ atomic file write and metadata validation.
    from `main`.
 2. The workflow acquires `global:orb-coordination-custody` and checks its
    fencing proof before the write.
-3. The workflow streams the existing GitHub secret directly to the root helper;
-   no step echoes or serializes the value.
+3. The workflow streams the active GitHub secret and public key id directly to
+   the root helper; no step echoes or serializes the value.
 4. The helper writes
    `/etc/skincos/global-coordination/orb-backup.env` with mode `0640`, owner
    `root`, and group `admin`, then returns metadata-only audit output.
