@@ -134,7 +134,9 @@ jobs:
       - name: Initialize private release artifact directory
         run: |
           echo "PONTO_ARTIFACT_DIR=$RUNNER_TEMP/ponto-release" >> "$GITHUB_ENV"
-          echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=$RUNNER_TEMP/ponto-release/global-coordination-release-ponto.json" >> "$GITHUB_ENV"
+          if [[ "$STAGE" != "preview" ]]; then
+            echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=$RUNNER_TEMP/ponto-release/global-coordination-release-ponto.json" >> "$GITHUB_ENV"
+          fi
           mkdir -p "$RUNNER_TEMP/ponto-release"
       - name: Verify immutable source and ordered predecessor provenance
         id: source
@@ -215,10 +217,13 @@ jobs:
           PONTO_EXPECTED_STAGE="$predecessor" PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
             node .github/scripts/ponto-release-evidence.mjs verify "$PONTO_ARTIFACT_DIR/predecessor/ponto-release-evidence.json"
           rm -f "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json"
-      # Hold the closure-scoped Ponto lease while required checks settle. The
-      # coordinator still admits a documented disjoint main merge, but delays
-      # one that changes the selected Ponto dependency closure.
+      # Preview never holds the composite release lease: its child publishers
+      # already take their individual global writer leases, while the watchdog
+      # must remain able to acquire release:ponto and materialize fail-close.
+      # Staging and live stages retain the closure-scoped composite lease while
+      # their required checks settle.
       - name: Acquire the composite Ponto release lease before gate settlement
+        if: ${{ inputs.stage != 'preview' }}
         uses: ./.github/actions/global-coordination-acquire
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -1810,7 +1815,7 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
       - name: Release the composite Ponto release lease
-        if: always()
+        if: ${{ always() && inputs.stage != 'preview' }}
         uses: ./.github/actions/global-coordination-release
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}

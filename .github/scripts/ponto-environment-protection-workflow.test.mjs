@@ -64,7 +64,26 @@ test("coordinator initializes runner-only custody paths inside a step", () => {
   assert.doesNotMatch(jobEnvironment, /\$\{\{\s*runner\./);
   assert.match(
     initialization,
-    /echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=\$RUNNER_TEMP\/ponto-release\/global-coordination-release-ponto\.json" >> "\$GITHUB_ENV"/,
+    /if \[\[ "\$STAGE" != "preview" \]\]; then\s+echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=\$RUNNER_TEMP\/ponto-release\/global-coordination-release-ponto\.json" >> "\$GITHUB_ENV"/,
+  );
+
+  const acquireStart = coordinator.indexOf(
+    "\n      - name: Acquire the composite Ponto release lease before gate settlement",
+  );
+  const acquireEnd = coordinator.indexOf("\n      - name:", acquireStart + 1);
+  const releaseStart = coordinator.indexOf(
+    "\n      - name: Release the composite Ponto release lease",
+  );
+  const releaseEnd = coordinator.indexOf("\n\n  recovery-latch:", releaseStart);
+  assert.ok(acquireStart >= 0);
+  assert.ok(releaseStart >= 0);
+  assert.match(
+    coordinator.slice(acquireStart, acquireEnd),
+    /if: \$\{\{ inputs\.stage != 'preview' \}\}/,
+  );
+  assert.match(
+    coordinator.slice(releaseStart, releaseEnd),
+    /if: \$\{\{ always\(\) && inputs\.stage != 'preview' \}\}/,
   );
 });
 

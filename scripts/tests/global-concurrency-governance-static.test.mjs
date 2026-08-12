@@ -176,13 +176,21 @@ test("the staging RBAC journey recovers synthetic teardown under a fresh lease",
   assert.match(workflow, /refusing a non-staging D1 target/);
 });
 
-test("the Ponto composite lease starts before gate settlement, selects the correct authority, and spans the orchestrator", () => {
+test("the Ponto composite lease protects only non-preview stages while preview keeps separate writer custody", () => {
   const workflow = read(".github/workflows/ponto-progressive-release.yml");
   const acquire = workflow.indexOf("Acquire the composite Ponto release lease before gate settlement");
   const requiredChecks = workflow.indexOf("Attest canonical merged PR and required checks for the immutable SHA");
   const firstDispatch = workflow.indexOf("node .github/scripts/ponto-dispatch-workflow.mjs");
   const release = workflow.indexOf("Release the composite Ponto release lease");
   assert.ok(acquire >= 0 && requiredChecks > acquire && firstDispatch > acquire && release > firstDispatch);
+  const acquireEnd = workflow.indexOf("\n      - name:", acquire + 1);
+  const releaseEnd = workflow.indexOf("\n\n  recovery-latch:", release);
+  assert.match(workflow.slice(acquire, acquireEnd), /if: \$\{\{ inputs\.stage != 'preview' \}\}/);
+  assert.match(workflow.slice(release, releaseEnd), /if: \$\{\{ always\(\) && inputs\.stage != 'preview' \}\}/);
+  assert.match(
+    workflow,
+    /if \[\[ "\$STAGE" != "preview" \]\]; then\s+echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=/,
+  );
   assert.match(workflow, /SKINCOS_GLOBAL_COORDINATOR_URL: \$\{\{ contains\(fromJSON\('\["preview","staging"\]'\)/);
   assert.match(workflow, /coordinator_url: \$\{\{ env\.SKINCOS_GLOBAL_COORDINATOR_URL \}\}/);
   assert.match(read(".github/scripts/ponto-dispatch-workflow.mjs"), /revalidatePontoCompositeLease/);
