@@ -1,12 +1,13 @@
 # ADR: Influencer Intelligence canonical architecture
 
-- Status: accepted as the implementation contract; runtime remains off
+- Status: accepted implementation contract; runtime is registered but disabled
 - Version: `influencer-intelligence-architecture/v1`
 - Scope: `social/influencer-intelligence/`
 - Decision owner: SKINCOS product and platform maintainers
-- This ADR is architecture-only. It does not expose a route, apply a
-  migration, register a CRM module, connect a provider, change an Orb workflow,
-  or enable a user-facing feature.
+- The architecture manifest remains side-effect free. A later runtime
+  registration addendum in this ADR records the disabled loopback bindings;
+  registration is not activation and does not assign a user grant or call a
+  provider.
 
 The machine-readable companion is
 [`social/influencer-intelligence/architecture.mjs`](../../social/influencer-intelligence/architecture.mjs).
@@ -41,8 +42,9 @@ provider-specific response shape may leak into scoring, CRM, MCP, or Orb.
 
 The architecture PR versions the boundaries, provider interface, data model,
 provenance, score envelope, API contract, MCP tools, feature/release model,
-privacy rules, observability requirements, and M0--M13 implementation plan. It
-does not implement the future service layers.
+privacy rules, observability requirements, and M0--M13 implementation plan.
+The runtime-registration gate adds only the disabled bindings described in the
+addendum below.
 
 ## 2. Current-state evidence
 
@@ -60,7 +62,7 @@ written:
 | Orb source of truth | `orb/engine/README-WORKFLOWS.md` states that local workflow files are snapshots/exportations and the current browser/live n8n workflow is canonical. Orb runtime is PostgreSQL-backed and native-release based. | Orb schedules and recovers domain jobs only. Local JSON is never imported as live workflow truth by this mission. |
 | PostgreSQL conventions | The M1 registry artifact is additive and scoped. `crm/api/server/clinical/clinicalApprovalMigration.js` demonstrates destination checks, advisory locking, timeouts, schema ledgers, append-only triggers, and non-destructive rollback. | Future snapshot tables must follow additive migration, destination/grant gates, append-only evidence, and evidence-preserving rollback. No migration is applied by this ADR. |
 | Module/release policy | `docs/architecture/module-catalog.md` and `module-catalog.json` keep new modules experimental and require a disabled flag, grants, evidence, fallback, SLO, and rollback. CRM authorization is server-side in `crm/console/authPolicy.ts` and `crmRoleAccess.ts`. | Influencer Intelligence remains under the social capability and experimental/off until a later CRM milestone adds the required catalog and grant evidence. |
-| Runtime topology | `CODEX_CONTEXT.md`, `orb/engine/CODEX_CONTEXT.md`, and the delivery policies require immutable native releases, private runtime state, isolated worktrees, exact SHA evidence, and no production claim from health alone. | Architecture is source-controlled and runtime-free. Any future promotion must use the existing immutable release and rollback controls. |
+| Runtime topology | `CODEX_CONTEXT.md`, `orb/engine/CODEX_CONTEXT.md`, and the delivery policies require immutable native releases, private runtime state, isolated worktrees, exact SHA evidence, and no production claim from health alone. | The service/MCP bindings are registered on loopback only, disabled by default, and any promotion must use the existing immutable release and rollback controls. |
 
 ## 3. Boundaries
 
@@ -246,7 +248,8 @@ architecture PR does not mount these routes:
 
 | Method | Path | Semantics |
 | --- | --- | --- |
-| `GET` | `/internal/influencer-intelligence/v1/creators/{creatorKey}/analysis` | One creator's analysis envelope |
+| `GET` | `/internal/influencer-intelligence/v1/creators/{creatorKey}/analysis` | One creator's deterministic analysis envelope for MCP/read consumers |
+| `GET` | `/internal/influencer-intelligence/v1/creators/{creatorKey}/dashboard` | CRM-only assembled read projection; the public CRM `/analysis` path maps here |
 | `GET` | `/internal/influencer-intelligence/v1/creators/{creatorKey}/coverage` | Availability and provenance coverage |
 | `POST` | `/internal/influencer-intelligence/v1/compare` | Bounded comparison query; POST is transport for a read, not mutation |
 | `POST` | `/internal/influencer-intelligence/v1/campaign-fit` | Bounded Campaign Fit computation; no campaign is created or dispatched |
@@ -308,12 +311,13 @@ sanitization, a domain rate limit, a 12-second timeout/abort path, an audit
 event, and a read-only database role. The response is sanitized again before
 leaving the gateway.
 
-MCP delegates to the internal service. The M6 adapter is not a live transport
-registration; the existing gateway remains the owner of transport and
-upstream-authentication integration. The adapter cannot call Meta Graph or
-instagrapi, retrieve Token Vault material, run arbitrary SQL or shell, scrape,
-publish, engage, or mutate Orb/n8n workflows. Errors are reduced to stable
-codes and never include raw upstream payloads.
+MCP delegates to the internal service. The M6 adapter remains a pure domain
+adapter; the runtime-registration gate adds a separate loopback transport with
+bearer authentication, the fixed grant, bounded request/response limits and
+the same read-only audit posture. The adapter and transport cannot call Meta
+Graph or instagrapi directly, retrieve Token Vault material, run arbitrary SQL
+or shell, scrape, publish, engage, or mutate Orb/n8n workflows. Errors are
+reduced to stable codes and never include raw upstream payloads.
 
 ## 10. Feature flag and release model
 
@@ -325,10 +329,12 @@ grant=module.influencer-intelligence.access
 rollout=off -> shadow -> active
 ```
 
-The flag is not wired for users or runtime by this ADR or by M0--M5. The M3
-workflow source only checks the flag and remains inactive. A future CRM surface
-must add the module catalog evidence, server-side grant, explicit data scope,
-owner, fallback, SLO, smoke, and rollback identity before it can be activated.
+The registered service, MCP transport and CRM proxy all check the flag
+server-side; the default remains false and the units remain disabled. The M3
+workflow source only checks the flag and remains inactive. A future staging
+shadow run must add module catalog evidence, a least-privilege database role,
+Token Vault deployment, server-side grant, explicit data scope, owner,
+fallback, SLO, smoke, and rollback identity before it can be activated.
 Navigation visibility, a frontend flag, a generic role, a direct URL, or a
 successful health check is not authorization.
 
@@ -380,11 +386,12 @@ without the required audit evidence is not considered proven.
 
 M1's migration
 [`20260810_influencer_intelligence_registry_v1.up.sql`](../../social/influencer-intelligence/migrations/20260810_influencer_intelligence_registry_v1.up.sql)
-is an unapplied, additive proposal for the minimal registry. M3's separate
-additive artifacts for the data model, snapshot metadata, and scheduler opt-in
-are also unapplied and are reviewed independently. M5's separate scoring
-metadata artifact is likewise unapplied and is tied to the deterministic score
-algorithm and weights version.
+is an additive artifact applied only in the governed staging schema at the
+current checkpoint; production remains unapplied. M3's separate additive
+artifacts for the data model, snapshot metadata, scheduler opt-in and later
+score/comment/Campaign Fit metadata are applied only through the staging runner
+and are reviewed independently. M5's scoring metadata remains tied to the
+deterministic score algorithm and weights version.
 
 Future migrations must:
 
@@ -411,17 +418,18 @@ source-controlled migration artifacts; they do not apply them.
 | M0 | Pure normalized evidence/provenance/coverage/signal/score contracts | Merged in PR #1303; no network or persistence |
 | M1 | Minimal pseudonymous registry and additive PostgreSQL artifact | Merged in PR #1304; artifact only, not applied |
 | M2 | Official-first Meta router and controlled instagrapi boundary | Canonical router merged in PR #1324 (supersedes #1305); injected synthetic transports only |
-| M3 | Append-only snapshots, retention policy, and Orb job contract | Snapshots merged in PR #1331; inactive scheduler source merged in #1335; import/runtime pending |
+| M3 | Append-only snapshots, retention policy, and Orb job contract | Snapshots merged in PR #1331; inactive scheduler source merged in #1335; disabled service binding registered; import pending |
 | M4 | Robust analytics and outlier-resistant metrics | Merged in PR #1333; synthetic time-series fixtures and explicit unavailable coverage |
 | M5 | Deterministic score/confidence/provenance engine | Merged in PR #1334; versioned algorithms and golden evidence |
-| M6 | Hardened authenticated read-only MCP domain adapter | Tool schema, auth/grant, sanitization, limits, timeout, audit contract, read-only service delegation; runtime registration remains pending |
+| M6 | Hardened authenticated read-only MCP domain adapter | Tool schema, auth/grant, sanitization, limits, timeout, audit contract, read-only service delegation, and disabled loopback transport registration |
 | M7 | `skincos-influencer-intelligence` skill | Versioned trigger/output/boundary instructions and contract test use only the approved MCP; runtime/user access remains governed |
-| M8 | Read-only CRM API/dashboard | Implemented in source: bounded internal Pages proxy, typed client, gated shadow dashboard, server-side flag/grant and direct-provider negative tests; upstream remains unconfigured/off |
+| M8 | Read-only CRM API/dashboard | Implemented in source: bounded internal Pages proxy, typed client, gated shadow dashboard, signed upstream registration, server-side flag/grant and direct-provider negative tests; runtime remains off |
 | M9 | Minimized comments intelligence | Aggregate-only topics/sentiment/safety/spam signals and retention evidence |
 | M10 | Semantic content and Reels signals | Approved bounded media projection and model provenance |
 | M11 | Campaign/brand fit | Structured criteria, deterministic base, labeled inferred signals, additive persistence metadata, persisted read-only MCP/CRM projection |
 | M12 | Synthetic validation and calibration | Versioned synthetic dataset and deterministic report covering outliers, coverage, confidence, zero-denominators, follower-scale normalization, and separate Campaign Fit; no live provider calls |
 | M13 | Optional provider gap analysis | Source-implemented capability gap report/ADR; live coverage decision pending runtime evidence; no external provider integrated |
+| Runtime registration | Internal service, read-only MCP, CRM upstream and Orb binding | Loopback units and private auth source registered; units disabled, grant absent, workflow not imported, provider calls off |
 
 Each milestone remains off by default, uses a dedicated worktree/branch and
 single-purpose PR, records risk/surfaces/flag/migration/validation/rollback,
@@ -452,3 +460,39 @@ addition, it has no database, runtime, provider, session, user, or business
 data impact. If a later implementation contradicts this ADR, that milestone
 stops at the architecture gate and requires a new versioned ADR/manifest
 decision before implementation continues.
+
+## Runtime registration addendum
+
+The runtime-registration milestone is a controlled operational binding, not a
+promotion. It adds the following source surfaces:
+
+- `social/influencer-intelligence/runtime/server.mjs` exposes fixed internal
+  service routes on loopback and lazily composes the existing repository and
+  official Token Vault Meta transport only after all gates pass;
+- `social/influencer-intelligence/runtime/mcp-server.mjs` exposes a separate
+  loopback MCP transport, validates its private bearer and grant, and delegates
+  to the internal service instead of opening PostgreSQL or a provider path;
+- the CRM proxy signs version-2 upstream requests with actor scope, method,
+  path, query and the fixed module grant;
+- the inactive Orb source carries only a private service-token expression and
+  the fixed grant, retains bounded retries/concurrency/timeout, and remains
+  `active: false`;
+- `ops/runtime/units/influencer-intelligence.service` and
+  `influencer-intelligence-mcp.service` are strict unit templates installed by
+  `scripts/runtime/install-influencer-intelligence-runtime.sh`, which verifies
+  but never enables or starts them.
+
+The default private configuration is `INFLUENCER_INTELLIGENCE_ENABLED=false`
+with empty service/MCP/HMAC/Token Vault secrets. The service rejects active
+snapshot mode at this binding, does not accept arbitrary SQL/shell/provider
+paths, and records redacted audit events fail-closed. The runtime does not
+assign the CRM grant, deploy Token Vault, provision a runtime database role,
+import the Orb workflow, or call a live provider as part of registration.
+
+Validation is limited to synthetic contract tests, runtime syntax checks,
+workflow/static checks and dry-run systemd verification. Before a staging
+shadow run, operators must separately prove the staging Token Vault endpoint,
+scoped credential, dedicated least-privilege database role, authenticated
+service-to-service tokens, grant assignment and rollback identity. Rollback is
+to disable both exact units and restore the prior immutable release; historical
+rows are not deleted and no migration rollback is required.

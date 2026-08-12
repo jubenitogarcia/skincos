@@ -86,10 +86,10 @@ test('models evidence as append-only and provenance-complete', () => {
   assert.match(DATA_MODEL.invariants.join('\n'), /never silently imputed as zero/i);
 });
 
-test('maps the reviewed physical data-model artifact without enabling runtime', () => {
+test('maps the reviewed physical data-model artifact without enabling production runtime', () => {
   assert.equal(DATA_MODEL.persistence.migration, 'migrations/20260811_influencer_intelligence_data_model_v1.up.sql');
   assert.equal(DATA_MODEL.persistence.dependsOn, 'migrations/20260810_influencer_intelligence_registry_v1.up.sql');
-  assert.match(DATA_MODEL.persistence.artifactStatus, /not applied/i);
+  assert.match(DATA_MODEL.persistence.artifactStatus, /staging only/i);
   const relations = new Map(DATA_MODEL.persistence.relations.map((relation) => [relation.name, relation]));
   for (const name of [
     'creator_identity',
@@ -160,12 +160,13 @@ test('keeps API reads and MCP tools read-only while isolating Orb collection', (
   assert.match(MCP_CONTRACT.forbidden.join('\n'), /arbitrary SQL/i);
 });
 
-test('records the M7 skill as source-complete without enabling runtime access', () => {
+test('records the M7 skill and keeps access disabled after runtime registration', () => {
   const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M7');
   assert.match(milestone.status, /versioned skill and contract tests implemented/i);
-  assert.match(milestone.status, /later gates/i);
+  assert.match(milestone.status, /MCP\/runtime registration remains governed|later gates/i);
   assert.equal(FEATURE_ACCESS.defaultValue, false);
-  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeEnabled, false);
 });
 
 test('records M11 Campaign Fit as source-complete while keeping compute and runtime registration off', () => {
@@ -211,7 +212,7 @@ test('records M10 content analysis as source-complete without media/runtime wiri
   assert.equal(PRIVACY_CONTRACT.neverPersisted.includes('raw captions or transcripts'), true);
 });
 
-test('keeps this architecture milestone off and runtime-free', () => {
+test('keeps architecture activation off while recording disabled runtime registration', () => {
   assert.equal(FEATURE_ACCESS.defaultValue, false);
   assert.equal(FEATURE_ACCESS.initialMode, 'off');
   assert.equal(FEATURE_ACCESS.wired, false);
@@ -225,21 +226,28 @@ test('keeps this architecture milestone off and runtime-free', () => {
   assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowImported, false);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowActive, false);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpSourceAdded, true);
-  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeEnabled, false);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.crmSourceAdded, true);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.crmRuntimeEnabled, false);
-  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmUpstreamConfigured, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmUpstreamConfigured, true);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.crmFeatureFlagDefault, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.internalServiceRuntimeRegistered, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.internalServiceRuntimeEnabled, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.orbRuntimeRegistered, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.orbWorkflowImported, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.orbWorkflowActive, false);
+  assert.equal(RELEASE_CONTRACT.runtimeRegistration.registrationMarker, 'INFLUENCER_INTELLIGENCE_RUNTIME_REGISTERED=true');
 
   const source = fs.readFileSync(architecturePath, 'utf8');
   assert.doesNotMatch(source, /\b(?:fetch|spawn|exec|execFile|createServer|listen)\s*\(/i);
   assert.doesNotMatch(source, /from\s+['"](?:node:)?(?:http|https|net|tls|child_process|pg)['"]/i);
 });
 
-test('covers architecture plus every M0-M13 milestone', () => {
+test('covers architecture plus every M0-M13 milestone and runtime registration gate', () => {
   const ids = IMPLEMENTATION_PLAN.map(({ id }) => id);
   assert.equal(ids[0], 'architecture');
-  assert.deepEqual(ids.slice(1), Array.from({ length: 14 }, (_, index) => `M${index}`));
+  assert.deepEqual(ids.slice(1), [...Array.from({ length: 14 }, (_, index) => `M${index}`), 'runtime-registration']);
 });
 
 test('keeps the ADR synchronized with the required architecture decisions', () => {

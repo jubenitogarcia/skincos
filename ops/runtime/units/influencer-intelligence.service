@@ -1,0 +1,31 @@
+[Unit]
+Description=SKINCOS Influencer Intelligence internal service (registered, flag-gated)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+WorkingDirectory=__REPO_ROOT__
+EnvironmentFile=-__CONFIG_ROOT__/influencer-intelligence.env
+Environment=INFLUENCER_INTELLIGENCE_RUNTIME_REGISTERED=true
+Environment=INFLUENCER_INTELLIGENCE_SERVICE_HOST=127.0.0.1
+Environment=INFLUENCER_INTELLIGENCE_SERVICE_PORT=8899
+Environment=INFLUENCER_INTELLIGENCE_AUDIT_PATH=__LOG_ROOT__/influencer-intelligence/service-audit.jsonl
+ExecStart=/usr/bin/node __REPO_ROOT__/social/influencer-intelligence/runtime/server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=20
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=__REPO_ROOT__
+ReadWritePaths=__STATE_ROOT__/influencer-intelligence __LOG_ROOT__/influencer-intelligence
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

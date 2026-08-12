@@ -1,8 +1,10 @@
 # Influencer Intelligence MCP read-only adapter
 
 M6 defines the domain adapter for the existing
-`orb/engine/mcp-readonly-gateway` security pattern. It is source-controlled but
-not registered in a live transport, imported into Orb, or enabled for users.
+`orb/engine/mcp-readonly-gateway` security pattern. The runtime-registration
+gate now provides a separate loopback HTTP binding for the adapter, but the
+unit is installed disabled, the module flag is false, the bearer token is
+empty by default, and no user grant is assigned.
 The adapter accepts an already authenticated context and an injected internal
 read service. It never opens a provider connection, reads PostgreSQL directly,
 executes SQL or shell, calls Token Vault, or starts a collection job.
@@ -80,10 +82,21 @@ components, algorithm/weights versions, conflicts, and provenance.
 
 ## Runtime status and rollback
 
-This milestone adds no migration, route, systemd unit, Orb import, provider
-call, credential access, grant assignment, or feature-flag change. Keep
-`INFLUENCER_INTELLIGENCE_ENABLED=false`, `mcpRuntimeRegistered=false`, and the
-domain in `off` until the internal service and later M7/M8 gates are proven.
+The runtime binding is `runtime/mcp-server.mjs` on loopback `127.0.0.1:8767`.
+It requires a private bearer token and the fixed
+`module.influencer-intelligence.access` grant, then delegates every tool to
+the internal service at the fixed read routes. It does not access PostgreSQL,
+providers, Token Vault, Orb workflows, or Instagram directly. The service
+binding and MCP transport both fail closed when the feature flag is false.
+
+Registration adds no live provider call, credential access, grant assignment,
+workflow import, or production activation. Keep
+`INFLUENCER_INTELLIGENCE_ENABLED=false`, `mcpRuntimeRegistered=true`, and
+`mcpRuntimeEnabled=false` until staging Token Vault, database-role,
+authentication and synthetic shadow evidence are independently proven.
+
+Rollback is disabling the exact MCP and service units and restoring the prior
+immutable source release; no database or historical data rollback is needed.
 
 Rollback is a revert or closure of the single-purpose M6 change. No database,
 provider session, workflow, or user-visible state is created by this adapter.

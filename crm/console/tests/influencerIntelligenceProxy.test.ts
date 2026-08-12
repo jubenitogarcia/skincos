@@ -41,10 +41,12 @@ describe('Influencer Intelligence CRM internal proxy', () => {
     expect(payload).toEqual({ data: { creatorKey: 'creator-1', handle: 'synthetic' } })
     expect(fetchMock).toHaveBeenCalledOnce()
     const upstream = fetchMock.mock.calls[0][0] as Request
-    expect(upstream.url).toBe('http://127.0.0.1:8899/internal/influencer-intelligence/v1/creators/creator-1/analysis')
+    expect(upstream.url).toBe('http://127.0.0.1:8899/internal/influencer-intelligence/v1/creators/creator-1/dashboard')
     expect(upstream.headers.get('cookie')).toBeNull()
     expect(upstream.headers.get('authorization')).toBeNull()
     expect(upstream.headers.get('x-crm-actor-scope')).toMatch(/^[a-f0-9]{64}$/)
+    expect(upstream.headers.get('x-crm-signature-version')).toBe('2')
+    expect(upstream.headers.get('x-crm-grant')).toBe('module.influencer-intelligence.access')
     expect(upstream.headers.get('x-influencer-audit')).toBe('required')
   })
 
@@ -61,5 +63,10 @@ describe('Influencer Intelligence CRM internal proxy', () => {
     expect(__testables.validateBody('/compare', { creatorKeys: ['a'], sql: 'select 1' })).toBe(false)
     expect(__testables.validateBody('/campaign-fit', { campaignKey: 'campaign-1', campaignVersion: 1, creatorKeys: ['a', 'b'] })).toBe(true)
     expect(__testables.validateBody('/campaign-fit', { campaignKey: 'campaign-1', brief: { category: 'skincare' } })).toBe(false)
+  })
+
+  it('accepts encoded opaque creator keys while keeping the dashboard mapping internal', () => {
+    expect(__testables.isAllowedRoute('/v1/creators/creator%3Aabc123/analysis', 'GET')).toBe(true)
+    expect(__testables.targetUrl('http://127.0.0.1:8899', '/v1/creators/creator%3Aabc123/analysis', '')).toBe('http://127.0.0.1:8899/internal/influencer-intelligence/v1/creators/creator%3Aabc123/dashboard')
   })
 })
