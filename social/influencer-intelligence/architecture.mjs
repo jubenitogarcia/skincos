@@ -161,8 +161,9 @@ export const DATA_MODEL = deepFreeze({
   ],
   persistence: {
     migration: 'migrations/20260811_influencer_intelligence_data_model_v1.up.sql',
+    additiveMigrations: ['migrations/20260812_influencer_intelligence_comments_v1.up.sql'],
     dependsOn: 'migrations/20260810_influencer_intelligence_registry_v1.up.sql',
-    artifactStatus: 'source-controlled additive artifact; not applied by this milestone',
+    artifactStatus: 'source-controlled additive artifacts; not applied by this milestone',
     appendOnlyRelations: [
       'collector_evidence',
       'creator_profile_snapshot',
@@ -340,6 +341,9 @@ export const RELEASE_CONTRACT = deepFreeze({
     crmRuntimeEnabled: false,
     crmUpstreamConfigured: false,
     crmFeatureFlagDefault: false,
+    commentsSourceAdded: true,
+    commentsMigrationArtifactAdded: true,
+    commentsRuntimeWired: false,
   },
 });
 
@@ -371,7 +375,7 @@ export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'M6', title: 'Hardened read-only MCP', status: 'source adapter and protocol tests implemented; runtime registration pending', acceptance: ['auth', 'sanitization', 'rate limit', 'timeout', 'audit', 'bounded tools', 'read-only role'] },
   { id: 'M7', title: 'Codex skill', status: 'versioned skill and contract tests implemented; MCP/runtime registration remains governed by later gates', acceptance: ['read-only tool use', 'safe question routing', 'no provider or shell bypass'] },
   { id: 'M8', title: 'CRM read-only surface', status: 'internal proxy, typed client, gated shadow dashboard, and synthetic UI tests implemented; upstream/runtime remains off', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
-  { id: 'M9', title: 'Comments intelligence', status: 'pending', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
+  { id: 'M9', title: 'Comments intelligence', status: 'source implemented; aggregate-only analyzer, additive persistence metadata, and synthetic tests; runtime/provider wiring remains off', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
   { id: 'M10', title: 'Semantic content and Reels signals', status: 'pending', acceptance: ['approved media projection', 'no raw media archive by default', 'versioned inference'] },
   { id: 'M11', title: 'Campaign and brand fit', status: 'pending', acceptance: ['structured criteria', 'explainable deterministic base', 'inferred signals labeled'] },
   { id: 'M12', title: 'Synthetic validation and calibration', status: 'pending', acceptance: ['fixtures', 'outlier tests', 'coverage/confidence calibration', 'negative policy tests'] },

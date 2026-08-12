@@ -167,6 +167,18 @@ test('records the M7 skill as source-complete without enabling runtime access', 
   assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, false);
 });
 
+test('records M9 comments intelligence as source-complete without wiring runtime collection', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M9');
+  assert.match(milestone.status, /aggregate-only analyzer/i);
+  assert.match(milestone.status, /runtime\/provider wiring remains off/i);
+  assert.deepEqual(DATA_MODEL.persistence.additiveMigrations, [
+    'migrations/20260812_influencer_intelligence_comments_v1.up.sql',
+  ]);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsMigrationArtifactAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsRuntimeWired, false);
+});
+
 test('keeps this architecture milestone off and runtime-free', () => {
   assert.equal(FEATURE_ACCESS.defaultValue, false);
   assert.equal(FEATURE_ACCESS.initialMode, 'off');
