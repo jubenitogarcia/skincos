@@ -82,6 +82,44 @@ test('normalizes a provider snapshot without carrying raw profile payloads', () 
   assert.equal(Object.isFrozen(snapshot.observations[0]), true);
 });
 
+test('does not allow an observed snapshot to contain derived observations', () => {
+  assertContractError(() => normalizeProviderSnapshot({
+    creatorKey: 'creator:synthetic-001',
+    provider: 'meta-graph',
+    observedAt,
+    evidenceState: 'observed',
+    provenance: provenance(),
+    observations: [
+      {
+        key: 'engagement_rate',
+        unit: 'ratio',
+        value: 0.04,
+        evidenceState: 'derived',
+        provenance: provenance({ evidenceState: 'derived' }),
+      },
+    ],
+  }), /cannot be more optimistic/);
+});
+
+test('does not allow an observed snapshot when every observation is unavailable', () => {
+  assertContractError(() => normalizeProviderSnapshot({
+    creatorKey: 'creator:synthetic-001',
+    provider: 'meta-graph',
+    observedAt,
+    evidenceState: 'observed',
+    provenance: provenance(),
+    observations: [
+      {
+        key: 'reach',
+        unit: 'count',
+        value: null,
+        evidenceState: 'unavailable',
+        provenance: provenance({ sourceType: 'insights', evidenceState: 'unavailable' }),
+      },
+    ],
+  }), /no available observations/);
+});
+
 test('rejects credentials and direct contact identifiers at the contract boundary', () => {
   assertContractError(() => normalizeProviderSnapshot({
     creatorKey: 'creator:synthetic-001',

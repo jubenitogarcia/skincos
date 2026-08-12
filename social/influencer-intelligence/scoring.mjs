@@ -375,7 +375,20 @@ function normalizeAnalytics(analytics) {
   assertRecord(analytics.coverage, 'analytics.coverage');
   const coverageRatio = finite(analytics.coverage.ratio, 'analytics.coverage.ratio', { minimum: 0, maximum: 1 });
   const providers = unique(Array.isArray(analytics.providers) ? analytics.providers : []);
-  const provenance = Array.isArray(analytics.provenance) ? analytics.provenance : [];
+  const rawProvenance = analytics.provenance === undefined ? [] : analytics.provenance;
+  if (!Array.isArray(rawProvenance)) fail('INVALID_ANALYTICS_EVIDENCE', 'analytics.provenance must be an array');
+  const provenance = rawProvenance.map((item, index) => {
+    assertRecord(item, `analytics.provenance[${index}]`);
+    boundedString(item.sourceRef, `analytics.provenance[${index}].sourceRef`);
+    return item;
+  });
+  const rawSnapshotKeys = analytics.inputSnapshotKeys === undefined ? [] : analytics.inputSnapshotKeys;
+  if (!Array.isArray(rawSnapshotKeys)) fail('INVALID_ANALYTICS_EVIDENCE', 'analytics.inputSnapshotKeys must be an array');
+  if (rawSnapshotKeys.length > 128) fail('INVALID_ANALYTICS_EVIDENCE', 'analytics.inputSnapshotKeys may contain at most 128 references');
+  const inputSnapshotKeys = rawSnapshotKeys.map((value, index) => boundedString(value, `analytics.inputSnapshotKeys[${index}]`));
+  if (evidenceState === 'derived' && inputSnapshotKeys.length === 0 && provenance.length === 0) {
+    fail('INVALID_ANALYTICS_EVIDENCE', 'derived analytics require at least one input snapshot or provenance reference');
+  }
   const history = analytics.history === undefined || analytics.history === null
     ? legacyHistorySummary(analytics)
     : (() => {
@@ -387,7 +400,7 @@ function normalizeAnalytics(analytics) {
         mediaMetricObservationCount: boundedInteger(analytics.history.mediaMetricObservationCount ?? 0, 'analytics.history.mediaMetricObservationCount', { maximum: 100000 }),
       };
     })();
-  return { ...analytics, creatorKey, calculatedAt, evidenceState, coverageRatio, providers, provenance, history };
+  return { ...analytics, creatorKey, calculatedAt, evidenceState, coverageRatio, providers, provenance, inputSnapshotKeys, history };
 }
 
 function legacyCount(value) {
