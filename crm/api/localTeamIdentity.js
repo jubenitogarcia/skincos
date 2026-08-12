@@ -6,15 +6,17 @@
  * proposal.
  */
 export function normalizeLocalCrmAccountLink(member = {}) {
+    const linkId = String(member.crmAccountLinkId || '').trim() || null
     const username = String(member.crmAccountUsername || '').trim() || null
     const reviewStatus = String(
         member.crmAccountReviewStatus || (member.crmAccountLinked === false ? '' : 'CONFIRMED'),
     ).trim().toUpperCase() || null
 
     return {
+        linkId,
         username,
         reviewStatus,
-        linked: reviewStatus === 'CONFIRMED' && Boolean(username),
-        inconsistent: reviewStatus === 'CONFIRMED' && !username,
+        linked: reviewStatus === 'CONFIRMED' && Boolean(linkId) && Boolean(username),
+        inconsistent: reviewStatus === 'CONFIRMED' && (!linkId || !username),
     }
 }

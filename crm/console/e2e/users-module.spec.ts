@@ -32,19 +32,25 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByText('Exibindo 51–54 de 54', { exact: true })).toBeVisible()
   })
 
-  test('keeps identity, operation, invite and read-only editing in one auditable flow', async ({ page }) => {
+  test('keeps business editing in one flow and gates Escala to Injetor', async ({ page }) => {
     await mockUsersApi(page)
     await page.goto('/?module=users')
     await page.getByRole('button', { name: 'Editar Ana Ribeiro' }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Editar membro da equipe' })).toBeVisible()
     await expect(page.getByRole('tablist')).toHaveCount(0)
     await expect(page.getByText('Vínculo operacional da Escala', { exact: true })).toBeVisible()
     await expect(page.getByRole('switch', { name: 'Status na Escala' })).toBeChecked()
     await expect(page.getByLabel('Função na Escala')).toHaveValue('Injetor')
     await expect(page.getByLabel('Função na Escala')).toHaveAttribute('readonly', '')
+    await expect(page.getByText('Conta CRM vinculada', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('Vínculos de identidade', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Registrar vínculo' })).toHaveCount(0)
     await page.getByRole('button', { name: 'Fechar' }).click()
 
     await page.getByRole('button', { name: 'Editar Lucas Mendes' }).click()
+    await expect(page.getByText('Vínculo operacional da Escala', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('switch', { name: 'Status na Escala' })).toHaveCount(0)
     page.once('dialog', (dialog) => dialog.accept())
     await page.getByRole('button', { name: 'Reenviar convite' }).click()
     await expect(page.getByRole('dialog')).toBeHidden()
@@ -59,6 +65,7 @@ test.describe('Usuários e Equipe', () => {
   test('exposes native required semantics for the unified employee form', async ({ page }) => {
     await mockUsersApi(page)
     await page.goto('/?module=users')
+    await expect(page.getByRole('heading', { name: 'Equipe' })).toBeVisible()
     await page.getByRole('button', { name: 'Cadastrar funcionário' }).click()
     await expect(page.getByRole('tablist')).toHaveCount(0)
     await expect(page.getByLabel('Nome completo')).toHaveAttribute('required', '')
@@ -73,10 +80,11 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByRole('group', { name: 'Unidades de acesso' })).toHaveAttribute('aria-required', 'true')
     await expect(page.getByRole('button', { name: 'Novo Hamburgo' })).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByRole('button', { name: 'Barra Shopping Sul' })).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByRole('switch', { name: 'Status na Escala' })).toBeChecked()
-    await expect(page.getByLabel('Função na Escala')).toHaveValue('Consultor')
+    await expect(page.getByRole('switch', { name: 'Status na Escala' })).toHaveCount(0)
+    await expect(page.getByLabel('Função na Escala')).toHaveCount(0)
     await page.getByRole('combobox', { name: 'Cargo' }).click()
     await page.getByRole('option', { name: 'Injetor' }).click()
+    await expect(page.getByRole('switch', { name: 'Status na Escala' })).toBeChecked()
     await expect(page.getByLabel('Função na Escala')).toHaveValue('Injetor')
     await page.getByLabel('Celular').fill('abc51997929226')
     await expect(page.getByLabel('Celular')).toHaveValue('(51) 99792-9226')
@@ -95,22 +103,25 @@ test.describe('Usuários e Equipe', () => {
     await page.getByRole('button', { name: 'Fechar' }).click()
   })
 
-  test('registers explicit operational links without name-based matching', async ({ page }) => {
-    await mockUsersApi(page)
-    await page.goto('/?module=users')
-    await page.getByRole('button', { name: 'Editar Ana Ribeiro' }).click()
-    await page.getByLabel('Identificador').fill('e2e-escala-ana-manual')
-    await page.getByRole('button', { name: 'Registrar vínculo' }).click()
-    await expect(page.getByText('e2e-escala-ana-manual', { exact: true })).toBeVisible()
-    await expect(page.getByText('Revisão pendente', { exact: true })).toBeVisible()
-  })
-
-  test('retries a failed Escala synchronization from the unified member modal', async ({ page }) => {
+  test('does not expose technical link reconciliation controls', async ({ page }) => {
     await mockUsersApi(page)
     await page.goto('/?module=users')
     await page.getByRole('combobox', { name: 'Filtrar status' }).click()
     await page.getByRole('option', { name: 'Todos os estados' }).click()
     await page.getByRole('button', { name: 'Editar Carla Souza' }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('Conta CRM vinculada', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByText('Vínculos de identidade', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByText('legacycarla', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: /Confirmar|Rejeitar|Registrar vínculo|Propor vínculo/ })).toHaveCount(0)
+  })
+
+  test('retries a failed Escala synchronization from the unified member modal', async ({ page }) => {
+    await mockUsersApi(page, 'GESTOR', { failedScheduleFor: 'e2e-ana' })
+    await page.goto('/?module=users')
+    await page.getByRole('combobox', { name: 'Filtrar status' }).click()
+    await page.getByRole('option', { name: 'Todos os estados' }).click()
+    await page.getByRole('button', { name: 'Editar Ana Ribeiro' }).click()
     await expect(page.getByRole('dialog').getByText('Falhou', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Tentar novamente' }).click()
     await expect(page.getByRole('dialog').getByText('Sincronizada', { exact: true })).toBeVisible()
@@ -132,27 +143,28 @@ test.describe('Usuários e Equipe', () => {
     await expect(lucasRow.getByText('Ativo', { exact: true })).toBeVisible()
   })
 
-  test('resolves a pending operational link with an explicit review action', async ({ page }) => {
+  test('saves business fields without requiring technical link input', async ({ page }) => {
     await mockUsersApi(page)
     await page.goto('/?module=users')
-    await page.getByRole('combobox', { name: 'Filtrar status' }).click()
-    await page.getByRole('option', { name: 'Todos os estados' }).click()
-    await page.getByRole('button', { name: 'Editar Carla Souza' }).click()
-    page.once('dialog', (dialog) => dialog.accept())
-    await page.getByRole('button', { name: 'Confirmar vínculo e2e-escala-carla' }).click()
-    await expect(page.getByText('Confirmado', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Editar Lucas Mendes' }).click()
+    await page.getByRole('combobox', { name: 'Departamento' }).click()
+    await page.getByRole('option', { name: 'Recepção' }).click()
+    await page.getByRole('button', { name: 'Salvar alterações' }).click()
+    await expect(page.getByRole('dialog')).toBeHidden()
+    await expect(page.getByRole('row').filter({ hasText: 'Lucas Mendes' }).getByText('Recepção', { exact: true })).toBeVisible()
   })
 
-  test('resolves a legacy CRM account only through exact username review', async ({ page }) => {
-    await mockUsersApi(page)
+  test('blocks unified edits while the server feature flag is off without using legacy PUT', async ({ page }) => {
+    const legacyPutRequests: string[] = []
+    page.on('request', (request) => {
+      if (request.method() === 'PUT' && request.url().includes('/api/crm/admin/onboarding')) legacyPutRequests.push(request.url())
+    })
+    await mockUsersApi(page, 'GESTOR', { unifiedEnabled: false })
     await page.goto('/?module=users')
-    await page.getByRole('combobox', { name: 'Filtrar status' }).click()
-    await page.getByRole('option', { name: 'Todos os estados' }).click()
-    await page.getByRole('button', { name: 'Editar Carla Souza' }).click()
-    await expect(page.getByText('legacycarla', { exact: true })).toBeVisible()
-    page.once('dialog', (dialog) => dialog.accept())
-    await page.getByRole('button', { name: 'Confirmar conta CRM legacycarla' }).click()
-    await expect(page.getByText('Confirmada', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Editar Ana Ribeiro' }).click()
+    await page.getByRole('button', { name: 'Salvar alterações' }).click()
+    await expect(page.getByRole('alert').filter({ hasText: 'A gestão centralizada está desligada neste ambiente. Nenhuma alteração foi enviada.' })).toBeVisible()
+    expect(legacyPutRequests).toEqual([])
   })
 
   test('does not overflow at 390, 768 or 1280 pixels', async ({ page }) => {
