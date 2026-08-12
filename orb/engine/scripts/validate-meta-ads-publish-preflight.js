@@ -9,10 +9,11 @@ const {
 const { CODE_SOURCES } = require('./lib/meta-ads-publish-code-sources');
 const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
 const {
-  CRM_URL: CRM_COMMERCIAL_CATALOG_URL,
   FETCH_NODE: CRM_FETCH_NODE,
+  isSupportedCrmContextUrl,
   validate: validateCrmContextPrefetch,
 } = require('./patch-meta-ads-crm-context-prefetch');
+const { validate: validateAdvantagePlusDriftReadback } = require('./patch-meta-ads-advantage-plus-drift-readback');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 
@@ -35,7 +36,7 @@ function structuralContractDrift(nodes, connections) {
   const sheets = nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheetsTool');
   if (sheets.length) drift.push({ contract: 'commercial_offer_source', reason: 'google_sheets_tool_present', nodes: sheets.map((node) => node.name) });
   const crmFetch = nodes.find((node) => node.name === CRM_FETCH_NODE);
-  if (!crmFetch || crmFetch.type !== 'n8n-nodes-base.httpRequest' || crmFetch.parameters?.authentication !== 'genericCredentialType' || crmFetch.parameters?.genericAuthType !== 'httpBearerAuth' || !crmFetch.credentials?.httpBearerAuth?.id || !String(crmFetch.parameters?.url || '').includes(CRM_COMMERCIAL_CATALOG_URL)) {
+  if (!crmFetch || crmFetch.type !== 'n8n-nodes-base.httpRequest' || crmFetch.parameters?.authentication !== 'genericCredentialType' || crmFetch.parameters?.genericAuthType !== 'httpBearerAuth' || !crmFetch.credentials?.httpBearerAuth?.id || !isSupportedCrmContextUrl(crmFetch.parameters?.url)) {
     drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_prefetch_request_invalid' });
   }
   try {
@@ -68,6 +69,15 @@ function videoUploadContractDrift(workflow) {
     return [];
   } catch (error) {
     return [{ contract: 'video_upload_replay', reason: String(error.message || error) }];
+  }
+}
+
+function advantagePlusDriftReadbackContractDrift(workflow) {
+  try {
+    validateAdvantagePlusDriftReadback(workflow);
+    return [];
+  } catch (error) {
+    return [{ contract: 'advantage_plus_graph_drift_readback', reason: String(error.message || error) }];
   }
 }
 
@@ -152,6 +162,7 @@ async function main() {
     const settings = parseJson(workflow.settings, {});
     const structuralDrift = structuralContractDrift(nodes, connections);
     const videoUploadDrift = videoUploadContractDrift({ ...workflow, id: WORKFLOW_ID, nodes, connections });
+    const advantagePlusDriftReadbackDrift = advantagePlusDriftReadbackContractDrift({ ...workflow, id: WORKFLOW_ID, nodes, connections });
     const creativeDrift = creativeContractDrift(nodes);
     const report = {
       workflow_id: WORKFLOW_ID,
@@ -166,6 +177,8 @@ async function main() {
       crm_catalog_contract_drift: structuralDrift,
       video_upload_contract_synchronized: videoUploadDrift.length === 0,
       video_upload_contract_drift: videoUploadDrift,
+      advantage_plus_graph_drift_readback_contract_synchronized: advantagePlusDriftReadbackDrift.length === 0,
+      advantage_plus_graph_drift_readback_contract_drift: advantagePlusDriftReadbackDrift,
       creative_payload_contract_synchronized: creativeDrift.length === 0,
       creative_payload_contract_drift: creativeDrift,
       manual_execution_audit: manualExecutionAuditState(settings),
@@ -176,7 +189,7 @@ async function main() {
       service_restarts_performed: false,
     };
     console.log(JSON.stringify(report, null, 2));
-    if (drift.length || structuralDrift.length || videoUploadDrift.length || creativeDrift.length) process.exitCode = 1;
+    if (drift.length || structuralDrift.length || videoUploadDrift.length || advantagePlusDriftReadbackDrift.length || creativeDrift.length) process.exitCode = 1;
   } finally {
     await client.end();
   }
