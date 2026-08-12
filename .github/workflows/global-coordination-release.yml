@@ -12,6 +12,10 @@ on:
       coordinator_url:
         required: true
         type: string
+      key_id:
+        required: false
+        default: ''
+        type: string
     secrets:
       SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:
         required: true
@@ -32,6 +36,7 @@ jobs:
         env:
           SKINCOS_GLOBAL_COORDINATOR_URL: ${{ inputs.coordinator_url }}
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ inputs.key_id }}
           GLOBAL_PROOF_B64: ${{ inputs.proof_b64 }}
           GLOBAL_PROOF_FILE: ${{ runner.temp }}/skincos-global-coordination-proof.json
         run: |

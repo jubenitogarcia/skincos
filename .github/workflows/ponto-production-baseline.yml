@@ -47,7 +47,7 @@ jobs:
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
-      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
     with:
       required: true
       global_lease_required: true
@@ -142,7 +142,8 @@ jobs:
           required: 'true'
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_b64: ${{ needs.orchestrator.outputs.global_proof_b64 }}
           resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
           module: ponto
@@ -268,8 +269,9 @@ jobs:
     if: ${{ always() && needs.orchestrator.outputs.global_lease_required == 'true' }}
     uses: ./.github/workflows/global-coordination-release.yml
     secrets:
-      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
     with:
       required: true
       proof_b64: ${{ needs.orchestrator.outputs.global_proof_b64 }}
       coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}
+      key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
