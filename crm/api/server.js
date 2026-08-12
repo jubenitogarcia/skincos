@@ -2060,6 +2060,7 @@ if (DEV_AUTH_ENABLED) {
         const hierarchyError = localTeamHierarchyError(session, member.profile, member.units)
         if (hierarchyError) return res.status(403).json({ success: false, error: 'Hierarquia não permite reenviar este convite', code: hierarchyError })
         if (!['INVITED', 'PENDING_ACCESS'].includes(String(member.accountStatus || '').toUpperCase())) return res.status(409).json({ success: false, error: 'Somente convites pendentes podem ser reenviados', code: 'TEAM_INVITE_NOT_PENDING' })
+        if (!String(member.workforceEmployeeId || '').trim()) return res.status(409).json({ success: false, error: 'Reconcilie o vínculo Workforce antes de reenviar o convite', code: 'TEAM_WORKFORCE_BINDING_REQUIRED' })
         store.invites.forEach((invite) => { if (invite.id === member.inviteId && !invite.revoked) invite.revoked = true })
         const at = new Date().toISOString()
         const inviteId = `local-invite-${randomUUID()}`

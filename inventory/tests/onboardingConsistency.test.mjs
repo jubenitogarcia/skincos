@@ -117,6 +117,43 @@ test('invite activation has an audited retry boundary and does not mint a second
   assert.doesNotMatch(activationBlock, /randomInviteToken\(\)/);
 });
 
+test('Workforce recovery is backend-only and invitation delivery fails closed without a binding', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const localApi = await readFile(new URL('../../crm/api/server.js', import.meta.url), 'utf8');
+  const reconcileBlock = admin.slice(
+    admin.indexOf('const reconcileWorkforceMatch'),
+    admin.indexOf('const resendInviteMatch'),
+  );
+  const resendBlock = admin.slice(
+    admin.indexOf('const resendInviteMatch'),
+    admin.indexOf('const revokeInviteMatch'),
+  );
+  const localResendBlock = localApi.slice(
+    localApi.indexOf("app.post(['/api/crm/admin/team/:id/invite/resend'"),
+    localApi.indexOf("app.post(['/api/crm/admin/team/:id/invite/revoke'"),
+  );
+  const updateBlock = admin.slice(admin.indexOf('const teamMemberMatch'), admin.indexOf("if (url.pathname === '/admin/team' && request.method === 'GET')"));
+
+  assert.match(reconcileBlock, /workforce.*reconcile/);
+  assert.match(reconcileBlock, /syncIdentityWorkforceOnboarding\(env/);
+  assert.match(reconcileBlock, /EMPLOYEE_TEAM_WORKFORCE_RECONCILED/);
+  assert.match(reconcileBlock, /inviteDeliveryChanged: false/);
+  assert.doesNotMatch(reconcileBlock, /sendAccountInviteEmail/);
+  assert.match(resendBlock, /TEAM_WORKFORCE_BINDING_REQUIRED/);
+  assert.ok(
+    resendBlock.indexOf('TEAM_WORKFORCE_BINDING_REQUIRED') < resendBlock.indexOf('UPDATE ${invitesTable} SET revoked=1'),
+    'the resend guard must run before any invite revocation',
+  );
+  assert.match(localResendBlock, /TEAM_WORKFORCE_BINDING_REQUIRED/);
+  assert.ok(
+    localResendBlock.indexOf('TEAM_WORKFORCE_BINDING_REQUIRED') < localResendBlock.indexOf('store.invites.forEach'),
+    'the local preview guard must run before any invite revocation',
+  );
+  assert.match(updateBlock, /const workforce = await syncIdentityWorkforceOnboarding\(env/);
+  assert.match(updateBlock, /sets\.push\('workforce_employee_id=\?'\)/);
+  assert.match(updateBlock, /UPDATE crm_employee_team SET workforce_employee_id=\?/);
+});
+
 test('onboarding status changes stay hierarchical, synchronized, audited and fail closed', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   assert.ok(admin.includes("const statusMatch = url.pathname.match(/^\\/admin\\/(onboarding|team)\\/([^/]+)\\/status$/);"));
