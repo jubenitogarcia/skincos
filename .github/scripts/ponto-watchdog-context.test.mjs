@@ -57,6 +57,22 @@ test("watchdog accepts only an exact failed first-attempt coordinator from main"
   assert.equal(context.releaseSha, sha);
 });
 
+test("watchdog accepts a closure-compatible main revision for an immutable release", async () => {
+  const observedSha = "b".repeat(40);
+  const sourceChecks = [];
+  const context = await validateWatchdogContext(input({
+    event: { workflow_run: { ...event.workflow_run, head_sha: observedSha } },
+    request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
+      ? workflow
+      : { ...run, head_sha: observedSha },
+    assertReleaseSource: (releaseSha, currentSha) => {
+      sourceChecks.push([releaseSha, currentSha]);
+    },
+  }));
+  assert.equal(context.releaseSha, sha);
+  assert.deepEqual(sourceChecks, [[sha, observedSha]]);
+});
+
 test("watchdog closes both successful and failed unauthorized reruns", async () => {
   for (const conclusion of ["success", "failure"]) {
     const replay = { ...run, run_attempt: 2, conclusion };

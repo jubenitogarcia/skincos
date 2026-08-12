@@ -795,7 +795,11 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     || issuer?.conclusion != null
     || issuer?.event !== "workflow_dispatch"
     || issuer?.head_branch !== (delegatedIssuer ? releaseTag : "main")
-    || issuer?.head_sha !== releaseSha
+    // The direct issuer is the canonical root on main. It was already
+    // attested through assertObservedPontoSource by canonicalOrchestrator,
+    // which permits a documented disjoint main advance. A delegated issuer
+    // is itself tag-pinned and must remain exact.
+    || (delegatedIssuer && issuer?.head_sha !== releaseSha)
     || issuer?.repository?.full_name !== repository
     || String(issuer?.repository?.id || "") !== repositoryId
     || issuer?.head_repository?.full_name !== repository

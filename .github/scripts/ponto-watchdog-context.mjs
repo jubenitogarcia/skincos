@@ -1,9 +1,23 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { assertPontoSourceClosureUnchanged } from "./ponto-source-closure.mjs";
 
 const TITLE = /^Ponto (preview|staging|pilot|canary|production|rollback) ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/;
 const FAILURE_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out"]);
+
+function sourceMatchesImmutableRelease(releaseSha, observedSha, assertSource) {
+  const release = String(releaseSha || "").trim().toLowerCase();
+  const observed = String(observedSha || "").trim().toLowerCase();
+  if (!release || !observed) return false;
+  if (release === observed) return true;
+  try {
+    assertSource(release, observed);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const targetForStage = (stage) => {
   if (stage === "preview") return null;
@@ -20,6 +34,7 @@ export async function validateWatchdogContext({
   gitRef,
   watchdogRunAttempt,
   request: requestOverride,
+  assertReleaseSource = assertPontoSourceClosureUnchanged,
 }) {
   if (
     !repository?.includes("/")
@@ -48,6 +63,11 @@ export async function validateWatchdogContext({
     request(`/repos/${repository}/actions/runs/${eventRun.id}`),
   ]);
   const match = TITLE.exec(String(run?.display_title || ""));
+  const sourceMatchesRelease = sourceMatchesImmutableRelease(
+    match?.[2],
+    run?.head_sha,
+    assertReleaseSource,
+  );
   const runAttempt = Number(run?.run_attempt);
   const eventAttempt = Number(eventRun?.run_attempt);
   const unauthorizedReplay = Number.isInteger(runAttempt) && runAttempt > 1;
@@ -77,7 +97,7 @@ export async function validateWatchdogContext({
     || String(run?.head_repository?.id || "") !== String(repositoryId)
     || !match
     || String(run.id) !== match[3]
-    || String(run.head_sha || "").toLowerCase() !== match[2]
+    || !sourceMatchesRelease
     || eventRun.workflow_id !== workflow.id
     || eventRun.path !== run.path
     || eventRun.head_sha !== run.head_sha
