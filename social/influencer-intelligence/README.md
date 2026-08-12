@@ -367,7 +367,7 @@ production configuration.
 | M10 | Semantic content and Reels signals | Source implemented; bounded feature projection, closed semantic schema, fixtures and persistence boundary; media/runtime adapter remains off |
 | M11 | Campaign and brand fit | Source implemented; deterministic engine, additive fit metadata, persisted MCP read, CRM query surface, and golden tests; compute/runtime remains off |
 | M12 | Synthetic validation and calibration | Source implemented; versioned golden dataset, deterministic report, outlier/missing-data/confidence/campaign-fit guardrails, and focused tests; no live provider calls |
-| M13 | Optional provider gap analysis | Pending; only if a measured gap remains |
+| M13 | Optional provider gap analysis | Source implemented; measured gap matrix/ADR; no external provider integrated |
 
 ## M12 decision: synthetic calibration before commercial use
 
@@ -383,6 +383,21 @@ calibration or commercial accuracy claim. It deliberately makes no weight
 adjustment and does not use real creators or live provider calls. Internal
 follower-tier benchmarks remain unavailable until an approved representative
 dataset exists.
+
+## M13 decision: no external provider in the current source scope
+
+[`EXTERNAL_PROVIDER_GAP_ANALYSIS.md`](./EXTERNAL_PROVIDER_GAP_ANALYSIS.md)
+records the measured coverage gaps and compares the existing official/private
+transport, SKINCOS history, content intelligence, and comment intelligence with
+Apify, HypeAuditor, and Modash. The result is deliberately source-only: Meta
+official remains first, the existing instagrapi path remains a controlled
+fallback, and the legacy Instaloader path is not promoted into this domain.
+
+Audience demographics/overlap and a validated authenticity model are the only
+material candidates for a future shadow POC. Any such provider must be
+explicitly configured and allowlisted, use Token Vault custody, return the
+typed provider contract, remain bounded/read-only, and be calibrated before it
+can influence a score. No external provider is configured or called by M13.
 
 ## M2 risk, validation, and rollback
 
