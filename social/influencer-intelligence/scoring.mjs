@@ -238,19 +238,11 @@ function normalizeStructuredSignal(name, signal, weight) {
 }
 
 function profileHistoryLength(analytics) {
-  return Array.isArray(analytics.provenance)
-    ? new Set(analytics.provenance
-      .filter((item) => item.sourceType === 'profile' && item.evidenceState === 'observed')
-      .map((item) => item.sourceRef)).size
-    : 0;
+  return analytics.history?.profileMetricObservationCount ?? 0;
 }
 
 function mediaHistoryLength(analytics) {
-  return Array.isArray(analytics.provenance)
-    ? new Set(analytics.provenance
-      .filter((item) => item.sourceType === 'media' && item.evidenceState === 'observed')
-      .map((item) => item.sourceRef)).size
-    : 0;
+  return analytics.history?.mediaMetricObservationCount ?? 0;
 }
 
 function engagementQuality(analytics, weight) {
@@ -369,7 +361,18 @@ function normalizeAnalytics(analytics) {
   const coverageRatio = finite(analytics.coverage.ratio, 'analytics.coverage.ratio', { minimum: 0, maximum: 1 });
   const providers = unique(Array.isArray(analytics.providers) ? analytics.providers : []);
   const provenance = Array.isArray(analytics.provenance) ? analytics.provenance : [];
-  return { ...analytics, creatorKey, calculatedAt, evidenceState, coverageRatio, providers, provenance };
+  const history = analytics.history === undefined || analytics.history === null
+    ? null
+    : (() => {
+      assertRecord(analytics.history, 'analytics.history');
+      return {
+        profileSnapshotCount: boundedInteger(analytics.history.profileSnapshotCount ?? 0, 'analytics.history.profileSnapshotCount', { maximum: 100000 }),
+        profileMetricObservationCount: boundedInteger(analytics.history.profileMetricObservationCount ?? 0, 'analytics.history.profileMetricObservationCount', { maximum: 100000 }),
+        mediaSnapshotCount: boundedInteger(analytics.history.mediaSnapshotCount ?? 0, 'analytics.history.mediaSnapshotCount', { maximum: 100000 }),
+        mediaMetricObservationCount: boundedInteger(analytics.history.mediaMetricObservationCount ?? 0, 'analytics.history.mediaMetricObservationCount', { maximum: 100000 }),
+      };
+    })();
+  return { ...analytics, creatorKey, calculatedAt, evidenceState, coverageRatio, providers, provenance, history };
 }
 
 function freshnessFactor(analytics, calculatedAt) {
@@ -446,6 +449,7 @@ function inputFingerprint(analytics, components, providers) {
     computedAt: analytics.calculatedAt,
     evidenceState: analytics.evidenceState,
     coverage: analytics.coverage,
+    history: analytics.history || null,
     providers: [...(providers || [])].sort(),
     provenance: analytics.provenance || [],
     window: analytics.window || null,

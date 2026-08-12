@@ -217,6 +217,32 @@ test('unavailable profile and media provenance cannot satisfy the short-history 
   assert.ok(result.confidence_score <= SCORE_THRESHOLDS.shortHistoryConfidenceCap * 100);
 });
 
+test('metricless observed snapshots cannot satisfy the short-history gate', () => {
+  const profileOnly = structuredClone(GOLDEN_FIXTURES.smallStable);
+  profileOnly.profileSnapshots = profileOnly.profileSnapshots.map((snapshot) => ({
+    ...snapshot,
+    followersCount: null,
+    followingCount: null,
+    mediaCount: null,
+  }));
+  const profileResult = scoreFor(profileOnly);
+  assert.equal(profileResult.confidence_factors.history_length, 0);
+  assert.equal(profileResult.confidence_factors.short_history_gate, SCORE_THRESHOLDS.shortHistoryConfidenceCap);
+
+  const mediaOnly = structuredClone(GOLDEN_FIXTURES.smallStable);
+  mediaOnly.mediaSnapshots = mediaOnly.mediaSnapshots.map((snapshot) => ({
+    ...snapshot,
+    likesCount: null,
+    commentsCount: null,
+    viewsCount: null,
+    reachCount: null,
+    followersCount: null,
+  }));
+  const mediaResult = scoreFor(mediaOnly);
+  assert.equal(mediaResult.confidence_factors.media_history_length, 0);
+  assert.equal(mediaResult.confidence_factors.short_history_gate, SCORE_THRESHOLDS.shortHistoryConfidenceCap);
+});
+
 test('unavailable analytics cannot produce an overall score or confidence', () => {
   const analytics = analyticsFor({
     creatorKey: 'creator-unavailable',
