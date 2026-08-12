@@ -40,7 +40,8 @@ arguments reject unknown properties and sensitive fields. Creator keys are
 opaque internal identifiers; provider ids, tokens, sessions, raw comments, and
 free-form provider payloads are not accepted.
 
-The adapter enforces a 64 KiB request limit, 512 KiB sanitized response limit,
+The adapter measures and enforces a 64 KiB serialized request limit even when a
+transport does not provide byte metadata, plus a 512 KiB sanitized response limit,
 50-item pages, at most 20 creators per comparison, at most a 365-day window,
 four concurrent calls, a 12-second timeout/abort, and a fixed 60 requests per
 minute per actor scope. Audit is mandatory and audit failure is fail-closed.
@@ -58,9 +59,10 @@ and an explicit limitation. `stale` is represented by the freshness field and
 must not be hidden by a successful response state.
 
 Provenance is restricted to bounded provider/source references with timestamps
-and evidence state. Raw payloads, credentials, authorization material, PII,
-sessions, query-string URLs, and diagnostic upstream bodies are rejected or
-removed before a result leaves the adapter. Provider-specific evidence is
+and evidence state. Raw payloads, credentials, authorization material,
+unnecessary public identity fields (display names, biographies, locations and
+account ids), PII, sessions, query-string URLs, and diagnostic upstream bodies
+are rejected or removed before a result leaves the adapter. Provider-specific evidence is
 therefore an opaque, bounded reference rather than a raw provider response.
 
 The adapter only returns persisted or service-owned read projections. It does

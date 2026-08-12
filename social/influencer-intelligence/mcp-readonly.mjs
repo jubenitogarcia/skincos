@@ -65,7 +65,7 @@ const SAFE_LIMITATION_PATTERN = /^[A-Za-z0-9._:/ -]{1,240}$/;
 const SAFE_SEARCH_PATTERN = /^[A-Za-z0-9._@ -]{1,80}$/;
 const SAFE_ACTOR_SCOPE_PATTERN = /^[A-Za-z0-9._:-]{1,160}$/;
 const SAFE_SOURCE_REF_PATTERN = /^[A-Za-z0-9._:/-]{1,240}$/;
-const SENSITIVE_OUTPUT_KEY = /(?:access[_-]?token|refresh[_-]?token|id[_-]?token|authorization|cookie|credential|secret|client.?secret|password|api[_-]?key|session|session.?id|provider.?account|raw.?provider|raw.?payload|raw.?comment|comment.?text|caption|media.?url|image.?url|video.?url|binary|private.?key|email|phone|telephone|cpf|sql|shell|command|prompt|completion)/i;
+const SENSITIVE_OUTPUT_KEY = /(?:access[_-]?token|refresh[_-]?token|id[_-]?token|authorization|cookie|credential|secret|client.?secret|password|api[_-]?key|session|session.?id|provider.?account|provider.?id|account.?id|user.?id|raw.?provider|raw.?payload|raw.?comment|comment.?text|caption|media.?url|image.?url|video.?url|binary|private.?key|email|phone|telephone|cpf|full.?name|first.?name|last.?name|display.?name|biograph|profile.?picture|avatar|location|address|sql|shell|command|prompt|completion)/i;
 const SENSITIVE_OUTPUT_TEXT = /(?:bearer\s+[A-Za-z0-9._-]{8,}|(?:access[_-]?token|refresh[_-]?token|api[_-]?key|password|client[_ -]?secret|authorization|cookie)\s*[:=]|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b\d{3}\.\d{3}\.\d{3}-?\d{2}\b)/i;
 const FIXED_ERROR_MESSAGES = Object.freeze({
   AUTH_REQUIRED: 'authentication is required',
@@ -307,6 +307,13 @@ function assertResponseSize(value) {
   const bytes = new TextEncoder().encode(serialized).byteLength;
   assertCondition(bytes <= MCP_READONLY_LIMITS.maxResponseBytes, 'SANITIZATION_FAILED', 'response exceeds the limit');
   return value;
+}
+
+function requestByteLength(value) {
+  let serialized;
+  try { serialized = JSON.stringify(value); } catch { throw fail('INVALID_INPUT', 'request is not serializable'); }
+  assertCondition(typeof serialized === 'string', 'INVALID_INPUT', 'request is not serializable');
+  return new TextEncoder().encode(serialized).byteLength;
 }
 
 function normalizeProvenance(value) {
@@ -565,7 +572,11 @@ export function createInfluencerIntelligenceMcpGateway({
     let outcome;
     let outcomeCode = null;
     try {
-      assertCondition(requestBytes === undefined || (Number.isInteger(requestBytes) && requestBytes >= 0 && requestBytes <= MCP_READONLY_LIMITS.maxRequestBytes), 'INVALID_INPUT', 'request body exceeds the limit');
+      const measuredRequestBytes = requestByteLength(rpc ?? null);
+      assertCondition(measuredRequestBytes <= MCP_READONLY_LIMITS.maxRequestBytes, 'INVALID_INPUT', 'request body exceeds the limit');
+      if (requestBytes !== undefined) {
+        assertCondition(Number.isInteger(requestBytes) && requestBytes >= 0 && requestBytes === measuredRequestBytes, 'INVALID_INPUT', 'request body size metadata is invalid');
+      }
       validateRpc(rpc);
       normalizedContext = normalizeAuthContext(context);
       let allowed;
