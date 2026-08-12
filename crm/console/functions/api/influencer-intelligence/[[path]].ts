@@ -67,6 +67,7 @@ function isAllowedRoute(requestPath: string, method: string): boolean {
   if (!path) return false
   if (path === '/creators') return verb === 'GET' || verb === 'POST'
   if (path === '/compare') return verb === 'POST'
+  if (path === '/campaign-fit') return verb === 'POST'
   if (/^\/creators\/[A-Za-z0-9._:-]{1,128}\/analysis$/.test(path)) return verb === 'GET'
   if (/^\/creators\/[A-Za-z0-9._:-]{1,128}\/coverage$/.test(path)) return verb === 'GET'
   return false
@@ -91,6 +92,20 @@ function validateBody(path: string, body: unknown): body is JsonRecord {
     if (keys.length !== 1 || keys[0] !== 'creatorKeys' || !Array.isArray(record.creatorKeys)) return false
     const creatorKeys = record.creatorKeys
     return creatorKeys.length >= 1 && creatorKeys.length <= 20 && new Set(creatorKeys).size === creatorKeys.length && creatorKeys.every((key) => typeof key === 'string' && SAFE_CREATOR_KEY.test(key))
+  }
+  if (path === '/campaign-fit') {
+    if (keys.some((key) => !['campaignKey', 'campaignVersion', 'creatorKeys'].includes(key))) return false
+    if (typeof record.campaignKey !== 'string' || !SAFE_CREATOR_KEY.test(record.campaignKey)) return false
+    const campaignVersion = record.campaignVersion
+    if (campaignVersion !== undefined) {
+      if (typeof campaignVersion !== 'number' || !Number.isSafeInteger(campaignVersion)) return false
+      if (campaignVersion < 1 || campaignVersion > 100_000) return false
+    }
+    if (record.creatorKeys !== undefined) {
+      if (!Array.isArray(record.creatorKeys) || record.creatorKeys.length > 20 || new Set(record.creatorKeys).size !== record.creatorKeys.length) return false
+      if (!record.creatorKeys.every((key) => typeof key === 'string' && SAFE_CREATOR_KEY.test(key))) return false
+    }
+    return true
   }
   return false
 }

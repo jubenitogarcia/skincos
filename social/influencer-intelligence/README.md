@@ -2,10 +2,11 @@
 
 Status: architecture v1 defined; M2 provider boundary, M4 deterministic
 analytics, M5 deterministic scoring, M6 read-only MCP adapter, M7 Codex skill,
-M8 CRM contract/dashboard source, M9 comments intelligence, and M10 bounded
-content analysis are implemented in source control. Data model v1 plus scoring
-metadata remain additive, unapplied artifacts, and all Influencer Intelligence
-runtime/upstream registrations remain off.
+M8 CRM contract/dashboard source, M9 comments intelligence, M10 bounded content
+analysis, M11 Campaign Fit, and M12 synthetic calibration are implemented in
+source control. Data model v1 plus scoring metadata remain additive, unapplied
+artifacts, and all Influencer Intelligence runtime/upstream registrations remain
+off.
 The domain remains
 experimental, not exposed, and off by default.
 
@@ -206,8 +207,9 @@ deployment hardening.
 the existing `orb/engine/mcp-readonly-gateway` pattern. It exposes bounded
 `search_creators`, `get_creator_profile`, `get_creator_snapshots`,
 `get_creator_media`, `get_creator_analytics`, `get_creator_score`, and
-`compare_creators` tools through an injected internal read service. Campaign Fit
-is intentionally deferred from the tool registry until M11.
+`get_campaign_fit` and `compare_creators` tools through an injected internal
+read service. `get_campaign_fit` reads a persisted, versioned projection and
+does not accept a raw campaign brief or start computation.
 
 The adapter requires authentication, the server-side domain grant, opaque
 actor scope, closed input schemas, bounded windows/pages/comparisons, timeout,
@@ -363,9 +365,39 @@ production configuration.
 | M8 | Read-only CRM contracts and dashboard | Source implemented; gated shadow UI, upstream/runtime off |
 | M9 | Minimized comments intelligence | Source implemented; additive quality/sampling migration and synthetic tests; runtime/provider wiring remains off |
 | M10 | Semantic content and Reels signals | Source implemented; bounded feature projection, closed semantic schema, fixtures and persistence boundary; media/runtime adapter remains off |
-| M11 | Campaign and brand fit | Pending |
-| M12 | Synthetic validation and calibration | Pending |
-| M13 | Optional provider gap analysis | Pending; only if a measured gap remains |
+| M11 | Campaign and brand fit | Source implemented; deterministic engine, additive fit metadata, persisted MCP read, CRM query surface, and golden tests; compute/runtime remains off |
+| M12 | Synthetic validation and calibration | Source implemented; versioned golden dataset, deterministic report, outlier/missing-data/confidence/campaign-fit guardrails, and focused tests; no live provider calls |
+| M13 | Optional provider gap analysis | Source implemented; source-level gap matrix/ADR; live coverage decision pending runtime evidence; no external provider integrated |
+
+## M12 decision: synthetic calibration before commercial use
+
+The pure [`calibration.mjs`](./calibration.mjs) harness runs the versioned
+golden dataset in [`tests/fixtures/calibration-golden-fixtures.mjs`](./tests/fixtures/calibration-golden-fixtures.mjs)
+and produces the report in [`CALIBRATION.md`](./CALIBRATION.md). It checks
+follower-scale normalization, viral-outlier resistance, bounded growth-spike
+interpretation, missing-data semantics, zero-denominator behavior, sparse
+history confidence, irregular volatility, and Campaign Fit separation.
+
+The report is a deterministic policy/calculation gate, not a population
+calibration or commercial accuracy claim. It deliberately makes no weight
+adjustment and does not use real creators or live provider calls. Internal
+follower-tier benchmarks remain unavailable until an approved representative
+dataset exists.
+
+## M13 decision: no external provider in the current source scope
+
+[`EXTERNAL_PROVIDER_GAP_ANALYSIS.md`](./EXTERNAL_PROVIDER_GAP_ANALYSIS.md)
+records source-level capability gaps and compares the existing official/private
+transport, SKINCOS history, content intelligence, and comment intelligence with
+Apify, HypeAuditor, and Modash. The result is deliberately source-only: Meta
+official remains first, the existing instagrapi path remains a controlled
+fallback, and the legacy Instaloader path is not promoted into this domain.
+
+Audience demographics/overlap and a validated authenticity model are the only
+material candidates for a future shadow POC. Any such provider must be
+explicitly configured and allowlisted, use Token Vault custody, return the
+typed provider contract, remain bounded/read-only, and be calibrated before it
+can influence a score. No external provider is configured or called by M13.
 
 ## M2 risk, validation, and rollback
 

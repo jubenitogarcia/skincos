@@ -166,7 +166,10 @@ export const DATA_MODEL = deepFreeze({
   ],
   persistence: {
     migration: 'migrations/20260811_influencer_intelligence_data_model_v1.up.sql',
-    additiveMigrations: ['migrations/20260812_influencer_intelligence_comments_v1.up.sql'],
+    additiveMigrations: [
+      'migrations/20260812_influencer_intelligence_comments_v1.up.sql',
+      'migrations/20260812_influencer_intelligence_campaign_fit_v1.up.sql',
+    ],
     dependsOn: 'migrations/20260810_influencer_intelligence_registry_v1.up.sql',
     artifactStatus: 'source-controlled additive artifacts; not applied by this milestone',
     appendOnlyRelations: [
@@ -191,7 +194,7 @@ export const DATA_MODEL = deepFreeze({
       { name: 'creator_score', concept: 'creator score', lifecycle: 'append-only deterministic score envelope' },
       { name: 'creator_score_component', concept: 'score component', lifecycle: 'append-only explainable score component' },
       { name: 'campaign', concept: 'campaign criteria', lifecycle: 'versioned current criteria; no dispatch' },
-      { name: 'campaign_creator_fit', concept: 'campaign fit', lifecycle: 'append-only derived creator/campaign projection' },
+      { name: 'campaign_creator_fit', concept: 'campaign fit', lifecycle: 'append-only derived creator/campaign projection', fields: ['campaignKey', 'campaignVersion', 'creatorKey', 'campaignFitScore', 'confidence', 'coverage', 'evidenceState', 'components', 'weightsVersion', 'algorithmVersion', 'provenance', 'computedAt'] },
     ],
   },
   invariants: [
@@ -286,7 +289,7 @@ export const API_CONTRACT = deepFreeze({
       method: 'POST',
       path: '/internal/influencer-intelligence/v1/campaign-fit',
       readOnly: true,
-      purpose: 'Compute a bounded campaign-fit projection from structured criteria; no campaign is created or dispatched.',
+      purpose: 'Return a bounded persisted campaign-fit projection; computation is a separate controlled service operation and no campaign is created or dispatched.',
     },
   ],
   requestRules: {
@@ -299,7 +302,7 @@ export const API_CONTRACT = deepFreeze({
 });
 
 export const MCP_CONTRACT = deepFreeze({
-  contractVersion: 'influencer-intelligence/mcp/v1',
+  contractVersion: 'influencer-intelligence/mcp/v1.1',
   transport: 'domain adapter for the authenticated orb/engine/mcp-readonly-gateway pattern; MCP is not a provider transport',
   controls: ['authentication', 'server-side grant', 'schema sanitization', 'bounded input', 'rate limit', 'timeout and abort', 'audit event', 'read-only database role', 'redacted output'],
   limits: { maxRequestBytes: 65536, maxResponseBytes: 524288, maxPageSize: 50, maxCreatorsPerRequest: 20, maxWindowDays: 365, maxConcurrentRequests: 4, timeoutMs: 12000, rateLimitPerMinute: 60 },
@@ -308,11 +311,12 @@ export const MCP_CONTRACT = deepFreeze({
     { name: 'get_creator_profile', readOnly: true, input: ['creator_key'] },
     { name: 'get_creator_snapshots', readOnly: true, input: ['creator_key', 'window', 'page', 'page_size'] },
     { name: 'get_creator_media', readOnly: true, input: ['creator_key', 'window', 'page', 'page_size'] },
-    { name: 'get_creator_analytics', readOnly: true, input: ['creator_key', 'window'] },
-    { name: 'get_creator_score', readOnly: true, input: ['creator_key'] },
-    { name: 'compare_creators', readOnly: true, input: ['creator_keys', 'window'] },
-  ],
-  deferredTools: [{ name: 'get_campaign_fit', unavailableUntil: 'M11', rule: 'not registered before Campaign Fit exists' }],
+     { name: 'get_creator_analytics', readOnly: true, input: ['creator_key', 'window'] },
+     { name: 'get_creator_score', readOnly: true, input: ['creator_key'] },
+     { name: 'get_campaign_fit', readOnly: true, input: ['campaign_key', 'campaign_version', 'creator_keys', 'page', 'page_size'] },
+     { name: 'compare_creators', readOnly: true, input: ['creator_keys', 'window'] },
+   ],
+  deferredTools: [],
   forbidden: ['arbitrary SQL', 'arbitrary shell', 'scraping', 'provider credential retrieval', 'publication', 'engagement', 'workflow mutation', 'raw comment or media output'],
   output: ['versioned response envelope', 'data classification', 'freshness', 'confidence', 'coverage', 'provenance', 'requestId', 'sanitized errors'],
 });
@@ -350,7 +354,15 @@ export const RELEASE_CONTRACT = deepFreeze({
     commentsMigrationArtifactAdded: true,
     commentsRuntimeWired: false,
     contentSourceAdded: true,
-    contentRuntimeWired: false,
+     contentRuntimeWired: false,
+     campaignFitSourceAdded: true,
+     campaignFitMigrationArtifactAdded: true,
+     campaignFitRuntimeWired: false,
+     calibrationSourceAdded: true,
+     calibrationDatasetVersion: 'influencer-intelligence-calibration-golden/v1',
+     calibrationRuntimeWired: false,
+     gapAnalysisSourceAdded: true,
+     externalProviderIntegrated: false,
   },
 });
 
@@ -384,9 +396,9 @@ export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'M8', title: 'CRM read-only surface', status: 'internal proxy, typed client, gated shadow dashboard, and synthetic UI tests implemented; upstream/runtime remains off', acceptance: ['internal API only', 'server grant and flag', 'shadow UI', 'no direct provider access'] },
   { id: 'M9', title: 'Comments intelligence', status: 'source implemented; aggregate-only analyzer, additive persistence metadata, and synthetic tests; runtime/provider wiring remains off', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
   { id: 'M10', title: 'Semantic content and Reels signals', status: 'source implemented; bounded feature projection and closed semantic interface; runtime/media adapter remains off', acceptance: ['approved media projection', 'no raw media archive by default', 'versioned inference'] },
-  { id: 'M11', title: 'Campaign and brand fit', status: 'pending', acceptance: ['structured criteria', 'explainable deterministic base', 'inferred signals labeled'] },
-  { id: 'M12', title: 'Synthetic validation and calibration', status: 'pending', acceptance: ['fixtures', 'outlier tests', 'coverage/confidence calibration', 'negative policy tests'] },
-  { id: 'M13', title: 'Optional provider gap analysis', status: 'pending', acceptance: ['measured gap report', 'cost/risk/privacy review', 'new provider only after approval'] },
+  { id: 'M11', title: 'Campaign and brand fit', status: 'source implemented; deterministic engine, additive persistence metadata, read-only MCP projection, CRM query surface, and golden tests; compute/runtime remains off', acceptance: ['structured criteria', 'explainable deterministic base', 'inferred signals labeled', 'separate campaign-fit confidence and coverage', 'persisted fit read has no implicit computation'] },
+  { id: 'M12', title: 'Synthetic validation and calibration', status: 'source implemented; deterministic synthetic report and focused tests; no live provider or runtime calls', acceptance: ['fixtures', 'outlier tests', 'coverage/confidence calibration', 'negative policy tests'] },
+  { id: 'M13', title: 'Optional provider gap analysis', status: 'source implemented; source-level gap matrix/ADR; live coverage decision pending runtime evidence; no external provider integrated', acceptance: ['source-level gap report', 'cost/risk/privacy review', 'live coverage evidence before provider selection', 'new provider only after explicit configuration, allowlisting, and approval'] },
 ]);
 
 export const ARCHITECTURE_MANIFEST = deepFreeze({
