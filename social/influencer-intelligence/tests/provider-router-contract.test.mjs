@@ -371,6 +371,27 @@ test('inferred provider data requires model-version evidence before acceptance',
   assert.equal(result.provider_specific_evidence.model_version, 'profile-inference/v1');
 });
 
+test('malformed provider model-version evidence is classified as invalid response', async () => {
+  const meta = createMetaGraphProvider({
+    operations: {
+      get_profile: async () => ({
+        ...candidateFor('get_profile'),
+        data_classification: 'inferred',
+        provider_specific_evidence: {
+          ...candidateFor('get_profile').provider_specific_evidence,
+          model_version: 7,
+        },
+      }),
+    },
+  });
+  const router = createProviderRouter({ providers: { 'meta-graph': meta } });
+
+  await assert.rejects(
+    router.get_profile(baseRequest),
+    (error) => error instanceof ProviderRouterError && error.reasonCode === 'invalid_response',
+  );
+});
+
 test('future external providers require explicit opt-in and still use the same contract', async () => {
   const meta = createMetaGraphProvider({
     operations: {

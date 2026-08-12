@@ -45,7 +45,7 @@ export const PROVIDER_TERMINAL_CODES = Object.freeze([
 ]);
 
 export const PROVIDER_OPERATION_CONTRACT_VERSION =
-  'influencer-intelligence/provider-operation/v1';
+  'influencer-intelligence/provider-operation/v1.1';
 
 const operationSet = new Set(PROVIDER_OPERATIONS);
 const classificationSet = new Set(DATA_CLASSIFICATIONS);
@@ -482,7 +482,12 @@ function normalizeEvidence(value, { provider, operation, request, adapterVersion
   if (input.coverage_code !== undefined) evidence.coverage_code = slug(input.coverage_code, 'coverage_code');
   const modelVersion = input.model_version ?? input.modelVersion;
   if (modelVersion !== undefined) {
-    const normalizedModelVersion = normalizedString(modelVersion, 'provider_specific_evidence.model_version', { maxLength: 80 });
+    let normalizedModelVersion;
+    try {
+      normalizedModelVersion = normalizedString(modelVersion, 'provider_specific_evidence.model_version', { maxLength: 80 });
+    } catch {
+      fail('invalid_response', 'provider model version is malformed');
+    }
     if (!/^[a-z][a-z0-9._/-]{0,79}$/.test(normalizedModelVersion)) fail('invalid_response', 'provider model version is invalid');
     evidence.model_version = normalizedModelVersion;
   }
