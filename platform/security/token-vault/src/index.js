@@ -35,6 +35,9 @@ export async function handleRequest(request, env) {
     }
 
     if (isMetaAdsPublishPath(pathname)) {
+      if (!['admin', 'operational'].includes(auth.role)) {
+        return roleRequired(requestId, 'write_gateway_credential_required');
+      }
       return await handleMetaAdsPublishRequest({
         request,
         env,
@@ -46,12 +49,22 @@ export async function handleRequest(request, env) {
     }
 
     if (request.method === 'POST' && pathname === '/v1/social-publish/operations') {
+      if (!['admin', 'operational'].includes(auth.role)) {
+        return roleRequired(requestId, 'write_gateway_credential_required');
+      }
       return handleSocialPublishOperation({ request, env, requestId, decryptToken, writeAudit });
     }
 
     if (request.method === 'POST' && pathname === '/v1/analytics/operations') {
       if (auth.role !== 'admin' && auth.role !== 'analytics') {
         return json({ ok: false, error: 'analytics_credential_required', requestId }, { status: 403 });
+      }
+      const mode = analyticsMode(env);
+      if (mode === 'invalid') {
+        return json({ ok: false, error: 'invalid_analytics_mode', requestId }, { status: 500 });
+      }
+      if (mode === 'off' || (mode === 'active' && safeString(env.INFLUENCER_INTELLIGENCE_ENABLED).toLowerCase() !== 'true')) {
+        return json({ ok: false, error: 'analytics_disabled', requestId }, { status: 503 });
       }
       return handleAnalyticsReadonlyRequest({ request, env, requestId, decryptToken, writeAudit });
     }
@@ -89,6 +102,10 @@ function adminOnly(requestId) {
   return json({ ok: false, error: 'admin_credential_required', requestId }, { status: 403 });
 }
 
+function roleRequired(requestId, error) {
+  return json({ ok: false, error, requestId }, { status: 403 });
+}
+
 function normalizePath(pathname) {
   if (pathname === TOKEN_PREFIX) return '/';
   if (pathname.startsWith(`${TOKEN_PREFIX}/`)) return pathname.slice(TOKEN_PREFIX.length);
@@ -96,25 +113,34 @@ function normalizePath(pathname) {
 }
 
 async function health(env, requestId) {
+  const mode = analyticsMode(env);
   const checks = {
     d1: Boolean(env.TOKEN_VAULT_DB),
     apiToken: Boolean(safeString(env.TOKEN_VAULT_API_TOKEN)),
     analyticsApiToken: Boolean(safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN)),
     encryptionKey: Boolean(safeString(env.TOKEN_VAULT_ENCRYPTION_KEY)),
+    analyticsMode: mode !== 'invalid',
   };
 
   if (checks.d1) {
     await env.TOKEN_VAULT_DB.prepare('SELECT 1 AS ok').first();
   }
 
-  const ok = checks.d1 && checks.apiToken && checks.encryptionKey;
+  const ok = checks.d1 && checks.apiToken && checks.analyticsApiToken && checks.encryptionKey && checks.analyticsMode;
   return json({
     ok,
     service: 'skincos-token-vault',
     environment: safeString(env.ENVIRONMENT) || 'unknown',
+    analytics_mode: mode,
+    analytics_ready: checks.analyticsApiToken && mode !== 'off' && mode !== 'invalid',
     checks,
     requestId,
   }, { status: ok ? 200 : 500 });
+}
+
+function analyticsMode(env) {
+  const mode = safeString(env.INFLUENCER_INTELLIGENCE_ANALYTICS_MODE ?? 'off').toLowerCase();
+  return ['off', 'shadow', 'active'].includes(mode) ? mode : 'invalid';
 }
 
 async function listTokens(url, env, requestId) {
@@ -356,13 +382,20 @@ async function serializeToken(row, env) {
 }
 
 function authorizeRequest(request, env) {
-  if (safeString(env.REQUIRE_AUTH || 'true') !== 'true') return { ok: true };
+  const requireAuth = safeString(env.REQUIRE_AUTH ?? 'true').toLowerCase();
+  if (requireAuth !== 'true') {
+    return { ok: false, status: 500, reason: 'invalid_auth_configuration' };
+  }
 
   const adminToken = safeString(env.TOKEN_VAULT_API_TOKEN);
   const operationalToken = safeString(env.TOKEN_VAULT_N8N_API_TOKEN);
   const analyticsToken = safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN);
   if (!adminToken && !operationalToken && !analyticsToken) {
     return { ok: false, status: 500, reason: 'missing_worker_secret' };
+  }
+  const configuredTokens = [adminToken, operationalToken, analyticsToken].filter(Boolean);
+  if (new Set(configuredTokens).size !== configuredTokens.length) {
+    return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
   }
 
   const headerName = safeString(env.WORKER_AUTH_HEADER_NAME || 'Authorization') || 'Authorization';
@@ -445,6 +478,7 @@ function contract(requestId) {
       secret: 'TOKEN_VAULT_API_TOKEN',
       analytics_secret: 'TOKEN_VAULT_ANALYTICS_API_TOKEN',
       analytics_scope: 'influencer-intelligence',
+      analytics_mode: 'shadow|active',
     },
     storage: {
       d1_binding: 'TOKEN_VAULT_DB',

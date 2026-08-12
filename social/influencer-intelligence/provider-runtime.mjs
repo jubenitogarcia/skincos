@@ -38,9 +38,12 @@ export function createInfluencerIntelligenceProviderRouter({
   const providers = { 'meta-graph': metaGraph };
 
   if (instagrapiOperations !== undefined) {
-    if (!isRecord(instagrapiOperations)) throw new TypeError('instagrapiOperations must be an object');
+    if (!isRecord(instagrapiOperations) || instagrapiOperations.readOnly !== true || instagrapiOperations.writeActions !== false) {
+      throw new TypeError('instagrapiOperations must declare the existing read-only bridge');
+    }
     providers.instagrapi = createInstagrapiProvider({
       operations: instagrapiOperations,
+      readOnly: true,
       adapterVersion: 'existing-instagram-instagrapi-adapter-v1',
     });
   }

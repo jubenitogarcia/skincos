@@ -1,6 +1,9 @@
 const MAX_BODY_BYTES = 32 * 1024;
 const MAX_ACTIVE_REQUESTS = 8;
 const MAX_REQUESTS_PER_MINUTE = 60;
+const MAX_GRAPH_ACTIVE_REQUESTS = 8;
+const MAX_GRAPH_REQUESTS_PER_MINUTE = 120;
+const MAX_GRAPH_RESPONSE_BYTES = 64 * 1024;
 const GRAPH_ORIGIN = 'https://graph.facebook.com';
 const DEFAULT_GRAPH_VERSION = 'v20.0';
 const GRAPH_TIMEOUT_MS = 10_000;
@@ -59,6 +62,8 @@ const FALLBACK_CODES = new Set([
 
 let activeRequests = 0;
 const requestTimestamps = [];
+let activeGraphRequests = 0;
+const graphRequestTimestamps = [];
 
 export class AnalyticsReadonlyError extends Error {
   constructor(code, status = 500) {
@@ -250,15 +255,42 @@ async function readBoundedJson(request) {
   if (Number.isInteger(contentLength) && contentLength > MAX_BODY_BYTES) {
     throw new AnalyticsReadonlyError('request_too_large', 413);
   }
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
-    throw new AnalyticsReadonlyError('request_too_large', 413);
-  }
+  const text = request.body
+    ? await readBoundedText(request.body, MAX_BODY_BYTES, () => new AnalyticsReadonlyError('request_too_large', 413))
+    : await request.text();
   try {
     return JSON.parse(text);
   } catch {
     throw new AnalyticsReadonlyError('invalid_payload', 400);
   }
+}
+
+async function readBoundedText(body, maximumBytes, onExceeded) {
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      total += chunk.byteLength;
+      if (total > maximumBytes) {
+        await reader.cancel().catch(() => {});
+        throw onExceeded();
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function acquireRequestLease() {
@@ -273,6 +305,21 @@ function acquireRequestLease() {
   requestTimestamps.push(now);
   return () => {
     activeRequests = Math.max(0, activeRequests - 1);
+  };
+}
+
+function acquireGraphRequestLease() {
+  const now = Date.now();
+  while (graphRequestTimestamps[0] !== undefined && graphRequestTimestamps[0] <= now - 60_000) {
+    graphRequestTimestamps.shift();
+  }
+  if (activeGraphRequests >= MAX_GRAPH_ACTIVE_REQUESTS || graphRequestTimestamps.length >= MAX_GRAPH_REQUESTS_PER_MINUTE) {
+    throw new GraphRequestError('rate_limited');
+  }
+  activeGraphRequests += 1;
+  graphRequestTimestamps.push(now);
+  return () => {
+    activeGraphRequests = Math.max(0, activeGraphRequests - 1);
   };
 }
 
@@ -300,12 +347,13 @@ function graphErrorForStatus(status) {
   if (status === 401 || status === 403) return 'permission_gap';
   if (status === 404) return 'coverage_gap';
   if (status === 408 || status === 504) return 'timeout';
-  if (status === 429) return 'provider_unavailable';
+  if (status === 429) return 'rate_limited';
   if (status >= 500) return 'provider_unavailable';
   return 'invalid_response';
 }
 
 async function fetchGraphJson({ env, token, pathSegments, params, signal, fetchImpl }) {
+  const releaseGraphRequest = acquireGraphRequestLease();
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -333,7 +381,14 @@ async function fetchGraphJson({ env, token, pathSegments, params, signal, fetchI
     }
     let payload;
     try {
-      payload = await response.json();
+      const contentLength = Number(response.headers?.get?.('content-length') || 0);
+      if (Number.isInteger(contentLength) && contentLength > MAX_GRAPH_RESPONSE_BYTES) {
+        throw new GraphRequestError('invalid_response');
+      }
+      const text = response.body
+        ? await readBoundedText(response.body, MAX_GRAPH_RESPONSE_BYTES, () => new GraphRequestError('invalid_response'))
+        : await response.text();
+      payload = JSON.parse(text);
     } catch {
       throw new GraphRequestError('invalid_response');
     }
@@ -348,6 +403,7 @@ async function fetchGraphJson({ env, token, pathSegments, params, signal, fetchI
   } finally {
     clearTimeout(timer);
     if (signal) signal.removeEventListener('abort', abortParent);
+    releaseGraphRequest();
   }
 }
 
@@ -515,9 +571,8 @@ async function collectOperation({ input, row, token, env, signal, fetchImpl }) {
     const metricFields = input.operation === 'get_profile_metrics'
       ? ['followers_count', 'media_count']
       : GRAPH_FIELDS.get_profile;
-    const hasMetric = input.operation === 'get_profile'
-      ? Object.keys(data).length > 0
-      : Object.keys(data).some((key) => key.endsWith('_count'));
+    const hasMetric = ['followers_count', 'following_count', 'media_count']
+      .some((key) => data[key] !== undefined);
     if (!hasMetric) return unavailableResult(input, 'coverage_gap', metricFields, retrievedAt);
     return successResult(input, data, metricFields, retrievedAt, input.operation === 'get_profile_metrics'
       ? ['following_count_unavailable', 'engagement_metrics_unavailable']
@@ -547,6 +602,9 @@ async function collectOperation({ input, row, token, env, signal, fetchImpl }) {
       if (publishedAt && !Number.isNaN(Date.parse(publishedAt))) media.published_at = new Date(publishedAt).toISOString();
       return [media];
     });
+    if (connection.data.length > 0 && data.length === 0) {
+      throw new GraphRequestError('invalid_response');
+    }
     return successResult(input, data, GRAPH_FIELDS.get_recent_media, retrievedAt, data.length < connection.data.length ? ['bounded_limit'] : []);
   }
 
@@ -585,6 +643,13 @@ async function collectOperation({ input, row, token, env, signal, fetchImpl }) {
         else failures.push(result.error);
       }
     }
+    const terminalFailure = failures.find((code) => code === 'invalid_response' || code === 'rate_limited');
+    if (terminalFailure) {
+      throw new GraphRequestError(terminalFailure);
+    }
+    if (failures.length > 0 && results.length > 0) {
+      return successResult(input, results, GRAPH_FIELDS.get_media_metrics, retrievedAt, ['partial_coverage']);
+    }
     if (failures.length > 0) {
       const primary = failures.find((code) => FALLBACK_CODES.has(code)) || 'coverage_gap';
       return unavailableResult(input, primary, GRAPH_FIELDS.get_media_metrics, retrievedAt, ['partial_coverage']);
@@ -609,7 +674,8 @@ async function collectOperation({ input, row, token, env, signal, fetchImpl }) {
             fetchImpl,
           });
           if (!Array.isArray(payload.data)) throw new GraphRequestError('coverage_gap');
-          const values = payload.data.filter((item) => isObject(item));
+          const values = payload.data.filter((item) => isObject(item) && textValue(item.id));
+          if (payload.data.length > 0 && values.length === 0) throw new GraphRequestError('invalid_response');
           const total = countValue(payload.summary?.total_count);
           return { count: total === undefined ? values.length : total, sample: values.length };
         } catch (error) {
@@ -623,6 +689,16 @@ async function collectOperation({ input, row, token, env, signal, fetchImpl }) {
           sampleSize += result.sample;
         }
       }
+    }
+    const terminalFailure = failures.find((code) => code === 'invalid_response' || code === 'rate_limited');
+    if (terminalFailure) {
+      throw new GraphRequestError(terminalFailure);
+    }
+    if (failures.length > 0 && (commentCount > 0 || sampleSize > 0)) {
+      return successResult(input, [{
+        comment_count: commentCount,
+        sample_size: sampleSize,
+      }], GRAPH_FIELDS.get_comments_sample, retrievedAt, ['partial_coverage', 'raw_comment_text_not_returned']);
     }
     if (failures.length > 0) {
       const primary = failures.find((code) => FALLBACK_CODES.has(code)) || 'coverage_gap';
@@ -686,8 +762,8 @@ export async function handleAnalyticsReadonlyRequest({ request, env, requestId, 
   let row;
   let audited = false;
   try {
-    release = acquireRequestLease();
     input = normalizeInput(await readBoundedJson(request));
+    release = acquireRequestLease();
     row = await loadCredential(env, input.credential_ref);
     if (!credentialAllowsAnalytics(row)) {
       await audit(writeAudit, env, input, row, 'permission_gap', requestId, { code: 'permission_gap' });

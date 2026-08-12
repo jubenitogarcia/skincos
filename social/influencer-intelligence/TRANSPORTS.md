@@ -42,6 +42,12 @@ transport, media download, or Instagram write action.
   domain, logged, audited as a value, or placed in a URL.
 - The existing D1 schema is sufficient; this gate adds no migration.
 
+Token Vault also applies the server-side mode gate
+`INFLUENCER_INTELLIGENCE_ANALYTICS_MODE`: `off` is the default and rejects
+analytics before credential access, `shadow` permits only the bounded
+read-only path, and `active` additionally requires the explicit module flag.
+This keeps a configured transport from becoming an enabled user surface.
+
 ## Operations and safety
 
 The fixed projection covers `resolve_creator`, `get_profile`,

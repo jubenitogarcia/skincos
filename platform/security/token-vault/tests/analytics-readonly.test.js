@@ -62,6 +62,7 @@ function environment(db) {
     REQUIRE_AUTH: 'true',
     WORKER_AUTH_HEADER_NAME: 'Authorization',
     WORKER_AUTH_SCHEME: 'Bearer',
+    INFLUENCER_INTELLIGENCE_ANALYTICS_MODE: 'shadow',
   };
 }
 
@@ -120,6 +121,38 @@ async function withFetch(env, handler, callback) {
     env.ANALYTICS_FETCH = original;
   }
 }
+
+test('analytics remains off until the server-side shadow or active mode is configured', async () => {
+  const db = new FakeDb();
+  const env = environment(db);
+  env.INFLUENCER_INTELLIGENCE_ANALYTICS_MODE = 'off';
+  const response = await handleRequest(
+    new Request('https://api-staging.skincos.com.br/internal/token-vault/v1/analytics/operations', {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify(profileRequest()),
+    }),
+    env,
+  );
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).error, 'analytics_disabled');
+});
+
+test('analytics rejects oversized request bodies before loading credentials', async () => {
+  const db = new FakeDb();
+  const env = environment(db);
+  const response = await handleRequest(
+    new Request('https://api-staging.skincos.com.br/internal/token-vault/v1/analytics/operations', {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ ...profileRequest(), correlation_id: 'x'.repeat(40_000) }),
+    }),
+    env,
+  );
+  assert.equal(response.status, 413);
+  assert.equal((await response.json()).error, 'request_too_large');
+  assert.equal(db.audit.length, 1);
+});
 
 test('analytics role can read a bounded Meta profile without returning credentials', async () => {
   const db = new FakeDb();
@@ -222,6 +255,76 @@ test('official transport preserves explicit zero metrics and omits unavailable f
   });
 });
 
+test('sparse Meta profiles remain unavailable instead of promoting a handle to observed metrics', async () => {
+  const db = new FakeDb();
+  const env = environment(db);
+  await seedInstagram(db);
+  await withFetch(env, async () => new Response(JSON.stringify({ username: 'synthetic.creator' }), { status: 200 }), async () => {
+    const response = await handleRequest(
+      new Request('https://api-staging.skincos.com.br/internal/token-vault/v1/analytics/operations', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify(profileRequest()),
+      }),
+      env,
+    );
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.result.status, 'unavailable');
+    assert.equal(body.result.data, null);
+    assert.deepEqual(body.result.limitations, ['coverage_gap']);
+  });
+});
+
+test('bounded Graph response failures are structured without returning a partial payload', async () => {
+  const db = new FakeDb();
+  const env = environment(db);
+  await seedInstagram(db);
+  await withFetch(env, async () => new Response(JSON.stringify({ username: 'x'.repeat(70_000) }), { status: 200 }), async () => {
+    const response = await handleRequest(
+      new Request('https://api-staging.skincos.com.br/internal/token-vault/v1/analytics/operations', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify(profileRequest()),
+      }),
+      env,
+    );
+    assert.equal(response.status, 502);
+    assert.equal((await response.json()).error, 'invalid_response');
+  });
+});
+
+test('media metric fanout preserves valid results while marking partial coverage', async () => {
+  const db = new FakeDb();
+  const env = environment(db);
+  await seedInstagram(db);
+  await withFetch(env, async (url) => {
+    if (String(url).includes('10000000000000001')) {
+      return new Response(JSON.stringify({ id: '10000000000000001', like_count: 8 }), { status: 200 });
+    }
+    return new Response('{}', { status: 403 });
+  }, async () => {
+    const response = await handleRequest(
+      new Request('https://api-staging.skincos.com.br/internal/token-vault/v1/analytics/operations', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({
+          ...profileRequest(),
+          operation: 'get_media_metrics',
+          media_keys: ['10000000000000001', '10000000000000002'],
+          requested_fields: ['id', 'like_count', 'comments_count', 'views'],
+        }),
+      }),
+      env,
+    );
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.result.status, 'ok');
+    assert.deepEqual(body.result.data, [{ media_key: '10000000000000001', likes_count: 8 }]);
+    assert.deepEqual(body.result.limitations, ['partial_coverage']);
+  });
+});
+
 test('comment collection returns aggregate counts but never comment identifiers or text', async () => {
   const db = new FakeDb();
   const env = environment(db);
@@ -290,6 +393,19 @@ test('Meta permission and timeout failures remain structured and do not fabricat
     );
     assert.equal(response.status, 504);
     assert.equal((await response.json()).error, 'timeout');
+  });
+
+  await withFetch(env, async () => new Response(JSON.stringify({ error: 'rate_limited' }), { status: 429 }), async () => {
+    const response = await handleRequest(
+      new Request('https://api-staging.skincos.com.br/internal/token-vault/v1/analytics/operations', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify(profileRequest()),
+      }),
+      env,
+    );
+    assert.equal(response.status, 429);
+    assert.equal((await response.json()).error, 'rate_limited');
   });
 });
 

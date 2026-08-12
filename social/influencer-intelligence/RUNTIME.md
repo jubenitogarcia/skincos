@@ -68,12 +68,23 @@ The private file is intentionally blank for:
 INFLUENCER_INTELLIGENCE_SERVICE_TOKEN
 INFLUENCER_INTELLIGENCE_MCP_BEARER_TOKEN
 INFLUENCER_INTELLIGENCE_ACTOR_HMAC_KEY
+INFLUENCER_INTELLIGENCE_TOKEN_VAULT_BASE_URL
+INFLUENCER_INTELLIGENCE_TOKEN_VAULT_CREDENTIAL_REF
 TOKEN_VAULT_ANALYTICS_API_TOKEN
 ```
 
-The analytics database URL and Token Vault credential reference are also
-operator-supplied private values. They are not defaults and are not needed for
-health or registration checks.
+The Token Vault base URL, opaque credential reference, analytics caller token,
+and analytics database URL are operator-supplied private configuration. They
+are not defaults and are not needed for health or registration checks. The
+service consumes the caller token only when it composes the Meta Graph
+transport after all runtime gates pass; the Meta access token remains inside
+Token Vault.
+
+The Token Vault Worker remains independently gated by
+`INFLUENCER_INTELLIGENCE_ANALYTICS_MODE=off|shadow|active`. Registration does
+not change that setting; the first controlled transport smoke uses `shadow`
+with the CRM grant, Orb workflow, service units, and production routes still
+disabled.
 
 ## Validation, promotion and rollback
 

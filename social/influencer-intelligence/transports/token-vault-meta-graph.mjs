@@ -49,6 +49,7 @@ function timeoutValue(value) {
 function errorForCode(code) {
   if (code === 'permission_gap' || code === 'coverage_gap') return new ProviderGapError(code);
   if (code === 'invalid_response') return new ProviderCollectionError('invalid_response');
+  if (code === 'rate_limited') return new ProviderCollectionError('rate_limited');
   const error = new Error('Token Vault analytics transport unavailable');
   error.code = code === 'timeout' ? 'timeout' : 'provider_unavailable';
   return error;

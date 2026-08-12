@@ -15,6 +15,7 @@ const unitMcp = fs.readFileSync(path.join(root, 'ops/runtime/units/influencer-in
 const installer = fs.readFileSync(path.join(root, 'scripts/runtime/install-influencer-intelligence-runtime.sh'), 'utf8');
 const workflow = fs.readFileSync(path.join(root, 'orb/engine/workflows/influencer-intelligence-snapshot.json'), 'utf8');
 const crmProxy = fs.readFileSync(path.join(root, 'crm/console/functions/api/influencer-intelligence/[[path]].ts'), 'utf8');
+const tokenVaultWrangler = fs.readFileSync(path.join(root, 'platform/security/token-vault/wrangler.toml'), 'utf8');
 
 const clock = () => 1_754_000_000_000;
 const key = 'synthetic-runtime-hmac-key';
@@ -59,6 +60,11 @@ test('registers both loopback units without enabling them or storing secrets', (
   assert.match(unitService, /INFLUENCER_INTELLIGENCE_RUNTIME_REGISTERED=true/);
   assert.match(unitMcp, /INFLUENCER_INTELLIGENCE_RUNTIME_REGISTERED=true/);
   assert.match(installer, /INFLUENCER_INTELLIGENCE_ENABLED=false/);
+  assert.match(installer, /INFLUENCER_INTELLIGENCE_TOKEN_VAULT_BASE_URL=/);
+  assert.match(installer, /INFLUENCER_INTELLIGENCE_TOKEN_VAULT_CREDENTIAL_REF=/);
+  assert.match(installer, /TOKEN_VAULT_ANALYTICS_API_TOKEN=/);
+  assert.match(tokenVaultWrangler, /TOKEN_VAULT_ANALYTICS_API_TOKEN/);
+  assert.match(tokenVaultWrangler, /INFLUENCER_INTELLIGENCE_ANALYTICS_MODE = "off"/);
   assert.match(installer, /units remain disabled/);
   assert.doesNotMatch(installer, /systemctl enable influencer-intelligence/);
   assert.doesNotMatch(unitService, /INFLUENCER_INTELLIGENCE_SERVICE_TOKEN=[^\n]+/);

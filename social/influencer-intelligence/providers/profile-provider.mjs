@@ -17,6 +17,7 @@ export const PROVIDER_COLLECTION_CODES = Object.freeze([
   'transport_error',
   'invalid_response',
   'policy_block',
+  'rate_limited',
 ]);
 
 const providerGapSet = new Set(PROVIDER_GAP_CODES);
