@@ -42,7 +42,7 @@ const EVIDENCE_STATES = new Set(['observed', 'derived', 'inferred', 'unavailable
 const FRESHNESS_VALUES = new Set(['fresh', 'stale', 'unknown']);
 const PROVIDER_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 const VERSION_PATTERN = /^[a-z][a-z0-9._/-]{0,79}$/;
-const KEY_PATTERN = /^[A-Za-z0-9._:-]{1,240}$/;
+const KEY_PATTERN = /^[A-Za-z0-9._:-]{1,160}$/;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const DIRECT_CONTACT_PATTERN = /\b[^\s@]+@[^\s@]+\.[^\s@]+\b|(?:\+?\d[\d\s().-]{7,}\d)/;
 const CREDENTIAL_PATTERN = /(?:access[_-]?token|refresh[_-]?token|authorization|cookie|password|secret|api[_-]?key)\s*[:=]/i;
@@ -194,9 +194,14 @@ function normalizeEvidenceRefs(value, label, evidenceState) {
 function normalizeScalarMap(value, label) {
   if (!isRecord(value) || Object.keys(value).length > MAX_SIGNAL_TERMS) fail(`${label.toUpperCase()}_INVALID`);
   const result = {};
+  let total = 0;
   for (const [key, raw] of Object.entries(value)) {
     const normalizedKey = normalizedTerm(key, `${label}.key`);
-    result[normalizedKey] = ratio(raw, `${label}.${key}`);
+    if (Object.prototype.hasOwnProperty.call(result, normalizedKey)) fail(`${label.toUpperCase()}_DUPLICATE`);
+    const share = ratio(raw, `${label}.${key}`);
+    total += share;
+    if (total > 1.000001) fail(`${label.toUpperCase()}_DISTRIBUTION_INVALID`);
+    result[normalizedKey] = share;
   }
   return Object.fromEntries(Object.entries(result).sort(([left], [right]) => left.localeCompare(right)));
 }
@@ -273,6 +278,8 @@ function normalizeProvenance(value, label, evidenceState) {
     const retrievedAt = timestamp(entry.retrieved_at ?? entry.retrievedAt, `${label}[${index}].retrieved_at`);
     if (Date.parse(retrievedAt) < Date.parse(observedAt)) fail(`${label}[${index}]_TIMESTAMP_ORDER_INVALID`);
     const state = normalizeEvidenceState(entry.evidence_state ?? entry.evidenceState ?? evidenceState, `${label}[${index}].evidence_state`);
+    const stateRank = { observed: 0, derived: 1, inferred: 2, unavailable: 3 };
+    if (stateRank[state] > stateRank[evidenceState]) fail(`${label}[${index}]_STATE_ESCALATION_INVALID`);
     return Object.freeze({
       provider,
       source_type: normalizedTerm(entry.source_type ?? entry.sourceType ?? 'analysis', `${label}[${index}].source_type`),
@@ -309,7 +316,8 @@ export function normalizeCampaignBrief(input) {
   const campaignVersion = Number(input.campaign_version ?? input.campaignVersion ?? 1);
   if (!Number.isSafeInteger(campaignVersion) || campaignVersion < 1) fail('CAMPAIGN_VERSION_INVALID');
   const criteriaVersion = version(input.criteria_version ?? input.criteriaVersion ?? 'campaign-fit-criteria/v1', 'criteria_version');
-  const desiredFormats = termArray(input.desired_formats ?? input.desiredFormats ?? (input.desired_content_format ? [input.desired_content_format] : []), 'desired_formats', { maximum: 8 });
+  const desiredContentFormat = input.desired_content_format ?? input.desiredContentFormat;
+  const desiredFormats = termArray(input.desired_formats ?? input.desiredFormats ?? (desiredContentFormat ? [desiredContentFormat] : []), 'desired_formats', { maximum: 8 });
   const brief = {
     campaign_key: campaignKey,
     campaign_version: campaignVersion,
@@ -366,6 +374,7 @@ export function normalizeCreatorCampaignEvidence(input) {
     'audience_gender', 'audience_age', 'commercial_saturation', 'sponsored_ratio', 'content_formats',
     'brand_safety_flags', 'engagement_quality', 'historical_content',
   ];
+  if (Object.keys(input.signals).some((key) => !signalKeys.includes(key))) fail('CREATOR_SIGNALS_FIELD_FORBIDDEN');
   const signals = {};
   for (const key of signalKeys) {
     if (input.signals[key] !== undefined) signals[key] = normalizeSignal(input.signals[key], key);
@@ -454,6 +463,7 @@ function buildComponent({ key, scoreValue, signals, creator, applicable, code, i
   const weight = CAMPAIGN_FIT_WEIGHTS[key];
   const available = signals.filter((item) => item.evidence_state !== 'unavailable' && item.value !== null);
   if (!applicable || available.length === 0) {
+    const signalLimitations = signals.flatMap((item) => item.limitations || []);
     return {
       key,
       score: null,
@@ -466,7 +476,7 @@ function buildComponent({ key, scoreValue, signals, creator, applicable, code, i
       freshness: 'unknown',
       provenance: [],
       model_versions: [],
-      explanation: { code: code || 'component_unavailable', inputs, limitations: [...new Set(limitations || [])] },
+       explanation: { code: code || 'component_unavailable', inputs, limitations: [...new Set([...signalLimitations, ...(limitations || [])])] },
       conflicts: [...(conflicts || [])],
     };
   }
@@ -576,10 +586,19 @@ function saturationComponent(brief, evidence) {
   const sponsored = evidence.signals.sponsored_ratio;
   const signalToUse = signal.evidence_state === 'unavailable' ? sponsored : signal;
   const maxSaturation = brief.commercial_constraints.max_sponsored_ratio;
-  if (signalToUse.evidence_state === 'unavailable') return buildComponent({ key: 'commercial_saturation', signals: [signalToUse], creator: evidence, applicable: true, code: 'commercial_saturation_unavailable', inputs: {}, limitations: ['commercial_saturation_unavailable'] });
+  const brandMentions = evidence.signals.brands_mentioned;
+  const maxBrandMentions = brief.commercial_constraints.max_brand_mentions;
+  if (maxBrandMentions !== undefined && brandMentions.evidence_state === 'unavailable') {
+    return buildComponent({ key: 'commercial_saturation', signals: [signalToUse, brandMentions], creator: evidence, applicable: false, code: 'max_brand_mentions_unavailable', inputs: { max_brand_mentions: maxBrandMentions }, limitations: ['max_brand_mentions_unavailable'] });
+  }
+  if (signalToUse.evidence_state === 'unavailable' && maxBrandMentions === undefined) return buildComponent({ key: 'commercial_saturation', signals: [signalToUse], creator: evidence, applicable: true, code: 'commercial_saturation_unavailable', inputs: {}, limitations: ['commercial_saturation_unavailable'] });
   const value = signalToUse.value;
-  const scoreValue = maxSaturation !== undefined && value > maxSaturation ? Math.max(0, 100 - (((value - maxSaturation) / Math.max(1 - maxSaturation, 0.000001)) * 100)) : (1 - value) * 100;
-  return buildComponent({ key: 'commercial_saturation', scoreValue, signals: [signalToUse], creator: evidence, applicable: true, code: maxSaturation !== undefined && value > maxSaturation ? 'commercial_constraint_exceeded' : 'commercial_saturation_penalty', inputs: { observed_ratio: value, max_allowed_ratio: maxSaturation ?? null }, limitations: [] });
+  const saturationScore = value === null ? null : maxSaturation !== undefined && value > maxSaturation ? Math.max(0, 100 - (((value - maxSaturation) / Math.max(1 - maxSaturation, 0.000001)) * 100)) : (1 - value) * 100;
+  const mentionCount = Array.isArray(brandMentions.value) ? brandMentions.value.length : 0;
+  const mentionScore = maxBrandMentions === undefined ? null : mentionCount > maxBrandMentions ? 0 : 100;
+  const scoreValue = saturationScore === null ? mentionScore : mentionScore === null ? saturationScore : Math.min(saturationScore, mentionScore);
+  const constraintsExceeded = (maxSaturation !== undefined && value !== null && value > maxSaturation) || (maxBrandMentions !== undefined && mentionCount > maxBrandMentions);
+  return buildComponent({ key: 'commercial_saturation', scoreValue, signals: maxBrandMentions === undefined ? [signalToUse] : [signalToUse, brandMentions], creator: evidence, applicable: true, code: constraintsExceeded ? 'commercial_constraint_exceeded' : 'commercial_saturation_penalty', inputs: { observed_ratio: value, max_allowed_ratio: maxSaturation ?? null, observed_brand_mentions: mentionCount, max_brand_mentions: maxBrandMentions ?? null }, limitations: [] });
 }
 
 function competitorComponent(brief, evidence) {
@@ -588,6 +607,10 @@ function competitorComponent(brief, evidence) {
   const actual = arrayValue(signal);
   const mentioned = arrayValue(evidence.signals.brands_mentioned);
   const conflicts = brief.competitors.filter((target) => [...actual, ...mentioned].some((item) => matches(item, target)));
+  const partialEvidence = (signal.evidence_state === 'unavailable') !== (evidence.signals.brands_mentioned.evidence_state === 'unavailable');
+  if (partialEvidence && conflicts.length === 0) {
+    return buildComponent({ key: 'competitor_conflict', signals: [signal, evidence.signals.brands_mentioned], creator: evidence, applicable: false, code: 'competitor_history_partial_unavailable', inputs: { excluded_competitors: brief.competitors }, limitations: ['competitor_history_partial_unavailable'] });
+  }
   const conflictRatio = conflicts.length / brief.competitors.length;
   return buildComponent({ key: 'competitor_conflict', scoreValue: (1 - conflictRatio) * 100, signals: [signal, evidence.signals.brands_mentioned], creator: evidence, applicable: true, code: conflicts.length ? 'competitor_conflict_detected' : 'competitor_exclusion_clear', inputs: { excluded_competitors: brief.competitors, conflicts }, limitations: signal.evidence_state === 'unavailable' && evidence.signals.brands_mentioned.evidence_state === 'unavailable' ? ['competitor_history_unavailable'] : [], conflicts });
 }
@@ -676,6 +699,17 @@ function buildProvenance(components) {
     seen.add(key);
     return true;
   });
+}
+
+function repositoryProvenance(entries) {
+  return entries.map((entry) => ({
+    provider: entry.provider,
+    sourceType: entry.source_type,
+    sourceRef: entry.source_ref,
+    evidenceState: entry.evidence_state,
+    observedAt: entry.observed_at,
+    retrievedAt: entry.retrieved_at,
+  }));
 }
 
 export function computeCampaignFit({ campaign, creator, calculated_at: calculatedAtInput, calculatedAt, clock = Date.now } = {}) {
@@ -800,7 +834,7 @@ export async function computeAndPersistCampaignFit({
     modelVersion: result.model_version,
     providers: result.providers,
     inputFingerprint: result.input_fingerprint,
-    provenance: result.provenance,
+    provenance: repositoryProvenance(result.provenance),
     computedAt: result.calculated_at,
     components: result.campaign_fit_components,
     retentionPolicyVersion: normalizedRetention,

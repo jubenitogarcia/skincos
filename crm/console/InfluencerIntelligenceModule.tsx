@@ -307,6 +307,7 @@ export function InfluencerIntelligencePanel({ client = createInfluencerIntellige
   const [dashboard, setDashboard] = React.useState<InfluencerCreatorDashboard | null>(null)
   const [comparison, setComparison] = React.useState<InfluencerComparison | null>(null)
   const [campaignKey, setCampaignKey] = React.useState('')
+  const [campaignVersion, setCampaignVersion] = React.useState('1')
   const [campaignFit, setCampaignFit] = React.useState<InfluencerCampaignFitResponse | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [notice, setNotice] = React.useState('')
@@ -381,18 +382,23 @@ export function InfluencerIntelligencePanel({ client = createInfluencerIntellige
       setError('Informe a chave de uma campanha persistida.')
       return
     }
+    const parsedCampaignVersion = Number(campaignVersion)
+    if (!Number.isSafeInteger(parsedCampaignVersion) || parsedCampaignVersion < 1 || parsedCampaignVersion > 100000) {
+      setError('Informe uma versão de campanha válida.')
+      return
+    }
     setLoading(true)
     setError('')
     setNotice('')
     try {
-      setCampaignFit(await client.getCampaignFit(normalizedCampaignKey, selectedKeys))
+      setCampaignFit(await client.getCampaignFit(normalizedCampaignKey, selectedKeys, parsedCampaignVersion))
     } catch (caught) {
       setCampaignFit(null)
       setError(getUiError(caught))
     } finally {
       setLoading(false)
     }
-  }, [campaignKey, client, selectedKeys])
+  }, [campaignKey, campaignVersion, client, selectedKeys])
 
   if (!enabled || !granted) {
     return (
@@ -414,7 +420,7 @@ export function InfluencerIntelligencePanel({ client = createInfluencerIntellige
           <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void search() }}>
             <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar creator por handle ou chave aprovada" aria-label="Buscar creator" className="pl-9" maxLength={80} /></div>
             <Button type="submit" disabled={loading}><Search className="size-4" />{loading ? 'Consultando…' : 'Buscar'}</Button>
-            <Button type="button" variant="outline" onClick={() => { setQuery(''); setResults([]); setDashboard(null); setComparison(null); setCampaignFit(null); setCampaignKey(''); setError(''); setNotice('') }} disabled={loading}>Limpar</Button>
+            <Button type="button" variant="outline" onClick={() => { setQuery(''); setResults([]); setDashboard(null); setComparison(null); setCampaignFit(null); setCampaignKey(''); setCampaignVersion('1'); setError(''); setNotice('') }} disabled={loading}>Limpar</Button>
           </form>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400"><Database className="size-3.5" />A busca não dispara scraping ou snapshot. O cadastro apenas registra a intenção no serviço interno.</div>
         </CardContent>
@@ -424,7 +430,7 @@ export function InfluencerIntelligencePanel({ client = createInfluencerIntellige
 
       {results.length ? <Card className="border-white/10 bg-white/[0.03]" data-testid="influencer-search-results"><CardHeader><CardTitle className="text-base text-white">Creators encontrados</CardTitle></CardHeader><CardContent className="space-y-2">{results.map((creator) => <div key={creator.creatorKey} className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-black/10 p-3"><input type="checkbox" aria-label={`Selecionar ${creator.handle ? `@${creator.handle}` : creator.creatorKey}`} checked={selectedKeys.includes(creator.creatorKey)} onChange={(event) => setSelectedKeys((current) => event.target.checked ? [...new Set([...current, creator.creatorKey])].slice(-20) : current.filter((key) => key !== creator.creatorKey))} /><CreatorIdentity creator={creator} /><div className="ml-auto flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => void openCreator(creator.creatorKey)} disabled={loading}>Ver análise</Button><Button size="sm" onClick={() => void addCreator(creator.handle || creator.creatorKey)} disabled={loading || creator.registryState !== 'candidate'}><Plus className="size-3.5" />Adicionar creator</Button></div></div>)}<div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3"><span className="text-xs text-slate-400">{selectedKeys.length} selecionado(s) · máximo 20</span><Button size="sm" onClick={() => void compare()} disabled={loading || selectedKeys.length < 2}><Users className="size-3.5" />Comparar selecionados</Button></div></CardContent></Card> : null}
 
-      {results.length ? <Card className="border-white/10 bg-white/[0.03]" data-testid="influencer-campaign-fit-query"><CardHeader><CardTitle className="text-base text-white">Consultar Campaign Fit</CardTitle></CardHeader><CardContent className="space-y-2"><div className="flex flex-col gap-2 sm:flex-row"><Input value={campaignKey} onChange={(event) => setCampaignKey(event.target.value)} placeholder="Chave da campanha persistida" aria-label="Chave da campanha" maxLength={128} /><Button type="button" onClick={() => void loadCampaignFit()} disabled={loading || selectedKeys.length === 0}>Consultar Campaign Fit</Button></div><p className="text-xs text-slate-500">Selecione ao menos um creator. O serviço interno retorna apenas uma projeção já calculada e versionada.</p></CardContent></Card> : null}
+      {results.length ? <Card className="border-white/10 bg-white/[0.03]" data-testid="influencer-campaign-fit-query"><CardHeader><CardTitle className="text-base text-white">Consultar Campaign Fit</CardTitle></CardHeader><CardContent className="space-y-2"><div className="flex flex-col gap-2 sm:flex-row"><Input value={campaignKey} onChange={(event) => setCampaignKey(event.target.value)} placeholder="Chave da campanha persistida" aria-label="Chave da campanha" maxLength={128} /><Input type="number" min={1} max={100000} step={1} value={campaignVersion} onChange={(event) => setCampaignVersion(event.target.value)} placeholder="Versão" aria-label="Versão da campanha" /><Button type="button" onClick={() => void loadCampaignFit()} disabled={loading || selectedKeys.length === 0}>Consultar Campaign Fit</Button></div><p className="text-xs text-slate-500">Selecione ao menos um creator. O serviço interno retorna apenas uma projeção já calculada e versionada.</p></CardContent></Card> : null}
 
       {comparison ? <ComparisonTable comparison={comparison} /> : null}
       {campaignFit ? <CampaignFitTable response={campaignFit} /> : null}

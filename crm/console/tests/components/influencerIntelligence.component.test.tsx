@@ -67,10 +67,12 @@ describe('Influencer Intelligence CRM panel', () => {
     await user.click(screen.getByRole('button', { name: 'Buscar' }))
     await user.click(screen.getByRole('checkbox', { name: 'Selecionar @synthetic.creator' }))
     await user.type(screen.getByRole('textbox', { name: 'Chave da campanha' }), 'campaign-1')
+    await user.clear(screen.getByRole('spinbutton', { name: 'Versão da campanha' }))
+    await user.type(screen.getByRole('spinbutton', { name: 'Versão da campanha' }), '2')
     await user.click(screen.getByRole('button', { name: 'Consultar Campaign Fit' }))
 
     expect(await screen.findByTestId('influencer-campaign-fit')).toBeVisible()
-    expect(screen.getByText('Campaign Fit · campaign-1 v1')).toBeVisible()
+    expect(screen.getByText('Campaign Fit · campaign-1 v2')).toBeVisible()
     expect(screen.getByText(/projeção separada do Influencer Score geral/i)).toBeVisible()
     expect(screen.getByText('82 / 100')).toBeVisible()
   })

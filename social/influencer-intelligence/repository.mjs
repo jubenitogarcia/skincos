@@ -321,14 +321,16 @@ export const SQL = Object.freeze({
     on conflict (ingest_key) do nothing
     returning component_key, ingest_key, score_key, component_name, evidence_state`,
   upsertCampaign: `
-    insert into influencer_intelligence.campaign
+    insert into influencer_intelligence.campaign as target
       (campaign_key, campaign_version, status, criteria_version, criteria)
     values ($1, $2, $3, $4, $5::jsonb)
     on conflict (campaign_key, campaign_version) do update
       set status = excluded.status,
-          criteria_version = excluded.criteria_version,
-          criteria = excluded.criteria,
-          updated_at = now()
+           criteria_version = excluded.criteria_version,
+           criteria = excluded.criteria,
+           updated_at = now()
+     where target.criteria = excluded.criteria
+       and target.criteria_version = excluded.criteria_version
     returning campaign_key, campaign_version, status`,
   recordCampaignFit: `
     insert into influencer_intelligence.campaign_creator_fit
@@ -652,7 +654,7 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
       const coverageAvailable = integer(input.coverageAvailable, 'coverageAvailable', { required: true });
       const coverageExpected = integer(input.coverageExpected, 'coverageExpected', { required: true, minimum: 1 });
       ensureCoverage(coverageAvailable, coverageExpected, 'campaignFit');
-      const components = normalizeSafeJson(input.components ?? input.campaignFitComponents ?? {}, 'components');
+      const components = normalizeSafeJson(input.components ?? input.campaignFitComponents ?? {}, 'components', { maxDepth: 6 });
       const row = await insertReturning(queryable, SQL.recordCampaignFit, [
          requiredString(input.fitKey, 'fitKey'), requiredString(input.ingestKey, 'ingestKey'), requiredString(input.campaignKey, 'campaignKey'),
          integer(input.campaignVersion, 'campaignVersion', { required: true, minimum: 1 }), requiredString(input.creatorKey, 'creatorKey'), score,

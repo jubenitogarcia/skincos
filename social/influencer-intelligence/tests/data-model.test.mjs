@@ -172,6 +172,7 @@ test('repository exposes a parameterized, injected PostgreSQL boundary', async (
   assert.equal(queryable.calls[0].values[2], 'tiktok');
   assert.doesNotMatch(queryable.calls[0].text, /tiktok|collect-1/);
   assert.equal(typeof SQL.createCollectorRun, 'string');
+  assert.match(SQL.upsertCampaign, /where target\.criteria = excluded\.criteria/);
 });
 
 test('collector run idempotency rejects a changed request fingerprint', async () => {
@@ -362,10 +363,10 @@ test('analysis and campaign fit enforce coverage, model versions, and bounded re
   await repository.recordCampaignFit({
     fitKey: 'fit-1', ingestKey: 'fit-ingest-1', campaignKey: 'campaign-1', campaignVersion: 1, creatorKey: 'creator-1', score: 75,
     confidence: 0.7, coverageAvailable: 3, coverageExpected: 4, evidenceState: 'derived', algorithmVersion: 'influencer-intelligence-campaign-fit/v1', weightsVersion: 'influencer-intelligence-campaign-fit-weights/v1', providers: ['tiktok'],
-    provenance: [provenanceEntry()], inputFingerprint: digestB, computedAt: retrievedAt, components: { topic_affinity: { score: 80 } }, retentionPolicyVersion: 'retention/v1',
+    provenance: [provenanceEntry()], inputFingerprint: digestB, computedAt: retrievedAt, components: { topic_affinity: { explanation: { inputs: { positive_targets: ['skincare'] } }, score: 80 } }, retentionPolicyVersion: 'retention/v1',
   });
   assert.equal(queryable.calls[1].values[17], 'influencer-intelligence-campaign-fit-weights/v1');
-  assert.deepEqual(JSON.parse(queryable.calls[1].values[18]), { topic_affinity: { score: 80 } });
+  assert.deepEqual(JSON.parse(queryable.calls[1].values[18]), { topic_affinity: { explanation: { inputs: { positive_targets: ['skincare'] } }, score: 80 } });
   await assert.rejects(
     repository.recordCampaignFit({
       fitKey: 'fit-2', ingestKey: 'fit-ingest-2', campaignKey: 'campaign-1', campaignVersion: 1, creatorKey: 'creator-1', score: 75,

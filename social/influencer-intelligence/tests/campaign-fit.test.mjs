@@ -141,5 +141,36 @@ test('persists a new append-only fit envelope with components, weights, and prov
   assert.equal(calls[1][1].weightsVersion, CAMPAIGN_FIT_WEIGHTS_VERSION);
   assert.equal(calls[1][1].components.topic_affinity.score > 0, true);
   assert.equal(calls[1][1].coverageExpected > 0, true);
+  assert.equal(calls[1][1].provenance[0].observedAt, '2026-08-12T10:00:00.000Z');
+  assert.equal(calls[1][1].provenance[0].sourceType, 'analysis');
   assert.equal(persisted.persistence.fit.fit_key, 'fit:campaign-skin-serum-001:creator-good-fit:1');
+});
+
+test('enforces commercial brand-mention limits and keeps missing constraint evidence unavailable', () => {
+  const constrained = compute(GOOD_CREATOR, { ...CAMPAIGN_FIXTURE, commercial_constraints: { max_brand_mentions: 0 } });
+  assert.equal(constrained.campaign_fit_components.commercial_saturation.score, 0);
+  assert.equal(constrained.campaign_fit_components.commercial_saturation.explanation.code, 'commercial_constraint_exceeded');
+
+  const unavailableBrands = compute(MISSING_DEMOGRAPHICS_CREATOR, { ...CAMPAIGN_FIXTURE, commercial_constraints: { max_brand_mentions: 0 } });
+  assert.equal(unavailableBrands.campaign_fit_components.commercial_saturation.score, null);
+  assert.equal(unavailableBrands.campaign_fit_components.commercial_saturation.explanation.code, 'max_brand_mentions_unavailable');
+});
+
+test('rejects unknown signals, evidence-state escalation, malformed distributions, and oversized keys', () => {
+  assert.throws(() => computeCampaignFit({ campaign: CAMPAIGN_FIXTURE, creator: { ...GOOD_CREATOR, signals: { ...GOOD_CREATOR.signals, typo_signal: GOOD_CREATOR.signals.topics } }, calculated_at: CALCULATED_AT }), (error) => error.code === 'CREATOR_SIGNALS_FIELD_FORBIDDEN');
+  assert.throws(() => computeCampaignFit({ campaign: CAMPAIGN_FIXTURE, creator: { ...GOOD_CREATOR, signals: { ...GOOD_CREATOR.signals, topics: { ...GOOD_CREATOR.signals.topics, provenance: [{ ...GOOD_CREATOR.signals.topics.provenance[0], evidence_state: 'inferred' }] } } }, calculated_at: CALCULATED_AT }), (error) => error.code.endsWith('STATE_ESCALATION_INVALID'));
+  assert.throws(() => computeCampaignFit({ campaign: CAMPAIGN_FIXTURE, creator: { ...GOOD_CREATOR, signals: { ...GOOD_CREATOR.signals, audience_geography: { ...GOOD_CREATOR.signals.audience_geography, value: { brasil: 0.8, portugal: 0.8 } } } }, calculated_at: CALCULATED_AT }), (error) => error.code === 'AUDIENCE_GEOGRAPHY_DISTRIBUTION_INVALID');
+  assert.throws(() => normalizeCampaignBrief({ campaign_key: 'x'.repeat(161), category: 'skincare' }), (error) => error.code === 'CAMPAIGN_KEY_INVALID');
+});
+
+test('supports the documented camel-case desired format alias', () => {
+  const result = compute(GOOD_CREATOR, { campaignKey: 'campaign-format-alias', desiredContentFormat: 'reel' });
+  assert.equal(result.campaign_fit_components.format_affinity.score > 0, true);
+});
+
+test('does not claim a clear competitor exclusion from partial evidence', () => {
+  const partial = { ...GOOD_CREATOR, signals: { ...GOOD_CREATOR.signals, brands_mentioned: unavailable('brands-mentioned') } };
+  const result = compute(partial);
+  assert.equal(result.campaign_fit_components.competitor_conflict.score, null);
+  assert.equal(result.campaign_fit_components.competitor_conflict.explanation.code, 'competitor_history_partial_unavailable');
 });
