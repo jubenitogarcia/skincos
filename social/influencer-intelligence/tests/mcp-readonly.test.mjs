@@ -133,6 +133,29 @@ test('rejects arbitrary arguments, provider account material and oversized reque
   assert.equal(errorCode(oversized), 'INVALID_INPUT');
 });
 
+test('measures request size when the transport does not provide byte metadata', async () => {
+  const { gateway } = createHarness();
+  const response = await gateway.handleRpc({
+    rpc: { jsonrpc: '2.0', id: 'large', method: 'ping', params: { padding: 'x'.repeat(MCP_READONLY_LIMITS.maxRequestBytes) } },
+    context: AUTH,
+  });
+
+  assert.equal(errorCode(response), 'INVALID_INPUT');
+});
+
+test('accepts independently encoded in-limit transport size metadata', async () => {
+  const { gateway } = createHarness();
+  const rpc = { jsonrpc: '2.0', id: 'encoded', method: 'ping', params: {} };
+  const response = await gateway.handleRpc({
+    rpc,
+    context: AUTH,
+    requestBytes: Buffer.byteLength(JSON.stringify(rpc), 'utf8') + 10,
+  });
+
+  assert.equal(response.error, undefined);
+  assert.deepEqual(response.result, {});
+});
+
 test('validates bounded windows, paging and comparison cardinality before the store', async () => {
   const { gateway, service } = createHarness();
   const tooLong = await call(gateway, 'get_creator_snapshots', { creator_key: 'creator-1', window: { start: '2024-01-01T00:00:00.000Z', end: NOW } });
@@ -197,7 +220,7 @@ test('rejects an unavailable envelope that claims available metrics', async () =
 test('sanitizes raw payload, PII and credential-like output before returning it', async () => {
   const service = fixtureService({
     async getCreatorProfile() {
-      return envelope({ creator_key: 'creator-1', followers_count: 3, email: 'person@example.test', raw_comment_text: 'hello', nested: { access_token: 'Bearer fake-token-value' }, safe: 'kept' });
+      return envelope({ creator_key: 'creator-1', followers_count: 3, email: 'person@example.test', display_name: 'Person Public', location: 'São Paulo', raw_comment_text: 'hello', nested: { access_token: 'Bearer fake-token-value' }, safe: 'kept' });
     },
   });
   const { gateway } = createHarness({ service });
@@ -206,6 +229,8 @@ test('sanitizes raw payload, PII and credential-like output before returning it'
   assert.equal(data.safe, 'kept');
   assert.equal(Object.hasOwn(data, 'email'), false);
   assert.equal(Object.hasOwn(data, 'raw_comment_text'), false);
+  assert.equal(Object.hasOwn(data, 'display_name'), false);
+  assert.equal(Object.hasOwn(data, 'location'), false);
   assert.equal(Object.hasOwn(data.nested, 'access_token'), false);
   assert.equal(JSON.stringify(response).includes('person@example.test'), false);
   assert.equal(JSON.stringify(response).includes('fake-token-value'), false);
@@ -265,6 +290,26 @@ test('enforces concurrency without queueing unbounded work', async () => {
   assert.equal(errorCode(second), 'TOO_MANY_CONCURRENT_REQUESTS');
   release();
   assert.equal((await first).error, undefined);
+});
+
+test('keeps generated request identity aligned between the service envelope and audit event', async () => {
+  const { gateway, audit } = createHarness();
+  const response = await gateway.handleRpc({
+    rpc: { jsonrpc: '2.0', method: 'tools/call', params: { name: 'get_creator_profile', arguments: { creator_key: 'creator-1' } } },
+    context: AUTH,
+  });
+
+  const requestId = response.result.structuredContent.request_id;
+  assert.match(requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].request_id, requestId);
+});
+
+test('does not allow callers to raise the bounded concurrency ceiling', () => {
+  assert.throws(
+    () => createHarness({ maxConcurrentRequests: MCP_READONLY_LIMITS.maxConcurrentRequests + 1 }),
+    /maxConcurrentRequests is invalid/,
+  );
 });
 
 test('audit failure fails closed instead of returning a successful result', async () => {
