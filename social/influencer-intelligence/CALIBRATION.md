@@ -11,7 +11,7 @@ database, workflow, or real-user data is used.
 
 - Calibration contract: `influencer-intelligence/calibration/v1`
 - Analytics algorithm: `influencer-intelligence-analytics/v1`
-- Score algorithm: `influencer-intelligence-scoring/v0`
+- Score algorithm: `influencer-intelligence-scoring/v0.1`
 - Score weights: `influencer-intelligence-scoring-weights/v0`
 - Campaign Fit algorithm: `influencer-intelligence-campaign-fit/v1`
 - Campaign Fit weights: `influencer-intelligence-campaign-fit-weights/v1`
@@ -30,7 +30,7 @@ database, workflow, or real-user data is used.
 | short-history-confidence | Few posts do not manufacture cadence/outlier statistics; confidence is lower. | Confidence `53.5`, coverage `79.7`; posting interval and outlier ratio unavailable. | PASS |
 | irregular-engagement-volatility | Irregular engagement produces explicit robust volatility/outlier signals. | Engagement CV `1.6524`, likes outlier ratio `0.125`, no non-finite values. | PASS |
 | zero-denominator-extreme | Observed zero remains zero; ratios with zero denominators are unavailable. | Likes mean `0`; engagement rate unavailable/null; growth rate unavailable/null. | PASS |
-| score-confidence-separation | A sparse score may be bounded without high confidence. | Score `88.485`, confidence `58.6`, coverage `88.1`; one media item and comment sample factor `0.01`. | PASS |
+| score-confidence-separation | A sparse score may be bounded without high confidence. | Score `88.485`, confidence `55`, coverage `88.1`; one media item and comment sample factor `0.01`. | PASS |
 | campaign-fit-separation-and-missing-demographics | Campaign Fit is separate; conflict/saturation reduce fit and missing demographics reduce confidence. | Good `84.650/95.280/100`; conflict `51.059/41.274/85`; control `62.824/41.274/85`; missing demographics `57.867/40.149/75`; high saturation `49.422/40.149/75`. | PASS |
 
 The machine-readable source of truth is `runInfluencerCalibration()` in

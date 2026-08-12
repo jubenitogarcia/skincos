@@ -686,6 +686,9 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
       if (algorithmVersion.startsWith('influencer-intelligence-scoring/') && !weightsVersion) {
         fail('WEIGHTS_VERSION_REQUIRED');
       }
+      if (evidenceState === 'inferred' && !input.modelVersion) {
+        fail('SCORE_MODEL_VERSION_REQUIRED');
+      }
       const score = decimal(input.score, 'score', { minimum: 0, maximum: 100 });
       if (evidenceState === 'unavailable' && score !== null) fail('UNAVAILABLE_SCORE_MUST_BE_NULL');
       if (evidenceState !== 'unavailable' && score === null) fail('AVAILABLE_SCORE_REQUIRED');
@@ -717,6 +720,7 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
       const providers = normalizeStringArray(input.providers, 'providers');
       const evidenceRefs = normalizeStringArray(input.evidenceRefs, 'evidenceRefs', { max: 64, pattern: KEY_PATTERN });
       if (evidenceState !== 'unavailable' && (providers.length === 0 || evidenceRefs.length === 0)) fail('AVAILABLE_COMPONENT_EVIDENCE_REQUIRED');
+      if (evidenceState === 'inferred' && !input.modelVersion) fail('SCORE_COMPONENT_MODEL_VERSION_REQUIRED');
       const confidence = decimal(input.confidence ?? (evidenceState === 'unavailable' ? 0 : undefined), 'confidence', { required: true, minimum: 0, maximum: 1 });
       if (evidenceState === 'unavailable' && confidence !== 0) fail('UNAVAILABLE_COMPONENT_CONFIDENCE_INVALID');
       const row = await insertReturning(queryable, SQL.recordScoreComponent, [

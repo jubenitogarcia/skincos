@@ -364,6 +364,35 @@ test('scoring v0 persistence requires and binds the exact weights version', asyn
     })),
     (error) => error.code === 'WEIGHTS_VERSION_REQUIRED',
   );
+  await assert.rejects(
+    repository.recordScore(baseScore({
+      scoreKey: 'score-inferred-missing-model',
+      ingestKey: 'score-inferred-missing-model',
+      evidenceState: 'inferred',
+      modelVersion: null,
+    })),
+    (error) => error.code === 'SCORE_MODEL_VERSION_REQUIRED',
+  );
+  await assert.rejects(
+    repository.recordScoreComponent({
+      componentKey: 'component-inferred-missing-model',
+      ingestKey: 'component-inferred-missing-model',
+      scoreKey: 'score-v0',
+      componentName: 'engagement_quality',
+      value: 80,
+      weight: 0.2,
+      contribution: 16,
+      evidenceState: 'inferred',
+      confidence: 0.5,
+      algorithmVersion: 'score/v1',
+      modelVersion: null,
+      providers: ['tiktok'],
+      evidenceRefs: ['synthetic-fixture.score'],
+      provenance: { entries: [provenanceEntry()] },
+      retentionPolicyVersion: 'retention/v1',
+    }),
+    (error) => error.code === 'SCORE_COMPONENT_MODEL_VERSION_REQUIRED',
+  );
 });
 
 test('analysis and campaign fit enforce coverage, model versions, and bounded reads', async () => {

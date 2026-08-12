@@ -4,6 +4,7 @@ import test from 'node:test';
 import { computeInfluencerAnalytics } from '../analytics.mjs';
 import {
   SCORING_ALGORITHM_VERSION,
+  SCORE_THRESHOLDS,
   SCORING_WEIGHTS_VERSION,
   computeInfluencerScore,
 } from '../scoring.mjs';
@@ -85,6 +86,25 @@ test('missing views, comments, and short history reduce coverage/confidence with
   assertFiniteNumbers(result);
 });
 
+test('a one-profile, one-post creator receives an objective confidence cap', () => {
+  const result = scoreFor(GOLDEN_FIXTURES.fewPosts);
+
+  assert.ok(result.confidence_score <= SCORE_THRESHOLDS.shortHistoryConfidenceCap * 100);
+  assert.equal(result.confidence_factors.short_history_gate, SCORE_THRESHOLDS.shortHistoryConfidenceCap);
+  assert.ok(result.limitations.includes('confidence_limited_by_history_freshness_provider_or_metric_coverage'));
+  assertFiniteNumbers(result);
+});
+
+test('missing outlier series remain unavailable instead of entering risk as zero', () => {
+  const result = scoreFor(GOLDEN_FIXTURES.irregularEngagement);
+  const inputs = result.component_scores.risk.explanation.inputs;
+
+  assert.equal(result.component_scores.risk.evidence_state, 'derived');
+  assert.equal(inputs.views_viral_outlier_ratio, null);
+  assert.equal(inputs.outlier_penalty, inputs.likes_viral_outlier_ratio * 20);
+  assertFiniteNumbers(result);
+});
+
 test('structured optional signals retain evidence state, model version, and bounded references', () => {
   const result = scoreFor(GOLDEN_FIXTURES.smallStable, {
     structured_signals: {
@@ -122,6 +142,161 @@ test('structured optional signals retain evidence state, model version, and boun
 test('same inputs and calculated timestamp are bit-for-bit deterministic', () => {
   const input = { analytics: analyticsFor(GOLDEN_FIXTURES.viralPost) };
   assert.deepEqual(computeInfluencerScore(input), computeInfluencerScore(structuredClone(input)));
+});
+
+test('input fingerprint binds confidence and evidence metadata, not only component values', () => {
+  const fixture = GOLDEN_FIXTURES.smallStable;
+  const base = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'inferred',
+        confidence: 0.62,
+        evidence_refs: ['comment-sample-001'],
+        model_version: 'comments-model/v1',
+        sample_size: 50,
+      },
+    },
+  });
+  const changed = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'inferred',
+        confidence: 0.21,
+        evidence_refs: ['comment-sample-001'],
+        model_version: 'comments-model/v1',
+        sample_size: 50,
+      },
+    },
+  });
+
+  assert.notEqual(base.input_fingerprint, changed.input_fingerprint);
+});
+
+test('input fingerprint binds structured-signal provider provenance', () => {
+  const fixture = GOLDEN_FIXTURES.smallStable;
+  const base = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'derived',
+        confidence: 0.62,
+        evidence_refs: ['comment-sample-001'],
+        providers: ['comments-engine'],
+        sample_size: 50,
+      },
+    },
+  });
+  const changed = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'derived',
+        confidence: 0.62,
+        evidence_refs: ['comment-sample-001'],
+        providers: ['alternate-comments-engine'],
+        sample_size: 50,
+      },
+    },
+  });
+
+  assert.notEqual(base.input_fingerprint, changed.input_fingerprint);
+});
+
+test('input fingerprint preserves provider assignment for each structured signal', () => {
+  const fixture = GOLDEN_FIXTURES.smallStable;
+  const base = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'derived',
+        confidence: 0.62,
+        evidence_refs: ['comment-sample-001'],
+        providers: ['comments-engine'],
+      },
+      brand_fit: {
+        score: 82,
+        evidence_state: 'derived',
+        confidence: 0.9,
+        evidence_refs: ['campaign-brief-001'],
+        providers: ['campaign-engine'],
+      },
+    },
+  });
+  const changed = scoreFor(fixture, {
+    structured_signals: {
+      comment_quality: {
+        score: 74,
+        evidence_state: 'derived',
+        confidence: 0.62,
+        evidence_refs: ['comment-sample-001'],
+        providers: ['campaign-engine'],
+      },
+      brand_fit: {
+        score: 82,
+        evidence_state: 'derived',
+        confidence: 0.9,
+        evidence_refs: ['campaign-brief-001'],
+        providers: ['comments-engine'],
+      },
+    },
+  });
+
+  assert.notEqual(base.input_fingerprint, changed.input_fingerprint);
+});
+
+test('legacy analytics summaries preserve usable history when history is absent', () => {
+  const analytics = analyticsFor(GOLDEN_FIXTURES.smallStable);
+  const legacyAnalytics = structuredClone(analytics);
+  delete legacyAnalytics.history;
+
+  const current = computeInfluencerScore({ analytics });
+  const legacy = computeInfluencerScore({ analytics: legacyAnalytics });
+
+  assert.equal(legacy.confidence_factors.history_length, current.confidence_factors.history_length);
+  assert.equal(legacy.confidence_factors.media_history_length, current.confidence_factors.media_history_length);
+  assert.equal(legacy.confidence_score, current.confidence_score);
+  assert.equal(legacy.data_coverage, current.data_coverage);
+});
+
+test('unavailable profile and media provenance cannot satisfy the short-history gate', () => {
+  const fixture = structuredClone(GOLDEN_FIXTURES.fewPosts);
+  fixture.profileSnapshots = [
+    ...fixture.profileSnapshots,
+    { ...fixture.profileSnapshots[0], snapshotKey: 'profile-unavailable-1', evidenceState: 'unavailable', followersCount: null, followingCount: null, mediaCount: null },
+    { ...fixture.profileSnapshots[0], snapshotKey: 'profile-unavailable-2', evidenceState: 'unavailable', followersCount: null, followingCount: null, mediaCount: null },
+  ];
+  const result = scoreFor(fixture);
+
+  assert.equal(result.confidence_factors.short_history_gate, SCORE_THRESHOLDS.shortHistoryConfidenceCap);
+  assert.ok(result.confidence_score <= SCORE_THRESHOLDS.shortHistoryConfidenceCap * 100);
+});
+
+test('metricless observed snapshots cannot satisfy the short-history gate', () => {
+  const profileOnly = structuredClone(GOLDEN_FIXTURES.smallStable);
+  profileOnly.profileSnapshots = profileOnly.profileSnapshots.map((snapshot) => ({
+    ...snapshot,
+    followersCount: null,
+    followingCount: null,
+    mediaCount: null,
+  }));
+  const profileResult = scoreFor(profileOnly);
+  assert.equal(profileResult.confidence_factors.history_length, 0);
+  assert.equal(profileResult.confidence_factors.short_history_gate, SCORE_THRESHOLDS.shortHistoryConfidenceCap);
+
+  const mediaOnly = structuredClone(GOLDEN_FIXTURES.smallStable);
+  mediaOnly.mediaSnapshots = mediaOnly.mediaSnapshots.map((snapshot) => ({
+    ...snapshot,
+    likesCount: null,
+    commentsCount: null,
+    viewsCount: null,
+    reachCount: null,
+    followersCount: null,
+  }));
+  const mediaResult = scoreFor(mediaOnly);
+  assert.equal(mediaResult.confidence_factors.media_history_length, 0);
+  assert.equal(mediaResult.confidence_factors.short_history_gate, SCORE_THRESHOLDS.shortHistoryConfidenceCap);
 });
 
 test('unavailable analytics cannot produce an overall score or confidence', () => {

@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 
 export const SCORING_CONTRACT_VERSION = 'influencer-intelligence/scoring/v0';
-export const SCORING_ALGORITHM_VERSION = 'influencer-intelligence-scoring/v0';
+export const SCORING_ALGORITHM_VERSION = 'influencer-intelligence-scoring/v0.1';
 export const SCORING_WEIGHTS_VERSION = 'influencer-intelligence-scoring-weights/v0';
 
 export const SCORE_COMPONENTS = Object.freeze([
@@ -45,6 +45,7 @@ export const SCORE_THRESHOLDS = Object.freeze({
   minimumProfileHistory: 6,
   minimumMediaHistory: 12,
   commentSampleConfidenceSize: 100,
+  shortHistoryConfidenceCap: 0.55,
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -177,6 +178,16 @@ function unavailableComponent(name, weight, reasonCode, inputs = {}) {
   };
 }
 
+function normalizeSignalProviders(signal, name) {
+  const providers = signal.providers ?? [];
+  if (!Array.isArray(providers) || providers.length > 16 || providers.some((provider) => (
+    typeof provider !== 'string' || !/^[a-z0-9][a-z0-9._:-]{0,79}$/.test(provider)
+  ))) {
+    fail('INVALID_SIGNAL_PROVIDERS', `${name} signal providers are invalid`);
+  }
+  return unique(providers);
+}
+
 function derivedComponent(name, weight, score, confidence, refs, code, inputs, limitations = []) {
   return {
     component_name: name,
@@ -198,6 +209,7 @@ function derivedComponent(name, weight, score, confidence, refs, code, inputs, l
 function normalizeStructuredSignal(name, signal, weight) {
   if (signal === undefined || signal === null) return unavailableComponent(name, weight, 'structured_signal_unavailable');
   assertRecord(signal, `${name} signal`);
+  const providers = normalizeSignalProviders(signal, name);
   const evidenceState = signal.evidence_state || signal.evidenceState;
   if (!['observed', 'derived', 'inferred', 'unavailable'].includes(evidenceState)) {
     fail('INVALID_SIGNAL_STATE', `${name} signal evidence state is invalid`);
@@ -210,7 +222,10 @@ function normalizeStructuredSignal(name, signal, weight) {
   }
   if (evidenceState === 'unavailable') {
     if (score !== null || confidence !== 0) fail('UNAVAILABLE_SIGNAL_HAS_VALUE', `${name} unavailable signal must be value-free`);
-    return unavailableComponent(name, weight, 'structured_signal_unavailable', { sample_size: signal.sample_size ?? null });
+    return {
+      ...unavailableComponent(name, weight, 'structured_signal_unavailable', { sample_size: signal.sample_size ?? null }),
+      providers,
+    };
   }
   if (score === null || refs.length === 0) fail('AVAILABLE_SIGNAL_EVIDENCE_REQUIRED', `${name} signal requires score and evidence refs`);
   const modelVersion = signal.model_version || signal.modelVersion || null;
@@ -223,6 +238,7 @@ function normalizeStructuredSignal(name, signal, weight) {
     contribution: null,
     evidence_state: evidenceState,
     confidence: round(confidence, 6),
+    providers,
     evidence_refs: unique(refs).slice(0, 32),
     ...(modelVersion ? { model_version: boundedString(modelVersion, `${name}.model_version`) } : {}),
     explanation: {
@@ -237,17 +253,11 @@ function normalizeStructuredSignal(name, signal, weight) {
 }
 
 function profileHistoryLength(analytics) {
-  return Array.isArray(analytics.provenance)
-    ? new Set(analytics.provenance.filter((item) => item.sourceType === 'profile').map((item) => item.sourceRef)).size
-    : 0;
+  return analytics.history?.profileMetricObservationCount ?? 0;
 }
 
 function mediaHistoryLength(analytics) {
-  const publicationCount = get(analytics, 'postingCadence.publicationCount');
-  if (Number.isInteger(publicationCount)) return publicationCount;
-  return Array.isArray(analytics.provenance)
-    ? new Set(analytics.provenance.filter((item) => item.sourceType === 'media').map((item) => item.sourceRef)).size
-    : 0;
+  return analytics.history?.mediaMetricObservationCount ?? 0;
 }
 
 function engagementQuality(analytics, weight) {
@@ -327,15 +337,17 @@ function risk(analytics, weight) {
   if (anomalyRatio === null && likesOutlierRatio === null && viewsOutlierRatio === null) {
     return unavailableComponent('risk', weight, 'risk_signals_unavailable');
   }
-  const growthPenalty = anomalyRatio === null ? 0 : clamp(anomalyRatio, 0, 1) * 70;
-  const outlierPenalty = Math.max(likesOutlierRatio ?? 0, viewsOutlierRatio ?? 0) * 20;
-  const score = clamp(100 - growthPenalty - outlierPenalty);
+  const growthPenalty = anomalyRatio === null ? null : clamp(anomalyRatio, 0, 1) * 70;
+  const outlierRatios = [likesOutlierRatio, viewsOutlierRatio].filter((value) => value !== null);
+  const outlierPenalty = outlierRatios.length === 0 ? null : Math.max(...outlierRatios) * 20;
+  const penalties = [growthPenalty, outlierPenalty].filter((value) => value !== null);
+  const score = clamp(100 - penalties.reduce((sum, value) => sum + value, 0));
   const availableSignals = [anomalyRatio, likesOutlierRatio, viewsOutlierRatio].filter((value) => value !== null).length;
   const confidence = clamp(availableSignals / 3);
   return derivedComponent(
     'risk', weight, score, confidence, sourceRefs(analytics),
     'bounded_pattern_risk_not_fake_followers_claim',
-    { growth_anomaly_ratio: anomalyRatio, likes_viral_outlier_ratio: likesOutlierRatio, views_viral_outlier_ratio: viewsOutlierRatio },
+    { growth_anomaly_ratio: anomalyRatio, growth_penalty: growthPenalty, likes_viral_outlier_ratio: likesOutlierRatio, views_viral_outlier_ratio: viewsOutlierRatio, outlier_penalty: outlierPenalty },
     ['pattern_signals_are_not_a_fake_followers_determination'],
   );
 }
@@ -364,7 +376,55 @@ function normalizeAnalytics(analytics) {
   const coverageRatio = finite(analytics.coverage.ratio, 'analytics.coverage.ratio', { minimum: 0, maximum: 1 });
   const providers = unique(Array.isArray(analytics.providers) ? analytics.providers : []);
   const provenance = Array.isArray(analytics.provenance) ? analytics.provenance : [];
-  return { ...analytics, creatorKey, calculatedAt, evidenceState, coverageRatio, providers, provenance };
+  const history = analytics.history === undefined || analytics.history === null
+    ? legacyHistorySummary(analytics)
+    : (() => {
+      assertRecord(analytics.history, 'analytics.history');
+      return {
+        profileSnapshotCount: boundedInteger(analytics.history.profileSnapshotCount ?? 0, 'analytics.history.profileSnapshotCount', { maximum: 100000 }),
+        profileMetricObservationCount: boundedInteger(analytics.history.profileMetricObservationCount ?? 0, 'analytics.history.profileMetricObservationCount', { maximum: 100000 }),
+        mediaSnapshotCount: boundedInteger(analytics.history.mediaSnapshotCount ?? 0, 'analytics.history.mediaSnapshotCount', { maximum: 100000 }),
+        mediaMetricObservationCount: boundedInteger(analytics.history.mediaMetricObservationCount ?? 0, 'analytics.history.mediaMetricObservationCount', { maximum: 100000 }),
+      };
+    })();
+  return { ...analytics, creatorKey, calculatedAt, evidenceState, coverageRatio, providers, provenance, history };
+}
+
+function legacyCount(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 100000 ? value : 0;
+}
+
+function summaryCount(record, path) {
+  const value = get(record, `${path}.count`);
+  return legacyCount(value);
+}
+
+function legacyHistorySummary(analytics) {
+  const profileMetricObservationCount = Math.max(
+    summaryCount(analytics, 'profileGrowth.followers.summary'),
+    summaryCount(analytics, 'profileGrowth.following'),
+    summaryCount(analytics, 'profileGrowth.mediaCount'),
+  );
+  const metricCounts = [
+    summaryCount(analytics, 'likes'),
+    summaryCount(analytics, 'comments'),
+    summaryCount(analytics, 'videoPerformance.likes'),
+    summaryCount(analytics, 'videoPerformance.comments'),
+    summaryCount(analytics, 'videoPerformance.views'),
+    summaryCount(analytics, 'videoPerformance.reach'),
+  ];
+  const availableMediaMetricCount = Math.max(...metricCounts, 0);
+  const publicationCount = legacyCount(analytics.postingCadence?.publicationCount);
+  const mediaMetricObservationCount = publicationCount > 0
+    ? Math.min(availableMediaMetricCount, publicationCount)
+    : availableMediaMetricCount;
+  return {
+    profileSnapshotCount: profileMetricObservationCount,
+    profileMetricObservationCount,
+    mediaSnapshotCount: Math.max(publicationCount, mediaMetricObservationCount),
+    mediaMetricObservationCount,
+    source: 'legacy_analytics_summary_fallback',
+  };
 }
 
 function freshnessFactor(analytics, calculatedAt) {
@@ -418,8 +478,14 @@ function confidenceScore(analytics, components, signals) {
     + (official * 0.10)
     + (metricCoverage * 0.16)
   );
+  const shortHistory = profileHistoryLength(analytics) < 2 || mediaHistoryLength(analytics) < 2;
+  const historyGate = shortHistory ? SCORE_THRESHOLDS.shortHistoryConfidenceCap : 1;
   const available = Object.values(components).filter((component) => component.score !== null).length;
-  return { score: round(clamp(weighted * 100)), factors, available_components: available };
+  return {
+    score: round(clamp(Math.min(weighted, historyGate) * 100)),
+    factors: { ...factors, short_history_gate: historyGate },
+    available_components: available,
+  };
 }
 
 function dataCoverage(analytics, components) {
@@ -428,16 +494,29 @@ function dataCoverage(analytics, components) {
   return { score: round(clamp(ratio * 100)), analytics_ratio: analytics.coverageRatio, component_weight_ratio: round(availableWeight) };
 }
 
-function inputFingerprint(analytics, components) {
+function inputFingerprint(analytics, components, providers) {
   const canonical = JSON.stringify({
     creatorKey: analytics.creatorKey,
     algorithmVersion: analytics.algorithmVersion || null,
     computedAt: analytics.calculatedAt,
+    evidenceState: analytics.evidenceState,
+    coverage: analytics.coverage,
+    history: analytics.history || null,
+    providers: [...(providers || [])].sort(),
+    provenance: analytics.provenance || [],
+    window: analytics.window || null,
     snapshots: [...(analytics.inputSnapshotKeys || [])].sort(),
     components: Object.values(components).map((component) => ({
       component_name: component.component_name,
       score: component.score,
       evidence_state: component.evidence_state,
+      confidence: component.confidence,
+      model_version: component.model_version || null,
+      weight: component.weight,
+      effective_weight: component.effective_weight || null,
+      contribution: component.contribution ?? null,
+      explanation: component.explanation,
+      providers: component.providers || [],
       evidence_refs: component.evidence_refs,
     })),
   });
@@ -496,7 +575,7 @@ export function computeInfluencerScore(input) {
     provenance,
     input_snapshot_keys: [...(analytics.inputSnapshotKeys || [])].sort(),
     input_evidence_refs: sourceRefs(analytics, Object.values(structuredSignals).flatMap((signal) => signal?.evidence_refs || signal?.evidenceRefs || [])),
-    input_fingerprint: inputFingerprint(analytics, components),
+    input_fingerprint: inputFingerprint(analytics, components, providers),
     explanations: Object.values(components).map((component) => ({
       component_name: component.component_name,
       code: component.explanation.code,

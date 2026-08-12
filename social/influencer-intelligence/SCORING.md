@@ -1,9 +1,14 @@
-# Influencer Score v0
+# Influencer Score v0.1
 
 `scoring.mjs` is a pure deterministic boundary over the versioned analytics
 artifact. It does not call providers, an LLM, PostgreSQL, Orb, CRM, MCP, or a
 network. A caller supplies optional comments, commercial-saturation, and
 brand-fit values only as bounded structured signals with evidence references.
+
+This is a backward-incompatible v0 algorithm revision: the algorithm version
+is `influencer-intelligence-scoring/v0.1`; the weights remain
+`influencer-intelligence-scoring-weights/v0`. Historical v0 artifacts remain
+readable and are not rewritten.
 
 The output always includes `overall_score`, `confidence_score`,
 `data_coverage`, `algorithm_version`, `weights_version`, `calculated_at`,
@@ -42,11 +47,21 @@ unavailable until a governed SKINCOS calibration dataset exists.
 history, comment sample size, freshness, provider reliability, official-provider
 availability, and analytics metric coverage. A one-snapshot or stale fallback
 result therefore cannot receive high confidence even if a component can be
-computed.
+computed. More specifically, fewer than two metric-bearing profile observations
+or fewer than two metric-bearing media observations applies the versioned
+`shortHistoryConfidenceCap` of 0.55 (55/100); timestamp-only or unavailable
+snapshots do not satisfy that gate. Missing risk signals remain unavailable: a penalty is calculated only
+from the outlier or anomaly series that actually exists.
 
 `data_coverage` combines analytics metric coverage (65%) with the configured
 weight of components that have usable evidence (35%). `null` and
 `unavailable` remain distinct from observed numeric zero.
+
+The input fingerprint binds the analytics evidence state, coverage, providers
+(including providers contributed by structured signals), provenance, snapshot
+keys, and each component's value, confidence, model version, weight,
+contribution, explanation, and evidence references. A change to audit metadata
+therefore creates a distinct score artifact.
 
 ## Safety and explanations
 
