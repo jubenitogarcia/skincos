@@ -25,6 +25,13 @@
       { "id": "procedimentos", "label": "Procedimentos", "route": "/?module=procedimentos", "source": "local-launch-catalog" },
       { "id": "unit-monitor", "label": "Unit Monitor", "route": "/?module=unit-monitor", "source": "local-launch-catalog" },
       { "id": "instagram-studio", "label": "Redes Sociais", "route": "/?module=instagram-studio", "source": "local-launch-catalog" },
+      {
+        "id": "influencer-intelligence",
+        "label": "Influencer Intelligence",
+        "route": "/?module=influencer-intelligence",
+        "source": "local-launch-catalog",
+        "reason": "gated surface remains disabled online until its internal API dependency is released"
+      },
       { "id": "meta-pages-review", "label": "Meta Review", "route": "/?module=meta-pages-review", "source": "local-launch-catalog" },
       { "id": "meta-ads", "label": "Meta Ads", "route": "/?module=meta-ads", "source": "local-launch-catalog" },
       { "id": "site-tracking", "label": "Site EF", "route": "/?module=site-tracking", "source": "local-launch-catalog" },
