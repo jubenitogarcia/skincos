@@ -453,6 +453,8 @@ function normalizeEvidence(value, { provider, operation, request, adapterVersion
     'observed_fields',
     'endpoint_family',
     'coverage_code',
+    'model_version',
+    'modelVersion',
     'provider',
     'operation',
     'correlation_id',
@@ -478,6 +480,12 @@ function normalizeEvidence(value, { provider, operation, request, adapterVersion
   }
   if (input.endpoint_family !== undefined) evidence.endpoint_family = slug(input.endpoint_family, 'endpoint_family');
   if (input.coverage_code !== undefined) evidence.coverage_code = slug(input.coverage_code, 'coverage_code');
+  const modelVersion = input.model_version ?? input.modelVersion;
+  if (modelVersion !== undefined) {
+    const normalizedModelVersion = normalizedString(modelVersion, 'provider_specific_evidence.model_version', { maxLength: 80 });
+    if (!/^[a-z][a-z0-9._/-]{0,79}$/.test(normalizedModelVersion)) fail('invalid_response', 'provider model version is invalid');
+    evidence.model_version = normalizedModelVersion;
+  }
   evidence.provider = provider;
   evidence.operation = operation;
   evidence.correlation_id = request.correlation_id;
@@ -555,6 +563,9 @@ export function normalizeProviderCandidate({
       sourceRef: sourceRef || `${normalizedProvider}:${normalizedOperation}:${request.creator_key || 'unresolved'}`,
     },
   );
+  if (dataClassification === 'inferred' && !evidence.model_version) {
+    fail('invalid_response', 'inferred provider data requires model version evidence');
+  }
   return deepFreeze({
     contract_version: PROVIDER_OPERATION_CONTRACT_VERSION,
     operation: normalizedOperation,
