@@ -33,6 +33,13 @@ membership. The preflight proves database identity, session/effective role,
 usage/create/DML privilege on the new schema. No runtime grant is created by
 this operation.
 
+For the global lease, the wrapper reads only the root-owned
+`/etc/skincos/global-coordination/orb-backup.env` custody file. It accepts the
+legacy shared-secret record or the explicit active-key/key-id pair produced by
+the dispatch-only native custody workflow, and owns the fixed mission, thread
+and actor identity for this staging operation. It never accepts a coordinator
+URL, secret or lease identity from command-line arguments.
+
 ## Dry-run and apply
 
 The release process must first generate the closure from the exact reviewed

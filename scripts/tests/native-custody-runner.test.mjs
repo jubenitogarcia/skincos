@@ -19,12 +19,16 @@ test("native custody uses a trusted dispatch-only runner and a narrow root helpe
   assert.match(workflow, /global:orb-coordination-custody/);
   assert.match(workflow, /provision-global-coordination write/);
   assert.match(workflow, /provision-global-coordination audit/);
+  assert.match(workflow, /SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY/);
+  assert.match(workflow, /SKINCOS_GLOBAL_COORDINATION_KEY_ID/);
   assert.doesNotMatch(workflow, /echo .*GLOBAL_COORDINATION_SHARED_SECRET/);
 
   assert.match(helper, /TARGET_FILE="\$TARGET_DIR\/orb-backup\.env"/);
   assert.match(helper, /read_contract/);
   assert.match(helper, /mv -f/);
   assert.match(helper, /mode=640/);
+  assert.match(helper, /validate_key_id/);
+  assert.match(helper, /SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY/);
   assert.match(helper, /Usage: provision-global-coordination-custody\.sh validate\|write\|audit/);
   assert.doesNotMatch(helper, /printf .*COORDINATION_SECRET/);
 

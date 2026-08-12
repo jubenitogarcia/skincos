@@ -369,7 +369,11 @@ test("native mini-PC mutations use the common coordinator and detached closure p
   const backup = read("scripts/runtime/run-orb-backup-with-coordination.sh");
   assert.match(backup, /global:orb-backup/);
   assert.match(backup, /orb-backup\.service/);
+  assert.match(backup, /SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY/);
   assert.match(read("scripts/runtime/publish-orb-backup.ps1"), /run-orb-backup-with-coordination\.sh/);
+  const influencerMigration = read("scripts/runtime/run-influencer-intelligence-staging-migration.sh");
+  assert.match(influencerMigration, /load_private_coordination_environment/);
+  assert.match(influencerMigration, /native-staging-migration-runner/);
   const harmonia = read("scripts/runtime/run-harmonia-migration-native.sh");
   assert.match(harmonia, /deploy:atendimento:staging/);
   assert.match(harmonia, /deploy:atendimento:production/);
