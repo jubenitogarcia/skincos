@@ -119,7 +119,8 @@ function Invoke-Git {
 function Get-WorktreeRecords {
     param(
         [string]$RepoPath,
-        [switch]$IncludeStatus
+        [switch]$IncludeStatus,
+        [string]$OnlyPath
     )
 
     $result = Invoke-Git -RepoPath $RepoPath -Arguments @('worktree', 'list', '--porcelain')
@@ -178,6 +179,11 @@ function Get-WorktreeRecords {
 
     if ($null -ne $current) {
         $records += [pscustomobject]$current
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($OnlyPath)) {
+        $normalizedOnlyPath = Normalize-PathString -Path $OnlyPath
+        $records = @($records | Where-Object { (Normalize-PathString -Path $_.path) -eq $normalizedOnlyPath })
     }
 
     foreach ($record in $records) {
@@ -563,7 +569,12 @@ function Test-OpenPullRequest {
     $exitCode = $LASTEXITCODE
     $ErrorActionPreference = $oldPreference
     if ($exitCode -ne 0) { return [pscustomobject]@{ status = 'error'; open = $null; output = $raw } }
-    try { $rows = @($raw -join "`n" | ConvertFrom-Json) } catch { return [pscustomobject]@{ status = 'error'; open = $null; output = $raw } }
+    try {
+        $jsonText = $raw -join "`n"
+        $document = $jsonText | ConvertFrom-Json
+        $rows = if ($null -eq $document) { @() } else { @($document) }
+    }
+    catch { return [pscustomobject]@{ status = 'error'; open = $null; output = $raw } }
     return [pscustomobject]@{ status = 'ok'; open = $rows.Count -gt 0; pullRequests = @($rows) }
 }
 
@@ -591,7 +602,7 @@ function Retire-Worktree {
     $canonicalRoot = Join-Path $WorktreeRoot ([string]$topology.worktree.canonicalRelativeRoot)
     if (Test-PathWithinRoot -Path $WorktreePath -Root $canonicalRoot) { throw 'Slots canônicos não podem ser aposentados por esta ação.' }
 
-    $records = @(Get-WorktreeRecords -RepoPath $ProjectRoot -IncludeStatus | Where-Object { (Normalize-PathString -Path $_.path) -eq $normalized })
+    $records = @(Get-WorktreeRecords -RepoPath $ProjectRoot -IncludeStatus -OnlyPath $WorktreePath)
     if ($records.Count -ne 1) { throw "Worktree não encontrado ou ambíguo: $WorktreePath." }
     $record = $records[0]
     if (-not $record.exists) { throw 'Worktree não existe no filesystem.' }
