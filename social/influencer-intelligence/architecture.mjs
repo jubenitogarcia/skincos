@@ -358,6 +358,9 @@ export const RELEASE_CONTRACT = deepFreeze({
      campaignFitSourceAdded: true,
      campaignFitMigrationArtifactAdded: true,
      campaignFitRuntimeWired: false,
+     calibrationSourceAdded: true,
+     calibrationDatasetVersion: 'influencer-intelligence-calibration-golden/v1',
+     calibrationRuntimeWired: false,
   },
 });
 
@@ -392,7 +395,7 @@ export const IMPLEMENTATION_PLAN = deepFreeze([
   { id: 'M9', title: 'Comments intelligence', status: 'source implemented; aggregate-only analyzer, additive persistence metadata, and synthetic tests; runtime/provider wiring remains off', acceptance: ['aggregate-only signals', 'privacy and model provenance', 'bounded retention'] },
   { id: 'M10', title: 'Semantic content and Reels signals', status: 'source implemented; bounded feature projection and closed semantic interface; runtime/media adapter remains off', acceptance: ['approved media projection', 'no raw media archive by default', 'versioned inference'] },
   { id: 'M11', title: 'Campaign and brand fit', status: 'source implemented; deterministic engine, additive persistence metadata, read-only MCP projection, CRM query surface, and golden tests; compute/runtime remains off', acceptance: ['structured criteria', 'explainable deterministic base', 'inferred signals labeled', 'separate campaign-fit confidence and coverage', 'persisted fit read has no implicit computation'] },
-  { id: 'M12', title: 'Synthetic validation and calibration', status: 'pending', acceptance: ['fixtures', 'outlier tests', 'coverage/confidence calibration', 'negative policy tests'] },
+  { id: 'M12', title: 'Synthetic validation and calibration', status: 'source implemented; deterministic synthetic report and focused tests; no live provider or runtime calls', acceptance: ['fixtures', 'outlier tests', 'coverage/confidence calibration', 'negative policy tests'] },
   { id: 'M13', title: 'Optional provider gap analysis', status: 'pending', acceptance: ['measured gap report', 'cost/risk/privacy review', 'new provider only after approval'] },
 ]);
 

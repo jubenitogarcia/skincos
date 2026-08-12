@@ -178,6 +178,16 @@ test('records M11 Campaign Fit as source-complete while keeping compute and runt
   assert.ok(DATA_MODEL.persistence.additiveMigrations.some((path) => path.includes('campaign_fit_v1')));
 });
 
+test('records M12 calibration as source-complete without live runtime calls', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M12');
+  assert.match(milestone.status, /source implemented/i);
+  assert.match(milestone.status, /synthetic report/i);
+  assert.match(milestone.status, /no live provider or runtime calls/i);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.calibrationSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.calibrationDatasetVersion, 'influencer-intelligence-calibration-golden/v1');
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.calibrationRuntimeWired, false);
+});
+
 test('records M9 comments intelligence as source-complete without wiring runtime collection', () => {
   const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M9');
   assert.match(milestone.status, /aggregate-only analyzer/i);
