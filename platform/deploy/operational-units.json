@@ -67,20 +67,20 @@
         "stagingIncumbent": {
           "state": "published-and-attested",
           "repository": "jubenitogarcia/skincos",
-          "sourceSha": "6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
-          "workflowRunId": "30966781527",
+          "sourceSha": "e25c31d673a1cb0b7247e54da0d8b0dc80abd161",
+          "workflowRunId": "31635557484",
           "workflowPath": ".github/workflows/ponto-progressive-release.yml",
           "runAttempt": 1,
           "decision": "pass",
           "releaseEvidenceArtifact": {
-            "id": "8915472652",
-            "name": "ponto-release-evidence-staging-6daa6eaee7c4c49f047e97944e70ea1aa320ca61",
-            "digest": "sha256:5709bcaa26af8a42a1eb321aa8e0ac15a18207b35e46e475a0b70ccd21103ebb"
+            "id": "9157683333",
+            "name": "ponto-release-evidence-staging-e25c31d673a1cb0b7247e54da0d8b0dc80abd161",
+            "digest": "sha256:b05ca7629da3e7c12eddf8489f5d03989b91fa735cf5258fddc088bece297ddb"
           },
           "surface": {
             "worker": "skincos-ponto-core-staging",
-            "deploymentId": "2688c47a-efbb-4b97-98f7-6a1734eac354",
-            "versionId": "e71704e3-0d6d-4327-83cf-3121010995b1"
+            "deploymentId": "fe4560bd-109e-4da6-82ea-37de2434794f",
+            "versionId": "883a931a-518f-49d0-b753-f3afc84d4e24"
           }
         }
       }
