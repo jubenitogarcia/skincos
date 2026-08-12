@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createProviderRouter } from '../provider-router.mjs';
+import { createProviderRouter, ProviderRouterError } from '../provider-router.mjs';
 import { createMetaGraphProvider } from '../providers/meta-graph-adapter.mjs';
 import { createTokenVaultMetaGraphOperations } from '../transports/token-vault-meta-graph.mjs';
 import { createInfluencerIntelligenceProviderRouter } from '../provider-runtime.mjs';
@@ -96,6 +96,8 @@ test('router falls back to the existing instagrapi operation set only after an o
       return new Response(JSON.stringify({ ok: false, error: 'coverage_gap' }), { status: 403 });
     },
     instagrapiOperations: {
+      readOnly: true,
+      writeActions: false,
       get_profile: async () => {
         calls.push('instagrapi');
         return {
@@ -120,6 +122,43 @@ test('router falls back to the existing instagrapi operation set only after an o
   const result = await router.get_profile(input());
   assert.equal(result.provider, 'instagrapi');
   assert.deepEqual(calls, ['meta-graph', 'instagrapi']);
+});
+
+test('rate-limited official transport is retryable but never fallback-eligible', async () => {
+  const calls = [];
+  const router = createInfluencerIntelligenceProviderRouter({
+    tokenVaultBaseUrl: 'https://api-staging.skincos.com.br/internal/token-vault',
+    tokenVaultApiToken: API_TOKEN,
+    tokenVaultCredentialRef: CREDENTIAL_REF,
+    fetchImpl: async () => {
+      calls.push('meta-graph');
+      return new Response(JSON.stringify({ ok: false, error: 'rate_limited' }), { status: 429 });
+    },
+    instagrapiOperations: {
+      readOnly: true,
+      writeActions: false,
+      get_profile: async () => {
+        calls.push('instagrapi');
+        return candidate();
+      },
+    },
+    retryPolicy: { maxAttempts: 1 },
+  });
+  await assert.rejects(
+    router.get_profile(input()),
+    (error) => error instanceof ProviderRouterError && error.reasonCode === 'rate_limited' && error.fallbackAllowed === false,
+  );
+  assert.deepEqual(calls, ['meta-graph']);
+});
+
+test('fallback bridge must explicitly declare read-only capability', () => {
+  assert.throws(() => createInfluencerIntelligenceProviderRouter({
+    tokenVaultBaseUrl: 'https://api-staging.skincos.com.br/internal/token-vault',
+    tokenVaultApiToken: API_TOKEN,
+    tokenVaultCredentialRef: CREDENTIAL_REF,
+    fetchImpl: async () => new Response(JSON.stringify({ ok: false, error: 'coverage_gap' }), { status: 403 }),
+    instagrapiOperations: { get_profile: async () => candidate() },
+  }), /existing read-only bridge/);
 });
 
 test('router retries a safe read-only Token Vault timeout without inventing values', async () => {

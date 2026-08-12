@@ -162,6 +162,9 @@ function classifyError(error) {
   if (rawCode === 'transport_error') {
     return { code: 'provider_unavailable', retryable: true, fallback: true };
   }
+  if (typeof rawCode === 'string' && retryableCodeSet.has(rawCode)) {
+    return { code: rawCode, retryable: true, fallback: false };
+  }
   if (typeof rawCode === 'string' && fallbackCodeSet.has(rawCode)) {
     return { code: rawCode, retryable: retryableCodeSet.has(rawCode), fallback: true };
   }

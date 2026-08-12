@@ -81,6 +81,7 @@ function env(db) {
     REQUIRE_AUTH: 'true',
     WORKER_AUTH_HEADER_NAME: 'Authorization',
     WORKER_AUTH_SCHEME: 'Bearer',
+    INFLUENCER_INTELLIGENCE_ANALYTICS_MODE: 'shadow',
   };
 }
 
@@ -119,6 +120,68 @@ test('health validates configured bindings and secrets', async () => {
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.checks.d1, true);
+  assert.equal(body.analytics_mode, 'shadow');
+  assert.equal(body.analytics_ready, true);
+});
+
+test('health stays unhealthy when the dedicated analytics secret is absent', async () => {
+  const db = new FakeDb();
+  const environment = env(db);
+  delete environment.TOKEN_VAULT_ANALYTICS_API_TOKEN;
+  const response = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: authHeaders() }),
+    environment,
+  );
+  const body = await response.json();
+  assert.equal(response.status, 500);
+  assert.equal(body.ok, false);
+  assert.equal(body.checks.analyticsApiToken, false);
+});
+
+test('analytics credential cannot reach write-capable sibling gateways', async () => {
+  const db = new FakeDb();
+  const socialResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/social-publish/operations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TEST_ANALYTICS_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ platform: 'instagram', unit: 'bss', operation: 'probe', method: 'GET', url: 'https://graph.instagram.com/v25.0/123' }),
+    }),
+    env(db),
+  );
+  assert.equal(socialResponse.status, 403);
+
+  const metaAdsResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config', {
+      headers: { Authorization: `Bearer ${TEST_ANALYTICS_TOKEN}` },
+    }),
+    env(db),
+  );
+  assert.equal(metaAdsResponse.status, 403);
+  assert.equal(db.tokens.length, 0);
+});
+
+test('invalid authentication configuration fails closed', async () => {
+  const db = new FakeDb();
+  const environment = env(db);
+  environment.REQUIRE_AUTH = 'false';
+  const response = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: authHeaders() }),
+    environment,
+  );
+  assert.equal(response.status, 500);
+  assert.equal((await response.json()).error, 'invalid_auth_configuration');
+});
+
+test('configured worker secrets must remain pairwise distinct', async () => {
+  const db = new FakeDb();
+  const environment = env(db);
+  environment.TOKEN_VAULT_ANALYTICS_API_TOKEN = TEST_API_TOKEN;
+  const response = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: authHeaders() }),
+    environment,
+  );
+  assert.equal(response.status, 500);
+  assert.equal((await response.json()).error, 'invalid_worker_secret_configuration');
 });
 
 test('routes social publication requests to the fail-closed gateway', async () => {
