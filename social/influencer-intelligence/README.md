@@ -1,9 +1,10 @@
 # Influencer Intelligence
 
 Status: architecture v1 defined; M2 provider boundary, M4 deterministic
-analytics, and M5 deterministic scoring are implemented in source control, and
-data model v1 plus scoring metadata remain additive, unapplied artifacts in
-this milestone. The domain remains
+analytics, M5 deterministic scoring, and the M6 read-only MCP domain adapter
+are implemented in source control. Data model v1 plus scoring metadata remain
+additive, unapplied artifacts, and M6 runtime registration is still deferred.
+The domain remains
 experimental, not exposed, and off by default.
 
 This domain provides read-only intelligence about Instagram creators for
@@ -20,10 +21,10 @@ boundary, append-only data model, provenance and score envelopes, internal API,
 read-only MCP tools, release/flag model, privacy rules, observability, and the
 M0--M13 implementation gates.
 
-The architecture milestone itself does not add routes, migrations, provider
-transports, CRM registration, MCP registration, Orb workflow changes, or flag
-wiring. `INFLUENCER_INTELLIGENCE_ENABLED` remains `false` and the domain stays
-off until a later milestone proves its own gates.
+The architecture and M6 source milestones do not add routes, migrations,
+provider transports, CRM registration, live MCP registration, Orb workflow
+imports, or flag wiring. `INFLUENCER_INTELLIGENCE_ENABLED` remains `false` and
+the domain stays off until later milestones prove their own gates.
 
 ## M0 decision
 
@@ -196,6 +197,27 @@ under `social/instagram/module/api/` must not be exposed as the domain API
 without independent authentication, input, timeout, rate-limit, audit, and
 deployment hardening.
 
+## M6 decision: read-only MCP adapter
+
+[`mcp-readonly.mjs`](./mcp-readonly.mjs) implements the domain-side adapter for
+the existing `orb/engine/mcp-readonly-gateway` pattern. It exposes bounded
+`search_creators`, `get_creator_profile`, `get_creator_snapshots`,
+`get_creator_media`, `get_creator_analytics`, `get_creator_score`, and
+`compare_creators` tools through an injected internal read service. Campaign Fit
+is intentionally deferred from the tool registry until M11.
+
+The adapter requires authentication, the server-side domain grant, opaque
+actor scope, closed input schemas, bounded windows/pages/comparisons, timeout,
+abort propagation, concurrency control, rate limiting, sanitized output, and
+mandatory audit. It returns explicit classification, freshness, provenance,
+confidence, coverage, limitations, and unavailable/null states. It never calls
+Meta, instagrapi, Token Vault, PostgreSQL, SQL, shell, Orb, or a scoring engine;
+it cannot mutate Instagram, workflows, or persisted scores. The source and
+protocol tests are present, while runtime registration remains pending.
+
+See [`MCP_READONLY.md`](./MCP_READONLY.md) for the internal service contract,
+limits, sanitization boundary, and rollback posture.
+
 ### Incumbent integrations to reuse
 
 - Official-first collection will wrap the existing CRM Graph adapter in
@@ -296,7 +318,7 @@ production configuration.
 | M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, and inactive Orb scheduler #1335; artifacts/import/runtime pending |
 | M4 | Robust analytics and outlier-resistant metrics | Merged in #1333; pure deterministic engine, golden fixtures, and formula documentation |
 | M5 | Deterministic score, confidence, coverage, and provenance | Merged in #1334; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
-| M6 | Authenticated, sanitized, rate-limited read-only MCP | Pending |
+| M6 | Authenticated, sanitized, rate-limited read-only MCP | Source adapter and protocol tests implemented; runtime registration pending |
 | M7 | `skincos-influencer-intelligence` Codex skill | Pending |
 | M8 | Read-only CRM contracts and dashboard | Pending |
 | M9 | Minimized comments intelligence | Pending |
@@ -319,6 +341,22 @@ production configuration.
 - Rollback: close or revert the single-purpose change to merge SHA
   `f0dcab87d5348941d5c28e690c8a689a3bad8a3d`. No user data, provider session,
   network state, or remote database state is created by this milestone.
+
+## M6 risk, validation, and rollback
+
+- Risk: high because the adapter is a security boundary, but the change is
+  source-only and has no transport or runtime registration.
+- Surfaces: `social/influencer-intelligence/mcp-readonly.mjs`, its protocol
+  tests, architecture manifest/docs, and the architecture governance test
+  list; no provider, database, CRM, Orb, systemd, or user-facing surface.
+- Migration: none; existing additive migration artifacts remain unapplied.
+- Flag/grant: `INFLUENCER_INTELLIGENCE_ENABLED=false`; the grant is validated
+  by the adapter but not assigned to users and `mcpRuntimeRegistered=false`.
+- Validation: protocol/security tests, architecture/domain-boundary validators,
+  focused M0--M5 regression tests, diff hygiene, and terminal hosted CI on the
+  exact PR SHA.
+- Rollback: revert or close the single-purpose change. No database, credential,
+  provider session, workflow, or external business effect is created by M6.
 
 ## Data model risk, validation, and rollback
 

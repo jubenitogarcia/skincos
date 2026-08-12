@@ -131,6 +131,27 @@ test('keeps API reads and MCP tools read-only while isolating Orb collection', (
     assert.ok(MCP_CONTRACT.controls.includes(control), `missing MCP control: ${control}`);
   }
   assert.ok(MCP_CONTRACT.tools.every(({ readOnly }) => readOnly === true));
+  assert.deepEqual(MCP_CONTRACT.tools.map(({ name }) => name), [
+    'search_creators',
+    'get_creator_profile',
+    'get_creator_snapshots',
+    'get_creator_media',
+    'get_creator_analytics',
+    'get_creator_score',
+    'compare_creators',
+  ]);
+  assert.equal(MCP_CONTRACT.deferredTools[0].name, 'get_campaign_fit');
+  assert.equal(MCP_CONTRACT.deferredTools[0].unavailableUntil, 'M11');
+  assert.deepEqual(MCP_CONTRACT.limits, {
+    maxRequestBytes: 65536,
+    maxResponseBytes: 524288,
+    maxPageSize: 50,
+    maxCreatorsPerRequest: 20,
+    maxWindowDays: 365,
+    maxConcurrentRequests: 4,
+    timeoutMs: 12000,
+    rateLimitPerMinute: 60,
+  });
   assert.equal(MCP_CONTRACT.limits.timeoutMs, 12000);
   assert.match(MCP_CONTRACT.forbidden.join('\n'), /arbitrary SQL/i);
 });
@@ -148,6 +169,8 @@ test('keeps this architecture milestone off and runtime-free', () => {
   assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerSourceAdded, true);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowImported, false);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowActive, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, false);
 
   const source = fs.readFileSync(architecturePath, 'utf8');
   assert.doesNotMatch(source, /\b(?:fetch|spawn|exec|execFile|createServer|listen)\s*\(/i);
