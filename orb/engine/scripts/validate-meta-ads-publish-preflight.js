@@ -102,6 +102,8 @@ function creativeContractDrift(nodes) {
   const buildJobs = String(nodes.find((node) => node.name === 'Build Jobs')?.parameters?.jsCode || '');
   const validator = String(nodes.find((node) => node.name === 'Validate Meta Creative Payload')?.parameters?.jsCode || '');
   const gatewayParams = String(nodes.find((node) => node.name === 'Build Meta API Params From Vault')?.parameters?.jsCode || '');
+  const buildPayload = String(nodes.find((node) => node.name === 'Build Payload')?.parameters?.jsCode || '');
+  const verification = String(nodes.find((node) => node.name === 'Attach Advantage+ Verification')?.parameters?.jsCode || '');
   const drift = [];
   const buildRevision = codeConstant(buildJobs, 'WORKFLOW_CONTRACT_REVISION');
   const validatorRevision = codeConstant(validator, 'WORKFLOW_CONTRACT_REVISION');
@@ -123,6 +125,13 @@ function creativeContractDrift(nodes) {
   }
   if (!/source_url:\s*toHttps\(sourceUrl\)/.test(buildJobs) || !/creative_source_url_missing/.test(validator) || !/creative_source_url_primary_link_mismatch/.test(validator)) {
     drift.push({ contract: 'creative_payload', reason: 'source_url_contract_mismatch' });
+  }
+  if (!/adset_conversion_observation/.test(gatewayParams) || !/creative_url_tags_readback/.test(gatewayParams) ||
+    !/tracking_contract/.test(buildPayload) || !/conversion_tracking/.test(buildPayload) ||
+    !/website_conversion_contract_missing/.test(buildJobs) || !/website_url_tags_contract_missing/.test(buildJobs) ||
+    !/url_tags/.test(buildJobs) || !/validateTrackingContract/.test(validator) ||
+    !/creative_tracking_verification/.test(verification) || !/url_tags_graph_mismatch/.test(verification)) {
+    drift.push({ contract: 'creative_tracking', reason: 'conversion_or_url_tags_contract_missing' });
   }
   return drift;
 }

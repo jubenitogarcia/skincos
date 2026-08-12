@@ -57,6 +57,9 @@ function configRow(id, unit, rowNumber) {
         landing_pages_by_creative_group: {
           BOTOX_35UI_PRICE_DOSE_AVISTA_ANIVERSARIO_7_ANOS: 'https://espacofacial.com/campanhas/aniversario-7-anos/botox',
         },
+        tracking_contract: {
+          url_tags: 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}',
+        },
       },
     }),
   };
@@ -86,11 +89,34 @@ test('config exposes metadata and opaque token ids without token material', asyn
   assert.equal(body.destinations[0].carousel_native_adset_verified, true);
   assert.equal(body.destinations[0].carousel_native_route_active, true);
   assert.equal(body.destinations[0].landing_pages_by_creative_group.BOTOX_35UI_PRICE_DOSE_AVISTA_ANIVERSARIO_7_ANOS, 'https://espacofacial.com/campanhas/aniversario-7-anos/botox');
+  assert.equal(body.destinations[0].tracking_contract.url_tags, 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}');
+  assert.equal(body.destinations[0].tracking_contract.url_tags_configured, true);
   assert.match(body.config_revision, /^[a-f0-9]{64}$/);
-  assert.equal(body.capabilities.workflow_contract_revision, 'meta_destination_contract_v18_live_campaign_cta');
+  assert.equal(body.capabilities.workflow_contract_revision, 'meta_destination_contract_v19_tracking_contract');
+  assert.equal(body.capabilities.tracking.adset_conversion_observation, true);
+  assert.equal(body.capabilities.tracking.creative_url_tags_readback, true);
   assert.deepEqual(body.capabilities.video_upload.supported_actions, __test.videoUploadActions);
   assert.equal(body.capabilities.video_upload.max_file_bytes, 90 * 1024 * 1024);
   assert.equal(body.capabilities.video_upload.max_chunk_bytes, 16 * 1024 * 1024);
+});
+
+test('tracking contract accepts safe URL query fragments without allowing secret-like keys', () => {
+  assert.equal(
+    __test.normalizeTrackingContract({ url_tags: 'utm_source=meta&utm_medium=paid_social&utm_id={{campaign.id}}&placement={{placement}}' }).url_tags_configured,
+    true,
+  );
+  assert.throws(
+    () => __test.normalizeTrackingContract({ url_tags: 'utm_source=meta&utm_medium=paid_social&redirect=https://example.test' }),
+    /url_tags_invalid/,
+  );
+  assert.throws(
+    () => __test.normalizeTrackingContract({ url_tags: 'utm_source=meta&utm_medium=paid_social&access_token=not_allowed' }),
+    /url_tags_invalid/,
+  );
+  assert.throws(
+    () => __test.normalizeTrackingContract({ url_tags: 'utm_campaign=campaign' }),
+    /url_tags_required_utm_source_and_medium/,
+  );
 });
 
 function flexibleStaticFeed() {
@@ -135,6 +161,15 @@ test('flexible creative quality gate requires 3 images, 5 bodies, 5 titles and 5
   };
   const validated = __test.validateCreativePayload(payload, 'creative:group:unit');
   assert.match(validated.name, /\[sk:creativegrou\]/);
+  const withUrlTags = __test.validateCreativePayload({
+    ...payload,
+    url_tags: 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}',
+  }, 'creative:tracking:unit');
+  assert.equal(withUrlTags.url_tags, 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}');
+  assert.throws(
+    () => __test.validateCreativePayload({ ...payload, url_tags: 'https://espacofacial.com/?utm_source=meta&utm_medium=paid_social' }, 'creative:tracking:invalid'),
+    /url_tags_invalid/,
+  );
   assert.throws(
     () => __test.validateCreativePayload({ ...payload, asset_feed_spec: { ...payload.asset_feed_spec, titles: [{ text: 'one' }] } }, 'creative:bad'),
     /creative_quality_gate_failed/,
@@ -248,6 +283,7 @@ test('creative readback requests only fields supported by the Graph creative obj
   assert.equal(__test.creativeReadFields.includes('updated_time'), false);
   assert.equal(__test.creativeReadFields.includes('asset_feed_spec'), true);
   assert.equal(__test.creativeReadFields.includes('degrees_of_freedom_spec'), true);
+  assert.equal(__test.creativeReadFields.includes('url_tags'), true);
 });
 
 test('video upload gateway uses Graph Video phases and enforces the chunk contract', async () => {
@@ -283,11 +319,88 @@ test('video upload actions stay part of the gateway capability contract', () => 
 
 test('adset placement readback requests effective WhatsApp and vertical placement fields', () => {
   assert.match(__test.adsetPlacementFields, /campaign\{id,objective\}/);
+  assert.match(__test.adsetPlacementFields, /billing_event/);
   assert.match(__test.adsetPlacementFields, /optimization_goal/);
+  assert.match(__test.adsetPlacementFields, /attribution_spec/);
+  assert.match(__test.adsetPlacementFields, /promoted_object/);
   assert.match(__test.adsetPlacementFields, /effective_whatsapp_positions/);
   assert.match(__test.adsetPlacementFields, /effective_facebook_positions/);
   assert.match(__test.adsetPlacementFields, /effective_instagram_positions/);
   assert.match(__test.adsetPlacementFields, /effective_audience_network_positions/);
+});
+
+test('adset placement readback uses Graph GET and exposes only a reduced conversion contract', async () => {
+  const calls = [];
+  const { context } = gatewayContext(async (url, init) => {
+    calls.push({ url: new URL(url), method: init.method });
+    return jsonResponse({
+      id: '323456789',
+      campaign: { id: '223456789', objective: 'OUTCOME_SALES' },
+      billing_event: 'IMPRESSIONS',
+      optimization_goal: 'OFFSITE_CONVERSIONS',
+      destination_type: 'WEBSITE',
+      attribution_spec: [{ event_type: 'CLICK_THROUGH' }],
+      promoted_object: {
+        pixel_id: '123456789',
+        custom_event_type: 'SCHEDULE',
+        custom_conversion_id: '234567891',
+        offline_conversion_data_set_id: '345678912',
+      },
+      targeting: { publisher_platforms: ['facebook'] },
+    });
+  });
+  const result = await __test.readAdsetPlacements({
+    token_id: 'facebook_barra',
+    account_id: '123456789',
+    api_version: 'v25.0',
+  }, '323456789', context);
+
+  assert.deepEqual(calls.map((call) => call.method), ['GET']);
+  assert.match(calls[0].url.searchParams.get('fields'), /promoted_object/);
+  assert.equal(result.conversion_tracking.website_event.configured, true);
+  assert.equal(result.conversion_tracking.offline_event_dataset.configured, true);
+  assert.equal(result.conversion_tracking.promoted_object.pixel_configured, true);
+  assert.equal(result.conversion_tracking.promoted_object.custom_event_type, 'SCHEDULE');
+  assert.equal(JSON.stringify(result).includes('123456789'), false);
+  assert.equal(JSON.stringify(result).includes('234567891'), false);
+  assert.equal(JSON.stringify(result).includes('345678912'), false);
+});
+
+test('dedicated conversion-contract readback uses Graph GET and never returns targeting or raw IDs', async () => {
+  const calls = [];
+  const { context } = gatewayContext(async (url, init) => {
+    calls.push({ url: new URL(url), method: init.method });
+    return jsonResponse({
+      id: '323456789',
+      billing_event: 'IMPRESSIONS',
+      optimization_goal: 'OFFSITE_CONVERSIONS',
+      destination_type: 'WEBSITE',
+      attribution_spec: [{ event_type: 'CLICK_THROUGH' }],
+      promoted_object: {
+        pixel_id: '123456789',
+        custom_event_type: 'SCHEDULE',
+        offline_conversion_data_set_id: '345678912',
+      },
+      targeting: { publisher_platforms: ['facebook'] },
+    });
+  });
+  const result = await __test.readAdsetConversionContract({
+    token_id: 'facebook_barra',
+    account_id: '123456789',
+    api_version: 'v25.0',
+    object_id: '323456789',
+  }, context);
+
+  assert.deepEqual(calls.map((call) => call.method), ['GET']);
+  const fields = calls[0].url.searchParams.get('fields');
+  assert.equal(fields, __test.adsetConversionContractFields);
+  assert.doesNotMatch(fields, /targeting|name|budget|id/);
+  assert.equal(result.website_event.configured, true);
+  assert.equal(result.offline_event_dataset.configured, true);
+  assert.equal(result.destination_type, 'WEBSITE');
+  assert.equal(JSON.stringify(result).includes('123456789'), false);
+  assert.equal(JSON.stringify(result).includes('345678912'), false);
+  assert.equal(JSON.stringify(result).includes('publisher_platforms'), false);
 });
 
 test('native-carousel calibration ad sets are constrained to paused, explicit delivery payloads', () => {

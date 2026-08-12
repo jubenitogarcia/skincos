@@ -379,6 +379,10 @@ test("native mini-PC mutations use the common coordinator and detached closure p
   assert.match(prepare, /\.skincos-global-coordination-\$\{closure_module\}\.json/);
   assert.match(prepare, /coordination_native_runtime_closure/);
   assert.match(prepare, /native-runtime dependency-closure attestation is required/);
+  assert.match(prepare, /export-meta-ads-publish-live\.js/);
+  assert.match(prepare, /apply-meta-ads-publish-workflow-snapshot\.js/);
+  assert.match(prepare, /patch-meta-ads-advantage-plus-drift-readback\.js/);
+  assert.match(prepare, /lib\/runtime-paths\.js/);
 
   const atendimentoPrepare = read("scripts/runtime/prepare-atendimento-staging-release.sh");
   assert.match(atendimentoPrepare, /--coordination-closure/);

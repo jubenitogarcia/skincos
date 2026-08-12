@@ -29,7 +29,7 @@ const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
 const REQUIRED_CTA = 'BOOK_NOW';
 const OUTCOME_LEADS_CTA = 'LEARN_MORE';
 const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v19_tracking_contract';
 const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'add_text_overlay',
   'image_touchups',
@@ -137,6 +137,49 @@ function destinationContractKind(source) {
   const kind = safeString(asObject(source.destination_contract).kind).toLowerCase();
   assert(kind === 'whatsapp' || kind === 'website', 'destination_contract_missing_or_invalid', { kind });
   return kind;
+}
+
+const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+const URL_TAG_FORBIDDEN_KEY_PATTERN = /(?:token|secret|password|authorization|signature|api_?key)/i;
+const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-]+$/;
+
+function validUrlTags(value) {
+  const raw = safeString(value);
+  if (!raw || raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw)) return false;
+  const seen = new Set();
+  for (const pair of raw.split('&')) {
+    const separator = pair.indexOf('=');
+    if (separator <= 0 || separator !== pair.lastIndexOf('=')) return false;
+    const key = pair.slice(0, separator).toLowerCase();
+    const parameterValue = pair.slice(separator + 1);
+    if (!URL_TAG_PARAMETER_KEY_PATTERN.test(key) || URL_TAG_FORBIDDEN_KEY_PATTERN.test(key) || seen.has(key) || !parameterValue || !URL_TAG_VALUE_PATTERN.test(parameterValue)) return false;
+    seen.add(key);
+  }
+  return seen.has('utm_source') && seen.has('utm_medium');
+}
+
+function trackingFingerprint(value) {
+  let hash = 2166136261;
+  for (const char of safeString(value)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function validateTrackingContract(source, payload, destinationKind) {
+  const tracking = asObject(source.tracking_contract);
+  const urlTags = safeString(payload.url_tags);
+  if (destinationKind === 'whatsapp') {
+    assert(safeString(tracking.url_tags_status) === 'not_applicable', 'whatsapp_url_tags_contract_invalid', {});
+    assert(!urlTags, 'whatsapp_url_tags_forbidden', {});
+    return { status: 'not_applicable', fingerprint: '' };
+  }
+  assert(safeString(tracking.website_event_status) === 'configured', 'website_conversion_contract_missing', {});
+  assert(safeString(tracking.url_tags_status) === 'expected', 'website_url_tags_contract_missing', {});
+  assert(validUrlTags(urlTags), 'url_tags_invalid', {});
+  assert(safeString(tracking.url_tags_fingerprint) === trackingFingerprint(urlTags), 'url_tags_contract_mismatch', {});
+  return { status: 'expected', fingerprint: trackingFingerprint(urlTags) };
 }
 
 function labelNames(assets) {
@@ -486,6 +529,7 @@ return $input.all().map((item) => {
   const legacyCarousel = isCarousel && Object.keys(asObject(story.link_data)).length > 0;
   const hosts = allowedHosts(source);
   const destinationKind = destinationContractKind(source);
+  const trackingValidation = validateTrackingContract(source, payload, destinationKind);
   // This value is also checked inside validateAdvantagePlus(), but the main
   // payload contract needs it in this scope to prove that Token Vault receives
   // the same destination as the primary asset-feed link. Native carousels are
@@ -636,6 +680,8 @@ return $input.all().map((item) => {
         vertical_crop_key: VERTICAL_CROP_KEY,
         media_variant: safeString(source.media_variant || 'static_flexible'),
         destination_contract_kind: destinationKind,
+        tracking_contract_status: trackingValidation.status,
+        url_tags_fingerprint: trackingValidation.fingerprint,
         workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
         vertical_placement_rule_count: isVideoOnly ? Number(placementValidation.video_only_placement_rule_count || 0) : 1,
         video_only_placement_rule_count: Number(placementValidation.video_only_placement_rule_count || 0),
