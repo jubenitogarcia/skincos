@@ -95,6 +95,38 @@ O ORB continua executando apenas releases imutáveis sob `/opt/skincos`; o
 worktree canônico de uma família serve para edição e qualificação e não pode
 ser usado como `cwd` de serviço.
 
+## Roteamento de novas threads
+
+No primeiro turno de uma thread, o agente executa o resolver com o objetivo
+recebido:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\resolve-codex-thread-worktree.ps1 `
+  -ProjectRoot (Get-Location).Path `
+  -TaskBrief "<objetivo da thread>" `
+  -TaskSlug <task-slug> `
+  -Intent edit
+```
+
+O resolver é somente-leitura. `ready` permite continuar; `replace` orienta a
+camada nativa do Codex App a usar `create_thread` ou `handoff_thread`;
+`manual_registration_required`, `ambiguous` e `blocked` interrompem a escolha
+automática. A thread chamadora não altera o próprio `cwd` e o script nunca
+recebe ou infere `threadId`.
+
+Para preview/qualificação, o slot canônico precisa estar registrado como
+projeto no Codex App. O registro de projeto é uma operação do aplicativo, não
+um fallback do PowerShell. Para edição, a thread substituta usa uma worktree
+gerenciada pelo App ou uma candidata de tarefa comprovadamente correspondente.
+Uma candidata temporária só é comprovada quando o `TaskSlug` coincide
+exatamente; o texto do objetivo não seleciona worktrees existentes por
+semelhança.
+
+O contexto transferido para uma thread substituta contém somente objetivo,
+restrições, SHA, checkout e resultado do resolver. A thread original é
+arquivada somente depois da criação bem-sucedida; exclusão permanente de
+histórico não é suportada pela API atual.
+
 ## Checklist de encerramento por chat
 - Branch/worktree limpos (`git status` sem alteracoes locais).
 - PR aberto e rastreavel.
