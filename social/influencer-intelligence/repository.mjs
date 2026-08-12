@@ -298,8 +298,8 @@ export const SQL = Object.freeze({
     returning snapshot_key, ingest_key, media_key, creator_key, provider, evidence_state, observed_at`,
   recordCommentSample: `
     insert into influencer_intelligence.creator_comment_sample
-      (sample_key, ingest_key, creator_key, media_key, evidence_key, provider, provider_adapter_version, evidence_state, observed_at, retrieved_at, source_ref, topic_key, language_code, sentiment_label, safety_label, comment_count, spam_ratio, sentiment_score, aggregate_metrics, model_version, retention_policy_version)
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21)
+      (sample_key, ingest_key, creator_key, media_key, evidence_key, provider, provider_adapter_version, evidence_state, observed_at, retrieved_at, source_ref, topic_key, language_code, sentiment_label, safety_label, comment_count, spam_ratio, sentiment_score, aggregate_metrics, model_version, sampling_version, sampling_config, algorithm_version, quality_score, quality_confidence, retention_policy_version)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22::jsonb, $23, $24, $25, $26)
     on conflict (ingest_key) do nothing
     returning sample_key, ingest_key, creator_key, provider, evidence_state, observed_at`,
   recordAnalysis: `
@@ -512,10 +512,19 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
     async recordCommentSample(input) {
       const common = commonArtifact(input, 'sample');
       const aggregateMetrics = normalizeSafeJson(input.aggregateMetrics, 'aggregateMetrics');
+      const samplingConfig = normalizeSafeJson(input.samplingConfig, 'samplingConfig');
+      const samplingVersion = optionalString(input.samplingVersion, 'samplingVersion', VERSION_PATTERN);
+      const algorithmVersion = optionalString(input.algorithmVersion, 'algorithmVersion', VERSION_PATTERN);
+      const qualityScore = decimal(input.qualityScore, 'qualityScore', { minimum: 0, maximum: 100 });
+      const qualityConfidence = decimal(input.qualityConfidence, 'qualityConfidence', { minimum: 0, maximum: 1 });
+      const qualityFieldsPresent = qualityScore !== null || qualityConfidence !== null || algorithmVersion !== null;
+      if (qualityFieldsPresent && (qualityScore === null || qualityConfidence === null || algorithmVersion === null)) {
+        fail('COMMENT_SAMPLE_QUALITY_FIELDS_REQUIRED');
+      }
       if (common.evidenceState === 'inferred' && !input.modelVersion) fail('COMMENT_SAMPLE_MODEL_VERSION_REQUIRED');
       if (common.evidenceState === 'unavailable' && (
         input.commentCount !== undefined || input.spamRatio !== undefined || input.sentimentScore !== undefined ||
-        Object.keys(aggregateMetrics).length > 0
+        Object.keys(aggregateMetrics).length > 0 || qualityFieldsPresent
       )) fail('UNAVAILABLE_COMMENT_SAMPLE_MUST_BE_EMPTY');
       const row = await insertReturning(queryable, SQL.recordCommentSample, [
         common.key, common.ingestKey, common.creatorKey, optionalString(input.mediaKey, 'mediaKey'),
@@ -525,7 +534,8 @@ export function createInfluencerIntelligenceRepository({ queryable }) {
         optionalString(input.sentimentLabel, 'sentimentLabel', /^(positive|neutral|negative|mixed|unknown)$/),
         optionalString(input.safetyLabel, 'safetyLabel', /^(safe|flagged|unknown)$/), integer(input.commentCount, 'commentCount'),
         decimal(input.spamRatio, 'spamRatio', { minimum: 0, maximum: 1 }), decimal(input.sentimentScore, 'sentimentScore', { minimum: -1, maximum: 1 }),
-        JSON.stringify(aggregateMetrics), optionalString(input.modelVersion, 'modelVersion', VERSION_PATTERN), common.retentionPolicyVersion,
+        JSON.stringify(aggregateMetrics), optionalString(input.modelVersion, 'modelVersion', VERSION_PATTERN), samplingVersion,
+        JSON.stringify(samplingConfig), algorithmVersion, qualityScore, qualityConfidence, common.retentionPolicyVersion,
       ]);
       return { inserted: Boolean(row), row };
     },

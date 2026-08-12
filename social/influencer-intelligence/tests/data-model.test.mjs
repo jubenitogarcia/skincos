@@ -15,9 +15,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_data_model_v1.up.sql');
 const snapshotMetadataMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_snapshots_v1.up.sql');
 const scoringMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_scoring_v0.up.sql');
+const commentsMigrationPath = path.join(here, '..', 'migrations', '20260812_influencer_intelligence_comments_v1.up.sql');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const snapshotMetadataMigration = fs.readFileSync(snapshotMetadataMigrationPath, 'utf8');
 const scoringMigration = fs.readFileSync(scoringMigrationPath, 'utf8');
+const commentsMigration = fs.readFileSync(commentsMigrationPath, 'utf8');
 const digestA = 'a'.repeat(64);
 const digestB = 'b'.repeat(64);
 const observedAt = '2026-08-11T12:00:00.000Z';
@@ -122,6 +124,18 @@ test('defines additive score weights version metadata without destructive DDL', 
   assert.match(scoringMigration, /COMMIT;\s*$/);
 });
 
+test('defines additive comment sampling, quality, and algorithm metadata without destructive DDL', () => {
+  assert.match(commentsMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
+  for (const column of ['sampling_version', 'sampling_config', 'algorithm_version', 'quality_score', 'quality_confidence']) {
+    assert.match(commentsMigration, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`), column);
+  }
+  assert.match(commentsMigration, /creator_comment_sample_quality_fields_check/);
+  assert.match(commentsMigration, /creator_comment_sample_quality_confidence_check/);
+  assert.doesNotMatch(commentsMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(commentsMigration, /TRUNCATE\s+/i);
+  assert.match(commentsMigration, /COMMIT;\s*$/);
+});
+
 test('repository exposes a parameterized, injected PostgreSQL boundary', async () => {
   const queryable = fakeQueryable([{ rows: [{ run_key: 'run-1' }] }]);
   const repository = createInfluencerIntelligenceRepository({ queryable });
@@ -217,6 +231,57 @@ test('media identity reconciliation does not rewrite historical metric snapshots
   assert.match(SQL.upsertMedia, /on conflict \(media_key\) do update/i);
   assert.match(SQL.recordMediaSnapshot, /on conflict \(ingest_key\) do nothing/i);
   assert.doesNotMatch(SQL.recordMediaSnapshot, /on conflict \(media_key\) do update/i);
+});
+
+test('comment intelligence persists only bounded aggregates with sampling and algorithm provenance', async () => {
+  const queryable = fakeQueryable([{ rows: [{ sample_key: 'comment-sample-1' }] }]);
+  const repository = createInfluencerIntelligenceRepository({ queryable });
+  const aggregateMetrics = {
+    sample_size: 7,
+    metrics: { duplicate_ratio: 0.14, language_distribution: { counts: { en: 4, pt: 2 } } },
+    quality_components: { originality: { value: 84 } },
+  };
+  await repository.recordCommentSample({
+    sampleKey: 'comment-sample-1',
+    ingestKey: 'comment-ingest-1',
+    creatorKey: 'creator-1',
+    mediaKey: 'media-1',
+    evidenceKey: 'evidence-1',
+    provider: 'meta-graph',
+    providerAdapterVersion: 'meta-graph-adapter-v1',
+    evidenceState: 'derived',
+    observedAt,
+    retrievedAt,
+    sourceRef: 'synthetic-fixture/comments-1',
+    commentCount: 7,
+    aggregateMetrics,
+    samplingVersion: 'influencer-intelligence-comments-sampling/v1',
+    samplingConfig: { requested_limit: 50, selected_count: 7, retention: 'aggregate_only' },
+    algorithmVersion: 'influencer-intelligence-comments/v1',
+    qualityScore: 84,
+    qualityConfidence: 0.42,
+    modelVersion: 'semantic-comments-fixture/v1',
+    retentionPolicyVersion: 'retention/v1',
+  });
+  const call = queryable.calls[0];
+  assert.equal(call.values[2], 'creator-1');
+  assert.equal(call.values[20], 'influencer-intelligence-comments-sampling/v1');
+  assert.deepEqual(JSON.parse(call.values[21]).retention, 'aggregate_only');
+  assert.equal(call.values[22], 'influencer-intelligence-comments/v1');
+  assert.equal(call.values[23], 84);
+  assert.equal(call.values[24], 0.42);
+  assert.doesNotMatch(call.text, /duplicate_ratio|semantic-comments/);
+  assert.doesNotMatch(JSON.stringify(call.values), /raw comment|comment text|commenter/);
+
+  await assert.rejects(
+    repository.recordCommentSample({
+      sampleKey: 'comment-sample-2', ingestKey: 'comment-ingest-2', creatorKey: 'creator-1', evidenceKey: 'evidence-1',
+      provider: 'meta-graph', providerAdapterVersion: 'meta-graph-adapter-v1', evidenceState: 'derived', observedAt, retrievedAt,
+      sourceRef: 'synthetic-fixture/comments-2', aggregateMetrics: {}, algorithmVersion: 'influencer-intelligence-comments/v1',
+      qualityScore: 80, retentionPolicyVersion: 'retention/v1',
+    }),
+    (error) => error.code === 'COMMENT_SAMPLE_QUALITY_FIELDS_REQUIRED',
+  );
 });
 
 test('scores accept future provider slugs but require auditable provenance and versions', async () => {
