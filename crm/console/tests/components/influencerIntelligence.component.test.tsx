@@ -30,6 +30,7 @@ function client(): InfluencerIntelligenceClient {
     addCreator: async () => dashboard.creator,
     getCreatorDashboard: async () => dashboard,
     compareCreators: async () => ({ creators: [], limitations: [], calculatedAt: null }),
+    getCampaignFit: async (campaignKey, creatorKeys = [], campaignVersion = 1) => ({ campaignKey, campaignVersion, freshness: 'fresh', limitations: [], fits: creatorKeys.map((creatorKey) => ({ creatorKey, campaignKey, campaignVersion, campaignFitScore: 82, campaignFitConfidence: 61, dataCoverage: 75, evidenceState: 'derived' as const, algorithmVersion: 'influencer-intelligence-campaign-fit/v1', weightsVersion: 'influencer-intelligence-campaign-fit-weights/v1', calculatedAt: '2026-08-11T12:01:00.000Z', providers: ['meta-graph'], components: [], competitorConflicts: [], limitations: [] })) }),
   }
 }
 
@@ -56,5 +57,21 @@ describe('Influencer Intelligence CRM panel', () => {
     render(<InfluencerIntelligencePanel client={client()} />)
     expect(screen.getByTestId('influencer-module-off')).toHaveTextContent(/desligado/i)
     expect(screen.queryByRole('button', { name: 'Buscar' })).not.toBeInTheDocument()
+  })
+
+  it('shows persisted campaign fit separately from the general score', async () => {
+    const user = userEvent.setup()
+    render(<InfluencerIntelligencePanel client={client()} enabled granted />)
+
+    await user.type(screen.getByRole('textbox', { name: 'Buscar creator' }), 'synthetic')
+    await user.click(screen.getByRole('button', { name: 'Buscar' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Selecionar @synthetic.creator' }))
+    await user.type(screen.getByRole('textbox', { name: 'Chave da campanha' }), 'campaign-1')
+    await user.click(screen.getByRole('button', { name: 'Consultar Campaign Fit' }))
+
+    expect(await screen.findByTestId('influencer-campaign-fit')).toBeVisible()
+    expect(screen.getByText('Campaign Fit · campaign-1 v1')).toBeVisible()
+    expect(screen.getByText(/não é uma substituição do Influencer Score geral/i)).toBeVisible()
+    expect(screen.getByText('82 / 100')).toBeVisible()
   })
 })

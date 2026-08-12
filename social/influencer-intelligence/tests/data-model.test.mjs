@@ -16,10 +16,12 @@ const migrationPath = path.join(here, '..', 'migrations', '20260811_influencer_i
 const snapshotMetadataMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_snapshots_v1.up.sql');
 const scoringMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_scoring_v0.up.sql');
 const commentsMigrationPath = path.join(here, '..', 'migrations', '20260812_influencer_intelligence_comments_v1.up.sql');
+const campaignFitMigrationPath = path.join(here, '..', 'migrations', '20260812_influencer_intelligence_campaign_fit_v1.up.sql');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const snapshotMetadataMigration = fs.readFileSync(snapshotMetadataMigrationPath, 'utf8');
 const scoringMigration = fs.readFileSync(scoringMigrationPath, 'utf8');
 const commentsMigration = fs.readFileSync(commentsMigrationPath, 'utf8');
+const campaignFitMigration = fs.readFileSync(campaignFitMigrationPath, 'utf8');
 const digestA = 'a'.repeat(64);
 const digestB = 'b'.repeat(64);
 const observedAt = '2026-08-11T12:00:00.000Z';
@@ -135,6 +137,17 @@ test('defines additive comment sampling, quality, and algorithm metadata without
   assert.doesNotMatch(commentsMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
   assert.doesNotMatch(commentsMigration, /TRUNCATE\s+/i);
   assert.match(commentsMigration, /COMMIT;\s*$/);
+});
+
+test('defines additive Campaign Fit weights and component provenance metadata', () => {
+  assert.match(campaignFitMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
+  assert.match(campaignFitMigration, /ADD COLUMN IF NOT EXISTS weights_version/);
+  assert.match(campaignFitMigration, /ADD COLUMN IF NOT EXISTS components jsonb/);
+  assert.match(campaignFitMigration, /campaign_creator_fit_components_object_check/);
+  assert.match(campaignFitMigration, /campaign_creator_fit_weights_version_check/);
+  assert.doesNotMatch(campaignFitMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(campaignFitMigration, /TRUNCATE\s+/i);
+  assert.match(campaignFitMigration, /COMMIT;\s*$/);
 });
 
 test('repository exposes a parameterized, injected PostgreSQL boundary', async () => {
@@ -348,9 +361,19 @@ test('analysis and campaign fit enforce coverage, model versions, and bounded re
   );
   await repository.recordCampaignFit({
     fitKey: 'fit-1', ingestKey: 'fit-ingest-1', campaignKey: 'campaign-1', campaignVersion: 1, creatorKey: 'creator-1', score: 75,
-    confidence: 0.7, coverageAvailable: 3, coverageExpected: 4, evidenceState: 'derived', algorithmVersion: 'fit/v1', providers: ['tiktok'],
-    provenance: [provenanceEntry()], inputFingerprint: digestB, computedAt: retrievedAt, retentionPolicyVersion: 'retention/v1',
+    confidence: 0.7, coverageAvailable: 3, coverageExpected: 4, evidenceState: 'derived', algorithmVersion: 'influencer-intelligence-campaign-fit/v1', weightsVersion: 'influencer-intelligence-campaign-fit-weights/v1', providers: ['tiktok'],
+    provenance: [provenanceEntry()], inputFingerprint: digestB, computedAt: retrievedAt, components: { topic_affinity: { score: 80 } }, retentionPolicyVersion: 'retention/v1',
   });
+  assert.equal(queryable.calls[1].values[17], 'influencer-intelligence-campaign-fit-weights/v1');
+  assert.deepEqual(JSON.parse(queryable.calls[1].values[18]), { topic_affinity: { score: 80 } });
+  await assert.rejects(
+    repository.recordCampaignFit({
+      fitKey: 'fit-2', ingestKey: 'fit-ingest-2', campaignKey: 'campaign-1', campaignVersion: 1, creatorKey: 'creator-1', score: 75,
+      confidence: 0.7, coverageAvailable: 3, coverageExpected: 4, evidenceState: 'derived', algorithmVersion: 'influencer-intelligence-campaign-fit/v1', providers: ['tiktok'],
+      provenance: [provenanceEntry()], inputFingerprint: digestB, computedAt: retrievedAt, retentionPolicyVersion: 'retention/v1',
+    }),
+    (error) => error.code === 'CAMPAIGN_FIT_WEIGHTS_VERSION_REQUIRED',
+  );
   const rows = await repository.latestScores({ creatorKey: 'creator-1', limit: 2 });
   assert.deepEqual(rows, [{ score_key: 'score-1' }]);
   assert.deepEqual(queryable.calls.at(-1).values, ['creator-1', 2]);

@@ -27,10 +27,13 @@ The factory requires a read service with these read-only methods:
 | `get_creator_media` | `getCreatorMedia` |
 | `get_creator_analytics` | `getCreatorAnalytics` |
 | `get_creator_score` | `getCreatorScore` |
+| `get_campaign_fit` | `getCampaignFit` |
 | `compare_creators` | `compareCreators` |
 
-`get_campaign_fit` is deliberately not registered until M11 has a concrete
-Campaign Fit artifact and contract.
+M11 registers `get_campaign_fit` only as a read of a persisted, versioned
+Campaign Fit projection. It accepts a bounded campaign key/version and an
+optional bounded creator list; it never accepts a raw brief, recalculates a
+fit, starts collection, or dispatches a campaign.
 
 ## Request controls
 
@@ -65,7 +68,9 @@ therefore an opaque, bounded reference rather than a raw provider response.
 
 The adapter only returns persisted or service-owned read projections. It does
 not recalculate analytics, scores, weights, benchmarks, or campaign fit, and it
-does not upgrade an inferred signal to observed.
+does not upgrade an inferred signal to observed. Campaign Fit remains separate
+from the overall Influencer Score and returns its own confidence, coverage,
+components, algorithm/weights versions, conflicts, and provenance.
 
 ## Runtime status and rollback
 

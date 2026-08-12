@@ -71,6 +71,7 @@ function fixtureService(overrides = {}) {
     async getCreatorMedia(input) { calls.push(['getCreatorMedia', input]); return envelope({ media: [{ media_key: 'media-1', likes_count: 10, comments_count: 2 }] }, { source_type: 'media' }); },
     async getCreatorAnalytics(input) { calls.push(['getCreatorAnalytics', input]); return envelope({ creator_key: input.creator_key, engagement: { median: 0.12 } }, { source_type: 'analysis', data_classification: 'derived', confidence_score: 70 }); },
     async getCreatorScore(input) { calls.push(['getCreatorScore', input]); return envelope({ creator_key: input.creator_key, overall_score: 72, confidence_score: 65, data_coverage: 80 }, { source_type: 'score', data_classification: 'derived', confidence_score: 65 }); },
+    async getCampaignFit(input) { calls.push(['getCampaignFit', input]); return envelope({ campaign_key: input.campaign_key, campaign_version: input.campaign_version, fits: (input.creator_keys || ['creator-1']).map((creator_key, index) => ({ creator_key, campaign_fit_score: 78 - index, campaign_fit_confidence: 62, data_coverage: 80, campaign_fit_components: {} })) }, { source_type: 'campaign-fit', data_classification: 'derived', confidence_score: 62 }); },
     async compareCreators(input) { calls.push(['compareCreators', input]); return envelope({ creators: input.creator_keys.map((creator_key) => ({ creator_key })) }, { source_type: 'comparison', data_classification: 'derived', confidence_score: 60 }); },
     ...overrides,
   };
@@ -102,12 +103,12 @@ function errorCode(response) {
   return response.error?.data?.error_code;
 }
 
-test('registers only bounded read-only tools and defers campaign fit', async () => {
+test('registers only bounded read-only tools and exposes persisted Campaign Fit separately', async () => {
   const { gateway } = createHarness();
   const response = await gateway.handleRpc({ rpc: { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }, context: AUTH });
   const names = response.result.tools.map((tool) => tool.name);
-  assert.deepEqual(names, ['search_creators', 'get_creator_profile', 'get_creator_snapshots', 'get_creator_media', 'get_creator_analytics', 'get_creator_score', 'compare_creators']);
-  assert.equal(names.includes('get_campaign_fit'), false);
+  assert.deepEqual(names, ['search_creators', 'get_creator_profile', 'get_creator_snapshots', 'get_creator_media', 'get_creator_analytics', 'get_creator_score', 'get_campaign_fit', 'compare_creators']);
+  assert.equal(names.includes('get_campaign_fit'), true);
   assert.ok(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false));
   assert.ok(names.every((name) => !/follow|like|dm|post|publish|scrap|sql|shell/i.test(name)));
 });
@@ -143,11 +144,23 @@ test('validates bounded windows, paging and comparison cardinality before the st
   assert.deepEqual(service.calls.at(-1), ['getCreatorSnapshots', { creator_key: 'creator-1', window: { start: OBSERVED, end: NOW }, page: 2, page_size: 10 }]);
 });
 
+test('reads a versioned Campaign Fit projection without accepting a raw brief or starting computation', async () => {
+  const { gateway, service } = createHarness();
+  const response = await call(gateway, 'get_campaign_fit', { campaign_key: 'campaign-skin-serum-001', campaign_version: 2, creator_keys: ['creator-1'], page: 1, page_size: 10 });
+  const content = response.result.structuredContent;
+  assert.equal(content.data_classification, 'derived');
+  assert.equal(content.provenance[0].source_type, 'campaign-fit');
+  assert.equal(content.data.fits[0].campaign_fit_score, 78);
+  assert.deepEqual(service.calls.at(-1), ['getCampaignFit', { campaign_key: 'campaign-skin-serum-001', campaign_version: 2, creator_keys: ['creator-1'], page: 1, page_size: 10 }]);
+  const rejected = await call(gateway, 'get_campaign_fit', { campaign_key: 'campaign-skin-serum-001', brief: { category: 'skincare' } });
+  assert.equal(errorCode(rejected), 'INVALID_INPUT');
+});
+
 test('returns provenance, freshness, confidence and coverage without recalculating the score', async () => {
   const { gateway, service } = createHarness();
   const response = await call(gateway, 'get_creator_score', { creator_key: 'creator-1' });
   const content = response.result.structuredContent;
-  assert.equal(content.contract_version, 'influencer-intelligence/mcp/v1');
+  assert.equal(content.contract_version, 'influencer-intelligence/mcp/v1.1');
   assert.equal(content.data_classification, 'derived');
   assert.equal(content.freshness, 'fresh');
   assert.equal(content.confidence_score, 65);

@@ -134,6 +134,7 @@ test('keeps API reads and MCP tools read-only while isolating Orb collection', (
     assert.ok(MCP_CONTRACT.controls.includes(control), `missing MCP control: ${control}`);
   }
   assert.ok(MCP_CONTRACT.tools.every(({ readOnly }) => readOnly === true));
+  assert.equal(MCP_CONTRACT.contractVersion, 'influencer-intelligence/mcp/v1.1');
   assert.deepEqual(MCP_CONTRACT.tools.map(({ name }) => name), [
     'search_creators',
     'get_creator_profile',
@@ -141,10 +142,10 @@ test('keeps API reads and MCP tools read-only while isolating Orb collection', (
     'get_creator_media',
     'get_creator_analytics',
     'get_creator_score',
+    'get_campaign_fit',
     'compare_creators',
   ]);
-  assert.equal(MCP_CONTRACT.deferredTools[0].name, 'get_campaign_fit');
-  assert.equal(MCP_CONTRACT.deferredTools[0].unavailableUntil, 'M11');
+  assert.deepEqual(MCP_CONTRACT.deferredTools, []);
   assert.deepEqual(MCP_CONTRACT.limits, {
     maxRequestBytes: 65536,
     maxResponseBytes: 524288,
@@ -167,13 +168,23 @@ test('records the M7 skill as source-complete without enabling runtime access', 
   assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, false);
 });
 
+test('records M11 Campaign Fit as source-complete while keeping compute and runtime registration off', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M11');
+  assert.match(milestone.status, /source implemented/i);
+  assert.match(milestone.status, /runtime remains off/i);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.campaignFitSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.campaignFitMigrationArtifactAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.campaignFitRuntimeWired, false);
+  assert.ok(DATA_MODEL.persistence.additiveMigrations.some((path) => path.includes('campaign_fit_v1')));
+});
+
 test('records M9 comments intelligence as source-complete without wiring runtime collection', () => {
   const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M9');
   assert.match(milestone.status, /aggregate-only analyzer/i);
   assert.match(milestone.status, /runtime\/provider wiring remains off/i);
-  assert.deepEqual(DATA_MODEL.persistence.additiveMigrations, [
+  assert.ok(DATA_MODEL.persistence.additiveMigrations.includes(
     'migrations/20260812_influencer_intelligence_comments_v1.up.sql',
-  ]);
+  ));
   assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsSourceAdded, true);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsMigrationArtifactAdded, true);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsRuntimeWired, false);

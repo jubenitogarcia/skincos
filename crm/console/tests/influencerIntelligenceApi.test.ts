@@ -39,4 +39,26 @@ describe('Influencer Intelligence CRM client', () => {
     expect(url).toBe('/api/influencer-intelligence/v1/compare')
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({ creatorKeys: ['creator-a', 'creator-b', 'creator-c'] })
   })
+
+  it('reads persisted campaign fit through the internal service without sending a campaign brief', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({ data: { campaignKey: 'campaign-1', campaignVersion: 2, fits: [], freshness: 'stale', limitations: ['not_computed'] } }))
+    const api = createInfluencerIntelligenceApi(fetchMock as unknown as typeof fetch)
+
+    const result = await api.getCampaignFit('campaign-1', ['creator-a', 'creator-b'], 2)
+
+    expect(result.campaignKey).toBe('campaign-1')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/influencer-intelligence/v1/campaign-fit')
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ campaignKey: 'campaign-1', campaignVersion: 2, creatorKeys: ['creator-a', 'creator-b'] })
+    expect(String((init as RequestInit).body)).not.toContain('brief')
+  })
+
+  it('rejects unsafe campaign keys before making a request', async () => {
+    const fetchMock = vi.fn()
+    const api = createInfluencerIntelligenceApi(fetchMock as unknown as typeof fetch)
+
+    await expect(api.getCampaignFit('campaign/with-secret')).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    await expect(api.getCampaignFit('campaign-1', ['creator/with-secret'])).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })
