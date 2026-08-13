@@ -62,6 +62,27 @@ test("Clube Botox aliases resolve to the requested Asaas payment links", () => {
     }
 });
 
+test("Instagram live WhatsApp aliases preserve the unit-specific prefilled message", () => {
+    const message = "Vim pela live da *Espaço Facial* e quero saber mais sobre a _condição especial_ que vocês apresentaram!";
+    const expected = {
+        "/nh/iglivewa": "5551995811008",
+        "/bss/iglivewa": "5551980882293",
+    };
+
+    for (const [slugPath, phone] of Object.entries(expected)) {
+        const destinationUrl = ESFA_REDIRECTS[slugPath];
+        const destination = new URL(destinationUrl);
+        assert.equal(destination.hostname, "wa.me");
+        assert.equal(destination.pathname, `/${phone}`);
+        assert.equal(destination.searchParams.get("text"), message);
+
+        const seed = buildEsfaManagedRedirectSeed({ slugPath, destinationUrl, now: 789 });
+        assert.equal(seed.destinationHost, "wa.me");
+        assert.equal(seed.placement, "whatsapp");
+        assert.equal(seed.unitSlug, slugPath.startsWith("/nh/") ? "novo-hamburgo" : "barrashoppingsul");
+    }
+});
+
 test("listEsfaManagedRedirectSeeds covers the active and retired catalog", () => {
     const seeds = listEsfaManagedRedirectSeeds(456);
 
