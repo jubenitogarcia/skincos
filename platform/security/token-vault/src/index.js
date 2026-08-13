@@ -64,6 +64,7 @@ export async function handleRequest(request, env) {
         requestId,
         pathname,
         decryptToken,
+        encryptToken,
         writeAudit,
       });
     }
@@ -137,6 +138,7 @@ async function health(env, requestId) {
   const checks = {
     d1: Boolean(env.TOKEN_VAULT_DB),
     apiToken: Boolean(safeString(env.TOKEN_VAULT_API_TOKEN)),
+    n8nApiToken: Boolean(safeString(env.TOKEN_VAULT_N8N_API_TOKEN)),
     analyticsApiToken: Boolean(safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN)),
     encryptionKey: Boolean(safeString(env.TOKEN_VAULT_ENCRYPTION_KEY)),
     analyticsMode: mode !== 'invalid',
@@ -146,7 +148,7 @@ async function health(env, requestId) {
     await env.TOKEN_VAULT_DB.prepare('SELECT 1 AS ok').first();
   }
 
-  const ok = checks.d1 && checks.apiToken && checks.analyticsApiToken && checks.encryptionKey && checks.analyticsMode;
+  const ok = checks.d1 && checks.apiToken && checks.n8nApiToken && checks.analyticsApiToken && checks.encryptionKey && checks.analyticsMode;
   return json({
     ok,
     service: 'skincos-token-vault',
@@ -486,6 +488,7 @@ function contract(requestId) {
       header: 'Authorization',
       scheme: 'Bearer',
       secret: 'TOKEN_VAULT_API_TOKEN',
+      operational_secret: 'TOKEN_VAULT_N8N_API_TOKEN',
       analytics_secret: 'TOKEN_VAULT_ANALYTICS_API_TOKEN',
       analytics_scope: 'influencer-intelligence',
       analytics_mode: 'shadow|active',

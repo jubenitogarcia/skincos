@@ -286,7 +286,10 @@ function verifyCreativeTracking(source, creative, graphReadbackAvailable) {
       reason: inherited ? 'whatsapp_inherited_url_tags_observed' : 'whatsapp_destination',
     };
   }
-  if (kind !== 'website' || text(tracking.website_event_status) !== 'configured' || text(tracking.url_tags_status) !== 'expected' || !expected) {
+  if (kind !== 'website' || tracking.profile_configured !== true || !['verified', 'reconciled'].includes(text(tracking.reconciliation_status)) ||
+    text(tracking.website_event_status) !== 'configured' ||
+    (text(tracking.offline_event_dataset_requirement) === 'required' && text(tracking.offline_event_dataset_status) !== 'configured') ||
+    text(tracking.url_tags_status) !== 'expected' || !expected) {
     return {
       status: 'mismatch',
       graph_request_method: 'GET',

@@ -12,16 +12,20 @@ const {
 const { CRM_TOOL_NAME, CRM_URL, transform } = require('../scripts/prepare-meta-ads-publish-crm-catalog');
 const { transform: patchVideoUploadReplay } = require('../scripts/patch-meta-ads-video-transfer-replay');
 const { CRM_META_ADS_COMPATIBILITY_URL, isSupportedCrmContextUrl } = require('../scripts/patch-meta-ads-crm-context-prefetch');
-const { CODE_SOURCES } = require('../scripts/lib/meta-ads-publish-code-sources');
+const { CODE_SOURCES, assertCodeSourceCoverage } = require('../scripts/lib/meta-ads-publish-code-sources');
 
 test('tracks every live Meta Ads Publish Code node in one shared source map', () => {
-  assert.equal(Object.keys(CODE_SOURCES).length, 51);
+  const workflow = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'workflows', 'meta-ads-publish.current.json'), 'utf8'));
+  const coverage = assertCodeSourceCoverage(workflow);
+  assert.equal(coverage.code_node_count, coverage.mapped_node_count);
   assert.equal(CODE_SOURCES['Build Jobs'], 'build-jobs.js');
   assert.equal(CODE_SOURCES['Validate Visual Grouping'], 'validate-visual-grouping.js');
   assert.equal(CODE_SOURCES['Prepare CRM Offer Context Requests'], 'prepare-crm-offer-context-requests.js');
   assert.equal(CODE_SOURCES['Attach CRM Offer Context'], 'attach-crm-offer-context.js');
   assert.equal(CODE_SOURCES['Prepare Advantage+ Drift Readback'], 'prepare-advantage-plus-drift-readback.js');
   assert.equal(CODE_SOURCES['Classify Advantage+ Graph Drift'], 'classify-advantage-plus-graph-drift.js');
+  assert.equal(CODE_SOURCES['Prepare Tracking Reconciliation'], 'prepare-tracking-reconciliation.js');
+  assert.equal(CODE_SOURCES['Attach Tracking Reconciliation'], 'attach-tracking-reconciliation.js');
 });
 
 test('Responses API uses the n8n 1.3 default when the stored parameter is absent', () => {
@@ -111,9 +115,9 @@ test('gateway parameters reject a Token Vault contract revision mismatch before 
     path.join(__dirname, '..', 'workflow-src', 'meta-ads-publish', 'build-meta-api-params-from-vault.js'),
     'utf8',
   );
-  assert.match(source, /const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v19_tracking_contract'/);
+  assert.match(source, /const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_reconciliation'/);
   assert.match(source, /gatewayContractRevision !== WORKFLOW_CONTRACT_REVISION/);
-  assert.match(source, /adset_conversion_observation/);
+  assert.match(source, /adset_conversion_reconciliation/);
   assert.match(source, /creative_url_tags_readback/);
 });
 

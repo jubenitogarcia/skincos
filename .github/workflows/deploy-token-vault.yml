@@ -1,0 +1,577 @@
+name: Deploy Token Vault
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Isolated environment
+        required: true
+        default: staging
+        type: choice
+        options: [preview, staging, production]
+      release_sha:
+        description: Immutable main commit to promote or restore
+        required: true
+        type: string
+      operation:
+        description: Deploy a release or restore a previously uploaded release SHA
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback]
+      confirm_staging_tracking_fixture:
+        description: Confirm that staging has an isolated authorized tracking profile and synthetic ad set
+        required: true
+        default: false
+        type: boolean
+      staging_run_id:
+        description: Required for production; successful Token Vault staging run for this exact SHA
+        required: false
+        type: string
+      preview_run_id:
+        description: Required for staging; successful Token Vault preview for this exact SHA
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-token-vault-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  promotion:
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: token-vault
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+      emit_preview_evidence: false
+    secrets: inherit
+
+  preview:
+    needs: promotion
+    if: ${{ inputs.target == 'preview' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+
+      - name: Validate immutable Token Vault preview source
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'preview checkout does not match promotion evidence'; exit 1; }
+          npm --prefix platform/security/token-vault test
+          node orb/engine/scripts/sync-meta-ads-publish-sources.js check
+          npx --yes wrangler@4.120.0 d1 migrations apply skincos-token-vault --local --config platform/security/token-vault/wrangler.toml
+          npx --yes wrangler@4.120.0 deploy --dry-run --keep-vars --config platform/security/token-vault/wrangler.toml
+
+      - name: Write Token Vault preview evidence after Worker validation
+        env:
+          PROMOTION_UNIT: token-vault
+          PROMOTION_TARGET: preview
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" \
+            node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+
+      - name: Upload immutable Token Vault preview evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-token-vault
+          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error
+
+  orb_contract:
+    needs: promotion
+    if: ${{ inputs.target == 'production' }}
+    runs-on: [self-hosted, Linux, X64, skincos-native-custody]
+    environment: production
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require the exact immutable native source before an Orb mutation
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(readlink -f /opt/skincos/current/source)"
+          [[ "$SOURCE_ROOT" == "/opt/skincos/releases/$RELEASE_SHA/source" ]] || { echo 'The required immutable native source has not been promoted.'; exit 1; }
+          [[ -r "$SOURCE_ROOT/scripts/runtime/apply-meta-ads-publish-tracking-release.sh" ]] || { echo 'The immutable native source lacks the tracking apply entrypoint.'; exit 1; }
+          echo "SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
+
+      - name: Capture the live inactive Orb version immediately before apply
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/meta-ads-tracking-orb"
+          sudo -n -u postgres /usr/bin/node "$SOURCE_ROOT/orb/engine/scripts/export-meta-ads-publish-live.js" \
+            | tee "$RUNNER_TEMP/meta-ads-tracking-orb/live-version.json"
+          EXPECTED_VERSION="$(node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(x.active===true||!/^[0-9a-fA-F-]{36}$/.test(String(x.versionId||'')))throw new Error('live Meta Ads Publish workflow is active or its version is invalid');process.stdout.write(x.versionId);" "$RUNNER_TEMP/meta-ads-tracking-orb/live-version.json")"
+          echo "ORB_META_ADS_EXPECTED_VERSION=$EXPECTED_VERSION" >> "$GITHUB_ENV"
+
+      - name: Acquire the shared Token Vault and Orb release lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault-orb.json
+
+      - name: Revalidate the shared lease before the Orb mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault-orb.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Apply the version-checked inactive Meta Ads tracking workflow
+        run: |
+          set -euo pipefail
+          sudo -n -u postgres /usr/bin/bash "$SOURCE_ROOT/scripts/runtime/apply-meta-ads-publish-tracking-release.sh" \
+            --source-root "$SOURCE_ROOT" \
+            --expected-version "$ORB_META_ADS_EXPECTED_VERSION" \
+            --apply
+
+      - name: Release the shared Token Vault and Orb release lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault-orb.json
+
+  release:
+    needs: [promotion, orb_contract]
+    # orb_contract is deliberately skipped in staging. `always()` makes that
+    # intentional skip distinguishable from a failed production Orb apply.
+    if: ${{ always() && inputs.target != 'preview' && (inputs.target == 'staging' || needs.orb_contract.result == 'success') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+
+      - name: Verify immutable Token Vault release
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checked-out source does not match promotion evidence'; exit 1; }
+
+      - name: Attest Token Vault deployment authorization and remote resources before mutation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TOKEN_VAULT_API_TOKEN: ${{ secrets.TOKEN_VAULT_API_TOKEN }}
+          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
+          TOKEN_VAULT_ANALYTICS_API_TOKEN: ${{ secrets.TOKEN_VAULT_ANALYTICS_API_TOKEN }}
+          TOKEN_VAULT_ENCRYPTION_KEY: ${{ secrets.TOKEN_VAULT_ENCRYPTION_KEY }}
+          TOKEN_VAULT_BACKUP_PASSPHRASE: ${{ secrets.TOKEN_VAULT_BACKUP_PASSPHRASE }}
+          TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
+          TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
+          ENABLE_TOKEN_VAULT_DEPLOY_STAGING: ${{ vars.ENABLE_TOKEN_VAULT_DEPLOY_STAGING }}
+          ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY: ${{ vars.ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY }}
+          TARGET: ${{ inputs.target }}
+          OPERATION: ${{ inputs.operation }}
+          CONFIRM_STAGING_TRACKING_FIXTURE: ${{ inputs.confirm_staging_tracking_fixture }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID TOKEN_VAULT_API_TOKEN TOKEN_VAULT_N8N_API_TOKEN TOKEN_VAULT_ANALYTICS_API_TOKEN TOKEN_VAULT_ENCRYPTION_KEY TOKEN_VAULT_BACKUP_PASSPHRASE; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required environment secret: $name"; exit 1; }
+          done
+          if [[ "$TARGET" == staging ]]; then
+            [[ "$ENABLE_TOKEN_VAULT_DEPLOY_STAGING" == true ]] || { echo 'ENABLE_TOKEN_VAULT_DEPLOY_STAGING must be true'; exit 1; }
+            [[ "$CONFIRM_STAGING_TRACKING_FIXTURE" == true ]] || { echo 'An isolated synthetic tracking fixture must be confirmed for staging'; exit 1; }
+            [[ "$TOKEN_VAULT_STAGING_BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'TOKEN_VAULT_STAGING_BASE_URL must be an HTTPS origin'; exit 1; }
+          else
+            [[ "$ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY" == true ]] || { echo 'ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY must be true'; exit 1; }
+            [[ "$TOKEN_VAULT_PRODUCTION_BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'TOKEN_VAULT_PRODUCTION_BASE_URL must be an HTTPS origin'; exit 1; }
+          fi
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-token-vault; else ENV_ARGS=(--env staging); DB=skincos-token-vault-staging; fi
+          npx --yes wrangler@4.120.0 d1 list --json | DB="$DB" node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync(0,'utf8'));if(!rows.some(row=>row.name===process.env.DB)){throw new Error('configured Token Vault D1 is absent')}"
+          secrets_json="$(npx --yes wrangler@4.120.0 secret list --format json --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}")"
+          printf '%s' "$secrets_json" | node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync(0,'utf8'));const names=new Set(rows.map(row=>row.name||row));for(const name of ['TOKEN_VAULT_API_TOKEN','TOKEN_VAULT_N8N_API_TOKEN','TOKEN_VAULT_ANALYTICS_API_TOKEN','TOKEN_VAULT_ENCRYPTION_KEY'])if(!names.has(name))throw new Error('required Worker secret is absent: '+name);"
+
+      - name: Validate Token Vault and Meta Ads Publish source
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          npm --prefix platform/security/token-vault test
+          node orb/engine/scripts/sync-meta-ads-publish-sources.js check
+          npx --yes wrangler@4.120.0 d1 migrations apply skincos-token-vault --local --config platform/security/token-vault/wrangler.toml
+          npx --yes wrangler@4.120.0 deploy --dry-run --keep-vars --config platform/security/token-vault/wrangler.toml
+
+      - name: Acquire Token Vault release lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault.json
+
+      - name: Capture encrypted Token Vault D1 checkpoint before migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TOKEN_VAULT_BACKUP_PASSPHRASE: ${{ secrets.TOKEN_VAULT_BACKUP_PASSPHRASE }}
+          TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ -n "${TOKEN_VAULT_BACKUP_PASSPHRASE:-}" ]] || { echo 'Missing TOKEN_VAULT_BACKUP_PASSPHRASE'; exit 1; }
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-token-vault; else ENV_ARGS=(--env staging); DB=skincos-token-vault-staging; fi
+          plain="$RUNNER_TEMP/token-vault-${TARGET}-pre-migration-${RELEASE_SHA}.sql"
+          encrypted="${plain}.gpg"
+          npx --yes wrangler@4.120.0 d1 export "$DB" --remote --output "$plain" --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}"
+          printf '%s' "$TOKEN_VAULT_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
+          rm -f "$plain"
+          sha256sum "$encrypted" | awk '{print $1}' > "$encrypted.sha256"
+          echo "CHECKPOINT=$encrypted" >> "$GITHUB_ENV"
+          echo "CHECKPOINT_DIGEST=$encrypted.sha256" >> "$GITHUB_ENV"
+
+      - name: Upload encrypted Token Vault D1 checkpoint
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: token-vault-${{ inputs.target }}-pre-migration-${{ needs.promotion.outputs.source_sha }}
+          path: |
+            ${{ env.CHECKPOINT }}
+            ${{ env.CHECKPOINT_DIGEST }}
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Check Token Vault release lease before migration journal
+        if: inputs.operation == 'deploy'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Ensure Token Vault migration journal
+        if: inputs.operation == 'deploy'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-token-vault; else ENV_ARGS=(--env staging); DB=skincos-token-vault-staging; fi
+          npx --yes wrangler@4.120.0 d1 execute "$DB" --remote --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" --command 'CREATE TABLE IF NOT EXISTS token_vault_schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (strftime('"'"'%Y-%m-%dT%H:%M:%fZ'"'"', '"'"'now'"'"')));'
+
+      - name: Check Token Vault release lease before additive migrations
+        if: inputs.operation == 'deploy'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Apply additive Token Vault migrations atomically
+        if: inputs.operation == 'deploy'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-token-vault; else ENV_ARGS=(--env staging); DB=skincos-token-vault-staging; fi
+          batch="$RUNNER_TEMP/token-vault-additive-migrations.sql"
+          : > "$batch"
+          pending=0
+          for migration in platform/security/token-vault/migrations/*.sql; do
+            name="$(basename "$migration")"
+            applied="$(npx --yes wrangler@4.120.0 d1 execute "$DB" --remote --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" --command "SELECT 1 AS applied FROM token_vault_schema_migrations WHERE name='$name' LIMIT 1;" --json | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));process.stdout.write(x[0]?.results?.[0]?.applied ? 'true' : 'false')")"
+            [[ "$applied" == true ]] && continue
+            cat "$migration" >> "$batch"
+            printf "\nINSERT INTO token_vault_schema_migrations(name) VALUES ('%s');\n" "$name" >> "$batch"
+            pending=1
+          done
+          if [[ "$pending" == 1 ]]; then
+            npx --yes wrangler@4.120.0 d1 execute "$DB" --remote --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" --file "$batch"
+          fi
+
+      - name: Check Token Vault release lease before version upload
+        if: inputs.operation == 'deploy'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Upload immutable Token Vault version
+        if: inputs.operation == 'deploy'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
+          upload_output="$(npx --yes wrangler@4.120.0 versions upload --config platform/security/token-vault/wrangler.toml --keep-vars --message "token-vault:deploy:$RELEASE_SHA" "${ENV_ARGS[@]}")"
+          printf '%s\n' "$upload_output"
+          VERSION_ID="$(printf '%s\n' "$upload_output" | sed -n 's/^Worker Version ID: //p' | tail -n 1)"
+          [[ "$VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to capture immutable Token Vault Worker version ID'; exit 1; }
+          echo "TOKEN_VAULT_VERSION_ID=$VERSION_ID" >> "$GITHUB_ENV"
+
+      - name: Resolve a previously uploaded Token Vault version for rollback
+        if: inputs.operation == 'rollback'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
+          TOKEN_VAULT_VERSION_ID="$(npx --yes wrangler@4.120.0 versions list --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" --json | node -e "const fs=require('fs');const versions=JSON.parse(fs.readFileSync(0,'utf8'));const expected='token-vault:deploy:'+process.env.RELEASE_SHA;const found=versions.find(x=>(x.message||x.annotations?.['workers/message'])===expected);if(!found?.id)process.exit(1);process.stdout.write(found.id)")"
+          [[ -n "$TOKEN_VAULT_VERSION_ID" ]] || { echo 'No prior Token Vault version for requested SHA'; exit 1; }
+          echo "TOKEN_VAULT_VERSION_ID=$TOKEN_VAULT_VERSION_ID" >> "$GITHUB_ENV"
+
+      - name: Check Token Vault release lease before version deployment
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Deploy only the selected Token Vault version
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
+          [[ -n "${TOKEN_VAULT_VERSION_ID:-}" ]] || { echo 'Token Vault version was not selected'; exit 1; }
+          npx --yes wrangler@4.120.0 versions deploy "${TOKEN_VAULT_VERSION_ID}@100%" --yes --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}"
+
+      - name: Read back Token Vault deployment and authenticated health
+        env:
+          TOKEN_VAULT_API_TOKEN: ${{ secrets.TOKEN_VAULT_API_TOKEN }}
+          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
+          TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
+          TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then BASE_URL="$TOKEN_VAULT_PRODUCTION_BASE_URL"; else BASE_URL="$TOKEN_VAULT_STAGING_BASE_URL"; fi
+          anonymous_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$BASE_URL/internal/token-vault/health")"
+          [[ "$anonymous_code" == 401 ]] || { echo 'Token Vault anonymous health must remain unauthorized'; exit 1; }
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true||x.checks?.n8nApiToken!==true)throw new Error('Token Vault admin health/readback failed');"
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_N8N_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true)throw new Error('Token Vault operational health/readback failed');"
+          if [[ "$TARGET" == staging ]]; then
+            curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/v1/meta-ads-publish/config" \
+              | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const fixture=(x.destinations||[]).filter(d=>d.tracking_contract?.destination_kind==='website'&&d.tracking_contract?.profile_configured&&d.tracking_contract?.url_tags_configured&&d.tracking_contract?.staging_synthetic_fixture===true);if(x.ready!==true||x.capabilities?.tracking?.adset_conversion_reconciliation!==true||fixture.length!==1)throw new Error('exactly one authorized synthetic Website tracking fixture is required in staging');"
+          fi
+
+      - name: Exercise reversible Meta tracking reconciliation against the isolated staging fixture
+        if: inputs.target == 'staging'
+        env:
+          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
+          TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base = String(process.env.TOKEN_VAULT_STAGING_BASE_URL || '').replace(/\/$/, '');
+          const token = String(process.env.TOKEN_VAULT_N8N_API_TOKEN || '');
+          const nonce = `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}-${process.env.RELEASE_SHA.slice(0, 12)}`;
+          let runId = '';
+          let completed = false;
+          const request = async (path, { method = 'GET', body } = {}) => {
+            const response = await fetch(`${base}/internal/token-vault${path}`, {
+              method,
+              headers: {
+                Authorization: `Bearer ${token}`,
+                ...(body ? { 'content-type': 'application/json' } : {}),
+              },
+              ...(body ? { body: JSON.stringify(body) } : {}),
+            });
+            let payload = {};
+            try { payload = await response.json(); } catch {}
+            if (!response.ok || payload.ok !== true) {
+              throw new Error(`staging tracking fixture request failed: ${response.status} ${String(payload.error || 'unknown')}`);
+            }
+            return payload;
+          };
+          try {
+            const config = await request('/v1/meta-ads-publish/config');
+            const fixtures = (config.destinations || []).filter((destination) => {
+              const tracking = destination?.tracking_contract || {};
+              return tracking.destination_kind === 'website' && tracking.profile_configured === true &&
+                tracking.staging_synthetic_fixture === true && tracking.website_event_requirement === 'required' &&
+                tracking.offline_event_dataset_requirement === 'required';
+            });
+            if (config.capabilities?.workflow_contract_revision !== 'meta_destination_contract_v20_tracking_reconciliation' || fixtures.length !== 1) {
+              throw new Error('staging tracking fixture contract is not eligible');
+            }
+            const fixture = fixtures[0];
+            const created = await request('/v1/meta-ads-publish/runs', {
+              method: 'POST',
+              body: {
+                config_revision: config.config_revision,
+                workflow_execution_id: `staging-tracking-fixture-${nonce}`,
+                files: [{ id: `synthetic-tracking-fixture-${nonce}`, name: 'tracking-fixture.txt', modified_time: nonce, size: '0' }],
+              },
+            });
+            runId = String(created.run?.id || '');
+            if (!runId) throw new Error('staging tracking fixture run was not created');
+            const ensured = await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}/operations`, {
+              method: 'POST',
+              body: {
+                action: 'ensure_adset_conversion_contract',
+                operation_key: `tracking-fixture:${nonce}`,
+                token_id: fixture.token_id,
+                account_id: fixture.account_id,
+                api_version: fixture.api_version,
+                object_id: fixture.adset_id,
+                destination_kind: 'website',
+                profile_ref: fixture.tracking_contract.profile_ref,
+              },
+            });
+            const reconciliation = ensured.operation?.result || {};
+            if (reconciliation.status !== 'reconciled' || reconciliation.website_event?.configured !== true ||
+              reconciliation.offline_event_dataset?.configured !== true || reconciliation.graph_mutation !== 'promoted_object_updated' ||
+              !String(reconciliation.snapshot_id || '')) {
+              throw new Error('staging tracking fixture did not prove Graph GET-POST-GET reconciliation');
+            }
+            const rolledBack = await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}/operations`, {
+              method: 'POST',
+              body: {
+                action: 'rollback_adset_conversion_contract',
+                operation_key: `tracking-fixture-rollback:${nonce}`,
+                token_id: fixture.token_id,
+                account_id: fixture.account_id,
+                api_version: fixture.api_version,
+                object_id: fixture.adset_id,
+                snapshot_id: reconciliation.snapshot_id,
+              },
+            });
+            if (rolledBack.operation?.result?.status !== 'restored' || rolledBack.operation?.result?.graph_mutation !== 'promoted_object_restored') {
+              throw new Error('staging tracking fixture rollback was not confirmed');
+            }
+            completed = true;
+            process.stdout.write(`${JSON.stringify({ tracking_fixture: { reconciliation: 'reconciled', rollback: 'restored' } })}\n`);
+          } finally {
+            if (runId) {
+              try {
+                await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}`, {
+                  method: 'PATCH',
+                  body: { status: completed ? 'completed' : 'failed', summary: { staging_tracking_fixture: true } },
+                });
+              } catch {}
+            }
+          }
+          NODE
+
+      - name: Write staging Token Vault promotion evidence
+        if: inputs.target == 'staging'
+        env:
+          PROMOTION_UNIT: token-vault
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+
+      - name: Upload staging Token Vault promotion evidence
+        if: inputs.target == 'staging'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-token-vault
+          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Release Token Vault release lease
+        if: always()
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault.json
+
+  orb_readback:
+    needs: release
+    if: ${{ inputs.target == 'production' && needs.release.result == 'success' }}
+    runs-on: [self-hosted, Linux, X64, skincos-native-custody]
+    environment: production
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Read back final native Orb source and live workflow after Worker activation
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(readlink -f /opt/skincos/current/source)"
+          [[ "$SOURCE_ROOT" == "/opt/skincos/releases/$RELEASE_SHA/source" ]] || { echo 'Native source changed before final Orb readback.'; exit 1; }
+          sudo -n -u postgres /usr/bin/node "$SOURCE_ROOT/orb/engine/scripts/validate-meta-ads-publish-preflight.js"

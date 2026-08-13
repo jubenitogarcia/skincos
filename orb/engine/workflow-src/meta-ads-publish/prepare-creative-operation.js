@@ -22,7 +22,7 @@ return $input.all().map((item) => {
       ...job,
       gateway_request: {
         action: 'create_creative',
-        operation_key: key(`creative:v2:${payloadHash}:${job.run_id}:${job.destination_group}:${job.media_variant || 'static_flexible'}`),
+        operation_key: key(`creative:v3:${payloadHash}:${job.run_id}:${job.destination_group}:${job.media_variant || 'static_flexible'}`),
         token_id: text(job.token_id),
         account_id: text(job.account_id),
         api_version: text(job.api_version || 'v25.0'),

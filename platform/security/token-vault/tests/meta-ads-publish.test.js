@@ -58,7 +58,17 @@ function configRow(id, unit, rowNumber) {
           BOTOX_35UI_PRICE_DOSE_AVISTA_ANIVERSARIO_7_ANOS: 'https://espacofacial.com/campanhas/aniversario-7-anos/botox',
         },
         tracking_contract: {
-          url_tags: 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}',
+          url_tags: 'key1=value1&key2=value2%20encoded',
+          profile_ref: 'website_schedule_v1',
+        },
+        tracking_profiles: {
+          website_schedule_v1: {
+            source_adset_id: '623456789',
+            destination_kind: 'website',
+            website_event_requirement: 'required',
+            offline_event_dataset_requirement: 'required',
+            staging_synthetic_fixture: true,
+          },
         },
       },
     }),
@@ -89,18 +99,28 @@ test('config exposes metadata and opaque token ids without token material', asyn
   assert.equal(body.destinations[0].carousel_native_adset_verified, true);
   assert.equal(body.destinations[0].carousel_native_route_active, true);
   assert.equal(body.destinations[0].landing_pages_by_creative_group.BOTOX_35UI_PRICE_DOSE_AVISTA_ANIVERSARIO_7_ANOS, 'https://espacofacial.com/campanhas/aniversario-7-anos/botox');
-  assert.equal(body.destinations[0].tracking_contract.url_tags, 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}');
+  assert.equal(body.destinations[0].tracking_contract.url_tags, 'key1=value1&key2=value2%20encoded');
   assert.equal(body.destinations[0].tracking_contract.url_tags_configured, true);
+  assert.equal(body.destinations[0].tracking_contract.profile_ref, 'website_schedule_v1');
+  assert.equal(body.destinations[0].tracking_contract.profile_configured, true);
+  assert.equal(body.destinations[0].tracking_contract.website_event_requirement, 'required');
+  assert.equal(body.destinations[0].tracking_contract.offline_event_dataset_requirement, 'required');
+  assert.equal(body.destinations[0].tracking_contract.staging_synthetic_fixture, true);
+  assert.equal(JSON.stringify(body.destinations[0].tracking_contract).includes('623456789'), false);
   assert.match(body.config_revision, /^[a-f0-9]{64}$/);
-  assert.equal(body.capabilities.workflow_contract_revision, 'meta_destination_contract_v19_tracking_contract');
-  assert.equal(body.capabilities.tracking.adset_conversion_observation, true);
+  assert.equal(body.capabilities.workflow_contract_revision, 'meta_destination_contract_v20_tracking_reconciliation');
+  assert.equal(body.capabilities.tracking.adset_conversion_reconciliation, true);
   assert.equal(body.capabilities.tracking.creative_url_tags_readback, true);
   assert.deepEqual(body.capabilities.video_upload.supported_actions, __test.videoUploadActions);
   assert.equal(body.capabilities.video_upload.max_file_bytes, 90 * 1024 * 1024);
   assert.equal(body.capabilities.video_upload.max_chunk_bytes, 16 * 1024 * 1024);
 });
 
-test('tracking contract accepts safe URL query fragments without allowing secret-like keys', () => {
+test('tracking contract accepts arbitrary safe URL fragments without allowing secret-like keys or malformed percent encoding', () => {
+  assert.equal(
+    __test.normalizeTrackingContract({ url_tags: 'key1=value1&key2=value2%20encoded' }).url_tags_configured,
+    true,
+  );
   assert.equal(
     __test.normalizeTrackingContract({ url_tags: 'utm_source=meta&utm_medium=paid_social&utm_id={{campaign.id}}&placement={{placement}}' }).url_tags_configured,
     true,
@@ -113,10 +133,17 @@ test('tracking contract accepts safe URL query fragments without allowing secret
     () => __test.normalizeTrackingContract({ url_tags: 'utm_source=meta&utm_medium=paid_social&access_token=not_allowed' }),
     /url_tags_invalid/,
   );
-  assert.throws(
-    () => __test.normalizeTrackingContract({ url_tags: 'utm_campaign=campaign' }),
-    /url_tags_required_utm_source_and_medium/,
-  );
+  assert.throws(() => __test.normalizeTrackingContract({ url_tags: 'key=value%2' }), /url_tags_invalid/);
+  assert.throws(() => __test.normalizeTrackingContract({ url_tags: 'key=value%ZZ' }), /url_tags_invalid/);
+  assert.equal(__test.normalizeTrackingContract({ url_tags: 'key1=value1&key2=value2' }).url_tags, 'key1=value1&key2=value2');
+});
+
+test('creative URL tags are serialized exactly once without double encoding', () => {
+  const urlTags = 'key1=value1&key2=value2%20encoded';
+  const request = __test.jsonRequest('POST', { url_tags: urlTags });
+  assert.equal(JSON.parse(request.body).url_tags, urlTags);
+  assert.match(request.body, /%20encoded/);
+  assert.doesNotMatch(request.body, /%2520encoded/);
 });
 
 function flexibleStaticFeed() {
@@ -163,9 +190,9 @@ test('flexible creative quality gate requires 3 images, 5 bodies, 5 titles and 5
   assert.match(validated.name, /\[sk:creativegrou\]/);
   const withUrlTags = __test.validateCreativePayload({
     ...payload,
-    url_tags: 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}',
+    url_tags: 'key1=value1&key2=value2%20encoded',
   }, 'creative:tracking:unit');
-  assert.equal(withUrlTags.url_tags, 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}');
+  assert.equal(withUrlTags.url_tags, 'key1=value1&key2=value2%20encoded');
   assert.throws(
     () => __test.validateCreativePayload({ ...payload, url_tags: 'https://espacofacial.com/?utm_source=meta&utm_medium=paid_social' }, 'creative:tracking:invalid'),
     /url_tags_invalid/,
@@ -394,13 +421,282 @@ test('dedicated conversion-contract readback uses Graph GET and never returns ta
   assert.deepEqual(calls.map((call) => call.method), ['GET']);
   const fields = calls[0].url.searchParams.get('fields');
   assert.equal(fields, __test.adsetConversionContractFields);
-  assert.doesNotMatch(fields, /targeting|name|budget|id/);
+  assert.match(fields, /account_id/);
+  assert.doesNotMatch(fields, /targeting|name|budget/);
   assert.equal(result.website_event.configured, true);
   assert.equal(result.offline_event_dataset.configured, true);
   assert.equal(result.destination_type, 'WEBSITE');
   assert.equal(JSON.stringify(result).includes('123456789'), false);
   assert.equal(JSON.stringify(result).includes('345678912'), false);
   assert.equal(JSON.stringify(result).includes('publisher_platforms'), false);
+});
+
+function websiteTrackingProfile() {
+  return {
+    tracking_contract: { profile_ref: 'website_schedule_v1' },
+    tracking_profiles: {
+      website_schedule_v1: {
+        source_adset_id: '623456789',
+        destination_kind: 'website',
+        website_event_requirement: 'required',
+        offline_event_dataset_requirement: 'required',
+      },
+    },
+  };
+}
+
+function conversionAdset(promotedObject) {
+  return {
+    account_id: '123456789',
+    campaign: { id: '223456789', objective: 'OUTCOME_SALES' },
+    billing_event: 'IMPRESSIONS',
+    optimization_goal: 'OFFSITE_CONVERSIONS',
+    destination_type: 'WEBSITE',
+    attribution_spec: [{ event_type: 'CLICK_THROUGH' }],
+    promoted_object: promotedObject,
+  };
+}
+
+test('website reconciliation copies only the authorized tracking fields, snapshots privately, and confirms the Graph readback', async () => {
+  const calls = [];
+  let targetReads = 0;
+  const source = conversionAdset({
+    pixel_id: '723456789',
+    custom_event_type: 'SCHEDULE',
+    offline_conversion_data_set_id: '823456789',
+  });
+  const before = conversionAdset({
+    pixel_id: '923456789',
+    custom_conversion_id: '103456789',
+    product_catalog_id: '113456789',
+  });
+  const after = conversionAdset({
+    product_catalog_id: '113456789',
+    pixel_id: '723456789',
+    custom_event_type: 'SCHEDULE',
+    offline_conversion_data_set_id: '823456789',
+  });
+  const { db, context } = gatewayContext(async (url, init) => {
+    const parsed = new URL(url);
+    const id = parsed.pathname.split('/').pop();
+    calls.push({ id, method: init.method, body: init.body ? JSON.parse(init.body) : null });
+    if (init.method === 'POST') return jsonResponse({ success: true });
+    if (id === '623456789') return jsonResponse(source);
+    targetReads += 1;
+    return jsonResponse(targetReads === 1 ? before : after);
+  }, { metaAdsPublish: websiteTrackingProfile() });
+  context.action = 'ensure_adset_conversion_contract';
+  context.operationKey = 'tracking-adset:run-test';
+  const result = await __test.ensureAdsetConversionContract({
+    token_id: 'facebook_barra',
+    account_id: '123456789',
+    api_version: 'v25.0',
+    object_id: '323456789',
+    destination_kind: 'website',
+    profile_ref: 'website_schedule_v1',
+  }, context);
+
+  assert.deepEqual(calls.map((call) => call.method), ['GET', 'GET', 'POST', 'GET']);
+  assert.deepEqual(calls[2].body.promoted_object, after.promoted_object);
+  assert.equal(result.status, 'reconciled');
+  assert.equal(result.website_event.configured, true);
+  assert.equal(result.offline_event_dataset.configured, true);
+  assert.match(result.snapshot_id, /^[0-9a-f-]{36}$/i);
+  assert.equal(JSON.stringify(result).includes('723456789'), false);
+  assert.equal(JSON.stringify(result).includes('823456789'), false);
+  assert.equal(JSON.stringify(result).includes('113456789'), false);
+  assert.ok(db.statements.some((entry) => entry.sql.includes('meta_ads_publish_adset_tracking_snapshots')));
+});
+
+test('an already reconciled website ad set performs no Graph POST', async () => {
+  const calls = [];
+  const state = conversionAdset({
+    pixel_id: '723456789',
+    custom_event_type: 'SCHEDULE',
+    offline_conversion_data_set_id: '823456789',
+  });
+  const { context } = gatewayContext(async (url, init) => {
+    const parsed = new URL(url);
+    calls.push({ id: parsed.pathname.split('/').pop(), method: init.method });
+    return jsonResponse(state);
+  }, { metaAdsPublish: websiteTrackingProfile() });
+  context.action = 'ensure_adset_conversion_contract';
+  const result = await __test.ensureAdsetConversionContract({
+    token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', object_id: '323456789',
+    destination_kind: 'website', profile_ref: 'website_schedule_v1',
+  }, context);
+  assert.equal(result.status, 'verified');
+  assert.deepEqual(calls.map((call) => call.method), ['GET', 'GET']);
+});
+
+test('Click-to-WhatsApp remains a no-op for website conversion reconciliation', async () => {
+  const calls = [];
+  const { context } = gatewayContext(async (url, init) => {
+    calls.push({ url, method: init.method });
+    return jsonResponse({});
+  });
+  const result = await __test.ensureAdsetConversionContract({
+    token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', object_id: '323456789',
+    destination_kind: 'whatsapp',
+  }, context);
+  assert.equal(result.status, 'not_applicable');
+  assert.equal(result.graph_mutation, 'none');
+  assert.equal(calls.length, 0);
+});
+
+test('explicit tracking rollback restores only the encrypted private snapshot and confirms readback', async () => {
+  const previous = { pixel_id: '723456789', custom_event_type: 'SCHEDULE', offline_conversion_data_set_id: '823456789' };
+  const calls = [];
+  const { db, context } = gatewayContext(async (url, init) => {
+    const parsed = new URL(url);
+    calls.push({ method: init.method, body: init.body ? JSON.parse(init.body) : null, id: parsed.pathname.split('/').pop() });
+    if (init.method === 'POST') return jsonResponse({ success: true });
+    return jsonResponse(conversionAdset(previous));
+  });
+  db.snapshot = {
+    id: '123e4567-e89b-42d3-a456-426614174000',
+    token_id: 'facebook_barra',
+    account_id: '123456789',
+    adset_id: '323456789',
+    previous_promoted_object_ciphertext: 'snapshot-ciphertext',
+    desired_tracking_promoted_object_ciphertext: 'desired-tracking-ciphertext',
+    tracking_keys_json: JSON.stringify(['pixel_id', 'custom_event_type', 'offline_conversion_data_set_id']),
+    status: 'captured',
+  };
+  context.decryptToken = async (value) => {
+    if (value === 'snapshot-ciphertext' || value === 'desired-tracking-ciphertext') return JSON.stringify(previous);
+    return 'fixture-secret';
+  };
+  context.action = 'rollback_adset_conversion_contract';
+  const result = await __test.rollbackAdsetConversionContract({
+    token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', object_id: '323456789',
+    snapshot_id: db.snapshot.id,
+  }, context);
+  assert.equal(result.status, 'restored');
+  assert.equal(result.snapshot_id, db.snapshot.id);
+  assert.deepEqual(calls.map((call) => call.method), ['GET', 'POST', 'GET']);
+  assert.deepEqual(calls[1].body.promoted_object, previous);
+  assert.equal(JSON.stringify(result).includes('723456789'), false);
+  assert.ok(db.statements.some((entry) => entry.sql.includes("SET status = 'restored'")));
+});
+
+test('tracking rollback preserves unrelated promoted-object changes made after reconciliation', async () => {
+  const previous = {
+    pixel_id: '723456789',
+    custom_conversion_id: '733456789',
+    offline_conversion_data_set_id: '823456789',
+    product_catalog_id: 'old-catalog',
+  };
+  const desiredTracking = {
+    pixel_id: '923456789',
+    custom_event_type: 'SCHEDULE',
+    offline_conversion_data_set_id: '993456789',
+  };
+  const current = {
+    product_catalog_id: 'new-catalog',
+    ...desiredTracking,
+  };
+  const calls = [];
+  let graphState = current;
+  const { db, context } = gatewayContext(async (url, init) => {
+    calls.push({ method: init.method, body: init.body ? JSON.parse(init.body) : null });
+    if (init.method === 'POST') {
+      graphState = init.body ? JSON.parse(init.body).promoted_object : graphState;
+      return jsonResponse({ success: true });
+    }
+    return jsonResponse(conversionAdset(graphState));
+  });
+  db.snapshot = {
+    id: '223e4567-e89b-42d3-a456-426614174000',
+    token_id: 'facebook_barra', account_id: '123456789', adset_id: '323456789',
+    previous_promoted_object_ciphertext: 'snapshot-ciphertext',
+    desired_tracking_promoted_object_ciphertext: 'desired-tracking-ciphertext',
+    tracking_keys_json: JSON.stringify(['pixel_id', 'custom_event_type', 'custom_conversion_id', 'offline_conversion_data_set_id']),
+    status: 'reconciled',
+  };
+  context.decryptToken = async (value) => {
+    if (value === 'snapshot-ciphertext') return JSON.stringify(previous);
+    if (value === 'desired-tracking-ciphertext') return JSON.stringify(desiredTracking);
+    return 'fixture-secret';
+  };
+  const result = await __test.rollbackAdsetConversionContract({
+    token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', object_id: '323456789',
+    snapshot_id: db.snapshot.id,
+  }, context);
+  assert.equal(result.status, 'restored');
+  assert.deepEqual(calls[1].body.promoted_object, {
+    product_catalog_id: 'new-catalog',
+    pixel_id: '723456789',
+    custom_conversion_id: '733456789',
+    offline_conversion_data_set_id: '823456789',
+  });
+});
+
+test('reconciliation retry reuses its encrypted snapshot after a failed Graph POST', async () => {
+  const source = conversionAdset({
+    pixel_id: '723456789', custom_event_type: 'SCHEDULE', offline_conversion_data_set_id: '823456789',
+  });
+  const before = conversionAdset({ pixel_id: '923456789', custom_conversion_id: '103456789' });
+  const after = conversionAdset({
+    pixel_id: '723456789', custom_event_type: 'SCHEDULE', offline_conversion_data_set_id: '823456789',
+  });
+  let target = before;
+  let postAttempts = 0;
+  const { db, context } = gatewayContext(async (url, init) => {
+    const id = new URL(url).pathname.split('/').pop();
+    if (init.method === 'POST') {
+      postAttempts += 1;
+      if (postAttempts === 1) return jsonResponse({ error: { code: 100, message: 'fixture POST rejected', is_transient: false } }, 400);
+      target = after;
+      return jsonResponse({ success: true });
+    }
+    return jsonResponse(id === '623456789' ? source : target);
+  }, { metaAdsPublish: websiteTrackingProfile() });
+  context.operationKey = 'tracking-adset:retry-post';
+  const request = {
+    token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', object_id: '323456789',
+    destination_kind: 'website', profile_ref: 'website_schedule_v1',
+  };
+  await assert.rejects(() => __test.ensureAdsetConversionContract(request, context), /adset_conversion_reconciliation_failed/);
+  const snapshotId = db.snapshot.id;
+  const retried = await __test.ensureAdsetConversionContract(request, context);
+  assert.equal(retried.status, 'reconciled');
+  assert.equal(retried.snapshot_id, snapshotId);
+  assert.equal(db.statements.filter((entry) => entry.sql.includes('INSERT OR IGNORE INTO meta_ads_publish_adset_tracking_snapshots')).length, 1);
+});
+
+test('reconciliation retry completes from the original snapshot after a delayed readback', async () => {
+  const source = conversionAdset({
+    pixel_id: '723456789', custom_event_type: 'SCHEDULE', offline_conversion_data_set_id: '823456789',
+  });
+  const before = conversionAdset({ pixel_id: '923456789', custom_conversion_id: '103456789' });
+  const after = conversionAdset({
+    pixel_id: '723456789', custom_event_type: 'SCHEDULE', offline_conversion_data_set_id: '823456789',
+  });
+  let targetReads = 0;
+  let postApplied = false;
+  const { db, context } = gatewayContext(async (url, init) => {
+    const id = new URL(url).pathname.split('/').pop();
+    if (init.method === 'POST') {
+      postApplied = true;
+      return jsonResponse({ success: true });
+    }
+    if (id === '623456789') return jsonResponse(source);
+    targetReads += 1;
+    if (postApplied && targetReads === 2) return jsonResponse(before);
+    return jsonResponse(postApplied ? after : before);
+  }, { metaAdsPublish: websiteTrackingProfile() });
+  context.operationKey = 'tracking-adset:retry-readback';
+  const request = {
+    token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', object_id: '323456789',
+    destination_kind: 'website', profile_ref: 'website_schedule_v1',
+  };
+  await assert.rejects(() => __test.ensureAdsetConversionContract(request, context), /adset_conversion_readback_mismatch/);
+  const snapshotId = db.snapshot.id;
+  const retried = await __test.ensureAdsetConversionContract(request, context);
+  assert.equal(retried.status, 'verified');
+  assert.equal(retried.snapshot_id, snapshotId);
+  assert.equal(db.statements.filter((entry) => entry.sql.includes('INSERT OR IGNORE INTO meta_ads_publish_adset_tracking_snapshots')).length, 1);
 });
 
 test('native-carousel calibration ad sets are constrained to paused, explicit delivery payloads', () => {
@@ -610,6 +906,7 @@ class GatewayStatement {
 
   async first() {
     if (this.sql.includes('FROM credential_tokens')) return this.db.credential;
+    if (this.sql.includes('FROM meta_ads_publish_adset_tracking_snapshots')) return this.db.snapshot || null;
     if (this.sql.includes('FROM meta_ads_publish_locks')) return null;
     if (this.sql.includes('FROM meta_ads_publish_operations')) return null;
     return null;
@@ -621,19 +918,49 @@ class GatewayStatement {
 
   async run() {
     this.db.statements.push({ sql: this.sql, values: this.values });
+    if (this.sql.includes('INSERT OR IGNORE INTO meta_ads_publish_adset_tracking_snapshots')) {
+      const [id, runId, operationKey, tokenId, accountId, adsetId, profileRef, previousCiphertext, previousFingerprint, desiredFingerprint, desiredCiphertext, trackingKeys] = this.values;
+      if (!this.db.snapshot) {
+        this.db.snapshot = {
+          id,
+          run_id: runId,
+          operation_key: operationKey,
+          token_id: tokenId,
+          account_id: accountId,
+          adset_id: adsetId,
+          profile_ref: profileRef,
+          previous_promoted_object_ciphertext: previousCiphertext,
+          previous_promoted_object_fingerprint: previousFingerprint,
+          desired_promoted_object_fingerprint: desiredFingerprint,
+          desired_tracking_promoted_object_ciphertext: desiredCiphertext,
+          tracking_keys_json: trackingKeys,
+          status: 'captured',
+        };
+      }
+    }
+    if (this.sql.includes("SET status = 'reconciled'") && this.db.snapshot) this.db.snapshot.status = 'reconciled';
+    if (this.sql.includes("SET status = 'restored'") && this.db.snapshot) this.db.snapshot.status = 'restored';
     return { success: true };
   }
 }
 
 class GatewayDb {
-  constructor() {
+  constructor(metaAdsPublish = {}) {
     this.statements = [];
+    this.snapshot = null;
     this.credential = {
       id: 'facebook_barra',
       provider: 'facebook',
       active: 1,
       token_ciphertext: 'encrypted',
-      metadata_json: JSON.stringify({ meta_ads_publish: { account_id: '123456789', api_version: 'v25.0' } }),
+      metadata_json: JSON.stringify({
+        meta_ads_publish: {
+          account_id: '123456789',
+          api_version: 'v25.0',
+          adset_id: '323456789',
+          ...metaAdsPublish,
+        },
+      }),
     };
   }
 
@@ -649,8 +976,8 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-function gatewayContext(fetchImpl) {
-  const db = new GatewayDb();
+function gatewayContext(fetchImpl, { metaAdsPublish = {}, encryptToken } = {}) {
+  const db = new GatewayDb(metaAdsPublish);
   return {
     db,
     context: {
@@ -661,7 +988,8 @@ function gatewayContext(fetchImpl) {
       },
       runId: 'run-test',
       operationKey: 'stage:run-test',
-      decryptToken: async () => 'fixture-secret',
+      decryptToken: async (value) => String(value).startsWith('encrypted:') ? String(value).slice('encrypted:'.length) : 'fixture-secret',
+      encryptToken: encryptToken || (async (value) => `encrypted:${value}`),
       attempts: 0,
       rateUsage: {},
       traceId: '',

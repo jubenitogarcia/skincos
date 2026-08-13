@@ -45,6 +45,8 @@ const CODE_SOURCES = Object.freeze({
   'Attach CRM Offer Context': 'attach-crm-offer-context.js',
   'Build Jobs': 'build-jobs.js',
   'Validate Meta Creative Payload': 'validate-meta-creative-payload.js',
+  'Prepare Tracking Reconciliation': 'prepare-tracking-reconciliation.js',
+  'Attach Tracking Reconciliation': 'attach-tracking-reconciliation.js',
   'Prepare Creative Operation': 'prepare-creative-operation.js',
   'Attach Creative Result': 'attach-creative-result.js',
   'Attach Advantage+ Verification': 'attach-advantage-plus-verification.js',
@@ -57,4 +59,28 @@ const CODE_SOURCES = Object.freeze({
   'Verify Drive Finalization': 'verify-drive-finalization.js',
 });
 
-module.exports = { CODE_SOURCES };
+function codeSourceCoverage(workflow) {
+  const nodes = Array.isArray(workflow?.nodes) ? workflow.nodes : [];
+  const codeNodes = nodes.filter((node) => node?.type === 'n8n-nodes-base.code');
+  const names = codeNodes.map((node) => String(node.name || '').trim()).filter(Boolean);
+  const nameCounts = new Map();
+  for (const name of names) nameCounts.set(name, Number(nameCounts.get(name) || 0) + 1);
+  const mapped = Object.keys(CODE_SOURCES);
+  return {
+    unmapped: [...new Set(names.filter((name) => !Object.prototype.hasOwnProperty.call(CODE_SOURCES, name)))].sort(),
+    stale: mapped.filter((name) => !nameCounts.has(name)).sort(),
+    duplicates: [...nameCounts.entries()].filter(([, count]) => count !== 1).map(([name]) => name).sort(),
+    code_node_count: names.length,
+    mapped_node_count: mapped.length,
+  };
+}
+
+function assertCodeSourceCoverage(workflow) {
+  const coverage = codeSourceCoverage(workflow);
+  if (coverage.unmapped.length || coverage.stale.length || coverage.duplicates.length) {
+    throw new Error(`Meta Ads Publish Code node source coverage invalid: ${JSON.stringify(coverage)}`);
+  }
+  return coverage;
+}
+
+module.exports = { CODE_SOURCES, assertCodeSourceCoverage, codeSourceCoverage };

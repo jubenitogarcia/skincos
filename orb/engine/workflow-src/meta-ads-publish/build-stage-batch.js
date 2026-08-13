@@ -3,6 +3,34 @@ function object(value) { return value && typeof value === 'object' && !Array.isA
 function key(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_.:-]+/g, '_').slice(0, 190); }
 function targetNameKey(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_.:-]+/g, '_'); }
 
+function assertTrackingReconciliation(job, index) {
+  const destination = object(job.destination_contract);
+  const tracking = object(job.tracking_contract);
+  const kind = text(destination.kind || tracking.destination_kind).toLowerCase();
+  const payload = object(job.creativePayload);
+  if (kind === 'whatsapp') {
+    if (text(tracking.reconciliation_status) !== 'not_applicable' || text(tracking.url_tags_status) !== 'not_applicable' || text(payload.url_tags)) {
+      throw new Error(`Contrato WhatsApp de tracking invalido no job ${job.job_key || index}.`);
+    }
+    return;
+  }
+  if (kind !== 'website' || tracking.profile_configured !== true || !['verified', 'reconciled'].includes(text(tracking.reconciliation_status))) {
+    throw new Error(`Reconciliação de tracking pendente ou ausente no job ${job.job_key || index}.`);
+  }
+  if (text(tracking.website_event_requirement) === 'required' && text(tracking.website_event_status) !== 'configured') {
+    throw new Error(`Evento de website nao confirmado no job ${job.job_key || index}.`);
+  }
+  if (text(tracking.website_event_requirement) === 'not_required' && text(tracking.website_event_status) !== 'not_required') {
+    throw new Error(`Contrato de evento Website nao obrigatorio invalido no job ${job.job_key || index}.`);
+  }
+  if (text(tracking.offline_event_dataset_requirement) === 'required' && text(tracking.offline_event_dataset_status) !== 'configured') {
+    throw new Error(`Dataset offline obrigatorio nao confirmado no job ${job.job_key || index}.`);
+  }
+  if (text(tracking.url_tags_status) !== 'expected' || !text(payload.url_tags)) {
+    throw new Error(`URL tags de website ausentes no job ${job.job_key || index}.`);
+  }
+}
+
 const inputs = $input.all();
 if (!inputs.length) throw new Error('Build Stage Batch recebeu zero creatives verificados.');
 const runIds = [...new Set(inputs.map((item) => text(item.json && item.json.run_id)).filter(Boolean))];
@@ -12,6 +40,7 @@ const targets = new Set();
 
 const jobs = inputs.map((item, index) => {
   const job = item.json || {};
+  assertTrackingReconciliation(job, index);
   const creativeId = text(job.creative_id);
   if (!creativeId) throw new Error(`Creative ID ausente no job ${job.job_key || index}.`);
   const action = text(job.action);

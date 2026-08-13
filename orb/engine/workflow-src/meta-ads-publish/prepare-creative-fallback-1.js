@@ -64,7 +64,7 @@ return $input.all().map((item, index) => {
       advantage_plus_fallback_removed_features: removed,
       advantage_plus_fallback_reasons: { ...object(source.advantage_plus_fallback_reasons), [removedFeature]: fallbackReason },
       creative_fallback_attempts: [...list(source.creative_fallback_attempts), { attempt: ATTEMPT, removed_feature: removedFeature, reason: fallbackReason }],
-      gateway_request: { action: 'create_creative', operation_key: key(`creative:v2:${payloadHash}:${source.run_id}:${source.destination_group}:fallback_${ATTEMPT}:${removedFeature}`), token_id: text(source.token_id), account_id: text(source.account_id), api_version: text(source.api_version || 'v25.0'), payload },
+      gateway_request: { action: 'create_creative', operation_key: key(`creative:v3:${payloadHash}:${source.run_id}:${source.destination_group}:fallback_${ATTEMPT}:${removedFeature}`), token_id: text(source.token_id), account_id: text(source.account_id), api_version: text(source.api_version || 'v25.0'), payload },
     }, binary: item.binary, pairedItem: { item: index },
   };
 });

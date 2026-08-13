@@ -7,7 +7,7 @@ const CALIBRATION_FILE_PREFIXES = ['[TEST-VIDEO-ONLY]', '[TEST-CAROUSEL]'];
 // Increment this whenever a persisted creative body becomes incompatible. The
 // resume path deliberately reuses an existing mutation body, so the revision
 // is a hard boundary rather than merely descriptive metadata.
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v19_tracking_contract';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_reconciliation';
 // The CTA is selected from the live campaign objective. Meta rejects BOOK_NOW
 // on dynamic OUTCOME_LEADS ad sets, while the other website contracts retain
 // the booking CTA. WhatsApp remains a URL destination, not a CTA policy.
@@ -275,13 +275,15 @@ function publicDestinationContract(contract) {
   };
 }
 
-const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+// Keep generic, query-safe parameter names: URL tags are not restricted to
+// UTMs. Values remain raw so already-encoded bytes are not encoded twice.
+const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
 const URL_TAG_FORBIDDEN_KEY_PATTERN = /(?:token|secret|password|authorization|signature|api_?key)/i;
-const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-]+$/;
+const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-@!$'()*\/;]+$/;
 
 function validUrlTags(value) {
-  const raw = safeString(value);
-  if (!raw || raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw)) return false;
+  const raw = value === undefined || value === null ? '' : String(value);
+  if (!raw || raw !== raw.trim() || raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw) || /%(?![0-9A-Fa-f]{2})/.test(raw)) return false;
   const seen = new Set();
   for (const pair of raw.split('&')) {
     const separator = pair.indexOf('=');
@@ -291,7 +293,7 @@ function validUrlTags(value) {
     if (!URL_TAG_PARAMETER_KEY_PATTERN.test(key) || URL_TAG_FORBIDDEN_KEY_PATTERN.test(key) || seen.has(key) || !parameterValue || !URL_TAG_VALUE_PATTERN.test(parameterValue)) return false;
     seen.add(key);
   }
-  return seen.has('utm_source') && seen.has('utm_medium');
+  return true;
 }
 
 function trackingFingerprint(value) {
@@ -304,29 +306,40 @@ function trackingFingerprint(value) {
 }
 
 function resolveTrackingContract(destinationMeta, destinationContract) {
-  const conversion = asObject(destinationMeta && destinationMeta.conversion_tracking);
-  const websiteEvent = asObject(conversion.website_event);
-  const offlineEventDataset = asObject(conversion.offline_event_dataset);
   const configured = asObject(destinationMeta && destinationMeta.tracking_contract);
-  const urlTags = safeString(configured.url_tags);
+  const urlTags = configured.url_tags === undefined || configured.url_tags === null ? '' : String(configured.url_tags);
   const kind = safeString(destinationContract && destinationContract.kind).toLowerCase();
   if (kind === 'whatsapp') {
     return {
       destination_kind: 'whatsapp',
       website_event_status: 'not_applicable',
-      offline_event_dataset_status: offlineEventDataset.configured === true ? 'configured' : 'not_configured',
+      offline_event_dataset_status: 'not_applicable',
       url_tags_status: 'not_applicable',
       url_tags_fingerprint: '',
       expected_url_tags: '',
+      profile_ref: '',
+      profile_configured: false,
+      website_event_requirement: 'not_applicable',
+      offline_event_dataset_requirement: 'not_applicable',
+      reconciliation_status: 'not_applicable',
     };
   }
+  const profileConfigured = configured.profile_configured === true;
+  const websiteEventRequirement = safeString(configured.website_event_requirement).toLowerCase();
+  const offlineRequirement = safeString(configured.offline_event_dataset_requirement).toLowerCase();
+  const websiteEventRequired = websiteEventRequirement === 'required';
   return {
     destination_kind: 'website',
-    website_event_status: websiteEvent.configured === true ? 'configured' : 'missing',
-    offline_event_dataset_status: offlineEventDataset.configured === true ? 'configured' : 'not_configured',
+    website_event_status: profileConfigured ? (websiteEventRequired ? 'pending_reconciliation' : 'not_required') : 'not_configured',
+    offline_event_dataset_status: profileConfigured && offlineRequirement === 'required' ? 'pending_reconciliation' : 'not_required',
     url_tags_status: validUrlTags(urlTags) ? 'expected' : 'missing',
     url_tags_fingerprint: validUrlTags(urlTags) ? trackingFingerprint(urlTags) : '',
     expected_url_tags: validUrlTags(urlTags) ? urlTags : '',
+    profile_ref: safeString(configured.profile_ref),
+    profile_configured: profileConfigured,
+    website_event_requirement: websiteEventRequirement,
+    offline_event_dataset_requirement: offlineRequirement,
+    reconciliation_status: profileConfigured ? 'pending' : 'not_configured',
   };
 }
 
@@ -337,6 +350,11 @@ function publicTrackingContract(contract) {
     offline_event_dataset_status: safeString(contract && contract.offline_event_dataset_status),
     url_tags_status: safeString(contract && contract.url_tags_status),
     url_tags_fingerprint: safeString(contract && contract.url_tags_fingerprint),
+    profile_ref: safeString(contract && contract.profile_ref),
+    profile_configured: contract && contract.profile_configured === true,
+    website_event_requirement: safeString(contract && contract.website_event_requirement),
+    offline_event_dataset_requirement: safeString(contract && contract.offline_event_dataset_requirement),
+    reconciliation_status: safeString(contract && contract.reconciliation_status),
   };
 }
 
@@ -348,8 +366,14 @@ function isCurrentTrackingResumeContract(row) {
   if (kind === 'whatsapp') {
     return safeString(tracking.url_tags_status) === 'not_applicable' && !safeString(payload.url_tags);
   }
+  const websiteEventRequired = safeString(tracking.website_event_requirement) === 'required';
+  const pending = safeString(tracking.reconciliation_status) === 'pending' &&
+    safeString(tracking.website_event_status) === (websiteEventRequired ? 'pending_reconciliation' : 'not_required');
+  const reconciled = ['verified', 'reconciled'].includes(safeString(tracking.reconciliation_status)) &&
+    safeString(tracking.website_event_status) === (websiteEventRequired ? 'configured' : 'not_required');
   return kind === 'website' &&
-    safeString(tracking.website_event_status) === 'configured' &&
+    tracking.profile_configured === true &&
+    (pending || reconciled) &&
     safeString(tracking.url_tags_status) === 'expected' &&
     safeString(tracking.url_tags_fingerprint) === trackingFingerprint(payload.url_tags) &&
     validUrlTags(payload.url_tags);
@@ -2186,18 +2210,18 @@ for (const entry of jobEntries) {
     }
     const usesWhatsAppDestination = destinationContract.kind === 'whatsapp';
     const trackingContract = resolveTrackingContract(destinationMeta, destinationContract);
-    if (!usesWhatsAppDestination && trackingContract.website_event_status !== 'configured') {
+    if (!usesWhatsAppDestination && trackingContract.profile_configured !== true) {
       outputs.push({
         json: {
-          error: 'O conjunto de anuncios de site nao confirmou Pixel e evento de conversao; lote bloqueado antes de criar o criativo.',
+          error: 'O destino de site nao possui um perfil de tracking autorizado no Token Vault; lote bloqueado antes de criar o criativo.',
           upstream_node: 'Build Jobs',
-          upstream_error: 'website_conversion_contract_missing',
+          upstream_error: 'website_tracking_profile_not_configured',
           debug: {
             job_key: safeString(job.job_key),
             destination_group: safeString(destinationMeta.destination_group),
             destination_adset_id_present: Boolean(safeString(destinationMeta.destination_adset_id)),
-            website_event_status: trackingContract.website_event_status,
-            offline_event_dataset_status: trackingContract.offline_event_dataset_status,
+            profile_ref: safeString(trackingContract.profile_ref),
+            reconciliation_status: trackingContract.reconciliation_status,
           },
         },
       });

@@ -66,6 +66,51 @@ test("Cloudflare mutators have one fail-closed writer group and no unclassified 
   assert.equal(coordinatorSurface.coordinationGroup, "global-coordinator-writer");
 });
 
+test("Token Vault has one immutable Worker and D1 publisher with explicit tracking-fixture custody", () => {
+  const policy = loadPolicy();
+  const group = policy.coordinationGroups.find((entry) => entry.id === "token-vault-writer");
+  assert.equal(group?.resource, "release:token-vault");
+  const surface = policy.surfaces.find((entry) => entry.id === "token-vault-worker-and-d1");
+  assert.equal(surface?.canonicalDeployWorkflow, ".github/workflows/deploy-token-vault.yml");
+  assert.equal(surface?.coordinationGroup, "token-vault-writer");
+  assert.deepEqual(surface?.mutationWorkflows, [".github/workflows/deploy-token-vault.yml"]);
+
+  const catalog = JSON.parse(read("platform/deploy/operational-units.json"));
+  assert.ok(catalog.units.some((unit) => unit.id === "token-vault"));
+  assert.ok(!catalog.nonPublishingSurfaces.some((entry) => entry.id === "token-vault"));
+
+  const workflow = read(".github/workflows/deploy-token-vault.yml");
+  for (const marker of [
+    "unit: token-vault",
+    "release:token-vault",
+    "confirm_staging_tracking_fixture",
+    "ENABLE_TOKEN_VAULT_DEPLOY_STAGING",
+    "ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY",
+    "TOKEN_VAULT_N8N_API_TOKEN",
+    "Capture encrypted Token Vault D1 checkpoint before migrations",
+    "Apply additive Token Vault migrations atomically",
+    "versions upload",
+    "versions deploy",
+    "promotion-evidence-token-vault",
+  ]) assert.match(workflow, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
+  assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-check/);
+  assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-release/);
+  assert.doesNotMatch(workflow, /\bsecret\s+put\b/);
+  assert.ok(workflow.indexOf("Capture encrypted Token Vault D1 checkpoint before migrations") < workflow.indexOf("Apply additive Token Vault migrations atomically"));
+  assert.ok(workflow.indexOf("Check Token Vault release lease before version upload") < workflow.indexOf("Upload immutable Token Vault version"));
+  assert.ok(workflow.indexOf("Check Token Vault release lease before version deployment") < workflow.indexOf("Deploy only the selected Token Vault version"));
+
+  const globalPolicy = JSON.parse(read("ops/governance/global-concurrency-policy.json"));
+  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("platform/security/token-vault/**"));
+  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/apply-meta-ads-publish-tracking-release.sh"));
+  assert.ok(workflow.indexOf("Apply the version-checked inactive Meta Ads tracking workflow") < workflow.indexOf("Deploy only the selected Token Vault version"));
+  assert.match(workflow, /Read back final native Orb source and live workflow after Worker activation/);
+  assert.match(workflow, /Exercise reversible Meta tracking reconciliation against the isolated staging fixture/);
+  assert.match(workflow, /Validate immutable Token Vault preview source/);
+  assert.match(workflow, /always\(\) && inputs\.target != 'preview'/);
+});
+
 test("direct Ponto recovery jobs use remote custody at every governed boundary", () => {
   const workflow = read(".github/workflows/ponto-progressive-release.yml");
   for (const jobName of ["recovery-latch", "recovery-reconcile", "recovery-close", "recovery-rollback"]) {

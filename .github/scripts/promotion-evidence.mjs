@@ -16,6 +16,7 @@ const releaseSurfacesByUnit = {
   "core-api": ["timekeeping"],
   "core-inventory": ["timekeeping"],
   "finance": ["runtime"],
+  "token-vault": ["runtime", "github-governance"],
   "finance-ui": ["website"],
   "escala-api": ["runtime"],
   "meta-ads-report": ["runtime"],

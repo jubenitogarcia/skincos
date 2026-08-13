@@ -31,7 +31,16 @@ function configDestination(group, suffix) {
     token_id: `facebook_${suffix}`,
     allowed_link_hosts: ['espacofacial.com'],
     landing_pages_by_creative_group: { DEFAULT: 'https://espacofacial.com/agendamento' },
-    tracking_contract: { url_tags: 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}', url_tags_configured: true },
+    tracking_contract: {
+      url_tags: 'key1=value1&key2=value2%20encoded',
+      url_tags_configured: true,
+      profile_ref: 'website_schedule_v1',
+      profile_configured: true,
+      destination_kind: 'website',
+      website_event_requirement: 'required',
+      offline_event_dataset_requirement: 'required',
+      reconciliation: 'enforce_from_authorized_source',
+    },
     landing_page_validation: { ok: true },
   };
 }
@@ -42,29 +51,29 @@ test('gateway parameters preserve declared URL tags and reject a gateway without
     ready: true,
     config_revision: 'a'.repeat(64),
     capabilities: {
-      workflow_contract_revision: 'meta_destination_contract_v19_tracking_contract',
+      workflow_contract_revision: 'meta_destination_contract_v20_tracking_reconciliation',
       video_upload: {
         supported_actions: ['start_video_upload', 'transfer_video_chunk', 'finish_video_upload', 'get_video_status'],
         max_file_bytes: 90 * 1024 * 1024,
         max_chunk_bytes: 16 * 1024 * 1024,
       },
-      tracking: { adset_conversion_observation: true, creative_url_tags_readback: true },
+      tracking: { adset_conversion_reconciliation: true, creative_url_tags_readback: true },
     },
     destinations: [configDestination('BarraShoppingSul', '1'), configDestination('Novo Hamburgo', '2')],
   };
   const rows = executeSource('build-meta-api-params-from-vault.js', { input: [{ json: rootPayload }] });
   assert.equal(rows.length, 2);
-  assert.equal(rows[0].json.tracking_contract.url_tags, 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}');
+  assert.equal(rows[0].json.tracking_contract.url_tags, 'key1=value1&key2=value2%20encoded');
   assert.throws(
     () => executeSource('build-meta-api-params-from-vault.js', {
       input: [{ json: { ...rootPayload, capabilities: { ...rootPayload.capabilities, tracking: {} } } }],
     }),
-    /contrato de conversao e url_tags/,
+    /reconciliacao de conversao e url_tags/,
   );
 });
 
-function sourceCreative({ destinationKind = 'website', expectedTags = 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}' } = {}) {
-  const expectedFingerprint = 'fnv1a:b86a6723';
+function sourceCreative({ destinationKind = 'website', expectedTags = 'key1=value1&key2=value2%20encoded' } = {}) {
+  const expectedFingerprint = 'fnv1a:6d58875a';
   return {
     creative_id: '100000000000001',
     destination_group: 'Novo Hamburgo',
@@ -72,7 +81,18 @@ function sourceCreative({ destinationKind = 'website', expectedTags = 'utm_sourc
     destination_contract: { kind: destinationKind },
     tracking_contract: destinationKind === 'whatsapp'
       ? { destination_kind: 'whatsapp', website_event_status: 'not_applicable', url_tags_status: 'not_applicable', url_tags_fingerprint: '' }
-      : { destination_kind: 'website', website_event_status: 'configured', url_tags_status: 'expected', url_tags_fingerprint: expectedFingerprint },
+      : {
+          destination_kind: 'website',
+          profile_ref: 'website_schedule_v1',
+          profile_configured: true,
+          website_event_requirement: 'required',
+          offline_event_dataset_requirement: 'required',
+          website_event_status: 'configured',
+          offline_event_dataset_status: 'configured',
+          reconciliation_status: 'verified',
+          url_tags_status: 'expected',
+          url_tags_fingerprint: expectedFingerprint,
+        },
     creativePayload: destinationKind === 'whatsapp' ? {} : { url_tags: expectedTags },
     advantage_plus_requested_features: [],
     advantage_plus_feature_groups: {},
@@ -145,7 +165,7 @@ test('WhatsApp creatives remain URL-tag not-applicable and do not turn into webs
 function nativeWebsiteCreativeForValidator({ urlTags, fingerprint } = {}) {
   return {
     run_id: 'map_tracking_test',
-    workflow_contract_revision: 'meta_destination_contract_v19_tracking_contract',
+    workflow_contract_revision: 'meta_destination_contract_v20_tracking_reconciliation',
     token_id: 'facebook_tracking',
     api_version: 'v25.0',
     account_id: '123456789',
@@ -155,8 +175,13 @@ function nativeWebsiteCreativeForValidator({ urlTags, fingerprint } = {}) {
     destination_contract: { kind: 'website' },
     tracking_contract: {
       destination_kind: 'website',
-      website_event_status: 'configured',
-      offline_event_dataset_status: 'not_configured',
+      profile_ref: 'website_schedule_v1',
+      profile_configured: true,
+      website_event_requirement: 'required',
+      offline_event_dataset_requirement: 'required',
+      website_event_status: 'pending_reconciliation',
+      offline_event_dataset_status: 'pending_reconciliation',
+      reconciliation_status: 'pending',
       url_tags_status: 'expected',
       url_tags_fingerprint: fingerprint,
     },
@@ -186,18 +211,29 @@ function nativeWebsiteCreativeForValidator({ urlTags, fingerprint } = {}) {
   };
 }
 
-test('validator accepts a declared website URL-tag fingerprint and rejects drift before an ad stage', () => {
-  const urlTags = 'utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}';
-  const valid = nativeWebsiteCreativeForValidator({ urlTags, fingerprint: 'fnv1a:b86a6723' });
+test('validator accepts a declared website URL-tag fingerprint while reconciliation is pending and rejects drift before an ad stage', () => {
+  const urlTags = 'key1=value1&key2=value2%20encoded';
+  const valid = nativeWebsiteCreativeForValidator({ urlTags, fingerprint: 'fnv1a:6d58875a' });
   const passed = executeSource('validate-meta-creative-payload.js', { input: [{ json: valid }] });
-  assert.equal(passed[0].json.meta_creative_validation.tracking_contract_status, 'expected');
-  assert.equal(passed[0].json.meta_creative_validation.url_tags_fingerprint, 'fnv1a:b86a6723');
+  assert.equal(passed[0].json.meta_creative_validation.tracking_contract_status, 'pending_reconciliation');
+  assert.equal(passed[0].json.meta_creative_validation.url_tags_fingerprint, 'fnv1a:6d58875a');
   assert.throws(
     () => executeSource('validate-meta-creative-payload.js', {
       input: [{ json: nativeWebsiteCreativeForValidator({ urlTags, fingerprint: 'fnv1a:00000000' }) }],
     }),
     /url_tags_contract_mismatch/,
   );
+});
+
+test('validator accepts a Website route whose authorized profile does not require a conversion event', () => {
+  const urlTags = 'key1=value1&key2=value2%20encoded';
+  const optional = nativeWebsiteCreativeForValidator({ urlTags, fingerprint: 'fnv1a:6d58875a' });
+  optional.tracking_contract.website_event_requirement = 'not_required';
+  optional.tracking_contract.website_event_status = 'not_required';
+  optional.tracking_contract.offline_event_dataset_requirement = 'not_required';
+  optional.tracking_contract.offline_event_dataset_status = 'not_required';
+  const passed = executeSource('validate-meta-creative-payload.js', { input: [{ json: optional }] });
+  assert.equal(passed[0].json.meta_creative_validation.tracking_contract_status, 'pending_reconciliation');
 });
 
 test('tracked source files carry the conversion readback, website gate and creative-only tags', () => {
@@ -207,12 +243,13 @@ test('tracked source files carry the conversion readback, website gate and creat
   const readback = source('attach-advantage-plus-verification.js');
   assert.match(buildPayload, /conversion_tracking: deepClone/);
   assert.match(buildPayload, /tracking_contract: deepClone/);
-  assert.match(buildJobs, /website_conversion_contract_missing/);
+  assert.match(buildJobs, /website_tracking_profile_not_configured/);
+  assert.match(buildJobs, /pending_reconciliation/);
   assert.match(buildJobs, /website_url_tags_contract_missing/);
   assert.match(buildJobs, /url_tags: trackingContract\.expected_url_tags/);
   assert.match(buildJobs, /tracking_contract: publicTrackingContract/);
   assert.match(validator, /validateTrackingContract/);
   assert.match(readback, /creative_tracking_verification/);
   assert.match(readback, /url_tags_graph_mismatch/);
-  assert.equal(source('prepare-publish-run.js').includes("creative_payload_v13_tracking_contract"), true);
+  assert.equal(source('prepare-publish-run.js').includes("creative_payload_v14_tracking_reconciliation"), true);
 });

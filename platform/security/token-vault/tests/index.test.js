@@ -120,6 +120,7 @@ test('health validates configured bindings and secrets', async () => {
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.checks.d1, true);
+  assert.equal(body.checks.n8nApiToken, true);
   assert.equal(body.analytics_mode, 'shadow');
   assert.equal(body.analytics_ready, true);
 });
@@ -136,6 +137,20 @@ test('health stays unhealthy when the dedicated analytics secret is absent', asy
   assert.equal(response.status, 500);
   assert.equal(body.ok, false);
   assert.equal(body.checks.analyticsApiToken, false);
+});
+
+test('health stays unhealthy when the operational Orb credential is absent', async () => {
+  const db = new FakeDb();
+  const environment = env(db);
+  delete environment.TOKEN_VAULT_N8N_API_TOKEN;
+  const response = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: authHeaders() }),
+    environment,
+  );
+  const body = await response.json();
+  assert.equal(response.status, 500);
+  assert.equal(body.ok, false);
+  assert.equal(body.checks.n8nApiToken, false);
 });
 
 test('analytics credential cannot reach write-capable sibling gateways', async () => {

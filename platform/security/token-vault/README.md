@@ -20,6 +20,7 @@ endpoint para diagnóstico controlado).
 
 - D1 binding: `TOKEN_VAULT_DB`
 - Secret: `TOKEN_VAULT_API_TOKEN`
+- Secret: `TOKEN_VAULT_N8N_API_TOKEN` (gateway operacional do Orb)
 - Secret: `TOKEN_VAULT_ANALYTICS_API_TOKEN` (somente analytics read-only)
 - Secret: `TOKEN_VAULT_ENCRYPTION_KEY`
 - Variável opcional: `META_GRAPH_VERSION` (default `v20.0`)
@@ -49,10 +50,10 @@ O caminho deve ser configurado primeiro em staging com o secret dedicado. Não
 ativar a flag/grant de Influencer Intelligence, importar o workflow Orb ou
 aplicar as migrations PostgreSQL como parte da configuração do Worker.
 
-O `health` só fica `ok=true` quando D1, a chave de administração, a chave de
-analytics e a chave de criptografia estão presentes. A ausência do secret de
-analytics mantém o Worker unhealthy e impede que um deploy parcial pareça
-pronto para o transport real.
+O `health` só fica `ok=true` quando D1, as chaves de administração e
+operacional, a chave de analytics e a chave de criptografia estão presentes.
+A ausência de qualquer uma mantém o Worker unhealthy e impede que um deploy
+parcial pareça pronto para o transport real.
 
 O modo `off` rejeita o caminho analytics com `analytics_disabled` antes de
 descriptografar credenciais ou chamar o Meta Graph. `shadow` é o único modo
@@ -63,34 +64,23 @@ estar explicitamente verdadeira.
 ## Gate operacional de analytics em staging
 
 O secret `TOKEN_VAULT_ANALYTICS_API_TOKEN` deve existir separadamente no
-Worker de staging e no arquivo privado do serviço interno. O valor é sempre
-fornecido por uma fonte de segredos aprovada via stdin; nunca coloque o valor
-em argumento, arquivo, repositório ou evidência:
+Worker de staging e no arquivo privado do serviço interno. O valor deve ser
+provisionado pela custódia aprovada no GitHub Environment `staging`; o workflow
+canônico somente confere o nome do secret e nunca recebe, imprime ou grava seu
+valor. Não execute `wrangler secret put`, `wrangler versions deploy` ou outra
+mutação manual para contornar esse gate.
 
-```bash
-# Execute somente em terminal/custódia privada; não cole o valor no comando.
-printf '%s' "$TOKEN_VAULT_ANALYTICS_API_TOKEN" | \
-  wrangler versions secret put TOKEN_VAULT_ANALYTICS_API_TOKEN \
-  --config wrangler.toml --env staging \
-  --message "influencer-intelligence:analytics-readonly-staging"
-
-# Retorna apenas nomes/metadados, nunca valores.
-wrangler secret list --config wrangler.toml --env staging
-wrangler versions list --config wrangler.toml --env staging
-
-# Somente depois de registrar o incumbent, revisar a versão e confirmar o
-# rollback, promova a versão retornada pelo comando anterior.
-wrangler versions deploy <candidate-version-id>@100% \
-  --config wrangler.toml --env staging --yes
-```
-
-Antes do deploy, registre a versão incumbent e seu caminho de rollback. Depois
-confirme `health` e `contract` com autenticação, e execute somente requests
-sintéticos bounded. Um smoke Meta read-only exige uma credencial de staging
-explicitamente aprovada, com `provider=instagram` e
-`metadata.analytics_scopes=["influencer-intelligence"]`; sem ela o resultado
-esperado é `unavailable`, não uma coleta implícita. A flag/grant do módulo, os
-units internos e o workflow Orb permanecem desligados durante este gate.
+Antes do dispatch, registre a versão incumbent e o rollback, disponibilize uma
+credencial de staging explicitamente aprovada e confirme uma fixture sintética
+isolada, marcada no perfil autorizado como `staging_synthetic_fixture=true`.
+O publicador exige que fonte e alvo sejam distintos e, em cada promoção de
+staging, executa `ensure_adset_conversion_contract` (`GET` -> `POST` -> `GET`)
+e o rollback explícito (`GET` -> `POST` -> `GET`) nessa fixture; nenhuma ID
+crua sai da evidência. Um smoke Meta read-only exige
+`provider=instagram` e `metadata.analytics_scopes=["influencer-intelligence"]`;
+sem essa fixture o resultado esperado é `unavailable`, não uma coleta implícita.
+A flag/grant do módulo, os units internos e o workflow Orb permanecem desligados
+durante este gate.
 
 ### Bootstrap selado da primeira credencial Meta
 
@@ -136,20 +126,21 @@ feita depois pelo router Meta-only, com timeout de 12 s e retry seguro limitado.
 
 ## Deploy
 
-```bash
-wrangler d1 create skincos-token-vault
-wrangler d1 create skincos-token-vault-staging
-# Copiar os database_id para wrangler.toml.
+O Token Vault é publicado exclusivamente por
+`.github/workflows/deploy-token-vault.yml`: Preview -> Staging -> Production.
+O workflow exige o gate imutável de promoção, lease global
+`release:token-vault`, checkpoint D1 cifrado, migrations aditivas, upload de
+versão imutável e readback sanitizado. Preview só emite evidência depois de
+testar o Worker e do dry-run; staging exerce a fixture reversível. Em produção,
+o workflow exige a source release nativa exata, aplica o Orb inativo com versão
+esperada, ativa só então o Worker e termina com o preflight Orb. Ele só atesta
+nomes de secrets; não cria nem imprime valores. Não execute `wrangler deploy`,
+`secret put` ou migrations remotas manualmente para publicar este serviço.
 
-wrangler d1 migrations apply skincos-token-vault-staging --config wrangler.toml --env staging --remote
-wrangler d1 migrations apply skincos-token-vault --config wrangler.toml --remote
-
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))" | wrangler secret put TOKEN_VAULT_API_TOKEN --config wrangler.toml
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))" | wrangler secret put TOKEN_VAULT_ENCRYPTION_KEY --config wrangler.toml
-
-# Produção só depois do gate de staging e de uma promoção explicitamente aprovada.
-wrangler deploy --config wrangler.toml --keep-vars
-```
+Antes da primeira promoção, disponibilize em cada GitHub Environment os
+segredos independentes exigidos pelo workflow e um perfil de tracking sintético
+e autorizado em staging. A ausência de credencial, fixture, checkpoint ou
+evidência de staging é um bloqueio fail-closed para produção.
 
 ## Import inicial
 

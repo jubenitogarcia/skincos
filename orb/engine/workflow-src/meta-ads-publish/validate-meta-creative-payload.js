@@ -29,7 +29,7 @@ const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
 const REQUIRED_CTA = 'BOOK_NOW';
 const OUTCOME_LEADS_CTA = 'LEARN_MORE';
 const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v19_tracking_contract';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_reconciliation';
 const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'add_text_overlay',
   'image_touchups',
@@ -139,13 +139,15 @@ function destinationContractKind(source) {
   return kind;
 }
 
-const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+// Keep generic, query-safe parameter names: URL tags are not restricted to
+// UTMs. Values remain raw so already-encoded bytes are not encoded twice.
+const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
 const URL_TAG_FORBIDDEN_KEY_PATTERN = /(?:token|secret|password|authorization|signature|api_?key)/i;
-const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-]+$/;
+const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-@!$'()*\/;]+$/;
 
 function validUrlTags(value) {
-  const raw = safeString(value);
-  if (!raw || raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw)) return false;
+  const raw = value === undefined || value === null ? '' : String(value);
+  if (!raw || raw !== raw.trim() || raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw) || /%(?![0-9A-Fa-f]{2})/.test(raw)) return false;
   const seen = new Set();
   for (const pair of raw.split('&')) {
     const separator = pair.indexOf('=');
@@ -155,7 +157,7 @@ function validUrlTags(value) {
     if (!URL_TAG_PARAMETER_KEY_PATTERN.test(key) || URL_TAG_FORBIDDEN_KEY_PATTERN.test(key) || seen.has(key) || !parameterValue || !URL_TAG_VALUE_PATTERN.test(parameterValue)) return false;
     seen.add(key);
   }
-  return seen.has('utm_source') && seen.has('utm_medium');
+  return true;
 }
 
 function trackingFingerprint(value) {
@@ -175,11 +177,27 @@ function validateTrackingContract(source, payload, destinationKind) {
     assert(!urlTags, 'whatsapp_url_tags_forbidden', {});
     return { status: 'not_applicable', fingerprint: '' };
   }
-  assert(safeString(tracking.website_event_status) === 'configured', 'website_conversion_contract_missing', {});
+  assert(tracking.profile_configured === true, 'website_tracking_profile_not_configured', {});
+  const websiteEventRequirement = safeString(tracking.website_event_requirement);
+  assert(['required', 'not_required'].includes(websiteEventRequirement), 'website_event_requirement_invalid', {});
+  const websiteEventRequired = websiteEventRequirement === 'required';
+  const reconciliationStatus = safeString(tracking.reconciliation_status);
+  assert(['pending', 'verified', 'reconciled'].includes(reconciliationStatus), 'website_tracking_reconciliation_status_invalid', { reconciliation_status: reconciliationStatus });
+  if (reconciliationStatus === 'pending') {
+    assert(safeString(tracking.website_event_status) === (websiteEventRequired ? 'pending_reconciliation' : 'not_required'), 'website_tracking_reconciliation_pending_invalid', {});
+    if (safeString(tracking.offline_event_dataset_requirement) === 'required') {
+      assert(safeString(tracking.offline_event_dataset_status) === 'pending_reconciliation', 'offline_tracking_reconciliation_pending_invalid', {});
+    }
+  } else {
+    assert(safeString(tracking.website_event_status) === (websiteEventRequired ? 'configured' : 'not_required'), 'website_conversion_contract_missing', {});
+    if (safeString(tracking.offline_event_dataset_requirement) === 'required') {
+      assert(safeString(tracking.offline_event_dataset_status) === 'configured', 'offline_conversion_dataset_contract_missing', {});
+    }
+  }
   assert(safeString(tracking.url_tags_status) === 'expected', 'website_url_tags_contract_missing', {});
   assert(validUrlTags(urlTags), 'url_tags_invalid', {});
   assert(safeString(tracking.url_tags_fingerprint) === trackingFingerprint(urlTags), 'url_tags_contract_mismatch', {});
-  return { status: 'expected', fingerprint: trackingFingerprint(urlTags) };
+  return { status: reconciliationStatus === 'pending' ? 'pending_reconciliation' : 'expected', fingerprint: trackingFingerprint(urlTags) };
 }
 
 function labelNames(assets) {

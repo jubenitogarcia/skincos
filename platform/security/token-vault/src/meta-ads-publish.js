@@ -49,12 +49,20 @@ const ADSET_READ_FIELDS = [
 // Narrow readback used by the diagnostic runner. Unlike get_adset it never
 // reads targeting, budget, dates, names or raw identifiers into the journal.
 const ADSET_CONVERSION_CONTRACT_FIELDS = [
+  'account_id',
+  'campaign{objective}',
   'billing_event',
   'optimization_goal',
   'destination_type',
   'attribution_spec',
   'promoted_object',
 ].join(',');
+const TRACKING_PROMOTED_OBJECT_KEYS = Object.freeze([
+  'pixel_id',
+  'custom_event_type',
+  'custom_conversion_id',
+  'offline_conversion_data_set_id',
+]);
 const CAMPAIGN_READ_FIELDS = [
   'id',
   'name',
@@ -115,7 +123,7 @@ const VIDEO_UPLOAD_ACTIONS = Object.freeze([
 // capabilities.  The workflow rejects a mismatch before it can open a publish
 // run, so a partial rollout cannot silently mix producer, checkpoint and
 // gateway behavior.
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v19_tracking_contract';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_reconciliation';
 const MUTATING_ACTIONS = new Set([
   'upload_image',
   'start_video_upload',
@@ -124,6 +132,8 @@ const MUTATING_ACTIONS = new Set([
   'create_creative',
   'create_campaign',
   'create_adset',
+  'ensure_adset_conversion_contract',
+  'rollback_adset_conversion_contract',
   'promote_native_carousel_route',
   'stage_batch',
   'activate_batch',
@@ -138,6 +148,8 @@ const ALLOWED_ACTIONS = new Set([
   'get_ad',
   'get_adset',
   'read_adset_conversion_contract',
+  'ensure_adset_conversion_contract',
+  'rollback_adset_conversion_contract',
   'get_campaign',
   'create_campaign',
   'create_adset',
@@ -178,7 +190,7 @@ export function isMetaAdsPublishPath(pathname) {
 }
 
 export async function handleMetaAdsPublishRequest(input) {
-  const { request, env, requestId, pathname, decryptToken, writeAudit } = input;
+  const { request, env, requestId, pathname, decryptToken, encryptToken, writeAudit } = input;
 
   if (request.method === 'GET' && pathname === `${PREFIX}/config`) {
     return getConfig(env, requestId);
@@ -218,6 +230,7 @@ export async function handleMetaAdsPublishRequest(input) {
       env,
       requestId,
       decryptToken,
+      encryptToken,
       writeAudit,
     });
   }
@@ -299,7 +312,7 @@ async function getConfig(env, requestId) {
       continue;
     }
     const allowedLinkHosts = normalizeHosts(config.allowed_link_hosts);
-    const trackingContract = normalizeTrackingContract(config.tracking_contract);
+    const trackingContract = normalizeTrackingContract(config.tracking_contract, config.tracking_profiles, config.adset_id);
     const landingDefinition = normalizeLandingPageMap(config.landing_pages_by_creative_group, allowedLinkHosts);
     const landingPageValidation = await validateLandingPagesOnline(landingDefinition.pages, allowedLinkHosts, env);
     const landingErrors = [...landingDefinition.errors, ...landingPageValidation.errors];
@@ -371,7 +384,7 @@ async function getConfig(env, requestId) {
         max_chunk_bytes: MAX_VIDEO_CHUNK_BYTES,
       },
       tracking: {
-        adset_conversion_observation: true,
+        adset_conversion_reconciliation: true,
         creative_url_tags_readback: true,
       },
     },
@@ -529,7 +542,7 @@ async function claimEvent(runId, request, env, requestId) {
 }
 
 async function executeOperation(context) {
-  const { runId, request, env, requestId, decryptToken, writeAudit } = context;
+  const { runId, request, env, requestId, decryptToken, encryptToken, writeAudit } = context;
   const run = await loadRun(env, runId);
   if (!run) return response({ ok: false, error: 'run_not_found', requestId }, 404);
   if (TERMINAL_RUN_STATES.has(clean(run.status))) {
@@ -595,6 +608,7 @@ async function executeOperation(context) {
       operationKey,
       action,
       decryptToken,
+      encryptToken,
       file: parsed.file,
       attempts: 0,
       rateUsage: {},
@@ -673,6 +687,8 @@ async function performOperation(action, body, context) {
   if (action === 'get_ad') return getAd(body, context);
   if (action === 'get_adset') return getAdset(body, context);
   if (action === 'read_adset_conversion_contract') return readAdsetConversionContract(body, context);
+  if (action === 'ensure_adset_conversion_contract') return ensureAdsetConversionContract(body, context);
+  if (action === 'rollback_adset_conversion_contract') return rollbackAdsetConversionContract(body, context);
   if (action === 'get_campaign') return getCampaign(body, context);
   if (action === 'create_campaign') return createCampaign(body, context);
   if (action === 'create_adset') return createAdset(body, context);
@@ -881,6 +897,499 @@ async function readAdsetConversionContract(body, context) {
     context,
   );
   return summarizeAdsetConversionTracking(asObject(result.body));
+}
+
+// Reconcile the conversion fields of an existing, authorized ad set from a
+// separately authorized source ad set.  The Orb never receives the source
+// ID, Pixel ID, custom-conversion ID or offline dataset ID: it asks only for a
+// profile reference and gets back a redacted attestation.
+async function ensureAdsetConversionContract(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const targetAdsetId = authorizeConfiguredAdset(body, auth.config);
+  const destinationKind = normalizeDestinationKind(body.destination_kind);
+
+  // A WhatsApp handoff is deliberately outside the website-conversion
+  // contract.  Still authorize the configured target before returning the
+  // no-op attestation so a caller cannot use this action as an ad-set probe.
+  if (destinationKind === 'whatsapp') {
+    if (clean(body.profile_ref)) throw failure('whatsapp_tracking_profile_forbidden');
+    return {
+      status: 'not_applicable',
+      destination_kind: 'whatsapp',
+      website_event: { configured: false, required: false },
+      offline_event_dataset: { configured: false, required: false },
+      tracking_fingerprint: '',
+      snapshot_id: '',
+      graph_mutation: 'none',
+    };
+  }
+
+  if (destinationKind !== 'website') throw failure('destination_kind_invalid');
+  const profile = resolveAuthorizedTrackingProfile(auth.config, body.profile_ref);
+  const source = await readAdsetConversionState(auth, profile.source_adset_id, context);
+  const target = profile.source_adset_id === targetAdsetId
+    ? source
+    : await readAdsetConversionState(auth, targetAdsetId, context);
+
+  assertAdsetAccountAuthorized(source, target, auth.accountId);
+  assertWebsiteTrackingCompatibility(source, target);
+  const desired = projectAuthorizedTrackingPromotedObject(source, target, profile);
+  const existingSnapshot = await loadTrackingSnapshotByOperation(context.env, context.operationKey);
+  if (existingSnapshot) {
+    await assertTrackingSnapshotContract(existingSnapshot, {
+      auth,
+      targetAdsetId,
+      profile,
+      desiredTrackingPromotedObject: desired.tracking_promoted_object,
+      context,
+    });
+  }
+  const sourceSummary = summarizeAdsetConversionTracking(source);
+  const targetSummary = summarizeAdsetConversionTracking(target);
+  const matches = trackingPromotedObjectMatches(target.promoted_object, desired.tracking_promoted_object, profile);
+  const state = trackingAttestation({
+    destinationKind,
+    profile,
+    sourceSummary,
+    targetSummary,
+    trackingPromotedObject: asObject(target.promoted_object),
+    status: matches ? 'verified' : 'pending',
+  });
+  if (matches) {
+    if (existingSnapshot) await markTrackingSnapshotReconciled(context.env, existingSnapshot.id);
+    return { ...state, graph_mutation: 'none', snapshot_id: clean(existingSnapshot?.id) };
+  }
+
+  if (existingSnapshot) {
+    await assertTrackingSnapshotRetryIsSafe(existingSnapshot, target.promoted_object, context);
+  }
+
+  const snapshotId = await captureTrackingSnapshot({
+    auth,
+    targetAdsetId,
+    profile,
+    previousPromotedObject: asObject(target.promoted_object),
+    desiredTrackingPromotedObject: desired.tracking_promoted_object,
+    existingSnapshot,
+    context,
+  });
+  let mutation;
+  try {
+    mutation = await updateAdsetTrackingWithReconciliation(
+      auth,
+      targetAdsetId,
+      desired.full_promoted_object,
+      profile,
+      context,
+    );
+  } catch (error) {
+    throw redactTrackingFailure(error);
+  }
+  const readback = await readAdsetConversionState(auth, targetAdsetId, context);
+  if (!trackingPromotedObjectMatches(readback.promoted_object, desired.tracking_promoted_object, profile)) {
+    throw failure('adset_conversion_readback_mismatch', {
+      classification: 'permanent',
+      http_status: 502,
+    });
+  }
+  await markTrackingSnapshotReconciled(context.env, snapshotId);
+  const readbackSummary = summarizeAdsetConversionTracking(readback);
+  return {
+    ...trackingAttestation({
+      destinationKind,
+      profile,
+      sourceSummary,
+      targetSummary: readbackSummary,
+      trackingPromotedObject: asObject(readback.promoted_object),
+      status: 'reconciled',
+    }),
+    graph_mutation: 'promoted_object_updated',
+    snapshot_id: snapshotId,
+  };
+}
+
+async function rollbackAdsetConversionContract(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const snapshotId = normalizeSnapshotId(body.snapshot_id);
+  const requestedAdsetId = authorizeConfiguredAdset(body, auth.config);
+  const snapshot = await dbFirst(context.env,
+    `SELECT * FROM meta_ads_publish_adset_tracking_snapshots WHERE id = ?`,
+    snapshotId,
+  );
+  if (!snapshot) throw failure('adset_tracking_snapshot_not_found', { http_status: 404 });
+  if (clean(snapshot.token_id) !== auth.tokenId || clean(snapshot.account_id) !== auth.accountId || clean(snapshot.adset_id) !== requestedAdsetId) {
+    throw failure('adset_tracking_snapshot_not_authorized', { classification: 'auth', http_status: 403 });
+  }
+  if (clean(snapshot.status) === 'restored') {
+    return { status: 'already_restored', snapshot_id: snapshotId, graph_mutation: 'none' };
+  }
+  const snapshotState = await readTrackingSnapshotState(snapshot, context);
+  const current = await readAdsetConversionState(auth, requestedAdsetId, context);
+  if (!trackingKeysMatch(current.promoted_object, snapshotState.desiredTrackingPromotedObject, snapshotState.keys)) {
+    throw failure('adset_tracking_rollback_concurrent_drift', { classification: 'permanent', http_status: 409 });
+  }
+  const rollbackPromotedObject = { ...asObject(current.promoted_object) };
+  for (const key of snapshotState.keys) {
+    if (Object.prototype.hasOwnProperty.call(snapshotState.previousPromotedObject, key)) {
+      rollbackPromotedObject[key] = snapshotState.previousPromotedObject[key];
+    } else {
+      delete rollbackPromotedObject[key];
+    }
+  }
+  try {
+    await updateAdsetPromotedObject(auth, requestedAdsetId, rollbackPromotedObject, context);
+  } catch (error) {
+    throw redactTrackingFailure(error);
+  }
+  const readback = await readAdsetConversionState(auth, requestedAdsetId, context);
+  if (!trackingKeysMatch(readback.promoted_object, snapshotState.previousPromotedObject, snapshotState.keys)) {
+    throw failure('adset_tracking_rollback_readback_mismatch', { http_status: 502 });
+  }
+  await dbRun(context.env,
+    `UPDATE meta_ads_publish_adset_tracking_snapshots
+        SET status = 'restored', restored_at = ?, updated_at = ?
+      WHERE id = ?`,
+    nowIso(), nowIso(), snapshotId,
+  );
+  return { status: 'restored', snapshot_id: snapshotId, graph_mutation: 'promoted_object_restored' };
+}
+
+function authorizeConfiguredAdset(body, config) {
+  const requested = normalizeNumericId(body.object_id || body.adset_id, 'object_id');
+  const configured = normalizeNumericId(config.adset_id, 'configured_adset_id');
+  if (requested !== configured) {
+    throw failure('adset_not_authorized_for_token', { classification: 'auth', http_status: 403 });
+  }
+  return requested;
+}
+
+function resolveAuthorizedTrackingProfile(config, requestedProfileRef) {
+  const contract = normalizeTrackingContract(config.tracking_contract, config.tracking_profiles);
+  if (!contract.profile_configured || contract.destination_kind !== 'website' || contract.reconciliation !== 'enforce_from_authorized_source') {
+    throw failure('website_tracking_profile_not_configured', { classification: 'permanent', http_status: 409 });
+  }
+  const requested = normalizeTrackingProfileRef(requestedProfileRef);
+  if (!requested || requested !== contract.profile_ref) {
+    throw failure('tracking_profile_not_authorized', { classification: 'auth', http_status: 403 });
+  }
+  const profile = asObject(asObject(config.tracking_profiles)[requested]);
+  return {
+    profile_ref: requested,
+    source_adset_id: normalizeNumericId(profile.source_adset_id, 'tracking_profile_source_adset_id'),
+    destination_kind: 'website',
+    website_event_requirement: normalizeTrackingRequirement(profile.website_event_requirement, 'website_event_requirement'),
+    offline_event_dataset_requirement: normalizeTrackingRequirement(profile.offline_event_dataset_requirement, 'offline_event_dataset_requirement'),
+  };
+}
+
+async function readAdsetConversionState(auth, adsetId, context) {
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, adsetId, { fields: ADSET_CONVERSION_CONTRACT_FIELDS }),
+    { method: 'GET' },
+    auth,
+    context,
+  );
+  return asObject(result.body);
+}
+
+function assertWebsiteTrackingCompatibility(sourceValue, targetValue) {
+  const source = asObject(sourceValue);
+  const target = asObject(targetValue);
+  const sourceCampaignObjective = safeTrackingEnum(asObject(source.campaign).objective);
+  const targetCampaignObjective = safeTrackingEnum(asObject(target.campaign).objective);
+  const sourceOptimizationGoal = safeTrackingEnum(source.optimization_goal);
+  const targetOptimizationGoal = safeTrackingEnum(target.optimization_goal);
+  const sourceDestinationType = safeTrackingEnum(source.destination_type);
+  const targetDestinationType = safeTrackingEnum(target.destination_type);
+  const sourceBillingEvent = safeTrackingEnum(source.billing_event);
+  const targetBillingEvent = safeTrackingEnum(target.billing_event);
+  if (!sourceCampaignObjective || !targetCampaignObjective || sourceCampaignObjective !== targetCampaignObjective) {
+    throw failure('tracking_profile_campaign_objective_incompatible', { http_status: 409 });
+  }
+  if (!sourceOptimizationGoal || !targetOptimizationGoal || sourceOptimizationGoal !== targetOptimizationGoal) {
+    throw failure('tracking_profile_optimization_goal_incompatible', { http_status: 409 });
+  }
+  if (sourceDestinationType !== 'WEBSITE' || targetDestinationType !== 'WEBSITE') {
+    throw failure('tracking_profile_destination_type_incompatible', { http_status: 409 });
+  }
+  if (!sourceBillingEvent || !targetBillingEvent || sourceBillingEvent !== targetBillingEvent) {
+    throw failure('tracking_profile_billing_event_incompatible', { http_status: 409 });
+  }
+  if (stableStringify(safeArray(source.attribution_spec)) !== stableStringify(safeArray(target.attribution_spec))) {
+    throw failure('tracking_profile_attribution_spec_incompatible', { http_status: 409 });
+  }
+}
+
+function assertAdsetAccountAuthorized(sourceValue, targetValue, accountId) {
+  const sourceAccount = normalizeNumericId(asObject(sourceValue).account_id, 'tracking_profile_source_account_id');
+  const targetAccount = normalizeNumericId(asObject(targetValue).account_id, 'tracking_profile_target_account_id');
+  if (sourceAccount !== accountId || targetAccount !== accountId) {
+    throw failure('tracking_profile_account_not_authorized', { classification: 'auth', http_status: 403 });
+  }
+}
+
+function projectAuthorizedTrackingPromotedObject(sourceValue, targetValue, profile) {
+  const source = asObject(sourceValue);
+  const target = asObject(targetValue);
+  const sourcePromotedObject = asObject(source.promoted_object);
+  const targetPromotedObject = asObject(target.promoted_object);
+  const tracking = {};
+
+  if (profile.website_event_requirement === 'required') {
+    const pixelId = normalizeNumericId(sourcePromotedObject.pixel_id, 'authorized_pixel_id');
+    const customEventType = safeTrackingEnum(sourcePromotedObject.custom_event_type);
+    const customConversionId = clean(sourcePromotedObject.custom_conversion_id)
+      ? normalizeNumericId(sourcePromotedObject.custom_conversion_id, 'authorized_custom_conversion_id')
+      : '';
+    if (Boolean(customEventType) === Boolean(customConversionId)) {
+      throw failure('authorized_website_event_invalid', { http_status: 409 });
+    }
+    tracking.pixel_id = pixelId;
+    if (customEventType) tracking.custom_event_type = customEventType;
+    if (customConversionId) tracking.custom_conversion_id = customConversionId;
+  }
+
+  if (profile.offline_event_dataset_requirement === 'required') {
+    tracking.offline_conversion_data_set_id = normalizeNumericId(
+      sourcePromotedObject.offline_conversion_data_set_id,
+      'authorized_offline_conversion_dataset_id',
+    );
+  }
+
+  // Preserve every unrelated promoted-object field already accepted by Meta
+  // for this existing campaign. Only the fields explicitly required by this
+  // authorized profile may be replaced; an optional offline dataset is never
+  // silently removed while reconciling a website event, for example.
+  const full = { ...targetPromotedObject };
+  if (profile.website_event_requirement === 'required') {
+    for (const key of ['pixel_id', 'custom_event_type', 'custom_conversion_id']) delete full[key];
+  }
+  if (profile.offline_event_dataset_requirement === 'required') delete full.offline_conversion_data_set_id;
+  Object.assign(full, tracking);
+  return { full_promoted_object: full, tracking_promoted_object: tracking };
+}
+
+function trackingPromotedObjectMatches(currentValue, expectedValue, profile) {
+  return trackingKeysMatch(currentValue, expectedValue, trackingKeysForProfile(profile));
+}
+
+function trackingKeysForProfile(profile) {
+  const keys = [];
+  if (profile.website_event_requirement === 'required') {
+    keys.push('pixel_id', 'custom_event_type', 'custom_conversion_id');
+  }
+  if (profile.offline_event_dataset_requirement === 'required') keys.push('offline_conversion_data_set_id');
+  return keys;
+}
+
+function trackingKeysMatch(currentValue, expectedValue, keys) {
+  const current = asObject(currentValue);
+  const expected = asObject(expectedValue);
+  return safeArray(keys).every((key) => clean(current[key]) === clean(expected[key]));
+}
+
+async function updateAdsetTrackingWithReconciliation(auth, adsetId, promotedObject, profile, context) {
+  try {
+    await updateAdsetPromotedObject(auth, adsetId, promotedObject, context);
+    return { reconciled_after_ambiguous_response: false };
+  } catch (error) {
+    if (!normalizeFailure(error).ambiguous) throw error;
+    const current = await readAdsetConversionState(auth, adsetId, context);
+    const expected = projectTrackingKeysFromPromotedObject(promotedObject, profile);
+    if (trackingPromotedObjectMatches(current.promoted_object, expected, profile)) {
+      return { reconciled_after_ambiguous_response: true };
+    }
+    throw error;
+  }
+}
+
+function projectTrackingKeysFromPromotedObject(value, profile) {
+  const source = asObject(value);
+  const out = {};
+  if (profile.website_event_requirement === 'required') {
+    out.pixel_id = clean(source.pixel_id);
+    if (clean(source.custom_event_type)) out.custom_event_type = clean(source.custom_event_type);
+    if (clean(source.custom_conversion_id)) out.custom_conversion_id = clean(source.custom_conversion_id);
+  }
+  if (profile.offline_event_dataset_requirement === 'required') {
+    out.offline_conversion_data_set_id = clean(source.offline_conversion_data_set_id);
+  }
+  return out;
+}
+
+async function updateAdsetPromotedObject(auth, adsetId, promotedObject, context) {
+  return graphRequest(
+    graphUrl(auth.apiVersion, adsetId),
+    jsonRequest('POST', { promoted_object: promotedObject }),
+    auth,
+    context,
+  );
+}
+
+async function captureTrackingSnapshot({ auth, targetAdsetId, profile, previousPromotedObject, desiredTrackingPromotedObject, existingSnapshot, context }) {
+  if (typeof context.encryptToken !== 'function') {
+    throw failure('tracking_snapshot_encryption_unavailable', { classification: 'permanent', http_status: 500 });
+  }
+  const keys = trackingKeysForProfile(profile).filter((key) => clean(asObject(previousPromotedObject)[key]) !== clean(asObject(desiredTrackingPromotedObject)[key]));
+  if (!keys.length) throw failure('tracking_snapshot_without_mutation', { classification: 'permanent', http_status: 409 });
+  const previous = stableStringify(asObject(previousPromotedObject));
+  const desiredTracking = stableStringify(asObject(desiredTrackingPromotedObject));
+  if (existingSnapshot) return existingSnapshot.id;
+  const snapshotId = crypto.randomUUID();
+  const previousCiphertext = await context.encryptToken(previous, context.env);
+  const desiredTrackingCiphertext = await context.encryptToken(desiredTracking, context.env);
+  await dbRun(context.env,
+    `INSERT OR IGNORE INTO meta_ads_publish_adset_tracking_snapshots (
+      id, run_id, operation_key, token_id, account_id, adset_id, profile_ref,
+      previous_promoted_object_ciphertext, previous_promoted_object_fingerprint,
+      desired_promoted_object_fingerprint, desired_tracking_promoted_object_ciphertext,
+      tracking_keys_json, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'captured', ?, ?)`,
+    snapshotId,
+    context.runId,
+    context.operationKey,
+    auth.tokenId,
+    auth.accountId,
+    targetAdsetId,
+    profile.profile_ref,
+    previousCiphertext,
+    await sha256(previous),
+    await sha256(desiredTracking),
+    desiredTrackingCiphertext,
+    JSON.stringify(keys),
+    nowIso(),
+    nowIso(),
+  );
+  const stored = await loadTrackingSnapshotByOperation(context.env, context.operationKey);
+  if (!stored) throw failure('tracking_snapshot_capture_failed', { classification: 'permanent', http_status: 500 });
+  await assertTrackingSnapshotContract(stored, {
+    auth,
+    targetAdsetId,
+    profile,
+    desiredTrackingPromotedObject,
+    context,
+  });
+  return stored.id;
+}
+
+async function loadTrackingSnapshotByOperation(env, operationKey) {
+  return dbFirst(env,
+    `SELECT * FROM meta_ads_publish_adset_tracking_snapshots WHERE operation_key = ?`,
+    operationKey,
+  );
+}
+
+async function assertTrackingSnapshotContract(snapshot, { auth, targetAdsetId, profile, desiredTrackingPromotedObject, context }) {
+  if (!snapshot || clean(snapshot.token_id) !== auth.tokenId || clean(snapshot.account_id) !== auth.accountId ||
+    clean(snapshot.adset_id) !== targetAdsetId || clean(snapshot.profile_ref) !== profile.profile_ref ||
+    clean(snapshot.status) === 'restored') {
+    throw failure('adset_tracking_snapshot_operation_conflict', { classification: 'permanent', http_status: 409 });
+  }
+  const state = await readTrackingSnapshotState(snapshot, context, { previousRequired: false });
+  const expectedFingerprint = await sha256(stableStringify(asObject(desiredTrackingPromotedObject)));
+  if (clean(snapshot.desired_promoted_object_fingerprint) !== expectedFingerprint ||
+    !trackingKeysMatch(state.desiredTrackingPromotedObject, desiredTrackingPromotedObject, state.keys)) {
+    throw failure('adset_tracking_snapshot_operation_conflict', { classification: 'permanent', http_status: 409 });
+  }
+}
+
+async function assertTrackingSnapshotRetryIsSafe(snapshot, currentPromotedObject, context) {
+  const state = await readTrackingSnapshotState(snapshot, context);
+  if (!trackingKeysMatch(currentPromotedObject, state.previousPromotedObject, state.keys)) {
+    throw failure('adset_tracking_retry_concurrent_drift', { classification: 'permanent', http_status: 409 });
+  }
+}
+
+async function readTrackingSnapshotState(snapshot, context, { previousRequired = true } = {}) {
+  const keys = parseTrackingSnapshotKeys(snapshot.tracking_keys_json);
+  let desiredTrackingPromotedObject;
+  try {
+    desiredTrackingPromotedObject = asObject(JSON.parse(await context.decryptToken(snapshot.desired_tracking_promoted_object_ciphertext, context.env)));
+  } catch {
+    throw failure('adset_tracking_snapshot_unreadable', { classification: 'permanent', http_status: 409 });
+  }
+  let previousPromotedObject = {};
+  if (previousRequired) {
+    try {
+      previousPromotedObject = asObject(JSON.parse(await context.decryptToken(snapshot.previous_promoted_object_ciphertext, context.env)));
+    } catch {
+      throw failure('adset_tracking_snapshot_unreadable', { classification: 'permanent', http_status: 409 });
+    }
+  }
+  return { keys, desiredTrackingPromotedObject, previousPromotedObject };
+}
+
+function parseTrackingSnapshotKeys(value) {
+  let keys;
+  try {
+    keys = JSON.parse(clean(value));
+  } catch {
+    throw failure('adset_tracking_snapshot_unreadable', { classification: 'permanent', http_status: 409 });
+  }
+  if (!Array.isArray(keys) || !keys.length || keys.length > TRACKING_PROMOTED_OBJECT_KEYS.length ||
+    new Set(keys).size !== keys.length || !keys.every((key) => TRACKING_PROMOTED_OBJECT_KEYS.includes(key))) {
+    throw failure('adset_tracking_snapshot_unreadable', { classification: 'permanent', http_status: 409 });
+  }
+  return keys;
+}
+
+async function markTrackingSnapshotReconciled(env, snapshotId) {
+  await dbRun(env,
+    `UPDATE meta_ads_publish_adset_tracking_snapshots
+        SET status = 'reconciled', updated_at = ?
+      WHERE id = ? AND status = 'captured'`,
+    nowIso(), snapshotId,
+  );
+}
+
+function trackingAttestation({ destinationKind, profile, sourceSummary, targetSummary, trackingPromotedObject, status }) {
+  const target = asObject(targetSummary);
+  const tracking = asObject(trackingPromotedObject);
+  return {
+    status,
+    destination_kind: destinationKind,
+    profile_ref: profile.profile_ref,
+    website_event: {
+      configured: target.website_event?.configured === true,
+      required: profile.website_event_requirement === 'required',
+    },
+    offline_event_dataset: {
+      configured: target.offline_event_dataset?.configured === true,
+      required: profile.offline_event_dataset_requirement === 'required',
+    },
+    // The fingerprint is intentionally calculated from the redacted contract
+    // shape, never from a raw Pixel or dataset identifier.
+    tracking_fingerprint: trackingContractFingerprint({
+      website_event: target.website_event?.configured === true,
+      offline_event_dataset: target.offline_event_dataset?.configured === true,
+      custom_event_type: target.promoted_object?.custom_event_type || '',
+      source_website_event: sourceSummary.website_event?.configured === true,
+      source_offline_event_dataset: sourceSummary.offline_event_dataset?.configured === true,
+      fields: Object.keys(tracking).filter((key) => TRACKING_PROMOTED_OBJECT_KEYS.includes(key)).sort(),
+    }),
+  };
+}
+
+function trackingContractFingerprint(value) {
+  let hash = 2166136261;
+  for (const char of stableStringify(value)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function redactTrackingFailure(error) {
+  const normalized = normalizeFailure(error);
+  return failure('adset_conversion_reconciliation_failed', {
+    classification: normalized.classification || 'unknown',
+    retryable: Boolean(normalized.retryable),
+    ambiguous: Boolean(normalized.ambiguous),
+    http_status: Number(normalized.http_status || 502),
+    code: Number(normalized.code || 0),
+    error_subcode: Number(normalized.error_subcode || 0),
+    fbtrace_id: clean(normalized.fbtrace_id),
+  });
 }
 
 async function getCampaign(body, context) {
@@ -1101,7 +1610,7 @@ async function resolveGraphAuth(body, context) {
   const appSecretProof = clean(context.env.META_APP_SECRET)
     ? await hmacSha256(clean(context.env.META_APP_SECRET), accessToken)
     : '';
-  return { tokenId, accountId, apiVersion, accessToken, appSecretProof };
+  return { tokenId, accountId, apiVersion, accessToken, appSecretProof, config };
 }
 
 async function graphRequest(url, init, auth, context) {
@@ -1628,6 +2137,15 @@ function deriveResourceKeys(action, body) {
   if (action === 'create_creative') return [`creative:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
   if (action === 'create_campaign') return [`campaign:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
   if (action === 'create_adset') return [`adset:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
+  if (action === 'ensure_adset_conversion_contract') {
+    return [`adset-contract:${clean(body.account_id)}:${clean(body.object_id || body.adset_id)}`];
+  }
+  if (action === 'rollback_adset_conversion_contract') {
+    return [
+      `adset-contract:${clean(body.account_id)}:${clean(body.object_id || body.adset_id)}`,
+      `adset-contract-snapshot:${clean(body.snapshot_id)}`,
+    ];
+  }
   if (action === 'upload_image') return [`image:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
   if (VIDEO_UPLOAD_ACTIONS.includes(action)) {
     const videoKey = clean(body.video_id || body.object_id || body.upload_session_id || body.source_file_id || body.operation_key);
@@ -1854,21 +2372,30 @@ function normalizeHosts(value) {
   return [...new Set(safeArray(value).map((entry) => clean(entry).toLowerCase()).filter((entry) => /^[a-z0-9.-]+$/.test(entry)))];
 }
 
-const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+// URL parameter names are deliberately generic rather than UTM-shaped. Keep
+// only the RFC 3986 unreserved spelling in names; values additionally allow
+// common Meta macros and query-safe punctuation without ever decoding them.
+const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
 const URL_TAG_FORBIDDEN_KEY_PATTERN = /(?:token|secret|password|authorization|signature|api_?key)/i;
-const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-]+$/;
+const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-@!$'()*\/;]+$/;
+const TRACKING_PROFILE_REF_PATTERN = /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/;
+const TRACKING_REQUIREMENTS = new Set(['required', 'not_required']);
+const TRACKING_RECONCILIATION_MODE = 'enforce_from_authorized_source';
 
 // Meta expects url_tags to be a query-string fragment on the AdCreative, not
 // a URL. Keep the value deliberately narrow: it may contain standard UTM
 // parameters and Meta macros, but no URL, fragment, whitespace or secret-like
 // parameter names can cross into a Graph mutation body.
 function normalizeUrlTags(value, { required = false } = {}) {
-  const raw = clean(value);
+  const raw = String(value ?? '');
   if (!raw) {
     if (required) throw failure('url_tags_required');
     return '';
   }
-  if (raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw)) {
+  // Preserve this fragment byte-for-byte after validation. It is passed to
+  // JSON.stringify exactly once by jsonRequest; do not decode or re-encode it
+  // here, otherwise an already encoded value such as `%20` becomes `%2520`.
+  if (raw !== raw.trim() || raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw) || /%(?![0-9A-Fa-f]{2})/.test(raw)) {
     throw failure('url_tags_invalid');
   }
   const seen = new Set();
@@ -1884,17 +2411,71 @@ function normalizeUrlTags(value, { required = false } = {}) {
     }
     seen.add(key);
   }
-  if (!seen.has('utm_source') || !seen.has('utm_medium')) throw failure('url_tags_required_utm_source_and_medium');
   return raw;
 }
 
-function normalizeTrackingContract(value) {
+function normalizeTrackingContract(value, profilesValue = {}, targetAdsetId = '') {
   const source = asObject(value);
   const urlTags = normalizeUrlTags(source.url_tags);
+  const profileRef = normalizeTrackingProfileRef(source.profile_ref);
+  const profile = asObject(asObject(profilesValue)[profileRef]);
+  const destinationKind = normalizeDestinationKind(profile.destination_kind, { optional: true });
+  const websiteRequirement = normalizeTrackingRequirement(profile.website_event_requirement, 'website_event_requirement', { optional: true });
+  const offlineRequirement = normalizeTrackingRequirement(profile.offline_event_dataset_requirement, 'offline_event_dataset_requirement', { optional: true });
+  const sourceAdsetId = clean(profile.source_adset_id);
+  const profileConfigured = Boolean(
+    profileRef &&
+    /^\d{5,30}$/.test(sourceAdsetId) &&
+    destinationKind === 'website' &&
+    websiteRequirement &&
+    offlineRequirement,
+  );
+  // Only an explicitly marked, distinct source/target profile may be used by
+  // the deployment workflow's reversible staging exercise. This marker does
+  // not expose either identifier to Orb or to the workflow evidence.
+  const stagingSyntheticFixture = profileConfigured &&
+    profile.staging_synthetic_fixture === true &&
+    sourceAdsetId !== clean(targetAdsetId) &&
+    websiteRequirement === 'required' &&
+    offlineRequirement === 'required';
   return {
     url_tags: urlTags,
     url_tags_configured: Boolean(urlTags),
+    profile_ref: profileRef,
+    profile_configured: profileConfigured,
+    destination_kind: profileConfigured ? destinationKind : '',
+    website_event_requirement: profileConfigured ? websiteRequirement : 'unconfigured',
+    offline_event_dataset_requirement: profileConfigured ? offlineRequirement : 'unconfigured',
+    reconciliation: profileConfigured ? TRACKING_RECONCILIATION_MODE : 'unconfigured',
+    staging_synthetic_fixture: stagingSyntheticFixture,
   };
+}
+
+function normalizeTrackingProfileRef(value) {
+  const profileRef = clean(value);
+  return TRACKING_PROFILE_REF_PATTERN.test(profileRef) ? profileRef : '';
+}
+
+function normalizeDestinationKind(value, { optional = false } = {}) {
+  const kind = clean(value).toLowerCase();
+  if (!kind && optional) return '';
+  if (kind === 'website' || kind === 'whatsapp') return kind;
+  throw failure('destination_kind_invalid');
+}
+
+function normalizeTrackingRequirement(value, label, { optional = false } = {}) {
+  const requirement = clean(value).toLowerCase();
+  if (!requirement && optional) return '';
+  if (TRACKING_REQUIREMENTS.has(requirement)) return requirement;
+  throw failure(`${label}_invalid`);
+}
+
+function normalizeSnapshotId(value) {
+  const id = clean(value);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw failure('snapshot_id_invalid');
+  }
+  return id;
 }
 
 function safeTrackingEnum(value) {
@@ -2332,6 +2913,7 @@ export const __test = Object.freeze({
   adsetConversionContractFields: ADSET_CONVERSION_CONTRACT_FIELDS,
   adsetReadFields: ADSET_READ_FIELDS,
   graphRequest,
+  jsonRequest,
   graphVideoUrl,
   getVideoStatus,
   maxRateUsage,
@@ -2343,7 +2925,10 @@ export const __test = Object.freeze({
   normalizeMetaError,
   normalizeTrackingContract,
   normalizeUrlTags,
+  ensureAdsetConversionContract,
+  rollbackAdsetConversionContract,
   readAdsetConversionContract,
+  deriveResourceKeys,
   retryDelayMs,
   readAdsetPlacements,
   normalizeLandingPageMap,

@@ -4,7 +4,7 @@ function list(value) { return Array.isArray(value) ? value : []; }
 // The run fingerprint must change when the Meta creative contract changes;
 // otherwise a corrected payload collides with a failed operation for the same
 // Drive lot and cannot be retried safely by the idempotency gateway.
-const PUBLISH_CONTRACT_REVISION = 'creative_payload_v13_tracking_contract';
+const PUBLISH_CONTRACT_REVISION = 'creative_payload_v14_tracking_reconciliation';
 
 const groups = $input.all().map((item) => item.json || {});
 if (!groups.length) throw new Error('Prepare Publish Run recebeu zero grupos.');
