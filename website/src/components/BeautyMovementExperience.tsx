@@ -134,6 +134,7 @@ type HandStage =
 type IntroStage = "hidden" | "entering" | "holding" | "exiting";
 type FinaleStage = "hidden" | "assembling" | "collecting" | "merging" | "confirmation" | "result";
 type SpecialCardKind = "velocity" | "discount" | "free_procedure" | "reserved";
+type SpecialCardAction = "none" | "confirm" | "reopen";
 type ProgressRect = {
     left: number;
     top: number;
@@ -679,7 +680,7 @@ export default function BeautyMovementExperience({
     const finaleRef = useRef<HTMLElement | null>(null);
     const confirmationActionRef = useRef<HTMLElement | null>(null);
     const specialCardModalCloseRef = useRef<HTMLButtonElement | null>(null);
-    const specialCardReopenCardRef = useRef<HTMLElement | null>(null);
+    const specialCardReopenActionRef = useRef<HTMLButtonElement | null>(null);
     const selectionsRef = useRef(selections);
     const displayedActIndexRef = useRef(displayedActIndex);
     const introStageRef = useRef(introStage);
@@ -699,20 +700,13 @@ export default function BeautyMovementExperience({
     const closeSpecialCardModal = useCallback(() => {
         setIsSpecialCardModalOpen(false);
         window.requestAnimationFrame(() => {
-            specialCardReopenCardRef.current?.focus({ preventScroll: true });
+            specialCardReopenActionRef.current?.focus({ preventScroll: true });
         });
     }, []);
 
     const openSpecialCardModal = useCallback(() => {
         setIsSpecialCardModalOpen(true);
     }, []);
-
-    function handleSpecialCardReopenKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
-        if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
-
-        event.preventDefault();
-        openSpecialCardModal();
-    }
 
     const motionCssVariables = useMemo(
         () =>
@@ -1551,6 +1545,35 @@ export default function BeautyMovementExperience({
         }
     }
 
+    function renderWhatsappAction(className: string, label = primaryWhatsappLabel) {
+        if (isLocalPreview) {
+            return (
+                <button className={className} type="button" onClick={handleWhatsappClick}>
+                    {label}
+                </button>
+            );
+        }
+
+        if (initialState.campaign.whatsappMessage?.trim()) {
+            return (
+                <BeautyMovementWhatsappLink
+                    className={className}
+                    message={initialState.campaign.whatsappMessage.trim()}
+                    placement="result"
+                    onClick={handleWhatsappClick}
+                >
+                    {label}
+                </BeautyMovementWhatsappLink>
+            );
+        }
+
+        return (
+            <button className={className} type="button" disabled>
+                {label}
+            </button>
+        );
+    }
+
     function handleConditionsClick() {
         if (conditionsOpenedRef.current) return;
         conditionsOpenedRef.current = true;
@@ -1708,7 +1731,8 @@ export default function BeautyMovementExperience({
         );
     }
 
-    function renderSpecialCard(revealed: boolean, showRevealAction = false, interactive = false) {
+    function renderSpecialCard(revealed: boolean, action: SpecialCardAction = "none") {
+        const showRevealAction = action !== "none";
         const kind: SpecialCardKind = revealed
             ? hasCourtesyClass
                 ? "velocity"
@@ -1744,29 +1768,19 @@ export default function BeautyMovementExperience({
                   : "Seu presente está reservado";
         const description =
             kind === "velocity"
-                ? velocity?.text || "Sua aula será confirmada pela equipe da unidade após o contato."
+                ? "Seu movimento também faz parte da celebração."
                 : kind === "discount" || kind === "free_procedure"
                   ? benefit?.displayText || "Um cuidado especial para celebrar o seu momento."
-                  : "Confirme sua entrada para revelar a condição preparada para você.";
-        const meta =
-            kind === "discount" && benefit?.discount
-                ? formatRewardDiscount(benefit.discount)
-                : kind === "free_procedure"
-                  ? "Procedimento gratuito"
-                  : kind === "velocity"
-                    ? "Seu movimento também faz parte da celebração"
-                    : "Carta final da celebração";
+                  : "Um presente preparado para acompanhar o seu momento.";
+        const specialCardWhatsappLabel = /whatsapp/i.test(primaryWhatsappLabel)
+            ? primaryWhatsappLabel
+            : `${primaryWhatsappLabel} no WhatsApp`;
 
         return (
             <article
-                ref={interactive ? specialCardReopenCardRef : undefined}
-                className={`${styles.specialCard} ${interactive ? styles.specialCardReopenCard : ""}`.trim()}
+                className={styles.specialCard}
                 data-special-state={revealed ? "revealed" : "locked"}
-                role={interactive ? "button" : undefined}
-                tabIndex={interactive ? 0 : undefined}
-                aria-label={interactive ? "Revelar sua carta especial" : revealed ? `Carta especial: ${title}` : "Carta especial reservada"}
-                onClick={interactive ? openSpecialCardModal : undefined}
-                onKeyDown={interactive ? handleSpecialCardReopenKeyDown : undefined}
+                aria-label={revealed ? `Carta especial: ${title}` : "Carta especial reservada"}
             >
                 <div className={styles.specialCardInner}>
                     <div
@@ -1780,22 +1794,22 @@ export default function BeautyMovementExperience({
                         <BrandMark className={styles.specialCardBrand} loading="eager" tone="light" title="" />
                         <span className={styles.specialCardBackLabel}>CARTA ESPECIAL</span>
                         <strong>A soma da sua leitura está pronta.</strong>
-                        <span>Confirme sua entrada para revelar a sua carta especial.</span>
                         {showRevealAction ? (
                             <div
                                 className={styles.specialCardRevealAction}
                                 ref={(node) => {
-                                    confirmationActionRef.current = node;
+                                    if (action === "confirm") confirmationActionRef.current = node;
                                 }}
                             >
-                                {actionError ? <p className={styles.specialCardRevealError} role="alert">{actionError}</p> : null}
+                                {action === "confirm" && actionError ? <p className={styles.specialCardRevealError} role="alert">{actionError}</p> : null}
                                 <button
+                                    ref={action === "reopen" ? specialCardReopenActionRef : undefined}
                                     className={styles.primaryButton}
                                     type="button"
-                                    onClick={() => void handleConfirm()}
-                                    disabled={isConfirming}
+                                    onClick={action === "confirm" ? () => void handleConfirm() : openSpecialCardModal}
+                                    disabled={action === "confirm" ? isConfirming : undefined}
                                 >
-                                    {isConfirming ? "Revelando…" : "Clique aqui para revelar sua carta especial"}
+                                    {action === "confirm" && isConfirming ? "Revelando…" : "Clique aqui para revelar sua carta especial"}
                                 </button>
                             </div>
                         ) : null}
@@ -1810,7 +1824,12 @@ export default function BeautyMovementExperience({
                         </span>
                         <strong>{title}</strong>
                         <span className={styles.specialCardCopy}>{description}</span>
-                        <span className={styles.specialCardMeta}>{meta}</span>
+                        {revealed
+                            ? renderWhatsappAction(
+                                `${styles.primaryButton} ${styles.specialCardWhatsappAction}`,
+                                specialCardWhatsappLabel,
+                            )
+                            : null}
                     </div>
                 </div>
             </article>
@@ -1916,24 +1935,7 @@ export default function BeautyMovementExperience({
                 ) : null}
 
                 <div className={styles.resultActions}>
-                    {isLocalPreview ? (
-                        <button className={styles.primaryButton} type="button" onClick={handleWhatsappClick}>
-                            {primaryWhatsappLabel}
-                        </button>
-                    ) : initialState.campaign.whatsappMessage?.trim() ? (
-                        <BeautyMovementWhatsappLink
-                            className={styles.primaryButton}
-                            message={initialState.campaign.whatsappMessage.trim()}
-                            placement="result"
-                            onClick={handleWhatsappClick}
-                        >
-                            {primaryWhatsappLabel}
-                        </BeautyMovementWhatsappLink>
-                    ) : (
-                        <button className={styles.primaryButton} type="button" disabled>
-                            {primaryWhatsappLabel}
-                        </button>
-                    )}
+                    {renderWhatsappAction(styles.primaryButton)}
                     <button className={styles.secondaryButton} type="button" onClick={() => void handleShare()}>
                         Preparar Story para compartilhar
                     </button>
@@ -1955,6 +1957,7 @@ export default function BeautyMovementExperience({
                     <h1 id="beauty-movement-title">{initialState.campaign.title?.trim() || "Beleza que se move com você."}</h1>
                     <p
                         className={`${styles.heroDeckInstruction} ${waitingForInitialDeal ? "" : styles.heroDeckInstructionHidden}`.trim()}
+                        id="beauty-movement-deck-prompt"
                         aria-hidden={!waitingForInitialDeal || undefined}
                     >
                         Clique no baralho para começar a sua leitura
@@ -2144,7 +2147,7 @@ export default function BeautyMovementExperience({
                                 aria-label="Carta especial da celebração"
                             >
                                 {!isLocalPreview ? renderConfirmationAction() : null}
-                                {renderSpecialCard(false, isLocalPreview)}
+                                {renderSpecialCard(false, isLocalPreview ? "confirm" : "none")}
                             </div>
                         ) : finaleStage === "result" ? (
                             <div
@@ -2152,7 +2155,7 @@ export default function BeautyMovementExperience({
                                 role="group"
                                 aria-label="Carta especial do benefício"
                             >
-                                {renderSpecialCard(false, false, !isSpecialCardModalOpen)}
+                                {renderSpecialCard(false, "reopen")}
                             </div>
                         ) : finaleStage === "hidden" && introStage === "hidden" && handStage !== "waiting" && handStage !== "prompt" && handStage !== "prompt-out" ? (
                             <div className={styles.cardGrid} role="group" aria-label={`Cartas da etapa ${tableDefinition.label}`}>
