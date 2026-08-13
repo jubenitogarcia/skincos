@@ -110,10 +110,10 @@
   pointer-events: none;
 }
 
-.progressRow:not(.progressRowWaiting) {
+.tableStageShifted {
   /* Reuse the instruction's reserved space once the first hand begins.
-   * Keeping the row in normal flow avoids moving the table surface, while
-   * the visual offset lets the category read as the hero subtitle. */
+   * The category row and the complete table move as one visual group, while
+   * their normal-flow space stays intact to avoid a layout shift. */
   transform: translateY(-38px);
 }
 

@@ -1966,7 +1966,7 @@ export default function BeautyMovementExperience({
 
                 <section
                     ref={tableRef}
-                    className={styles.tableStage}
+                    className={`${styles.tableStage} ${waitingForInitialDeal ? "" : styles.tableStageShifted}`.trim()}
                     id="mesa-de-cartas"
                     aria-label={tableDefinition.label}
                     aria-describedby={tablePromptText ? "table-stage-prompt" : undefined}
