@@ -442,6 +442,16 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-check/);
   assert.match(scheduler, /uses: \.\/\.github\/actions\/global-coordination-release/);
+  assert.equal(
+    (scheduler.match(/key_id: \$\{\{ vars\.SKINCOS_GLOBAL_COORDINATION_KEY_ID \}\}/g) || []).length,
+    3,
+    "branch maintenance must pin the rotated coordination key for acquire, check, and release",
+  );
+  assert.equal(
+    (scheduler.match(/shared_secret: \$\{\{ secrets\.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY \}\}/g) || []).length,
+    3,
+    "branch maintenance must use the pinned active coordination key for acquire, check, and release",
+  );
   assert.match(scheduler, /resource: merge:main/);
   assert.match(scheduler, /Detect whether branch maintenance needs merge:main/);
   assert.match(scheduler, /steps\.maintenance_scan\.outputs\.needs_maintenance == 'true'/);
