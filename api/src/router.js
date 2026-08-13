@@ -1,12 +1,12 @@
-const json = (status, payload, requestId) =>
-    new Response(JSON.stringify(payload), {
-        status,
-        headers: {
-            'content-type': 'application/json; charset=utf-8',
-            'cache-control': 'no-store',
-            'x-request-id': requestId,
-        },
+const json = (status, payload, requestId, extraHeaders) => {
+    const headers = new Headers({
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-request-id': requestId,
     });
+    for (const [name, value] of new Headers(extraHeaders || {})) headers.set(name, value);
+    return new Response(JSON.stringify(payload), { status, headers });
+};
 
 function requestIdFor(request) {
     return String(request.headers.get('x-request-id') || request.headers.get('cf-ray') || crypto.randomUUID()).trim();
@@ -149,10 +149,24 @@ async function pontoReadiness(request, env, ctx, timekeepingHandler, requestId) 
     try {
         const response = await timekeepingHandler(probe, env, ctx);
         const ready = response.ok;
+        const releaseHeaders = new Headers();
+        setGatewayReleaseHeaders(releaseHeaders, env);
+        for (const name of [
+            'x-skincos-timekeeping-release-sha',
+            'x-skincos-timekeeping-version-id',
+        ]) {
+            const value = response.headers.get(name);
+            if (value) releaseHeaders.set(name, value);
+        }
         await response.body?.cancel().catch(() => {});
         const status = ready ? 200 : 503;
         pontoOperationalLog(env, requestId, status, '/readiness');
-        return json(status, pontoOperationalPayload(env, requestId, ready, ready ? 'healthy' : 'degraded'), requestId);
+        return json(
+            status,
+            pontoOperationalPayload(env, requestId, ready, ready ? 'healthy' : 'degraded'),
+            requestId,
+            releaseHeaders,
+        );
     } catch {
         pontoOperationalLog(env, requestId, 503, '/readiness');
         return json(503, pontoOperationalPayload(env, requestId, false, 'unavailable'), requestId);
