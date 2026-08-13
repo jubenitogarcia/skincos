@@ -38,6 +38,7 @@ test("Clube Botox aliases resolve to the requested Asaas payment links", () => {
         "/nh/ClubeBotox40URec": "https://www.asaas.com/c/d6wi6vey83vare5o",
         "/nh/ClubeBotox50URec": "https://www.asaas.com/c/qfh7xmfkx75thufp",
         "/nh/ClubeBotox60URec": "https://www.asaas.com/c/s6pzbxxek5zupn20",
+        "/nh/ClubeBotoxA60URec": "https://www.asaas.com/c/kmqx08rera7xwnc6",
         "/nh/ClubeBotox90URec": "https://www.asaas.com/c/nhimvltr035trkro",
         "/bss/ClubeBotox40U": "https://www.asaas.com/c/bv1wikkg0l1h53wc",
         "/bss/ClubeBotox50U": "https://www.asaas.com/c/tfy2w7livbb3pby9",
@@ -46,6 +47,7 @@ test("Clube Botox aliases resolve to the requested Asaas payment links", () => {
         "/bss/ClubeBotox40URec": "https://www.asaas.com/c/pf2r6q16tiyrp9bc",
         "/bss/ClubeBotox50URec": "https://www.asaas.com/c/prjvdv7v95x50y32",
         "/bss/ClubeBotox60URec": "https://www.asaas.com/c/lr38ej38lji2kyuz",
+        "/bss/ClubeBotoxA60URec": "https://www.asaas.com/c/j09bzb3zy2igqune",
         "/bss/ClubeBotox90URec": "https://www.asaas.com/c/zmfwvjotop3vpmjz",
     };
 
