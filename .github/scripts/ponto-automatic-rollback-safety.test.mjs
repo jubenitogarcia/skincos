@@ -63,6 +63,19 @@ test("zero-surface recovery uses a fresh external maintenance probe instead of f
   assert.match(source, /no-dispatched-surface-noop/);
 });
 
+test("composite rollback attestation waits for public propagation while maintenance remains required", () => {
+  const start = source.indexOf("const compositeHealthUrl = staging");
+  const end = source.indexOf("// Re-read after every mutation", start);
+  assert.ok(start >= 0 && end > start, "composite rollback attestation block is absent");
+  const block = source.slice(start, end);
+  assert.match(block, /const maxCompositeAttempts = 36/);
+  assert.match(block, /for \(let attempt = 1; attempt <= maxCompositeAttempts; attempt \+= 1\)/);
+  assert.match(block, /availability\?\.state === "maintenance"/);
+  assert.match(block, /x-skincos-gateway-version-id/);
+  assert.match(block, /x-skincos-timekeeping-version-id/);
+  assert.match(block, /await new Promise\(\(resolve\) => setTimeout\(resolve, 5_000\)\)/);
+});
+
 test("Pages recovery skips rollback intent custody when no owned candidate exists", () => {
   assert.match(
     source,
