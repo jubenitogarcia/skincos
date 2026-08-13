@@ -133,11 +133,32 @@ jobs:
           fetch-depth: 0
       - name: Initialize private release artifact directory
         run: |
-          echo "PONTO_ARTIFACT_DIR=$RUNNER_TEMP/ponto-release" >> "$GITHUB_ENV"
+          artifact_dir="$RUNNER_TEMP/ponto-release"
+          echo "PONTO_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
           if [[ "$STAGE" != "preview" ]]; then
             echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=$RUNNER_TEMP/ponto-release/global-coordination-release-ponto.json" >> "$GITHUB_ENV"
           fi
-          mkdir -p "$RUNNER_TEMP/ponto-release"
+          mkdir -p "$artifact_dir"
+          node - "$artifact_dir/recovery-intent.json" <<'NODE'
+          const fs = require("fs");
+          const stage = String(process.env.STAGE || "");
+          const releaseSha = String(process.env.RELEASE_SHA || "").toLowerCase();
+          const coordinatorRunId = String(process.env.GITHUB_RUN_ID || "");
+          if (
+            !["preview", "staging", "pilot", "canary", "production", "rollback"].includes(stage)
+            || !/^[0-9a-f]{40}$/.test(releaseSha)
+            || !/^[1-9][0-9]*$/.test(coordinatorRunId)
+          ) throw new Error("recovery intent identity is invalid");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            phase: "pre-mutation",
+            stage,
+            releaseSha,
+            coordinatorRunId,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          })}\n`, { mode: 0o600 });
+          NODE
       - name: Verify immutable source and ordered predecessor provenance
         id: source
         env:
@@ -2011,6 +2032,8 @@ jobs:
   recovery-reconcile:
     needs: [orchestrate, recovery-latch]
     if: ${{ always() && needs.recovery-latch.result == 'success' }}
+    outputs:
+      rollback_required: ${{ steps.rollback_requirement.outputs.required }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -2101,6 +2124,23 @@ jobs:
             fi
             rm -rf "$download_dir"
           done
+      - name: Classify whether exact rollback is required
+        id: rollback_requirement
+        run: |
+          set -euo pipefail
+          node - "$PONTO_RECOVERY_ARTIFACT_ROOT/watchdog-journal.json" <<'NODE'
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            report?.passed !== true
+            || !Number.isInteger(report?.discoveredChildren)
+            || report.discoveredChildren < 0
+          ) throw new Error("watchdog did not prove the recovery child set");
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `required=${report.discoveredChildren > 0 ? "true" : "false"}\n`,
+          );
+          NODE
       - name: Upload immutable ordinary-recovery reconciliation
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -2256,7 +2296,7 @@ jobs:
 
   recovery-rollback:
     needs: [orchestrate, recovery-reconcile, recovery-close]
-    if: ${{ always() && needs.recovery-reconcile.result == 'success' && needs.recovery-close.result == 'success' && contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+    if: ${{ always() && needs.recovery-reconcile.result == 'success' && needs.recovery-reconcile.outputs.rollback_required == 'true' && needs.recovery-close.result == 'success' && contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
