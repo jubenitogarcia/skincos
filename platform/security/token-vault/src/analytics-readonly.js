@@ -1,3 +1,5 @@
+import { readBoundedText } from './bounded-body.js';
+
 const MAX_BODY_BYTES = 32 * 1024;
 const MAX_ACTIVE_REQUESTS = 8;
 const MAX_REQUESTS_PER_MINUTE = 60;
@@ -263,34 +265,6 @@ async function readBoundedJson(request) {
   } catch {
     throw new AnalyticsReadonlyError('invalid_payload', 400);
   }
-}
-
-async function readBoundedText(body, maximumBytes, onExceeded) {
-  const reader = body.getReader();
-  const chunks = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
-      total += chunk.byteLength;
-      if (total > maximumBytes) {
-        await reader.cancel().catch(() => {});
-        throw onExceeded();
-      }
-      chunks.push(chunk);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(bytes);
 }
 
 function acquireRequestLease() {

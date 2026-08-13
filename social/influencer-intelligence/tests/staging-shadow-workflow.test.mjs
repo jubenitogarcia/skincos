@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const workflow = fs.readFileSync(path.resolve(here, '../../../.github/workflows/influencer-intelligence-staging-shadow.yml'), 'utf8');
+const bootstrapScript = fs.readFileSync(path.resolve(here, '../../../platform/security/token-vault/scripts/seal-staging-analytics-credential.mjs'), 'utf8');
 
 test('staging shadow workflow is manual, staging-only, and forbids the fallback bridge', () => {
   assert.match(workflow, /workflow_dispatch:/);
@@ -29,13 +30,20 @@ test('staging shadow workflow is manual, staging-only, and forbids the fallback 
   assert.doesNotMatch(workflow, /secrets\.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET/);
   assert.match(workflow, /name:\s*Guard private real-read inputs/);
   assert.match(workflow, /if:\s*\$\{\{\s*inputs\.run_real_router_smoke\s*==\s*true\s*\}\}/);
+  assert.match(workflow, /INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN/);
+  assert.match(workflow, /INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID/);
+  assert.match(workflow, /TOKEN_VAULT_STAGING_ANALYTICS_BOOTSTRAP_TOKEN/);
+  assert.match(workflow, /scripts\/seal-staging-analytics-credential\.mjs/);
+  assert.match(bootstrapScript, /\/v1\/analytics\/staging-bootstrap/);
+  assert.match(bootstrapScript, /readFileSync\(0, 'utf8'\)/);
+  assert.doesNotMatch(workflow, /INFLUENCER_INTELLIGENCE_SHADOW_CREDENTIAL_REF:\s*\$\{\{\s*secrets\./);
   assert.match(workflow, /name:\s*Remove workflow-only analytics credential/);
   assert.doesNotMatch(workflow, /instagrapi/i);
   assert.doesNotMatch(workflow, /TOKEN_VAULT_API_TOKEN:\s*\$\{\{\s*secrets\./);
 
-  const promoteStep = workflow.match(/- name: Promote bounded staging shadow and validate its contract([\s\S]*?)(?=\n\s*- name: Run one approved Meta-only router smoke)/)?.[1] || '';
+  const promoteStep = workflow.match(/- name: Promote bounded staging shadow and validate its contract([\s\S]*?)(?=\n\s*- name: Seal one staging-only Meta analytics credential)/)?.[1] || '';
   assert.notEqual(promoteStep, '');
-  assert.doesNotMatch(promoteStep, /INFLUENCER_INTELLIGENCE_SHADOW_(CREDENTIAL_REF|CREATOR_HANDLE)/);
+  assert.doesNotMatch(promoteStep, /INFLUENCER_INTELLIGENCE_(META_GRAPH_TOKEN|META_GRAPH_INSTAGRAM_ACCOUNT_ID|SHADOW_CREATOR_HANDLE)/);
 });
 
 test('staging shadow workflow shell blocks remain parseable, including nested heredocs', () => {

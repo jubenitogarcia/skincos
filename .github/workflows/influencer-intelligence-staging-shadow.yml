@@ -38,12 +38,17 @@ jobs:
       - name: Guard private real-read inputs
         if: ${{ inputs.run_real_router_smoke == true }}
         env:
-          INFLUENCER_INTELLIGENCE_SHADOW_CREDENTIAL_REF: ${{ secrets.INFLUENCER_INTELLIGENCE_SHADOW_CREDENTIAL_REF }}
+          INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN }}
+          INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID }}
           INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE: ${{ secrets.INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE }}
         run: |
           set -euo pipefail
-          [[ -n "${INFLUENCER_INTELLIGENCE_SHADOW_CREDENTIAL_REF:-}" ]] || {
-            echo 'Private Token Vault credential reference is unavailable; refusing the real Meta read.' >&2
+          [[ -n "${INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN:-}" ]] || {
+            echo 'Dedicated Meta Graph token is unavailable; refusing the real Meta read.' >&2
+            exit 1
+          }
+          [[ -n "${INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID:-}" ]] || {
+            echo 'Approved Instagram professional account identifier is unavailable; refusing the real Meta read.' >&2
             exit 1
           }
           [[ -n "${INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE:-}" ]] || {
@@ -86,8 +91,9 @@ jobs:
             return config.slice(start, next === -1 ? config.length : next);
           };
           assert.match(section('vars'), /INFLUENCER_INTELLIGENCE_ANALYTICS_MODE\s*=\s*"off"/);
+          assert.match(section('vars'), /INFLUENCER_INTELLIGENCE_ENABLED\s*=\s*"false"/);
           assert.match(section('env.staging.vars'), /INFLUENCER_INTELLIGENCE_ANALYTICS_MODE\s*=\s*"shadow"/);
-          assert.doesNotMatch(config, /^INFLUENCER_INTELLIGENCE_ENABLED\s*=\s*"true"/m);
+          assert.match(section('env.staging.vars'), /INFLUENCER_INTELLIGENCE_ENABLED\s*=\s*"false"/);
           NODE
 
       - name: Acquire staging Token Vault coordination lease
@@ -121,6 +127,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RUN_REAL_ROUTER_SMOKE: ${{ inputs.run_real_router_smoke }}
         run: |
           set -euo pipefail
           cd platform/security/token-vault
@@ -158,7 +165,8 @@ jobs:
           printf '%s\n' "$incumbent" > "$output_root/incumbent-version.txt"
 
           analytics_token="$(node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('base64url'));")"
-          trap 'unset analytics_token' EXIT
+          bootstrap_token=''
+          trap 'unset analytics_token bootstrap_token' EXIT
           printf '%s' "$analytics_token" | wrangler versions secret put TOKEN_VAULT_ANALYTICS_API_TOKEN \
             --config "$config" \
             --env staging \
@@ -166,6 +174,16 @@ jobs:
           umask 077
           printf '%s' "$analytics_token" > "$output_root/analytics-token"
           chmod 600 "$output_root/analytics-token"
+
+          if [[ "$RUN_REAL_ROUTER_SMOKE" == true ]]; then
+            bootstrap_token="$(node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('base64url'));")"
+            printf '%s' "$bootstrap_token" | wrangler versions secret put TOKEN_VAULT_STAGING_ANALYTICS_BOOTSTRAP_TOKEN \
+              --config "$config" \
+              --env staging \
+              --message "influencer-intelligence:staging-bootstrap:${GITHUB_SHA}" >/dev/null
+            printf '%s' "$bootstrap_token" > "$output_root/bootstrap-token"
+            chmod 600 "$output_root/bootstrap-token"
+          fi
 
           WRANGLER_OUTPUT_FILE_PATH="$output_root/source-upload.ndjson" wrangler versions upload \
             --config "$config" \
@@ -326,10 +344,53 @@ jobs:
           fs.writeFileSync(process.env.EVIDENCE_FILE, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
           NODE
 
+      - name: Seal one staging-only Meta analytics credential
+        if: ${{ inputs.run_real_router_smoke == true }}
+        env:
+          INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN }}
+          INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          cd platform/security/token-vault
+          output_root="$RUNNER_TEMP/influencer-intelligence-staging-shadow"
+          bootstrap_token_file="$output_root/bootstrap-token"
+          [[ -s "$bootstrap_token_file" ]] || {
+            echo 'Workflow-only staging bootstrap credential is unavailable.' >&2
+            exit 1
+          }
+          bootstrap_token="$(<"$bootstrap_token_file")"
+          trap 'unset bootstrap_token INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN' EXIT
+          printf '%s' "$INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN" | \
+            BOOTSTRAP_TOKEN="$bootstrap_token" \
+            INSTAGRAM_ACCOUNT_ID="$INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID" \
+            BASE_URL='https://api-staging.skincos.com.br/internal/token-vault' \
+            BOOTSTRAP_FILE="$output_root/bootstrap-result.json" \
+            EVIDENCE_FILE="$output_root/evidence.json" \
+            node scripts/seal-staging-analytics-credential.mjs
+          bootstrap_request_id="$(node -e "const v=require(process.argv[1]);process.stdout.write(v.request_id)" "$output_root/bootstrap-result.json")"
+          npx --yes wrangler@4.123.0 d1 execute skincos-token-vault-staging --remote --config wrangler.toml --env staging --json \
+            --command "SELECT request_id, status FROM credential_token_audit WHERE event = 'analytics.staging_bootstrap' AND request_id = '$bootstrap_request_id' ORDER BY created_at DESC LIMIT 1" \
+            > "$output_root/bootstrap-audit.json"
+          EVIDENCE_FILE="$output_root/evidence.json" AUDIT_FILE="$output_root/bootstrap-audit.json" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+
+          const evidence = JSON.parse(fs.readFileSync(process.env.EVIDENCE_FILE, 'utf8'));
+          const response = JSON.parse(fs.readFileSync(process.env.AUDIT_FILE, 'utf8'));
+          const rows = Array.isArray(response)
+            ? response.flatMap((entry) => entry?.results || [])
+            : (response?.results || []);
+          assert.equal(rows.length, 1, 'staging credential bootstrap audit entry is missing');
+          assert.equal(rows[0].request_id, evidence.staging_credential_bootstrap.request_id);
+          assert.ok(['ok', 'bootstrap_already_sealed'].includes(rows[0].status));
+          evidence.staging_credential_bootstrap.audit_status = rows[0].status;
+          fs.writeFileSync(process.env.EVIDENCE_FILE, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
       - name: Run one approved Meta-only router smoke
         if: ${{ inputs.run_real_router_smoke == true }}
         env:
-          INFLUENCER_INTELLIGENCE_SHADOW_CREDENTIAL_REF: ${{ secrets.INFLUENCER_INTELLIGENCE_SHADOW_CREDENTIAL_REF }}
+          INFLUENCER_INTELLIGENCE_SHADOW_CREDENTIAL_REF: ig-analytics-staging-shadow-v1
           INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE: ${{ secrets.INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE }}
         run: |
           set -euo pipefail
