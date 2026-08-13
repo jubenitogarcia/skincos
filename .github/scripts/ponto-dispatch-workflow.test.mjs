@@ -87,15 +87,26 @@ test("child dispatch keeps an immutable release valid across unrelated main chan
   );
 });
 
-test("child dispatch refuses a release SHA after main advances", () => {
+test("child dispatch accepts unrelated main drift only with an equivalent Ponto closure", () => {
   const releaseSha = "a".repeat(40);
+  const unrelatedMainSha = "b".repeat(40);
   assert.deepEqual(
     assertPontoReleaseIsCurrentMain(releaseSha, releaseSha),
     { releaseSha, currentMainSha: releaseSha },
   );
+  assert.deepEqual(
+    assertPontoReleaseIsCurrentMain(releaseSha, unrelatedMainSha, (release, currentMain) => {
+      assert.equal(release, releaseSha);
+      assert.equal(currentMain, unrelatedMainSha);
+      return { release, observed: currentMain, digest: "c".repeat(64) };
+    }),
+    { releaseSha, currentMainSha: unrelatedMainSha },
+  );
   assert.throws(
-    () => assertPontoReleaseIsCurrentMain(releaseSha, "b".repeat(40)),
-    /no longer equals current main/,
+    () => assertPontoReleaseIsCurrentMain(releaseSha, unrelatedMainSha, () => {
+      throw new Error("a relevant dependency-closure input changed after the immutable release was selected");
+    }),
+    /dependency closure no longer matches current main/,
   );
 });
 
