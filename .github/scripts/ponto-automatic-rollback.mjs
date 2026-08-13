@@ -1096,6 +1096,49 @@ for (const name of ["coreApi", "identityWorkforce", "timekeeping"]) {
 }
 
 const external = {};
+const EXTERNAL_COMPOSITE_MAX_ATTEMPTS = 36;
+const EXTERNAL_COMPOSITE_RETRY_DELAY_MS = 5_000;
+const waitForPropagation = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const attestExternalComposite = async () => {
+  const origin = staging
+    ? "https://crm-staging.skincos.com.br/api/ponto/health"
+    : "https://crm.skincos.com.br/api/ponto/health";
+  let latest = { passed: false, status: 0, reason: "external-composite-probe-not-attempted" };
+  for (let attempt = 1; attempt <= EXTERNAL_COMPOSITE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const probe = new URL(origin);
+      probe.searchParams.set("automatic_rollback_readback", `${recoveryRunId}-${attempt}`);
+      const response = await fetch(probe, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(15_000),
+        headers: { accept: "application/json", "cache-control": "no-store", ...accessHeaders },
+      });
+      const json = await response.json().catch(() => null);
+      const dependencies = json?.dependencies && typeof json.dependencies === "object" ? Object.entries(json.dependencies) : [];
+      const maintenanceOnly = json?.ok === false
+        && json?.ready === false
+        && json?.availability?.state === "maintenance"
+        && json?.dependencies?.module_control?.state === "unavailable"
+        && json?.dependencies?.module_control?.reason === "MODULE_MAINTENANCE"
+        && dependencies.every(([name, dependency]) => name === "module_control" || dependency?.required !== true || dependency?.state === "healthy");
+      latest = {
+        passed: response.status === 200
+          && maintenanceOnly
+          && String(response.headers.get("x-skincos-gateway-version-id") || "").toLowerCase() === plan.coreApi.incumbentVersionId.toLowerCase()
+          && String(response.headers.get("x-skincos-timekeeping-version-id") || "").toLowerCase() === plan.timekeeping.incumbentVersionId.toLowerCase(),
+        status: response.status,
+        coreVersionId: String(response.headers.get("x-skincos-gateway-version-id") || ""),
+        timekeepingVersionId: String(response.headers.get("x-skincos-timekeeping-version-id") || ""),
+        attempt,
+      };
+    } catch {
+      latest = { passed: false, status: 0, reason: "external-composite-probe-failed", attempt };
+    }
+    if (latest.passed) return latest;
+    if (attempt < EXTERNAL_COMPOSITE_MAX_ATTEMPTS) await waitForPropagation(EXTERNAL_COMPOSITE_RETRY_DELAY_MS);
+  }
+  return { ...latest, propagationTimedOut: true, attempts: EXTERNAL_COMPOSITE_MAX_ATTEMPTS };
+};
 if (plan.identityWorkforce && proofs.identityWorkforce?.passed) {
   try {
     const response = await fetch(staging
@@ -1118,41 +1161,7 @@ if (plan.identityWorkforce && proofs.identityWorkforce?.passed) {
   }
 }
 if (plan.coreApi && plan.timekeeping && proofs.coreApi?.passed && proofs.timekeeping?.passed) {
-  const compositeHealthUrl = staging
-    ? "https://crm-staging.skincos.com.br/api/ponto/health"
-    : "https://crm.skincos.com.br/api/ponto/health";
-  const maxCompositeAttempts = 36;
-  for (let attempt = 1; attempt <= maxCompositeAttempts; attempt += 1) {
-    try {
-      const response = await fetch(compositeHealthUrl, {
-        redirect: "manual",
-        signal: AbortSignal.timeout(15_000),
-        headers: { accept: "application/json", ...accessHeaders },
-      });
-      const json = await response.json().catch(() => null);
-      const dependencies = json?.dependencies && typeof json.dependencies === "object" ? Object.entries(json.dependencies) : [];
-      const maintenanceOnly = json?.ok === false
-        && json?.ready === false
-        && json?.availability?.state === "maintenance"
-        && json?.dependencies?.module_control?.state === "unavailable"
-        && json?.dependencies?.module_control?.reason === "MODULE_MAINTENANCE"
-        && dependencies.every(([name, dependency]) => name === "module_control" || dependency?.required !== true || dependency?.state === "healthy");
-      external.composite = {
-        passed: response.status === 200
-          && maintenanceOnly
-          && String(response.headers.get("x-skincos-gateway-version-id") || "").toLowerCase() === plan.coreApi.incumbentVersionId.toLowerCase()
-          && String(response.headers.get("x-skincos-timekeeping-version-id") || "").toLowerCase() === plan.timekeeping.incumbentVersionId.toLowerCase(),
-        status: response.status,
-        coreVersionId: String(response.headers.get("x-skincos-gateway-version-id") || ""),
-        timekeepingVersionId: String(response.headers.get("x-skincos-timekeeping-version-id") || ""),
-        attempts: attempt,
-      };
-    } catch {
-      external.composite = { passed: false, status: 0, attempts: attempt };
-    }
-    if (external.composite.passed || attempt === maxCompositeAttempts) break;
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
-  }
+  external.composite = await attestExternalComposite();
 }
 
 // Re-read after every mutation while still holding the surface mutex. A reset,
