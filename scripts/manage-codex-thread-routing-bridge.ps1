@@ -420,7 +420,11 @@ try {
             $handlerCount = 0
             if ($null -ne $hooks) {
                 foreach ($eventName in @('UserPromptSubmit', 'PreToolUse')) {
-                    foreach ($group in @($hooks.hooks.$eventName)) {
+                    $eventProperty = $hooks.hooks.PSObject.Properties[$eventName]
+                    if ($null -eq $eventProperty) {
+                        continue
+                    }
+                    foreach ($group in @($eventProperty.Value)) {
                         $handlerCount += @($group.hooks | Where-Object { Test-BridgeHandler -Handler $_ }).Count
                     }
                 }

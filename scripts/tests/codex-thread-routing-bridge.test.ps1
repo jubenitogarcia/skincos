@@ -158,6 +158,15 @@ try {
     [IO.File]::WriteAllText($globalHooksPath, (($initialGlobalHooks | ConvertTo-Json -Depth 12) + [Environment]::NewLine), (New-Object Text.UTF8Encoding($false)))
 
     $manager = Join-Path $implementationRoot 'scripts\manage-codex-thread-routing-bridge.ps1'
+    $initialStatus = Invoke-JsonScript -ScriptPath $manager -Parameters @{
+        Action = 'status'
+        ProjectRoot = $implementationRoot
+        RuntimeRoot = $bridgeRoot
+        GlobalHooksPath = $globalHooksPath
+    }
+    Assert-Equal -Actual $initialStatus.state -Expected 'missing' -Message 'status must remain readable when global hooks only contain Stop'
+    Assert-Equal -Actual $initialStatus.globalBridgeHandlerCount -Expected 0 -Message 'status must not invent global bridge handlers'
+
     $withoutApply = Invoke-JsonScript -ScriptPath $manager -Parameters @{
         Action = 'install-candidate'
         ProjectRoot = $implementationRoot
