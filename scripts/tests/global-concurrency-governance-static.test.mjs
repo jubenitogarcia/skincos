@@ -97,6 +97,7 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-check/);
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-release/);
   assert.doesNotMatch(workflow, /\bsecret\s+put\b/);
+  assert.doesNotMatch(workflow, /secrets:\s*inherit/);
   assert.ok(workflow.indexOf("Capture encrypted Token Vault D1 checkpoint before migrations") < workflow.indexOf("Apply additive Token Vault migrations atomically"));
   assert.ok(workflow.indexOf("Check Token Vault release lease before version upload") < workflow.indexOf("Upload immutable Token Vault version"));
   assert.ok(workflow.indexOf("Check Token Vault release lease before version deployment") < workflow.indexOf("Deploy only the selected Token Vault version"));
