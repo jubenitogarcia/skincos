@@ -673,9 +673,9 @@ jobs:
           }
           const matching = runners.filter((runner) => {
             const labels = (runner.labels || []).map(item => String(item?.name || ""));
-          const normalizedLabels = new Set(labels.map(label => label.toLowerCase()));
-          return labels.length === requiredLabels.length
-            && requiredLabels.every(label => normalizedLabels.has(label.toLowerCase()));
+            const normalizedLabels = new Set(labels.map(label => label.toLowerCase()));
+            return labels.length === requiredLabels.length
+              && requiredLabels.every(label => normalizedLabels.has(label.toLowerCase()));
           });
           if (
             matching.length !== 1
