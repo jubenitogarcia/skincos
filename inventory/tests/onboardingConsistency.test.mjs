@@ -117,7 +117,7 @@ test('invite activation has an audited retry boundary and does not mint a second
   assert.doesNotMatch(activationBlock, /randomInviteToken\(\)/);
 });
 
-test('Workforce recovery is backend-only and invitation delivery fails closed without a binding', async () => {
+test('Workforce recovery is backend-only and invitation delivery auto-reconciles before any invite mutation', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   const localApi = await readFile(new URL('../../crm/api/server.js', import.meta.url), 'utf8');
   const reconcileBlock = admin.slice(
@@ -135,19 +135,22 @@ test('Workforce recovery is backend-only and invitation delivery fails closed wi
   const updateBlock = admin.slice(admin.indexOf('const teamMemberMatch'), admin.indexOf("if (url.pathname === '/admin/team' && request.method === 'GET')"));
 
   assert.match(reconcileBlock, /workforce.*reconcile/);
-  assert.match(reconcileBlock, /syncIdentityWorkforceOnboarding\(env/);
+  assert.match(reconcileBlock, /reconcilePendingWorkforceOnboarding/);
+  assert.match(admin, /syncIdentityWorkforceOnboarding\(env/);
   assert.match(reconcileBlock, /EMPLOYEE_TEAM_WORKFORCE_RECONCILED/);
   assert.match(reconcileBlock, /inviteDeliveryChanged: false/);
   assert.doesNotMatch(reconcileBlock, /sendAccountInviteEmail/);
-  assert.match(resendBlock, /TEAM_WORKFORCE_BINDING_REQUIRED/);
+  assert.match(resendBlock, /reconcilePendingWorkforceOnboarding/);
+  assert.doesNotMatch(resendBlock, /TEAM_WORKFORCE_BINDING_REQUIRED/);
   assert.ok(
-    resendBlock.indexOf('TEAM_WORKFORCE_BINDING_REQUIRED') < resendBlock.indexOf('UPDATE ${invitesTable} SET revoked=1'),
-    'the resend guard must run before any invite revocation',
+    resendBlock.indexOf('reconcilePendingWorkforceOnboarding') < resendBlock.indexOf('UPDATE ${invitesTable} SET revoked=1'),
+    'automatic Workforce reconciliation must finish before any invite revocation',
   );
-  assert.match(localResendBlock, /TEAM_WORKFORCE_BINDING_REQUIRED/);
+  assert.match(localResendBlock, /automaticBeforeInviteResend/);
+  assert.doesNotMatch(localResendBlock, /TEAM_WORKFORCE_BINDING_REQUIRED/);
   assert.ok(
-    localResendBlock.indexOf('TEAM_WORKFORCE_BINDING_REQUIRED') < localResendBlock.indexOf('store.invites.forEach'),
-    'the local preview guard must run before any invite revocation',
+    localResendBlock.indexOf('automaticBeforeInviteResend') < localResendBlock.indexOf('store.invites.forEach'),
+    'the local preview reconciliation must run before any invite revocation',
   );
   assert.match(updateBlock, /const workforce = await syncIdentityWorkforceOnboarding\(env/);
   assert.match(updateBlock, /sets\.push\('workforce_employee_id=\?'\)/);

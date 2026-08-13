@@ -307,11 +307,51 @@ test('backend Workforce reconciliation repairs a pending invite without activati
   assert.equal(Number(crmUser.ativo), 0);
 });
 
-test('resend refuses a missing Workforce binding before mutating a pending invite', async () => {
+test('resend automatically reconciles a missing Workforce binding before guarded delivery', async () => {
+  await env.DB.batch([
+    env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='INVITED', workforce_employee_id=NULL, invite_id='pending-hellen-invite', provisioning_state='FAILED' WHERE id=?").bind('hellenmelo-employee'),
+    env.DB.prepare('DELETE FROM crm_employee_team WHERE onboarding_id=?').bind('hellenmelo-employee'),
+  ]);
+  const result = await callRoute('/admin/team/hellenmelo-employee/invite/resend', {
+    method: 'POST',
+    envOverride: { workforce: workforceBindingWithEmployee('wf-hellen-recovered') },
+  });
+  assert.equal(result.response.status, 503);
+  assert.equal(result.body.code, 'INVITEE_EMAIL_UNAVAILABLE');
+  const onboarding = await env.DB.prepare('SELECT account_status, workforce_employee_id, invite_id, provisioning_state, last_error_code FROM crm_employee_onboarding WHERE id=?').bind('hellenmelo-employee').first();
+  const team = await env.DB.prepare('SELECT workforce_employee_id FROM crm_employee_team WHERE onboarding_id=?').bind('hellenmelo-employee').first();
+  assert.equal(onboarding.account_status, 'INVITED');
+  assert.equal(onboarding.workforce_employee_id, 'wf-hellen-recovered');
+  assert.equal(onboarding.invite_id, 'pending-hellen-invite');
+  assert.equal(onboarding.provisioning_state, 'INVITE_PENDING');
+  assert.equal(onboarding.last_error_code, null);
+  assert.equal(team.workforce_employee_id, 'wf-hellen-recovered');
+});
+
+test('resend keeps the prior invite untouched when automatic Workforce reconciliation fails', async () => {
   await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='INVITED', workforce_employee_id=NULL, invite_id='pending-hellen-invite', provisioning_state='FAILED' WHERE id=?").bind('hellenmelo-employee').run();
-  const result = await callRoute('/admin/team/hellenmelo-employee/invite/resend', { method: 'POST' });
+  const result = await callRoute('/admin/team/hellenmelo-employee/invite/resend', {
+    method: 'POST',
+    envOverride: { workforce: workforceBinding(false) },
+  });
+  assert.equal(result.response.status, 503);
+  assert.equal(result.body.code, 'WORKFORCE_TEST_FAILURE');
+  const onboarding = await env.DB.prepare('SELECT account_status, workforce_employee_id, invite_id, provisioning_state, last_error_code FROM crm_employee_onboarding WHERE id=?').bind('hellenmelo-employee').first();
+  assert.equal(onboarding.account_status, 'INVITED');
+  assert.equal(onboarding.workforce_employee_id, null);
+  assert.equal(onboarding.invite_id, 'pending-hellen-invite');
+  assert.equal(onboarding.provisioning_state, 'FAILED');
+  assert.equal(onboarding.last_error_code, 'WORKFORCE_TEST_FAILURE');
+});
+
+test('resend rejects a conflicting automatic Workforce binding before invitation mutation', async () => {
+  await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='INVITED', workforce_employee_id=NULL, invite_id='pending-hellen-invite', provisioning_state='FAILED' WHERE id=?").bind('hellenmelo-employee').run();
+  const result = await callRoute('/admin/team/hellenmelo-employee/invite/resend', {
+    method: 'POST',
+    envOverride: { workforce: workforceBindingWithEmployee('wf-unlinked') },
+  });
   assert.equal(result.response.status, 409);
-  assert.equal(result.body.code, 'TEAM_WORKFORCE_BINDING_REQUIRED');
+  assert.equal(result.body.code, 'TEAM_WORKFORCE_BINDING_CONFLICT');
   const onboarding = await env.DB.prepare('SELECT account_status, workforce_employee_id, invite_id FROM crm_employee_onboarding WHERE id=?').bind('hellenmelo-employee').first();
   assert.equal(onboarding.account_status, 'INVITED');
   assert.equal(onboarding.workforce_employee_id, null);
