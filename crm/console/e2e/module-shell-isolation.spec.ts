@@ -18,7 +18,7 @@ async function mockAuthenticatedShell(page: Page, allowedModules: string[] = ['f
           username: 'shell-e2e',
           email: 'shell-e2e@staging.invalid',
           role: 'GESTOR',
-          allowedUnits: ['novo-hamburgo'],
+          allowedUnits: ['novo-hamburgo', 'barra-shopping-sul'],
           allowedModules,
         },
       }),
