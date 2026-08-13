@@ -54,6 +54,8 @@ jobs:
         run: node --test .github/scripts/ponto-core-baseline-publisher.test.mjs
       - name: Test Ponto Core staging predecessor attestation
         run: node --test .github/scripts/ponto-core-staging-precondition.test.mjs
+      - name: Test Ponto cancelled Core rollback guard
+        run: node --test .github/scripts/ponto-cancelled-core-before-mutation.test.mjs .github/scripts/ponto-automatic-rollback-safety.test.mjs
       - name: Validate module catalog, maturity and dependency graph
         run: node .github/scripts/validate-module-catalog.mjs && node .github/scripts/validate-module-maturity.mjs
       - name: Validate domain import boundaries

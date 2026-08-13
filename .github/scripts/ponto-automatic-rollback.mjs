@@ -18,6 +18,11 @@ import {
 import { releaseTagFor } from "./ponto-release-identity.mjs";
 import { attestBrokerFailCloseEvidence } from "./ponto-recovery-evidence.mjs";
 import { readCloudflareKvJson } from "./ponto-kv-readback.mjs";
+import { resolveStagingCorePrecondition } from "./ponto-core-staging-precondition.mjs";
+import {
+  inspectCancelledBeforeRunnerDeployJob,
+  validateAttestedStagingCorePredecessor,
+} from "./ponto-cancelled-core-before-mutation.mjs";
 
 const [artifactRoot, reportFile] = process.argv.slice(2);
 const releaseSha = String(process.env.RELEASE_SHA || "").trim().toLowerCase();
@@ -331,6 +336,9 @@ for (const [name, spec] of Object.entries(surfaceSpecs)) {
       surface: name,
       childRunId: String(run.runId),
       run,
+      surfaceFile,
+      journalFile,
+      spec,
     });
   }
   const migrationStarted = journalValid && journal.migrationStarted === true;
@@ -735,33 +743,67 @@ const github = async (pathname, init = {}) => {
 const preMutationJobNames = Object.freeze({
   coreApi: "deploy",
 });
-const attestCancelledBeforeMutation = async ({ surface, childRunId, run }) => {
+const attestCancelledBeforeMutation = async ({
+  surface,
+  childRunId,
+  run,
+  surfaceFile,
+  journalFile,
+  spec,
+}) => {
   const expectedJobName = preMutationJobNames[surface];
-  if (!expectedJobName || run.conclusion !== "cancelled" || !/^[1-9][0-9]*$/.test(childRunId)) {
+  if (
+    !staging
+    || !expectedJobName
+    || run.conclusion !== "cancelled"
+    || !/^[1-9][0-9]*$/.test(childRunId)
+    || fs.existsSync(surfaceFile)
+    || fs.existsSync(journalFile)
+  ) {
     return { passed: false, reason: "mutation-journal-missing-or-invalid" };
   }
+
+  let jobProof;
   try {
     const payload = await github(
       `/repos/${repository}/actions/runs/${encodeURIComponent(childRunId)}/jobs?filter=latest&per_page=100`,
     );
-    const jobs = Array.isArray(payload?.jobs) ? payload.jobs : null;
-    const totalCount = Number(payload?.total_count);
-    const expectedJobs = jobs?.filter((job) => job?.name === expectedJobName) || [];
-    const expectedJob = expectedJobs[0];
-    const neverStarted = Array.isArray(jobs)
-      && Number.isSafeInteger(totalCount)
-      && totalCount === jobs.length
-      && expectedJobs.length === 1
-      && expectedJob?.status === "completed"
-      && expectedJob?.conclusion === "cancelled"
-      && Array.isArray(expectedJob?.steps)
-      && expectedJob.steps.length === 0;
-    return neverStarted
-      ? { passed: true, jobName: expectedJobName, disposition: "cancelled-before-mutation" }
-      : { passed: false, reason: "mutation-journal-missing-or-invalid" };
+    jobProof = inspectCancelledBeforeRunnerDeployJob(payload);
   } catch {
     return { passed: false, reason: "pre-mutation-job-attestation-unavailable" };
   }
+  if (!jobProof.passed) return { passed: false, reason: "mutation-journal-missing-or-invalid" };
+
+  let predecessorProof;
+  try {
+    const catalogPath = path.resolve("platform/deploy/operational-units.json");
+    if (!fs.existsSync(catalogPath)) {
+      return { passed: false, reason: "staging-core-predecessor-catalog-missing" };
+    }
+    predecessorProof = await resolveStagingCorePrecondition({
+      catalog: readJson(catalogPath),
+      accountId,
+      apiToken,
+      repository,
+      catalogPath,
+    });
+  } catch {
+    return { passed: false, reason: "staging-core-predecessor-proof-unavailable" };
+  }
+  const incumbent = validateAttestedStagingCorePredecessor({
+    proof: predecessorProof,
+    releaseSha,
+    workerName: spec.workerName,
+  });
+  if (!incumbent.passed) return { passed: false, reason: incumbent.reason };
+
+  return {
+    passed: true,
+    jobName: expectedJobName,
+    disposition: "cancelled-before-runner-no-worker-mutation",
+    deployJob: jobProof.job,
+    predecessor: incumbent.predecessor,
+  };
 };
 const preMutationCancellations = {};
 for (const candidate of preMutationCancellationCandidates) {
@@ -773,6 +815,8 @@ for (const candidate of preMutationCancellationCandidates) {
       childRunId: candidate.childRunId,
       jobName: proof.jobName,
       disposition: proof.disposition,
+      deployJob: proof.deployJob,
+      predecessor: proof.predecessor,
     };
     continue;
   }

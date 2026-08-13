@@ -79,14 +79,13 @@ test("recovery accepts only children from the exact immutable Ponto release tag"
   assert.doesNotMatch(source, /run\.headBranch !== "main"/);
 });
 
-test("a cancelled Core child is untouched only when GitHub attests that deploy never started", () => {
+test("a cancelled staging Core child is untouched only with runner and live-incumbent proof", () => {
   assert.match(source, /const preMutationJobNames = Object\.freeze\(\{\s*coreApi: "deploy",/s);
-  assert.match(source, /run\.conclusion !== "cancelled"/);
   assert.match(source, /actions\/runs\/\$\{encodeURIComponent\(childRunId\)\}\/jobs\?filter=latest&per_page=100/);
-  assert.match(source, /expectedJob\?\.status === "completed"/);
-  assert.match(source, /expectedJob\?\.conclusion === "cancelled"/);
-  assert.match(source, /Array\.isArray\(expectedJob\?\.steps\)/);
-  assert.match(source, /expectedJob\.steps\.length === 0/);
-  assert.match(source, /untouched\[candidate\.surface\] = proof\.disposition/);
-  assert.match(source, /pre-mutation-job-attestation-unavailable/);
+  assert.match(source, /inspectCancelledBeforeRunnerDeployJob/);
+  assert.match(source, /resolveStagingCorePrecondition/);
+  assert.match(source, /validateAttestedStagingCorePredecessor/);
+  assert.match(source, /cancelled-before-runner-no-worker-mutation/);
+  assert.match(source, /fs\.existsSync\(surfaceFile\)/);
+  assert.match(source, /fs\.existsSync\(journalFile\)/);
 });
