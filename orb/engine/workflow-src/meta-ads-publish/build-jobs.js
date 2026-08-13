@@ -279,7 +279,7 @@ function publicDestinationContract(contract) {
 // UTMs. Values remain raw so already-encoded bytes are not encoded twice.
 const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
 const URL_TAG_FORBIDDEN_KEY_PATTERN = /(?:token|secret|password|authorization|signature|api_?key)/i;
-const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-@!$'()*\/;]+$/;
+const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-@!$'()*\/;=]+$/;
 
 function validUrlTags(value) {
   const raw = value === undefined || value === null ? '' : String(value);
@@ -287,7 +287,7 @@ function validUrlTags(value) {
   const seen = new Set();
   for (const pair of raw.split('&')) {
     const separator = pair.indexOf('=');
-    if (separator <= 0 || separator !== pair.lastIndexOf('=')) return false;
+    if (separator <= 0) return false;
     const key = pair.slice(0, separator).toLowerCase();
     const parameterValue = pair.slice(separator + 1);
     if (!URL_TAG_PARAMETER_KEY_PATTERN.test(key) || URL_TAG_FORBIDDEN_KEY_PATTERN.test(key) || seen.has(key) || !parameterValue || !URL_TAG_VALUE_PATTERN.test(parameterValue)) return false;
@@ -2795,6 +2795,12 @@ for (const entry of jobEntries) {
         batch_fingerprint: safeString(job.batch_fingerprint),
         workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
         config_revision: safeString(destinationMeta.config_revision || job.config_revision),
+        tracking_binding_revision: safeString(
+          destinationMeta.tracking_binding_revision ||
+            job.tracking_binding_revision ||
+            destinationMeta.config_revision ||
+            job.config_revision,
+        ),
         allowed_link_hosts: deepClone(allowedLinkHosts),
         landing_page_url: primaryLinkUrl,
         scheduling_landing_page_url: schedulingLandingPageUrl,

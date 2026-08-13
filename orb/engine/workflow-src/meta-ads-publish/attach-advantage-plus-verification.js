@@ -286,9 +286,12 @@ function verifyCreativeTracking(source, creative, graphReadbackAvailable) {
       reason: inherited ? 'whatsapp_inherited_url_tags_observed' : 'whatsapp_destination',
     };
   }
+  const websiteEventRequired = text(tracking.website_event_requirement) === 'required';
+  const offlineDatasetRequired = text(tracking.offline_event_dataset_requirement) === 'required';
+  const websiteEventStatusValid = text(tracking.website_event_status) === (websiteEventRequired ? 'configured' : 'not_required');
+  const offlineDatasetStatusValid = text(tracking.offline_event_dataset_status) === (offlineDatasetRequired ? 'configured' : 'not_required');
   if (kind !== 'website' || tracking.profile_configured !== true || !['verified', 'reconciled'].includes(text(tracking.reconciliation_status)) ||
-    text(tracking.website_event_status) !== 'configured' ||
-    (text(tracking.offline_event_dataset_requirement) === 'required' && text(tracking.offline_event_dataset_status) !== 'configured') ||
+    !websiteEventStatusValid || !offlineDatasetStatusValid ||
     text(tracking.url_tags_status) !== 'expected' || !expected) {
     return {
       status: 'mismatch',

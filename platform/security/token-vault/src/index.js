@@ -1,6 +1,7 @@
 import {
   handleMetaAdsPublishRequest,
   isMetaAdsPublishPath,
+  updateMetaAdsPublishConfig,
 } from './meta-ads-publish.js';
 import { handleSocialPublishOperation } from './social-publish.js';
 import { handleAnalyticsReadonlyRequest } from './analytics-readonly.js';
@@ -52,6 +53,15 @@ export async function handleRequest(request, env) {
 
     if (request.method === 'GET' && pathname === '/health') {
       return health(env, requestId);
+    }
+
+    if (request.method === 'PUT' && pathname === '/v1/meta-ads-publish/config') {
+      if (auth.role !== 'admin') return adminOnly(requestId);
+      return await updateMetaAdsPublishConfig({
+        request,
+        env,
+        requestId,
+      });
     }
 
     if (isMetaAdsPublishPath(pathname)) {
@@ -221,6 +231,9 @@ async function patchToken(id, request, env, requestId) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return json({ ok: false, error: 'invalid_payload', requestId }, { status: 400 });
   }
+  if (hasMetaAdsPublishConfig(body.metadata)) {
+    return json({ ok: false, error: 'meta_ads_publish_config_writer_required', requestId }, { status: 409 });
+  }
 
   const token = safeString(body.token || body.access_token);
   if (!token) {
@@ -298,6 +311,9 @@ async function createToken(request, env, requestId) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return json({ ok: false, error: 'invalid_payload', requestId }, { status: 400 });
   }
+  if (hasMetaAdsPublishConfig(body.metadata)) {
+    return json({ ok: false, error: 'meta_ads_publish_config_writer_required', requestId }, { status: 409 });
+  }
 
   const provider = safeString(body.provider).toLowerCase();
   if (!PROVIDERS.has(provider)) {
@@ -317,6 +333,17 @@ async function createToken(request, env, requestId) {
   const tokenType = safeString(body.token_type || body.tokenType) || 'long_lived_access_token';
   const unit = normalizeNullableString(body.unit);
   const metadata = isObject(body.metadata) ? body.metadata : {};
+  // POST is an upsert with whole-metadata replacement semantics. Never allow
+  // it to silently erase a governed tracking subtree on an existing
+  // credential; the narrow config writer is the only authority for that path.
+  const existing = await env.TOKEN_VAULT_DB.prepare(
+    `SELECT id, metadata_json
+       FROM credential_tokens
+      WHERE provider = ? AND external_account_id = ? AND token_type = ?`,
+  ).bind(provider, externalAccountId, tokenType).first();
+  if (existing && hasMetaAdsPublishConfig(parseJsonObject(existing.metadata_json))) {
+    return json({ ok: false, error: 'meta_ads_publish_config_writer_required', requestId }, { status: 409 });
+  }
   const now = new Date().toISOString();
   const encrypted = await encryptToken(token, env);
 
@@ -482,6 +509,7 @@ function contract(requestId) {
       listTokens: 'GET /internal/token-vault/v1/tokens?provider=threads|instagram|facebook&active=true',
       createToken: 'POST /internal/token-vault/v1/tokens',
       updateToken: 'PATCH /internal/token-vault/v1/tokens/:id',
+      updateMetaAdsPublishConfig: 'PUT /internal/token-vault/v1/meta-ads-publish/config',
       analyticsOperation: 'POST /internal/token-vault/v1/analytics/operations',
     },
     auth: {
@@ -527,6 +555,10 @@ function normalizeNullableString(value) {
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasMetaAdsPublishConfig(value) {
+  return isObject(value) && Object.prototype.hasOwnProperty.call(value, 'meta_ads_publish');
 }
 
 function parseJsonObject(value) {

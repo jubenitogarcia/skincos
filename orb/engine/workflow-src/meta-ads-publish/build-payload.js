@@ -1,4 +1,5 @@
 const inputItems = $input.all();
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_reconciliation';
 
 const SLOT_CONFIG = [
   // Feed uses 4:5 when that exact source asset exists. Other accepted source
@@ -1605,6 +1606,13 @@ const configRevisions = uniqueStrings(destinations.map((destination) => destinat
 if (configRevisions.length !== 1) {
   return buildFailure({ config_revisions: configRevisions }, 'Os destinos nao compartilham a mesma revisao de configuracao do gateway.');
 }
+const trackingBindingRevisions = uniqueStrings(destinations.map((destination) => destination.tracking_binding_revision || destination.config_revision));
+if (trackingBindingRevisions.length !== 1) {
+  return buildFailure(
+    { tracking_binding_revisions: trackingBindingRevisions },
+    'Os destinos nao compartilham a mesma revisao estavel de tracking do gateway.',
+  );
+}
 
 const normalizedSourceAds = sourceAds.map((ad) => {
   const searchText = buildAdSearchText(ad);
@@ -1864,6 +1872,7 @@ for (const group of groupedCreatives) {
       carousel_native_adset_verified: destination.carousel_native_adset_verified === true,
       carousel_native_route_active: destination.carousel_native_route_active === true,
       config_revision: safeString(destination.config_revision),
+      tracking_binding_revision: safeString(destination.tracking_binding_revision || destination.config_revision),
       destination_id_source: 'token_vault',
       suffix_hint: group.suffix_hint,
       warnings: destinationWarnings,
@@ -2005,6 +2014,7 @@ for (const group of groupedCreatives) {
         carousel_native_adset_verified: destination.carousel_native_adset_verified,
         carousel_native_route_active: destination.carousel_native_route_active,
         config_revision: destination.config_revision,
+        tracking_binding_revision: destination.tracking_binding_revision,
         destination_id_source: destination.destination_id_source,
         suffix_hint: destination.suffix_hint,
         warnings: destination.warnings,
@@ -2083,6 +2093,8 @@ for (const group of groupedCreatives) {
       source_ads: deepClone(sourceAds),
       batch_files: deepClone(batchFiles),
       config_revision: configRevisions[0],
+      tracking_binding_revision: trackingBindingRevisions[0],
+      workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
 
       debug_grouping: {
         drive_items_in_group: group.all_candidates.length,

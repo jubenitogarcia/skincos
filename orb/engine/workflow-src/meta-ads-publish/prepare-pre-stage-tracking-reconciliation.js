@@ -1,12 +1,12 @@
 function text(value) { return String(value ?? '').trim(); }
-function list(value) { return Array.isArray(value) ? value : []; }
 function object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function key(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_.:-]+/g, '_').slice(0, 190); }
-// A persisted resume payload can represent any reconciliation boundary. All
-// of these states are safe to replay through the same
-// idempotent Token Vault operation; only the stage gate requires attestation.
-const RESUMABLE_WEBSITE_RECONCILIATION_STATUSES = new Set(['pending', 'verified', 'reconciled']);
 
+// This runs after the creative Graph readback and immediately before staging.
+// It deliberately reuses the first reconciliation operation key: the Token
+// Vault treats completed ensure operations as a fresh GET/(conditional
+// POST)/GET, so a drift introduced while the creative was being created
+// cannot be staged on the strength of a cached attestation.
 function trackingGroupKey(job) {
   const destination = object(job.destination_contract);
   const tracking = object(job.tracking_contract);
@@ -15,53 +15,43 @@ function trackingGroupKey(job) {
   const accountId = text(job.account_id);
   const profileRef = text(tracking.profile_ref);
   if (!text(job.run_id) || !text(job.token_id) || !accountId || !adsetId) {
-    throw new Error(`Prepare Tracking Reconciliation recebeu job incompleto: ${job.job_key || 'sem-chave'}.`);
+    throw new Error(`Prepare Pre-Stage Tracking Reconciliation recebeu job incompleto: ${job.job_key || 'sem-chave'}.`);
   }
   if (kind === 'whatsapp') {
     if (text(tracking.reconciliation_status) !== 'not_applicable' || text(tracking.url_tags_status) !== 'not_applicable' || text(object(job.creativePayload).url_tags)) {
-      throw new Error(`Prepare Tracking Reconciliation recusou contrato WhatsApp invalido: ${job.job_key || adsetId}.`);
+      throw new Error(`Prepare Pre-Stage Tracking Reconciliation recusou contrato WhatsApp invalido: ${job.job_key || adsetId}.`);
     }
     return { kind, adsetId, accountId, profileRef: '', id: `${job.run_id}:${accountId}:${adsetId}:whatsapp` };
   }
   const websiteEventRequired = text(tracking.website_event_requirement) === 'required';
   const offlineDatasetRequired = text(tracking.offline_event_dataset_requirement) === 'required';
-  const reconciliationStatus = text(tracking.reconciliation_status);
-  const attested = ['verified', 'reconciled'].includes(reconciliationStatus);
-  const expectedWebsiteStatus = websiteEventRequired
-    ? (attested ? 'configured' : 'pending_reconciliation')
-    : 'not_required';
-  const expectedOfflineStatus = offlineDatasetRequired
-    ? (attested ? 'configured' : 'pending_reconciliation')
-    : 'not_required';
-  if (kind !== 'website' || tracking.profile_configured !== true || !RESUMABLE_WEBSITE_RECONCILIATION_STATUSES.has(reconciliationStatus) ||
-    text(tracking.website_event_status) !== expectedWebsiteStatus || text(tracking.offline_event_dataset_status) !== expectedOfflineStatus ||
-    !profileRef || text(tracking.url_tags_status) !== 'expected') {
-    throw new Error(`Prepare Tracking Reconciliation recusou contrato Website pendente/incompleto: ${job.job_key || adsetId}.`);
+  if (kind !== 'website' || tracking.profile_configured !== true || !['verified', 'reconciled'].includes(text(tracking.reconciliation_status)) ||
+    text(tracking.website_event_status) !== (websiteEventRequired ? 'configured' : 'not_required') ||
+    text(tracking.offline_event_dataset_status) !== (offlineDatasetRequired ? 'configured' : 'not_required') ||
+    !profileRef || text(tracking.url_tags_status) !== 'expected' || !text(object(job.creativePayload).url_tags)) {
+    throw new Error(`Prepare Pre-Stage Tracking Reconciliation recusou contrato Website nao atestado: ${job.job_key || adsetId}.`);
   }
   return { kind, adsetId, accountId, profileRef, id: `${job.run_id}:${accountId}:${adsetId}:${profileRef}` };
 }
 
 const jobs = $input.all();
-if (!jobs.length) throw new Error('Prepare Tracking Reconciliation recebeu zero jobs validados.');
+if (!jobs.length) throw new Error('Prepare Pre-Stage Tracking Reconciliation recebeu zero creatives verificados.');
 const grouped = new Map();
 const targetContracts = new Map();
 for (const [index, item] of jobs.entries()) {
   const source = object(item.json);
   const group = trackingGroupKey(source);
-  // A single target ad set cannot safely receive two distinct destination/profile
-  // contracts in one resumable run.  The Token Vault owns profile resolution, but
-  // reject the ambiguous fan-out here before any mutation is requested.
   const targetId = `${text(source.run_id)}:${group.accountId}:${group.adsetId}`;
   const contractId = `${group.kind}:${group.profileRef}`;
   const priorContract = targetContracts.get(targetId);
   if (priorContract && priorContract !== contractId) {
-    throw new Error(`Prepare Tracking Reconciliation encontrou contratos de tracking divergentes para ${group.adsetId}.`);
+    throw new Error(`Prepare Pre-Stage Tracking Reconciliation encontrou contratos de tracking divergentes para ${group.adsetId}.`);
   }
   targetContracts.set(targetId, contractId);
   const existing = grouped.get(group.id);
   if (existing) {
     if (existing.token_id !== text(source.token_id) || existing.api_version !== text(source.api_version || 'v25.0') || existing.destination_kind !== group.kind) {
-      throw new Error(`Prepare Tracking Reconciliation encontrou contexto divergente para ${group.adsetId}.`);
+      throw new Error(`Prepare Pre-Stage Tracking Reconciliation encontrou contexto divergente para ${group.adsetId}.`);
     }
     existing.job_indexes.push(index);
     continue;

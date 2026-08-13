@@ -85,7 +85,15 @@ valores de tracking e as chaves que uma reversão pode tocar.
   `key1=value1&key2=value2`. UTM é aceito normalmente, mas não é obrigatório.
   O fragmento é validado e transportado literalmente para `AdCreative.url_tags`;
   o fluxo não usa decodificação nem `URLSearchParams`, portanto `%20` não vira
-  `%2520`.
+  `%2520`. O separador é o primeiro `=` de cada par, portanto valores válidos
+  podem conter `=` (por exemplo, padding de base64) sem alterar o fragmento.
+- Cada mutação de creative ou stage exige a revisão estável v20 do Token Vault,
+  o destino, o ad set e o perfil autorizados e, para Website, o mesmo
+  `url_tags` bruto configurado privadamente. Antes do stage o Token Vault lê de
+  novo o creative e o ad set; se qualquer um divergir, não cria nem altera o
+  anúncio. Um route de carrossel nativo só é aceito quando está explicitamente
+  verificado/ativo e, para Website, quando o perfil privado também autoriza o
+  seu `carousel_native_adset_id` exato.
 - Destinos WhatsApp permanecem `not_applicable`: o fluxo não infere Pixel,
   dataset offline ou `url_tags`, não faz chamada de reconciliação e não troca
   objetivo ou otimização por causa de uma configuração de site.
@@ -95,9 +103,12 @@ valores de tracking e as chaves que uma reversão pode tocar.
 - Para diagnosticar o estado atual sem mutar a Graph, rode no runtime Orb que
   possui a credencial privada
   `scripts/run-meta-ads-conversion-contract-readback.sh`. A rotina abre um
-  run técnico isolado, executa apenas `read_adset_conversion_contract` (Graph `GET`) para os dois
-  destinos e o encerra imediatamente; o resultado é sanitizado e não contém
-  IDs, URLs ou tokens.
+  run técnico isolado, executa `read_adset_conversion_contract` (Graph `GET`)
+  para os dois destinos e, para cada Website, lê o creative pausado de fixture
+  privado via `read_authorized_creative_url_tags_contract` (também somente
+  Graph `GET`). A fixture e seus IDs ficam apenas no Token Vault; o resultado
+  expõe somente booleans de requisito/configuração e não contém IDs, URLs,
+  parâmetros ou tokens.
 
 ## Regras que evitam recorrência
 

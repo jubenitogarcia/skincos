@@ -48,6 +48,8 @@ required=(
   'validate-meta-ads-publish-preflight.js'
   'patch-meta-ads-tracking-reconciliation.js'
   'apply-meta-ads-publish-tracking-release.sh'
+  'rollback-meta-ads-publish-tracking-release.sh'
+  'restore-meta-ads-publish-workflow-snapshot.js'
   '"$DESTINATION/scripts/runtime"'
   'workflow-src/meta-ads-publish'
   'setfacl -Rm u:postgres:rX'
@@ -78,5 +80,6 @@ LIVIA_BUILD_JOB_GRAPH_SOURCE="$ROOT_DIR/orb/engine/compose2-current.js" \
   node "$ROOT_DIR/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-job-graph-contracts >/dev/null
 
 "$ROOT_DIR/scripts/runtime/test-workflow-runtime-retention.sh" >/dev/null
+bash "$ROOT_DIR/scripts/runtime/test-promote-native-source-release.sh" >/dev/null
 
 echo 'PASS: native source release accepts only a checksum-verified Linux archive.'

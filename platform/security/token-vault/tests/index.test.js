@@ -26,6 +26,14 @@ class FakeStatement {
 
   async first() {
     if (this.sql.includes('SELECT 1 AS ok')) return { ok: 1 };
+    if (this.sql.includes('WHERE provider = ? AND external_account_id = ? AND token_type = ?')) {
+      const [provider, externalAccountId, tokenType] = this.values;
+      return this.db.tokens.find((row) => (
+        row.provider === provider &&
+        row.external_account_id === externalAccountId &&
+        row.token_type === tokenType
+      )) || null;
+    }
     if (this.sql.includes('WHERE id = ?')) {
       return this.db.tokens.find((row) => row.id === this.values[0]) || null;
     }
@@ -341,4 +349,69 @@ test('patch updates encrypted token and writes audit without token payload', asy
   assert.equal(body.ok, true);
   assert.notEqual(db.tokens[0].token_ciphertext.includes(INSTAGRAM_NEW_TOKEN), true);
   assert.equal(JSON.stringify(db.audit).includes(INSTAGRAM_NEW_TOKEN), false);
+});
+
+test('generic token CRUD cannot create or shallow-overwrite governed Meta Ads configuration', async () => {
+  const db = new FakeDb();
+  const create = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/tokens', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        metadata: { meta_ads_publish: { destination_group: 'must-use-governed-writer' } },
+      }),
+    }),
+    env(db),
+  );
+  assert.equal(create.status, 409);
+  assert.equal((await create.json()).error, 'meta_ads_publish_config_writer_required');
+
+  db.tokens.push({
+    id: 'tok_facebook_1',
+    provider: 'facebook',
+    unit: 'barra_shopping_sul',
+    external_account_id: '789',
+    token_type: 'long_lived_access_token',
+    token_ciphertext: 'opaque-existing-ciphertext',
+    expires_at: null,
+    last_refreshed_at: null,
+    active: 1,
+    metadata_json: JSON.stringify({
+      retained: true,
+      meta_ads_publish: { destination_group: 'governed-existing-config' },
+    }),
+    created_at: '2026-06-18T00:00:00.000Z',
+    updated_at: '2026-06-18T00:00:00.000Z',
+  });
+  const priorMetadata = db.tokens[0].metadata_json;
+  const replaceViaPost = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/tokens', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'facebook',
+        external_account_id: '789',
+        token: FACEBOOK_TOKEN,
+        metadata: { source: 'generic-upsert-must-not-erase-governed-config' },
+      }),
+    }),
+    env(db),
+  );
+  assert.equal(replaceViaPost.status, 409);
+  assert.equal((await replaceViaPost.json()).error, 'meta_ads_publish_config_writer_required');
+  assert.equal(db.tokens[0].metadata_json, priorMetadata);
+
+  const patch = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/tokens/tok_facebook_1', {
+      method: 'PATCH',
+      headers: { ...authHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        metadata: { meta_ads_publish: { destination_group: 'must-use-governed-writer' } },
+      }),
+    }),
+    env(db),
+  );
+  assert.equal(patch.status, 409);
+  assert.equal((await patch.json()).error, 'meta_ads_publish_config_writer_required');
+  assert.equal(db.tokens.length, 1);
 });

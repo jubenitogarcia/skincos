@@ -47,6 +47,8 @@ const CODE_SOURCES = Object.freeze({
   'Validate Meta Creative Payload': 'validate-meta-creative-payload.js',
   'Prepare Tracking Reconciliation': 'prepare-tracking-reconciliation.js',
   'Attach Tracking Reconciliation': 'attach-tracking-reconciliation.js',
+  'Prepare Pre-Stage Tracking Reconciliation': 'prepare-pre-stage-tracking-reconciliation.js',
+  'Attach Pre-Stage Tracking Reconciliation': 'attach-pre-stage-tracking-reconciliation.js',
   'Prepare Creative Operation': 'prepare-creative-operation.js',
   'Attach Creative Result': 'attach-creative-result.js',
   'Attach Advantage+ Verification': 'attach-advantage-plus-verification.js',

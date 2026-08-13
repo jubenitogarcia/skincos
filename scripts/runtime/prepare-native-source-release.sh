@@ -367,8 +367,10 @@ sudo -n setfacl -m u:postgres:r-- \
 coordination_check
 sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/scripts/runtime/apply-meta-ads-publish-tracking-release.sh" \
+  "$DESTINATION/scripts/runtime/rollback-meta-ads-publish-tracking-release.sh" \
   "$DESTINATION/orb/engine/scripts/export-meta-ads-publish-live.js" \
   "$DESTINATION/orb/engine/scripts/apply-meta-ads-publish-workflow-snapshot.js" \
+  "$DESTINATION/orb/engine/scripts/restore-meta-ads-publish-workflow-snapshot.js" \
   "$DESTINATION/orb/engine/scripts/inspect-meta-ads-publish-version-alignment.js" \
   "$DESTINATION/orb/engine/scripts/validate-meta-ads-publish-preflight.js" \
   "$DESTINATION/orb/engine/scripts/patch-meta-ads-video-transfer-replay.js" \

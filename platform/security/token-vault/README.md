@@ -9,6 +9,7 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 - `GET /internal/token-vault/v1/tokens?provider=threads|instagram|facebook&active=true`
 - `POST /internal/token-vault/v1/tokens`
 - `PATCH /internal/token-vault/v1/tokens/:id`
+- `PUT /internal/token-vault/v1/meta-ads-publish/config`
 - `POST /internal/token-vault/v1/analytics/operations`
 
 Os endpoints administrativos exigem `Authorization: Bearer <TOKEN_VAULT_API_TOKEN>`.
@@ -29,6 +30,78 @@ endpoint para diagnóstico controlado).
   explícita `INFLUENCER_INTELLIGENCE_ENABLED=true`)
 
 Os tokens são gravados em D1 como AES-GCM ciphertext. Logs, auditoria e respostas de PATCH não retornam token em claro.
+
+## Configuração governada do Meta Ads Publish
+
+O endpoint PUT /internal/token-vault/v1/meta-ads-publish/config é o único
+writer para metadata.meta_ads_publish. Ele exige o bearer administrativo,
+aceita somente um corpo fechado com operation_key,
+expected_tracking_binding_revision e updates; cada item de updates contém
+somente token_id e meta_ads_publish. Nenhum campo de token, access token,
+secret, ciphertext ou metadata externo é aceito.
+
+O writer recebe todos os destinos que precisam mudar no mesmo lote. Ele
+preserva os outros campos de metadata_json de cada credencial e substitui
+somente metadata.meta_ads_publish com uma única operação D1 condicionada a
+todas as versões anteriores. Operação, atualizações e auditoria sanitizada são
+atômicas. POST/PATCH /v1/tokens rejeitam qualquer metadata.meta_ads_publish,
+pois o merge raso desses endpoints não é seguro para essa configuração.
+
+O operador primeiro consulta GET /v1/meta-ads-publish/config com a credencial
+administrativa e usa exatamente config_authority_revision como
+expected_tracking_binding_revision. Quando a fonte ainda é legada, esse valor
+tem o formato legacy:<hash> e é derivado da configuração atual; não existe
+valor curinga ou bypass. Após a substituição, a resposta do writer retorna
+somente hashes, status e requestId; uma repetição com o mesmo operation_key e
+o mesmo corpo é idempotente.
+
+O manifesto deve ficar em custódia privada, fora do repositório, logs e
+histórico de shell. A forma do corpo é:
+
+    {
+      "operation_key": "...",
+      "expected_tracking_binding_revision": "...",
+      "updates": [
+        {
+          "token_id": "...",
+          "meta_ads_publish": {
+            "destination_group": "...",
+            "api_version": "...",
+            "account_id": "...",
+            "campaign_id": "...",
+            "adset_id": "...",
+            "page_id": "...",
+            "instagram_user_id": "...",
+            "allowed_link_hosts": ["..."],
+            "landing_pages_by_creative_group": {},
+            "destination_type": "website",
+            "tracking_contract": {
+              "url_tags": "...",
+              "profile_ref": "...",
+              "production_url_tags_readback_fixture": {
+                "ad_id": "...",
+                "creative_id": "..."
+              }
+            },
+            "tracking_profiles": {}
+          }
+        }
+      ]
+    }
+
+Para destination_type="website", o contrato exige parâmetros url_tags válidos
+(pares arbitrários key=value separados por &, preservados sem double encoding),
+um perfil Website com requisitos explícitos para evento de website e dataset
+offline, e uma fixture de criativo pausado. IDs de pixel, evento e dataset não
+são aceitos no manifesto: o Gateway os lê do ad set fonte autorizado. Para
+destination_type="whatsapp", use whatsapp_destination_url HTTPS de WhatsApp e
+omita integralmente tracking_contract, tracking_profiles e campos de carousel.
+
+Fluxo seguro: obter a revisão opaca via GET, preparar o manifesto privado,
+enviar o PUT com bearer injetado pela custódia sem imprimir o valor, repetir
+GET /v1/meta-ads-publish/config para readback e só então executar o preflight
+Meta Ads Publish. Não inclua manifestos privados, headers Authorization ou
+respostas detalhadas em Git, comentários de PR ou logs.
 
 ## Analytics read-only
 

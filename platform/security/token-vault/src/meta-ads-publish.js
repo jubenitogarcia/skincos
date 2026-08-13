@@ -63,6 +63,42 @@ const TRACKING_PROMOTED_OBJECT_KEYS = Object.freeze([
   'custom_conversion_id',
   'offline_conversion_data_set_id',
 ]);
+// A Website profile may omit a website event only when both the campaign and
+// optimization objective are explicitly known to be non-conversion delivery.
+// Meta adds delivery goals over time, so an unknown goal must never silently
+// inherit the optional branch.  In particular, VALUE is a conversion goal even
+// though it does not contain the word CONVERSION.
+const WEBSITE_EVENT_REQUIRED_OPTIMIZATION_GOALS = new Set([
+  'OFFSITE_CONVERSIONS',
+  'APP_INSTALLS_AND_OFFSITE_CONVERSIONS',
+  'CONVERSIONS',
+  'VALUE',
+  'VALUE_OPTIMIZATION',
+  'PURCHASE',
+  'SALES',
+  'LEAD_GENERATION',
+]);
+const WEBSITE_EVENT_OPTIONAL_OPTIMIZATION_GOALS = new Set([
+  'LINK_CLICKS',
+  'LANDING_PAGE_VIEWS',
+  'REACH',
+  'IMPRESSIONS',
+  'THRUPLAY',
+  'VIDEO_VIEWS',
+  'POST_ENGAGEMENT',
+  'PAGE_LIKES',
+  'EVENT_RESPONSES',
+]);
+const WEBSITE_EVENT_REQUIRED_CAMPAIGN_OBJECTIVES = new Set([
+  'OUTCOME_SALES',
+  'OUTCOME_LEADS',
+  'OUTCOME_APP_PROMOTION',
+]);
+const WEBSITE_EVENT_OPTIONAL_CAMPAIGN_OBJECTIVES = new Set([
+  'OUTCOME_TRAFFIC',
+  'OUTCOME_AWARENESS',
+  'OUTCOME_ENGAGEMENT',
+]);
 const CAMPAIGN_READ_FIELDS = [
   'id',
   'name',
@@ -124,6 +160,69 @@ const VIDEO_UPLOAD_ACTIONS = Object.freeze([
 // run, so a partial rollout cannot silently mix producer, checkpoint and
 // gateway behavior.
 const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_reconciliation';
+const CONFIG_WRITER_LOCK_RESOURCE_KEY = 'meta_ads_publish_config_authority';
+const CONFIG_WRITER_LOCK_TTL_MS = 60 * 1000;
+const CONFIG_WRITER_MAX_REQUEST_BYTES = 150 * 1024;
+const CONFIG_WRITER_TOKEN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
+const CONFIG_WRITER_OPERATION_KEY_PATTERN = /^[A-Za-z0-9_.:-]{8,160}$/;
+const CONFIG_WRITER_TOP_LEVEL_KEYS = new Set([
+  'row_number',
+  'destination_group',
+  'api_version',
+  'account_id',
+  'campaign_id',
+  'adset_id',
+  'page_id',
+  'instagram_user_id',
+  'allowed_link_hosts',
+  'landing_pages_by_creative_group',
+  'freshness_window_days',
+  'destination_type',
+  'whatsapp_destination_url',
+  'tracking_contract',
+  'tracking_profiles',
+  'carousel_native_campaign_id',
+  'carousel_native_adset_id',
+  'carousel_native_adset_verified',
+  'carousel_native_route_active',
+]);
+const CONFIG_WRITER_TRACKING_CONTRACT_KEYS = new Set([
+  'url_tags',
+  'profile_ref',
+  'production_url_tags_readback_fixture',
+]);
+const CONFIG_WRITER_TRACKING_PROFILE_KEYS = new Set([
+  'source_adset_id',
+  'destination_kind',
+  'website_event_requirement',
+  'offline_event_dataset_requirement',
+  'staging_synthetic_fixture',
+  'authorized_destination_adset_ids',
+]);
+const CONFIG_WRITER_FIXTURE_KEYS = new Set(['ad_id', 'creative_id']);
+const CONFIG_WRITER_CAROUSEL_KEYS = [
+  'carousel_native_campaign_id',
+  'carousel_native_adset_id',
+  'carousel_native_adset_verified',
+  'carousel_native_route_active',
+];
+const CONFIG_WRITER_ERROR_CODES = new Set([
+  'meta_ads_publish_config_request_invalid',
+  'meta_ads_publish_config_request_too_large',
+  'meta_ads_publish_config_token_id_invalid',
+  'meta_ads_publish_config_operation_key_invalid',
+  'meta_ads_publish_config_expected_tracking_binding_revision_invalid',
+  'meta_ads_publish_config_invalid',
+  'meta_ads_publish_config_token_not_eligible',
+  'meta_ads_publish_config_binding_not_ready',
+  'meta_ads_publish_config_binding_stale',
+  'meta_ads_publish_config_operation_conflict',
+  'meta_ads_publish_config_operation_in_progress',
+  'meta_ads_publish_config_operation_state_stale',
+  'meta_ads_publish_config_locked',
+  'meta_ads_publish_config_readback_mismatch',
+  'meta_ads_publish_config_authority_unavailable',
+]);
 const MUTATING_ACTIONS = new Set([
   'upload_image',
   'start_video_upload',
@@ -148,6 +247,7 @@ const ALLOWED_ACTIONS = new Set([
   'get_ad',
   'get_adset',
   'read_adset_conversion_contract',
+  'read_authorized_creative_url_tags_contract',
   'ensure_adset_conversion_contract',
   'rollback_adset_conversion_contract',
   'get_campaign',
@@ -238,6 +338,689 @@ export async function handleMetaAdsPublishRequest(input) {
   return response({ ok: false, error: 'meta_ads_publish_not_found', requestId }, 404);
 }
 
+// This writer is intentionally separate from the token CRUD endpoints.  The
+// credential ciphertext is never accepted, decrypted, or re-encrypted here:
+// the only mutable subtree is metadata.meta_ads_publish.
+export async function updateMetaAdsPublishConfig({ request, env, requestId }) {
+  let lockOwner = '';
+  let lockAcquired = false;
+  try {
+    const body = await readConfigWriterRequest(request);
+    const input = await validateConfigWriterInput(body);
+    if (!env?.TOKEN_VAULT_DB || typeof env.TOKEN_VAULT_DB.batch !== 'function') {
+      throw configWriterFailure('meta_ads_publish_config_authority_unavailable', 503);
+    }
+
+    lockOwner = crypto.randomUUID();
+    await acquireConfigWriterLock(env, lockOwner);
+    lockAcquired = true;
+
+    const existingOperation = await dbFirst(
+      env,
+      [
+        'SELECT operation_key, target_token_ids_json, request_hash, resulting_tracking_binding_revision, status',
+        'FROM meta_ads_publish_config_operations WHERE operation_key = ?',
+      ].join(' '),
+      input.operationKey,
+    );
+    const currentRows = await listMetaAdsPublishConfigRows(env);
+    const currentAuthority = await configWriterAuthorityState(currentRows);
+
+    if (existingOperation) {
+      if (clean(existingOperation.request_hash) !== input.requestHash) {
+        throw configWriterFailure('meta_ads_publish_config_operation_conflict', 409);
+      }
+      if (clean(existingOperation.status) !== 'applied') {
+        throw configWriterFailure('meta_ads_publish_config_operation_in_progress', 409);
+      }
+      if (
+        !currentAuthority.ready ||
+        clean(existingOperation.resulting_tracking_binding_revision) !== currentAuthority.revision
+      ) {
+        throw configWriterFailure('meta_ads_publish_config_operation_state_stale', 409);
+      }
+      return configWriterSuccessResponse({
+        replayed: true,
+        revision: currentAuthority.revision,
+        requestId,
+      });
+    }
+
+    if (currentAuthority.revision !== input.expectedTrackingBindingRevision) {
+      throw configWriterFailure('meta_ads_publish_config_binding_stale', 409);
+    }
+
+    const plans = input.updates.map((update) => {
+      const target = currentRows.find((row) => clean(row.id) === update.tokenId);
+      if (!target || Number(target.active) !== 1) {
+        throw configWriterFailure('meta_ads_publish_config_token_not_eligible', 409);
+      }
+      const previousMetadata = parseConfigWriterMetadata(target.metadata_json);
+      const nextMetadata = {
+        ...previousMetadata,
+        meta_ads_publish: update.metaAdsPublish,
+      };
+      return {
+        tokenId: update.tokenId,
+        target,
+        nextMetadataJson: JSON.stringify(nextMetadata),
+      };
+    });
+    const plansByTokenId = new Map(plans.map((plan) => [plan.tokenId, plan]));
+    const candidateRows = currentRows.map((row) => (
+      plansByTokenId.has(clean(row.id))
+        ? { ...row, metadata_json: plansByTokenId.get(clean(row.id)).nextMetadataJson }
+        : row
+    ));
+    const candidateAuthority = await configWriterAuthorityState(candidateRows);
+    if (!candidateAuthority.ready) {
+      throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+    }
+
+    const operationId = crypto.randomUUID();
+    const now = nowIso();
+    const auditMetadata = JSON.stringify({
+      contract_revision: WORKFLOW_CONTRACT_REVISION,
+      operation: 'meta_ads_publish_config_update',
+      prior_tracking_binding_revision: currentAuthority.revision,
+      resulting_tracking_binding_revision: candidateAuthority.revision,
+      target_count: plans.length,
+    });
+    const batchStatements = [
+      env.TOKEN_VAULT_DB.prepare([
+        'INSERT INTO meta_ads_publish_config_operations (',
+        'id, operation_key, target_token_ids_json, request_hash, expected_tracking_binding_revision,',
+        'resulting_tracking_binding_revision, status, created_at, updated_at',
+        ') VALUES (?, ?, ?, ?, ?, ?, \'pending\', ?, ?)',
+        'ON CONFLICT(operation_key) DO NOTHING',
+      ].join(' ')).bind(
+        operationId,
+        input.operationKey,
+        input.targetTokenIdsJson,
+        input.requestHash,
+        input.expectedTrackingBindingRevision,
+        candidateAuthority.revision,
+        now,
+        now,
+      ),
+      buildConfigWriterAtomicMetadataUpdate(env, {
+        plans,
+        now,
+        operationId,
+        requestHash: input.requestHash,
+      }),
+      buildConfigWriterAppliedOperationUpdate(env, {
+        plans,
+        now,
+        operationId,
+      }),
+    ];
+    for (const plan of plans) {
+      batchStatements.push(env.TOKEN_VAULT_DB.prepare([
+        'INSERT INTO credential_token_audit (',
+        'id, token_id, event, provider, unit, token_type, status, request_id, metadata_json',
+        ') SELECT ?, ?, \'meta_ads_publish.config.update\', \'facebook\', ?, ?, \'ok\', ?, ?',
+        'WHERE EXISTS (SELECT 1 FROM meta_ads_publish_config_operations',
+        'WHERE id = ? AND status = \'applied\')',
+      ].join(' ')).bind(
+        crypto.randomUUID(),
+        plan.tokenId,
+        clean(plan.target.unit) || null,
+        clean(plan.target.token_type) || null,
+        clean(requestId) || null,
+        auditMetadata,
+        operationId,
+      ));
+    }
+    batchStatements.push(
+      env.TOKEN_VAULT_DB.prepare([
+        'DELETE FROM meta_ads_publish_config_operations',
+        'WHERE id = ? AND status = \'pending\'',
+      ].join(' ')).bind(operationId),
+    );
+    const batchResults = await env.TOKEN_VAULT_DB.batch(batchStatements);
+    if (
+      batchChanges(batchResults, 1) !== plans.length ||
+      batchChanges(batchResults, 2) !== 1
+    ) {
+      throw configWriterFailure('meta_ads_publish_config_readback_mismatch', 409);
+    }
+
+    const readbackAuthority = await configWriterAuthorityState(await listMetaAdsPublishConfigRows(env));
+    if (!readbackAuthority.ready || readbackAuthority.revision !== candidateAuthority.revision) {
+      throw configWriterFailure('meta_ads_publish_config_readback_mismatch', 409);
+    }
+    return configWriterSuccessResponse({
+      replayed: false,
+      revision: readbackAuthority.revision,
+      requestId,
+    }, 201);
+  } catch (error) {
+    return configWriterFailureResponse(error, requestId);
+  } finally {
+    if (lockAcquired) {
+      await releaseConfigWriterLock(env, lockOwner);
+    }
+  }
+}
+
+async function readConfigWriterRequest(request) {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > CONFIG_WRITER_MAX_REQUEST_BYTES) {
+    throw configWriterFailure('meta_ads_publish_config_request_too_large', 413);
+  }
+  try {
+    const body = await request.json();
+    if (!isJsonObject(body)) {
+      throw configWriterFailure('meta_ads_publish_config_request_invalid', 400);
+    }
+    return body;
+  } catch (error) {
+    if (isConfigWriterFailure(error)) throw error;
+    throw configWriterFailure('meta_ads_publish_config_request_invalid', 400);
+  }
+}
+
+async function validateConfigWriterInput(body) {
+  assertExactKeys(body, new Set([
+    'operation_key',
+    'expected_tracking_binding_revision',
+    'updates',
+  ]));
+  const operationKey = clean(body.operation_key);
+  if (!CONFIG_WRITER_OPERATION_KEY_PATTERN.test(operationKey)) {
+    throw configWriterFailure('meta_ads_publish_config_operation_key_invalid', 400);
+  }
+  const expectedTrackingBindingRevision = clean(body.expected_tracking_binding_revision).toLowerCase();
+  if (
+    !/^[a-f0-9]{64}$/.test(expectedTrackingBindingRevision) &&
+    !/^legacy:[a-f0-9]{64}$/.test(expectedTrackingBindingRevision)
+  ) {
+    throw configWriterFailure('meta_ads_publish_config_expected_tracking_binding_revision_invalid', 400);
+  }
+  if (!Array.isArray(body.updates) || !body.updates.length || body.updates.length > 50) {
+    throw configWriterFailure('meta_ads_publish_config_request_invalid', 400);
+  }
+  const seenTokenIds = new Set();
+  const updates = body.updates.map((rawUpdate) => {
+    assertExactKeys(rawUpdate, new Set(['token_id', 'meta_ads_publish']));
+    const tokenId = clean(rawUpdate.token_id);
+    if (!CONFIG_WRITER_TOKEN_ID_PATTERN.test(tokenId) || seenTokenIds.has(tokenId)) {
+      throw configWriterFailure('meta_ads_publish_config_token_id_invalid', 400);
+    }
+    seenTokenIds.add(tokenId);
+    return {
+      tokenId,
+      metaAdsPublish: validateGovernedMetaAdsPublishConfig(rawUpdate.meta_ads_publish),
+    };
+  }).sort((left, right) => left.tokenId.localeCompare(right.tokenId));
+  const serialized = stableStringify(updates);
+  if (serialized.length > CONFIG_WRITER_MAX_REQUEST_BYTES) {
+    throw configWriterFailure('meta_ads_publish_config_request_too_large', 413);
+  }
+  const targetTokenIds = updates.map((update) => update.tokenId);
+  return {
+    operationKey,
+    expectedTrackingBindingRevision,
+    updates,
+    targetTokenIdsJson: JSON.stringify(targetTokenIds),
+    requestHash: await sha256(stableStringify({
+      operation_key: operationKey,
+      expected_tracking_binding_revision: expectedTrackingBindingRevision,
+      updates,
+    })),
+  };
+}
+
+function validateGovernedMetaAdsPublishConfig(value) {
+  try {
+    if (!isJsonObject(value)) throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+    assertExactKeys(value, CONFIG_WRITER_TOP_LEVEL_KEYS);
+    const destinationType = normalizeDestinationKind(value.destination_type);
+    const config = {
+      destination_group: requireConfigText(value.destination_group, 160),
+      api_version: normalizeApiVersion(requireConfigText(value.api_version, 24)),
+      account_id: normalizeNumericId(value.account_id, 'account_id'),
+      campaign_id: normalizeNumericId(value.campaign_id, 'campaign_id'),
+      adset_id: normalizeNumericId(value.adset_id, 'adset_id'),
+      page_id: normalizeNumericId(value.page_id, 'page_id'),
+      instagram_user_id: normalizeNumericId(value.instagram_user_id, 'instagram_user_id'),
+      allowed_link_hosts: normalizeConfigWriterHosts(value.allowed_link_hosts),
+      landing_pages_by_creative_group: normalizeConfigWriterLandingPages(
+        value.landing_pages_by_creative_group,
+        value.allowed_link_hosts,
+      ),
+      freshness_window_days: normalizeConfigWriterDays(value.freshness_window_days),
+      destination_type: destinationType,
+    };
+    if (Object.prototype.hasOwnProperty.call(value, 'row_number')) {
+      config.row_number = normalizeConfigWriterRowNumber(value.row_number);
+    }
+    if (destinationType === 'whatsapp') {
+      if (
+        Object.prototype.hasOwnProperty.call(value, 'tracking_contract') ||
+        Object.prototype.hasOwnProperty.call(value, 'tracking_profiles') ||
+        CONFIG_WRITER_CAROUSEL_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value, key))
+      ) {
+        throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+      }
+      config.whatsapp_destination_url = normalizeConfigWriterWhatsAppUrl(value.whatsapp_destination_url);
+      return config;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(value, 'whatsapp_destination_url')) {
+      throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+    }
+    const tracking = normalizeConfigWriterWebsiteTracking(value, config.adset_id);
+    config.tracking_contract = tracking.tracking_contract;
+    config.tracking_profiles = tracking.tracking_profiles;
+    Object.assign(config, tracking.carousel);
+    return config;
+  } catch (error) {
+    if (isConfigWriterFailure(error)) throw error;
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+}
+
+function normalizeConfigWriterWebsiteTracking(value, targetAdsetId) {
+  const rawContract = value.tracking_contract;
+  const rawProfiles = value.tracking_profiles;
+  if (!isJsonObject(rawContract) || !isJsonObject(rawProfiles)) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  assertExactKeys(rawContract, CONFIG_WRITER_TRACKING_CONTRACT_KEYS);
+  const profileRef = normalizeTrackingProfileRef(rawContract.profile_ref);
+  if (!profileRef || !Object.prototype.hasOwnProperty.call(rawProfiles, profileRef)) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  const fixture = normalizeConfigWriterPausedFixture(rawContract.production_url_tags_readback_fixture);
+  const trackingProfiles = {};
+  const entries = Object.entries(rawProfiles);
+  if (!entries.length || entries.length > 30) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  for (const [rawProfileRef, rawProfile] of entries) {
+    const normalizedRef = normalizeTrackingProfileRef(rawProfileRef);
+    if (!normalizedRef || normalizedRef !== rawProfileRef || !isJsonObject(rawProfile)) {
+      throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+    }
+    assertExactKeys(rawProfile, CONFIG_WRITER_TRACKING_PROFILE_KEYS);
+    const destinationKind = normalizeDestinationKind(rawProfile.destination_kind);
+    if (destinationKind !== 'website') {
+      throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+    }
+    const profile = {
+      source_adset_id: normalizeNumericId(rawProfile.source_adset_id, 'tracking_profile_source_adset_id'),
+      destination_kind: destinationKind,
+      website_event_requirement: normalizeTrackingRequirement(
+        rawProfile.website_event_requirement,
+        'website_event_requirement',
+      ),
+      offline_event_dataset_requirement: normalizeTrackingRequirement(
+        rawProfile.offline_event_dataset_requirement,
+        'offline_event_dataset_requirement',
+      ),
+    };
+    if (Object.prototype.hasOwnProperty.call(rawProfile, 'staging_synthetic_fixture')) {
+      if (typeof rawProfile.staging_synthetic_fixture !== 'boolean') {
+        throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+      }
+      if (rawProfile.staging_synthetic_fixture) profile.staging_synthetic_fixture = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(rawProfile, 'authorized_destination_adset_ids')) {
+      profile.authorized_destination_adset_ids = normalizeConfigWriterNumericIdList(
+        rawProfile.authorized_destination_adset_ids,
+        'authorized_destination_adset_ids',
+      );
+    }
+    trackingProfiles[normalizedRef] = profile;
+  }
+  const trackingContract = {
+    url_tags: normalizeUrlTags(rawContract.url_tags, { required: true }),
+    profile_ref: profileRef,
+    production_url_tags_readback_fixture: fixture,
+  };
+  const normalized = normalizeTrackingContract(trackingContract, trackingProfiles, targetAdsetId);
+  if (
+    !normalized.profile_configured ||
+    normalized.destination_kind !== 'website' ||
+    normalized.reconciliation !== TRACKING_RECONCILIATION_MODE ||
+    !normalized.url_tags_configured ||
+    !normalized.production_url_tags_readback_fixture_configured
+  ) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  const selectedProfile = trackingProfiles[profileRef];
+  if (
+    selectedProfile.staging_synthetic_fixture === true &&
+    !normalized.staging_synthetic_fixture
+  ) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  return {
+    tracking_contract: trackingContract,
+    tracking_profiles: trackingProfiles,
+    carousel: normalizeConfigWriterCarousel(value, selectedProfile),
+  };
+}
+
+function normalizeConfigWriterPausedFixture(value) {
+  if (!isJsonObject(value)) throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  assertExactKeys(value, CONFIG_WRITER_FIXTURE_KEYS);
+  return {
+    ad_id: normalizeNumericId(value.ad_id, 'production_url_tags_readback_fixture_ad_id'),
+    creative_id: normalizeNumericId(value.creative_id, 'production_url_tags_readback_fixture_creative_id'),
+  };
+}
+
+function normalizeConfigWriterCarousel(value, profile) {
+  const present = CONFIG_WRITER_CAROUSEL_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value, key));
+  if (!present) return {};
+  if (!CONFIG_WRITER_CAROUSEL_KEYS.every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  if (value.carousel_native_adset_verified !== true || value.carousel_native_route_active !== true) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  const campaignId = normalizeNumericId(value.carousel_native_campaign_id, 'carousel_native_campaign_id');
+  const adsetId = normalizeNumericId(value.carousel_native_adset_id, 'carousel_native_adset_id');
+  if (!safeArray(profile.authorized_destination_adset_ids).includes(adsetId)) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  return {
+    carousel_native_campaign_id: campaignId,
+    carousel_native_adset_id: adsetId,
+    carousel_native_adset_verified: true,
+    carousel_native_route_active: true,
+  };
+}
+
+function normalizeConfigWriterHosts(value) {
+  if (!Array.isArray(value) || !value.length || value.length > 50) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  const hosts = value.map((entry) => clean(entry).toLowerCase());
+  if (
+    hosts.some((host) => !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host)) ||
+    new Set(hosts).size !== hosts.length
+  ) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  return hosts.sort();
+}
+
+function normalizeConfigWriterLandingPages(value, hosts) {
+  if (!isJsonObject(value) || !Object.keys(value).length || Object.keys(value).length > 100) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  for (const rawUrl of Object.values(value)) {
+    assertConfigWriterUrlHasNoCredentialQuery(rawUrl);
+  }
+  const definition = normalizeLandingPageMap(value, normalizeConfigWriterHosts(hosts));
+  if (definition.errors.length || !Object.keys(definition.pages).length) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  return definition.pages;
+}
+
+function normalizeConfigWriterWhatsAppUrl(value) {
+  const raw = requireConfigText(value, 2048);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    url.hash ||
+    !isWhatsAppHostname(url.hostname)
+  ) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  assertConfigWriterUrlHasNoCredentialQuery(url);
+  return url.toString();
+}
+
+function assertConfigWriterUrlHasNoCredentialQuery(value) {
+  let url;
+  try {
+    url = value instanceof URL ? value : new URL(clean(value));
+  } catch {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  for (const key of url.searchParams.keys()) {
+    if (URL_TAG_FORBIDDEN_KEY_PATTERN.test(key)) {
+      throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+    }
+  }
+}
+
+function normalizeConfigWriterNumericIdList(value) {
+  if (!Array.isArray(value) || value.length > 50) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  const values = value.map((entry) => normalizeNumericId(entry, 'authorized_destination_adset_id'));
+  if (new Set(values).size !== values.length) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  return values.sort();
+}
+
+function normalizeConfigWriterDays(value) {
+  if (value === undefined) return 7;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1 || number > 90) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  return number;
+}
+
+function normalizeConfigWriterRowNumber(value) {
+  const rowNumber = clean(value);
+  if (!rowNumber || rowNumber.length > 60 || /[\u0000-\u001f]/.test(rowNumber)) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  return rowNumber;
+}
+
+function requireConfigText(value, maxLength) {
+  const text = clean(value);
+  if (!text || text.length > maxLength || /[\u0000-\u001f]/.test(text)) {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+  return text;
+}
+
+function assertExactKeys(value, allowed) {
+  if (!isJsonObject(value) || Object.keys(value).some((key) => !allowed.has(key))) {
+    throw configWriterFailure('meta_ads_publish_config_request_invalid', 400);
+  }
+}
+
+function parseConfigWriterMetadata(value) {
+  try {
+    const metadata = JSON.parse(value);
+    if (!isJsonObject(metadata)) throw new Error('invalid_metadata');
+    return metadata;
+  } catch {
+    throw configWriterFailure('meta_ads_publish_config_invalid', 400);
+  }
+}
+
+// A legacy configuration cannot satisfy the v20 writer schema by definition,
+// but it still needs an optimistic-concurrency identity. The legacy revision
+// is derived from the complete currently configured Facebook destination set;
+// it is not a wildcard and changes whenever that source configuration changes.
+async function configWriterAuthorityState(rows) {
+  const configuredRows = safeArray(rows)
+    .filter((row) => Object.keys(asObject(parseObject(row && row.metadata_json).meta_ads_publish)).length > 0)
+    .sort((left, right) => clean(left.id).localeCompare(clean(right.id)));
+  const legacyRevision = `legacy:${await sha256(stableStringify(configuredRows.map((row) => {
+    const metadata = parseObject(row.metadata_json);
+    return {
+      token_id: clean(row.id),
+      external_account_id: clean(row.external_account_id),
+      meta_ads_publish: asObject(metadata.meta_ads_publish),
+    };
+  })))}`;
+
+  if (configuredRows.length < 2) {
+    return { ready: false, revision: legacyRevision, mode: 'legacy_bootstrap' };
+  }
+  try {
+    for (const row of configuredRows) {
+      validateGovernedMetaAdsPublishConfig(parseObject(row.metadata_json).meta_ads_publish);
+    }
+    const tracking = await deriveTrackingBindingState(configuredRows);
+    if (tracking.ready) {
+      return { ready: true, revision: tracking.revision, mode: 'tracking_ready' };
+    }
+  } catch {
+    // Deliberately return the hash-bound bootstrap mode below. No malformed or
+    // v18 state can be silently treated as a valid v20 binding.
+  }
+  return { ready: false, revision: legacyRevision, mode: 'legacy_bootstrap' };
+}
+
+function buildConfigWriterAtomicMetadataUpdate(env, { plans, now, operationId, requestHash }) {
+  const caseClauses = plans.map(() => 'WHEN ? THEN ?').join(' ');
+  const targetPlaceholders = plans.map(() => '?').join(', ');
+  const oldConditions = plans.map(() => '(id = ? AND metadata_json = ?)').join(' OR ');
+  const values = [
+    ...plans.flatMap((plan) => [plan.tokenId, plan.nextMetadataJson]),
+    now,
+    ...plans.map((plan) => plan.tokenId),
+    ...plans.flatMap((plan) => [plan.tokenId, plan.target.metadata_json]),
+    plans.length,
+    operationId,
+    requestHash,
+  ];
+  return env.TOKEN_VAULT_DB.prepare([
+    'UPDATE credential_tokens',
+    `SET metadata_json = CASE id ${caseClauses} ELSE metadata_json END, updated_at = ?`,
+    `WHERE id IN (${targetPlaceholders}) AND provider = 'facebook' AND active = 1`,
+    'AND (SELECT COUNT(*) FROM credential_tokens',
+    `WHERE provider = 'facebook' AND active = 1 AND (${oldConditions})) = ?`,
+    'AND EXISTS (SELECT 1 FROM meta_ads_publish_config_operations',
+    `WHERE id = ? AND request_hash = ? AND status = 'pending')`,
+  ].join(' ')).bind(...values);
+}
+
+function buildConfigWriterAppliedOperationUpdate(env, { plans, now, operationId }) {
+  const newConditions = plans.map(() => '(id = ? AND metadata_json = ?)').join(' OR ');
+  return env.TOKEN_VAULT_DB.prepare([
+    "UPDATE meta_ads_publish_config_operations SET status = 'applied', updated_at = ?",
+    "WHERE id = ? AND status = 'pending'",
+    'AND (SELECT COUNT(*) FROM credential_tokens',
+    `WHERE provider = 'facebook' AND active = 1 AND (${newConditions})) = ?`,
+  ].join(' ')).bind(
+    now,
+    operationId,
+    ...plans.flatMap((plan) => [plan.tokenId, plan.nextMetadataJson]),
+    plans.length,
+  );
+}
+
+async function acquireConfigWriterLock(env, ownerId) {
+  try {
+    const now = nowIso();
+    const expiresAt = new Date(Date.now() + CONFIG_WRITER_LOCK_TTL_MS).toISOString();
+    await dbRun(
+      env,
+      'DELETE FROM meta_ads_publish_config_locks WHERE resource_key = ? AND expires_at <= ?',
+      CONFIG_WRITER_LOCK_RESOURCE_KEY,
+      now,
+    );
+    await dbRun(
+      env,
+      [
+        'INSERT INTO meta_ads_publish_config_locks (resource_key, owner_id, expires_at, created_at, updated_at)',
+        'VALUES (?, ?, ?, ?, ?)',
+        'ON CONFLICT(resource_key) DO UPDATE SET owner_id = excluded.owner_id,',
+        'expires_at = excluded.expires_at, updated_at = excluded.updated_at',
+        'WHERE meta_ads_publish_config_locks.expires_at <= ?',
+      ].join(' '),
+      CONFIG_WRITER_LOCK_RESOURCE_KEY,
+      ownerId,
+      expiresAt,
+      now,
+      now,
+      now,
+    );
+    const lock = await dbFirst(
+      env,
+      'SELECT resource_key, owner_id FROM meta_ads_publish_config_locks WHERE resource_key = ?',
+      CONFIG_WRITER_LOCK_RESOURCE_KEY,
+    );
+    if (!lock || clean(lock.owner_id) !== ownerId) {
+      throw configWriterFailure('meta_ads_publish_config_locked', 409);
+    }
+  } catch (error) {
+    if (isConfigWriterFailure(error)) throw error;
+    throw configWriterFailure('meta_ads_publish_config_authority_unavailable', 503);
+  }
+}
+
+async function releaseConfigWriterLock(env, ownerId) {
+  try {
+    await dbRun(
+      env,
+      'DELETE FROM meta_ads_publish_config_locks WHERE resource_key = ? AND owner_id = ?',
+      CONFIG_WRITER_LOCK_RESOURCE_KEY,
+      ownerId,
+    );
+  } catch {
+    // The lock has a short expiry; a release failure cannot rewrite a committed
+    // configuration and must not turn a durable result into a false failure.
+  }
+}
+
+function batchChanges(results, index) {
+  const result = safeArray(results)[index] || {};
+  return Number(result.meta?.changes ?? result.changes ?? 0);
+}
+
+function configWriterSuccessResponse({ replayed, revision, requestId }, status = 200) {
+  return response({
+    ok: true,
+    applied: !replayed,
+    replayed,
+    operation_status: 'applied',
+    config_revision: revision,
+    tracking_binding_revision: revision,
+    workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
+    requestId,
+  }, status);
+}
+
+function configWriterFailure(code, httpStatus) {
+  return Object.assign(new Error(code), {
+    config_writer_error: true,
+    http_status: httpStatus,
+  });
+}
+
+function isConfigWriterFailure(error) {
+  return Boolean(error && error.config_writer_error === true);
+}
+
+function configWriterFailureResponse(error, requestId) {
+  const code = isConfigWriterFailure(error) && CONFIG_WRITER_ERROR_CODES.has(clean(error.message))
+    ? clean(error.message)
+    : 'meta_ads_publish_config_authority_unavailable';
+  const status = code === 'meta_ads_publish_config_request_too_large'
+    ? 413
+    : Number(error?.http_status) === 409
+      ? 409
+      : Number(error?.http_status) === 503
+        ? 503
+        : 400;
+  return response({ ok: false, error: code, requestId }, status);
+}
+
 async function getInventory({ request, env, requestId, decryptToken, writeAudit }) {
   const body = await readObject(request);
   try {
@@ -295,13 +1078,7 @@ async function getInventory({ request, env, requestId, decryptToken, writeAudit 
 }
 
 async function getConfig(env, requestId) {
-  const rows = await dbAll(env,
-    `SELECT id, unit, external_account_id, token_type, expires_at, active,
-            metadata_json, updated_at
-       FROM credential_tokens
-      WHERE provider = 'facebook' AND active = 1
-      ORDER BY unit, external_account_id`,
-  );
+  const rows = await listMetaAdsPublishConfigRows(env);
 
   const destinations = [];
   const landingPageInvalid = [];
@@ -340,6 +1117,11 @@ async function getConfig(env, requestId) {
       instagram_user_id: normalizeNumericId(config.instagram_user_id, 'instagram_user_id'),
       allowed_link_hosts: allowedLinkHosts,
       landing_pages_by_creative_group: landingDefinition.pages,
+      // These are non-secret destination hints consumed by Build Meta API
+      // Params. They deliberately remain independent from Website-only
+      // tracking metadata so Click-to-WhatsApp can run without it.
+      destination_type: clean(config.destination_type).toUpperCase(),
+      whatsapp_destination_url: clean(config.whatsapp_destination_url),
       // URL tags are a creative-level contract. They are intentionally
       // configured here rather than inferred from an existing ad, so a legacy
       // creative can never copy stale campaign attribution into a new one.
@@ -367,13 +1149,29 @@ async function getConfig(env, requestId) {
     }))
     .filter((item) => item.missing.length);
   invalid.push(...landingPageInvalid);
-  const configRevision = await sha256(stableStringify(destinations));
+  // This revision is intentionally derived from the static authorization
+  // configuration, not from landing_page_validation.  The latter contains a
+  // point-in-time HTTP probe and would make an otherwise authorized run
+  // unresumable merely because a live endpoint briefly changed state.
+  const binding = await deriveTrackingBindingState(rows);
+  const authority = await configWriterAuthorityState(rows);
+  const configRevision = binding.revision;
+  invalid.push(...binding.invalid);
+  // A legacy row can satisfy the historical shape while still lacking the v20
+  // tracking/CTWA split. Do not advertise such a source as publish-ready.
+  const ready = invalid.length === 0 && destinations.length >= 2 && binding.ready && authority.ready;
 
   return response({
-    ok: invalid.length === 0 && destinations.length >= 2,
-    ready: invalid.length === 0 && destinations.length >= 2,
+    ok: ready,
+    ready,
     count: destinations.length,
     config_revision: configRevision,
+    tracking_binding_revision: configRevision,
+    // This opaque revision is only for the governed administrative writer. In
+    // a legacy state it is hash-bound to the exact existing configuration,
+    // allowing an atomic bootstrap without a wildcard bypass.
+    config_authority_revision: authority.revision,
+    config_authority_mode: authority.mode,
     destinations,
     invalid,
     capabilities: {
@@ -386,23 +1184,187 @@ async function getConfig(env, requestId) {
       tracking: {
         adset_conversion_reconciliation: true,
         creative_url_tags_readback: true,
+        authorized_creative_url_tags_readback: true,
       },
     },
     secrets_exposed: false,
     requestId,
-  }, invalid.length || destinations.length < 2 ? 409 : 200);
+  }, ready ? 200 : 409);
+}
+
+async function listMetaAdsPublishConfigRows(env) {
+  return dbAll(env,
+    `SELECT id, unit, external_account_id, token_type, expires_at, active,
+            metadata_json, updated_at
+       FROM credential_tokens
+      WHERE provider = 'facebook' AND active = 1
+      ORDER BY unit, external_account_id`,
+  );
+}
+
+// The run binding deliberately contains only configuration that authorizes a
+// Meta Ads Publish mutation. It is hashed privately and never returned with
+// raw source-adset or tracking identifiers. In contrast to the public config
+// payload, it excludes online landing-page probe results and timestamps.
+function buildTrackingBindingDestination(row) {
+  const metadata = parseObject(row.metadata_json);
+  const config = asObject(metadata.meta_ads_publish);
+  if (!Object.keys(config).length) return null;
+
+  const tokenId = clean(row.id);
+  const destinationGroup = clean(config.destination_group);
+  if (!tokenId || !destinationGroup) throw failure('tracking_binding_destination_invalid', { http_status: 409 });
+
+  const allowedLinkHosts = normalizeHosts(config.allowed_link_hosts).sort();
+  const landingDefinition = normalizeLandingPageMap(config.landing_pages_by_creative_group, allowedLinkHosts);
+  if (landingDefinition.errors.length || !Object.keys(landingDefinition.pages).length) {
+    throw failure('tracking_binding_landing_pages_invalid', { http_status: 409 });
+  }
+  const trackingContract = normalizeTrackingContract(config.tracking_contract, config.tracking_profiles, config.adset_id);
+  const profile = trackingContract.profile_configured
+    ? asObject(asObject(config.tracking_profiles)[trackingContract.profile_ref])
+    : {};
+  const authorizedDestinationAdsetIds = trackingContract.profile_configured
+    ? normalizeProfileAuthorizedDestinationAdsetIds(profile)
+    : [];
+  const productionUrlTagsReadbackFixture = resolveProductionUrlTagsReadbackFixture(config, {
+    required: false,
+  });
+
+  return {
+    token_id: tokenId,
+    external_account_id: clean(row.external_account_id),
+    destination_group: destinationGroup,
+    api_version: normalizeApiVersion(config.api_version || 'v25.0'),
+    account_id: normalizeNumericId(config.account_id, 'account_id'),
+    campaign_id: normalizeNumericId(config.campaign_id, 'campaign_id'),
+    adset_id: normalizeNumericId(config.adset_id, 'adset_id'),
+    page_id: normalizeNumericId(config.page_id, 'page_id'),
+    instagram_user_id: normalizeNumericId(config.instagram_user_id, 'instagram_user_id'),
+    allowed_link_hosts: allowedLinkHosts,
+    landing_pages_by_creative_group: landingDefinition.pages,
+    destination_type: clean(config.destination_type).toLowerCase(),
+    whatsapp_destination_url: clean(config.whatsapp_destination_url),
+    freshness_window_days: clampInteger(config.freshness_window_days, 7, 1, 90),
+    carousel_native_campaign_id: clean(config.carousel_native_campaign_id),
+    carousel_native_adset_id: clean(config.carousel_native_adset_id),
+    carousel_native_adset_verified: config.carousel_native_adset_verified === true,
+    carousel_native_route_active: config.carousel_native_route_active === true,
+    tracking_contract: {
+      url_tags: trackingContract.url_tags,
+      profile_ref: trackingContract.profile_ref,
+      profile_configured: trackingContract.profile_configured,
+      destination_kind: trackingContract.destination_kind,
+      website_event_requirement: trackingContract.website_event_requirement,
+      offline_event_dataset_requirement: trackingContract.offline_event_dataset_requirement,
+      reconciliation: trackingContract.reconciliation,
+      staging_synthetic_fixture: trackingContract.staging_synthetic_fixture,
+      production_url_tags_readback_fixture: productionUrlTagsReadbackFixture,
+      // Source IDs remain private: they influence the binding hash but never
+      // cross the Token Vault response boundary.
+      ...(trackingContract.profile_configured ? {
+        profile: {
+          source_adset_id: normalizeNumericId(profile.source_adset_id, 'tracking_profile_source_adset_id'),
+          destination_kind: normalizeDestinationKind(profile.destination_kind),
+          website_event_requirement: normalizeTrackingRequirement(profile.website_event_requirement, 'website_event_requirement'),
+          offline_event_dataset_requirement: normalizeTrackingRequirement(profile.offline_event_dataset_requirement, 'offline_event_dataset_requirement'),
+          staging_synthetic_fixture: profile.staging_synthetic_fixture === true,
+          // A Website tracking profile may opt into a verified native-carousel
+          // route, but only through this private list. The raw IDs affect the
+          // binding revision and never cross the public config boundary.
+          authorized_destination_adset_ids: authorizedDestinationAdsetIds,
+        },
+      } : {}),
+    },
+  };
+}
+
+async function deriveTrackingBindingState(rows) {
+  const bindings = [];
+  const invalid = [];
+  for (const row of safeArray(rows)) {
+    try {
+      const binding = buildTrackingBindingDestination(row);
+      if (binding) bindings.push(binding);
+    } catch (error) {
+      const metadata = parseObject(row && row.metadata_json);
+      const config = asObject(metadata.meta_ads_publish);
+      invalid.push({
+        token_id: clean(row && row.id),
+        destination_group: clean(config.destination_group),
+        errors: [{ error: clean(error && error.message) || 'tracking_binding_invalid' }],
+      });
+    }
+  }
+  bindings.sort((left, right) => (
+    `${left.destination_group}:${left.token_id}`.localeCompare(`${right.destination_group}:${right.token_id}`)
+  ));
+  return {
+    revision: await sha256(stableStringify(bindings)),
+    // The public workflow configuration independently requires its expected
+    // destination count. The server-side binding itself only needs one valid
+    // authorized destination to prove that a particular mutating operation is
+    // still tied to its current token configuration.
+    ready: invalid.length === 0 && bindings.length > 0,
+    invalid,
+  };
+}
+
+async function currentTrackingBindingRevision(env) {
+  const state = await deriveTrackingBindingState(await listMetaAdsPublishConfigRows(env));
+  if (!state.ready) {
+    throw failure('tracking_binding_not_ready', { classification: 'permanent', http_status: 409 });
+  }
+  return state.revision;
+}
+
+async function assertCurrentRunTrackingBinding(run, env) {
+  const expected = await currentTrackingBindingRevision(env);
+  if (clean(run.config_revision).toLowerCase() !== expected) {
+    throw failure('run_tracking_binding_stale', { classification: 'permanent', http_status: 409 });
+  }
 }
 
 async function createOrResumeRun(request, env, requestId) {
   const body = await readObject(request);
-  const configRevision = requireHash(body.config_revision, 'config_revision');
+  const workflowContractRevision = clean(body.workflow_contract_revision);
+  if (workflowContractRevision !== WORKFLOW_CONTRACT_REVISION) {
+    return response({ ok: false, error: 'workflow_contract_revision_unsupported', requestId }, 409);
+  }
+  const configRevision = clean(body.config_revision).toLowerCase();
+  const trackingBindingRevision = clean(body.tracking_binding_revision).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(configRevision)) {
+    return response({ ok: false, error: 'config_revision_invalid', requestId }, 400);
+  }
+  if (!/^[a-f0-9]{64}$/.test(trackingBindingRevision)) {
+    return response({ ok: false, error: 'tracking_binding_revision_invalid', requestId }, 400);
+  }
+  if (trackingBindingRevision !== configRevision) {
+    return response({ ok: false, error: 'tracking_binding_revision_mismatch', requestId }, 409);
+  }
+  let currentBindingRevision;
+  try {
+    currentBindingRevision = await currentTrackingBindingRevision(env);
+  } catch (error) {
+    const normalized = normalizeFailure(error);
+    return response({ ok: false, error: normalized.message || 'tracking_binding_not_ready', requestId }, normalized.http_status || 409);
+  }
+  if (configRevision !== currentBindingRevision) {
+    return response({ ok: false, error: 'tracking_binding_revision_stale', requestId }, 409);
+  }
   const files = normalizeFiles(body.files);
   if (!files.length) return response({ ok: false, error: 'files_required', requestId }, 400);
   const batchFingerprint = body.batch_fingerprint
     ? requireHash(body.batch_fingerprint, 'batch_fingerprint')
-    : await sha256(stableStringify({ configRevision, files }));
+    : await sha256(stableStringify({ configRevision, trackingBindingRevision, workflowContractRevision, files }));
 
-  const requestHash = await sha256(stableStringify({ batchFingerprint, configRevision, files }));
+  const requestHash = await sha256(stableStringify({
+    batchFingerprint,
+    configRevision,
+    trackingBindingRevision,
+    workflowContractRevision,
+    files,
+  }));
   const existing = await dbFirst(env,
     `SELECT * FROM meta_ads_publish_runs WHERE batch_fingerprint = ?`,
     batchFingerprint,
@@ -568,7 +1530,16 @@ async function executeOperation(context) {
     if (clean(existing.request_hash) !== requestHash) {
       return response({ ok: false, error: 'operation_key_conflict', requestId }, 409);
     }
-    if (clean(existing.status) === 'completed') {
+    // A completed tracking reconciliation is not a timeless fact: the
+    // configured ad set can drift after the journal entry was written.  Its
+    // exact request is deliberately reopened below under the same resource
+    // lock so `ensure` performs a fresh GET/(conditional POST)/GET cycle.
+    // Both conversion reconciliation and the authorized paused-creative
+    // readback attest mutable remote state. A completed journal row therefore
+    // cannot replace the current Graph check on a same-key retry.
+    if (clean(existing.status) === 'completed' &&
+        action !== 'ensure_adset_conversion_contract' &&
+        action !== 'read_authorized_creative_url_tags_contract') {
       return response({ ok: true, replayed: true, operation: serializeOperation(existing), requestId });
     }
     if (clean(existing.status) === 'in_progress') {
@@ -614,6 +1585,13 @@ async function executeOperation(context) {
       rateUsage: {},
       traceId: '',
     };
+    // A run is an authorization snapshot, not a blanket permit for a later
+    // configuration. Re-check the static binding immediately before every
+    // Graph mutation so a later token/profile/ad-set change cannot be used by
+    // a long-lived run.
+    if (MUTATING_ACTIONS.has(action)) {
+      await assertCurrentRunTrackingBinding(run, env);
+    }
     const result = await performOperation(action, body, graphContext);
     const completedAt = nowIso();
     await dbRun(env,
@@ -687,6 +1665,7 @@ async function performOperation(action, body, context) {
   if (action === 'get_ad') return getAd(body, context);
   if (action === 'get_adset') return getAdset(body, context);
   if (action === 'read_adset_conversion_contract') return readAdsetConversionContract(body, context);
+  if (action === 'read_authorized_creative_url_tags_contract') return readAuthorizedCreativeUrlTagsContract(body, context);
   if (action === 'ensure_adset_conversion_contract') return ensureAdsetConversionContract(body, context);
   if (action === 'rollback_adset_conversion_contract') return rollbackAdsetConversionContract(body, context);
   if (action === 'get_campaign') return getCampaign(body, context);
@@ -839,9 +1818,178 @@ async function getVideoStatus(body, context) {
   return { ...value, video_status: videoStatus, ready: videoStatus === 'ready' };
 }
 
+function assertWorkflowContractRevision(value) {
+  if (clean(value) !== WORKFLOW_CONTRACT_REVISION) {
+    throw failure('workflow_contract_revision_unsupported', { classification: 'permanent', http_status: 409 });
+  }
+}
+
+function resolveConfiguredNativeCarouselAdsetId(config) {
+  // An alternate route is never inferred from a caller-supplied ID. It exists
+  // only while the private configuration names it and explicitly keeps the
+  // route both verified and active.
+  if (config.carousel_native_adset_verified !== true || config.carousel_native_route_active !== true) {
+    return '';
+  }
+  return normalizeNumericId(config.carousel_native_adset_id, 'carousel_native_adset_id');
+}
+
+function normalizeProfileAuthorizedDestinationAdsetIds(value) {
+  const profile = asObject(value);
+  if (profile.authorized_destination_adset_ids === undefined || profile.authorized_destination_adset_ids === null) {
+    return [];
+  }
+  if (!Array.isArray(profile.authorized_destination_adset_ids)) {
+    throw failure('tracking_profile_authorized_destination_adsets_invalid', {
+      classification: 'permanent', http_status: 409,
+    });
+  }
+  return [...new Set(profile.authorized_destination_adset_ids.map((adsetId) =>
+    normalizeNumericId(adsetId, 'tracking_profile_authorized_destination_adset_id'),
+  ))].sort();
+}
+
+function authorizeConfiguredDestinationAdset(body, config, destinationKind) {
+  // `destination_kind` is supplied by the workflow and therefore cannot be
+  // allowed to choose a less restrictive authorization branch. The private
+  // destination type is the authority for whether Website tracking is
+  // mandatory or the explicit Click-to-WhatsApp exemption applies.
+  const configuredDestinationKind = normalizeDestinationKind(config.destination_type);
+  if (destinationKind !== configuredDestinationKind) {
+    throw failure('destination_kind_not_authorized_for_token', {
+      classification: 'auth', http_status: 403,
+    });
+  }
+  const requested = normalizeNumericId(body.destination_adset_id, 'destination_adset_id');
+  const configured = normalizeNumericId(config.adset_id, 'configured_adset_id');
+  if (requested === configured) return requested;
+
+  const nativeCarouselAdsetId = resolveConfiguredNativeCarouselAdsetId(config);
+  if (requested !== nativeCarouselAdsetId) {
+    throw failure('destination_adset_not_authorized_for_token', { classification: 'auth', http_status: 403 });
+  }
+
+  // The native carousel route may be a different Website ad set. Its
+  // conversion contract is only inherited when the selected private tracking
+  // profile explicitly lists that exact alternate. WhatsApp has no Website
+  // conversion profile, but still needs the verified/active private route.
+  if (destinationKind === 'website') {
+    const profile = resolveAuthorizedTrackingProfile(config, body.profile_ref);
+    if (!normalizeProfileAuthorizedDestinationAdsetIds(
+      asObject(asObject(config.tracking_profiles)[profile.profile_ref]),
+    ).includes(requested)) {
+      throw failure('website_tracking_profile_destination_adset_not_authorized', {
+        classification: 'auth', http_status: 403,
+      });
+    }
+  }
+  return requested;
+}
+
+function resolveAuthorizedWebsiteTrackingMetadata(body, config) {
+  const contract = normalizeTrackingContract(config.tracking_contract, config.tracking_profiles, config.adset_id);
+  if (!contract.profile_configured || contract.destination_kind !== 'website' ||
+      contract.reconciliation !== TRACKING_RECONCILIATION_MODE || !contract.url_tags_configured) {
+    throw failure('website_tracking_contract_not_configured', { classification: 'permanent', http_status: 409 });
+  }
+  const profile = resolveAuthorizedTrackingProfile(config, body.profile_ref);
+  const requestedUrlTags = normalizeUrlTags(body.url_tags, { required: true });
+  if (requestedUrlTags !== contract.url_tags) {
+    throw failure('creative_url_tags_not_authorized', { classification: 'auth', http_status: 403 });
+  }
+  return { profile_ref: profile.profile_ref, url_tags: requestedUrlTags };
+}
+
+function assertNoTrackingMetadataForWhatsApp(body) {
+  if (clean(body.profile_ref)) {
+    throw failure('whatsapp_tracking_profile_forbidden', { classification: 'permanent', http_status: 400 });
+  }
+  if (Object.prototype.hasOwnProperty.call(asObject(body), 'url_tags') && String(body.url_tags ?? '') !== '') {
+    throw failure('whatsapp_url_tags_forbidden', { classification: 'permanent', http_status: 400 });
+  }
+}
+
+function authorizeTrackingMutationMetadata(body, config) {
+  assertWorkflowContractRevision(body.workflow_contract_revision);
+  const destinationKind = normalizeDestinationKind(body.destination_kind);
+  const destinationAdsetId = authorizeConfiguredDestinationAdset(body, config, destinationKind);
+  if (destinationKind === 'website') {
+    return {
+      destination_adset_id: destinationAdsetId,
+      destination_kind: destinationKind,
+      ...resolveAuthorizedWebsiteTrackingMetadata(body, config),
+    };
+  }
+  assertNoTrackingMetadataForWhatsApp(body);
+  return {
+    destination_adset_id: destinationAdsetId,
+    destination_kind: destinationKind,
+    profile_ref: '',
+    url_tags: '',
+  };
+}
+
+function inferCreativeDestinationKind(payload) {
+  const creative = asObject(payload);
+  const flexibleUrl = clean(safeArray(asObject(creative.asset_feed_spec).link_urls)[0]?.website_url);
+  const carouselUrl = clean(asObject(asObject(creative.object_story_spec).link_data).link);
+  const destinationUrl = flexibleUrl || carouselUrl;
+  try {
+    const parsed = new URL(destinationUrl);
+    if (parsed.protocol !== 'https:') throw new Error('creative_destination_protocol_invalid');
+    return isWhatsAppHostname(parsed.hostname) ? 'whatsapp' : 'website';
+  } catch {
+    throw failure('creative_destination_kind_undetermined', { classification: 'permanent', http_status: 400 });
+  }
+}
+
+function assertCreativeTrackingAuthorization(body, auth, payload) {
+  const metadata = authorizeTrackingMutationMetadata(body, auth.config);
+  if (inferCreativeDestinationKind(payload) !== metadata.destination_kind) {
+    throw failure('creative_destination_kind_mismatch', { classification: 'permanent', http_status: 409 });
+  }
+  const hasPayloadUrlTags = Object.prototype.hasOwnProperty.call(asObject(payload), 'url_tags');
+  if (metadata.destination_kind === 'website') {
+    if (!hasPayloadUrlTags) {
+      throw failure('website_creative_url_tags_required', { classification: 'permanent', http_status: 400 });
+    }
+    const payloadUrlTags = normalizeUrlTags(payload.url_tags, { required: true });
+    if (payloadUrlTags !== metadata.url_tags) {
+      throw failure('creative_url_tags_payload_mismatch', { classification: 'permanent', http_status: 409 });
+    }
+  } else if (hasPayloadUrlTags && String(payload.url_tags ?? '') !== '') {
+    throw failure('whatsapp_url_tags_forbidden', { classification: 'permanent', http_status: 400 });
+  }
+  return metadata;
+}
+
+async function assertStagedCreativeTracking(auth, creativeId, metadata, context) {
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, creativeId, { fields: CREATIVE_READ_FIELDS.join(',') }),
+    { method: 'GET' },
+    auth,
+    context,
+  );
+  const creative = asObject(result.body);
+  if (normalizeNumericId(creative.id, 'creative_readback_id') !== creativeId) {
+    throw failure('creative_readback_identity_mismatch', { classification: 'permanent', http_status: 502 });
+  }
+  if (inferCreativeDestinationKind(creative) !== metadata.destination_kind) {
+    throw failure('stage_creative_destination_kind_mismatch', { classification: 'permanent', http_status: 409 });
+  }
+  if (metadata.destination_kind === 'website') {
+    if (normalizeUrlTags(creative.url_tags, { required: true }) !== metadata.url_tags) {
+      throw failure('creative_url_tags_readback_mismatch', { classification: 'permanent', http_status: 409 });
+    }
+  } else if (clean(creative.url_tags)) {
+    throw failure('whatsapp_creative_url_tags_readback_mismatch', { classification: 'permanent', http_status: 409 });
+  }
+}
+
 async function createCreative(body, context) {
   const auth = await resolveGraphAuth(body, context);
   const payload = validateCreativePayload(body.payload, context.operationKey);
+  assertCreativeTrackingAuthorization(body, auth, payload);
   try {
     const result = await graphRequest(
       graphUrl(auth.apiVersion, `act_${auth.accountId}/adcreatives`),
@@ -889,7 +2037,9 @@ async function getAdset(body, context) {
 // raw dataset IDs that the generic get_adset readback would otherwise retain.
 async function readAdsetConversionContract(body, context) {
   const auth = await resolveGraphAuth(body, context);
-  const adsetId = normalizeNumericId(body.object_id, 'object_id');
+  // This endpoint is used by the deployment readback. Treat it as a narrow
+  // authorized diagnostic, never as a generic ad-set discovery primitive.
+  const adsetId = authorizeConfiguredAdset(body, auth.config);
   const result = await graphRequest(
     graphUrl(auth.apiVersion, adsetId, { fields: ADSET_CONVERSION_CONTRACT_FIELDS }),
     { method: 'GET' },
@@ -899,14 +2049,128 @@ async function readAdsetConversionContract(body, context) {
   return summarizeAdsetConversionTracking(asObject(result.body));
 }
 
+function assertAuthorizedCreativeUrlTagsReadbackRequest(body) {
+  const allowed = new Set([
+    'action',
+    'operation_key',
+    'token_id',
+    'account_id',
+    'api_version',
+    'request_hash',
+  ]);
+  for (const key of Object.keys(asObject(body))) {
+    if (!allowed.has(key)) {
+      throw failure('authorized_creative_url_tags_contract_request_invalid', {
+        classification: 'permanent', http_status: 400,
+      });
+    }
+  }
+}
+
+function resolveProductionUrlTagsReadbackFixture(config, { required = true } = {}) {
+  const rawContract = asObject(asObject(config).tracking_contract);
+  const fixture = asObject(rawContract.production_url_tags_readback_fixture);
+  if (!Object.keys(fixture).length && !required) return null;
+  let adId;
+  let creativeId;
+  try {
+    adId = normalizeNumericId(fixture.ad_id, 'production_url_tags_readback_fixture_ad_id');
+    creativeId = normalizeNumericId(fixture.creative_id, 'production_url_tags_readback_fixture_creative_id');
+  } catch {
+    throw failure('authorized_creative_url_tags_readback_fixture_invalid', {
+      classification: 'permanent', http_status: 409,
+    });
+  }
+  return { ad_id: adId, creative_id: creativeId };
+}
+
+function resolveAuthorizedCreativeUrlTagsReadbackContract(config) {
+  const contract = normalizeTrackingContract(config.tracking_contract, config.tracking_profiles, config.adset_id);
+  if (!contract.profile_configured || contract.destination_kind !== 'website' ||
+      contract.reconciliation !== TRACKING_RECONCILIATION_MODE || !contract.url_tags_configured) {
+    throw failure('authorized_creative_url_tags_contract_not_configured', {
+      classification: 'permanent', http_status: 409,
+    });
+  }
+  return {
+    destination_kind: 'website',
+    url_tags: contract.url_tags,
+    fixture: resolveProductionUrlTagsReadbackFixture(config),
+  };
+}
+
+function redactAuthorizedCreativeUrlTagsReadbackFailure(error) {
+  const normalized = normalizeFailure(error);
+  return failure('authorized_creative_url_tags_contract_readback_failed', {
+    classification: normalized.classification || 'unknown',
+    retryable: Boolean(normalized.retryable),
+    ambiguous: Boolean(normalized.ambiguous),
+    http_status: Number(normalized.http_status || 502),
+    code: Number(normalized.code || 0),
+    error_subcode: Number(normalized.error_subcode || 0),
+    // This dedicated readback has a deliberately boolean-only evidence
+    // surface. Keep Graph trace identifiers out of its journal/error record
+    // alongside the private fixture IDs and raw URL tags.
+    fbtrace_id: '',
+  });
+}
+
+// A production diagnostic must not accept ad, creative or URL-tag selectors
+// from Orb. The fixture is resolved entirely from the private credential
+// configuration and only fixed booleans leave this boundary.
+async function readAuthorizedCreativeUrlTagsContract(body, context) {
+  assertAuthorizedCreativeUrlTagsReadbackRequest(body);
+  const auth = await resolveGraphAuth(body, context);
+  const contract = resolveAuthorizedCreativeUrlTagsReadbackContract(auth.config);
+  try {
+    const adReadback = await graphRequest(
+      graphUrl(auth.apiVersion, contract.fixture.ad_id, { fields: 'id,status,creative{id}' }),
+      { method: 'GET' },
+      auth,
+      context,
+    );
+    const ad = asObject(adReadback.body);
+    if (normalizeNumericId(ad.id, 'authorized_creative_fixture_ad_readback_id') !== contract.fixture.ad_id ||
+        clean(ad.status).toUpperCase() !== 'PAUSED' ||
+        normalizeNumericId(asObject(ad.creative).id, 'authorized_creative_fixture_ad_creative_id') !== contract.fixture.creative_id) {
+      throw failure('authorized_creative_url_tags_fixture_not_paused_or_matched', {
+        classification: 'permanent', http_status: 409,
+      });
+    }
+    const creativeReadback = await graphRequest(
+      graphUrl(auth.apiVersion, contract.fixture.creative_id, { fields: 'id,url_tags' }),
+      { method: 'GET' },
+      auth,
+      context,
+    );
+    const creative = asObject(creativeReadback.body);
+    if (normalizeNumericId(creative.id, 'authorized_creative_fixture_creative_readback_id') !== contract.fixture.creative_id ||
+        normalizeUrlTags(creative.url_tags, { required: true }) !== contract.url_tags) {
+      throw failure('authorized_creative_url_tags_fixture_readback_mismatch', {
+        classification: 'permanent', http_status: 409,
+      });
+    }
+  } catch (error) {
+    throw redactAuthorizedCreativeUrlTagsReadbackFailure(error);
+  }
+  return {
+    destination_kind: 'website',
+    creative_url_tags: {
+      required: true,
+      paused_fixture_verified: true,
+      exact_match: true,
+    },
+  };
+}
+
 // Reconcile the conversion fields of an existing, authorized ad set from a
 // separately authorized source ad set.  The Orb never receives the source
 // ID, Pixel ID, custom-conversion ID or offline dataset ID: it asks only for a
 // profile reference and gets back a redacted attestation.
 async function ensureAdsetConversionContract(body, context) {
   const auth = await resolveGraphAuth(body, context);
-  const targetAdsetId = authorizeConfiguredAdset(body, auth.config);
   const destinationKind = normalizeDestinationKind(body.destination_kind);
+  const targetAdsetId = authorizeConfiguredTrackingAdset(body, auth.config, destinationKind);
 
   // A WhatsApp handoff is deliberately outside the website-conversion
   // contract.  Still authorize the configured target before returning the
@@ -932,7 +2196,7 @@ async function ensureAdsetConversionContract(body, context) {
     : await readAdsetConversionState(auth, targetAdsetId, context);
 
   assertAdsetAccountAuthorized(source, target, auth.accountId);
-  assertWebsiteTrackingCompatibility(source, target);
+  assertWebsiteTrackingCompatibility(source, target, profile);
   const desired = projectAuthorizedTrackingPromotedObject(source, target, profile);
   const existingSnapshot = await loadTrackingSnapshotByOperation(context.env, context.operationKey);
   if (existingSnapshot) {
@@ -973,45 +2237,47 @@ async function ensureAdsetConversionContract(body, context) {
     existingSnapshot,
     context,
   });
-  let mutation;
   try {
-    mutation = await updateAdsetTrackingWithReconciliation(
+    await updateAdsetTrackingWithReconciliation(
       auth,
       targetAdsetId,
       desired.full_promoted_object,
       profile,
       context,
     );
+    const readback = await readAdsetConversionState(auth, targetAdsetId, context);
+    if (!trackingPromotedObjectMatches(readback.promoted_object, desired.tracking_promoted_object, profile)) {
+      throw failure('adset_conversion_readback_mismatch', {
+        classification: 'permanent',
+        http_status: 502,
+      });
+    }
+    await markTrackingSnapshotReconciled(context.env, snapshotId);
+    const readbackSummary = summarizeAdsetConversionTracking(readback);
+    return {
+      ...trackingAttestation({
+        destinationKind,
+        profile,
+        sourceSummary,
+        targetSummary: readbackSummary,
+        trackingPromotedObject: asObject(readback.promoted_object),
+        status: 'reconciled',
+      }),
+      graph_mutation: 'promoted_object_updated',
+      snapshot_id: snapshotId,
+    };
   } catch (error) {
-    throw redactTrackingFailure(error);
+    // The encrypted snapshot is committed before a Graph POST.  Retain only
+    // its opaque UUID in the sanitized failure so a caller can compensate a
+    // mutation that succeeded but whose POST response or readback failed.
+    throw redactTrackingFailure(error, snapshotId);
   }
-  const readback = await readAdsetConversionState(auth, targetAdsetId, context);
-  if (!trackingPromotedObjectMatches(readback.promoted_object, desired.tracking_promoted_object, profile)) {
-    throw failure('adset_conversion_readback_mismatch', {
-      classification: 'permanent',
-      http_status: 502,
-    });
-  }
-  await markTrackingSnapshotReconciled(context.env, snapshotId);
-  const readbackSummary = summarizeAdsetConversionTracking(readback);
-  return {
-    ...trackingAttestation({
-      destinationKind,
-      profile,
-      sourceSummary,
-      targetSummary: readbackSummary,
-      trackingPromotedObject: asObject(readback.promoted_object),
-      status: 'reconciled',
-    }),
-    graph_mutation: 'promoted_object_updated',
-    snapshot_id: snapshotId,
-  };
 }
 
 async function rollbackAdsetConversionContract(body, context) {
   const auth = await resolveGraphAuth(body, context);
   const snapshotId = normalizeSnapshotId(body.snapshot_id);
-  const requestedAdsetId = authorizeConfiguredAdset(body, auth.config);
+  const requestedAdsetId = normalizeNumericId(body.object_id || body.adset_id, 'object_id');
   const snapshot = await dbFirst(context.env,
     `SELECT * FROM meta_ads_publish_adset_tracking_snapshots WHERE id = ?`,
     snapshotId,
@@ -1020,11 +2286,27 @@ async function rollbackAdsetConversionContract(body, context) {
   if (clean(snapshot.token_id) !== auth.tokenId || clean(snapshot.account_id) !== auth.accountId || clean(snapshot.adset_id) !== requestedAdsetId) {
     throw failure('adset_tracking_snapshot_not_authorized', { classification: 'auth', http_status: 403 });
   }
+  // A rollback is a mutation too: the stored snapshot alone must not keep an
+  // alternate route authorized after its private route/profile grant changed.
+  // Resolve the current Website profile before accepting either the standard
+  // ad set or a verified native-carousel alternate.
+  resolveAuthorizedTrackingProfile(auth.config, snapshot.profile_ref);
+  authorizeConfiguredTrackingAdset({
+    destination_adset_id: requestedAdsetId,
+    profile_ref: snapshot.profile_ref,
+  }, auth.config, 'website');
   if (clean(snapshot.status) === 'restored') {
     return { status: 'already_restored', snapshot_id: snapshotId, graph_mutation: 'none' };
   }
   const snapshotState = await readTrackingSnapshotState(snapshot, context);
   const current = await readAdsetConversionState(auth, requestedAdsetId, context);
+  if (trackingKeysMatch(current.promoted_object, snapshotState.previousPromotedObject, snapshotState.keys)) {
+    // A failed ensure may have captured a snapshot before the Graph POST was
+    // accepted.  Do not issue a redundant POST when the protected keys still
+    // equal the exact pre-mutation state; the stored snapshot remains usable
+    // for a safe same-operation retry.
+    return { status: 'not_applied', snapshot_id: snapshotId, graph_mutation: 'none' };
+  }
   if (!trackingKeysMatch(current.promoted_object, snapshotState.desiredTrackingPromotedObject, snapshotState.keys)) {
     throw failure('adset_tracking_rollback_concurrent_drift', { classification: 'permanent', http_status: 409 });
   }
@@ -1063,6 +2345,13 @@ function authorizeConfiguredAdset(body, config) {
   return requested;
 }
 
+function authorizeConfiguredTrackingAdset(body, config, destinationKind) {
+  return authorizeConfiguredDestinationAdset({
+    ...asObject(body),
+    destination_adset_id: body.object_id || body.adset_id || body.destination_adset_id,
+  }, config, destinationKind);
+}
+
 function resolveAuthorizedTrackingProfile(config, requestedProfileRef) {
   const contract = normalizeTrackingContract(config.tracking_contract, config.tracking_profiles);
   if (!contract.profile_configured || contract.destination_kind !== 'website' || contract.reconciliation !== 'enforce_from_authorized_source') {
@@ -1092,7 +2381,7 @@ async function readAdsetConversionState(auth, adsetId, context) {
   return asObject(result.body);
 }
 
-function assertWebsiteTrackingCompatibility(sourceValue, targetValue) {
+function assertWebsiteTrackingCompatibility(sourceValue, targetValue, profile) {
   const source = asObject(sourceValue);
   const target = asObject(targetValue);
   const sourceCampaignObjective = safeTrackingEnum(asObject(source.campaign).objective);
@@ -1115,9 +2404,29 @@ function assertWebsiteTrackingCompatibility(sourceValue, targetValue) {
   if (!sourceBillingEvent || !targetBillingEvent || sourceBillingEvent !== targetBillingEvent) {
     throw failure('tracking_profile_billing_event_incompatible', { http_status: 409 });
   }
+  if (websiteEventRequiredForDelivery(sourceCampaignObjective, sourceOptimizationGoal) && profile.website_event_requirement !== 'required') {
+    throw failure('tracking_profile_website_event_required_for_optimization', { http_status: 409 });
+  }
   if (stableStringify(safeArray(source.attribution_spec)) !== stableStringify(safeArray(target.attribution_spec))) {
     throw failure('tracking_profile_attribution_spec_incompatible', { http_status: 409 });
   }
+}
+
+function websiteEventRequiredForDelivery(campaignObjective, optimizationGoal) {
+  const campaign = safeTrackingEnum(campaignObjective);
+  const optimization = safeTrackingEnum(optimizationGoal);
+  if (WEBSITE_EVENT_REQUIRED_CAMPAIGN_OBJECTIVES.has(campaign) || WEBSITE_EVENT_REQUIRED_OPTIMIZATION_GOALS.has(optimization)) {
+    return true;
+  }
+  if (/(?:CONVERSION|VALUE|PURCHASE|SALE|LEAD|APP.*INSTALL)/.test(campaign) ||
+      /(?:CONVERSION|VALUE|PURCHASE|SALE|LEAD|APP.*INSTALL)/.test(optimization)) {
+    return true;
+  }
+  // Optional means explicitly known to be non-conversion at both levels. A
+  // new Graph enum or a malformed/missing value therefore fails closed rather
+  // than silently publishing Website traffic without its required event.
+  return !(WEBSITE_EVENT_OPTIONAL_CAMPAIGN_OBJECTIVES.has(campaign) &&
+    WEBSITE_EVENT_OPTIONAL_OPTIMIZATION_GOALS.has(optimization));
 }
 
 function assertAdsetAccountAuthorized(sourceValue, targetValue, accountId) {
@@ -1232,8 +2541,11 @@ async function captureTrackingSnapshot({ auth, targetAdsetId, profile, previousP
   }
   const keys = trackingKeysForProfile(profile).filter((key) => clean(asObject(previousPromotedObject)[key]) !== clean(asObject(desiredTrackingPromotedObject)[key]));
   if (!keys.length) throw failure('tracking_snapshot_without_mutation', { classification: 'permanent', http_status: 409 });
-  const previous = stableStringify(asObject(previousPromotedObject));
-  const desiredTracking = stableStringify(asObject(desiredTrackingPromotedObject));
+  // Snapshots are for compensating only the fields this reconciliation is
+  // allowed to change.  Do not encrypt or retain unrelated promoted-object
+  // state (catalogs, products, etc.), even though the Graph POST preserves it.
+  const previous = stableStringify(projectTrackingSnapshotFields(previousPromotedObject, keys));
+  const desiredTracking = stableStringify(projectTrackingSnapshotFields(desiredTrackingPromotedObject, keys));
   if (existingSnapshot) return existingSnapshot.id;
   const snapshotId = crypto.randomUUID();
   const previousCiphertext = await context.encryptToken(previous, context.env);
@@ -1269,6 +2581,11 @@ async function captureTrackingSnapshot({ auth, targetAdsetId, profile, previousP
     desiredTrackingPromotedObject,
     context,
   });
+  // INSERT OR IGNORE intentionally never overwrites an existing checkpoint.
+  // A same-key retry (or a concurrent claimant that won the insert race) must
+  // still prove that the target state read by this operation matches the
+  // snapshot's original tracking values before a Graph write can reuse it.
+  await assertTrackingSnapshotRetryIsSafe(stored, previousPromotedObject, context);
   return stored.id;
 }
 
@@ -1286,11 +2603,24 @@ async function assertTrackingSnapshotContract(snapshot, { auth, targetAdsetId, p
     throw failure('adset_tracking_snapshot_operation_conflict', { classification: 'permanent', http_status: 409 });
   }
   const state = await readTrackingSnapshotState(snapshot, context, { previousRequired: false });
-  const expectedFingerprint = await sha256(stableStringify(asObject(desiredTrackingPromotedObject)));
-  if (clean(snapshot.desired_promoted_object_fingerprint) !== expectedFingerprint ||
+  const expectedFingerprint = await sha256(stableStringify(projectTrackingSnapshotFields(desiredTrackingPromotedObject, state.keys)));
+  // Releases before v20 stored the whole desired promoted object.  Continue to
+  // accept that legacy fingerprint only for a previously captured snapshot;
+  // new captures above are always the narrower projection.
+  const legacyFingerprint = await sha256(stableStringify(asObject(desiredTrackingPromotedObject)));
+  if (![expectedFingerprint, legacyFingerprint].includes(clean(snapshot.desired_promoted_object_fingerprint)) ||
     !trackingKeysMatch(state.desiredTrackingPromotedObject, desiredTrackingPromotedObject, state.keys)) {
     throw failure('adset_tracking_snapshot_operation_conflict', { classification: 'permanent', http_status: 409 });
   }
+}
+
+function projectTrackingSnapshotFields(value, keys) {
+  const source = asObject(value);
+  const projected = {};
+  for (const key of safeArray(keys)) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) projected[key] = source[key];
+  }
+  return projected;
 }
 
 async function assertTrackingSnapshotRetryIsSafe(snapshot, currentPromotedObject, context) {
@@ -1379,8 +2709,12 @@ function trackingContractFingerprint(value) {
   return `fnv1a:${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
-function redactTrackingFailure(error) {
+function redactTrackingFailure(error, snapshotId = '') {
   const normalized = normalizeFailure(error);
+  const candidateSnapshotId = clean(snapshotId);
+  const compensation = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidateSnapshotId)
+    ? { snapshot_id: candidateSnapshotId }
+    : undefined;
   return failure('adset_conversion_reconciliation_failed', {
     classification: normalized.classification || 'unknown',
     retryable: Boolean(normalized.retryable),
@@ -1389,6 +2723,7 @@ function redactTrackingFailure(error) {
     code: Number(normalized.code || 0),
     error_subcode: Number(normalized.error_subcode || 0),
     fbtrace_id: clean(normalized.fbtrace_id),
+    ...(compensation ? { compensation } : {}),
   });
 }
 
@@ -1476,10 +2811,41 @@ async function stageBatch(body, context) {
     for (const job of jobs) {
       const auth = await resolveGraphAuth(job, context);
       const payload = validateAdPayload(job.ad_payload, job.action);
+      const tracking = authorizeTrackingMutationMetadata(job, auth.config);
+      const creativeId = normalizeNumericId(job.creative_id, 'creative_id');
+      if (creativeId !== normalizeNumericId(payload.creative.creative_id, 'ad_payload.creative.creative_id')) {
+        throw failure('stage_creative_identity_mismatch', { classification: 'permanent', http_status: 409 });
+      }
+      const payloadAdsetId = clean(payload.adset_id)
+        ? normalizeNumericId(payload.adset_id, 'ad_payload.adset_id')
+        : '';
+      if ((job.action === 'create_new' && !payloadAdsetId) ||
+          (payloadAdsetId && payloadAdsetId !== tracking.destination_adset_id)) {
+        throw failure('stage_adset_not_authorized_for_destination', { classification: 'auth', http_status: 403 });
+      }
+      // The stage request is a second trust boundary. Reconcile the configured
+      // ad set again under the batch's ad-set lock instead of treating the
+      // earlier Orb pre-stage attestation as a durable authorization. This
+      // catches drift between creative construction and the eventual ad POST.
+      await ensureAdsetConversionContract({
+        token_id: job.token_id,
+        account_id: auth.accountId,
+        api_version: auth.apiVersion,
+        object_id: tracking.destination_adset_id,
+        destination_kind: tracking.destination_kind,
+        profile_ref: tracking.profile_ref,
+      }, context);
+      // Do not trust a creative ID merely because it appeared in a workflow
+      // payload. Its exact raw URL-tag contract is read back inside the Token
+      // Vault before the ad can reference it.
+      await assertStagedCreativeTracking(auth, creativeId, tracking, context);
       payload.status = 'PAUSED';
       if (job.action === 'replace_existing') {
         const adId = normalizeNumericId(job.target_ad_id, 'target_ad_id');
         const previous = await readAd(auth, adId, context);
+        if (normalizeNumericId(previous.adset_id, 'existing_adset_id') !== tracking.destination_adset_id) {
+          throw failure('stage_adset_not_authorized_for_destination', { classification: 'auth', http_status: 403 });
+        }
         const result = await updateAdWithReconciliation(auth, adId, payload, context);
         const record = buildStagedRecord(job, adId, previous, result, false);
         staged.push(record);
@@ -2093,7 +3459,15 @@ async function acquireLocks(env, runId, operationKey, resourceKeys) {
       `SELECT resource_key, run_id, operation_key, expires_at FROM meta_ads_publish_locks WHERE resource_key = ?`,
       resourceKey,
     );
-    if (current && clean(current.run_id) !== runId && Date.parse(current.expires_at) > Date.now()) {
+    // A run is not a blanket lock owner. Re-entrancy is permitted only for
+    // the same idempotent operation so a same-run rollback/ensure cannot
+    // replace a stage batch's fresh ad-set attestation between its Graph GET
+    // and ad POST.
+    if (
+      current &&
+      Date.parse(current.expires_at) > Date.now() &&
+      (clean(current.run_id) !== runId || clean(current.operation_key) !== operationKey)
+    ) {
       throw new Error(`resource_locked:${resourceKey}`);
     }
     await dbRun(env,
@@ -2106,14 +3480,21 @@ async function acquireLocks(env, runId, operationKey, resourceKeys) {
         heartbeat_at = excluded.heartbeat_at,
         expires_at = excluded.expires_at,
         updated_at = excluded.updated_at
-      WHERE meta_ads_publish_locks.expires_at <= ? OR meta_ads_publish_locks.run_id = ?`,
-      resourceKey, runId, operationKey, now, expiresAt, now, now, now, runId,
+      WHERE meta_ads_publish_locks.expires_at <= ? OR
+        (meta_ads_publish_locks.run_id = ? AND meta_ads_publish_locks.operation_key = ?)`,
+      resourceKey, runId, operationKey, now, expiresAt, now, now, now, runId, operationKey,
     );
     const acquired = await dbFirst(env,
       `SELECT run_id, operation_key FROM meta_ads_publish_locks WHERE resource_key = ?`,
       resourceKey,
     );
-    if (!acquired || clean(acquired.run_id) !== runId) throw new Error(`resource_locked:${resourceKey}`);
+    if (
+      !acquired ||
+      clean(acquired.run_id) !== runId ||
+      clean(acquired.operation_key) !== operationKey
+    ) {
+      throw new Error(`resource_locked:${resourceKey}`);
+    }
   }
 }
 
@@ -2131,7 +3512,11 @@ async function releaseRunLocks(env, runId) {
 
 function deriveResourceKeys(action, body) {
   if (action === 'stage_batch') {
-    return validateBatchJobs(body.jobs).map((job) => job.resource_key);
+    const jobs = validateBatchJobs(body.jobs);
+    return [
+      ...jobs.map((job) => job.resource_key),
+      ...jobs.map((job) => `adset-contract:${normalizeNumericId(job.account_id, 'account_id')}:${normalizeNumericId(job.destination_adset_id, 'destination_adset_id')}`),
+    ];
   }
   if (['activate_batch', 'rollback_batch'].includes(action)) return [`run:${clean(body.stage_operation_key)}`];
   if (action === 'create_creative') return [`creative:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
@@ -2377,7 +3762,7 @@ function normalizeHosts(value) {
 // common Meta macros and query-safe punctuation without ever decoding them.
 const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
 const URL_TAG_FORBIDDEN_KEY_PATTERN = /(?:token|secret|password|authorization|signature|api_?key)/i;
-const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-@!$'()*\/;]+$/;
+const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-@!$'()*\/;=]+$/;
 const TRACKING_PROFILE_REF_PATTERN = /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/;
 const TRACKING_REQUIREMENTS = new Set(['required', 'not_required']);
 const TRACKING_RECONCILIATION_MODE = 'enforce_from_authorized_source';
@@ -2403,7 +3788,7 @@ function normalizeUrlTags(value, { required = false } = {}) {
   if (!pairs.length) throw failure('url_tags_invalid');
   for (const pair of pairs) {
     const separator = pair.indexOf('=');
-    if (separator <= 0 || separator !== pair.lastIndexOf('=')) throw failure('url_tags_invalid');
+    if (separator <= 0) throw failure('url_tags_invalid');
     const key = pair.slice(0, separator).toLowerCase();
     const parameterValue = pair.slice(separator + 1);
     if (!URL_TAG_PARAMETER_KEY_PATTERN.test(key) || URL_TAG_FORBIDDEN_KEY_PATTERN.test(key) || seen.has(key) || !parameterValue || !URL_TAG_VALUE_PATTERN.test(parameterValue)) {
@@ -2438,6 +3823,8 @@ function normalizeTrackingContract(value, profilesValue = {}, targetAdsetId = ''
     sourceAdsetId !== clean(targetAdsetId) &&
     websiteRequirement === 'required' &&
     offlineRequirement === 'required';
+  const productionUrlTagsReadbackFixtureConfigured = profileConfigured &&
+    hasValidProductionUrlTagsReadbackFixture(source.production_url_tags_readback_fixture);
   return {
     url_tags: urlTags,
     url_tags_configured: Boolean(urlTags),
@@ -2448,7 +3835,16 @@ function normalizeTrackingContract(value, profilesValue = {}, targetAdsetId = ''
     offline_event_dataset_requirement: profileConfigured ? offlineRequirement : 'unconfigured',
     reconciliation: profileConfigured ? TRACKING_RECONCILIATION_MODE : 'unconfigured',
     staging_synthetic_fixture: stagingSyntheticFixture,
+    // The fixture IDs remain private. The public config reports only whether a
+    // production-safe, paused readback fixture is available for the deployed
+    // diagnostic action.
+    production_url_tags_readback_fixture_configured: productionUrlTagsReadbackFixtureConfigured,
   };
+}
+
+function hasValidProductionUrlTagsReadbackFixture(value) {
+  const fixture = asObject(value);
+  return /^\d{5,30}$/.test(clean(fixture.ad_id)) && /^\d{5,30}$/.test(clean(fixture.creative_id));
 }
 
 function normalizeTrackingProfileRef(value) {
@@ -2855,6 +4251,10 @@ function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function isJsonObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -2906,7 +4306,9 @@ function redactText(value) {
 
 export const __test = Object.freeze({
   acquireLocks,
+  createCreative,
   createOrResumeRun,
+  currentTrackingBindingRevision,
   creativeReadFields: CREATIVE_READ_FIELDS,
   campaignReadFields: CAMPAIGN_READ_FIELDS,
   adsetPlacementFields: ADSET_PLACEMENT_FIELDS,
@@ -2918,6 +4320,7 @@ export const __test = Object.freeze({
   getVideoStatus,
   maxRateUsage,
   normalizeApiVersion,
+  normalizeFailure,
   normalizeUploadSessionId,
   normalizeVideoFileSize,
   normalizeVideoOffset,
@@ -2928,6 +4331,7 @@ export const __test = Object.freeze({
   ensureAdsetConversionContract,
   rollbackAdsetConversionContract,
   readAdsetConversionContract,
+  readAuthorizedCreativeUrlTagsContract,
   deriveResourceKeys,
   retryDelayMs,
   readAdsetPlacements,

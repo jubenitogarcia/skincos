@@ -14,7 +14,7 @@ on:
         required: true
         type: string
       operation:
-        description: Deploy a release or restore a previously uploaded release SHA
+        description: Deploy an immutable release (cross-SHA rollback is fail-closed; this workflow compensates only its own transaction)
         required: true
         default: deploy
         type: choice
@@ -93,14 +93,27 @@ jobs:
           if-no-files-found: error
 
   orb_contract:
-    needs: promotion
-    if: ${{ inputs.target == 'production' }}
+    # The production Worker may be uploaded in `release`, but it is deliberately
+    # not activated there.  This job owns the only activation path, after the
+    # immutable native source has applied and read back the inactive Orb
+    # contract for the same release SHA.
+    needs: [promotion, release]
+    if: ${{ inputs.target == 'production' && needs.release.result == 'success' }}
     runs-on: [self-hosted, Linux, X64, skincos-native-custody]
     environment: production
     timeout-minutes: 15
     permissions:
       actions: read
       contents: read
+      # The native helper accepts a short-lived, candidate-bound GitHub OIDC
+      # approval only over stdin. No persistent runner credential can promote
+      # a source release or mutate Orb.
+      id-token: write
+    env:
+      # Keep every native custody transition bound to the same immutable
+      # promotion identity; unlike step-local env, this survives checkpoint,
+      # apply and compensation steps.
+      RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -108,24 +121,56 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Require the exact immutable native source before an Orb mutation
-        env:
-          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+      - name: Attest the already staged immutable candidate through GitHub OIDC
+        id: candidate_initial_attestation
         run: |
           set -euo pipefail
-          SOURCE_ROOT="$(readlink -f /opt/skincos/current/source)"
-          [[ "$SOURCE_ROOT" == "/opt/skincos/releases/$RELEASE_SHA/source" ]] || { echo 'The required immutable native source has not been promoted.'; exit 1; }
-          [[ -r "$SOURCE_ROOT/scripts/runtime/apply-meta-ads-publish-tracking-release.sh" ]] || { echo 'The immutable native source lacks the tracking apply entrypoint.'; exit 1; }
-          echo "SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'The promotion identity is not a full immutable SHA.'; exit 1; }
+          [[ "${GITHUB_RUN_ATTEMPT:-}" == '1' ]] || { echo 'Native custody rejects GitHub workflow reruns; dispatch a fresh production release.'; exit 1; }
+          request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
+          oidc_token="$(curl --fail --silent --show-error -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$request_url" | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const v=String(x.value||'');if(!/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v))throw new Error('GitHub OIDC response is invalid');process.stdout.write(v);")"
+          mkdir -p "$RUNNER_TEMP/meta-ads-tracking-orb"
+          attestation="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$oidc_token" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody attest)"
+          unset oidc_token
+          printf '%s\n' "$attestation" > "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-attestation.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-attestation.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'attest' || value.releaseSha !== process.env.RELEASE_SHA ||
+              String(value.runId || '') !== process.env.GITHUB_RUN_ID || value.runAttempt !== Number(process.env.GITHUB_RUN_ATTEMPT) ||
+              value.approval !== 'valid' || !Number.isSafeInteger(value.approvalExpiresAt) || value.approvalExpiresAt <= Math.floor(Date.now() / 1000)) {
+            throw new Error('candidate OIDC custody attestation is incomplete');
+          }
+          NODE
 
-      - name: Capture the live inactive Orb version immediately before apply
+      - name: Capture the complete incumbent inactive Orb checkpoint before compound transition
+        id: incumbent_orb_checkpoint
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/meta-ads-tracking-orb"
-          sudo -n -u postgres /usr/bin/node "$SOURCE_ROOT/orb/engine/scripts/export-meta-ads-publish-live.js" \
-            | tee "$RUNNER_TEMP/meta-ads-tracking-orb/live-version.json"
-          EXPECTED_VERSION="$(node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(x.active===true||!/^[0-9a-fA-F-]{36}$/.test(String(x.versionId||'')))throw new Error('live Meta Ads Publish workflow is active or its version is invalid');process.stdout.write(x.versionId);" "$RUNNER_TEMP/meta-ads-tracking-orb/live-version.json")"
+          checkpoint="$(printf '%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody checkpoint-current)"
+          printf '%s\n' "$checkpoint" > "$RUNNER_TEMP/meta-ads-tracking-orb/live-version.json"
+          readarray -t checkpoint_fields < <(RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/live-version.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const current = String(value.currentReleaseSha || '');
+          const version = String(value.versionId || '');
+          const checkpoint = String(value.checkpoint || '');
+          if (value.ok !== true || value.action !== 'checkpoint-current' || value.releaseSha !== process.env.RELEASE_SHA || !/^[0-9a-f]{40}$/.test(current) ||
+              !/^[0-9a-fA-F-]{36}$/.test(version) ||
+              !/^\/var\/lib\/skincos-runtime\/orb\/exports\/workflow-patches\/meta-ads-build-payload-[0-9TZ-]{20,64}\/workflow\.live\.json$/.test(checkpoint)) {
+            throw new Error('incumbent native Orb checkpoint is incomplete');
+          }
+          process.stdout.write(`${current}\n${version}\n${checkpoint}\n`);
+          NODE
+          )
+          prior_source_sha="${checkpoint_fields[0]:-}"
+          EXPECTED_VERSION="${checkpoint_fields[1]:-}"
+          checkpoint_path="${checkpoint_fields[2]:-}"
+          [[ "$prior_source_sha" =~ ^[0-9a-f]{40}$ && -n "$EXPECTED_VERSION" && -n "$checkpoint_path" ]] || { echo 'Native incumbent checkpoint output is incomplete.'; exit 1; }
+          echo "ORB_META_ADS_PRIOR_SOURCE_SHA=$prior_source_sha" >> "$GITHUB_ENV"
           echo "ORB_META_ADS_EXPECTED_VERSION=$EXPECTED_VERSION" >> "$GITHUB_ENV"
+          echo "ORB_META_ADS_CHECKPOINT=$checkpoint_path" >> "$GITHUB_ENV"
 
       - name: Acquire the shared Token Vault and Orb release lease
         uses: ./.github/actions/global-coordination-acquire
@@ -140,7 +185,7 @@ jobs:
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault-orb.json
 
-      - name: Revalidate the shared lease before the Orb mutation
+      - name: Revalidate the shared lease before native source promotion
         uses: ./.github/actions/global-coordination-check
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -153,13 +198,476 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
-      - name: Apply the version-checked inactive Meta Ads tracking workflow
+      - name: Refresh candidate OIDC custody approval before native mutation
+        id: candidate_mutation_attestation
         run: |
           set -euo pipefail
-          sudo -n -u postgres /usr/bin/bash "$SOURCE_ROOT/scripts/runtime/apply-meta-ads-publish-tracking-release.sh" \
-            --source-root "$SOURCE_ROOT" \
-            --expected-version "$ORB_META_ADS_EXPECTED_VERSION" \
-            --apply
+          request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
+          oidc_token="$(curl --fail --silent --show-error -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$request_url" | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const v=String(x.value||'');if(!/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v))throw new Error('GitHub OIDC response is invalid');process.stdout.write(v);")"
+          attestation="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$oidc_token" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody attest)"
+          unset oidc_token
+          printf '%s\n' "$attestation" > "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-mutation-attestation.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-mutation-attestation.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'attest' || value.releaseSha !== process.env.RELEASE_SHA || value.approval !== 'valid') {
+            throw new Error('candidate mutation OIDC custody attestation is incomplete');
+          }
+          NODE
+
+      - name: Promote and apply the version-checked inactive Meta Ads tracking workflow atomically
+        id: native_orb_promotion
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          transition_error="$RUNNER_TEMP/meta-ads-tracking-orb/promote-and-apply-error.json"
+          set +e
+          transition="$(printf '%s\n%s\n%s\n%s\nfalse\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$ORB_META_ADS_EXPECTED_VERSION" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody promote-and-apply 2>"$transition_error")"
+          transition_status=$?
+          set -e
+          if [[ "$transition_status" -ne 0 ]]; then
+            [[ -z "$transition" ]] || printf '%s\n' "$transition" > "$RUNNER_TEMP/meta-ads-tracking-orb/promote-and-apply-result.json"
+            exit "$transition_status"
+          fi
+          printf '%s\n' "$transition" > "$RUNNER_TEMP/meta-ads-tracking-orb/promote-and-apply-result.json"
+          readarray -t promotion_fields < <(RELEASE_SHA="$RELEASE_SHA" PRIOR_SOURCE_SHA="$ORB_META_ADS_PRIOR_SOURCE_SHA" EXPECTED_VERSION="$ORB_META_ADS_EXPECTED_VERSION" node - "$RUNNER_TEMP/meta-ads-tracking-orb/promote-and-apply-result.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const prior = String(value.priorReleaseSha || '');
+          const current = String(value.currentReleaseSha || '');
+          const applied = String(value.appliedVersion || '');
+          if (value.ok !== true || value.action !== 'promote-and-apply' || value.releaseSha !== process.env.RELEASE_SHA ||
+              prior !== process.env.PRIOR_SOURCE_SHA || current !== process.env.RELEASE_SHA ||
+              !/^[0-9a-fA-F-]{36}$/.test(applied) || applied === process.env.EXPECTED_VERSION) {
+            throw new Error('compound native custody transition did not produce an owned inactive Orb version');
+          }
+          process.stdout.write(`${prior}\n${applied}\n`);
+          NODE
+          )"
+          prior_source_sha="${promotion_fields[0]:-}"
+          applied_version="${promotion_fields[1]:-}"
+          [[ "$prior_source_sha" == "$ORB_META_ADS_PRIOR_SOURCE_SHA" && "$applied_version" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Compound native custody result is incomplete.'; exit 1; }
+          echo "ORB_META_ADS_APPLIED_VERSION=$applied_version" >> "$GITHUB_ENV"
+          echo 'applied=true' >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate the shared lease before Worker activation after the native Orb apply
+        if: steps.native_orb_promotion.outputs.applied == 'true'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault-orb.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Refresh candidate OIDC custody approval before pre-Worker native readback
+        id: candidate_pre_worker_readback_attestation
+        if: steps.native_orb_promotion.outputs.applied == 'true'
+        run: |
+          set -euo pipefail
+          request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
+          oidc_token="$(curl --fail --silent --show-error -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$request_url" | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const v=String(x.value||'');if(!/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v))throw new Error('GitHub OIDC response is invalid');process.stdout.write(v);")"
+          attestation="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$oidc_token" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody attest)"
+          unset oidc_token
+          printf '%s\n' "$attestation" > "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-pre-worker-readback-attestation.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-pre-worker-readback-attestation.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'attest' || value.releaseSha !== process.env.RELEASE_SHA || value.approval !== 'valid') {
+            throw new Error('candidate pre-Worker readback OIDC custody attestation is incomplete');
+          }
+          NODE
+
+      - name: Read back the promoted native Orb source and live workflow before Worker activation
+        id: orb_pre_worker_readback
+        if: steps.candidate_pre_worker_readback_attestation.outcome == 'success'
+        run: |
+          set -euo pipefail
+          preflight="$(printf '%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody preflight)"
+          printf '%s\n' "$preflight" > "$RUNNER_TEMP/meta-ads-tracking-orb/pre-worker-preflight.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/pre-worker-preflight.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'preflight' || value.releaseSha !== process.env.RELEASE_SHA) {
+            throw new Error('candidate Orb preflight did not attest the exact promoted source');
+          }
+          NODE
+
+      - name: Activate the exact immutable Token Vault Worker after native Orb readback
+        id: worker_activation
+        if: steps.native_orb_promotion.outputs.applied == 'true' && steps.orb_pre_worker_readback.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TOKEN_VAULT_VERSION_ID: ${{ needs.release.outputs.token_vault_version_id }}
+          TOKEN_VAULT_INCUMBENT_VERSION_ID: ${{ needs.release.outputs.token_vault_incumbent_version_id }}
+        run: |
+          set -euo pipefail
+          [[ "$TOKEN_VAULT_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'The immutable Token Vault Worker candidate is unavailable'; exit 1; }
+          [[ "$TOKEN_VAULT_INCUMBENT_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'The Token Vault Worker rollback incumbent is unavailable'; exit 1; }
+          touch "$RUNNER_TEMP/token-vault-production-worker-mutation-started"
+          npx --yes wrangler@4.120.0 versions deploy "${TOKEN_VAULT_VERSION_ID}@100%" --yes --config platform/security/token-vault/wrangler.toml
+
+      - name: Read back the exact active Token Vault Worker version after the native Orb apply
+        id: worker_deployment_readback
+        if: always() && steps.worker_activation.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TOKEN_VAULT_VERSION_ID: ${{ needs.release.outputs.token_vault_version_id }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.120.0 deployments status --json --config platform/security/token-vault/wrangler.toml > "$RUNNER_TEMP/token-vault-production-active.json"
+          CANDIDATE="$TOKEN_VAULT_VERSION_ID" node - "$RUNNER_TEMP/token-vault-production-active.json" <<'NODE'
+          const fs = require('fs');
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = payload?.versions || payload?.latest?.versions || [];
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100 || String(versions[0]?.version_id || versions[0]?.id || '').toLowerCase() !== process.env.CANDIDATE.toLowerCase()) {
+            throw new Error('production Token Vault did not activate the exact immutable Worker version');
+          }
+          NODE
+
+      - name: Read back production Token Vault authenticated health after activation
+        id: worker_health_readback
+        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success'
+        env:
+          TOKEN_VAULT_API_TOKEN: ${{ secrets.TOKEN_VAULT_API_TOKEN }}
+          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
+          TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
+        run: |
+          set -euo pipefail
+          BASE_URL="$TOKEN_VAULT_PRODUCTION_BASE_URL"
+          anonymous_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$BASE_URL/internal/token-vault/health")"
+          [[ "$anonymous_code" == 401 ]] || { echo 'Token Vault anonymous health must remain unauthorized'; exit 1; }
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true||x.checks?.n8nApiToken!==true)throw new Error('Token Vault admin health/readback failed');"
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_N8N_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true)throw new Error('Token Vault operational health/readback failed');"
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/v1/meta-ads-publish/config" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const websites=(x.destinations||[]).filter(d=>d.tracking_contract?.destination_kind==='website');const valid=websites.length>0&&websites.every(d=>d.tracking_contract?.profile_configured===true&&d.tracking_contract?.url_tags_configured===true&&['required','not_required'].includes(d.tracking_contract?.website_event_requirement)&&['required','not_required'].includes(d.tracking_contract?.offline_event_dataset_requirement));if(x.ready!==true||x.capabilities?.workflow_contract_revision!=='meta_destination_contract_v20_tracking_reconciliation'||x.capabilities?.tracking?.adset_conversion_reconciliation!==true||!valid)throw new Error('production Token Vault tracking configuration readback is incomplete');"
+
+      - name: Refresh candidate OIDC custody approval before final native readback
+        id: candidate_final_readback_attestation
+        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.worker_health_readback.outcome == 'success'
+        run: |
+          set -euo pipefail
+          request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
+          oidc_token="$(curl --fail --silent --show-error -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$request_url" | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const v=String(x.value||'');if(!/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v))throw new Error('GitHub OIDC response is invalid');process.stdout.write(v);")"
+          attestation="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$oidc_token" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody attest)"
+          unset oidc_token
+          printf '%s\n' "$attestation" > "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-final-readback-attestation.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-final-readback-attestation.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'attest' || value.releaseSha !== process.env.RELEASE_SHA || value.approval !== 'valid') {
+            throw new Error('candidate final readback OIDC custody attestation is incomplete');
+          }
+          NODE
+
+      - name: Revalidate final native Orb source and live workflow after Worker activation
+        id: orb_live_readback
+        if: always() && steps.candidate_final_readback_attestation.outcome == 'success'
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          preflight="$(printf '%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody preflight)"
+          printf '%s\n' "$preflight" > "$RUNNER_TEMP/meta-ads-tracking-orb/final-preflight.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/final-preflight.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'preflight' || value.releaseSha !== process.env.RELEASE_SHA) {
+            throw new Error('bounded native custody preflight did not attest the exact live workflow');
+          }
+          NODE
+
+      - name: Refresh candidate OIDC custody approval before Graph conversion readback
+        id: candidate_conversion_readback_attestation
+        if: always() && steps.orb_live_readback.outcome == 'success'
+        run: |
+          set -euo pipefail
+          request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
+          oidc_token="$(curl --fail --silent --show-error -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$request_url" | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const v=String(x.value||'');if(!/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v))throw new Error('GitHub OIDC response is invalid');process.stdout.write(v);")"
+          attestation="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$oidc_token" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody attest)"
+          unset oidc_token
+          printf '%s\n' "$attestation" > "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-conversion-readback-attestation.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-conversion-readback-attestation.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'attest' || value.releaseSha !== process.env.RELEASE_SHA || value.approval !== 'valid') {
+            throw new Error('candidate conversion readback OIDC custody attestation is incomplete');
+          }
+          NODE
+
+      - name: Read back required Website conversion and offline-dataset contracts from Graph
+        id: conversion_contract_readback
+        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.worker_health_readback.outcome == 'success' && steps.candidate_conversion_readback_attestation.outcome == 'success'
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          readback="$(printf '%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody conversion-readback)"
+          printf '%s\n' "$readback" > "$RUNNER_TEMP/meta-ads-tracking-orb/conversion-contract-readback.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/conversion-contract-readback.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const summary = value.summary || {};
+          for (const key of ['websiteProfiles', 'requiredWebsiteEvents', 'configuredWebsiteEvents', 'requiredOfflineDatasets', 'configuredOfflineDatasets', 'requiredCreativeUrlTagFixtures', 'pausedFixtureVerifiedCreativeUrlTagFixtures', 'exactMatchCreativeUrlTagFixtures']) {
+            if (!Number.isInteger(summary[key]) || summary[key] < 0) throw new Error(`sanitized conversion readback is missing ${key}`);
+          }
+          if (value.ok !== true || value.action !== 'conversion-readback' || value.releaseSha !== process.env.RELEASE_SHA ||
+              summary.configuredWebsiteEvents !== summary.requiredWebsiteEvents ||
+              summary.configuredOfflineDatasets !== summary.requiredOfflineDatasets ||
+              summary.requiredCreativeUrlTagFixtures !== summary.websiteProfiles ||
+              summary.pausedFixtureVerifiedCreativeUrlTagFixtures !== summary.websiteProfiles ||
+              summary.exactMatchCreativeUrlTagFixtures !== summary.websiteProfiles) {
+            throw new Error('required Website conversion, offline dataset, or paused creative URL-tag contract is not configured in Graph');
+          }
+          NODE
+
+      - name: Upload sanitized production conversion-contract readback
+        if: always() && steps.conversion_contract_readback.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: token-vault-production-conversion-contract-readback
+          path: ${{ runner.temp }}/meta-ads-tracking-orb/conversion-contract-readback.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Revalidate the shared lease before cross-surface production compensation
+        id: cross_surface_compensation_lease
+        if: always() && steps.native_orb_promotion.outputs.applied == 'true' && (steps.orb_pre_worker_readback.outcome != 'success' || steps.worker_activation.outcome != 'success' || steps.worker_deployment_readback.outcome != 'success' || steps.worker_health_readback.outcome != 'success' || steps.orb_live_readback.outcome != 'success' || steps.conversion_contract_readback.outcome != 'success')
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault-orb.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Refresh candidate OIDC custody approval before cross-surface compensation
+        id: candidate_compensation_attestation
+        if: always() && steps.cross_surface_compensation_lease.outcome == 'success'
+        run: |
+          set -euo pipefail
+          request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
+          oidc_token="$(curl --fail --silent --show-error -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$request_url" | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const v=String(x.value||'');if(!/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v))throw new Error('GitHub OIDC response is invalid');process.stdout.write(v);")"
+          attestation="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$oidc_token" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody attest)"
+          unset oidc_token
+          printf '%s\n' "$attestation" > "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-compensation-attestation.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-compensation-attestation.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'attest' || value.releaseSha !== process.env.RELEASE_SHA || value.approval !== 'valid') {
+            throw new Error('candidate compensation OIDC custody attestation is incomplete');
+          }
+          NODE
+
+      - name: Compensate the production Worker first only when this release still owns traffic
+        id: worker_compensation
+        if: always() && steps.candidate_compensation_attestation.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TOKEN_VAULT_VERSION_ID: ${{ needs.release.outputs.token_vault_version_id }}
+          TOKEN_VAULT_INCUMBENT_VERSION_ID: ${{ needs.release.outputs.token_vault_incumbent_version_id }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.120.0 deployments status --json --config platform/security/token-vault/wrangler.toml > "$RUNNER_TEMP/token-vault-production-compensation-before.json"
+          ownership="$(CANDIDATE="$TOKEN_VAULT_VERSION_ID" INCUMBENT="$TOKEN_VAULT_INCUMBENT_VERSION_ID" node - "$RUNNER_TEMP/token-vault-production-compensation-before.json" <<'NODE'
+          const fs = require('fs');
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = payload?.versions || payload?.latest?.versions || [];
+          const selected = [...versions].sort((a, b) => Number(b.percentage || 0) - Number(a.percentage || 0))[0];
+          const id = String(selected?.version_id || selected?.id || '').toLowerCase();
+          const percentage = Number(selected?.percentage || 0);
+          if (id === String(process.env.INCUMBENT).toLowerCase() && percentage === 100) process.stdout.write('already-incumbent');
+          else if (id === String(process.env.CANDIDATE).toLowerCase() && percentage === 100) process.stdout.write('candidate-owned');
+          else process.stdout.write('ownership-conflict');
+          NODE
+          )"
+          case "$ownership" in
+            already-incumbent) echo 'Production Token Vault Worker was already restored.' ;;
+            candidate-owned)
+              npx --yes wrangler@4.120.0 versions deploy "${TOKEN_VAULT_INCUMBENT_VERSION_ID}@100%" --yes --config platform/security/token-vault/wrangler.toml --message "token-vault:auto-abort:$RELEASE_SHA"
+              ;;
+            *) echo 'Production Token Vault traffic ownership changed; refusing an unsafe compensation.' >&2; exit 1 ;;
+          esac
+          npx --yes wrangler@4.120.0 deployments status --json --config platform/security/token-vault/wrangler.toml > "$RUNNER_TEMP/token-vault-production-compensation-after.json"
+          INCUMBENT="$TOKEN_VAULT_INCUMBENT_VERSION_ID" node - "$RUNNER_TEMP/token-vault-production-compensation-after.json" <<'NODE'
+          const fs = require('fs');
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = payload?.versions || payload?.latest?.versions || [];
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100 || String(versions[0]?.version_id || versions[0]?.id || '').toLowerCase() !== process.env.INCUMBENT.toLowerCase()) {
+            throw new Error('production Token Vault compensation did not restore the exact incumbent Worker version');
+          }
+          NODE
+
+      - name: Read back the incumbent Token Vault health before restoring the Orb snapshot
+        id: worker_incumbent_health
+        if: always() && steps.worker_compensation.outcome == 'success'
+        env:
+          TOKEN_VAULT_API_TOKEN: ${{ secrets.TOKEN_VAULT_API_TOKEN }}
+          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
+          TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
+        run: |
+          set -euo pipefail
+          BASE_URL="$TOKEN_VAULT_PRODUCTION_BASE_URL"
+          anonymous_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$BASE_URL/internal/token-vault/health")"
+          [[ "$anonymous_code" == 401 ]] || { echo 'Token Vault anonymous health must remain unauthorized after compensation'; exit 1; }
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true||x.checks?.n8nApiToken!==true)throw new Error('Token Vault incumbent admin health/readback failed');"
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_N8N_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true)throw new Error('Token Vault incumbent operational health/readback failed');"
+
+      - name: Revalidate the shared lease before restoring the owned Orb snapshot
+        id: orb_compensation_lease
+        if: always() && steps.worker_incumbent_health.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault-orb.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Refresh candidate OIDC custody approval before restoring the owned Orb snapshot
+        id: candidate_orb_compensation_attestation
+        if: always() && steps.orb_compensation_lease.outcome == 'success'
+        run: |
+          set -euo pipefail
+          request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
+          oidc_token="$(curl --fail --silent --show-error -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$request_url" | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const v=String(x.value||'');if(!/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v))throw new Error('GitHub OIDC response is invalid');process.stdout.write(v);")"
+          attestation="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$oidc_token" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody attest)"
+          unset oidc_token
+          printf '%s\n' "$attestation" > "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-orb-compensation-attestation.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-orb-compensation-attestation.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'attest' || value.releaseSha !== process.env.RELEASE_SHA || value.approval !== 'valid') {
+            throw new Error('candidate Orb compensation OIDC custody attestation is incomplete');
+          }
+          NODE
+
+      - name: Restore the pre-apply Orb snapshot only after the Worker incumbent readback
+        id: orb_compensation
+        if: always() && steps.candidate_orb_compensation_attestation.outcome == 'success'
+        run: |
+          set -euo pipefail
+          [[ "${ORB_META_ADS_CHECKPOINT:-}" == /* ]] || { echo 'The private pre-apply Orb checkpoint is unavailable for compensation.'; exit 1; }
+          [[ "${ORB_META_ADS_EXPECTED_VERSION:-}" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'The pre-apply Orb version is unavailable for compensation.'; exit 1; }
+          [[ "${ORB_META_ADS_APPLIED_VERSION:-}" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'The applied Orb ownership version is unavailable for compensation.'; exit 1; }
+          restored="$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$ORB_META_ADS_APPLIED_VERSION" "$ORB_META_ADS_EXPECTED_VERSION" "$ORB_META_ADS_CHECKPOINT" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody restore)"
+          printf '%s\n' "$restored" > "$RUNNER_TEMP/meta-ads-tracking-orb/restored-version.json"
+          RELEASE_SHA="$RELEASE_SHA" APPLIED_VERSION="$ORB_META_ADS_APPLIED_VERSION" node - "$RUNNER_TEMP/meta-ads-tracking-orb/restored-version.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'restore' || value.releaseSha !== process.env.RELEASE_SHA ||
+              !/^[0-9a-fA-F-]{36}$/.test(String(value.restoredVersion || '')) || value.restoredVersion === process.env.APPLIED_VERSION) {
+            throw new Error('bounded native custody did not restore an owned Orb snapshot');
+          }
+          NODE
+
+      - name: Revalidate the shared lease before restoring the native source
+        id: native_source_compensation_lease
+        if: always() && steps.orb_compensation.outcome == 'success'
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault-orb.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Refresh candidate OIDC custody approval before restoring the native source
+        id: candidate_native_source_compensation_attestation
+        if: always() && steps.native_source_compensation_lease.outcome == 'success'
+        run: |
+          set -euo pipefail
+          request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
+          oidc_token="$(curl --fail --silent --show-error -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$request_url" | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const v=String(x.value||'');if(!/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v))throw new Error('GitHub OIDC response is invalid');process.stdout.write(v);")"
+          attestation="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$oidc_token" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody attest)"
+          unset oidc_token
+          printf '%s\n' "$attestation" > "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-native-source-compensation-attestation.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-native-source-compensation-attestation.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'attest' || value.releaseSha !== process.env.RELEASE_SHA || value.approval !== 'valid') {
+            throw new Error('candidate native source compensation OIDC custody attestation is incomplete');
+          }
+          NODE
+
+      - name: Restore the prior immutable native source after the Worker and Orb rollback
+        id: native_source_compensation
+        if: always() && steps.candidate_native_source_compensation_attestation.outcome == 'success'
+        run: |
+          set -euo pipefail
+          [[ "${ORB_META_ADS_PRIOR_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || { echo 'The prior immutable native source SHA is unavailable for compensation.'; exit 1; }
+          source_rollback="$(printf '%s\n%s\n%s\n%s\ntrue\n' "$RELEASE_SHA" "$ORB_META_ADS_PRIOR_SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody rollback-native)"
+          printf '%s\n' "$source_rollback" > "$RUNNER_TEMP/meta-ads-tracking-orb/native-source-rollback.json"
+          RELEASE_SHA="$RELEASE_SHA" PRIOR_SOURCE_SHA="$ORB_META_ADS_PRIOR_SOURCE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/native-source-rollback.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'rollback-native' || value.releaseSha !== process.env.RELEASE_SHA || value.priorReleaseSha !== process.env.PRIOR_SOURCE_SHA) {
+            throw new Error('bounded native custody did not restore the exact immutable source');
+          }
+          NODE
+
+      - name: Refresh candidate OIDC custody approval before predecessor preflight
+        id: candidate_predecessor_preflight_attestation
+        if: always() && steps.native_source_compensation.outcome == 'success'
+        run: |
+          set -euo pipefail
+          request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
+          oidc_token="$(curl --fail --silent --show-error -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$request_url" | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const v=String(x.value||'');if(!/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v))throw new Error('GitHub OIDC response is invalid');process.stdout.write(v);")"
+          attestation="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$oidc_token" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody attest)"
+          unset oidc_token
+          printf '%s\n' "$attestation" > "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-predecessor-preflight-attestation.json"
+          RELEASE_SHA="$RELEASE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/candidate-predecessor-preflight-attestation.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'attest' || value.releaseSha !== process.env.RELEASE_SHA || value.approval !== 'valid') {
+            throw new Error('candidate predecessor preflight OIDC custody attestation is incomplete');
+          }
+          NODE
+
+      - name: Revalidate the restored predecessor source after Worker and Orb rollback
+        id: native_source_compensation_preflight
+        if: always() && steps.candidate_predecessor_preflight_attestation.outcome == 'success'
+        run: |
+          set -euo pipefail
+          prior_preflight="$(printf '%s\n%s\n%s\n%s\n' "$RELEASE_SHA" "$ORB_META_ADS_PRIOR_SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | sudo -n /usr/local/sbin/skincos-meta-ads-tracking-custody preflight-rollback)"
+          printf '%s\n' "$prior_preflight" > "$RUNNER_TEMP/meta-ads-tracking-orb/prior-preflight.json"
+          RELEASE_SHA="$RELEASE_SHA" PRIOR_SOURCE_SHA="$ORB_META_ADS_PRIOR_SOURCE_SHA" node - "$RUNNER_TEMP/meta-ads-tracking-orb/prior-preflight.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (value.ok !== true || value.action !== 'preflight-rollback' || value.releaseSha !== process.env.RELEASE_SHA || value.priorReleaseSha !== process.env.PRIOR_SOURCE_SHA) {
+            throw new Error('restored immutable source preflight did not pass');
+          }
+          NODE
+
+      - name: Fail closed when the compound native promotion and Orb apply is not attested
+        if: always() && steps.native_orb_promotion.outputs.applied != 'true'
+        run: |
+          echo 'The compound native promotion and Orb apply did not return an owned version. Known failures are compensated inside native custody; ambiguous state remains fail-closed.' >&2
+          exit 1
 
       - name: Release the shared Token Vault and Orb release lease
         if: always()
@@ -172,10 +680,14 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault-orb.json
 
   release:
-    needs: [promotion, orb_contract]
-    # orb_contract is deliberately skipped in staging. `always()` makes that
-    # intentional skip distinguishable from a failed production Orb apply.
-    if: ${{ always() && inputs.target != 'preview' && (inputs.target == 'staging' || needs.orb_contract.result == 'success') }}
+    needs: promotion
+    # Production only uploads an immutable Worker candidate here.  Its traffic
+    # activation is intentionally deferred to `orb_contract`, which runs on
+    # native custody and proves the matching Orb snapshot first.
+    if: ${{ inputs.target != 'preview' }}
+    outputs:
+      token_vault_version_id: ${{ steps.selected_worker_version.outputs.version_id }}
+      token_vault_incumbent_version_id: ${{ steps.selected_worker_version.outputs.incumbent_version_id }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
     steps:
@@ -213,6 +725,7 @@ jobs:
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID TOKEN_VAULT_API_TOKEN TOKEN_VAULT_N8N_API_TOKEN TOKEN_VAULT_ANALYTICS_API_TOKEN TOKEN_VAULT_ENCRYPTION_KEY TOKEN_VAULT_BACKUP_PASSPHRASE; do
             [[ -n "${!name:-}" ]] || { echo "Missing required environment secret: $name"; exit 1; }
           done
+          [[ "$OPERATION" == deploy ]] || { echo 'Cross-SHA Token Vault rollback is fail-closed because it cannot prove restoration of the matching native Orb snapshot; the deployment path compensates its own transaction automatically.'; exit 1; }
           if [[ "$TARGET" == staging ]]; then
             [[ "$ENABLE_TOKEN_VAULT_DEPLOY_STAGING" == true ]] || { echo 'ENABLE_TOKEN_VAULT_DEPLOY_STAGING must be true'; exit 1; }
             [[ "$CONFIRM_STAGING_TRACKING_FIXTURE" == true ]] || { echo 'An isolated synthetic tracking fixture must be confirmed for staging'; exit 1; }
@@ -247,6 +760,28 @@ jobs:
           module: token-vault
           source_sha: ${{ needs.promotion.outputs.source_sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault.json
+
+      - name: Capture the exact Token Vault Worker incumbent before mutation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
+          npx --yes wrangler@4.120.0 deployments status --json --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" > "$RUNNER_TEMP/token-vault-incumbent.json"
+          incumbent="$(node - "$RUNNER_TEMP/token-vault-incumbent.json" <<'NODE'
+          const fs = require('fs');
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = payload?.versions || payload?.latest?.versions || [];
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100) {
+            throw new Error('Token Vault must have exactly one 100-percent incumbent before promotion');
+          }
+          process.stdout.write(String(versions[0]?.version_id || versions[0]?.id || ''));
+          NODE
+          )"
+          [[ "$incumbent" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve the exact Token Vault Worker incumbent'; exit 1; }
+          echo "TOKEN_VAULT_INCUMBENT_VERSION_ID=$incumbent" >> "$GITHUB_ENV"
 
       - name: Capture encrypted Token Vault D1 checkpoint before migrations
         env:
@@ -371,21 +906,17 @@ jobs:
           [[ "$VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to capture immutable Token Vault Worker version ID'; exit 1; }
           echo "TOKEN_VAULT_VERSION_ID=$VERSION_ID" >> "$GITHUB_ENV"
 
-      - name: Resolve a previously uploaded Token Vault version for rollback
-        if: inputs.operation == 'rollback'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TARGET: ${{ inputs.target }}
-          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+      - name: Export immutable Worker and incumbent identities for the activation gate
+        id: selected_worker_version
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
-          TOKEN_VAULT_VERSION_ID="$(npx --yes wrangler@4.120.0 versions list --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" --json | node -e "const fs=require('fs');const versions=JSON.parse(fs.readFileSync(0,'utf8'));const expected='token-vault:deploy:'+process.env.RELEASE_SHA;const found=versions.find(x=>(x.message||x.annotations?.['workers/message'])===expected);if(!found?.id)process.exit(1);process.stdout.write(found.id)")"
-          [[ -n "$TOKEN_VAULT_VERSION_ID" ]] || { echo 'No prior Token Vault version for requested SHA'; exit 1; }
-          echo "TOKEN_VAULT_VERSION_ID=$TOKEN_VAULT_VERSION_ID" >> "$GITHUB_ENV"
+          [[ "${TOKEN_VAULT_VERSION_ID:-}" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Token Vault candidate version was not selected'; exit 1; }
+          [[ "${TOKEN_VAULT_INCUMBENT_VERSION_ID:-}" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Token Vault incumbent version was not captured'; exit 1; }
+          echo "version_id=$TOKEN_VAULT_VERSION_ID" >> "$GITHUB_OUTPUT"
+          echo "incumbent_version_id=$TOKEN_VAULT_INCUMBENT_VERSION_ID" >> "$GITHUB_OUTPUT"
 
-      - name: Check Token Vault release lease before version deployment
+      - name: Check Token Vault release lease before staging version deployment
+        if: inputs.target == 'staging'
         uses: ./.github/actions/global-coordination-check
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -398,39 +929,57 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
-      - name: Deploy only the selected Token Vault version
+      - name: Activate only the selected Token Vault version in staging
+        id: worker_deploy
+        if: inputs.target == 'staging'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
           [[ -n "${TOKEN_VAULT_VERSION_ID:-}" ]] || { echo 'Token Vault version was not selected'; exit 1; }
-          npx --yes wrangler@4.120.0 versions deploy "${TOKEN_VAULT_VERSION_ID}@100%" --yes --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}"
+          touch "$RUNNER_TEMP/token-vault-worker-mutation-started"
+          npx --yes wrangler@4.120.0 versions deploy "${TOKEN_VAULT_VERSION_ID}@100%" --yes --config platform/security/token-vault/wrangler.toml --env staging
 
-      - name: Read back Token Vault deployment and authenticated health
+      - name: Read back the exact active Token Vault Worker version in staging
+        id: worker_deployment_readback
+        if: inputs.target == 'staging'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.120.0 deployments status --json --config platform/security/token-vault/wrangler.toml --env staging > "$RUNNER_TEMP/token-vault-staging-active.json"
+          CANDIDATE="$TOKEN_VAULT_VERSION_ID" node - "$RUNNER_TEMP/token-vault-staging-active.json" <<'NODE'
+          const fs = require('fs');
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = payload?.versions || payload?.latest?.versions || [];
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100 || String(versions[0]?.version_id || versions[0]?.id || '').toLowerCase() !== process.env.CANDIDATE.toLowerCase()) {
+            throw new Error('staging Token Vault did not activate the exact selected immutable Worker version');
+          }
+          NODE
+
+      - name: Read back staging Token Vault deployment and authenticated health
+        id: worker_health_readback
+        if: inputs.target == 'staging'
         env:
           TOKEN_VAULT_API_TOKEN: ${{ secrets.TOKEN_VAULT_API_TOKEN }}
           TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
           TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
-          TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
-          TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == production ]]; then BASE_URL="$TOKEN_VAULT_PRODUCTION_BASE_URL"; else BASE_URL="$TOKEN_VAULT_STAGING_BASE_URL"; fi
+          BASE_URL="$TOKEN_VAULT_STAGING_BASE_URL"
           anonymous_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$BASE_URL/internal/token-vault/health")"
           [[ "$anonymous_code" == 401 ]] || { echo 'Token Vault anonymous health must remain unauthorized'; exit 1; }
           curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
             | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true||x.checks?.n8nApiToken!==true)throw new Error('Token Vault admin health/readback failed');"
           curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_N8N_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
             | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true)throw new Error('Token Vault operational health/readback failed');"
-          if [[ "$TARGET" == staging ]]; then
-            curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/v1/meta-ads-publish/config" \
-              | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const fixture=(x.destinations||[]).filter(d=>d.tracking_contract?.destination_kind==='website'&&d.tracking_contract?.profile_configured&&d.tracking_contract?.url_tags_configured&&d.tracking_contract?.staging_synthetic_fixture===true);if(x.ready!==true||x.capabilities?.tracking?.adset_conversion_reconciliation!==true||fixture.length!==1)throw new Error('exactly one authorized synthetic Website tracking fixture is required in staging');"
-          fi
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/v1/meta-ads-publish/config" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const fixture=(x.destinations||[]).filter(d=>d.tracking_contract?.destination_kind==='website'&&d.tracking_contract?.profile_configured&&d.tracking_contract?.url_tags_configured&&d.tracking_contract?.staging_synthetic_fixture===true);if(x.ready!==true||x.capabilities?.tracking?.adset_conversion_reconciliation!==true||fixture.length!==1)throw new Error('exactly one authorized synthetic Website tracking fixture is required in staging');"
 
       - name: Exercise reversible Meta tracking reconciliation against the isolated staging fixture
+        id: tracking_fixture
         if: inputs.target == 'staging'
         env:
           TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
@@ -440,10 +989,17 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           const base = String(process.env.TOKEN_VAULT_STAGING_BASE_URL || '').replace(/\/$/, '');
-          const token = String(process.env.TOKEN_VAULT_N8N_API_TOKEN || '');
-          const nonce = `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}-${process.env.RELEASE_SHA.slice(0, 12)}`;
-          let runId = '';
-          let completed = false;
+           const token = String(process.env.TOKEN_VAULT_N8N_API_TOKEN || '');
+           const nonce = `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}-${process.env.RELEASE_SHA.slice(0, 12)}`;
+           let runId = '';
+           let fixture = null;
+           let snapshotId = '';
+           let rollbackConfirmed = false;
+           let completed = false;
+           const snapshotIdFromFailure = (value) => {
+             const candidate = String(value?.detail?.compensation?.snapshot_id || '');
+             return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate) ? candidate : '';
+           };
           const request = async (path, { method = 'GET', body } = {}) => {
             const response = await fetch(`${base}/internal/token-vault${path}`, {
               method,
@@ -456,11 +1012,39 @@ jobs:
             let payload = {};
             try { payload = await response.json(); } catch {}
             if (!response.ok || payload.ok !== true) {
-              throw new Error(`staging tracking fixture request failed: ${response.status} ${String(payload.error || 'unknown')}`);
-            }
-            return payload;
-          };
-          try {
+              const error = new Error(`staging tracking fixture request failed: ${response.status} ${String(payload.error || 'unknown')}`);
+              // Never print the response body. The finally block may use only
+              // its validated opaque snapshot UUID to compensate a Graph POST
+              // that was accepted before a failed operation readback.
+              error.payload = payload;
+              throw error;
+             }
+             return payload;
+           };
+           const rollback = async (operationKey) => {
+             if (!runId || !fixture || !snapshotId) return;
+             const rolledBack = await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}/operations`, {
+               method: 'POST',
+               body: {
+                 action: 'rollback_adset_conversion_contract',
+                 operation_key: operationKey,
+                 token_id: fixture.token_id,
+                 account_id: fixture.account_id,
+                 api_version: fixture.api_version,
+                 object_id: fixture.adset_id,
+                 snapshot_id: snapshotId,
+               },
+             });
+             const rollbackResult = rolledBack.operation?.result || {};
+             const confirmedRollback =
+               (rollbackResult.status === 'restored' && rollbackResult.graph_mutation === 'promoted_object_restored') ||
+               (['already_restored', 'not_applied'].includes(rollbackResult.status) && rollbackResult.graph_mutation === 'none');
+             if (!confirmedRollback) {
+               throw new Error('staging tracking fixture rollback was not confirmed');
+             }
+             rollbackConfirmed = true;
+           };
+           try {
             const config = await request('/v1/meta-ads-publish/config');
             const fixtures = (config.destinations || []).filter((destination) => {
               const tracking = destination?.tracking_contract || {};
@@ -471,66 +1055,78 @@ jobs:
             if (config.capabilities?.workflow_contract_revision !== 'meta_destination_contract_v20_tracking_reconciliation' || fixtures.length !== 1) {
               throw new Error('staging tracking fixture contract is not eligible');
             }
-            const fixture = fixtures[0];
+            fixture = fixtures[0];
             const created = await request('/v1/meta-ads-publish/runs', {
               method: 'POST',
               body: {
                 config_revision: config.config_revision,
+                tracking_binding_revision: config.tracking_binding_revision,
+                workflow_contract_revision: config.capabilities.workflow_contract_revision,
                 workflow_execution_id: `staging-tracking-fixture-${nonce}`,
                 files: [{ id: `synthetic-tracking-fixture-${nonce}`, name: 'tracking-fixture.txt', modified_time: nonce, size: '0' }],
               },
             });
             runId = String(created.run?.id || '');
             if (!runId) throw new Error('staging tracking fixture run was not created');
-            const ensured = await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}/operations`, {
-              method: 'POST',
-              body: {
-                action: 'ensure_adset_conversion_contract',
-                operation_key: `tracking-fixture:${nonce}`,
-                token_id: fixture.token_id,
-                account_id: fixture.account_id,
-                api_version: fixture.api_version,
-                object_id: fixture.adset_id,
-                destination_kind: 'website',
-                profile_ref: fixture.tracking_contract.profile_ref,
-              },
-            });
-            const reconciliation = ensured.operation?.result || {};
-            if (reconciliation.status !== 'reconciled' || reconciliation.website_event?.configured !== true ||
-              reconciliation.offline_event_dataset?.configured !== true || reconciliation.graph_mutation !== 'promoted_object_updated' ||
-              !String(reconciliation.snapshot_id || '')) {
-              throw new Error('staging tracking fixture did not prove Graph GET-POST-GET reconciliation');
+            let ensured;
+            try {
+              ensured = await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}/operations`, {
+                method: 'POST',
+                body: {
+                  action: 'ensure_adset_conversion_contract',
+                  operation_key: `tracking-fixture:${nonce}`,
+                  token_id: fixture.token_id,
+                  account_id: fixture.account_id,
+                  api_version: fixture.api_version,
+                  object_id: fixture.adset_id,
+                  destination_kind: 'website',
+                  profile_ref: fixture.tracking_contract.profile_ref,
+                },
+              });
+            } catch (error) {
+              snapshotId = snapshotIdFromFailure(error?.payload);
+              throw error;
             }
-            const rolledBack = await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}/operations`, {
-              method: 'POST',
-              body: {
-                action: 'rollback_adset_conversion_contract',
-                operation_key: `tracking-fixture-rollback:${nonce}`,
-                token_id: fixture.token_id,
-                account_id: fixture.account_id,
-                api_version: fixture.api_version,
-                object_id: fixture.adset_id,
-                snapshot_id: reconciliation.snapshot_id,
-              },
-            });
-            if (rolledBack.operation?.result?.status !== 'restored' || rolledBack.operation?.result?.graph_mutation !== 'promoted_object_restored') {
-              throw new Error('staging tracking fixture rollback was not confirmed');
-            }
+             const reconciliation = ensured.operation?.result || {};
+             // Store the snapshot before asserting the rest of the attestation:
+             // a successful Graph mutation with a failed readback assertion must
+             // still be compensable in this same synthetic staging run.
+             snapshotId = String(reconciliation.snapshot_id || '');
+             if (reconciliation.status !== 'reconciled' || reconciliation.website_event?.configured !== true ||
+               reconciliation.offline_event_dataset?.configured !== true || reconciliation.graph_mutation !== 'promoted_object_updated' ||
+               !snapshotId) {
+               throw new Error('staging tracking fixture did not prove Graph GET-POST-GET reconciliation');
+             }
+            await rollback(`tracking-fixture-rollback:${nonce}`);
             completed = true;
             process.stdout.write(`${JSON.stringify({ tracking_fixture: { reconciliation: 'reconciled', rollback: 'restored' } })}\n`);
-          } finally {
-            if (runId) {
-              try {
-                await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}`, {
-                  method: 'PATCH',
-                  body: { status: completed ? 'completed' : 'failed', summary: { staging_tracking_fixture: true } },
-                });
-              } catch {}
-            }
-          }
+           } finally {
+             let cleanupFailure = '';
+             if (snapshotId && !rollbackConfirmed) {
+               try {
+                 await rollback(`tracking-fixture-cleanup:${nonce}`);
+                 process.stdout.write(`${JSON.stringify({ tracking_fixture: { cleanup_rollback: 'restored' } })}\n`);
+               } catch (error) {
+                 cleanupFailure = String(error?.message || error || 'unknown');
+               }
+             }
+             if (runId) {
+               try {
+                 await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}`, {
+                   method: 'PATCH',
+                   body: {
+                     status: completed && rollbackConfirmed && !cleanupFailure ? 'completed' : 'failed',
+                     summary: { staging_tracking_fixture: true, rollback_confirmed: rollbackConfirmed },
+                   },
+                 });
+               } catch {}
+             }
+             if (cleanupFailure) throw new Error(`staging tracking fixture cleanup rollback failed: ${cleanupFailure}`);
+           }
           NODE
 
       - name: Write staging Token Vault promotion evidence
+        id: staging_evidence
         if: inputs.target == 'staging'
         env:
           PROMOTION_UNIT: token-vault
@@ -539,6 +1135,7 @@ jobs:
         run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
 
       - name: Upload staging Token Vault promotion evidence
+        id: staging_evidence_upload
         if: inputs.target == 'staging'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -546,6 +1143,59 @@ jobs:
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
           retention-days: 14
           if-no-files-found: error
+
+      - name: Revalidate the release lease before staging Worker compensation
+        id: staging_worker_compensation_lease
+        if: always() && inputs.target == 'staging' && steps.worker_deploy.outcome != 'skipped' && (steps.worker_deploy.outcome != 'success' || steps.worker_deployment_readback.outcome != 'success' || steps.worker_health_readback.outcome != 'success' || steps.tracking_fixture.outcome != 'success' || steps.staging_evidence.outcome != 'success' || steps.staging_evidence_upload.outcome != 'success')
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault.json
+          resource: release:token-vault
+          module: token-vault
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Compensate the staging Worker only when this release still owns traffic
+        if: always() && steps.staging_worker_compensation_lease.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.120.0 deployments status --json --config platform/security/token-vault/wrangler.toml --env staging > "$RUNNER_TEMP/token-vault-staging-compensation-before.json"
+          ownership="$(CANDIDATE="$TOKEN_VAULT_VERSION_ID" INCUMBENT="$TOKEN_VAULT_INCUMBENT_VERSION_ID" node - "$RUNNER_TEMP/token-vault-staging-compensation-before.json" <<'NODE'
+          const fs = require('fs');
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = payload?.versions || payload?.latest?.versions || [];
+          const selected = [...versions].sort((a, b) => Number(b.percentage || 0) - Number(a.percentage || 0))[0];
+          const id = String(selected?.version_id || selected?.id || '').toLowerCase();
+          const percentage = Number(selected?.percentage || 0);
+          if (id === String(process.env.INCUMBENT).toLowerCase() && percentage === 100) process.stdout.write('already-incumbent');
+          else if (id === String(process.env.CANDIDATE).toLowerCase() && percentage === 100) process.stdout.write('candidate-owned');
+          else process.stdout.write('ownership-conflict');
+          NODE
+          )"
+          case "$ownership" in
+            already-incumbent) echo 'Staging Token Vault Worker was already restored.' ;;
+            candidate-owned)
+              npx --yes wrangler@4.120.0 versions deploy "${TOKEN_VAULT_INCUMBENT_VERSION_ID}@100%" --yes --config platform/security/token-vault/wrangler.toml --env staging --message "token-vault:staging-auto-abort:$RELEASE_SHA"
+              ;;
+            *) echo 'Staging Token Vault traffic ownership changed; refusing an unsafe compensation.' >&2; exit 1 ;;
+          esac
+          npx --yes wrangler@4.120.0 deployments status --json --config platform/security/token-vault/wrangler.toml --env staging > "$RUNNER_TEMP/token-vault-staging-compensation-after.json"
+          INCUMBENT="$TOKEN_VAULT_INCUMBENT_VERSION_ID" node - "$RUNNER_TEMP/token-vault-staging-compensation-after.json" <<'NODE'
+          const fs = require('fs');
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = payload?.versions || payload?.latest?.versions || [];
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100 || String(versions[0]?.version_id || versions[0]?.id || '').toLowerCase() !== process.env.INCUMBENT.toLowerCase()) {
+            throw new Error('staging Token Vault compensation did not restore the exact incumbent Worker version');
+          }
+          NODE
 
       - name: Release Token Vault release lease
         if: always()
@@ -556,21 +1206,3 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-token-vault.json
-
-  orb_readback:
-    needs: release
-    if: ${{ inputs.target == 'production' && needs.release.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, skincos-native-custody]
-    environment: production
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Read back final native Orb source and live workflow after Worker activation
-        env:
-          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-          SOURCE_ROOT="$(readlink -f /opt/skincos/current/source)"
-          [[ "$SOURCE_ROOT" == "/opt/skincos/releases/$RELEASE_SHA/source" ]] || { echo 'Native source changed before final Orb readback.'; exit 1; }
-          sudo -n -u postgres /usr/bin/node "$SOURCE_ROOT/orb/engine/scripts/validate-meta-ads-publish-preflight.js"
