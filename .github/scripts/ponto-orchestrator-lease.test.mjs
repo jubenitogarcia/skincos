@@ -803,16 +803,18 @@ test("staging waits for exact Pages-to-Timekeeping affinity before the authentic
   const end = source.indexOf("- name: Execute authenticated synthetic staging journey", start);
   assert.ok(start >= 0 && end > start, "staging affinity probe block is absent or misplaced");
   const block = source.slice(start, end);
-  assert.match(block, /for attempt in \{1\.\.36\}; do/);
-  assert.match(block, /\/api\/ponto\/health\?staging_affinity_probe=\$GITHUB_RUN_ID/);
+  assert.match(block, /PONTO_IDEMPOTENCY_KEY: \$\{\{ secrets\.PONTO_IDEMPOTENCY_KEY \}\}/);
+  assert.match(block, /const maxAttempts = 36/);
+  assert.match(block, /\/api\/ponto\/_release-readiness/);
+  assert.match(block, /ponto-release-probe\/v1\.\$\{timestamp\}\.\$\{nonce\}\.GET/);
   assert.match(block, /x-skincos-pages-release-sha/);
-  assert.match(block, /x-skincos-gateway-environment/);
-  assert.match(block, /x-skincos-timekeeping-release-sha/);
-  assert.match(block, /x-skincos-timekeeping-version-id/);
-  assert.doesNotMatch(block, /x-skincos-gateway-release-sha/);
-  assert.doesNotMatch(block, /x-skincos-gateway-version-id/);
-  assert.match(block, /Unable to attest exact staging Pages-to-Timekeeping affinity/);
-  assert.doesNotMatch(block, /PONTO_IDEMPOTENCY_KEY/);
+  assert.match(block, /body\?\.coreVersionId/);
+  assert.match(block, /body\?\.timekeepingVersionId/);
+  assert.match(block, /protected-pages-service-binding/);
+  assert.match(block, /publicVersionOverrideUsed: false/);
+  assert.match(block, /releaseProbeNonceReserved: true/);
+  assert.match(block, /bounded propagation/);
+  assert.doesNotMatch(block, /PONTO_RELEASE_PROBE_HMAC_KEY/);
 });
 
 test("staging retries the protected Identity contract during bounded propagation", () => {
