@@ -74,13 +74,21 @@ export function assertPontoDependencyClosureUnchanged(orchestratorDigest, mainDi
   return assertDependencyClosureUnchanged(orchestratorDigest, mainDigest);
 }
 
-export function assertPontoReleaseIsCurrentMain(releaseSha, currentMainSha) {
+export function assertPontoReleaseIsCurrentMain(
+  releaseSha,
+  currentMainSha,
+  assertReleaseSource = assertPontoSourceClosureUnchanged,
+) {
   const release = String(releaseSha || "").trim().toLowerCase();
   const currentMain = String(currentMainSha || "").trim().toLowerCase();
   if (!FULL_SHA.test(release)) throw new Error("Ponto release SHA must be a full SHA");
   if (!FULL_SHA.test(currentMain)) throw new Error("current main SHA is unavailable");
   if (release !== currentMain) {
-    throw new Error("Ponto release SHA no longer equals current main");
+    try {
+      assertReleaseSource(release, currentMain);
+    } catch (error) {
+      throw new Error("Ponto release dependency closure no longer matches current main", { cause: error });
+    }
   }
   return { releaseSha: release, currentMainSha: currentMain };
 }
