@@ -11,6 +11,7 @@ export const CLUBE_BOTOX_ASAAS_REDIRECTS: Record<string, string> = {
   "/nh/clubebotox40urec": "https://www.asaas.com/c/d6wi6vey83vare5o",
   "/nh/clubebotox50urec": "https://www.asaas.com/c/qfh7xmfkx75thufp",
   "/nh/clubebotox60urec": "https://www.asaas.com/c/s6pzbxxek5zupn20",
+  "/nh/clubebotoxa60urec": "https://www.asaas.com/c/kmqx08rera7xwnc6",
   "/nh/clubebotox90urec": "https://www.asaas.com/c/nhimvltr035trkro",
 
   // BarraShoppingSul — Clube do Botox
@@ -21,6 +22,7 @@ export const CLUBE_BOTOX_ASAAS_REDIRECTS: Record<string, string> = {
   "/bss/clubebotox40urec": "https://www.asaas.com/c/pf2r6q16tiyrp9bc",
   "/bss/clubebotox50urec": "https://www.asaas.com/c/prjvdv7v95x50y32",
   "/bss/clubebotox60urec": "https://www.asaas.com/c/lr38ej38lji2kyuz",
+  "/bss/clubebotoxa60urec": "https://www.asaas.com/c/j09bzb3zy2igqune",
   "/bss/clubebotox90urec": "https://www.asaas.com/c/zmfwvjotop3vpmjz",
 };
 
