@@ -176,6 +176,12 @@ test.describe('Usuários e Equipe', () => {
       const dimensions = await page.evaluate(() => ({ viewport: window.innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }))
       expect(dimensions.document, `document overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
       expect(dimensions.body, `body overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
+      if (width === 390) {
+        const managementValue = page.getByText('Centralizada', { exact: true })
+        await expect(managementValue).toBeVisible()
+        const managementMetrics = await managementValue.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }))
+        expect(managementMetrics.scrollWidth, 'management summary content overflow at 390px').toBeLessThanOrEqual(managementMetrics.clientWidth)
+      }
       if (width >= 768) {
         const overflowingCells = await page.locator('table tbody tr').first().locator('td').evaluateAll((cells) => cells
           .filter((cell) => cell.scrollWidth > cell.clientWidth + 1)

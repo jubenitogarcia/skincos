@@ -691,7 +691,7 @@ export function UsersModule() {
                     {(searchInput || searchQuery || statusFilter !== 'ACTIVE') && <Button type="button" variant="ghost" size="sm" onClick={() => { setSearchInput(''); setSearchQuery(''); setStatusFilter('ACTIVE'); setPage(1) }}>Limpar</Button>}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-2 sm:grid-cols-4">
                   <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Total</p><p className="mt-1 text-lg font-semibold text-white">{pageTotal}</p></div>
                   <div className="rounded-xl border border-amber-300/15 bg-amber-400/[0.06] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-amber-100/55">Convites</p><p className="mt-1 text-lg font-semibold text-amber-50">{summary.pendingInvites || 0}</p></div>
                   <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><p className="mt-1 text-lg font-semibold text-white">{unitCount}</p></div>
