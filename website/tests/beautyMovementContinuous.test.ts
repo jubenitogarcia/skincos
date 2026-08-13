@@ -190,7 +190,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(heroInstructionMarkup, /<p\s+className=\{`\$\{styles\.heroDeckInstruction\} \$\{waitingForInitialDeal \? "" : styles\.heroDeckInstructionHidden\}`\.trim\(\)\}/);
     assert.match(heroInstructionMarkup, /aria-hidden=\{!waitingForInitialDeal \|\| undefined\}/);
     assert.doesNotMatch(heroInstructionMarkup, /<(?:button|a)\b|onClick=|onKeyDown=|tabIndex=|aria-label=/);
-    assert.doesNotMatch(experience, /id="beauty-movement-deck-prompt"/);
+    assert.match(heroInstructionMarkup, /id="beauty-movement-deck-prompt"/);
     assert.equal((experience.match(/onClick=\{startInitialDeal\}/g) ?? []).length, 1);
     assert.match(experience, /Clique no baralho para começar a sua leitura/);
     assert.match(experience, /className=\{styles\.tableDeckPromptArrow\}/);
@@ -210,7 +210,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /setIsSpecialCardModalOpen\(confirmed\)/);
     assert.match(experience, /function closeSpecialCardModal|const closeSpecialCardModal/);
     assert.match(experience, /Fechar carta especial/);
-    assert.match(experience, /Revelar sua carta especial/);
+    assert.match(experience, /Clique aqui para revelar sua carta especial/);
     assert.match(experience, /key=\{introStage !== "hidden" \? "experience-intro" : tableDefinition\.id\}/);
     assert.match(experience, /styles\.tablePromptIntro/);
     assert.match(experience, /styles\.tablePromptIntroHolding/);
@@ -239,7 +239,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /@keyframes cardFlipAndSettle/);
     assert.match(styles, /@keyframes cardSparkle/);
     assert.match(styles, /@keyframes deckDealPulse/);
-    assert.match(styles, /@keyframes deckReceivePulse/);
+    assert.doesNotMatch(styles, /@keyframes deckReceivePulse/);
     assert.match(styles, /@keyframes deckStageDeal/);
     assert.match(styles, /@keyframes deckStageExpand/);
     assert.match(styles, /@keyframes deckStageCollect/);
@@ -259,6 +259,10 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.doesNotMatch(
         styles,
         /\.tableStage\[data-hand-stage="reveal"\] \.cardButton:not\(\.cardButtonSelected\)[^}]*animation:\s*cardReturnToDeck/,
+    );
+    assert.doesNotMatch(
+        styles,
+        /\.tableStage\[data-hand-stage="reveal"\] \.deck(?:Stage|CardTop)\s*\{[^}]*animation:/,
     );
     assert.doesNotMatch(
         styles,
@@ -317,6 +321,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /@keyframes deckPromptArrowFloat/);
     assert.match(styles, /\.progressRowWaiting \{[\s\S]*min-height: 52px/);
     assert.match(styles, /\.progressRowWaiting \.progressGroup \{[\s\S]*visibility: hidden[\s\S]*pointer-events: none/);
+    assert.match(styles, /\.progressRow:not\(\.progressRowWaiting\) \{[\s\S]*?transform: translateY\(-38px\);/);
     assert.doesNotMatch(styles, /\.initialDeckPrompt/);
     assert.match(styles, /\.heroDeckInstruction/);
     assert.doesNotMatch(styles, /\.tableDeckPrompt \{|\.deckPrompt \{|\.deckPromptArrow \{/);
@@ -333,13 +338,14 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /\.tablePrompt \{[\s\S]*padding: 0;[\s\S]*border: 0;[\s\S]*background: transparent;[\s\S]*box-shadow: none;/);
     assert.match(styles, /\.specialCardStage \{[\s\S]*gap: 0;/);
     assert.match(styles, /\.specialCardStageReopen \{[\s\S]*min-height: 430px/);
-    assert.match(styles, /\.specialCardReopenCard \{[\s\S]*cursor: pointer/);
+    assert.doesNotMatch(styles, /\.specialCardReopenCard/);
     assert.match(styles, /\.specialCardModalOverlay \{[\s\S]*--bm-ink: #303030[\s\S]*position: fixed[\s\S]*backdrop-filter: blur\(10px\)/);
     assert.match(styles, /\.specialCardModalDialog \{[\s\S]*place-items: center/);
     assert.match(styles, /\.specialCardModalClose \{[\s\S]*position: absolute/);
     assert.match(styles, /@keyframes specialCardModalBackdropEnter/);
     assert.match(styles, /\.specialCardRevealAction \{[\s\S]*gap: 7px;[\s\S]*width: min\(100%, 282px\)/);
-    assert.match(styles, /\.specialCardBackWithAction \{[\s\S]*padding: 24px/);
+    assert.match(styles, /\.specialCardBackWithAction \{[\s\S]*justify-content: flex-start[\s\S]*padding: 32px 24px 20px/);
+    assert.match(styles, /\.specialCardWhatsappAction \{[\s\S]*background: var\(--bm-yellow\)/);
     assert.match(styles, /\.promptWord \{[\s\S]*animation: promptWordMaterialize/);
     assert.match(styles, /\.promptTitle,[\s\S]*\.promptSubtitle \{[\s\S]*display: block/);
     assert.match(styles, /@keyframes promptWordMaterialize/);
@@ -392,20 +398,26 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /aria-hidden=\{!isSelected\}/);
     assert.match(experience, /BeautyMovementCardIllustration/);
     assert.match(experience, /function renderSpecialCard/);
-    assert.match(experience, /function renderSpecialCard\(revealed: boolean, showRevealAction = false, interactive = false\)/);
+    assert.match(experience, /type SpecialCardAction = "none" \| "confirm" \| "reopen"/);
+    assert.match(experience, /function renderSpecialCard\(revealed: boolean, action: SpecialCardAction = "none"\)/);
     assert.match(experience, /className=\{styles\.specialCardRevealAction\}/);
     assert.match(experience, /Garantir presente e confirmar presença/);
     assert.match(experience, /if \(!operationalConsent && !isLocalPreview\) return;/);
-    assert.match(experience, /Confirme sua entrada para revelar a sua carta especial/);
+    assert.doesNotMatch(experience, /Confirme sua entrada para revelar a sua carta especial/);
+    assert.doesNotMatch(experience, /Sua aula será confirmada pela equipe da unidade após o contato/);
+    assert.match(experience, /Seu movimento também faz parte da celebração/);
+    assert.match(experience, /styles\.specialCardWhatsappAction/);
     assert.match(experience, /finaleStage === "confirmation" \?/);
     assert.match(experience, /!isLocalPreview \? renderConfirmationAction\(\) : null/);
-    assert.match(experience, /renderSpecialCard\(false, isLocalPreview\)/);
-    assert.match(experience, /renderSpecialCard\(false, false, !isSpecialCardModalOpen\)/);
+    assert.match(experience, /renderSpecialCard\(false, isLocalPreview \? "confirm" : "none"\)/);
+    assert.match(experience, /renderSpecialCard\(false, "reopen"\)/);
     assert.doesNotMatch(experience, /specialCardPrompt|Sua carta especial está pronta\./);
     assert.match(experience, /Clique aqui para revelar sua carta especial/);
     assert.match(experience, /finaleCardGridMerging/);
     assert.match(experience, /Carta especial do benefício/);
-    assert.match(experience, /role=\{interactive \? "button" : undefined\}/);
+    assert.match(experience, /ref=\{action === "reopen" \? specialCardReopenActionRef : undefined\}/);
+    assert.match(experience, /onClick=\{action === "confirm" \? \(\) => void handleConfirm\(\) : openSpecialCardModal\}/);
+    assert.doesNotMatch(experience, /role=\{interactive \? "button" : undefined\}/);
     assert.doesNotMatch(experience, /aria-label="Cartas finais"/);
     assert.match(experience, /function drawStoryCardIllustration/);
     assert.match(experience, /drawStoryCardIllustration\(context, line\.cardId/);

@@ -110,6 +110,13 @@
   pointer-events: none;
 }
 
+.progressRow:not(.progressRowWaiting) {
+  /* Reuse the instruction's reserved space once the first hand begins.
+   * Keeping the row in normal flow avoids moving the table surface, while
+   * the visual offset lets the category read as the hero subtitle. */
+  transform: translateY(-38px);
+}
+
 .progressGroup {
   display: grid;
   justify-items: stretch;
@@ -398,7 +405,7 @@
 .tableStage,
 .resultStage {
   width: min(100%, 1040px);
-  margin: clamp(16px, 2.4vw, 26px) auto 0;
+  margin: clamp(8px, 1.2vw, 12px) auto 0;
   scroll-margin-top: 32px;
 }
 
@@ -584,10 +591,6 @@
 .tableStage[data-hand-stage="deal"] .deckStage {
   animation: deckStageDeal var(--bm-hand-deal-ms) cubic-bezier(0.4, 0, 0.2, 1) both;
   will-change: transform;
-}
-
-.tableStage[data-hand-stage="reveal"] .deckCardTop {
-  animation: deckReceivePulse 680ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
 }
 
 .tableStage[data-hand-stage="collect"] .deckStage {
@@ -790,22 +793,6 @@
   min-height: 430px;
 }
 
-.specialCardReopenCard {
-  cursor: pointer;
-  outline: none;
-  transition: transform 180ms ease, filter 180ms ease;
-}
-
-.specialCardReopenCard:hover {
-  filter: brightness(1.04);
-  transform: translateY(-4px);
-}
-
-.specialCardReopenCard:focus-visible {
-  outline: 3px solid var(--bm-yellow);
-  outline-offset: 4px;
-}
-
 .specialCardModalOverlay {
   --bm-bg: #fafafa;
   --bm-surface: #ffffff;
@@ -921,8 +908,9 @@
 }
 
 .specialCardBackWithAction {
+  justify-content: flex-start;
   gap: 10px;
-  padding: 24px;
+  padding: 32px 24px 20px;
 }
 
 .specialCardBackWithAction .specialCardBrand {
@@ -936,6 +924,15 @@
   background: var(--bm-yellow);
   color: var(--bm-ink);
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.18);
+}
+
+.specialCardWhatsappAction {
+  width: min(100%, 282px);
+  min-height: 50px;
+  border-color: var(--bm-yellow);
+  background: var(--bm-yellow);
+  color: var(--bm-ink);
+  box-shadow: 0 10px 20px rgba(48, 48, 48, 0.14);
 }
 
 .specialCardRevealError {
@@ -1371,17 +1368,6 @@
 
   72% {
     transform: rotate(2deg) translateY(0) scale(0.98);
-  }
-}
-
-@keyframes deckReceivePulse {
-  0%,
-  100% {
-    transform: rotate(1deg) translateY(0);
-  }
-
-  48% {
-    transform: rotate(-3deg) translateY(4px) scale(1.03);
   }
 }
 
