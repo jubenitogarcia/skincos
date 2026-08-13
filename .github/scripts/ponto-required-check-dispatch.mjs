@@ -6,6 +6,9 @@ import { releaseTagFor } from "./ponto-release-identity.mjs";
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const ACTIVE_RUN_STATUSES = new Set(["queued", "in_progress", "pending", "requested", "waiting"]);
+const RETRYABLE_DISPATCH_STATUSES = new Set([429, 500, 502, 503, 504]);
+const DISPATCH_RECONCILIATION_ATTEMPTS = 3;
+const DISPATCH_RECONCILIATION_DELAY_MS = 2_000;
 
 export const REQUIRED_CHECK_WORKFLOWS = Object.freeze([
   {
@@ -56,6 +59,53 @@ function matchingRuns({ runs, repository, releaseSha, releaseTag }) {
   ));
 }
 
+function workflowRunsPath(repository, workflow, releaseTag) {
+  return `/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}/runs?event=workflow_dispatch&branch=${encodeURIComponent(releaseTag)}&per_page=100`;
+}
+
+function retryableDispatchStatus(error) {
+  const direct = Number(error?.status);
+  if (Number.isInteger(direct)) return direct;
+  const match = /returned\s+(\d{3})\b/.exec(String(error?.message || error));
+  return match ? Number(match[1]) : null;
+}
+
+function isRetryableDispatchError(error) {
+  return RETRYABLE_DISPATCH_STATUSES.has(retryableDispatchStatus(error));
+}
+
+function plannedExistingRun({ workflow, result, repository, releaseSha, releaseTag }) {
+  if (!Array.isArray(result?.workflow_runs)) {
+    throw new Error(`GitHub required-check workflow ${workflow} returned an invalid runs payload`);
+  }
+  const matches = matchingRuns({
+    runs: result.workflow_runs,
+    repository,
+    releaseSha,
+    releaseTag,
+  });
+  if (matches.length > 1) {
+    throw new Error(`immutable required-check workflow ${workflow} is ambiguous for this release tag`);
+  }
+  if (matches.length === 0) return null;
+
+  const run = matches[0];
+  if (run.status === "completed") {
+    if (run.conclusion !== "success") {
+      throw new Error(`immutable required-check workflow ${workflow} ended ${String(run.conclusion || "without-success")}`);
+    }
+    return { state: "reconciled-success", runId: String(run.id) };
+  }
+  if (!ACTIVE_RUN_STATUSES.has(String(run.status || ""))) {
+    throw new Error(`immutable required-check workflow ${workflow} has an unknown status`);
+  }
+  return { state: "reconciled-active", runId: String(run.id) };
+}
+
+function sleep(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
 export function planRequiredCheckDispatches({ repository, releaseSha, releaseTag, runsByWorkflow } = {}) {
   const normalizedRepositoryName = normalizedRepository(repository);
   const normalizedSha = normalizedReleaseSha(releaseSha);
@@ -104,7 +154,11 @@ async function githubRequest({ apiBase, token, pathname, init = {} }) {
     },
   });
   const body = response.status === 204 ? null : await response.json().catch(() => null);
-  if (!response.ok) throw new Error(`GitHub API ${init.method || "GET"} ${pathname} returned ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(`GitHub API ${init.method || "GET"} ${pathname} returned ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -113,6 +167,7 @@ export async function ensureRequiredCheckDispatches({
   releaseSha,
   releaseTag,
   request,
+  wait = sleep,
 } = {}) {
   const normalizedRepositoryName = normalizedRepository(repository);
   const normalizedSha = normalizedReleaseSha(releaseSha);
@@ -122,7 +177,7 @@ export async function ensureRequiredCheckDispatches({
   const runsByWorkflow = {};
   for (const { workflow } of REQUIRED_CHECK_WORKFLOWS) {
     const result = await request(
-      `/repos/${normalizedRepositoryName}/actions/workflows/${encodeURIComponent(workflow)}/runs?event=workflow_dispatch&branch=${encodeURIComponent(normalizedTag)}&per_page=100`,
+      workflowRunsPath(normalizedRepositoryName, workflow, normalizedTag),
     );
     if (!Array.isArray(result?.workflow_runs)) {
       throw new Error(`GitHub required-check workflow ${workflow} returned an invalid runs payload`);
@@ -142,15 +197,37 @@ export async function ensureRequiredCheckDispatches({
       results.push(plan);
       continue;
     }
-    await request(
-      `/repos/${normalizedRepositoryName}/actions/workflows/${encodeURIComponent(plan.workflow)}/dispatches`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ref: normalizedTag }),
-      },
-    );
-    results.push({ ...plan, state: "requested" });
+    let lastError = null;
+    for (let attempt = 1; attempt <= DISPATCH_RECONCILIATION_ATTEMPTS; attempt += 1) {
+      try {
+        await request(
+          `/repos/${normalizedRepositoryName}/actions/workflows/${encodeURIComponent(plan.workflow)}/dispatches`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ref: normalizedTag }),
+          },
+        );
+        results.push({ ...plan, state: "requested" });
+        break;
+      } catch (error) {
+        if (!isRetryableDispatchError(error)) throw error;
+        lastError = error;
+        await wait(DISPATCH_RECONCILIATION_DELAY_MS);
+        const existing = plannedExistingRun({
+          workflow: plan.workflow,
+          result: await request(workflowRunsPath(normalizedRepositoryName, plan.workflow, normalizedTag)),
+          repository: normalizedRepositoryName,
+          releaseSha: normalizedSha,
+          releaseTag: normalizedTag,
+        });
+        if (existing) {
+          results.push({ ...plan, ...existing });
+          break;
+        }
+        if (attempt === DISPATCH_RECONCILIATION_ATTEMPTS) throw lastError;
+      }
+    }
   }
   return {
     schemaVersion: 1,
