@@ -15,6 +15,7 @@ import {
   classifyPagesRollbackOwnership,
   classifyWorkerRollbackOwnership,
 } from "./ponto-rollback-ownership.mjs";
+import { releaseTagFor } from "./ponto-release-identity.mjs";
 import { attestBrokerFailCloseEvidence } from "./ponto-recovery-evidence.mjs";
 import { readCloudflareKvJson } from "./ponto-kv-readback.mjs";
 
@@ -55,6 +56,7 @@ if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
 
 if (!artifactRoot || !reportFile) throw new Error("automatic rollback artifact root and report path are required");
 if (!/^[0-9a-f]{40}$/.test(releaseSha) || !["staging", "pilot", "canary", "production"].includes(stage)) throw new Error("invalid automatic rollback identity");
+const expectedReleaseBranch = releaseTagFor("ponto", releaseSha);
 if (
   !/^[0-9]+$/.test(orchestratorRunId)
   || !repository.includes("/")
@@ -287,6 +289,15 @@ const expectedWeights = {
   canary: { timekeeping: 0, identityWorkforce: 0, coreApi: 0 },
   production: { timekeeping: 100, identityWorkforce: 100, coreApi: 100 },
 };
+const isExactImmutableChildRun = (run, workflow) => (
+  run?.workflow === workflow
+  && run.status === "completed"
+  && ["success", "failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(String(run.conclusion || ""))
+  && run.event === "workflow_dispatch"
+  && run.headBranch === expectedReleaseBranch
+  && String(run.headSha || "").toLowerCase() === releaseSha
+  && run.repository === repository
+);
 const plan = {};
 const unresolved = [];
 const untouched = {};
@@ -300,14 +311,7 @@ for (const [name, spec] of Object.entries(surfaceSpecs)) {
     continue;
   }
   const run = readJson(runFile);
-  if (
-    run.workflow !== spec.workflow
-    || run.status !== "completed"
-    || !["success", "failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(String(run.conclusion || ""))
-    || run.event !== "workflow_dispatch"
-    || run.headBranch !== "main"
-    || run.repository !== repository
-  ) {
+  if (!isExactImmutableChildRun(run, spec.workflow)) {
     unresolved.push({ surface: name, reason: "child-run-provenance-invalid" });
     continue;
   }
@@ -422,12 +426,7 @@ const pagesProvisionRunFile = path.join(artifactRoot, "runs/provision-pages.json
 if (fs.existsSync(pagesProvisionRunFile)) {
   const run = readJson(pagesProvisionRunFile);
   const journalFile = path.join(artifactRoot, "provisioning/pages/pages-release-probe-evidence.json");
-  const runValid = run.workflow === "cloudflare-pages-sync-ponto.yml"
-    && run.status === "completed"
-    && ["success", "failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(String(run.conclusion || ""))
-    && run.event === "workflow_dispatch"
-    && run.headBranch === "main"
-    && run.repository === repository;
+  const runValid = isExactImmutableChildRun(run, "cloudflare-pages-sync-ponto.yml");
   if (!runValid) {
     unresolved.push({ surface: "pagesEnvironmentSecrets", reason: "child-run-provenance-invalid" });
   } else if (!fs.existsSync(journalFile)) {
@@ -509,12 +508,7 @@ const drillRunFile = path.join(artifactRoot, "runs/staging-rollback-drill.json")
 if (staging && fs.existsSync(drillRunFile)) {
   const run = readJson(drillRunFile);
   const drillFile = path.join(artifactRoot, "staging-rollback-drill/ponto-staging-rollback-drill.json");
-  const runValid = run.workflow === "ponto-staging-rollback-drill.yml"
-    && run.status === "completed"
-    && ["success", "failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(String(run.conclusion || ""))
-    && run.event === "workflow_dispatch"
-    && run.headBranch === "main"
-    && run.repository === repository;
+  const runValid = isExactImmutableChildRun(run, "ponto-staging-rollback-drill.yml");
   if (!runValid || !fs.existsSync(drillFile)) {
     drillOwnershipResolved = false;
     unresolved.push({ surface: "stagingRollbackDrill", reason: "drill-run-or-evidence-provenance-invalid" });
