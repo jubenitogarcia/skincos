@@ -279,6 +279,14 @@ try {
     })
     Assert-Equal -Actual $denied.hookSpecificOutput.permissionDecision -Expected 'deny' -Message 'pending replacement must block source writes through the global bridge'
 
+    $allowedNativeCreate = Invoke-BridgeHook -EventName 'PreToolUse' -LoaderPath $loaderPath -LoaderHash $loaderHash -Payload ([ordered]@{
+        hook_event_name = 'PreToolUse'
+        cwd = $contextRoot
+        tool_name = 'codex_app__create_thread'
+        tool_input = [ordered]@{ target = [ordered]@{ type = 'project'; environment = [ordered]@{ type = 'worktree' } } }
+    })
+    Assert-Equal -Actual $allowedNativeCreate -Expected $null -Message 'pending replacement must allow native task creation without manufacturing a deny decision'
+
     $contextHead = (Invoke-FixtureGit -Repository $contextRoot -Arguments @('rev-parse', 'HEAD') | Select-Object -First 1).Trim()
     $managedChild = Join-Path $managedRoot 'bound-child'
     Invoke-FixtureGit -Repository $contextRoot -Arguments @('worktree', 'add', '--detach', $managedChild, $contextHead) | Out-Null

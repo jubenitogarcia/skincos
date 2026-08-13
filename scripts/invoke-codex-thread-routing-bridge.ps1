@@ -316,11 +316,19 @@ function Invoke-PrivateHook {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $raw = @($inputJson | & powershell.exe @arguments 2>&1 | ForEach-Object { [string]$_ })
-        if ($LASTEXITCODE -ne 0 -or $raw.Count -eq 0) {
+        $raw = @($inputJson | & powershell.exe @arguments 2>&1 | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($LASTEXITCODE -ne 0) {
             return $null
         }
-        return (($raw -join "`n") | ConvertFrom-Json -ErrorAction Stop)
+        if ($raw.Count -eq 0) {
+            # PreToolUse hooks may intentionally allow a native action by
+            # exiting successfully without emitting a decision object.
+            return [pscustomobject]@{ hasOutput = $false; output = $null }
+        }
+        return [pscustomobject]@{
+            hasOutput = $true
+            output = (($raw -join "`n") | ConvertFrom-Json -ErrorAction Stop)
+        }
     }
     catch {
         return $null
@@ -405,7 +413,7 @@ try {
         if ($Event -eq 'UserPromptSubmit') {
             if ($null -ne $routeMarker) {
                 $result = Invoke-PrivateHook -Payload $payload -Bundle $verified.bundle -RepositoryRoot $root
-                if ($null -eq $result) { Write-FailClosed -Reason 'candidate_route_marker_hook_failed' } else { $result | ConvertTo-Json -Depth 24 -Compress }
+                if ($null -eq $result -or -not $result.hasOutput) { Write-FailClosed -Reason 'candidate_route_marker_hook_failed' } else { $result.output | ConvertTo-Json -Depth 24 -Compress }
                 exit 0
             }
             $candidateNonce = Get-CandidateActivationMarker -Prompt $prompt
@@ -419,7 +427,7 @@ try {
                     exit 0
                 }
                 $result = Invoke-PrivateHook -Payload $payload -Bundle $verified.bundle -RepositoryRoot $root -PromptOverride (Remove-CandidateActivationMarker -Prompt $prompt)
-                if ($null -eq $result) { Write-FailClosed -Reason 'candidate_activation_hook_failed' } else { $result | ConvertTo-Json -Depth 24 -Compress }
+                if ($null -eq $result -or -not $result.hasOutput) { Write-FailClosed -Reason 'candidate_activation_hook_failed' } else { $result.output | ConvertTo-Json -Depth 24 -Compress }
                 exit 0
             }
             if ($null -ne $activation -and -not [string]::IsNullOrWhiteSpace([string]$activation.consumedAtUtc) -and (Test-CandidateSource -Activation $activation -Root $root)) {
@@ -429,17 +437,17 @@ try {
         }
         if ($null -ne $activation -and -not [string]::IsNullOrWhiteSpace([string]$activation.consumedAtUtc) -and (Test-CandidateSource -Activation $activation -Root $root)) {
             $result = Invoke-PrivateHook -Payload $payload -Bundle $verified.bundle -RepositoryRoot $root
-            if ($null -eq $result) { Write-FailClosed -Reason 'candidate_guard_hook_failed' } else { $result | ConvertTo-Json -Depth 24 -Compress }
+            if ($null -eq $result) { Write-FailClosed -Reason 'candidate_guard_hook_failed' } elseif ($result.hasOutput) { $result.output | ConvertTo-Json -Depth 24 -Compress }
         }
         exit 0
     }
 
     $result = Invoke-PrivateHook -Payload $payload -Bundle $verified.bundle -RepositoryRoot $root
-    if ($null -eq $result) {
+    if ($null -eq $result -or ($Event -eq 'UserPromptSubmit' -and -not $result.hasOutput)) {
         Write-FailClosed -Reason 'stable_private_hook_failed'
     }
-    else {
-        $result | ConvertTo-Json -Depth 24 -Compress
+    elseif ($result.hasOutput) {
+        $result.output | ConvertTo-Json -Depth 24 -Compress
     }
 }
 catch {
