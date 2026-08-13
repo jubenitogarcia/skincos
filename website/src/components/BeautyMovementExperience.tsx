@@ -1725,7 +1725,8 @@ export default function BeautyMovementExperience({
                         <BeautyMovementCardIllustration cardId={card.id} />
                     </span>
                     <span className={styles.finaleCardAct}>{line.actLabel}</span>
-                    <strong>{line.title}</strong>
+                    <strong>{card.title}</strong>
+                    <span className={styles.finaleCardMessage}>{card.shortMessage}</span>
                 </div>
             </article>
         );
