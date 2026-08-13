@@ -81,6 +81,7 @@ test("Ponto release custody pins the active coordination key at every release bo
     ".github/workflows/ponto-staging-rollback-drill.yml",
     ".github/workflows/ponto-waf-security.yml",
     ".github/workflows/timekeeping-staging-journey.yml",
+    ".github/workflows/deploy-website-cloudflare.yml",
   ];
   const activeSecret = /^\s{10}shared_secret: \$\{\{ secrets\.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY \}\}$/gm;
   const activeKeyId = /^\s{10}key_id: \$\{\{ vars\.SKINCOS_GLOBAL_COORDINATION_KEY_ID \}\}$/gm;
