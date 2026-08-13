@@ -96,7 +96,7 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || '' }}
           resource: global:token-vault-staging
           module: influencer-intelligence
@@ -114,7 +114,7 @@ jobs:
           source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || '' }}
 
       - name: Promote bounded staging shadow and validate its contract
@@ -497,6 +497,6 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || '' }}
           proof_file: ${{ runner.temp }}/influencer-intelligence-staging-shadow-lease.json
