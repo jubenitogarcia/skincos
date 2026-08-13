@@ -108,11 +108,11 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.doesNotMatch(experience, /className=\{styles\.progressCopy\}>\s*<small>/);
     assert.match(experience, /styles\.progressRowWaiting/);
     assert.match(experience, /className=\{styles\.progressGroup\}/);
-    assert.match(experience, /className=\{styles\.heroDeckInstruction\}/);
+    assert.match(experience, /styles\.heroDeckInstructionHidden/);
     assert.match(experience, /aria-hidden=\{waitingForInitialDeal \|\| undefined\}/);
     assert.match(experience, /\$\{styles\.tablePrompt\}/);
     assert.match(experience, /key=\{introStage !== "hidden" \? "experience-intro" : tableDefinition\.id\}/);
-    assert.match(experience, /waitingForInitialDeal \? \(/);
+    assert.doesNotMatch(experience, /waitingForInitialDeal \? \(\s*<p/);
     assert.doesNotMatch(experience, /className=\{styles\.autoAdvanceLabel\}/);
     assert.doesNotMatch(experience, /className=\{styles\.autoAdvanceHint\}/);
     assert.doesNotMatch(experience, /className=\{styles\.brandLine\}/);
@@ -181,13 +181,14 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /function handleDeckKeyDown\(event: ReactKeyboardEvent<HTMLButtonElement>\)/);
     assert.match(experience, /event\.key !== "Enter" && event\.key !== " " && event\.key !== "Spacebar"/);
     assert.equal((experience.match(/onKeyDown=\{handleDeckKeyDown\}/g) ?? []).length, 1);
-    const heroInstructionClass = experience.indexOf("className={styles.heroDeckInstruction}");
+    const heroInstructionClass = experience.indexOf("styles.heroDeckInstruction");
     const heroInstructionMarkup = experience.slice(
         experience.lastIndexOf("<p", heroInstructionClass),
         experience.indexOf("</p>", heroInstructionClass) + "</p>".length,
     );
     assert.ok(heroInstructionClass >= 0);
-    assert.match(heroInstructionMarkup, /<p\s+className=\{styles\.heroDeckInstruction\}>/);
+    assert.match(heroInstructionMarkup, /<p\s+className=\{`\$\{styles\.heroDeckInstruction\} \$\{waitingForInitialDeal \? "" : styles\.heroDeckInstructionHidden\}`\.trim\(\)\}/);
+    assert.match(heroInstructionMarkup, /aria-hidden=\{!waitingForInitialDeal \|\| undefined\}/);
     assert.doesNotMatch(heroInstructionMarkup, /<(?:button|a)\b|onClick=|onKeyDown=|tabIndex=|aria-label=/);
     assert.doesNotMatch(experience, /id="beauty-movement-deck-prompt"/);
     assert.equal((experience.match(/onClick=\{startInitialDeal\}/g) ?? []).length, 1);
@@ -298,6 +299,8 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
         styles.indexOf(".tableDeckPromptArrow {"),
     );
     assert.match(heroInstructionStyles, /display: block[\s\S]*font-family: var\(--font-brand-text\)/);
+    assert.match(styles, /\.heroDeckInstructionHidden \{\s*visibility: hidden;/);
+    assert.match(styles, /\.progressRow \{[\s\S]*min-height: 52px;[\s\S]*align-items: flex-start;/);
     assert.doesNotMatch(heroInstructionStyles, /cursor: pointer|:hover|:focus-visible|appearance:|background:/);
     assert.match(styles, /\.tableDeckPromptArrow \{[\s\S]*position: absolute[\s\S]*bottom: calc\(32px \+ 106px \+ 8px\)[\s\S]*font-size: 1\.35rem/);
     assert.match(styles, /\.tableSurface \{[\s\S]*padding: clamp\(10px, 1\.5vw, 16px\) clamp\(10px, 1\.4vw, 16px\) clamp\(32px, 3vw, 44px\)/);

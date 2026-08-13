@@ -1953,11 +1953,12 @@ export default function BeautyMovementExperience({
             <section className={styles.shell} aria-labelledby="beauty-movement-title">
                 <header className={styles.hero}>
                     <h1 id="beauty-movement-title">{initialState.campaign.title?.trim() || "Beleza que se move com você."}</h1>
-                    {waitingForInitialDeal ? (
-                        <p className={styles.heroDeckInstruction}>
-                            Clique no baralho para começar a sua leitura
-                        </p>
-                    ) : null}
+                    <p
+                        className={`${styles.heroDeckInstruction} ${waitingForInitialDeal ? "" : styles.heroDeckInstructionHidden}`.trim()}
+                        aria-hidden={!waitingForInitialDeal || undefined}
+                    >
+                        Clique no baralho para começar a sua leitura
+                    </p>
                 </header>
 
                 <section

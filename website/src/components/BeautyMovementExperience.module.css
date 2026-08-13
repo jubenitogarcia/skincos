@@ -56,6 +56,10 @@
   text-wrap: balance;
 }
 
+.heroDeckInstructionHidden {
+  visibility: hidden;
+}
+
 .tableDeckPromptArrow {
   position: absolute;
   z-index: 3;
@@ -92,13 +96,13 @@
   display: flex;
   justify-content: center;
   width: min(100%, 930px);
-  min-height: 38px;
+  min-height: 52px;
+  align-items: flex-start;
   margin: -4px auto 2px;
 }
 
 .progressRowWaiting {
   min-height: 52px;
-  align-items: start;
 }
 
 .progressRowWaiting .progressGroup {
