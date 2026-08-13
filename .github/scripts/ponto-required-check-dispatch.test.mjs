@@ -95,6 +95,81 @@ test("dispatches only missing workflows at the exact immutable tag", async () =>
   assert.equal(requests.filter(({ pathname }) => pathname.endsWith("/dispatches")).length, 3);
 });
 
+test("reconciles an indeterminate retryable dispatch before issuing a second tag-pinned request", async () => {
+  const requests = [];
+  let centralDispatches = 0;
+  let waits = 0;
+  const request = async (pathname, init = {}) => {
+    requests.push({ pathname, init });
+    if (pathname.includes("/runs?")) {
+      const workflow = decodeURIComponent(pathname.split("/actions/workflows/")[1].split("/runs?")[0]);
+      if (workflow === "central-e2e-smoke.yml" && centralDispatches === 1) {
+        return {
+          workflow_runs: [run(workflow, { id: 104, status: "in_progress", conclusion: null })],
+        };
+      }
+      return { workflow_runs: [] };
+    }
+    if (pathname.includes("central-e2e-smoke.yml/dispatches")) {
+      centralDispatches += 1;
+      const error = new Error("GitHub API POST returned 500");
+      error.status = 500;
+      throw error;
+    }
+    return null;
+  };
+
+  const report = await ensureRequiredCheckDispatches({
+    repository,
+    releaseSha,
+    releaseTag,
+    request,
+    wait: async () => { waits += 1; },
+  });
+  const central = report.workflows.find(({ workflow }) => workflow === "central-e2e-smoke.yml");
+  assert.deepEqual(central, {
+    workflow: "central-e2e-smoke.yml",
+    checks: ["Central E2E Smoke"],
+    state: "reconciled-active",
+    runId: "104",
+  });
+  assert.equal(centralDispatches, 1);
+  assert.equal(waits, 1);
+  assert.equal(requests.filter(({ pathname }) => pathname.includes("central-e2e-smoke.yml/dispatches")).length, 1);
+});
+
+test("retries a retryable dispatch only after reconciling that no tag-pinned run exists", async () => {
+  const requests = [];
+  let centralDispatches = 0;
+  let waits = 0;
+  const request = async (pathname, init = {}) => {
+    requests.push({ pathname, init });
+    if (pathname.includes("/runs?")) return { workflow_runs: [] };
+    if (pathname.includes("central-e2e-smoke.yml/dispatches")) {
+      centralDispatches += 1;
+      if (centralDispatches === 1) {
+        const error = new Error("GitHub API POST returned 500");
+        error.status = 500;
+        throw error;
+      }
+    }
+    return null;
+  };
+
+  const report = await ensureRequiredCheckDispatches({
+    repository,
+    releaseSha,
+    releaseTag,
+    request,
+    wait: async () => { waits += 1; },
+  });
+  const central = report.workflows.find(({ workflow }) => workflow === "central-e2e-smoke.yml");
+  assert.equal(central.state, "requested");
+  assert.equal(centralDispatches, 2);
+  assert.equal(waits, 1);
+  assert.equal(requests.filter(({ pathname }) => pathname.includes("central-e2e-smoke.yml/runs?")).length, 2);
+});
+
 test("preview wires immutable required-check dispatch immediately after tag identity creation", () => {
   const workflow = fs.readFileSync(new URL("../workflows/ponto-progressive-release.yml", import.meta.url), "utf8");
   assert.match(
