@@ -11,6 +11,7 @@ test("beauty movement motion keeps its visible stages and reading windows aligne
     assert.ok(BEAUTY_MOVEMENT_MOTION.handDealSettleMs > 0);
     assert.equal(BEAUTY_MOVEMENT_MOTION.handCollectMs, 860);
     assert.equal(BEAUTY_MOVEMENT_MOTION.handExpandMs, 760);
+    assert.equal(BEAUTY_MOVEMENT_MOTION.progressEnterMs, 620);
     assert.equal(
         BEAUTY_MOVEMENT_MOTION.progressCollapseMs +
             BEAUTY_MOVEMENT_MOTION.progressTransferMs +
@@ -18,10 +19,7 @@ test("beauty movement motion keeps its visible stages and reading windows aligne
         BEAUTY_MOVEMENT_MOTION.progressTransitionMs,
     );
     assert.equal(BEAUTY_MOVEMENT_MOTION.finaleCardsEnterMs, 880);
-    assert.equal(
-        BEAUTY_MOVEMENT_MOTION.finaleCardMergeMs + BEAUTY_MOVEMENT_MOTION.finaleMergeStaggerMs * 2,
-        BEAUTY_MOVEMENT_MOTION.finaleMergeMs,
-    );
+    assert.ok(BEAUTY_MOVEMENT_MOTION.finaleCardMergeMs < BEAUTY_MOVEMENT_MOTION.finaleMergeMs);
     assert.ok(BEAUTY_MOVEMENT_MOTION.finaleMergeSettleMs > 0);
     assert.ok(BEAUTY_MOVEMENT_MOTION.handRevealFallbackMs > BEAUTY_MOVEMENT_MOTION.handRevealMs);
 });

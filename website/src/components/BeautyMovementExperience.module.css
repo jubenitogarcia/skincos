@@ -36,66 +36,43 @@
 .hero {
   display: grid;
   justify-items: center;
+  gap: clamp(12px, 1.8vw, 18px);
   max-width: 830px;
   margin: 0 auto;
   text-align: center;
 }
 
-.heroDeckPrompt {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: min(100%, 220px);
+.heroDeckInstruction {
+  display: block;
   max-width: 100%;
-  min-height: 40px;
-  margin: 0 0 clamp(14px, 2.4vw, 22px);
-  padding: 9px 18px;
-  border: 1px solid var(--bm-yellow-ink);
-  border-radius: 999px;
-  background: var(--bm-yellow-soft);
-  color: var(--bm-ink);
-  cursor: pointer;
-  font-family: var(--font-brand-ui);
-  font-size: clamp(0.76rem, 1vw, 0.86rem);
-  font-weight: 700;
-  letter-spacing: 0.025em;
-  line-height: 1.25;
+  margin: 0 auto;
+  color: var(--bm-muted);
+  font-family: var(--font-brand-text);
+  font-size: clamp(0.94rem, 1.35vw, 1.08rem);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
   text-align: center;
-  white-space: nowrap;
-  box-shadow: 0 8px 18px rgba(48, 48, 48, 0.1);
-  transition: background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  text-wrap: balance;
 }
 
-.heroDeckPrompt::before {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--bm-yellow);
-  content: "";
-}
-
-.heroDeckPrompt:hover {
-  background: #ffe9a0;
-  box-shadow: 0 12px 24px rgba(48, 48, 48, 0.14);
-  transform: translateY(-2px);
-}
-
-.heroDeckPrompt:focus-visible {
-  outline: 3px solid var(--bm-yellow);
-  outline-offset: 4px;
-}
-
-.heroDeckPromptArrow {
+.tableDeckPromptArrow {
+  position: absolute;
+  z-index: 3;
+  bottom: calc(32px + 106px + 8px);
+  left: 50%;
+  display: block;
   color: var(--bm-yellow-ink);
-  font-size: 1.15rem;
+  font-size: 1.35rem;
+  font-weight: 700;
   line-height: 1;
-  transition: transform 180ms ease;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: deckPromptArrowFloat 1200ms cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
 }
 
-.heroDeckPrompt:hover .heroDeckPromptArrow {
-  transform: translateY(3px);
+.tableSurface[data-deck-state="waiting"] .tableDeckPromptArrow {
+  bottom: 35px;
 }
 
 .hero h1 {
@@ -111,12 +88,22 @@
 }
 
 .progressRow {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: clamp(16px, 3vw, 42px);
+  position: relative;
+  display: flex;
+  justify-content: center;
   width: min(100%, 930px);
-  margin: -4px auto 0;
+  min-height: 38px;
+  margin: -4px auto 2px;
+}
+
+.progressRowWaiting {
+  min-height: 52px;
+  align-items: start;
+}
+
+.progressRowWaiting .progressGroup {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .progressGroup {
@@ -128,12 +115,21 @@
 }
 
 .tablePrompt {
-  max-width: 560px;
-  margin: 0;
+  display: grid;
+  justify-items: center;
+  width: min(100%, 680px);
+  max-width: 100%;
+  margin: 0 auto clamp(8px, 1.4vw, 14px);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--bm-muted);
   font-family: var(--font-brand-text);
   font-size: clamp(0.9rem, 1.25vw, 1.02rem);
   line-height: 1.45;
+  text-align: center;
   text-wrap: pretty;
   overflow: visible;
 }
@@ -161,17 +157,6 @@
   color: var(--bm-muted);
   font-size: 0.96em;
   line-height: 1.4;
-}
-
-.tablePromptIntro .promptTitle,
-.tablePromptIntroHolding .promptTitle,
-.tablePromptIntroExit .promptTitle {
-  color: inherit;
-  font-family: var(--font-brand-text);
-  font-size: inherit;
-  font-weight: 400;
-  letter-spacing: normal;
-  line-height: inherit;
 }
 
 .tablePromptIntro {
@@ -246,8 +231,9 @@
   background: var(--bm-yellow);
   box-shadow: 0 8px 18px rgba(245, 179, 1, 0.18);
   pointer-events: none;
-  animation: progressHighlightTransfer var(--bm-progress-total-ms) cubic-bezier(0.22, 1, 0.36, 1) both;
-  will-change: left, top, width, height;
+  transform-origin: center;
+  animation: progressHighlightTransfer var(--bm-progress-total-ms) cubic-bezier(0.4, 0, 0.2, 1) both;
+  will-change: left, top, width, height, transform;
 }
 
 .progressItem {
@@ -266,8 +252,8 @@
   justify-items: center;
   gap: 0;
   width: 100%;
-  min-height: 44px;
-  padding: 8px 2px 10px;
+  min-height: 38px;
+  padding: 5px 2px 7px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
@@ -317,17 +303,31 @@
 }
 
 .progressItemCurrent .progressButton {
+  grid-template-rows: 25px 5px;
   border-bottom-color: var(--bm-yellow);
   border-radius: 8px;
   background: var(--bm-yellow);
   color: var(--bm-ink);
-  min-height: 50px;
-  padding: 10px 18px;
+  height: 38px;
+  min-height: 38px;
+  align-self: start;
+  padding: 4px 14px 1px;
 }
 
 .progressItemCurrent .progressButton strong {
   font-size: clamp(1rem, 1.5vw, 1.18rem);
   font-size: var(--bm-progress-active-label-size);
+}
+
+.progressItemEntering .progressButton {
+  transform-origin: center;
+  animation: progressButtonEnter var(--bm-progress-enter-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
+  will-change: min-height, padding, transform, background, color, opacity;
+}
+
+.progressItemEntering strong {
+  animation: progressLabelEnter var(--bm-progress-enter-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
+  will-change: font-size;
 }
 
 .progressItemCurrent .progressButton:hover {
@@ -355,8 +355,10 @@
 
 .progressItemTransferFrom .progressButton {
   color: var(--bm-ink);
-  min-height: 50px;
-  padding: 10px 18px;
+  height: 38px;
+  min-height: 38px;
+  align-self: start;
+  padding: 4px 14px 1px;
   border-radius: 8px;
   animation: progressButtonCollapse var(--bm-progress-collapse-ms) cubic-bezier(0.4, 0, 0.2, 1) both;
   will-change: min-height, padding, transform;
@@ -375,16 +377,16 @@
 .progressItemTransferTo .progressButton {
   color: var(--bm-muted);
   opacity: 1;
-  min-height: 44px;
-  padding: 8px 2px 10px;
-  animation: progressButtonExpand var(--bm-progress-expand-ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+  min-height: 38px;
+  padding: 5px 2px 7px;
+  animation: progressButtonExpand var(--bm-progress-expand-ms) cubic-bezier(0.4, 0, 0.2, 1) both;
   animation-delay: calc(var(--bm-progress-collapse-ms) + var(--bm-progress-transfer-ms));
   will-change: min-height, padding, transform;
 }
 
 .progressItemTransferTo strong {
   font-size: 0.78rem;
-  animation: progressLabelExpand var(--bm-progress-expand-ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: progressLabelExpand var(--bm-progress-expand-ms) cubic-bezier(0.4, 0, 0.2, 1) both;
   animation-delay: calc(var(--bm-progress-collapse-ms) + var(--bm-progress-transfer-ms));
   will-change: font-size;
 }
@@ -399,10 +401,14 @@
 .tableStage {
   position: relative;
   display: grid;
-  gap: 8px;
+  gap: 4px;
   padding: clamp(4px, 0.8vw, 8px) 0 clamp(8px, 1vw, 12px);
   overflow-anchor: none;
   isolation: isolate;
+}
+
+.tableStage[data-finale-stage="hidden"] {
+  padding-bottom: clamp(86px, 9vw, 96px);
 }
 
 .tableStage::before,
@@ -434,7 +440,7 @@
   position: relative;
   width: min(100%, 920px);
   margin: 0 auto;
-  padding: clamp(10px, 1.5vw, 16px) clamp(10px, 1.4vw, 16px) clamp(126px, 10vw, 136px);
+  padding: clamp(10px, 1.5vw, 16px) clamp(10px, 1.4vw, 16px) clamp(32px, 3vw, 44px);
   border: 1px solid var(--bm-line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.48);
@@ -442,14 +448,45 @@
 }
 
 .tableSurface[data-deck-state="waiting"] {
-  min-height: 220px;
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.tableSurface[data-deck-state="intro"],
+.tableSurface[data-deck-state="prompt"] {
+  padding-bottom: clamp(10px, 1.5vw, 16px);
+  overflow: visible;
+}
+
+.tableSurface[data-deck-state="intro"] {
+  height: var(--bm-table-intro-height, 0px);
+  min-height: 0;
+  transition: height var(--bm-hand-expand-ms) cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: height;
+}
+
+.tableSurface[data-deck-state="prompt"] {
+  min-height: 112px;
+}
+
+.tableSurface[data-deck-state="waiting"] .deckStage,
+.tableSurface[data-deck-state="intro"] .deckStage,
+.tableSurface[data-deck-state="prompt"] .deckStage,
+.tableSurface[data-deck-state="expanding"] .deckStage,
+.tableSurface[data-deck-state="ready"] .deckStage {
+  bottom: -79px;
 }
 
 .deckStage {
   appearance: none;
   position: absolute;
   z-index: 2;
-  bottom: 14px;
+  bottom: 32px;
   left: 50%;
   width: 82px;
   height: 106px;
@@ -459,7 +496,6 @@
   color: inherit;
   cursor: pointer;
   transform: translateX(-50%);
-  will-change: auto;
 }
 
 .deckStage .deckCard,
@@ -525,14 +561,14 @@
 }
 
 .tableStage[data-hand-stage="expand"] .tableSurface {
-  height: var(--bm-table-expand-height, 220px);
-  overflow: hidden;
-  transition: height var(--bm-hand-expand-ms) cubic-bezier(0.22, 1, 0.36, 1);
+  height: var(--bm-table-expand-height, 112px);
+  overflow: visible;
+  transition: height var(--bm-hand-expand-ms) cubic-bezier(0.4, 0, 0.2, 1);
   will-change: height;
 }
 
 .tableStage[data-hand-stage="expand"] .deckStage {
-  animation: deckStageExpand var(--bm-hand-expand-ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: deckStageExpand var(--bm-hand-expand-ms) cubic-bezier(0.4, 0, 0.2, 1) both;
   will-change: transform;
 }
 
@@ -542,7 +578,7 @@
 }
 
 .tableStage[data-hand-stage="deal"] .deckStage {
-  animation: deckStageDeal var(--bm-hand-deal-ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: deckStageDeal var(--bm-hand-deal-ms) cubic-bezier(0.4, 0, 0.2, 1) both;
   will-change: transform;
 }
 
@@ -593,16 +629,19 @@
 }
 
 .finaleCardGrid {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: clamp(14px, 2.8vw, 30px);
   width: min(100%, 920px);
   margin: 2px auto 0;
+  --finale-card-height: 360px;
+  --finale-special-card-height: 430px;
 }
 
 .finaleCard {
   position: relative;
-  min-height: 360px;
+  min-height: var(--finale-card-height);
   perspective: 1200px;
   pointer-events: none;
   --finale-x: 0px;
@@ -618,6 +657,41 @@
 .finaleCard:nth-child(3) {
   --finale-x: clamp(-320px, -23vw, -170px);
   --finale-rotate: 8deg;
+}
+
+.tableStage[data-hand-stage="finale"] .deckStage,
+.tableStage[data-finale-stage="confirmation"] .deckStage,
+.tableStage[data-finale-stage="result"] .deckStage {
+  pointer-events: none;
+}
+
+.tableStage[data-finale-stage="confirmation"] .deckStage,
+.tableStage[data-finale-stage="result"] .deckStage {
+  visibility: hidden;
+}
+
+.finaleSpecialCardTransform {
+  position: absolute;
+  z-index: 6;
+  top: calc((var(--finale-card-height) - var(--finale-special-card-height)) / 2);
+  left: 50%;
+  width: min(100%, 360px);
+  height: var(--finale-special-card-height);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(-50%, 0, 0) scale(0.16);
+  transform-origin: center;
+}
+
+.finaleSpecialCardTransform .specialCard {
+  width: 100%;
+  min-height: 100%;
+  animation: none;
+}
+
+.tableStage[data-hand-stage="finale"] .finaleCardGridMerging .finaleSpecialCardTransform {
+  animation: finaleSpecialCardTransform var(--bm-finale-merge-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
+  will-change: transform, opacity;
 }
 
 .tableStage[data-hand-stage="finale"][data-finale-stage="merging"] .deckCardTop {
@@ -639,12 +713,14 @@
   will-change: transform, opacity;
 }
 
-.tableStage[data-hand-stage="finale"] .finaleCardGridMerging .finaleCard:nth-child(2) {
-  animation-delay: var(--bm-finale-merge-stagger-ms);
+.tableStage[data-hand-stage="finale"] .finaleCardGridMerging .finaleCard:nth-child(1),
+.tableStage[data-hand-stage="finale"] .finaleCardGridMerging .finaleCard:nth-child(3) {
+  animation-delay: 0ms;
 }
 
-.tableStage[data-hand-stage="finale"] .finaleCardGridMerging .finaleCard:nth-child(3) {
-  animation-delay: calc(var(--bm-finale-merge-stagger-ms) * 2);
+.tableStage[data-hand-stage="finale"] .finaleCardGridMerging .finaleCard:nth-child(2) {
+  animation: finaleCenterCardTransform var(--bm-finale-card-merge-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
+  animation-delay: 0ms;
 }
 
 .finaleCardFace {
@@ -699,11 +775,102 @@
 
 .specialCardStage {
   display: grid;
-  gap: 18px;
+  gap: 0;
   width: min(100%, 520px);
   min-height: 430px;
   place-items: center;
   margin: 2px auto 0;
+}
+
+.specialCardStageReopen {
+  min-height: 430px;
+}
+
+.specialCardReopenCard {
+  cursor: pointer;
+  outline: none;
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.specialCardReopenCard:hover {
+  filter: brightness(1.04);
+  transform: translateY(-4px);
+}
+
+.specialCardReopenCard:focus-visible {
+  outline: 3px solid var(--bm-yellow);
+  outline-offset: 4px;
+}
+
+.specialCardModalOverlay {
+  --bm-bg: #fafafa;
+  --bm-surface: #ffffff;
+  --bm-surface-soft: #f5f5f5;
+  --bm-ink: #303030;
+  --bm-muted: #505050;
+  --bm-line: #d0d0d0;
+  --bm-line-strong: #a8a8a8;
+  --bm-yellow: #f5b301;
+  --bm-yellow-soft: #fff2bd;
+  --bm-yellow-ink: #825900;
+  --bm-shadow: 0 10px 24px rgba(48, 48, 48, 0.08);
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: clamp(16px, 4vw, 32px);
+  background: rgba(10, 10, 11, 0.64);
+  backdrop-filter: blur(10px) saturate(0.84);
+  -webkit-backdrop-filter: blur(10px) saturate(0.84);
+  animation: specialCardModalBackdropEnter 260ms ease-out both;
+}
+
+.specialCardModalDialog {
+  position: relative;
+  display: grid;
+  width: min(400px, 100%);
+  max-height: min(94vh, 720px);
+  place-items: center;
+  padding-top: 22px;
+}
+
+.specialCardModalDialog .specialCard {
+  width: min(360px, 100%);
+  max-height: calc(94vh - 22px);
+}
+
+.specialCardModalClose {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(15, 15, 16, 0.7);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+  color: var(--bm-surface);
+  cursor: pointer;
+  font-size: 1.65rem;
+  line-height: 1;
+  transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+}
+
+.specialCardModalClose:hover,
+.specialCardModalClose:focus-visible {
+  border-color: var(--bm-yellow);
+  background: var(--bm-yellow);
+  color: var(--bm-ink);
+  transform: translateY(-1px);
+}
+
+.specialCardModalClose:focus-visible {
+  outline: 3px solid var(--bm-yellow);
+  outline-offset: 4px;
 }
 
 .specialCardConfirmation {
@@ -742,32 +909,39 @@
   width: 100%;
 }
 
-.finaleHoldStatus {
+.specialCardRevealAction {
   display: grid;
   justify-items: center;
-  gap: 3px;
-  margin: -4px auto 0;
-  color: var(--bm-muted);
-  text-align: center;
+  gap: 7px;
+  width: min(100%, 282px);
 }
 
-.finaleHoldStatus span {
-  font-family: var(--font-brand-ui);
-  font-size: 0.76rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+.specialCardBackWithAction {
+  gap: 10px;
+  padding: 24px;
 }
 
-.finaleHoldStatus strong {
+.specialCardBackWithAction .specialCardBrand {
+  width: 76px;
+  height: 68px;
+}
+
+.specialCardRevealAction .primaryButton {
+  width: 100%;
+  border-color: var(--bm-yellow);
+  background: var(--bm-yellow);
   color: var(--bm-ink);
-  font-family: var(--font-brand-ui);
-  font-size: 1.35rem;
-  line-height: 1;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.18);
 }
 
-.finaleHoldStatus small {
-  font-size: 0.82rem;
+.specialCardRevealError {
+  max-width: 270px;
+  margin: 0;
+  color: rgba(250, 250, 250, 0.88);
+  font-family: var(--font-brand-text);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  text-align: center;
 }
 
 .specialCard {
@@ -775,6 +949,10 @@
   min-height: 430px;
   perspective: 1200px;
   animation: specialCardEnter 820ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
+}
+
+.specialCardStageReopen .specialCard {
+  width: min(100%, 360px);
 }
 
 .specialCardInner {
@@ -935,7 +1113,6 @@
   perspective: 1200px;
   text-align: left;
   transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), filter 320ms ease;
-  will-change: auto;
   --deal-x: 0px;
   --deal-y: 106px;
   --deal-rotate: 0deg;
@@ -987,17 +1164,19 @@
   transform-origin: center center;
   transform-style: preserve-3d;
   transition: transform 860ms cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform;
 }
 
 .cardButtonSelected .cardInner {
   animation: cardFlipAndSettle var(--bm-hand-reveal-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
-  will-change: transform;
 }
 
 .cardButtonSelected {
   z-index: 3;
   animation: cardLiftAndSettle var(--bm-hand-reveal-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
+}
+
+.tableStage[data-hand-stage="reveal"] .cardButtonSelected,
+.tableStage[data-hand-stage="reveal"] .cardButtonSelected .cardInner {
   will-change: transform;
 }
 
@@ -1103,6 +1282,16 @@
 
 .cardButtonSelected .cardSparkles > span:nth-child(5) {
   animation-delay: 300ms;
+}
+
+@keyframes deckPromptArrowFloat {
+  from {
+    transform: translate(-50%, 0);
+  }
+
+  to {
+    transform: translate(-50%, 5px);
+  }
 }
 
 @keyframes cardLiftAndSettle {
@@ -1258,24 +1447,6 @@
   }
 }
 
-@keyframes finaleCardsReappear {
-  from {
-    opacity: 0;
-    transform: translate3d(var(--finale-x), var(--finale-y), 0) rotate(var(--finale-rotate)) scale(0.58);
-  }
-
-  62% {
-    opacity: 1;
-    transform: translate3d(calc(var(--finale-x) * 0.08), calc(var(--finale-y) * 0.08), 0)
-      rotate(calc(var(--finale-rotate) * 0.12)) scale(1.04);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
-  }
-}
-
 @keyframes finaleCardsMerge {
   0% {
     opacity: 1;
@@ -1297,6 +1468,52 @@
   100% {
     opacity: 0;
     transform: translate3d(var(--finale-x), var(--finale-merge-y, 0px), 0) rotate(0deg) scale(0.24);
+  }
+}
+
+@keyframes finaleCenterCardTransform {
+  0%,
+  52% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+  }
+
+  68% {
+    opacity: 1;
+    transform: translate3d(0, -3px, 0) scale(1.04) rotate(-1deg);
+  }
+
+  84% {
+    opacity: 0.62;
+    transform: translate3d(0, 0, 0) scale(0.64) rotate(0deg);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.2) rotate(0deg);
+  }
+}
+
+@keyframes finaleSpecialCardTransform {
+  0%,
+  52% {
+    opacity: 0;
+    transform: translate3d(-50%, 0, 0) scale(0.16);
+  }
+
+  68% {
+    opacity: 0.18;
+    transform: translate3d(-50%, 0, 0) scale(0.32);
+  }
+
+  84% {
+    opacity: 0.78;
+    transform: translate3d(-50%, 0, 0) scale(0.84);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(-50%, 0, 0) scale(1);
   }
 }
 
@@ -1327,6 +1544,16 @@
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes specialCardModalBackdropEnter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
 
@@ -1604,20 +1831,19 @@
   line-height: 1.55;
 }
 
-.actAdvance {
-  display: grid;
-  justify-items: center;
-  gap: 12px;
-}
-
 .autoAdvance {
   display: block;
   width: 100%;
   height: 4px;
-  margin-top: 8px;
+  margin-top: 1px;
   border-radius: 999px;
   background: rgba(48, 48, 48, 0.16);
   overflow: hidden;
+  visibility: hidden;
+}
+
+.autoAdvanceVisible {
+  visibility: visible;
 }
 
 .autoAdvance::after {
@@ -1628,6 +1854,10 @@
   background: var(--bm-ink);
   content: "";
   transform-origin: left center;
+  animation: none;
+}
+
+.autoAdvanceVisible::after {
   animation: autoAdvanceProgress var(--bm-auto-advance-ms) linear both;
 }
 
@@ -1669,53 +1899,84 @@
   }
 }
 
-@keyframes progressHighlightTransfer {
-  0%,
-  23% {
-    top: var(--progress-from-top);
-    left: var(--progress-from-left);
-    width: var(--progress-from-width);
-    height: var(--progress-from-height);
-  }
-
-  73% {
-    top: var(--progress-to-top);
-    left: var(--progress-from-left);
-    width: calc(var(--progress-to-left) + var(--progress-to-width) - var(--progress-from-left));
-    height: var(--progress-to-height);
-  }
-
-  100% {
-    top: var(--progress-to-top);
-    left: var(--progress-to-left);
-    width: var(--progress-to-width);
-    height: var(--progress-to-height);
-  }
-}
-
 @keyframes progressButtonCollapse {
   from {
-    min-height: 50px;
-    padding: 10px 18px;
+    min-height: 38px;
+    padding: 4px 14px 1px;
+    background: var(--bm-yellow);
   }
 
   to {
-    min-height: 44px;
-    padding: 8px 2px 10px;
+    min-height: 38px;
+    padding: 5px 2px 7px;
+    background: transparent;
+  }
+}
+
+@keyframes progressButtonEnter {
+  0% {
+    min-height: 38px;
+    padding: 5px 2px 7px;
+    background: transparent;
+    color: var(--bm-muted);
+    opacity: 0.65;
+    transform: translate3d(0, 2px, 0) scale(0.92);
+  }
+
+  42% {
+    min-height: 38px;
+    padding: 4px 14px 1px;
+    background: var(--bm-yellow);
+    color: var(--bm-ink);
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1.04);
+  }
+
+  72% {
+    transform: translate3d(0, 0, 0) scale(0.985);
+  }
+
+  100% {
+    min-height: 38px;
+    padding: 4px 14px 1px;
+    background: var(--bm-yellow);
+    color: var(--bm-ink);
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes progressLabelEnter {
+  0% {
+    font-size: 0.78rem;
+  }
+
+  42% {
+    font-size: var(--bm-progress-active-label-size);
+  }
+
+  72% {
+    font-size: calc(var(--bm-progress-active-label-size) * 0.985);
+  }
+
+  100% {
+    font-size: var(--bm-progress-active-label-size);
   }
 }
 
 @keyframes progressButtonExpand {
   from {
-    min-height: 44px;
-    padding: 8px 2px 10px;
+    min-height: 38px;
+    padding: 5px 2px 7px;
     color: var(--bm-muted);
+    background: transparent;
   }
 
   to {
-    min-height: 50px;
-    padding: 10px 18px;
+    min-height: 38px;
+    padding: 4px 14px 1px;
     color: var(--bm-ink);
+    background: var(--bm-yellow);
   }
 }
 
@@ -1739,17 +2000,78 @@
   }
 }
 
+@keyframes progressHighlightTransfer {
+  0% {
+    top: var(--progress-from-top);
+    left: var(--progress-from-left);
+    width: var(--progress-from-width);
+    height: var(--progress-from-height);
+    border-radius: 8px;
+    transform: translateZ(0) scale(1);
+  }
+
+  16% {
+    top: var(--progress-from-top);
+    left: var(--progress-from-left);
+    width: var(--progress-from-width);
+    height: var(--progress-from-height);
+    border-radius: 10px;
+    transform: translateZ(0) scale(1.04, 0.94);
+  }
+
+  48% {
+    top: var(--progress-to-top);
+    left: var(--progress-from-left);
+    width: calc(var(--progress-to-left) + var(--progress-to-width) - var(--progress-from-left));
+    height: var(--progress-to-height);
+    border-radius: 12px;
+    transform: translateZ(0) scale(1.02, 0.98);
+  }
+
+  70% {
+    top: var(--progress-to-top);
+    left: var(--progress-from-left);
+    width: calc(var(--progress-to-left) + var(--progress-to-width) - var(--progress-from-left));
+    height: var(--progress-to-height);
+    border-radius: 12px;
+    transform: translateZ(0) scale(1.06, 0.93);
+  }
+
+  82% {
+    top: var(--progress-to-top);
+    left: var(--progress-to-left);
+    width: var(--progress-to-width);
+    height: var(--progress-to-height);
+    border-radius: 8px;
+    transform: translateZ(0) scale(0.98, 1.04);
+  }
+
+  92% {
+    top: var(--progress-to-top);
+    left: var(--progress-to-left);
+    width: var(--progress-to-width);
+    height: var(--progress-to-height);
+    border-radius: 8px;
+    transform: translateZ(0) scale(1.02, 0.98);
+  }
+
+  100% {
+    top: var(--progress-to-top);
+    left: var(--progress-to-left);
+    width: var(--progress-to-width);
+    height: var(--progress-to-height);
+    border-radius: 8px;
+    transform: translateZ(0) scale(1);
+  }
+}
+
 @keyframes deckStageDeal {
   0% {
     transform: translateX(-50%) translateY(0) scale(1) rotate(0deg);
   }
 
-  34% {
-    transform: translateX(-50%) translateY(8px) scale(0.97) rotate(-1deg);
-  }
-
-  68% {
-    transform: translateX(-50%) translateY(4px) scale(0.99) rotate(0.5deg);
+  50% {
+    transform: translateX(-50%) translateY(2px) scale(0.995) rotate(-0.15deg);
   }
 
   100% {
@@ -1759,15 +2081,11 @@
 
 @keyframes deckStageExpand {
   0% {
-    transform: translateX(-50%) translateY(-24px) scale(0.96) rotate(-1deg);
+    transform: translateX(-50%) translateY(0) scale(0.985) rotate(-0.35deg);
   }
 
-  42% {
-    transform: translateX(-50%) translateY(-10px) scale(1.015) rotate(0.6deg);
-  }
-
-  76% {
-    transform: translateX(-50%) translateY(3px) scale(0.99) rotate(-0.25deg);
+  55% {
+    transform: translateX(-50%) translateY(0) scale(1.005) rotate(0.15deg);
   }
 
   100% {
@@ -1809,13 +2127,6 @@
   100% {
     transform: translateX(-50%) translateY(0) scale(1) rotate(0deg);
   }
-}
-
-.advanceNote {
-  margin: 0;
-  color: var(--bm-muted);
-  font-size: 0.86rem;
-  text-align: center;
 }
 
 .inlineError,
@@ -1886,7 +2197,6 @@
   }
 }
 
-.continueButton,
 .primaryButton,
 .secondaryButton {
   display: inline-flex;
@@ -1902,17 +2212,11 @@
   transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease, border-color 180ms ease;
 }
 
-.continueButton,
 .primaryButton {
   border: 1px solid var(--bm-ink);
   background: var(--bm-ink);
   color: var(--bm-surface);
   box-shadow: var(--bm-shadow);
-}
-
-.continueButton {
-  justify-self: center;
-  padding: 0 24px;
 }
 
 .primaryButton {
@@ -1926,9 +2230,7 @@
   color: var(--bm-ink);
 }
 
-.continueButton:hover,
 .primaryButton:hover,
-.continueButton:focus-visible,
 .primaryButton:focus-visible {
   background: var(--bm-yellow);
   border-color: var(--bm-yellow);
@@ -1945,7 +2247,6 @@
 }
 
 .primaryButton:disabled,
-.continueButton:disabled,
 .secondaryButton:disabled {
   opacity: 0.58;
   box-shadow: none;
@@ -2168,8 +2469,8 @@
   }
 
   .progressButton {
-    min-height: 44px;
-    padding: 7px 10px 9px;
+    min-height: 38px;
+    padding: 5px 10px 7px;
   }
 
   .progressItem strong {
@@ -2188,31 +2489,37 @@
   .finaleCardGrid {
     grid-template-columns: 1fr;
     width: min(100%, 420px);
+    --finale-card-height: 334px;
+    --finale-special-card-height: 410px;
   }
 
   .finaleCard {
-    min-height: 334px;
+    min-height: var(--finale-card-height);
   }
 
   .finaleCard:nth-child(1) {
     --finale-x: 0px;
     --finale-y: 122px;
-    --finale-merge-y: 0px;
+    --finale-merge-y: 348px;
     --finale-rotate: 0deg;
   }
 
   .finaleCard:nth-child(2) {
     --finale-x: 0px;
     --finale-y: 470px;
-    --finale-merge-y: -348px;
+    --finale-merge-y: 0px;
     --finale-rotate: 0deg;
   }
 
   .finaleCard:nth-child(3) {
     --finale-x: 0px;
     --finale-y: 818px;
-    --finale-merge-y: -696px;
+    --finale-merge-y: -348px;
     --finale-rotate: 0deg;
+  }
+
+  .finaleSpecialCardTransform {
+    top: calc(var(--finale-card-height) + clamp(14px, 2.8vw, 30px) + (var(--finale-card-height) - var(--finale-special-card-height)) / 2);
   }
 
   .specialCardStage,
@@ -2294,7 +2601,7 @@
   }
 
   .tableSurface {
-    padding-bottom: 130px;
+    padding-bottom: 40px;
   }
 
   .cardButton {
@@ -2342,6 +2649,10 @@
   .progressItemTransferFrom strong,
   .progressItemTransferTo .progressButton,
   .progressItemTransferTo strong,
+  .progressItemEntering .progressButton,
+  .progressItemEntering strong,
+  .specialCard,
+  .specialCardModalOverlay,
   .cardBack .cardIllustration,
   .cardBack .cardIllustration svg,
   .cardBack .cardIllustration svg > * {
@@ -2355,5 +2666,17 @@
 
   .cardButtonSelected .cardBack {
     display: flex;
+  }
+
+  .finaleSpecialCardTransform {
+    opacity: 1;
+    transform: translate3d(-50%, 0, 0) scale(1);
+    animation: none !important;
+  }
+
+  .tableStage[data-hand-stage="finale"] .finaleCardGridMerging .finaleCard {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.2);
+    animation: none !important;
   }
 }
