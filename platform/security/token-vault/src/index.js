@@ -4,6 +4,8 @@ import {
 } from './meta-ads-publish.js';
 import { handleSocialPublishOperation } from './social-publish.js';
 import { handleAnalyticsReadonlyRequest } from './analytics-readonly.js';
+import { handleAnalyticsStagingBootstrapRequest } from './analytics-staging-bootstrap.js';
+import { decryptToken, encryptToken } from './token-crypto.js';
 
 const TOKEN_PREFIX = '/internal/token-vault';
 const JSON_HEADERS = {
@@ -28,6 +30,24 @@ export async function handleRequest(request, env) {
     const auth = authorizeRequest(request, env);
     if (!auth.ok) {
       return json({ ok: false, error: auth.reason, requestId }, { status: auth.status });
+    }
+
+    if (auth.role === 'staging-bootstrap') {
+      if (request.method !== 'POST' || pathname !== '/v1/analytics/staging-bootstrap') {
+        return json({ ok: false, error: 'bootstrap_endpoint_required', requestId }, { status: 403 });
+      }
+      return await handleAnalyticsStagingBootstrapRequest({
+        request,
+        env,
+        requestId,
+        encryptToken,
+        prepareAuditStatement,
+        writeAudit,
+      });
+    }
+
+    if (request.method === 'POST' && pathname === '/v1/analytics/staging-bootstrap') {
+      return json({ ok: false, error: 'staging_bootstrap_credential_required', requestId }, { status: 403 });
     }
 
     if (request.method === 'GET' && pathname === '/health') {
@@ -141,6 +161,12 @@ async function health(env, requestId) {
 function analyticsMode(env) {
   const mode = safeString(env.INFLUENCER_INTELLIGENCE_ANALYTICS_MODE ?? 'off').toLowerCase();
   return ['off', 'shadow', 'active'].includes(mode) ? mode : 'invalid';
+}
+
+function stagingBootstrapEligible(env) {
+  return safeString(env.ENVIRONMENT).toLowerCase() === 'staging'
+    && analyticsMode(env) === 'shadow'
+    && safeString(env.INFLUENCER_INTELLIGENCE_ENABLED).toLowerCase() === 'false';
 }
 
 async function listTokens(url, env, requestId) {
@@ -390,10 +416,14 @@ function authorizeRequest(request, env) {
   const adminToken = safeString(env.TOKEN_VAULT_API_TOKEN);
   const operationalToken = safeString(env.TOKEN_VAULT_N8N_API_TOKEN);
   const analyticsToken = safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN);
-  if (!adminToken && !operationalToken && !analyticsToken) {
+  const stagingBootstrapToken = safeString(env.TOKEN_VAULT_STAGING_ANALYTICS_BOOTSTRAP_TOKEN);
+  if (stagingBootstrapToken && !stagingBootstrapEligible(env)) {
+    return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
+  }
+  if (!adminToken && !operationalToken && !analyticsToken && !stagingBootstrapToken) {
     return { ok: false, status: 500, reason: 'missing_worker_secret' };
   }
-  const configuredTokens = [adminToken, operationalToken, analyticsToken].filter(Boolean);
+  const configuredTokens = [adminToken, operationalToken, analyticsToken, stagingBootstrapToken].filter(Boolean);
   if (new Set(configuredTokens).size !== configuredTokens.length) {
     return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
   }
@@ -409,42 +439,22 @@ function authorizeRequest(request, env) {
   if (analyticsToken && constantTimeEqual(authHeader, `${scheme} ${analyticsToken}`.trim())) {
     return { ok: true, role: 'analytics' };
   }
+  if (stagingBootstrapToken && constantTimeEqual(authHeader, `${scheme} ${stagingBootstrapToken}`.trim())) {
+    return { ok: true, role: 'staging-bootstrap' };
+  }
   if (operationalToken && constantTimeEqual(authHeader, `${scheme} ${operationalToken}`.trim())) {
     return { ok: true, role: 'operational' };
   }
   return { ok: false, status: 401, reason: 'invalid_auth_header' };
 }
 
-async function encryptToken(token, env) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoded = new TextEncoder().encode(token);
-  const key = await getEncryptionKey(env);
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
-  return `v1:${base64Encode(iv)}:${base64Encode(new Uint8Array(ciphertext))}`;
-}
-
-async function decryptToken(value, env) {
-  const parts = safeString(value).split(':');
-  if (parts.length !== 3 || parts[0] !== 'v1') {
-    throw new Error('unsupported_ciphertext');
-  }
-  const iv = base64Decode(parts[1]);
-  const ciphertext = base64Decode(parts[2]);
-  const key = await getEncryptionKey(env);
-  const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
-  return new TextDecoder().decode(plaintext);
-}
-
-async function getEncryptionKey(env) {
-  const secret = safeString(env.TOKEN_VAULT_ENCRYPTION_KEY);
-  if (secret.length < 32) throw new Error('TOKEN_VAULT_ENCRYPTION_KEY must be configured');
-  const raw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
-  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
-}
-
 async function writeAudit(env, input) {
   if (!env.TOKEN_VAULT_DB) return;
-  await env.TOKEN_VAULT_DB.prepare(
+  await prepareAuditStatement(env, input).run();
+}
+
+function prepareAuditStatement(env, input) {
+  return env.TOKEN_VAULT_DB.prepare(
     `INSERT INTO credential_token_audit (
       id, token_id, event, provider, unit, token_type, status, request_id, metadata_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -458,7 +468,7 @@ async function writeAudit(env, input) {
     safeString(input.status || 'ok'),
     normalizeNullableString(input.requestId),
     JSON.stringify(input.metadata || {}),
-  ).run();
+  );
 }
 
 function contract(requestId) {
@@ -540,21 +550,6 @@ function constantTimeEqual(a, b) {
     diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
   }
   return diff === 0;
-}
-
-function base64Encode(bytes) {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-function base64Decode(value) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
 }
 
 function safeErrorMessage(error) {

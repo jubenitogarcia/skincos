@@ -17,6 +17,7 @@ function section(name) {
 
 test('only staging exposes the bounded Influencer Intelligence analytics shadow gate', () => {
   assert.match(section('vars'), /INFLUENCER_INTELLIGENCE_ANALYTICS_MODE\s*=\s*"off"/);
+  assert.match(section('vars'), /INFLUENCER_INTELLIGENCE_ENABLED\s*=\s*"false"/);
   assert.match(section('env.staging.vars'), /INFLUENCER_INTELLIGENCE_ANALYTICS_MODE\s*=\s*"shadow"/);
-  assert.doesNotMatch(config, /^INFLUENCER_INTELLIGENCE_ENABLED\s*=\s*"true"/m);
+  assert.match(section('env.staging.vars'), /INFLUENCER_INTELLIGENCE_ENABLED\s*=\s*"false"/);
 });
