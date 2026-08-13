@@ -666,6 +666,19 @@
   --finale-rotate: 8deg;
 }
 
+.tableStage[data-hand-stage="finale"] {
+  overflow: visible;
+}
+
+.tableStage[data-hand-stage="finale"] .tableSurface {
+  overflow: visible;
+}
+
+.tableStage[data-hand-stage="finale"] .finaleCardGridMerging {
+  z-index: 4;
+  overflow: visible;
+}
+
 .tableStage[data-hand-stage="finale"] .deckStage,
 .tableStage[data-finale-stage="confirmation"] .deckStage,
 .tableStage[data-finale-stage="result"] .deckStage {
