@@ -738,8 +738,14 @@ function responseJson(data, status = 200) {
 
 async function audit(writeAudit, env, input, row, status, requestId, metadata = {}) {
   if (typeof writeAudit !== 'function') return;
+  const credentialRefState = row?.id
+    ? 'matched'
+    : (input?.credential_ref ? 'unmatched' : 'not_provided');
   await writeAudit(env, {
-    tokenId: row?.id || input?.credential_ref,
+    // credential_token_audit.token_id is a foreign key. An unresolved,
+    // caller-controlled reference must remain auditable without converting a
+    // deliberate 403 permission_gap into an internal error.
+    tokenId: row?.id || null,
     event: 'analytics.meta_graph.operation',
     provider: 'meta-graph',
     unit: row?.unit,
@@ -750,6 +756,7 @@ async function audit(writeAudit, env, input, row, status, requestId, metadata = 
       scope: 'influencer-intelligence',
       operation: input?.operation || null,
       correlation_id: input?.correlation_id || null,
+      credential_ref_state: credentialRefState,
       endpoint_family: 'instagram-graph-read-only',
       ...(input?.limit !== undefined ? { limit: input.limit } : {}),
       ...metadata,
