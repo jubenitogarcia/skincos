@@ -69,3 +69,12 @@ test("Pages recovery skips rollback intent custody when no owned candidate exist
     /const pagesIntentInput = plan\.crmPages && UUID\.test\(plan\.crmPages\.candidateDeploymentId \|\| ""\) \?/,
   );
 });
+
+test("recovery accepts only children from the exact immutable Ponto release tag", () => {
+  assert.match(source, /import \{ releaseTagFor \} from "\.\/ponto-release-identity\.mjs"/);
+  assert.match(source, /const expectedReleaseBranch = releaseTagFor\("ponto", releaseSha\);/);
+  assert.match(source, /const isExactImmutableChildRun = \(run, workflow\) => \(/);
+  assert.match(source, /run\.headBranch === expectedReleaseBranch/);
+  assert.match(source, /String\(run\.headSha \|\| ""\)\.toLowerCase\(\) === releaseSha/);
+  assert.doesNotMatch(source, /run\.headBranch !== "main"/);
+});
