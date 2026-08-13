@@ -572,7 +572,7 @@ jobs:
               name: "PONTO_PILOT_RUNNER_LABELS_JSON",
               value: process.env.PONTO_PILOT_RUNNER_LABELS_JSON || "",
             }));
-            NODE
+          NODE
           fi
           if ! gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM" > "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json"; then
             node - "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json" <<'NODE'
@@ -581,7 +581,7 @@ jobs:
               name: "PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM",
               value: process.env.PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM || "",
             }));
-            NODE
+          NODE
           fi
           gh api "repos/$GITHUB_REPOSITORY/environments/production/variables?per_page=100" > "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json"
           node - \
