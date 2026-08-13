@@ -29,6 +29,7 @@ RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadWritePaths=/var/lib/skincos-runtime/github-actions-runner
 ReadWritePaths=/etc/skincos/global-coordination
+ReadWritePaths=/var/lib/skincos/ponto-jit
 UMask=0077
 
 [Install]
