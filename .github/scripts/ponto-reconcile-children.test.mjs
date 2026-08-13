@@ -130,12 +130,20 @@ test("failure recovery latches before reconciliation and mutexes maintenance plu
   const reconciliationJob = workflow.slice(reconcile, close);
   const closeJob = workflow.slice(close, rollback);
   const rollbackJob = workflow.slice(rollback);
+  const initialization = workflow.slice(
+    workflow.indexOf("Initialize private release artifact directory"),
+    workflow.indexOf("Verify immutable source and ordered predecessor provenance"),
+  );
+  assert.match(initialization, /recovery-intent\.json/);
+  assert.match(initialization, /phase: "pre-mutation"/);
   assert.match(latchJob, /ponto-emergency-latch-write\.mjs/);
   assert.match(latchJob, /Attempt external overlay propagation before reconciliation/);
   assert.match(latchJob, /PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active/);
   assert.match(latchJob, /pendingPrimaryClose: propagation\.passed !== true/);
   assert.doesNotMatch(latchJob, /concurrency:\s*\n\s*group:\s*ponto-surface-mutation/);
   assert.match(reconciliationJob, /Cancel and reconcile children without waiting on the surface mutex/);
+  assert.match(reconciliationJob, /Download the durable recovery journal/);
+  assert.match(reconciliationJob, /id: rollback_requirement/);
   assert.doesNotMatch(reconciliationJob, /concurrency:\s*\n\s*group:\s*ponto-surface-mutation/);
   assert.match(closeJob, /concurrency:\s*\n\s*group:\s*ponto-surface-mutation[\s\S]*ponto-emergency-maintenance-write\.mjs/);
   assert.match(closeJob, /Prove external fail-close through overlay or exact incumbent control/);
@@ -144,6 +152,7 @@ test("failure recovery latches before reconciliation and mutexes maintenance plu
   assert.match(closeJob, /\["control", "emergency-latch-active"\]\.includes\(availability\?\.source\)/);
   assert.match(rollbackJob, /needs:\s*\[orchestrate, recovery-reconcile, recovery-close\]/);
   assert.match(rollbackJob, /needs\.recovery-reconcile\.result == 'success'/);
+  assert.match(rollbackJob, /needs\.recovery-reconcile\.outputs\.rollback_required == 'true'/);
   assert.match(rollbackJob, /concurrency:\s*\n\s*group:\s*ponto-surface-mutation[\s\S]*ponto-automatic-rollback\.mjs/);
   const reconciliationStep = reconciliationJob;
   assert.doesNotMatch(reconciliationStep, /continue-on-error:\s*true/);
@@ -192,6 +201,7 @@ test("ordered predecessor provenance is exact and replay resistant before artifa
     workflow.indexOf("Refuse a latched Ponto emergency stop before issuing capabilities"),
   );
   const download = provenance.indexOf("gh run download");
+  assert.doesNotMatch(provenance, /release_sha must equal current origin\/main/);
   for (const contract of [
     /workflow\?\.state !== "active"/,
     /workflow\?\.path !== "\.github\/workflows\/ponto-progressive-release\.yml"/,
