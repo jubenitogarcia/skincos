@@ -78,3 +78,15 @@ test("recovery accepts only children from the exact immutable Ponto release tag"
   assert.match(source, /String\(run\.headSha \|\| ""\)\.toLowerCase\(\) === releaseSha/);
   assert.doesNotMatch(source, /run\.headBranch !== "main"/);
 });
+
+test("a cancelled Core child is untouched only when GitHub attests that deploy never started", () => {
+  assert.match(source, /const preMutationJobNames = Object\.freeze\(\{\s*coreApi: "deploy",/s);
+  assert.match(source, /run\.conclusion !== "cancelled"/);
+  assert.match(source, /actions\/runs\/\$\{encodeURIComponent\(childRunId\)\}\/jobs\?filter=latest&per_page=100/);
+  assert.match(source, /expectedJob\?\.status === "completed"/);
+  assert.match(source, /expectedJob\?\.conclusion === "cancelled"/);
+  assert.match(source, /Array\.isArray\(expectedJob\?\.steps\)/);
+  assert.match(source, /expectedJob\.steps\.length === 0/);
+  assert.match(source, /untouched\[candidate\.surface\] = proof\.disposition/);
+  assert.match(source, /pre-mutation-job-attestation-unavailable/);
+});

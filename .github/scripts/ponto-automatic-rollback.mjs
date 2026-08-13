@@ -302,6 +302,7 @@ const plan = {};
 const unresolved = [];
 const untouched = {};
 const retainedDataChanges = {};
+const preMutationCancellationCandidates = [];
 for (const [name, spec] of Object.entries(surfaceSpecs)) {
   const surfaceFile = path.join(artifactRoot, spec.path);
   const runFile = path.join(artifactRoot, spec.run);
@@ -325,7 +326,13 @@ for (const [name, spec] of Object.entries(surfaceSpecs)) {
     && String(journal.orchestratorRunId) === orchestratorRunId
     && journal.credentialsIncluded === false
     && journal.piiIncluded === false;
-  if (!journalValid) unresolved.push({ surface: name, childRunId: String(run.runId), reason: "mutation-journal-missing-or-invalid" });
+  if (!journalValid) {
+    preMutationCancellationCandidates.push({
+      surface: name,
+      childRunId: String(run.runId),
+      run,
+    });
+  }
   const migrationStarted = journalValid && journal.migrationStarted === true;
   if (migrationStarted) {
     const migrationResolved = journal.migrationCompleted === true
@@ -720,6 +727,62 @@ const github = async (pathname, init = {}) => {
   return payload;
 };
 
+// A cancelled child normally leaves an always-uploaded mutation journal. The
+// one safe exception is the Core staging publisher cancelled before its only
+// mutable `deploy` job ever ran. Resolve that exception from the GitHub job
+// record itself; any unavailable, renamed, started, or otherwise ambiguous
+// job remains unresolved and therefore fail-closed.
+const preMutationJobNames = Object.freeze({
+  coreApi: "deploy",
+});
+const attestCancelledBeforeMutation = async ({ surface, childRunId, run }) => {
+  const expectedJobName = preMutationJobNames[surface];
+  if (!expectedJobName || run.conclusion !== "cancelled" || !/^[1-9][0-9]*$/.test(childRunId)) {
+    return { passed: false, reason: "mutation-journal-missing-or-invalid" };
+  }
+  try {
+    const payload = await github(
+      `/repos/${repository}/actions/runs/${encodeURIComponent(childRunId)}/jobs?filter=latest&per_page=100`,
+    );
+    const jobs = Array.isArray(payload?.jobs) ? payload.jobs : null;
+    const totalCount = Number(payload?.total_count);
+    const expectedJobs = jobs?.filter((job) => job?.name === expectedJobName) || [];
+    const expectedJob = expectedJobs[0];
+    const neverStarted = Array.isArray(jobs)
+      && Number.isSafeInteger(totalCount)
+      && totalCount === jobs.length
+      && expectedJobs.length === 1
+      && expectedJob?.status === "completed"
+      && expectedJob?.conclusion === "cancelled"
+      && Array.isArray(expectedJob?.steps)
+      && expectedJob.steps.length === 0;
+    return neverStarted
+      ? { passed: true, jobName: expectedJobName, disposition: "cancelled-before-mutation" }
+      : { passed: false, reason: "mutation-journal-missing-or-invalid" };
+  } catch {
+    return { passed: false, reason: "pre-mutation-job-attestation-unavailable" };
+  }
+};
+const preMutationCancellations = {};
+for (const candidate of preMutationCancellationCandidates) {
+  const proof = await attestCancelledBeforeMutation(candidate);
+  if (proof.passed) {
+    untouched[candidate.surface] = proof.disposition;
+    preMutationCancellations[candidate.surface] = {
+      passed: true,
+      childRunId: candidate.childRunId,
+      jobName: proof.jobName,
+      disposition: proof.disposition,
+    };
+    continue;
+  }
+  unresolved.push({
+    surface: candidate.surface,
+    childRunId: candidate.childRunId,
+    reason: proof.reason,
+  });
+}
+
 let pagesCreatedDeploymentId = "";
 let pagesMutationAttempted = false;
 let pagesMutationObserved = false;
@@ -1101,6 +1164,7 @@ const report = {
   plannedSurfaces: plannedNames,
   planSource: Object.fromEntries(Object.entries(plan).map(([name, item]) => [name, item.source])),
   untouchedSurfaces: untouched,
+  preMutationCancellations,
   unresolved,
   proofs,
   environmentPrerequisites,
