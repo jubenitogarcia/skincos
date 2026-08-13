@@ -22,6 +22,33 @@ const releaseRef = releaseRefFor("ponto", sha);
 const uuid = "11111111-1111-4111-8111-111111111111";
 const artifactDigest = "c".repeat(64);
 
+const encryptCredentials = (credentials) => {
+  const plaintext = Buffer.from(JSON.stringify(credentials));
+  const dataKey = crypto.randomBytes(32);
+  const iv = crypto.randomBytes(12);
+  try {
+    const cipher = crypto.createCipheriv("aes-256-gcm", dataKey, iv);
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const encryptedKey = crypto.publicEncrypt({
+      key: runnerKeys.publicKey,
+      oaepHash: "sha256",
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+    }, dataKey);
+    return Buffer.from(`${JSON.stringify({
+      schemaVersion: 1,
+      algorithm: "RSA-OAEP-256+A256GCM",
+      encryptedKeyBase64url: encryptedKey.toString("base64url"),
+      ivBase64url: iv.toString("base64url"),
+      ciphertextBase64url: ciphertext.toString("base64url"),
+      tagBase64url: cipher.getAuthTag().toString("base64url"),
+    })}\n`);
+  } finally {
+    plaintext.fill(0);
+    dataKey.fill(0);
+    iv.fill(0);
+  }
+};
+
 const fixture = (overrides = {}) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-jit-test-"));
   const directory = path.join(root, "sealed");
@@ -38,7 +65,7 @@ const fixture = (overrides = {}) => {
     pilotLogin: "pilot@example.test",
     pilotPassword: "synthetic-password-123",
   };
-  const rawBundle = Buffer.from(`${JSON.stringify(credentials)}\n`);
+  const rawBundle = encryptCredentials(credentials);
   const rawDecryptKey = Buffer.from(runnerPrivatePem);
   fs.writeFileSync(credentialBundleFile, rawBundle, { mode: 0o600 });
   fs.writeFileSync(decryptKeyFile, rawDecryptKey, { mode: 0o600 });
@@ -156,7 +183,10 @@ const fixture = (overrides = {}) => {
 test("consumes an exact signed JIT bundle and decrypt-key file, then deletes every hook file", () => {
   const item = fixture();
   try {
-    const result = consumeJitCredentials(item);
+    const encrypted = fs.readFileSync(item.credentialBundleFile, "utf8");
+    assert.equal(encrypted.includes("synthetic-password-123"), false);
+    assert.match(encrypted, /RSA-OAEP-256\+A256GCM/);
+    const result = consumeJitCredentials({ ...item, directTestMode: true });
     assert.equal(result.pilotLogin, "pilot@example.test");
     assert.equal(result.runnerEncryptionPrivateKeyPem, runnerPrivatePem);
     assert.match(result.attestationDigest, /^[0-9a-f]{64}$/);
@@ -185,7 +215,7 @@ test("rejects global runner secrets and claim swaps while still deleting all JIT
     const item = fixture(overrides);
     try {
       assert.throws(
-        () => consumeJitCredentials(item),
+        () => consumeJitCredentials({ ...item, directTestMode: true }),
         /runner secret environment is forbidden|claims differ/,
       );
       assert.equal(fs.existsSync(item.credentialBundleFile), false);
@@ -202,7 +232,7 @@ test("fails closed on policy nulls and insecure file or directory modes", () => 
   try {
     nullPolicy.policy.pilotRunner.production.jitDecryptKeyFilePath = null;
     assert.throws(
-      () => consumeJitCredentials(nullPolicy),
+      () => consumeJitCredentials({ ...nullPolicy, directTestMode: true }),
       /policy remains fail-closed/,
     );
   } finally {
@@ -213,7 +243,7 @@ test("fails closed on policy nulls and insecure file or directory modes", () => 
   try {
     fs.chmodSync(badDirectory.directory, 0o755);
     assert.throws(
-      () => consumeJitCredentials(badDirectory),
+      () => consumeJitCredentials({ ...badDirectory, directTestMode: true }),
       /directory ownership, path, or mode is invalid/,
     );
   } finally {
@@ -224,7 +254,7 @@ test("fails closed on policy nulls and insecure file or directory modes", () => 
   try {
     fs.chmodSync(badFile.decryptKeyFile, 0o644);
     assert.throws(
-      () => consumeJitCredentials(badFile),
+      () => consumeJitCredentials({ ...badFile, directTestMode: true }),
       /artifact ownership, path, or mode is invalid/,
     );
   } finally {
@@ -236,7 +266,7 @@ test("fails closed on policy nulls and insecure file or directory modes", () => 
     fs.rmSync(symlinkSwap.decryptKeyFile);
     fs.symlinkSync(symlinkSwap.credentialBundleFile, symlinkSwap.decryptKeyFile);
     assert.throws(
-      () => consumeJitCredentials(symlinkSwap),
+      () => consumeJitCredentials({ ...symlinkSwap, directTestMode: true }),
       /artifact ownership, path, or mode is invalid/,
     );
     assert.equal(fs.existsSync(symlinkSwap.credentialBundleFile), false);
@@ -255,9 +285,10 @@ test("idempotent cleanup removes an unconsumed one-shot bundle without reading i
   try {
     assert.deepEqual(cleanupJitFiles({
       ...item,
+      directTestMode: true,
       env: { ...item.env, PONTO_IDEMPOTENCY_KEY: "polluted-host-must-not-block-cleanup" },
     }), { filesDeleted: true });
-    assert.deepEqual(cleanupJitFiles(item), { filesDeleted: true });
+    assert.deepEqual(cleanupJitFiles({ ...item, directTestMode: true }), { filesDeleted: true });
     assert.equal(fs.existsSync(item.credentialBundleFile), false);
     assert.equal(fs.existsSync(item.decryptKeyFile), false);
     assert.equal(fs.existsSync(item.attestationFile), false);

@@ -1,14 +1,22 @@
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { attestClinicRunner } from "./ponto-clinic-runner-attestation.mjs";
 import { releaseRefFor } from "./ponto-release-identity.mjs";
+import {
+  canonicalJitClaims,
+  JIT_CLAIM_FIELDS,
+} from "../../scripts/runtime/ponto-jit-claims.mjs";
+
+export { canonicalJitClaims, JIT_CLAIM_FIELDS };
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const POSITIVE_ID = /^[1-9][0-9]{0,19}$/;
 const HEX_32 = /^[0-9a-f]{64}$/;
+const CUSTODY_HELPER = "/usr/local/sbin/skincos-provision-ponto-jit";
 const SECRET_ENVIRONMENT_NAMES = [
   "PONTO_PILOT_LOGIN",
   "PONTO_PILOT_PASSWORD",
@@ -21,46 +29,6 @@ const SECRET_ENVIRONMENT_NAMES = [
   "PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY",
   "CLOUDFLARE_API_TOKEN",
 ];
-export const JIT_CLAIM_FIELDS = [
-  "schemaVersion",
-  "domain",
-  "repositoryId",
-  "repository",
-  "workflowPath",
-  "workflowRef",
-  "workflowJob",
-  "ref",
-  "environment",
-  "releaseSha",
-  "stage",
-  "coordinatorRunId",
-  "coordinatorIssuerRunId",
-  "coordinatorDispatchNonce",
-  "workflowRunId",
-  "runAttempt",
-  "coreVersionId",
-  "timekeepingVersionId",
-  "identityVersionId",
-  "pagesDeploymentId",
-  "preflightArtifactId",
-  "preflightArtifactSha256",
-  "runnerId",
-  "runnerName",
-  "runnerOs",
-  "runnerArch",
-  "runnerIsolationRef",
-  "networkContextCustodyRef",
-  "runnerEncryptionPublicKeySha256",
-  "credentialBundleSha256",
-  "decryptKeySha256",
-  "supervisorCustodyRef",
-  "cleanupHookCustodyRef",
-  "attestationNonce",
-  "issuedAt",
-  "expiresAt",
-  "singleUse",
-];
-
 const required = (env, name) => {
   const value = String(env[name] || "").trim();
   if (!value) throw new Error(`${name} is required`);
@@ -71,10 +39,6 @@ const normalizeArtifactDigest = (value) => String(value || "")
   .trim()
   .toLowerCase()
   .replace(/^sha256:/, "");
-
-export const canonicalJitClaims = (claims) => JSON.stringify(
-  Object.fromEntries(JIT_CLAIM_FIELDS.map((field) => [field, claims?.[field]])),
-);
 
 const equalClaimFields = (claims) => (
   Object.keys(claims || {}).sort().join(",") === [...JIT_CLAIM_FIELDS].sort().join(",")
@@ -135,7 +99,7 @@ function loadJitPolicy(policyDocument, target) {
   return { expected, files };
 }
 
-function assertSecureDirectory(directory, env) {
+function assertSecureDirectory(directory, env, { directTestMode = false } = {}) {
   if (process.platform === "win32" || typeof process.getuid !== "function") {
     throw new Error("JIT clinic credential files require a Linux owner-isolated runner");
   }
@@ -145,12 +109,14 @@ function assertSecureDirectory(directory, env) {
   const resolved = path.resolve(directory);
   const metadata = fs.lstatSync(resolved);
   const real = fs.realpathSync(resolved);
+  const expectedOwner = directTestMode ? currentUid : 0;
+  const expectedMode = directTestMode ? 0o700 : 0o711;
   if (
     !metadata.isDirectory()
     || metadata.isSymbolicLink()
     || real !== resolved
-    || metadata.uid !== currentUid
-    || (metadata.mode & 0o777) !== 0o700
+    || metadata.uid !== expectedOwner
+    || (metadata.mode & 0o777) !== expectedMode
     || real === workspace
     || real.startsWith(`${workspace}${path.sep}`)
     || real === runnerTemp
@@ -199,6 +165,92 @@ function readSecureFile(file, context) {
     return fs.readFileSync(descriptor);
   } finally {
     fs.closeSync(descriptor);
+  }
+}
+
+function decodeBase64url(value, label, { minLength = 1, maxLength = 16384 } = {}) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new Error(`${label} is invalid`);
+  }
+  const decoded = Buffer.from(value, "base64url");
+  if (decoded.length < minLength || decoded.length > maxLength) {
+    decoded.fill(0);
+    throw new Error(`${label} length is invalid`);
+  }
+  return decoded;
+}
+
+function decryptCredentialBundle(rawBundle, rawDecryptKey) {
+  let encryptedKey = null;
+  let iv = null;
+  let ciphertext = null;
+  let tag = null;
+  let dataKey = null;
+  let plaintext = null;
+  try {
+    const envelope = JSON.parse(rawBundle.toString("utf8"));
+    const keys = Object.keys(envelope || {}).sort();
+    if (
+      JSON.stringify(keys) !== JSON.stringify([
+        "algorithm",
+        "ciphertextBase64url",
+        "encryptedKeyBase64url",
+        "ivBase64url",
+        "schemaVersion",
+        "tagBase64url",
+      ])
+      || envelope?.schemaVersion !== 1
+      || envelope?.algorithm !== "RSA-OAEP-256+A256GCM"
+    ) throw new Error("JIT credential envelope is invalid");
+    encryptedKey = decodeBase64url(envelope.encryptedKeyBase64url, "JIT encrypted data key", {
+      minLength: 256,
+      maxLength: 1024,
+    });
+    iv = decodeBase64url(envelope.ivBase64url, "JIT credential IV", { minLength: 12, maxLength: 12 });
+    ciphertext = decodeBase64url(envelope.ciphertextBase64url, "JIT credential ciphertext", {
+      minLength: 2,
+    });
+    tag = decodeBase64url(envelope.tagBase64url, "JIT credential authentication tag", {
+      minLength: 16,
+      maxLength: 16,
+    });
+    const privateKey = crypto.createPrivateKey(rawDecryptKey);
+    if (
+      privateKey.asymmetricKeyType !== "rsa"
+      || Number(privateKey.asymmetricKeyDetails?.modulusLength || 0) < 2048
+    ) throw new Error("JIT decrypt key is invalid");
+    dataKey = crypto.privateDecrypt({
+      key: privateKey,
+      oaepHash: "sha256",
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+    }, encryptedKey);
+    if (dataKey.length !== 32) throw new Error("JIT decrypted data key is invalid");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", dataKey, iv);
+    decipher.setAuthTag(tag);
+    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    const credentials = JSON.parse(plaintext.toString("utf8"));
+    if (
+      JSON.stringify(Object.keys(credentials).sort()) !== JSON.stringify([
+        "cfAccessClientId",
+        "cfAccessClientSecret",
+        "pilotLogin",
+        "pilotPassword",
+      ])
+      || !String(credentials.pilotLogin || "").includes("@")
+      || String(credentials.pilotPassword || "").length < 12
+      || Boolean(credentials.cfAccessClientId) !== Boolean(credentials.cfAccessClientSecret)
+    ) throw new Error("JIT credential bundle is invalid");
+    return credentials;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("JIT ")) throw error;
+    throw new Error("JIT credential envelope decryption failed");
+  } finally {
+    encryptedKey?.fill(0);
+    iv?.fill(0);
+    ciphertext?.fill(0);
+    tag?.fill(0);
+    dataKey?.fill(0);
+    plaintext?.fill(0);
   }
 }
 
@@ -275,14 +327,7 @@ function validateRuntimeContext(env, expected, claims, now, rawBundle, rawDecryp
     && claims?.singleUse === true;
 }
 
-export function cleanupJitFiles({
-  env = process.env,
-  policy = null,
-  target = "production",
-} = {}) {
-  const { files } = loadJitPolicy(loadPolicy(policy), target);
-  const directory = path.dirname(path.resolve(files.credentialBundle));
-  const context = assertSecureDirectory(directory, env);
+function cleanupDirectJitFiles(files, context) {
   const failures = [];
   for (const file of Object.values(files)) {
     try {
@@ -311,6 +356,33 @@ export function cleanupJitFiles({
     }
   }
   if (failures.length) throw new Error(`JIT credential cleanup failed: ${failures.join("; ")}`);
+}
+
+function invokeCustodyCleanupHook() {
+  const result = spawnSync(
+    "sudo",
+    ["-n", CUSTODY_HELPER, "cleanup"],
+    { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (result.error || result.status !== 0 || result.signal) {
+    throw new Error("JIT credential cleanup hook failed");
+  }
+}
+
+export function cleanupJitFiles({
+  env = process.env,
+  policy = null,
+  target = "production",
+  directTestMode = false,
+} = {}) {
+  if (directTestMode && policy === null) {
+    throw new Error("direct JIT cleanup is available only to an explicit test policy");
+  }
+  const { files } = loadJitPolicy(loadPolicy(policy), target);
+  const directory = path.dirname(path.resolve(files.credentialBundle));
+  const context = assertSecureDirectory(directory, env, { directTestMode });
+  if (directTestMode) cleanupDirectJitFiles(files, context);
+  else invokeCustodyCleanupHook();
   return { filesDeleted: true };
 }
 
@@ -318,6 +390,7 @@ export function consumeJitCredentials({
   env = process.env,
   policy = null,
   now = new Date(),
+  directTestMode = false,
 } = {}) {
   const target = "production";
   const policyDocument = loadPolicy(policy);
@@ -331,7 +404,7 @@ export function consumeJitCredentials({
   let cleanupError = null;
   try {
     assertRunnerSecretEnvironmentIsEmpty(env);
-    const context = assertSecureDirectory(directory, env);
+    const context = assertSecureDirectory(directory, env, { directTestMode });
     rawBundle = readSecureFile(files.credentialBundle, context);
     rawDecryptKey = readSecureFile(files.decryptKey, context);
     const rawAttestationBuffer = readSecureFile(files.attestation, context);
@@ -356,18 +429,7 @@ export function consumeJitCredentials({
       )
     ) throw new Error("JIT credential attestation signature differs");
 
-    const credentials = JSON.parse(rawBundle.toString("utf8"));
-    if (
-      JSON.stringify(Object.keys(credentials).sort()) !== JSON.stringify([
-        "cfAccessClientId",
-        "cfAccessClientSecret",
-        "pilotLogin",
-        "pilotPassword",
-      ])
-      || !String(credentials.pilotLogin || "").includes("@")
-      || String(credentials.pilotPassword || "").length < 12
-      || Boolean(credentials.cfAccessClientId) !== Boolean(credentials.cfAccessClientSecret)
-    ) throw new Error("JIT credential bundle is invalid");
+    const credentials = decryptCredentialBundle(rawBundle, rawDecryptKey);
 
     const runnerPrivateKeyPem = rawDecryptKey.toString("utf8");
     const clinicRunner = attestClinicRunner({
@@ -395,7 +457,12 @@ export function consumeJitCredentials({
     primaryError = error instanceof Error ? error : new Error(String(error));
   } finally {
     try {
-      cleanupJitFiles({ env, policy: policyDocument, target });
+      cleanupJitFiles({
+        env,
+        policy: policyDocument,
+        target,
+        directTestMode,
+      });
     } catch (error) {
       cleanupError = error instanceof Error ? error : new Error(String(error));
     }

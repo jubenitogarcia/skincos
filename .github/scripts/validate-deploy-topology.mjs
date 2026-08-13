@@ -202,6 +202,8 @@ const productionJourney = read('.github/scripts/ponto-production-journey.mjs');
 const productionSloPreflight = read('.github/scripts/ponto-production-slo-preflight.mjs');
 const jitCredentialAttestation = read('.github/scripts/ponto-jit-credential-attestation.mjs');
 const clinicRunnerAttestation = read('.github/scripts/ponto-clinic-runner-attestation.mjs');
+const jitCleanupService = read('ops/runtime/units/skincos-ponto-jit-credential-cleanup.service');
+const jitCleanupTimer = read('ops/runtime/units/skincos-ponto-jit-credential-cleanup.timer');
 const dispatchWorkflow = read('.github/scripts/ponto-dispatch-workflow.mjs');
 const workerCustody = read('.github/workflows/cloudflare-workers-sync-ponto-secrets.yml');
 const pagesCustody = read('.github/workflows/cloudflare-pages-sync-ponto.yml');
@@ -248,10 +250,26 @@ for (const [source, label] of [
   }
 }
 const clinicSloStart = productionSlo.indexOf('  consultor-journey:');
+const custodyPreparationStart = productionSlo.indexOf('  prepare-clinic-credentials:');
 const rollbackSloStart = productionSlo.indexOf('  rollback-observation:');
 const clinicSlo = clinicSloStart >= 0 && rollbackSloStart > clinicSloStart
   ? productionSlo.slice(clinicSloStart, rollbackSloStart)
   : '';
+const custodyPreparation = custodyPreparationStart >= 0 && clinicSloStart > custodyPreparationStart
+  ? productionSlo.slice(custodyPreparationStart, clinicSloStart)
+  : '';
+if (
+  !custodyPreparation.includes('runs-on: [self-hosted, Linux, X64, skincos-native-custody]')
+  || !custodyPreparation.includes('ponto-orchestrator-lease.mjs assert-active')
+  || !custodyPreparation.includes('Authorize global Ponto JIT custody mutation')
+  || !custodyPreparation.includes('skincos-provision-ponto-jit materialize')
+  || !custodyPreparation.includes('PONTO_PILOT_LOGIN: ${{ secrets.PONTO_PILOT_LOGIN }}')
+  || !custodyPreparation.includes('PONTO_PILOT_PASSWORD: ${{ secrets.PONTO_PILOT_PASSWORD }}')
+  || custodyPreparation.indexOf('ponto-orchestrator-lease.mjs assert-active')
+    > custodyPreparation.indexOf('secrets.PONTO_PILOT_LOGIN')
+) {
+  fail('Ponto JIT custody must materialize only after the exact coordinator is revalidated on the isolated custody runner');
+}
 const runnerInventoryStart = productionSlo.indexOf(
   '      - name: Attest the exact registered clinic runner before hydrating control-plane authority',
 );
@@ -305,6 +323,27 @@ for (const required of [
   }
 }
 for (const required of [
+  'Type=oneshot',
+  'User=root',
+  'cleanup-expired',
+  'ProtectSystem=strict',
+  'NoNewPrivileges=true',
+  'ReadWritePaths=/var/lib/skincos/ponto-jit',
+]) {
+  if (!jitCleanupService.includes(required)) {
+    fail(`Ponto JIT credential expiration cleanup service is missing: ${required}`);
+  }
+}
+for (const required of [
+  'OnUnitInactiveSec=1min',
+  'Persistent=true',
+  'Unit=skincos-ponto-jit-credential-cleanup.service',
+]) {
+  if (!jitCleanupTimer.includes(required)) {
+    fail(`Ponto JIT credential expiration cleanup timer is missing: ${required}`);
+  }
+}
+for (const required of [
   'repositoryId',
   'workflowRef',
   'workflowJob',
@@ -324,12 +363,14 @@ for (const required of [
   'attestationNonce',
   'expiresAt',
   'Ed25519',
-  'metadata.uid !== currentUid',
+  'metadata.uid !== expectedOwner',
   '(metadata.mode & 0o777) !== 0o600',
-  '(metadata.mode & 0o777) !== 0o700',
+  '(metadata.mode & 0o777) !== expectedMode',
+  '0o711',
   'O_NOFOLLOW',
   'fs.fstatSync',
   'cleanupJitFiles',
+  'skincos-provision-ponto-jit',
 ]) {
   if (!jitCredentialAttestation.includes(required)) {
     fail(`Ponto JIT supervisor attestation is missing: ${required}`);

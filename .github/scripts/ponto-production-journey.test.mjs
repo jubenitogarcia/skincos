@@ -460,3 +460,26 @@ test("clinic workflow receives only encrypted delegation and non-secret bindings
     "clinic job must use the exact selector emitted by the protected inventory attestation",
   );
 });
+
+test("custody preparation is isolated, coordinator-gated, and precedes the clinic runner", () => {
+  const workflow = fs.readFileSync(
+    path.resolve(".github/workflows/ponto-production-slo.yml"),
+    "utf8",
+  );
+  const preparationStart = workflow.indexOf("  prepare-clinic-credentials:");
+  const clinicStart = workflow.indexOf("  consultor-journey:");
+  assert.ok(preparationStart >= 0 && clinicStart > preparationStart);
+  const preparation = workflow.slice(preparationStart, clinicStart);
+  assert.match(preparation, /runs-on: \[self-hosted, Linux, X64, skincos-native-custody\]/);
+  assert.match(preparation, /ponto-orchestrator-lease\.mjs assert-active/);
+  assert.match(preparation, /Authorize global Ponto JIT custody mutation/);
+  assert.match(preparation, /skincos-provision-ponto-jit materialize/);
+  assert.match(preparation, /PONTO_PILOT_LOGIN: \$\{\{ secrets\.PONTO_PILOT_LOGIN \}\}/);
+  assert.match(preparation, /PONTO_PILOT_PASSWORD: \$\{\{ secrets\.PONTO_PILOT_PASSWORD \}\}/);
+  assert.match(preparation, /GITHUB_WORKFLOW_REF !== workflowRef/);
+  assert.ok(
+    preparation.indexOf("ponto-orchestrator-lease.mjs assert-active")
+      < preparation.indexOf("secrets.PONTO_PILOT_LOGIN"),
+    "the exact coordinator must be revalidated before pilot credentials are hydrated",
+  );
+});

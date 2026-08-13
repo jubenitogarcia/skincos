@@ -311,9 +311,148 @@ jobs:
           path: ${{ runner.temp }}/ponto-slo-preflight
           retention-days: 1
           if-no-files-found: error
-  consultor-journey:
+  prepare-clinic-credentials:
     needs: [orchestrator, control-plane-preflight]
     if: ${{ needs.orchestrator.result == 'success' && needs.control-plane-preflight.result == 'success' && github.run_attempt == 1 && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/skincos/release/ponto/') && inputs.orchestrator_run_id != '' && github.sha == inputs.release_sha)) && inputs.stage != 'rollback' }}
+    runs-on: [self-hosted, Linux, X64, skincos-native-custody]
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify trusted exact release source before materializing clinic custody
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_STAGE: ${{ inputs.stage }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'SLO release SHA is invalid'; exit 1; }
+          [[ "$ORCHESTRATOR_STAGE" == "$RELEASE_STAGE" ]] || { echo 'SLO stage differs from its coordinator capability'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'SLO custody checkout differs from the trusted workflow revision'; exit 1; }
+          PONTO_RELEASE_SHA="$RELEASE_SHA" PONTO_OBSERVED_SHA="$GITHUB_SHA" node --input-type=module <<'NODE'
+          import { assertPontoSourceClosureUnchanged } from "./.github/scripts/ponto-source-closure.mjs";
+          assertPontoSourceClosureUnchanged(process.env.PONTO_RELEASE_SHA, process.env.PONTO_OBSERVED_SHA);
+          NODE
+      - name: Revalidate the exact active coordinator before clinic custody secrets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-orchestrator-lease.mjs assert-active \
+            "$ORCHESTRATOR_STAGE" \
+            "$RELEASE_SHA" \
+            "$ORCHESTRATOR_RUN_ID"
+      - name: Authorize global Ponto JIT custody mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
+          coordinator_url: ${{ needs.orchestrator.outputs.global_coordinator_url }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_b64: ${{ needs.orchestrator.outputs.global_proof_b64 }}
+          resource: ${{ inputs.orchestrator_run_id != '' && 'release:ponto-child' || 'release:ponto' }}
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+      - name: Attest exact immutable preflight artifact before clinic custody secrets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.control-plane-preflight.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.control-plane-preflight.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Preflight artifact ID is invalid'; exit 1; }
+          [[ "$ARTIFACT_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]] || { echo 'Preflight artifact digest is invalid'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" > "$RUNNER_TEMP/ponto-jit-preflight-artifact.json"
+          node - "$RUNNER_TEMP/ponto-jit-preflight-artifact.json" <<'NODE'
+          const fs = require("fs");
+          const artifact = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const expectedDigest = String(process.env.ARTIFACT_DIGEST || "").replace(/^sha256:/, "");
+          const actualDigest = String(artifact?.digest || "").replace(/^sha256:/, "");
+          if (
+            String(artifact?.id || "") !== process.env.ARTIFACT_ID
+            || artifact?.name !== `ponto-slo-preflight-${process.env.GITHUB_RUN_ID}`
+            || String(artifact?.workflow_run?.id || "") !== process.env.GITHUB_RUN_ID
+            || artifact?.expired !== false
+            || actualDigest !== expectedDigest
+          ) throw new Error("immutable Ponto JIT preflight artifact metadata differs");
+          NODE
+          rm -f "$RUNNER_TEMP/ponto-jit-preflight-artifact.json"
+      - name: Materialize one-time runner-encrypted clinic credentials
+        env:
+          PONTO_PILOT_LOGIN: ${{ secrets.PONTO_PILOT_LOGIN }}
+          PONTO_PILOT_PASSWORD: ${{ secrets.PONTO_PILOT_PASSWORD }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_RELEASE_SHA: ${{ inputs.release_sha }}
+          PONTO_RELEASE_STAGE: ${{ inputs.stage }}
+          PONTO_ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          PONTO_ORCHESTRATOR_ISSUER_RUN_ID: ${{ inputs.orchestrator_issuer_run_id }}
+          PONTO_ORCHESTRATOR_NONCE: ${{ inputs.orchestrator_nonce }}
+          PONTO_EXPECTED_CORE_VERSION_ID: ${{ inputs.core_version_id }}
+          PONTO_EXPECTED_TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
+          PONTO_EXPECTED_IDENTITY_VERSION_ID: ${{ inputs.identity_version_id }}
+          PONTO_EXPECTED_PAGES_DEPLOYMENT_ID: ${{ inputs.pages_deployment_id }}
+          PONTO_SLO_PREFLIGHT_ARTIFACT_ID: ${{ needs.control-plane-preflight.outputs.artifact_id }}
+          PONTO_SLO_PREFLIGHT_ARTIFACT_DIGEST: ${{ needs.control-plane-preflight.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE' | sudo -n /usr/local/sbin/skincos-provision-ponto-jit materialize
+          const required = (name) => {
+            const value = String(process.env[name] || "");
+            if (!value) throw new Error(`${name} is required for one-time clinic custody`);
+            return value;
+          };
+          const releaseSha = required("PONTO_RELEASE_SHA").toLowerCase();
+          const releaseRef = `refs/tags/skincos/release/ponto/${releaseSha}`;
+          const workflowRef = `${required("GITHUB_REPOSITORY")}/.github/workflows/ponto-production-slo.yml@${releaseRef}`;
+          if (process.env.GITHUB_REF !== releaseRef || process.env.GITHUB_WORKFLOW_REF !== workflowRef || Number(process.env.GITHUB_RUN_ATTEMPT) !== 1) {
+            throw new Error("clinic custody requires the exact immutable release workflow");
+          }
+          const accessClientId = String(process.env.CF_ACCESS_CLIENT_ID || "");
+          const accessClientSecret = String(process.env.CF_ACCESS_CLIENT_SECRET || "");
+          if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
+            throw new Error("Cloudflare Access custody is partial");
+          }
+          process.stdout.write(`${JSON.stringify({
+            schemaVersion: 1,
+            credentials: {
+              pilotLogin: required("PONTO_PILOT_LOGIN"),
+              pilotPassword: required("PONTO_PILOT_PASSWORD"),
+              cfAccessClientId: accessClientId,
+              cfAccessClientSecret: accessClientSecret,
+            },
+            context: {
+              repositoryId: required("GITHUB_REPOSITORY_ID"),
+              releaseSha,
+              stage: required("PONTO_RELEASE_STAGE"),
+              coordinatorRunId: required("PONTO_ORCHESTRATOR_RUN_ID"),
+              coordinatorIssuerRunId: required("PONTO_ORCHESTRATOR_ISSUER_RUN_ID"),
+              coordinatorDispatchNonce: required("PONTO_ORCHESTRATOR_NONCE"),
+              workflowRunId: required("GITHUB_RUN_ID"),
+              runAttempt: 1,
+              coreVersionId: required("PONTO_EXPECTED_CORE_VERSION_ID"),
+              timekeepingVersionId: required("PONTO_EXPECTED_TIMEKEEPING_VERSION_ID"),
+              identityVersionId: required("PONTO_EXPECTED_IDENTITY_VERSION_ID"),
+              pagesDeploymentId: required("PONTO_EXPECTED_PAGES_DEPLOYMENT_ID"),
+              preflightArtifactId: required("PONTO_SLO_PREFLIGHT_ARTIFACT_ID"),
+              preflightArtifactSha256: required("PONTO_SLO_PREFLIGHT_ARTIFACT_DIGEST"),
+            },
+          })}\n`);
+          NODE
+  consultor-journey:
+    needs: [orchestrator, control-plane-preflight, prepare-clinic-credentials]
+    if: ${{ needs.orchestrator.result == 'success' && needs.control-plane-preflight.result == 'success' && needs.prepare-clinic-credentials.result == 'success' && github.run_attempt == 1 && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/skincos/release/ponto/') && inputs.orchestrator_run_id != '' && github.sha == inputs.release_sha)) && inputs.stage != 'rollback' }}
     runs-on: ${{ fromJSON(needs.control-plane-preflight.outputs.runner_labels_json || '["ponto-unavailable"]') }}
     timeout-minutes: 30
     environment: production
@@ -428,8 +567,23 @@ jobs:
             "$RUNNER_TEMP/ponto-slo-artifact.json" \
             "$RUNNER_TEMP/ponto-slo-preflight/control-plane-attestation.json" \
             "$RUNNER_TEMP/ponto-slo-preflight/release-probe-capability.json"
+  cleanup-clinic-credentials:
+    needs: [prepare-clinic-credentials, consultor-journey]
+    if: ${{ always() && needs.prepare-clinic-credentials.result == 'success' }}
+    runs-on: [self-hosted, Linux, X64, skincos-native-custody]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Remove any remaining one-time clinic credential material
+        run: sudo -n /usr/local/sbin/skincos-provision-ponto-jit cleanup
   global-coordination-release:
-    needs: [orchestrator, control-plane-preflight, consultor-journey, rollback-observation]
+    needs: [orchestrator, control-plane-preflight, prepare-clinic-credentials, consultor-journey, cleanup-clinic-credentials, rollback-observation]
     if: ${{ always() && needs.orchestrator.outputs.global_lease_required == 'true' }}
     uses: ./.github/workflows/global-coordination-release.yml
     secrets:
