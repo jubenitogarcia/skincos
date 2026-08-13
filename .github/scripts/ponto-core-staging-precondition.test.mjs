@@ -14,17 +14,17 @@ const deploymentId = '2688c47a-efbb-4b97-98f7-6a1734eac354';
 const versionId = 'e71704e3-0d6d-4327-83cf-3121010995b1';
 
 const attestedIncumbent = {
-  sourceSha: 'e25c31d673a1cb0b7247e54da0d8b0dc80abd161',
-  workflowRunId: '31635557484',
+  sourceSha: '413b270bf99ed23b379e8ab4ff089d6361f7f232',
+  workflowRunId: '31655973469',
   releaseEvidenceArtifact: {
-    id: '9157683333',
-    name: 'ponto-release-evidence-staging-e25c31d673a1cb0b7247e54da0d8b0dc80abd161',
-    digest: 'sha256:b05ca7629da3e7c12eddf8489f5d03989b91fa735cf5258fddc088bece297ddb',
+    id: '9164912078',
+    name: 'ponto-release-evidence-staging-413b270bf99ed23b379e8ab4ff089d6361f7f232',
+    digest: 'sha256:f520c883e11aed9e297f648d22e6b202488c23c9c12274191382421140e946ec',
   },
   surface: {
     worker: 'skincos-ponto-core-staging',
-    deploymentId: 'fe4560bd-109e-4da6-82ea-37de2434794f',
-    versionId: '883a931a-518f-49d0-b753-f3afc84d4e24',
+    deploymentId: 'd122e5fa-fff4-4ded-8ad1-bb625084797b',
+    versionId: '289fb453-6370-4621-91e0-a1499269139e',
   },
 };
 
