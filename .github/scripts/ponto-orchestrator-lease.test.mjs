@@ -806,9 +806,11 @@ test("staging waits for exact Pages-to-Timekeeping affinity before the authentic
   assert.match(block, /for attempt in \{1\.\.36\}; do/);
   assert.match(block, /\/api\/ponto\/health\?staging_affinity_probe=\$GITHUB_RUN_ID/);
   assert.match(block, /x-skincos-pages-release-sha/);
-  assert.match(block, /x-skincos-gateway-version-id/);
+  assert.match(block, /x-skincos-gateway-environment/);
   assert.match(block, /x-skincos-timekeeping-release-sha/);
   assert.match(block, /x-skincos-timekeeping-version-id/);
+  assert.doesNotMatch(block, /x-skincos-gateway-release-sha/);
+  assert.doesNotMatch(block, /x-skincos-gateway-version-id/);
   assert.match(block, /Unable to attest exact staging Pages-to-Timekeeping affinity/);
   assert.doesNotMatch(block, /PONTO_IDEMPOTENCY_KEY/);
 });
