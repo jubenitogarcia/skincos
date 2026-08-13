@@ -255,3 +255,22 @@ test("baseline workflow, reusable gate, and coordinator retain every exported Wo
     "reusableRuns.length > 1",
   ]) assert.ok(reuse.includes(required), `baseline reuse misses strict provenance: ${required}`);
 });
+
+test("coordinator and reusable release gate require the exact current main SHA", () => {
+  for (const name of [
+    "ponto-progressive-release.yml",
+    "ponto-release-gate.yml",
+  ]) {
+    const source = fs.readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8");
+    assert.match(
+      source,
+      /\[\[ "\$\(git rev-parse origin\/main\)" == "\$RELEASE_SHA" \]\] \|\| \{ echo 'release_sha must equal current origin\/main'; exit 1; \}/,
+      name,
+    );
+    assert.doesNotMatch(
+      source,
+      /git merge-base --is-ancestor "\$RELEASE_SHA" origin\/main/,
+      name,
+    );
+  }
+});

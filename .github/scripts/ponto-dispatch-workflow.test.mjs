@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import test from "node:test";
 import {
   assertPontoDependencyClosureUnchanged,
+  assertPontoReleaseIsCurrentMain,
   dispatchTimeoutMsFor,
   globalResourceFor,
   governedLeaseKeyFor,
@@ -86,6 +87,18 @@ test("child dispatch keeps an immutable release valid across unrelated main chan
   );
 });
 
+test("child dispatch refuses a release SHA after main advances", () => {
+  const releaseSha = "a".repeat(40);
+  assert.deepEqual(
+    assertPontoReleaseIsCurrentMain(releaseSha, releaseSha),
+    { releaseSha, currentMainSha: releaseSha },
+  );
+  assert.throws(
+    () => assertPontoReleaseIsCurrentMain(releaseSha, "b".repeat(40)),
+    /no longer equals current main/,
+  );
+});
+
 test("child dispatch separates the immutable release identity from the main workflow revision", () => {
   const releaseSha = "a".repeat(40);
   const workflowSha = "b".repeat(40);
@@ -102,11 +115,17 @@ test("child dispatch separates the immutable release identity from the main work
 test("Ponto recovery keeps provenance fail-closed while accepting a closure-equivalent coordinator revision", () => {
   const read = (relative) => fs.readFileSync(new URL(relative, import.meta.url), "utf8");
   const progressive = read("../workflows/ponto-progressive-release.yml");
+  const dispatcher = read("./ponto-dispatch-workflow.mjs");
   const orchestratorLease = read("./ponto-orchestrator-lease.mjs");
   const watchdogJournal = read("./ponto-watchdog-journal.mjs");
   const recovery = read("../workflows/ponto-staging-recovery-rollback.yml");
   assert.match(progressive, /PONTO_WORKFLOW_SHA=.*assertPontoSourceClosureUnchanged/s);
   assert.doesNotMatch(progressive, /release_sha must equal the immutable main coordinator SHA/);
+  for (const currentMainCheck of [
+    "assertPontoReleaseIsCurrentMain(orchestratorHeadSha, currentMainSha)",
+    "assertPontoReleaseIsCurrentMain(orchestratorHeadSha, dispatchMainSha)",
+    "assertPontoReleaseIsCurrentMain(orchestratorHeadSha, observedMainSha)",
+  ]) assert.ok(dispatcher.includes(currentMainCheck), `missing current-main guard: ${currentMainCheck}`);
   assert.match(orchestratorLease, /assertObservedPontoSource\(releaseSha, String\(run\?\.head_sha \|\| ""\)\.trim\(\)\.toLowerCase\(\)\)/);
   assert.doesNotMatch(orchestratorLease, /run\?\.head_sha !== releaseSha/);
   assert.match(watchdogJournal, /pontoSourceClosureMatches\(releaseSha, String\(coordinator\?\.head_sha \|\| ""\)\.trim\(\)\.toLowerCase\(\)\)/);
