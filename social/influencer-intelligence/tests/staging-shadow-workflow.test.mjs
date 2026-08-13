@@ -21,6 +21,12 @@ test('staging shadow workflow is manual, staging-only, and forbids the fallback 
   assert.match(workflow, /candidate_active_after_validation/);
   assert.match(workflow, /versions\.length\s*!==\s*1/);
   assert.match(workflow, /Number\(versions\[0\]\?\.percentage\)\s*!==\s*100/);
+  assert.equal(
+    (workflow.match(/shared_secret:\s*\$\{\{\s*secrets\.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY\s*\}\}/g) || []).length,
+    3,
+    'all staging shadow lease operations must use the active coordinator key',
+  );
+  assert.doesNotMatch(workflow, /secrets\.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET/);
   assert.match(workflow, /name:\s*Guard private real-read inputs/);
   assert.match(workflow, /if:\s*\$\{\{\s*inputs\.run_real_router_smoke\s*==\s*true\s*\}\}/);
   assert.match(workflow, /name:\s*Remove workflow-only analytics credential/);
