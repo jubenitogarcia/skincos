@@ -720,6 +720,16 @@ test("recovery artifact downloads isolate extraction before merging attested evi
   }
 });
 
+test("recovery rollback classification receives the attested artifact root in its own step", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const start = source.indexOf("- name: Classify whether exact rollback is required");
+  const end = source.indexOf("- name: Upload immutable ordinary-recovery reconciliation", start);
+  assert.ok(start >= 0 && end > start, "recovery rollback classification block is absent");
+  const block = source.slice(start, end);
+  assert.match(block, /PONTO_RECOVERY_ARTIFACT_ROOT: \$\{\{ runner\.temp \}\}\/ponto-ordinary-recovery\/journal/);
+  assert.match(block, /node - "\$PONTO_RECOVERY_ARTIFACT_ROOT\/watchdog-journal\.json"/);
+});
+
 test("staging Pages incumbent capture retries and requires exact terminal provenance", () => {
   const source = workflow("deploy-crm-pages.yml");
   const start = source.indexOf("- name: Capture Ponto staging Pages rollback deployment");

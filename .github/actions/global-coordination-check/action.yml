@@ -55,6 +55,7 @@ runs:
         GLOBAL_OBSERVED_SOURCE_SHA: ${{ inputs.observed_source_sha }}
         GLOBAL_ENABLED: ${{ inputs.enabled }}
         GLOBAL_PROOF_FILE: ${{ runner.temp }}/skincos-global-coordination-proof-check.json
+        GLOBAL_CHECK_RESULT: ${{ runner.temp }}/skincos-global-coordination-check-result.json
       run: |
         set -euo pipefail
         [[ "$GLOBAL_ENABLED" == true ]] || { echo 'Global coordination is not active'; exit 1; }
@@ -80,11 +81,40 @@ runs:
         coordination_attempt=1
         coordination_max_attempts=3
         while (( coordination_attempt <= coordination_max_attempts )); do
+          # The lease was often acquired only seconds before this gate.  The
+          # authorization check is the authoritative fail-closed boundary; do
+          # not add an unnecessary remote state mutation while more than five
+          # minutes of the exact lease remain.  When it is due, renew first
+          # and then authorize again against the renewed proof.
           if SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
             SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
             SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
-              node scripts/codex-global-coordination-workflow.mjs renew \
-                --proof-file "$GLOBAL_PROOF_FILE" && \
+              node scripts/codex-global-coordination-workflow.mjs check \
+                --proof-file "$GLOBAL_PROOF_FILE" \
+                --resource "$GLOBAL_RESOURCE" \
+                --module "$GLOBAL_MODULE" \
+                --source "$GLOBAL_OBSERVED_SOURCE_SHA" \
+                --candidate-source "$GLOBAL_SOURCE_SHA" \
+                --result-file "$GLOBAL_CHECK_RESULT"; then
+            renew_required="$(node - "$GLOBAL_CHECK_RESULT" <<'NODE'
+          const fs = require("fs");
+          const result = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const expiresAt = Number(result?.lease?.expiresAt);
+          if (result?.passed !== true || !Number.isSafeInteger(expiresAt)) {
+            throw new Error("global coordination authorization did not return an exact lease expiry");
+          }
+          process.stdout.write(expiresAt - Date.now() > 5 * 60 * 1000 ? "false" : "true");
+        NODE
+            )" || renew_required="invalid"
+            if [[ "$renew_required" == false ]]; then
+              exit 0
+            fi
+            if [[ "$renew_required" == true ]] && \
+              SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
+              SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
+              SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
+                node scripts/codex-global-coordination-workflow.mjs renew \
+                  --proof-file "$GLOBAL_PROOF_FILE" && \
             SKINCOS_GLOBAL_COORDINATOR_URL="$SKINCOS_GLOBAL_COORDINATOR_URL" \
             SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" \
             SKINCOS_GLOBAL_COORDINATION_KEY_ID="${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" \
@@ -95,6 +125,7 @@ runs:
                 --source "$GLOBAL_OBSERVED_SOURCE_SHA" \
                 --candidate-source "$GLOBAL_SOURCE_SHA"; then
             exit 0
+          fi
           fi
           if (( coordination_attempt == coordination_max_attempts )); then
             echo "Global coordination revalidation failed after ${coordination_max_attempts} attempts" >&2

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -8,6 +9,16 @@ const ROOT = path.resolve(import.meta.dirname, "../..");
 
 function read(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+}
+
+function compositeActionBash(source) {
+  const marker = "      run: |\n";
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, "missing composite-action Bash block");
+  return source.slice(start + marker.length)
+    .split("\n")
+    .map((line) => line.startsWith("        ") ? line.slice(8) : line)
+    .join("\n");
 }
 
 function jobBlock(workflow, jobName) {
@@ -157,6 +168,17 @@ test("the reusable check action accepts either an external proof file or an enco
   assert.match(read(".github/actions/global-coordination-release/action.yml"), /github\.event\.inputs\.target == 'production'/);
   assert.match(action, /GLOBAL_PROOF_FILE_INPUT/);
   assert.match(action, /base64 -d/);
+  assert.match(action, /GLOBAL_CHECK_RESULT/);
+  assert.match(action, /--result-file "\$GLOBAL_CHECK_RESULT"/);
+  assert.match(action, /expiresAt - Date\.now\(\) > 5 \* 60 \* 1000/);
+  assert.match(action, /if \[\[ "\$renew_required" == false \]\]; then/);
+  assert.match(action, /if \[\[ "\$renew_required" == true \]\] &&/);
+  assert.match(action, /\n {8}NODE\n {12}\)" \|\| renew_required="invalid"/);
+  const syntax = spawnSync("bash", ["-n"], {
+    input: compositeActionBash(action),
+    encoding: "utf8",
+  });
+  assert.equal(syntax.status, 0, syntax.stderr || "global coordination check Bash syntax failed");
   assert.match(action, /coordination_max_attempts=3/);
   assert.match(action, /Global coordination revalidation failed after/);
   for (const file of [
