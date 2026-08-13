@@ -17,6 +17,8 @@ const REPOSITORY = 'jubenitogarcia/skincos';
 const WORKER = 'skincos-ponto-core-staging';
 const RELEASE_WORKFLOW = '.github/workflows/ponto-progressive-release.yml';
 const DEFAULT_CATALOG = path.resolve('platform/deploy/operational-units.json');
+const EVIDENCE_DERIVED_STAGING_INCURBENT = 'evidence-derived-staging-incumbent';
+const RECENT_STAGING_RUN_LIMIT = 25;
 
 function requireValue(condition, message) {
   if (!condition) throw new Error(message);
@@ -62,28 +64,31 @@ function catalogUnit(catalog) {
 }
 
 export function validateStagingIncumbentCatalog({ catalog, repository = REPOSITORY }) {
-  const unit = catalogUnit(catalog);
-  const incumbent = unit.promotion?.stagingIncumbent;
-  requireValue(incumbent?.state === 'published-and-attested', 'staging Ponto Core incumbent is not attested');
-  requireValue(incumbent.repository === repository, 'staging Ponto Core incumbent repository differs');
-  requireValue(SHA_PATTERN.test(String(incumbent.sourceSha || '')), 'staging Ponto Core incumbent source SHA is invalid');
-  requireValue(ID_PATTERN.test(String(incumbent.workflowRunId || '')), 'staging Ponto Core incumbent workflow run is invalid');
-  requireValue(incumbent.workflowPath === RELEASE_WORKFLOW, 'staging Ponto Core incumbent workflow path is invalid');
-  requireValue(incumbent.runAttempt === 1, 'staging Ponto Core incumbent run attempt must be 1');
-  requireValue(incumbent.decision === 'pass', 'staging Ponto Core incumbent decision is not pass');
+  const incumbent = catalogUnit(catalog).promotion?.stagingIncumbent;
+  return validateStagingIncumbent({ incumbent, repository, label: 'staging Ponto Core incumbent' });
+}
+
+function validateStagingIncumbent({ incumbent, repository, label }) {
+  requireValue(incumbent?.state === 'published-and-attested', `${label} is not attested`);
+  requireValue(incumbent.repository === repository, `${label} repository differs`);
+  requireValue(SHA_PATTERN.test(String(incumbent.sourceSha || '')), `${label} source SHA is invalid`);
+  requireValue(ID_PATTERN.test(String(incumbent.workflowRunId || '')), `${label} workflow run is invalid`);
+  requireValue(incumbent.workflowPath === RELEASE_WORKFLOW, `${label} workflow path is invalid`);
+  requireValue(incumbent.runAttempt === 1, `${label} workflow run attempt must be 1`);
+  requireValue(incumbent.decision === 'pass', `${label} decision is not pass`);
 
   const artifact = incumbent.releaseEvidenceArtifact;
-  requireValue(ID_PATTERN.test(String(artifact?.id || '')), 'staging Ponto Core incumbent artifact ID is invalid');
+  requireValue(ID_PATTERN.test(String(artifact?.id || '')), `${label} artifact ID is invalid`);
   requireValue(
     artifact.name === `ponto-release-evidence-staging-${incumbent.sourceSha}`,
-    'staging Ponto Core incumbent artifact name is not source-bound',
+    `${label} artifact name is not source-bound`,
   );
-  requireValue(DIGEST_PATTERN.test(String(artifact.digest || '')), 'staging Ponto Core incumbent artifact digest is invalid');
+  requireValue(DIGEST_PATTERN.test(String(artifact.digest || '')), `${label} artifact digest is invalid`);
 
   const surface = incumbent.surface;
-  requireValue(surface?.worker === WORKER, 'staging Ponto Core incumbent Worker differs');
-  requireValue(UUID_PATTERN.test(String(surface?.deploymentId || '')), 'staging Ponto Core incumbent deployment ID is invalid');
-  requireValue(UUID_PATTERN.test(String(surface?.versionId || '')), 'staging Ponto Core incumbent version ID is invalid');
+  requireValue(surface?.worker === WORKER, `${label} Worker differs`);
+  requireValue(UUID_PATTERN.test(String(surface?.deploymentId || '')), `${label} deployment ID is invalid`);
+  requireValue(UUID_PATTERN.test(String(surface?.versionId || '')), `${label} version ID is invalid`);
 
   return {
     ...incumbent,
@@ -158,6 +163,143 @@ function validateArtifact(artifact, expected, repository) {
   requireValue(artifact.workflow_run?.id === Number(expected.workflowRunId), 'staging incumbent artifact workflow run differs');
   requireValue(artifact.workflow_run?.head_sha === expected.sourceSha, 'staging incumbent artifact SHA differs');
   requireValue(artifact.workflow_run?.head_branch === 'main', 'staging incumbent artifact branch differs');
+}
+
+function stagingRunTitle(sourceSha, workflowRunId) {
+  return `Ponto staging ${sourceSha} orchestrator=${workflowRunId}`;
+}
+
+export function validateEvidenceDerivedStagingIncumbent({
+  run,
+  artifact,
+  evidence,
+  repository = REPOSITORY,
+  currentRunId = '',
+}) {
+  const workflowRunId = String(run?.id || '');
+  const sourceSha = String(run?.head_sha || '').trim().toLowerCase();
+  requireValue(ID_PATTERN.test(workflowRunId), 'evidence-derived staging Ponto Core workflow run is invalid');
+  requireValue(SHA_PATTERN.test(sourceSha), 'evidence-derived staging Ponto Core source SHA is invalid');
+  requireValue(
+    !currentRunId || workflowRunId !== String(currentRunId),
+    'current Ponto coordinator cannot attest itself as a staging predecessor',
+  );
+
+  const incumbent = validateStagingIncumbent({
+    incumbent: {
+      state: 'published-and-attested',
+      repository,
+      sourceSha,
+      workflowRunId,
+      workflowPath: RELEASE_WORKFLOW,
+      runAttempt: 1,
+      decision: 'pass',
+      releaseEvidenceArtifact: {
+        id: String(artifact?.id || ''),
+        name: artifact?.name,
+        digest: artifact?.digest,
+      },
+      surface: evidenceDerivedSurface({ evidence, workflowRunId, sourceSha }),
+    },
+    repository,
+    label: 'evidence-derived staging Ponto Core incumbent',
+  });
+
+  validateRun(run, incumbent, repository);
+  requireValue(
+    run.display_title === stagingRunTitle(sourceSha, workflowRunId),
+    'evidence-derived staging Ponto Core workflow title differs',
+  );
+  validateArtifact(artifact, incumbent, repository);
+  return incumbent;
+}
+
+function sourceIsReachableFromMain({ repository, sourceSha, ghApi = ghJson }) {
+  const comparison = ghApi(`repos/${repository}/compare/${sourceSha}...main`);
+  requireValue(
+    comparison?.status === 'ahead' || comparison?.status === 'identical',
+    'evidence-derived staging Ponto Core source SHA is not reachable from main',
+  );
+}
+
+function evidenceDerivedSurface({ evidence, workflowRunId, sourceSha }) {
+  const core = evidence?.surfaces?.coreApi;
+  requireValue(evidence?.decision === 'pass', 'evidence-derived staging Ponto Core release evidence decision is not pass');
+  requireValue(String(evidence?.runId || '') === workflowRunId, 'evidence-derived staging Ponto Core evidence run differs');
+  requireValue(core?.sourceSha === sourceSha && core.stage === 'staging', 'evidence-derived staging Ponto Core evidence source differs');
+  requireValue(UUID_PATTERN.test(String(core?.deploymentId || '')), 'evidence-derived staging Ponto Core evidence deployment is invalid');
+  requireValue(UUID_PATTERN.test(String(core?.candidateVersionId || '')), 'evidence-derived staging Ponto Core evidence version is invalid');
+  requireValue(core.candidatePercent === 100 && core.incumbentPercent === 0, 'evidence-derived staging Ponto Core evidence traffic differs');
+  requireValue(core.candidateTag === `ponto:coreApi:${sourceSha}`, 'evidence-derived staging Ponto Core evidence tag differs');
+  return {
+    worker: WORKER,
+    deploymentId: core.deploymentId,
+    versionId: core.candidateVersionId,
+  };
+}
+
+async function readReleaseEvidenceArtifact({ repository, workflowRunId, artifactName }) {
+  const root = await fsTempDirectory('ponto-staging-evidence-derived');
+  try {
+    run('gh', [
+      'run', 'download', workflowRunId,
+      '--repo', repository,
+      '--name', artifactName,
+      '--dir', root,
+    ]);
+    const evidencePath = findFile(root, 'ponto-release-evidence.json');
+    requireValue(evidencePath, 'evidence-derived staging Ponto Core release evidence file is missing');
+    return jsonFile(evidencePath);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+export async function discoverEvidenceDerivedStagingIncumbents({
+  repository,
+  currentRunId = String(process.env.GITHUB_RUN_ID || '').trim(),
+  ghApi = ghJson,
+  readEvidence = readReleaseEvidenceArtifact,
+}) {
+  const payload = ghApi(`repos/${repository}/actions/workflows/ponto-progressive-release.yml/runs?per_page=100&event=workflow_dispatch&branch=main`);
+  const candidates = [];
+  const failures = [];
+
+  for (const run of Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : []) {
+    if (candidates.length >= RECENT_STAGING_RUN_LIMIT) break;
+    const workflowRunId = String(run?.id || '');
+    const sourceSha = String(run?.head_sha || '').trim().toLowerCase();
+    try {
+      if (run?.status !== 'completed' || run?.conclusion !== 'success') continue;
+      if (run?.display_title !== stagingRunTitle(sourceSha, workflowRunId)) continue;
+      if (currentRunId && workflowRunId === currentRunId) continue;
+      sourceIsReachableFromMain({ repository, sourceSha, ghApi });
+      const artifactsPayload = ghApi(`repos/${repository}/actions/runs/${workflowRunId}/artifacts?per_page=100`);
+      const artifactName = `ponto-release-evidence-staging-${sourceSha}`;
+      const matches = (Array.isArray(artifactsPayload?.artifacts) ? artifactsPayload.artifacts : [])
+        .filter(artifact => artifact?.name === artifactName);
+      requireValue(matches.length === 1, 'evidence-derived staging Ponto Core artifact is absent or ambiguous');
+
+      const artifact = matches[0];
+      const evidence = await readEvidence({
+        repository,
+        workflowRunId,
+        artifactName,
+      });
+      const expected = validateEvidenceDerivedStagingIncumbent({
+        run,
+        artifact,
+        evidence,
+        repository,
+        currentRunId,
+      });
+      candidates.push(expected);
+    } catch (error) {
+      failures.push(`${workflowRunId || 'unknown'}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return { candidates, failures };
 }
 
 function findFile(root, name) {
@@ -289,6 +431,7 @@ export async function resolveStagingCorePrecondition({
   catalogPath = DEFAULT_CATALOG,
   fetchImpl = fetch,
   verifyEvidence = true,
+  evidenceDerivedIncumbents,
 }) {
   const unit = catalogUnit(catalog);
   const incumbent = validateStagingIncumbentCatalog({ catalog, repository });
@@ -300,7 +443,23 @@ export async function resolveStagingCorePrecondition({
   requireValue(ID_PATTERN.test(String(bootstrap?.workflowRunId || '')), 'historical Ponto Core bootstrap workflow run is invalid');
 
   const attempts = [];
+  let evidenceDerived = Array.isArray(evidenceDerivedIncumbents) ? evidenceDerivedIncumbents : [];
+  if (!Array.isArray(evidenceDerivedIncumbents) && verifyEvidence) {
+    try {
+      const discovered = await discoverEvidenceDerivedStagingIncumbents({ repository });
+      evidenceDerived = discovered.candidates;
+      attempts.push(...discovered.failures.map(message => `evidence-derived-staging-incumbent discovery: ${message}`));
+    } catch (error) {
+      attempts.push(`evidence-derived-staging-incumbent discovery: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const predecessors = [
+    ...evidenceDerived.map(expected => ({
+      mode: EVIDENCE_DERIVED_STAGING_INCURBENT,
+      expected,
+      message: `ponto:coreApi:${expected.sourceSha}`,
+      artifactVerifier: verifyEvidence ? () => verifyIncumbentEvidence({ repository, expected }) : null,
+    })),
     {
       mode: 'staging-incumbent',
       expected: incumbent,
