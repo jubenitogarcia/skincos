@@ -155,6 +155,17 @@ resolver — nunca IDs de task, cookies ou segredos. A task original é arquivad
 somente depois de a substituta estar pronta; exclusão permanente de histórico
 não é suportada pela API atual.
 
+Quando um checkout SKINCOS antigo não possui a implementação completa do hook,
+use somente a ponte global privada materializada de um source limpo pelo
+`manage-codex-thread-routing-bridge.ps1`. A ponte usa o `cwd` real, mas lê
+resolver, topologia e estado do bundle privado verificado; o clone
+compartilhado continua apenas contexto. Ela é inerte fora de
+`jubenitogarcia/skincos` e também é inerte onde os hooks do projeto já estão
+completos, para não duplicar decisões concorrentes. Candidato é restrito a um
+nonce curto para a prova nativa; após merge, ative somente um bundle estável do
+SHA integrado em `origin/main`. Revise novamente a definição global alterada
+em `/hooks` antes de usar a ponte.
+
 ## Checklist de encerramento por chat
 - Branch/worktree limpos (`git status` sem alteracoes locais).
 - PR aberto e rastreavel.

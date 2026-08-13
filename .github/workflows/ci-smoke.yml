@@ -244,6 +244,7 @@ jobs:
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-skill-installer.ps1
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\tests\codex-thread-worktree-router.test.ps1
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\tests\codex-thread-routing-hook.test.ps1
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\tests\codex-thread-routing-bridge.test.ps1
 
       - name: Verify storage governance contracts
         if: ${{ needs.changes.outputs.storage_governance == 'true' || needs.changes.outputs.all == 'true' }}

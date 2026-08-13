@@ -72,6 +72,52 @@ Uma candidata temporária só pode ser associada por `TaskSlug` exato (ou pela
 worktree atual já registrada). O texto do objetivo pode resolver a superfície,
 mas nunca é usado sozinho para escolher uma worktree existente.
 
+## Ponte global privada
+
+Checkouts históricos e o clone compartilhado podem não conter os hooks de
+roteamento já integrados. Nesses casos, a ponte global do operador só é
+instalada por `manage-codex-thread-routing-bridge.ps1` a partir de um source
+limpo e verificável. Ela aceita apenas o repositório
+`jubenitogarcia/skincos`, preserva o hook global `Stop` e carrega uma cópia com
+hashes verificados no runtime privado em
+`C:\CodexRuntime\operator\admin\skincos\thread-routing-bridge`. Ela nunca
+executa `scripts` do clone compartilhado.
+
+Se o checkout já contém `UserPromptSubmit`, `PreToolUse`, resolver, estado e
+topologia completos, a ponte global não faz nada: os hooks do projeto continuam
+sendo a única fonte da decisão. Se o bundle privado estiver ausente, alterado
+ou inválido, a ponte falha fechada e bloqueia escrita naquele checkout.
+
+O candidato nativo tem validade curta e só reage à sua ativação privada; o
+marcador de teste não cria vínculo de worktree e é consumido antes de o hook
+emitir o nonce normal de substituição. Depois do merge, o bundle estável deve
+ser materializado a partir do checkout limpo cujo `HEAD` é exatamente
+`origin/main`:
+
+```powershell
+# No worktree limpo do PR, antes da prova manual no App.
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\manage-codex-thread-routing-bridge.ps1 `
+  -Action install-candidate `
+  -ProjectRoot (Get-Location).Path `
+  -ActivationCheckout "C:\CodexShared\Projetos\skincos" `
+  -Apply
+
+# Depois do merge, em checkout limpo e atualizado de main.
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\manage-codex-thread-routing-bridge.ps1 `
+  -Action activate-stable `
+  -ProjectRoot (Get-Location).Path `
+  -Apply
+```
+
+`status` é somente leitura; `deactivate` remove apenas os dois handlers da
+ponte e preserva os demais hooks globais. Como a definição em
+`C:\Users\admin\.codex\hooks.json` muda ao instalar a ponte, abra `/hooks`
+no Codex App, revise a definição final e conclua a revisão de confiança antes
+do teste. Uma definição nova ou alterada é ignorada pelo App até essa revisão;
+isso é um controle intencional, não um fallback a ser contornado.
+[A documentação oficial de hooks](https://learn.chatgpt.com/docs/hooks)
+descreve esse vínculo de confiança por hash da definição.
+
 ## Configuração única do App
 
 Em **Settings > Worktrees**, configure o root gerenciado como:

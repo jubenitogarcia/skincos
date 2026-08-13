@@ -13,6 +13,8 @@ const hooks = read('.codex/hooks.json')
 const routingState = read('scripts/codex-thread-routing-state.ps1')
 const promptHook = read('.codex/hooks/invoke-codex-thread-routing.ps1')
 const guardHook = read('.codex/hooks/invoke-codex-thread-routing-guard.ps1')
+const globalBridge = read('scripts/invoke-codex-thread-routing-bridge.ps1')
+const bridgeManager = read('scripts/manage-codex-thread-routing-bridge.ps1')
 const routingDocs = read('docs/codex-thread-bootstrap.md')
 const ciSmoke = read('.github/workflows/ci-smoke.yml')
 
@@ -78,6 +80,29 @@ test('prompt hook uses an explicit edit default and guards a pending replacement
   assert.match(guardHook, /pending replacement route/)
   assert.match(guardHook, /permissionDecision = 'deny'/)
   assert.match(guardHook, /codex_app__create_thread/)
+  assert.match(promptHook, /ImplementationRoot/)
+  assert.match(guardHook, /ImplementationRoot/)
+})
+
+test('global bridge only loads verified private routing code for incomplete SKINCOS checkouts', () => {
+  assert.match(globalBridge, /Test-SkincosRepository/)
+  assert.match(globalBridge, /Test-CompleteProjectRoutingImplementation/)
+  assert.match(globalBridge, /Read-VerifiedActiveBundle/)
+  assert.match(globalBridge, /Get-Sha256File -Path \$PSCommandPath/)
+  assert.match(globalBridge, /SKINCOS_BRIDGE_TEST_V1/)
+  assert.match(globalBridge, /candidate_route_marker_hook_failed/)
+  assert.match(globalBridge, /Write-PreToolDeny/)
+  assert.match(globalBridge, /ImplementationRoot/)
+  assert.doesNotMatch(globalBridge, /C:\\CodexShared\\Projetos\\skincos\\scripts/)
+
+  for (const action of ['status', 'install-candidate', 'activate-stable', 'deactivate']) {
+    assert.match(bridgeManager, new RegExp(`'${action}'`))
+  }
+  assert.match(bridgeManager, /source limpo/)
+  assert.match(bridgeManager, /origin\/main/)
+  assert.match(bridgeManager, /Copy-Item/)
+  assert.match(bridgeManager, /Install-BridgeHandlers/)
+  assert.match(bridgeManager, /Remove-InstalledBridgeHandlers/)
 })
 
 test('routing documentation records the managed App perimeter and separate primary projects', () => {
@@ -86,6 +111,8 @@ test('routing documentation records the managed App perimeter and separate prima
   assert.match(routingDocs, /C:\\CodexShared\\Worktrees\\skincos\\admin\\canonical\\crm\\users/)
   assert.match(routingDocs, /C:\\CodexShared\\Worktrees\\skincos\\admin\\canonical\\orb\\meta-ads-publish/)
   assert.match(routingDocs, /threadId`, cookies ou segredos/)
+  assert.match(routingDocs, /Ponte global privada/)
+  assert.match(routingDocs, /revisão de confiança/i)
 })
 
 test('CI executes the routing contracts on Linux and Windows', () => {
@@ -93,4 +120,5 @@ test('CI executes the routing contracts on Linux and Windows', () => {
   assert.match(ciSmoke, /node --test scripts\/tests\/codex-thread-worktree-router\.test\.mjs/)
   assert.match(ciSmoke, /scripts\\tests\\codex-thread-worktree-router\.test\.ps1/)
   assert.match(ciSmoke, /scripts\\tests\\codex-thread-routing-hook\.test\.ps1/)
+  assert.match(ciSmoke, /scripts\\tests\\codex-thread-routing-bridge\.test\.ps1/)
 })

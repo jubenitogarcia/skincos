@@ -3,7 +3,8 @@ param(
     [string]$RuntimeRegistryRoot = 'C:\CodexRuntime\operator\admin\skincos\worktree-registry',
     [string]$WorktreeRoot = 'C:\CodexShared\Worktrees\skincos',
     [string]$CodexManagedWorktreeRoot = 'C:\CodexShared\Worktrees\skincos\admin\managed',
-    [string]$RoutingStateScript
+    [string]$RoutingStateScript,
+    [string]$ImplementationRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -113,7 +114,13 @@ try {
     if ([string]::IsNullOrWhiteSpace($root)) {
         exit 0
     }
-    $stateScript = if ([string]::IsNullOrWhiteSpace($RoutingStateScript)) { Join-Path $root 'scripts\codex-thread-routing-state.ps1' } else { $RoutingStateScript }
+    $implementationRoot = if ([string]::IsNullOrWhiteSpace($ImplementationRoot)) {
+        $root
+    }
+    else {
+        (Resolve-Path -LiteralPath $ImplementationRoot -ErrorAction Stop).Path
+    }
+    $stateScript = if ([string]::IsNullOrWhiteSpace($RoutingStateScript)) { Join-Path $implementationRoot 'scripts\codex-thread-routing-state.ps1' } else { $RoutingStateScript }
     if (-not (Test-Path -LiteralPath $stateScript -PathType Leaf)) {
         exit 0
     }

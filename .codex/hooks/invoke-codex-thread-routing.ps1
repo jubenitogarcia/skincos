@@ -4,7 +4,8 @@ param(
     [string]$WorktreeRoot = 'C:\CodexShared\Worktrees\skincos',
     [string]$CodexManagedWorktreeRoot = 'C:\CodexShared\Worktrees\skincos\admin\managed',
     [string]$TopologyPath,
-    [string]$RoutingStateScript
+    [string]$RoutingStateScript,
+    [string]$ImplementationRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -139,9 +140,16 @@ try {
     if ([string]::IsNullOrWhiteSpace($root)) {
         exit 0
     }
-    $resolver = Join-Path $root 'scripts\resolve-codex-thread-worktree.ps1'
-    $stateScript = if ([string]::IsNullOrWhiteSpace($RoutingStateScript)) { Join-Path $root 'scripts\codex-thread-routing-state.ps1' } else { $RoutingStateScript }
-    if (-not (Test-Path -LiteralPath $resolver -PathType Leaf) -or -not (Test-Path -LiteralPath $stateScript -PathType Leaf)) {
+    $implementationRoot = if ([string]::IsNullOrWhiteSpace($ImplementationRoot)) {
+        $root
+    }
+    else {
+        (Resolve-Path -LiteralPath $ImplementationRoot -ErrorAction Stop).Path
+    }
+    $resolver = Join-Path $implementationRoot 'scripts\resolve-codex-thread-worktree.ps1'
+    $stateScript = if ([string]::IsNullOrWhiteSpace($RoutingStateScript)) { Join-Path $implementationRoot 'scripts\codex-thread-routing-state.ps1' } else { $RoutingStateScript }
+    $topology = if ([string]::IsNullOrWhiteSpace($TopologyPath)) { Join-Path $implementationRoot 'ops\codex\worktree-topology.json' } else { $TopologyPath }
+    if (-not (Test-Path -LiteralPath $resolver -PathType Leaf) -or -not (Test-Path -LiteralPath $stateScript -PathType Leaf) -or -not (Test-Path -LiteralPath $topology -PathType Leaf)) {
         Write-HookContext -EventName 'UserPromptSubmit' -Context 'SKINCOS thread routing is unavailable in this checkout. Do not edit files; open a registered project containing the current routing implementation.' -Block -Reason 'Routing implementation unavailable.'
         exit 0
     }
@@ -169,6 +177,7 @@ try {
             WorktreeRoot = $WorktreeRoot
             CodexManagedWorktreeRoot = $CodexManagedWorktreeRoot
             RuntimeRegistryRoot = $RuntimeRegistryRoot
+            TopologyPath = $topology
             RoutingStateScript = $stateScript
             Intent = 'edit'
             SurfaceType = [string]$binding.surfaceType
@@ -193,6 +202,7 @@ try {
         WorktreeRoot = $WorktreeRoot
         CodexManagedWorktreeRoot = $CodexManagedWorktreeRoot
         RuntimeRegistryRoot = $RuntimeRegistryRoot
+        TopologyPath = $topology
         RoutingStateScript = $stateScript
         Intent = 'edit'
         TaskBrief = $prompt
