@@ -145,6 +145,21 @@ test("Ponto recovery keeps provenance fail-closed while accepting a closure-equi
   assert.doesNotMatch(recovery, /coordinator\.head_sha !== releaseSha/);
 });
 
+test("Ponto coordinator accepts only closure-equivalent main drift after pinning the exact release checkout", () => {
+  const progressive = fs.readFileSync(
+    new URL("../workflows/ponto-progressive-release.yml", import.meta.url),
+    "utf8",
+  );
+  const source = progressive.slice(
+    progressive.indexOf("Verify immutable source and ordered predecessor provenance"),
+    progressive.indexOf("Acquire the composite Ponto release lease before gate settlement"),
+  );
+  assert.match(source, /\[\[ "\$\(git rev-parse HEAD\)" == "\$RELEASE_SHA" \]\]/);
+  assert.match(source, /current_main_sha="\$\(git rev-parse origin\/main\)"/);
+  assert.match(source, /\["current main", process\.env\.PONTO_CURRENT_MAIN_SHA\]/);
+  assert.doesNotMatch(source, /\[\[ "\$\(git rev-parse origin\/main\)" == "\$RELEASE_SHA" \]\]/);
+});
+
 test("Ponto child mutations expose the canonical global resource and conflict scope", () => {
   assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "preview" }), "global:ponto-workers-writer");
   assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "inventory", target: "preview" }), "global:ponto-workers-writer");
