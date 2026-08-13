@@ -847,7 +847,11 @@ jobs:
           import fs from "node:fs";
           import { remoteSnapshot } from "./.github/scripts/ponto-core-baseline-publisher.mjs";
           const predecessorMode = process.env.PONTO_BOOTSTRAP_PREDECESSOR_MODE;
-          const expectedVersionMessage = predecessorMode === "staging-incumbent"
+          const isStagingIncumbent = ["staging-incumbent", "evidence-derived-staging-incumbent"].includes(predecessorMode);
+          if (!isStagingIncumbent && predecessorMode !== "historical-bootstrap") {
+            throw new Error("staging Ponto Core predecessor mode is invalid");
+          }
+          const expectedVersionMessage = isStagingIncumbent
             ? `ponto:coreApi:${process.env.PONTO_BOOTSTRAP_SOURCE_SHA}`
             : `ponto-core-baseline:${process.env.PONTO_BOOTSTRAP_SOURCE_SHA}`;
           const snapshot = await remoteSnapshot({
