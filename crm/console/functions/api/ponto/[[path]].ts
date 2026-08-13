@@ -1105,9 +1105,14 @@ export async function onRequest(context: any): Promise<Response> {
     redirect: 'manual',
   })
 
+  // Health and readiness are public observability contracts. They must be read
+  // from the canonical gateway, rather than a possibly stale Pages service
+  // binding, so a maintenance/degraded response cannot be reintroduced as a
+  // legacy ready=true result through the CRM alias.
+  const useCanonicalGateway = rest === '/health' || rest === '/health/' || rest === '/readiness' || rest === '/readiness/'
   let upstream: Response
   try {
-    upstream = configuration.localDirectTimekeeping
+    upstream = configuration.localDirectTimekeeping || useCanonicalGateway
       ? await fetch(upstreamRequest)
       : await env.PONTO_CORE.fetch(upstreamRequest)
   } catch {
