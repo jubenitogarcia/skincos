@@ -28,6 +28,12 @@ test("Cloudflare mutators have one fail-closed writer group and no unclassified 
   assert.equal(crm.resource, "global:crm-cloudflare-writer");
   const pontoWorkers = policy.coordinationGroups.find((group) => group.id === "ponto-workers-writer");
   assert.equal(pontoWorkers.resource, "global:ponto-workers-writer");
+  const tokenVaultStaging = policy.coordinationGroups.find((group) => group.id === "token-vault-staging-writer");
+  assert.equal(tokenVaultStaging.resource, "global:token-vault-staging");
+  const tokenVaultShadow = policy.surfaces.find((surface) => surface.id === "token-vault-staging-shadow");
+  assert.equal(tokenVaultShadow.canonicalDeployWorkflow, ".github/workflows/influencer-intelligence-staging-shadow.yml");
+  assert.equal(tokenVaultShadow.coordinationGroup, "token-vault-staging-writer");
+  assert.match(read(".github/workflows/influencer-intelligence-staging-shadow.yml"), /resource: global:token-vault-staging/);
   assert.match(read(".github/workflows/deploy-crm-pages.yml"), /resource: global:crm-cloudflare-writer/);
   assert.match(read(".github/workflows/cloudflare-pages-sync-ponto.yml"), /global_resource: global:crm-cloudflare-writer/);
   assert.match(read(".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"), /global_resource: global:ponto-workers-writer/);

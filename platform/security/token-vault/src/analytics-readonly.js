@@ -749,6 +749,7 @@ async function audit(writeAudit, env, input, row, status, requestId, metadata = 
     metadata: {
       scope: 'influencer-intelligence',
       operation: input?.operation || null,
+      correlation_id: input?.correlation_id || null,
       endpoint_family: 'instagram-graph-read-only',
       ...(input?.limit !== undefined ? { limit: input.limit } : {}),
       ...metadata,

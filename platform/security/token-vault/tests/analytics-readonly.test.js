@@ -189,6 +189,7 @@ test('analytics role can read a bounded Meta profile without returning credentia
     assert.equal(new URL(calls[0].url).searchParams.has('access_token'), false);
     assert.equal(calls[0].url, 'https://graph.facebook.com/v20.0/17841400000000001?fields=business_discovery.username%28synthetic.creator%29%7Bid%2Cusername%2Cfollowers_count%2Cmedia_count%7D');
     assert.equal(db.audit.length, 1);
+    assert.equal(JSON.parse(db.audit[0][8]).correlation_id, 'ii:get_profile:creator:synthetic-001');
     assert.equal(JSON.stringify(db.audit).includes(GRAPH_TOKEN), false);
   });
 });
