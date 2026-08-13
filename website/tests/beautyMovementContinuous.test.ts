@@ -28,7 +28,10 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
         assert.match(route, /<Footer \/>/);
     }
 
-    assert.match(experience, /className=\{styles\.tableStage\}/);
+    assert.match(
+        experience,
+        /className=\{`\$\{styles\.tableStage\} \$\{waitingForInitialDeal \? "" : styles\.tableStageShifted\}`\.trim\(\)\}/,
+    );
     assert.match(experience, /id="mesa-de-cartas"/);
     assert.match(experience, /data-hand-stage=\{handStage\}/);
     assert.match(experience, /const tableIsBusy =/);
@@ -321,7 +324,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /@keyframes deckPromptArrowFloat/);
     assert.match(styles, /\.progressRowWaiting \{[\s\S]*min-height: 52px/);
     assert.match(styles, /\.progressRowWaiting \.progressGroup \{[\s\S]*visibility: hidden[\s\S]*pointer-events: none/);
-    assert.match(styles, /\.progressRow:not\(\.progressRowWaiting\) \{[\s\S]*?transform: translateY\(-38px\);/);
+    assert.match(styles, /\.tableStageShifted \{[\s\S]*?transform: translateY\(-38px\);/);
     assert.doesNotMatch(styles, /\.initialDeckPrompt/);
     assert.match(styles, /\.heroDeckInstruction/);
     assert.doesNotMatch(styles, /\.tableDeckPrompt \{|\.deckPrompt \{|\.deckPromptArrow \{/);
