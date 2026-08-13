@@ -317,7 +317,7 @@ function encryptedCredentialEnvelope(credentials, encryptionPrivateKeyPem) {
       publicKey.asymmetricKeyType !== "rsa"
       || Number(publicKey.asymmetricKeyDetails?.modulusLength || 0) < 2048
     ) fail("runner encryption key is invalid");
-    const cipher = crypto.createCipheriv("aes-256-gcm", dataKey, iv);
+    const cipher = crypto.createCipheriv("aes-256-gcm", dataKey, iv, { authTagLength: 16 });
     ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     encryptedKey = crypto.publicEncrypt({
       key: publicKey,

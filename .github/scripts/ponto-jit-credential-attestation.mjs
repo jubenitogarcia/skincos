@@ -225,7 +225,7 @@ function decryptCredentialBundle(rawBundle, rawDecryptKey) {
       padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
     }, encryptedKey);
     if (dataKey.length !== 32) throw new Error("JIT decrypted data key is invalid");
-    const decipher = crypto.createDecipheriv("aes-256-gcm", dataKey, iv);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", dataKey, iv, { authTagLength: 16 });
     decipher.setAuthTag(tag);
     plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
     const credentials = JSON.parse(plaintext.toString("utf8"));

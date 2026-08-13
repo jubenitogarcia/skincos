@@ -177,6 +177,7 @@
     "scripts/codex-global-coordination-client.mjs",
     "scripts/codex-global-coordination-workflow.mjs",
     "scripts/codex-autonomy-lib.mjs",
+    "scripts/runtime/ponto-jit-claims.mjs",
     ".github/actions/**",
     ".github/scripts/promotion-*.mjs",
     ".github/workflows/promotion-gate.yml",
