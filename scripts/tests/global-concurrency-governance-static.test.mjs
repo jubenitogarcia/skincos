@@ -139,6 +139,11 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.match(release, /if \[\[ "\$TARGET" == staging \]\]; then[\s\S]*?TOKEN_VAULT_N8N_API_TOKEN/);
   assert.match(release, /if \(process\.env\.TARGET === 'production'\) requiredInherited\.push\('TOKEN_VAULT_N8N_API_TOKEN'\)/);
   assert.match(release, /if \(process\.env\.TARGET === 'staging'\) \{[\s\S]*?secrets\.TOKEN_VAULT_N8N_API_TOKEN/);
+  assert.match(release, /Token Vault Meta Ads config bearer must be printable ASCII without BOM or control characters/);
+  const printableAsciiBearer = /^[\x21-\x7e]+$/;
+  assert.equal(printableAsciiBearer.test('opaque-bearer_123'), true);
+  assert.equal(printableAsciiBearer.test('\uFEFFopaque-bearer_123'), false);
+  assert.equal(printableAsciiBearer.test('opaque\nbearer'), false);
   assert.match(release, /expected_config_authority_revision: expectedRevision/);
   assert.match(release, /entries: manifest\.entries/);
   assert.match(release, /bootstrap_operation_key="meta-ads-bootstrap:\$\{RELEASE_SHA:0:12\}:\$\{GITHUB_RUN_ID\}:\$\{GITHUB_RUN_ATTEMPT\}"/);
