@@ -36,6 +36,25 @@ test("exceptional paths are explicit rather than inferred from every workflow or
   assert.equal(exceptional.risk, "critical");
 });
 
+test("secret emission classification keeps internal generation autonomous and external issuance fail-closed", () => {
+  const ordinarySecret = classifyFiles(policy, ["platform/security/token-vault/secret-contract.md"]);
+  assert.equal(ordinarySecret.risk, "high");
+  const credentialExposure = classifyFiles(policy, ["ops/credential-exposure-report.md"]);
+  assert.equal(credentialExposure.risk, "critical");
+
+  const requiredSentence = "Absence of a versioned generator alone is not evidence that an internal generated secret requires human intervention.";
+  const documents = [
+    "docs/decisions/codex-autonomy-policy.md",
+    "docs/operations/autonomous-delivery-standard.md",
+    "skills/skincos-secret-provisioning/SKILL.md",
+  ].map((relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8"));
+  for (const document of documents) {
+    assert.match(document, /INTERNAL GENERATED SECRET/);
+    assert.match(document, /EXTERNALLY ISSUED CREDENTIAL/);
+  }
+  assert.ok(documents[0].includes(requiredSentence));
+});
+
 test("release input digest ignores unrelated documentation but invalidates relevant input", () => {
   const base = {
     sourceCommit: "a".repeat(40),

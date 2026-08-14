@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$SourceRoot,
+  [ValidatePattern('^(?=.{1,63}$)[a-z0-9]+(?:-[a-z0-9]+)*$')]
+  [string]$SkillName = 'skincos-project-orchestrator',
   [string]$TargetRoot = (Join-Path $env:USERPROFILE '.agents\skills'),
   [switch]$ReplaceExistingLink,
   [switch]$Uninstall
@@ -11,9 +13,8 @@ if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
   $SourceRoot = Split-Path -Parent $PSScriptRoot
 }
 $projectRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
-$skillName = 'skincos-project-orchestrator'
-$source = Join-Path $projectRoot "skills\$skillName"
-$target = Join-Path $TargetRoot $skillName
+$source = Join-Path $projectRoot "skills\$SkillName"
+$target = Join-Path $TargetRoot $SkillName
 
 if (-not (Test-Path -LiteralPath (Join-Path $source 'SKILL.md') -PathType Leaf)) {
   throw "Versioned skill source was not found: $source"

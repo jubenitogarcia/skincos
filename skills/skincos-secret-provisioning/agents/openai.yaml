@@ -1,0 +1,4 @@
+interface:
+  display_name: "SKINCOS Secret Provisioning"
+  short_description: "Provision internal secrets safely"
+  default_prompt: "Use $skincos-secret-provisioning to classify and safely provision this SKINCOS secret."

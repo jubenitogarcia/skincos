@@ -84,6 +84,10 @@
   flags still require applicable domain gates, real platform permission,
   rollback and evidence; a missing gate is a concrete blocker, not a reason to
   ask again for permission.
+- Before treating an absent secret as a human blocker, classify it through the
+  autonomy policy: a mission-authorized `INTERNAL GENERATED SECRET` with write
+  access to its canonical store is provisioned autonomously; an `EXTERNALLY
+  ISSUED CREDENTIAL` remains fail-closed.
 
 ## Source of Truth
 
