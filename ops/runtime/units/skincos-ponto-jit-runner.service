@@ -1,0 +1,34 @@
+[Unit]
+Description=SKINCOS isolated Ponto JIT-credential GitHub Actions runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos-ponto-jit
+Group=skincos-ponto-jit
+WorkingDirectory=/var/lib/skincos/ponto-jit-runner
+Environment=HOME=/var/lib/skincos/ponto-jit-runner
+Environment=RUNNER_ALLOW_RUNASROOT=0
+ExecStart=/var/lib/skincos/ponto-jit-runner/run.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=300
+# The only elevation is the exact cleanup helper in the sudoers contract. It
+# removes three fixed files from a root-owned directory; no shell, path, or
+# service-management privilege is granted to the runner account.
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/skincos/ponto-jit-runner
+ReadWritePaths=/var/lib/skincos/ponto-jit
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

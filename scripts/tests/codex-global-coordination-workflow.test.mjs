@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { assertCoordinationPayloadSize } from "../codex-github-integration-candidate.mjs";
-import { buildWorkflowLeaseRequest, closureFromFile } from "../codex-global-coordination-workflow.mjs";
+import { acquireWorkflowLease, buildWorkflowLeaseRequest, closureFromFile } from "../codex-global-coordination-workflow.mjs";
 import { dependencyClosureForSource } from "../codex-global-coordinator.mjs";
 
 test("workflow adapter binds the lease to source closure, owner, and selected resource", () => {
@@ -91,4 +91,34 @@ test("merge admission rejects a changed-file payload before remote coordination"
   assert.throws(() => assertCoordinationPayloadSize({
     inputs: { changedPaths: Array.from({ length: 2_000 }, (_, index) => `website/${"x".repeat(48)}/${index}.tsx`) },
   }), /payload budget/);
+});
+
+test("workflow acquisition retries only a held lease within an explicit bounded recovery wait", async () => {
+  let calls = 0;
+  let elapsed = 0;
+  const result = await acquireWorkflowLease({
+    request: { resource: "release:ponto" },
+    url: "https://coordination.example.test",
+    maxWaitMs: 30,
+    pollMs: 10,
+    now: () => elapsed,
+    sleep: async (milliseconds) => { elapsed += milliseconds; },
+    acquireImpl: async () => {
+      calls += 1;
+      return calls < 3
+        ? { passed: false, reason: "resource-lease-held" }
+        : { passed: true, lease: { leaseId: "lease-1" } };
+    },
+  });
+  assert.equal(calls, 3);
+  assert.equal(result.lease.leaseId, "lease-1");
+
+  const failedClosed = await acquireWorkflowLease({
+    request: { resource: "release:ponto" },
+    url: "https://coordination.example.test",
+    maxWaitMs: 30,
+    pollMs: 10,
+    acquireImpl: async () => ({ passed: false, reason: "coordination-dependency-closure-ambiguous" }),
+  });
+  assert.equal(failedClosed.reason, "coordination-dependency-closure-ambiguous");
 });

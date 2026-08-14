@@ -5,8 +5,8 @@ if (checkpoint.ok !== true || !checkpoint.run || text(checkpoint.run.id) !== tex
   throw new Error(`Persist Resume Jobs falhou: ${JSON.stringify(checkpoint.error || checkpoint)}`);
 }
 
-const jobs = $items('Validate Meta Creative Payload') || [];
-if (!jobs.length) throw new Error('Restore Persisted Resume Jobs nao encontrou jobs validados.');
+const jobs = $items('Attach Tracking Reconciliation') || [];
+if (!jobs.length) throw new Error('Restore Persisted Resume Jobs nao encontrou jobs com tracking reconciliado.');
 
 return jobs.map((item) => ({
   json: item.json || {},

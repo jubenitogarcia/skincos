@@ -11,14 +11,21 @@ const {
 } = require('../scripts/lib/meta-ads-publish-execution-semantics');
 const { CRM_TOOL_NAME, CRM_URL, transform } = require('../scripts/prepare-meta-ads-publish-crm-catalog');
 const { transform: patchVideoUploadReplay } = require('../scripts/patch-meta-ads-video-transfer-replay');
-const { CODE_SOURCES } = require('../scripts/lib/meta-ads-publish-code-sources');
+const { CRM_META_ADS_COMPATIBILITY_URL, isSupportedCrmContextUrl } = require('../scripts/patch-meta-ads-crm-context-prefetch');
+const { CODE_SOURCES, assertCodeSourceCoverage } = require('../scripts/lib/meta-ads-publish-code-sources');
 
 test('tracks every live Meta Ads Publish Code node in one shared source map', () => {
-  assert.equal(Object.keys(CODE_SOURCES).length, 49);
+  const workflow = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'workflows', 'meta-ads-publish.current.json'), 'utf8'));
+  const coverage = assertCodeSourceCoverage(workflow);
+  assert.equal(coverage.code_node_count, coverage.mapped_node_count);
   assert.equal(CODE_SOURCES['Build Jobs'], 'build-jobs.js');
   assert.equal(CODE_SOURCES['Validate Visual Grouping'], 'validate-visual-grouping.js');
   assert.equal(CODE_SOURCES['Prepare CRM Offer Context Requests'], 'prepare-crm-offer-context-requests.js');
   assert.equal(CODE_SOURCES['Attach CRM Offer Context'], 'attach-crm-offer-context.js');
+  assert.equal(CODE_SOURCES['Prepare Advantage+ Drift Readback'], 'prepare-advantage-plus-drift-readback.js');
+  assert.equal(CODE_SOURCES['Classify Advantage+ Graph Drift'], 'classify-advantage-plus-graph-drift.js');
+  assert.equal(CODE_SOURCES['Prepare Tracking Reconciliation'], 'prepare-tracking-reconciliation.js');
+  assert.equal(CODE_SOURCES['Attach Tracking Reconciliation'], 'attach-tracking-reconciliation.js');
 });
 
 test('Responses API uses the n8n 1.3 default when the stored parameter is absent', () => {
@@ -86,6 +93,12 @@ test('replaces the legacy Sheets tool with the authenticated CRM offer-context t
   assert.deepEqual(updatedSchema.properties.analysis.properties.crmPricing.properties.source.enum, ['crm', 'none']);
 });
 
+test('accepts only the fixed legacy Meta Ads compatibility adapter during a versioned workflow patch', () => {
+  assert.equal(isSupportedCrmContextUrl(`${CRM_META_ADS_COMPATIBILITY_URL}?unit=novo-hamburgo`), true);
+  assert.equal(isSupportedCrmContextUrl('http://127.0.0.1:8099/api/atendimento/internal/commercial/catalog?unit=novo-hamburgo'), true);
+  assert.equal(isSupportedCrmContextUrl('https://example.invalid/offer-context'), false);
+});
+
 test('preflight loads workflow connections before validating the CRM tool edge', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'scripts', 'validate-meta-ads-publish-preflight.js'),
@@ -93,6 +106,7 @@ test('preflight loads workflow connections before validating the CRM tool edge',
   );
   assert.match(source, /SELECT active, nodes, connections, settings,/);
   assert.match(source, /gateway_contract_revision_gate_missing/);
+  assert.match(source, /advantage_plus_graph_drift_readback/);
   assert.doesNotMatch(source, /new RegExp\(/);
 });
 
@@ -101,8 +115,13 @@ test('gateway parameters reject a Token Vault contract revision mismatch before 
     path.join(__dirname, '..', 'workflow-src', 'meta-ads-publish', 'build-meta-api-params-from-vault.js'),
     'utf8',
   );
-  assert.match(source, /const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta'/);
+  assert.match(
+    source,
+    /const WORKFLOW_CONTRACT_REVISION\s*=\s*["']meta_destination_contract_v20_tracking_reconciliation["']/,
+  );
   assert.match(source, /gatewayContractRevision !== WORKFLOW_CONTRACT_REVISION/);
+  assert.match(source, /adset_conversion_reconciliation/);
+  assert.match(source, /creative_url_tags_readback/);
 });
 
 test('video upload replay key includes normalized bytes and rejects the legacy v4 key', () => {

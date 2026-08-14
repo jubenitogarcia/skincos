@@ -40,11 +40,25 @@ platform.
 GitHub Actions is the source of truth for the coordination secret. The trusted
 mini-PC runner is the only bridge that may reconcile it to native Linux. The
 runner is dispatch-only from the exact current `main` SHA, runs as
-`skincos-actions`, and has one passwordless sudo command:
-`/usr/local/sbin/skincos-provision-global-coordination`. That helper writes the
-private `/etc/skincos/global-coordination/orb-backup.env` atomically and emits
-metadata only. No workflow copies the value to the checkout, Windows, an
-artifact, a comment, or a log.
+`skincos-actions`, and has only fixed passwordless sudo helper actions. The
+coordination helper `/usr/local/sbin/skincos-provision-global-coordination`
+writes the private `/etc/skincos/global-coordination/orb-backup.env` atomically
+and emits metadata only. The separate
+`/usr/local/sbin/skincos-meta-ads-tracking-custody` accepts only the named
+attest/checkpoint/discover-current/checkpoint-current/apply/preflight/
+preflight-rollback/restore/promote-native/promote-and-apply/rollback-native/conversion-readback
+actions over a bounded stdin contract. `attest` verifies GitHub OIDC against
+the fixed production workflow provenance and a candidate-specific audience;
+its approval is bound to the immutable candidate SHA, run id, and first
+attempt. `checkpoint-current` and `preflight-rollback` additionally prove the
+candidate's direct immutable lineage to the current/predecessor release, so an
+approval cannot become a generic source or checkpoint oracle. The OIDC `sha`
+may be a newer workflow SHA than an approved immutable ancestor; the
+candidate-specific audience and staged release identity provide the binding.
+Every other action requires the approval. The helper resolves immutable
+releases itself and never accepts a path, shell fragment, or credential from
+the runner. No workflow copies a secret to the checkout, Windows, an artifact,
+a comment, or a log.
 
 The bootstrap is executable without a manual secret handoff when the operator
 already has an authenticated GitHub CLI session and native root access. Run

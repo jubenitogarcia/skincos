@@ -49,6 +49,11 @@
       "purpose": "Compatibility writer group for Finance Worker and its governed staging database operations."
     },
     {
+      "id": "token-vault-writer",
+      "resource": "release:token-vault",
+      "purpose": "Serializes Token Vault Worker publication and its D1 migrations across isolated environments."
+    },
+    {
       "id": "finance-ui-writer",
       "resource": "deploy:finance-ui:<environment>",
       "purpose": "Dedicated Finance UI Pages projects; staging and production are isolated projects."
@@ -163,6 +168,16 @@
         ".github/workflows/deploy-finance.yml",
         ".github/workflows/finance-staging-canary.yml",
         ".github/workflows/finance-staging-smoke-identity.yml"
+      ]
+    },
+    {
+      "id": "token-vault-worker-and-d1",
+      "platform": "cloudflare-worker-d1",
+      "canonicalDeployWorkflow": ".github/workflows/deploy-token-vault.yml",
+      "coordinationGroup": "token-vault-writer",
+      "mutationWorkflows": [
+        ".github/workflows/deploy-token-vault.yml",
+        ".github/workflows/influencer-intelligence-staging-shadow.yml"
       ]
     },
     {

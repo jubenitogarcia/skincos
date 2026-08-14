@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  discoverEvidenceDerivedStagingIncumbents,
   resolveStagingCorePrecondition,
+  validateEvidenceDerivedStagingIncumbent,
   validateStagingCoreIncumbentLive,
   validateStagingHistoricalBootstrapLive,
   validateStagingIncumbentCatalog,
@@ -11,6 +14,63 @@ import {
 const sourceSha = '6daa6eaee7c4c49f047e97944e70ea1aa320ca61';
 const deploymentId = '2688c47a-efbb-4b97-98f7-6a1734eac354';
 const versionId = 'e71704e3-0d6d-4327-83cf-3121010995b1';
+const evidenceDerivedSourceSha = 'd0abd96c8d35f7028150c25d74ca4f5aabe923f8';
+const evidenceDerivedDeploymentId = 'e6845b49-0d6d-4327-83cf-3121010995b1';
+const evidenceDerivedVersionId = 'b71704e3-0d6d-4327-83cf-3121010995b1';
+const evidenceDerivedRun = {
+  id: 31662357446,
+  path: '.github/workflows/ponto-progressive-release.yml',
+  head_sha: evidenceDerivedSourceSha,
+  head_branch: 'main',
+  event: 'workflow_dispatch',
+  status: 'completed',
+  conclusion: 'success',
+  run_attempt: 1,
+  display_title: `Ponto staging ${evidenceDerivedSourceSha} orchestrator=31662357446`,
+  repository: { full_name: 'jubenitogarcia/skincos' },
+  head_repository: { full_name: 'jubenitogarcia/skincos' },
+};
+const evidenceDerivedArtifact = {
+  id: 9167149830,
+  name: `ponto-release-evidence-staging-${evidenceDerivedSourceSha}`,
+  digest: 'sha256:2187107cdd6dcd827613be60cc0e6d4204161d5b287c05d39aa7c27869fd932b',
+  expired: false,
+  workflow_run: {
+    id: 31662357446,
+    head_sha: evidenceDerivedSourceSha,
+    head_branch: 'main',
+  },
+};
+const evidenceDerivedEvidence = {
+  decision: 'pass',
+  runId: '31662357446',
+  surfaces: {
+    coreApi: {
+      sourceSha: evidenceDerivedSourceSha,
+      stage: 'staging',
+      deploymentId: evidenceDerivedDeploymentId,
+      candidateVersionId: evidenceDerivedVersionId,
+      candidatePercent: 100,
+      incumbentPercent: 0,
+      candidateTag: `ponto:coreApi:${evidenceDerivedSourceSha}`,
+    },
+  },
+};
+
+const attestedIncumbent = {
+  sourceSha: 'd0abd96c8d35f7028150c25d74ca4f5aabe923f8',
+  workflowRunId: '31662357446',
+  releaseEvidenceArtifact: {
+    id: '9167149830',
+    name: 'ponto-release-evidence-staging-d0abd96c8d35f7028150c25d74ca4f5aabe923f8',
+    digest: 'sha256:2187107cdd6dcd827613be60cc0e6d4204161d5b287c05d39aa7c27869fd932b',
+  },
+  surface: {
+    worker: 'skincos-ponto-core-staging',
+    deploymentId: '1f22e714-2151-4de9-b149-dae4b23cdd92',
+    versionId: 'e6845b49-6c32-4afe-87b8-618c5fdb84cd',
+  },
+};
 
 function catalog() {
   return {
@@ -82,6 +142,23 @@ test('accepts a source-bound staging incumbent catalog entry', () => {
   const expected = validateStagingIncumbentCatalog({ catalog: catalog() });
   assert.equal(expected.sourceSha, sourceSha);
   assert.equal(expected.surface.versionId, versionId);
+});
+
+test('pins the repository staging incumbent to the last passed immutable Core release', () => {
+  const repositoryCatalog = JSON.parse(readFileSync(
+    new URL('../../platform/deploy/operational-units.json', import.meta.url),
+    'utf8',
+  ));
+  const incumbent = validateStagingIncumbentCatalog({ catalog: repositoryCatalog });
+  assert.deepEqual(
+    {
+      sourceSha: incumbent.sourceSha,
+      workflowRunId: incumbent.workflowRunId,
+      releaseEvidenceArtifact: incumbent.releaseEvidenceArtifact,
+      surface: incumbent.surface,
+    },
+    attestedIncumbent,
+  );
 });
 
 test('accepts the live incumbent only at 100% and with private exposure', () => {
@@ -157,6 +234,66 @@ test('rejects a missing or unreviewed incumbent evidence entry', () => {
     () => validateStagingIncumbentCatalog({ catalog: value }),
     /artifact ID is invalid/,
   );
+});
+
+test('derives the active staging predecessor only from terminal source-bound release evidence', () => {
+  const incumbent = validateEvidenceDerivedStagingIncumbent({
+    run: evidenceDerivedRun,
+    artifact: evidenceDerivedArtifact,
+    evidence: evidenceDerivedEvidence,
+  });
+  assert.equal(incumbent.sourceSha, evidenceDerivedSourceSha);
+  assert.equal(incumbent.surface.versionId, evidenceDerivedVersionId);
+  assert.equal(incumbent.surface.deploymentId, evidenceDerivedDeploymentId);
+  assert.throws(
+    () => validateEvidenceDerivedStagingIncumbent({
+      run: { ...evidenceDerivedRun, display_title: 'Ponto pilot forged' },
+      artifact: evidenceDerivedArtifact,
+      evidence: evidenceDerivedEvidence,
+    }),
+    /workflow title differs/,
+  );
+  assert.throws(
+    () => validateEvidenceDerivedStagingIncumbent({
+      run: evidenceDerivedRun,
+      artifact: evidenceDerivedArtifact,
+      evidence: { ...evidenceDerivedEvidence, surfaces: { coreApi: { ...evidenceDerivedEvidence.surfaces.coreApi, candidatePercent: 50 } } },
+    }),
+    /evidence traffic differs/,
+  );
+});
+
+test('discovers only a reachable terminal staging release with one exact evidence artifact', async () => {
+  const calls = [];
+  const discovered = await discoverEvidenceDerivedStagingIncumbents({
+    repository: 'jubenitogarcia/skincos',
+    ghApi(pathname) {
+      calls.push(pathname);
+      if (pathname.includes('/actions/workflows/ponto-progressive-release.yml/runs?')) {
+        return {
+          workflow_runs: [
+            { ...evidenceDerivedRun, status: 'completed', conclusion: 'failure' },
+            evidenceDerivedRun,
+          ],
+        };
+      }
+      if (pathname === `repos/jubenitogarcia/skincos/compare/${evidenceDerivedSourceSha}...main`) {
+        return { status: 'ahead' };
+      }
+      if (pathname === `repos/jubenitogarcia/skincos/actions/runs/${evidenceDerivedRun.id}/artifacts?per_page=100`) {
+        return { artifacts: [evidenceDerivedArtifact] };
+      }
+      throw new Error(`unexpected GitHub API path: ${pathname}`);
+    },
+    async readEvidence({ workflowRunId, artifactName }) {
+      assert.equal(workflowRunId, String(evidenceDerivedRun.id));
+      assert.equal(artifactName, evidenceDerivedArtifact.name);
+      return evidenceDerivedEvidence;
+    },
+  });
+  assert.equal(discovered.failures.length, 0);
+  assert.deepEqual(discovered.candidates.map(candidate => candidate.sourceSha), [evidenceDerivedSourceSha]);
+  assert.equal(calls.filter(pathname => pathname.includes('/compare/')).length, 1);
 });
 
 test('resolves the cataloged incumbent through the same read-only Cloudflare attestation path', async () => {

@@ -606,6 +606,13 @@ test("consume-check maps the direct parent issuer into the delegated snapshot sh
   );
 });
 
+test("direct root issuers rely on the closure attestation while delegated issuers stay SHA-pinned", () => {
+  const source = fs.readFileSync(script, "utf8");
+  assert.match(source, /assertObservedPontoSource\(releaseSha, String\(run\?\.head_sha/);
+  assert.match(source, /\(delegatedIssuer && issuer\?\.head_sha !== releaseSha\)/);
+  assert.doesNotMatch(source, /\|\| issuer\?\.head_sha !== releaseSha/);
+});
+
 test("every orchestrated secret or mutation job revalidates the coordinator after checkout and before secrets", () => {
   const guardedJobs = [
     ["deploy-timekeeping.yml", "release"],
@@ -619,6 +626,7 @@ test("every orchestrated secret or mutation job revalidates the coordinator afte
     ["cloudflare-pages-sync-ponto.yml", "provision"],
     ["module-availability.yml", "set-state"],
     ["ponto-production-baseline.yml", "capture"],
+    ["ponto-production-slo.yml", "prepare-clinic-credentials"],
     ["ponto-production-slo.yml", "consultor-journey"],
     ["ponto-production-slo.yml", "rollback-observation"],
     ["timekeeping-staging-journey.yml", "journey"],
@@ -653,6 +661,7 @@ test("every privileged Ponto mutation job refuses workflow reruns without blocki
     ["ponto-emergency-close.yml", "close"],
     ["ponto-emergency-close.yml", "materialize"],
     ["ponto-production-baseline.yml", "capture"],
+    ["ponto-production-slo.yml", "prepare-clinic-credentials"],
     ["ponto-production-slo.yml", "consultor-journey"],
     ["ponto-production-slo.yml", "rollback-observation"],
     ["timekeeping-staging-journey.yml", "journey"],
@@ -709,6 +718,16 @@ test("recovery artifact downloads isolate extraction before merging attested evi
       `${file} must not extract directly into a pre-populated evidence directory`,
     );
   }
+});
+
+test("recovery rollback classification receives the attested artifact root in its own step", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const start = source.indexOf("- name: Classify whether exact rollback is required");
+  const end = source.indexOf("- name: Upload immutable ordinary-recovery reconciliation", start);
+  assert.ok(start >= 0 && end > start, "recovery rollback classification block is absent");
+  const block = source.slice(start, end);
+  assert.match(block, /PONTO_RECOVERY_ARTIFACT_ROOT: \$\{\{ runner\.temp \}\}\/ponto-ordinary-recovery\/journal/);
+  assert.match(block, /node - "\$PONTO_RECOVERY_ARTIFACT_ROOT\/watchdog-journal\.json"/);
 });
 
 test("staging Pages incumbent capture retries and requires exact terminal provenance", () => {
@@ -794,14 +813,18 @@ test("staging waits for exact Pages-to-Timekeeping affinity before the authentic
   const end = source.indexOf("- name: Execute authenticated synthetic staging journey", start);
   assert.ok(start >= 0 && end > start, "staging affinity probe block is absent or misplaced");
   const block = source.slice(start, end);
-  assert.match(block, /for attempt in \{1\.\.36\}; do/);
-  assert.match(block, /\/api\/ponto\/health\?staging_affinity_probe=\$GITHUB_RUN_ID/);
+  assert.match(block, /PONTO_IDEMPOTENCY_KEY: \$\{\{ secrets\.PONTO_IDEMPOTENCY_KEY \}\}/);
+  assert.match(block, /const maxAttempts = 36/);
+  assert.match(block, /\/api\/ponto\/_release-readiness/);
+  assert.match(block, /ponto-release-probe\/v1\.\$\{timestamp\}\.\$\{nonce\}\.GET/);
   assert.match(block, /x-skincos-pages-release-sha/);
-  assert.match(block, /x-skincos-gateway-version-id/);
-  assert.match(block, /x-skincos-timekeeping-release-sha/);
-  assert.match(block, /x-skincos-timekeeping-version-id/);
-  assert.match(block, /Unable to attest exact staging Pages-to-Timekeeping affinity/);
-  assert.doesNotMatch(block, /PONTO_IDEMPOTENCY_KEY/);
+  assert.match(block, /body\?\.coreVersionId/);
+  assert.match(block, /body\?\.timekeepingVersionId/);
+  assert.match(block, /protected-pages-service-binding/);
+  assert.match(block, /publicVersionOverrideUsed: false/);
+  assert.match(block, /releaseProbeNonceReserved: true/);
+  assert.match(block, /bounded propagation/);
+  assert.doesNotMatch(block, /PONTO_RELEASE_PROBE_HMAC_KEY/);
 });
 
 test("staging retries the protected Identity contract during bounded propagation", () => {

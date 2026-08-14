@@ -23,7 +23,7 @@ arquivos em `workflow-src/meta-ads-publish/`.
    `Orb Validate` é a verificação ampla após alterações de infraestrutura.
 4. A definição rastreada é `workflows/meta-ads-publish.current.json`. Ela é
    uma exportação sanitizada: não inclui execução, pin data, contadores nem
-   versão runtime. Cada um dos 49 Code nodes tem uma fonte em
+   versão runtime. Cada Code node tem uma fonte em
    `workflow-src/meta-ads-publish/`, listada uma única vez em
    `scripts/lib/meta-ads-publish-code-sources.js`.
 
@@ -43,9 +43,12 @@ arquivos em `workflow-src/meta-ads-publish/`.
    editor, de um worktree antigo ou de uma execução para a produção.
 
 O Token Vault é uma superfície separada: o arquivo canônico é
-`platform/security/token-vault/src/meta-ads-publish.js`. Antes de promover uma
-versão do Worker, execute seus testes e registre o ID/ETag retornado pelo
-Wrangler; depois compare a versão de produção e rode o preflight do workflow.
+`platform/security/token-vault/src/meta-ads-publish.js`. A promoção canônica é
+`.github/workflows/deploy-token-vault.yml`: Preview testa/dry-run, Staging
+exerce uma reconciliação e rollback reais numa fixture sintética, e Production
+requer a source release nativa exata, aplica o Orb inativo por versão esperada,
+ativa então o Worker e roda o preflight final. Não publique Worker e Orb por
+canais separados ou em ordem inversa.
 O Worker declara a mesma `WORKFLOW_CONTRACT_REVISION` que `Build Jobs`,
 `Validate Meta Creative Payload` e `Build Meta API Params From Vault`. Este
 último nó falha fechado se a capacidade recebida divergir; uma alteração de
@@ -53,8 +56,59 @@ contrato exige atualizar os quatro produtores/consumidores, a definição
 canônica, o checkpoint de run e o preflight na mesma revisão.
 
 Antes do primeiro deploy em um ambiente, aplique as migrations do Token Vault
-com `npm run d1:migrate`. A migration `0002_meta_ads_publish_journal.sql`
-versiona o journal, operações e locks idempotentes já usados pelo gateway.
+pelo publicador governado. As migrations
+`0002_meta_ads_publish_journal.sql` e
+`0003_meta_ads_publish_tracking_reconciliation.sql` versionam o journal,
+locks idempotentes e snapshots cifrados usados pela reconciliação, inclusive os
+valores de tracking e as chaves que uma reversão pode tocar.
+
+## Conversão e parâmetros de URL
+
+- `url_tags` pertence ao `AdCreative`; Pixel, evento e dataset offline
+  pertencem ao `AdSet.promoted_object`. Para Website, o fluxo primeiro valida
+  o creative e depois reconcilia o ad set autorizado via Graph `GET` ->
+  `POST` somente quando necessário -> `GET` de confirmação. A publicação
+  falha fechada se Pixel, um único evento/conversão personalizada ou o dataset
+  offline exigido pelo perfil não forem confirmados. Perfis Website cujo
+  objetivo não exige conversão declaram `website_event_requirement=not_required`
+  e seguem pela mesma atestação sem forçar Pixel/evento em campanhas existentes.
+- A configuração privada no Token Vault declara um `profile_ref` e mantém
+  somente ali o `source_adset_id` autorizado. O workflow recebe apenas o
+  perfil, os requisitos, fingerprints sanitizados e `url_tags`; nunca IDs de
+  Pixel, conversão ou dataset. A reconciliação só altera os campos de tracking
+  permitidos e preserva os demais campos do `promoted_object` do conjunto já
+  existente. Um snapshot cifrado registra apenas as chaves de tracking que a
+  operação mudou; o rollback compara essas chaves, preserva mudanças
+  concorrentes em catálogo/outros campos e falha se o tracking tiver drift.
+- `tracking_contract.url_tags` é um fragmento de query bruto, sem `?` ou `#`,
+  formado por pares arbitrários `chave=valor` separados por `&`, por exemplo
+  `key1=value1&key2=value2`. UTM é aceito normalmente, mas não é obrigatório.
+  O fragmento é validado e transportado literalmente para `AdCreative.url_tags`;
+  o fluxo não usa decodificação nem `URLSearchParams`, portanto `%20` não vira
+  `%2520`. O separador é o primeiro `=` de cada par, portanto valores válidos
+  podem conter `=` (por exemplo, padding de base64) sem alterar o fragmento.
+- Cada mutação de creative ou stage exige a revisão estável v20 do Token Vault,
+  o destino, o ad set e o perfil autorizados e, para Website, o mesmo
+  `url_tags` bruto configurado privadamente. Antes do stage o Token Vault lê de
+  novo o creative e o ad set; se qualquer um divergir, não cria nem altera o
+  anúncio. Um route de carrossel nativo só é aceito quando está explicitamente
+  verificado/ativo e, para Website, quando o perfil privado também autoriza o
+  seu `carousel_native_adset_id` exato.
+- Destinos WhatsApp permanecem `not_applicable`: o fluxo não infere Pixel,
+  dataset offline ou `url_tags`, não faz chamada de reconciliação e não troca
+  objetivo ou otimização por causa de uma configuração de site.
+- Vincular o dataset offline ao ad set seleciona a otimização da Meta; a
+  ingestão dos eventos offline continua sendo responsabilidade do emissor CAPI
+  ou da integração offline apropriada e deve ter sua própria evidência.
+- Para diagnosticar o estado atual sem mutar a Graph, rode no runtime Orb que
+  possui a credencial privada
+  `scripts/run-meta-ads-conversion-contract-readback.sh`. A rotina abre um
+  run técnico isolado, executa `read_adset_conversion_contract` (Graph `GET`)
+  para os dois destinos e, para cada Website, lê o creative pausado de fixture
+  privado via `read_authorized_creative_url_tags_contract` (também somente
+  Graph `GET`). A fixture e seus IDs ficam apenas no Token Vault; o resultado
+  expõe somente booleans de requisito/configuração e não contém IDs, URLs,
+  parâmetros ou tokens.
 
 ## Regras que evitam recorrência
 
@@ -68,6 +122,14 @@ versiona o journal, operações e locks idempotentes já usados pelo gateway.
   Links opcionais do Advantage+ continuam sujeitos à allowlist.
 - Não publique na Meta para diagnosticar uma falha. Reproduza com testes e
   finalize com o preflight; uma rodada live exige autorização explícita.
+- Advantage+ possui duas evidências Graph por criativo: a leitura após a
+  estabilização inicial e outra 30 segundos após a ativação, antes de encerrar
+  o run. Ambas usam `get_creative` (Graph `GET`) e não criam, alteram, ativam,
+  republicam ou revertem recursos.
+- A segunda leitura registra `unchanged_graph_state_ui_unverified`,
+  `graph_state_drift_detected` ou `unavailable`. Essas categorias descrevem
+  apenas o que a Graph reporta em `creative_features_spec`; não comprovam o
+  estado exibido no Ads Manager e não acionam remediação automática.
 - Tokens de provedor não podem entrar nos itens do workflow. Meta Ads, Livia e
   Token Manager usam endpoints allowlisted do Token Vault com credencial n8n
   criptografada; `/v1/tokens` é uma interface exclusivamente administrativa.

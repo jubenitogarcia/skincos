@@ -170,6 +170,7 @@ jobs:
           GLOBAL_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           GLOBAL_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           GLOBAL_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          GLOBAL_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           GLOBAL_RESOURCE: ${{ inputs.global_resource }}
           GLOBAL_MODULE: ${{ inputs.global_module }}
           GLOBAL_INPUT_URL: ${{ inputs.global_coordinator_url }}
@@ -206,6 +207,7 @@ jobs:
           NODE
           SKINCOS_GLOBAL_COORDINATOR_URL="$GLOBAL_URL" \
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET="$GLOBAL_SECRET" \
+          SKINCOS_GLOBAL_COORDINATION_KEY_ID="$GLOBAL_KEY_ID" \
             node scripts/codex-global-coordination-workflow.mjs acquire \
               --resource "$GLOBAL_RESOURCE" \
               --module "$GLOBAL_MODULE" \

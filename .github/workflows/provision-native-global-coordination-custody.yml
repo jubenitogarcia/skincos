@@ -41,7 +41,8 @@ jobs:
           required: 'true'
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: global:orb-coordination-custody
           module: native-runtime
           source_sha: ${{ github.sha }}
@@ -54,7 +55,8 @@ jobs:
           required: 'true'
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           resource: global:orb-coordination-custody
           module: native-runtime
           source_sha: ${{ github.sha }}
@@ -64,17 +66,34 @@ jobs:
         if: ${{ steps.acquire.outcome == 'success' }}
         env:
           SKINCOS_GLOBAL_COORDINATOR_URL: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
         run: |
           set -euo pipefail
-          [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" && -n "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET" ]] || {
+          [[ -n "$SKINCOS_GLOBAL_COORDINATOR_URL" ]] || {
             echo 'GitHub coordination custody is unavailable.' >&2
+            exit 78
+          }
+          if [[ "$SKINCOS_GLOBAL_COORDINATION_KEY_ID" == 'legacy-v1' ]]; then
+            custody_secret="${SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY:-$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET}"
+          else
+            [[ -n "$SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY" ]] || {
+              echo 'Explicit active coordination key custody is unavailable.' >&2
+              exit 78
+            }
+            custody_secret="$SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY"
+          fi
+          [[ -n "$custody_secret" ]] || {
+            echo 'GitHub coordination secret custody is unavailable.' >&2
             exit 78
           }
           {
             printf '%s\n' "$SKINCOS_GLOBAL_COORDINATOR_URL"
-            printf '%s\n' "$SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET"
+            printf '%s\n' "$custody_secret"
+            printf '%s\n' "$SKINCOS_GLOBAL_COORDINATION_KEY_ID"
           } | sudo -n /usr/local/sbin/skincos-provision-global-coordination write
+          unset custody_secret
           sudo -n /usr/local/sbin/skincos-provision-global-coordination audit
 
       - name: Release global custody lease
@@ -83,5 +102,6 @@ jobs:
         with:
           required: 'true'
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
           proof_file: ${{ runner.temp }}/skincos-global-custody.json

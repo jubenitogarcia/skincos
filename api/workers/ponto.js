@@ -22,6 +22,10 @@ function timekeepingTimeout(request) {
         : TIMEKEEPING_WRITE_TIMEOUT_MS;
 }
 
+function isPontoReadiness(request) {
+    return request.method === 'GET' && new URL(request.url).pathname === '/api/ponto/readiness';
+}
+
 const handlePontoCoreRequest = createGatewayHandler({
     // The route-only guard makes this handler unreachable. Keeping an explicit
     // fail-closed implementation also prevents a future router refactor from
@@ -40,7 +44,13 @@ const handlePontoCoreRequest = createGatewayHandler({
         prepareTimekeepingRequest(request, env),
         env,
         'TIMEKEEPING',
-        { timeoutMs: timekeepingTimeout(request) },
+        {
+            timeoutMs: timekeepingTimeout(request),
+            // A 503 from the Timekeeping readiness route is the authoritative
+            // fail-closed Ponto contract, not a transport outage. Preserve its
+            // release identity, dependencies and maintenance reason end-to-end.
+            passThroughErrorStatuses: isPontoReadiness(request) ? [503] : [],
+        },
     ),
 });
 

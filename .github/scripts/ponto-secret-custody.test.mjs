@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import test from "node:test";
 
@@ -59,6 +60,40 @@ test("release preflight proves the repository-scoped runner selector used by run
     source.indexOf("Preflight production custody, approved cohort, and online pilot runner")
       < source.indexOf("Open the approved live cohort or activate production"),
   );
+});
+
+test("release pilot runner preflight keeps its callback inside the YAML run block", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const start = source.indexOf(
+    "- name: Preflight production custody, approved cohort, and online pilot runner",
+  );
+  const end = source.indexOf(
+    "- name: Attest unconditional edge blocks before any candidate mutation",
+    start,
+  );
+  const step = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(
+    step,
+    /const matching = runners\.filter\(\(runner\) => \{\r?\n            const labels = \(runner\.labels \|\| \[\]\)\.map\(item => String\(item\?\.name \|\| ""\)\);\r?\n            const normalizedLabels = new Set\(labels\.map\(label => label\.toLowerCase\(\)\)\);\r?\n            return labels\.length === requiredLabels\.length\r?\n              && requiredLabels\.every\(label => normalizedLabels\.has\(label\.toLowerCase\(\)\)\);\r?\n          \}\);/,
+  );
+});
+
+test("release pilot runner preflight is syntactically valid Bash", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const start = source.indexOf(
+    "- name: Preflight production custody, approved cohort, and online pilot runner",
+  );
+  const end = source.indexOf(
+    "- name: Attest unconditional edge blocks before any candidate mutation",
+    start,
+  );
+  const step = source.slice(start, end);
+  const run = step.match(/        run: \|\r?\n([\s\S]*)$/)?.[1];
+  assert.ok(run, "pilot preflight run block must exist");
+  const shell = run.split(/\r?\n/).map(line => line.slice(10)).join("\n");
+  const result = spawnSync("bash", ["-n"], { encoding: "utf8", input: shell });
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test("coordinator refuses repository fallback for both environment-owned roots before mutation", () => {

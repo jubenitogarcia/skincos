@@ -302,11 +302,14 @@ test('unsupported operation coverage remains unavailable and never fabricates me
 });
 
 test('the router keeps the pre-existing collect-only adapter boundary compatible', async () => {
+  let legacyContext;
   const legacyMeta = {
     id: 'meta-graph',
     officialFirst: true,
     capabilities: ['profile'],
-    collect: async () => ({
+    collect: async (_input, context) => {
+      legacyContext = context;
+      return {
       creatorKey: 'creator:synthetic-001',
       handle: 'synthetic.creator',
       provider: 'meta-graph',
@@ -320,7 +323,8 @@ test('the router keeps the pre-existing collect-only adapter boundary compatible
         { key: 'followers_count', value: 12000 },
         { key: 'media_count', value: 42 },
       ],
-    }),
+      };
+    },
   };
   const router = createProviderRouter({ providers: { 'meta-graph': legacyMeta } });
 
@@ -329,6 +333,81 @@ test('the router keeps the pre-existing collect-only adapter boundary compatible
   assert.equal(result.provider, 'meta-graph');
   assert.equal(result.data.followers_count, 12000);
   assert.equal(result.data.media_count, 42);
+  assert.equal(legacyContext.attempt, 1);
+  assert.equal(legacyContext.signal instanceof AbortSignal, true);
+});
+
+test('inferred provider data requires model-version evidence before acceptance', async () => {
+  const meta = createMetaGraphProvider({
+    operations: {
+      get_profile: async () => ({
+        ...candidateFor('get_profile'),
+        data_classification: 'inferred',
+      }),
+    },
+  });
+  const router = createProviderRouter({ providers: { 'meta-graph': meta } });
+
+  await assert.rejects(
+    router.get_profile(baseRequest),
+    (error) => error instanceof ProviderRouterError && error.reasonCode === 'invalid_response',
+  );
+
+  const withModel = createMetaGraphProvider({
+    operations: {
+      get_profile: async () => ({
+        ...candidateFor('get_profile'),
+        data_classification: 'inferred',
+        provider_specific_evidence: {
+          ...candidateFor('get_profile').provider_specific_evidence,
+          model_version: 'profile-inference/v1',
+        },
+      }),
+    },
+  });
+  const validRouter = createProviderRouter({ providers: { 'meta-graph': withModel } });
+  const result = await validRouter.get_profile(baseRequest);
+  assert.equal(result.data_classification, 'inferred');
+  assert.equal(result.provider_specific_evidence.model_version, 'profile-inference/v1');
+});
+
+test('malformed provider model-version evidence is classified as invalid response', async () => {
+  const meta = createMetaGraphProvider({
+    operations: {
+      get_profile: async () => ({
+        ...candidateFor('get_profile'),
+        data_classification: 'inferred',
+        provider_specific_evidence: {
+          ...candidateFor('get_profile').provider_specific_evidence,
+          model_version: 7,
+        },
+      }),
+    },
+  });
+  const router = createProviderRouter({ providers: { 'meta-graph': meta } });
+
+  await assert.rejects(
+    router.get_profile(baseRequest),
+    (error) => error instanceof ProviderRouterError && error.reasonCode === 'invalid_response',
+  );
+});
+
+test('unavailable inferred provider results remain explicit gaps without model evidence', async () => {
+  const meta = createMetaGraphProvider({
+    operations: {
+      get_profile: async () => ({
+        status: 'unavailable',
+        data: null,
+        data_classification: 'inferred',
+      }),
+    },
+  });
+  const router = createProviderRouter({ providers: { 'meta-graph': meta } });
+
+  const result = await router.get_profile(baseRequest);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.data, null);
+  assert.equal(result.data_classification, 'observed');
 });
 
 test('future external providers require explicit opt-in and still use the same contract', async () => {

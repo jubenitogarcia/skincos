@@ -22,6 +22,8 @@ export interface AuthUser {
   role?: string
   allowedUnits?: string[]
   allowedModules?: string[]
+  grants?: string[]
+  featureFlags?: Record<string, boolean>
   localFocusModule?: string
   createdAt: string
   avatarUrl?: string
@@ -44,8 +46,9 @@ interface AuthContextValue {
   isAuthenticated: boolean
 }
 
+const hotAuthData = import.meta.hot?.data as { AuthCtx?: React.Context<AuthContextValue | undefined> } | undefined
 const AuthContext: React.Context<AuthContextValue | undefined> =
-  (import.meta.hot?.data.AuthCtx as React.Context<AuthContextValue | undefined> | undefined) ??
+  hotAuthData?.AuthCtx ??
   createContext<AuthContextValue | undefined>(undefined)
 if (import.meta.hot) {
   import.meta.hot.dispose(d => { d.AuthCtx = AuthContext })
@@ -108,6 +111,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role: insumosUser.role ? normalizeCrmRole(insumosUser.role) : undefined,
       allowedUnits: Array.isArray(insumosUser.allowedUnits) ? insumosUser.allowedUnits : undefined,
       allowedModules: effectiveAllowedModules(insumosUser.role, insumosUser.allowedModules),
+      grants: Array.isArray(insumosUser.grants) ? insumosUser.grants.map(String).filter(Boolean) : undefined,
+      featureFlags: insumosUser.featureFlags && typeof insumosUser.featureFlags === 'object'
+        ? Object.fromEntries(Object.entries(insumosUser.featureFlags).map(([key, value]) => [key, value === true]))
+        : undefined,
       localFocusModule: insumosUser.localFocusModule ? String(insumosUser.localFocusModule) : undefined,
       createdAt: String(insumosUser.createdAt || new Date().toISOString()),
       avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
@@ -444,8 +451,9 @@ interface IntegrationsContextValue {
   syncWhatsApp: () => Promise<void>
 }
 
+const hotIntegrationsData = import.meta.hot?.data as { IntegrationsCtx?: React.Context<IntegrationsContextValue | undefined> } | undefined
 const IntegrationsContext: React.Context<IntegrationsContextValue | undefined> =
-  (import.meta.hot?.data.IntegrationsCtx as React.Context<IntegrationsContextValue | undefined> | undefined) ??
+  hotIntegrationsData?.IntegrationsCtx ??
   createContext<IntegrationsContextValue | undefined>(undefined)
 if (import.meta.hot) {
   import.meta.hot.dispose(d => { d.IntegrationsCtx = IntegrationsContext })
@@ -653,8 +661,9 @@ interface NotificationContextType {
   getNotificationsByCategory: (category: string) => Notification[]
 }
 
+const hotNotificationData = import.meta.hot?.data as { NotificationCtx?: React.Context<NotificationContextType | undefined> } | undefined
 const NotificationContext: React.Context<NotificationContextType | undefined> =
-  (import.meta.hot?.data.NotificationCtx as React.Context<NotificationContextType | undefined> | undefined) ??
+  hotNotificationData?.NotificationCtx ??
   createContext<NotificationContextType | undefined>(undefined)
 if (import.meta.hot) {
   import.meta.hot.dispose(d => { d.NotificationCtx = NotificationContext })

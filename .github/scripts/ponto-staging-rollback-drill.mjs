@@ -99,6 +99,11 @@ export function classifyIncumbentBundle(evidence) {
 }
 
 export function isFailClosedIncumbentHealth({ status, payload, headers, expected }) {
+  return classifyIncumbentCompatibilityHealth({ status, payload, headers, expected })
+    === "heterogeneous-fail-closed-health";
+}
+
+export function classifyIncumbentCompatibilityHealth({ status, payload, headers, expected }) {
   const header = (name) => {
     if (typeof headers?.get === "function") return String(headers.get(name) || "").trim().toLowerCase();
     const lower = name.toLowerCase();
@@ -107,24 +112,48 @@ export function isFailClosedIncumbentHealth({ status, payload, headers, expected
   const metadata = payload?.versionMetadata || {};
   const moduleControlState = String(payload?.dependencies?.module_control?.state || "").toLowerCase();
   const gatewayAffinity = payload?.dependencies?.gateway_affinity || {};
-  return status === 200
+  const timekeepingSourceSha = String(expected?.timekeepingSourceSha || "").toLowerCase();
+  const timekeepingVersionId = String(expected?.timekeepingVersionId || "").toLowerCase();
+  const coreSourceSha = String(expected?.coreSourceSha || "").toLowerCase();
+  const coreVersionId = String(expected?.coreVersionId || "").toLowerCase();
+  const sourceShas = [
+    expected?.pagesSourceSha,
+    expected?.identitySourceSha,
+    expected?.coreSourceSha,
+    expected?.timekeepingSourceSha,
+  ].map((value) => String(value || "").toLowerCase());
+  const coherent = sourceShas.every((value) => SHA.test(value))
+    && new Set(sourceShas).size === 1;
+  const baseline = status === 200
     && payload?.ok === false
     && payload?.ready === false
     && payload?.service === "workforce-timekeeping"
     && payload?.unit === "timekeeping"
     && payload?.environment === "staging"
     && payload?.database === true
-    && ["healthy", "unavailable"].includes(moduleControlState)
-    && gatewayAffinity.state === "unavailable"
-    && gatewayAffinity.reason === "RELEASE_AFFINITY_MISMATCH"
-    && String(metadata.releaseSha || "").toLowerCase() === String(expected.timekeepingSourceSha || "").toLowerCase()
-    && String(metadata.workerVersionId || "").toLowerCase() === String(expected.timekeepingVersionId || "").toLowerCase()
+    && String(metadata.releaseSha || "").toLowerCase() === timekeepingSourceSha
+    && String(metadata.workerVersionId || "").toLowerCase() === timekeepingVersionId
     && SHA.test(String(metadata.gatewayReleaseSha || ""))
     && UUID.test(String(metadata.gatewayVersionId || ""))
     && String(metadata.gatewayEnvironment || "").toLowerCase() === "staging"
-    && header("x-skincos-timekeeping-release-sha") === String(expected.timekeepingSourceSha || "").toLowerCase()
+    && header("x-skincos-timekeeping-release-sha") === timekeepingSourceSha
     && header("x-skincos-timekeeping-environment") === "staging"
-    && header("x-skincos-timekeeping-version-id") === String(expected.timekeepingVersionId || "").toLowerCase();
+    && header("x-skincos-timekeeping-version-id") === timekeepingVersionId;
+  if (!baseline) return null;
+  if (
+    !coherent
+    && ["healthy", "unavailable"].includes(moduleControlState)
+    && gatewayAffinity.state === "unavailable"
+    && gatewayAffinity.reason === "RELEASE_AFFINITY_MISMATCH"
+  ) return "heterogeneous-fail-closed-health";
+  if (
+    coherent
+    && moduleControlState === "unavailable"
+    && gatewayAffinity.state === "healthy"
+    && String(metadata.gatewayReleaseSha || "").toLowerCase() === coreSourceSha
+    && String(metadata.gatewayVersionId || "").toLowerCase() === coreVersionId
+  ) return "coherent-maintenance-health";
+  return null;
 }
 
 const versionSet = (ids, side) => ({
@@ -178,6 +207,24 @@ const safeFailureDetail = (value) => String(value || "")
   .replaceAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "<email>")
   .replaceAll(/\b(password|pin|token|secret|authorization|cookie)\s*[:=]\s*[^,\s}]+/gi, "$1=<redacted>")
   .slice(0, 500);
+
+const isRetryableTimekeepingPropagationFailure = (error) => {
+  const detail = String(error?.details || "");
+  return String(error?.code || "") === "AUTHENTICATED_JOURNEY_FAILED"
+    && detail.includes("invalid PIN did not fail closed (503/domain_service_degraded")
+    && detail.includes('"timekeepingReleaseSha":""')
+    && detail.includes('"timekeepingVersionId":""');
+};
+
+const isCoherentIncumbentExpectation = (expected) => {
+  const sourceShas = [
+    expected?.pagesSourceSha,
+    expected?.identitySourceSha,
+    expected?.coreSourceSha,
+    expected?.timekeepingSourceSha,
+  ].map((value) => String(value || "").toLowerCase());
+  return sourceShas.every((value) => SHA.test(value)) && new Set(sourceShas).size === 1;
+};
 
 const recordFailure = (report, phase, error) => {
   const failure = { phase, code: publicFailureCode(error) };
@@ -245,6 +292,7 @@ async function validateFixture({
   let handle;
   let fixtureReady = false;
   let affinityReady = !includeProtectedContract;
+  let legacyIncumbentCompatibilityRequired = false;
   if (includeProtectedContract) {
     report.functionalValidation.candidateAffinity.attempted = true;
     try {
@@ -295,7 +343,22 @@ async function validateFixture({
         ...await runtime.runJourney(handle, pages.url, expected),
       };
     } catch (error) {
-      recordFailure(report, `${label}.journey`, error);
+      if (
+        label === "incumbent"
+        && isCoherentIncumbentExpectation(expected)
+        && isRetryableTimekeepingPropagationFailure(error)
+      ) {
+        legacyIncumbentCompatibilityRequired = true;
+        report.functionalValidation[journeyKey] = {
+          attempted: true,
+          passed: false,
+          skipped: true,
+          blocking: true,
+          reason: "legacy-incumbent-timekeeping-contract-unavailable",
+        };
+      } else {
+        recordFailure(report, `${label}.journey`, error);
+      }
     }
   }
 
@@ -313,6 +376,7 @@ async function validateFixture({
       recordFailure(report, `${label}.teardown`, error);
     }
   }
+  return { legacyIncumbentCompatibilityRequired };
 }
 
 export async function runStagingRollbackDrill(config, runtime) {
@@ -321,6 +385,24 @@ export async function runStagingRollbackDrill(config, runtime) {
   let restoredPages = null;
   let mutationStarted = false;
   let incumbentProvenance = null;
+  let incumbentCompatibilityExpected = null;
+  let incumbentCompatibilityNeedsMaintenance = false;
+
+  const setPreRestorationMaintenance = async () => {
+    if (report.moduleControl.preRestorationMaintenance.attempted) {
+      return report.moduleControl.preRestorationMaintenance;
+    }
+    report.moduleControl.preRestorationMaintenance.attempted = true;
+    try {
+      report.moduleControl.preRestorationMaintenance = {
+        attempted: true,
+        ...await runtime.setModuleState("maintenance", {}, "pre-restoration-maintenance"),
+      };
+    } catch (error) {
+      recordFailure(report, "module-control.pre-restoration-maintenance", error);
+    }
+    return report.moduleControl.preRestorationMaintenance;
+  };
 
   report.preflight.attempted = true;
   try {
@@ -364,6 +446,16 @@ export async function runStagingRollbackDrill(config, runtime) {
   }
 
   if (report.preflight.passed) {
+    incumbentCompatibilityExpected = {
+      pagesSourceSha: incumbentProvenance.crmPages.sourceSha,
+      identitySourceSha: incumbentProvenance.identityWorkforce.sourceSha,
+      coreSourceSha: incumbentProvenance.coreApi.sourceSha,
+      timekeepingSourceSha: incumbentProvenance.timekeeping.sourceSha,
+      pagesDeploymentId: null,
+      identityVersionId: config.ids.identityWorkforce.incumbent,
+      coreVersionId: config.ids.coreApi.incumbent,
+      timekeepingVersionId: config.ids.timekeeping.incumbent,
+    };
     mutationStarted = true;
     rollbackPages = await mutateEverySurface({
       config,
@@ -382,7 +474,7 @@ export async function runStagingRollbackDrill(config, runtime) {
           ...await runtime.setModuleState("active", {
             // The drill's signed coordinator lease covers this direct mutation;
             // incumbent source evidence remains independently attested per surface.
-            releaseSha: config.releaseSha,
+            releaseSha: incumbentProvenance.timekeeping.sourceSha,
             versions: versionSet(config.ids, "incumbent"),
           }, "incumbent-active"),
         };
@@ -396,49 +488,58 @@ export async function runStagingRollbackDrill(config, runtime) {
           report.functionalValidation.incumbentCompatibility = {
             attempted: true,
             ...await runtime.proveIncumbentCompatibility(rollbackPages, {
-              pagesSourceSha: incumbentProvenance.crmPages.sourceSha,
-              identitySourceSha: incumbentProvenance.identityWorkforce.sourceSha,
-              coreSourceSha: incumbentProvenance.coreApi.sourceSha,
-              timekeepingSourceSha: incumbentProvenance.timekeeping.sourceSha,
+              ...incumbentCompatibilityExpected,
               pagesDeploymentId: rollbackPages.activeDeploymentId,
-              identityVersionId: config.ids.identityWorkforce.incumbent,
-              coreVersionId: config.ids.coreApi.incumbent,
-              timekeepingVersionId: config.ids.timekeeping.incumbent,
             }),
           };
         } catch (error) {
           recordFailure(report, "incumbent.compatibility", error);
         }
       } else if (report.moduleControl.incumbentActive.passed) {
-        await validateFixture({
+        const validation = await validateFixture({
           label: "incumbent",
           pages: rollbackPages,
           expected: {
-            releaseSha: config.releaseSha,
-            sourceSha: null,
+            releaseSha: incumbentProvenance.timekeeping.sourceSha,
+            sourceSha: incumbentProvenance.timekeeping.sourceSha,
             pagesActiveDeploymentId: rollbackPages.activeDeploymentId,
             timekeepingVersionId: config.ids.timekeeping.incumbent,
             identityVersionId: config.ids.identityWorkforce.incumbent,
             coreVersionId: config.ids.coreApi.incumbent,
+            pagesSourceSha: incumbentProvenance.crmPages.sourceSha,
+            identitySourceSha: incumbentProvenance.identityWorkforce.sourceSha,
+            coreSourceSha: incumbentProvenance.coreApi.sourceSha,
+            timekeepingSourceSha: incumbentProvenance.timekeeping.sourceSha,
           },
           includeProtectedContract: false,
           runtime,
           report,
         });
+        incumbentCompatibilityNeedsMaintenance = validation.legacyIncumbentCompatibilityRequired;
+      }
+    }
+  }
+
+  if (incumbentCompatibilityNeedsMaintenance) {
+    await setPreRestorationMaintenance();
+    if (report.moduleControl.preRestorationMaintenance.passed && incumbentCompatibilityExpected) {
+      report.functionalValidation.incumbentCompatibility.attempted = true;
+      try {
+        report.functionalValidation.incumbentCompatibility = {
+          attempted: true,
+          ...await runtime.proveIncumbentCompatibility(rollbackPages, {
+            ...incumbentCompatibilityExpected,
+            pagesDeploymentId: rollbackPages?.activeDeploymentId || null,
+          }),
+        };
+      } catch (error) {
+        recordFailure(report, "incumbent.compatibility", error);
       }
     }
   }
 
   if (mutationStarted) {
-    report.moduleControl.preRestorationMaintenance.attempted = true;
-    try {
-      report.moduleControl.preRestorationMaintenance = {
-        attempted: true,
-        ...await runtime.setModuleState("maintenance", {}, "pre-restoration-maintenance"),
-      };
-    } catch (error) {
-      recordFailure(report, "module-control.pre-restoration-maintenance", error);
-    }
+    await setPreRestorationMaintenance();
 
     restoredPages = await mutateEverySurface({
       config,
@@ -499,10 +600,12 @@ export async function runStagingRollbackDrill(config, runtime) {
       && report.functionalValidation.incumbentJourney.passed === false
       && report.functionalValidation.incumbentJourney.blocking === true
       && report.functionalValidation.incumbentCompatibility.passed === true
-      && report.functionalValidation.incumbentCompatibility.mode === "heterogeneous-fail-closed-health"
+      && ["heterogeneous-fail-closed-health", "coherent-maintenance-health"].includes(
+        report.functionalValidation.incumbentCompatibility.mode,
+      )
     );
   const incumbentTeardownPassed = report.functionalValidation.incumbentJourney.skipped === true
-    ? report.teardown.incumbent.notRequired === true
+    ? report.teardown.incumbent.notRequired === true || report.teardown.incumbent.passed === true
     : report.teardown.incumbent.passed;
   const normalPassed = report.failures.length === 0
     && report.preflight.passed
@@ -1240,7 +1343,7 @@ function createRealRuntime(config, env = process.env) {
           },
         });
         payload = await response.json().catch(() => null);
-        const pagesPassed = isFailClosedIncumbentHealth({
+        const compatibilityMode = classifyIncumbentCompatibilityHealth({
           status: response.status,
           payload,
           headers: response.headers,
@@ -1269,7 +1372,8 @@ function createRealRuntime(config, env = process.env) {
           attempt,
           pages: {
             status: response.status,
-            passed: pagesPassed,
+            passed: Boolean(compatibilityMode),
+            compatibilityMode: compatibilityMode || "none",
             ready: payload?.ready === true,
             moduleControl: payload?.dependencies?.module_control?.state || "unknown",
             affinity: payload?.dependencies?.gateway_affinity?.state || "unknown",
@@ -1283,16 +1387,18 @@ function createRealRuntime(config, env = process.env) {
             ready: identityPayload?.ready === true,
           },
         };
-        if (pagesPassed && identityPassed) {
+        if (compatibilityMode && identityPassed) {
           return {
             passed: true,
-            mode: "heterogeneous-fail-closed-health",
+            mode: compatibilityMode,
             attempts: attempt,
             pagesHealth: {
               status: response.status,
               ready: false,
               moduleControl: payload?.dependencies?.module_control?.state || "unknown",
-              affinity: "RELEASE_AFFINITY_MISMATCH",
+              affinity: compatibilityMode === "heterogeneous-fail-closed-health"
+                ? "RELEASE_AFFINITY_MISMATCH"
+                : "HEALTHY_UNDER_MAINTENANCE",
             },
             identityHealth: {
               status: identityResponse.status,
@@ -1400,13 +1506,8 @@ function createRealRuntime(config, env = process.env) {
     try {
       runJourneyCommand();
     } catch (error) {
-      const detail = String(error?.details || "");
-      const retryablePropagationFailure = error instanceof DrillFailure
-        && detail.includes("invalid PIN did not fail closed (503/domain_service_degraded")
-        && detail.includes('"timekeepingReleaseSha":""')
-        && detail.includes('"timekeepingVersionId":""');
-      if (!retryablePropagationFailure) throw error;
-      await proveCandidateAffinity(pages, expected);
+      if (!isRetryableTimekeepingPropagationFailure(error) || handle.label !== "candidate") throw error;
+      await proveCandidateAffinity({ url: origin.href }, expected);
       runJourneyCommand();
     }
     const raw = fs.readFileSync(handle.journeyReportPath, "utf8");

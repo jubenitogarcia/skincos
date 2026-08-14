@@ -3,11 +3,13 @@ import crypto from "node:crypto";
 import test from "node:test";
 import {
   assertPontoDependencyClosureUnchanged,
+  assertPontoReleaseIsCurrentMain,
   dispatchTimeoutMsFor,
   globalResourceFor,
   governedLeaseKeyFor,
   isBodylessResponseStatus,
   readGitHubResponse,
+  resolvePontoCoordinatorIdentity,
   verifyConsumedCapabilityCheck,
 } from "./ponto-dispatch-workflow.mjs";
 import {
@@ -85,7 +87,83 @@ test("child dispatch keeps an immutable release valid across unrelated main chan
   );
 });
 
+test("child dispatch accepts unrelated main drift only with an equivalent Ponto closure", () => {
+  const releaseSha = "a".repeat(40);
+  const unrelatedMainSha = "b".repeat(40);
+  assert.deepEqual(
+    assertPontoReleaseIsCurrentMain(releaseSha, releaseSha),
+    { releaseSha, currentMainSha: releaseSha },
+  );
+  assert.deepEqual(
+    assertPontoReleaseIsCurrentMain(releaseSha, unrelatedMainSha, (release, currentMain) => {
+      assert.equal(release, releaseSha);
+      assert.equal(currentMain, unrelatedMainSha);
+      return { release, observed: currentMain, digest: "c".repeat(64) };
+    }),
+    { releaseSha, currentMainSha: unrelatedMainSha },
+  );
+  assert.throws(
+    () => assertPontoReleaseIsCurrentMain(releaseSha, unrelatedMainSha, () => {
+      throw new Error("a relevant dependency-closure input changed after the immutable release was selected");
+    }),
+    /dependency closure no longer matches current main/,
+  );
+});
+
+test("child dispatch separates the immutable release identity from the main workflow revision", () => {
+  const releaseSha = "a".repeat(40);
+  const workflowSha = "b".repeat(40);
+  assert.deepEqual(
+    resolvePontoCoordinatorIdentity({ releaseSha, workflowSha }),
+    { releaseSha, workflowSha },
+  );
+  assert.throws(
+    () => resolvePontoCoordinatorIdentity({ releaseSha, workflowSha: "not-a-sha" }),
+    /GITHUB_SHA must be a full immutable Ponto coordinator workflow SHA/,
+  );
+});
+
+test("Ponto recovery keeps provenance fail-closed while accepting a closure-equivalent coordinator revision", () => {
+  const read = (relative) => fs.readFileSync(new URL(relative, import.meta.url), "utf8");
+  const progressive = read("../workflows/ponto-progressive-release.yml");
+  const dispatcher = read("./ponto-dispatch-workflow.mjs");
+  const orchestratorLease = read("./ponto-orchestrator-lease.mjs");
+  const watchdogJournal = read("./ponto-watchdog-journal.mjs");
+  const recovery = read("../workflows/ponto-staging-recovery-rollback.yml");
+  assert.match(progressive, /PONTO_WORKFLOW_SHA=.*assertPontoSourceClosureUnchanged/s);
+  assert.doesNotMatch(progressive, /release_sha must equal the immutable main coordinator SHA/);
+  for (const currentMainCheck of [
+    "assertPontoReleaseIsCurrentMain(orchestratorHeadSha, currentMainSha)",
+    "assertPontoReleaseIsCurrentMain(orchestratorHeadSha, dispatchMainSha)",
+    "assertPontoReleaseIsCurrentMain(orchestratorHeadSha, observedMainSha)",
+  ]) assert.ok(dispatcher.includes(currentMainCheck), `missing current-main guard: ${currentMainCheck}`);
+  assert.match(orchestratorLease, /assertObservedPontoSource\(releaseSha, String\(run\?\.head_sha \|\| ""\)\.trim\(\)\.toLowerCase\(\)\)/);
+  assert.doesNotMatch(orchestratorLease, /run\?\.head_sha !== releaseSha/);
+  assert.match(watchdogJournal, /pontoSourceClosureMatches\(releaseSha, String\(coordinator\?\.head_sha \|\| ""\)\.trim\(\)\.toLowerCase\(\)\)/);
+  assert.doesNotMatch(watchdogJournal, /coordinator\?\.head_sha.*!== releaseSha/);
+  assert.match(recovery, /pontoSourceClosureMatches\(releaseSha, String\(coordinator\.head_sha \|\| ""\)\.toLowerCase\(\)\)/);
+  assert.doesNotMatch(recovery, /coordinator\.head_sha !== releaseSha/);
+});
+
+test("Ponto coordinator accepts only closure-equivalent main drift after pinning the exact release checkout", () => {
+  const progressive = fs.readFileSync(
+    new URL("../workflows/ponto-progressive-release.yml", import.meta.url),
+    "utf8",
+  );
+  const source = progressive.slice(
+    progressive.indexOf("Verify immutable source and ordered predecessor provenance"),
+    progressive.indexOf("Acquire the composite Ponto release lease before gate settlement"),
+  );
+  assert.match(source, /\[\[ "\$\(git rev-parse HEAD\)" == "\$RELEASE_SHA" \]\]/);
+  assert.match(source, /current_main_sha="\$\(git rev-parse origin\/main\)"/);
+  assert.match(source, /\["current main", process\.env\.PONTO_CURRENT_MAIN_SHA\]/);
+  assert.doesNotMatch(source, /\[\[ "\$\(git rev-parse origin\/main\)" == "\$RELEASE_SHA" \]\]/);
+});
+
 test("Ponto child mutations expose the canonical global resource and conflict scope", () => {
+  assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "preview" }), "global:ponto-workers-writer");
+  assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "inventory", target: "preview" }), "global:ponto-workers-writer");
+  assert.equal(globalResourceFor("deploy-crm-pages.yml", { release_scope: "ponto", target: "preview" }), "global:crm-cloudflare-writer");
   assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "staging" }), "global:ponto-workers-writer");
   assert.equal(globalResourceFor("cloudflare-pages-sync-ponto.yml", { target: "staging" }), "global:crm-cloudflare-writer");
   assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "api", target: "staging" }), "global:ponto-workers-writer");

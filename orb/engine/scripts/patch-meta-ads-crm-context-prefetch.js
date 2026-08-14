@@ -11,6 +11,12 @@ const { CRM_COMMERCIAL_CATALOG_URL } = require('./lib/crm-commercial-catalog-con
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const CRM_URL = CRM_COMMERCIAL_CATALOG_URL;
+// The current production workflow predates the generic catalog route. This
+// fixed compatibility adapter is authenticated with the same read-only token
+// and delegates to commercialCatalog; accept it only to preserve a live
+// workflow while applying an unrelated, versioned graph patch.
+const CRM_META_ADS_COMPATIBILITY_URL = 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context';
+const SUPPORTED_CRM_CONTEXT_URLS = Object.freeze([CRM_URL, CRM_META_ADS_COMPATIBILITY_URL]);
 const PREPARE_NODE = 'Prepare CRM Offer Context Requests';
 const FETCH_NODE = 'Fetch CRM Offer Context';
 const ATTACH_NODE = 'Attach CRM Offer Context';
@@ -91,6 +97,10 @@ return [...buckets.entries()].map(([jobKey, bucket]) => {
 
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function nodeByName(workflow, name) { return workflow.nodes.find((node) => node.name === name); }
+function isSupportedCrmContextUrl(value) {
+  const url = String(value || '');
+  return SUPPORTED_CRM_CONTEXT_URLS.some((endpoint) => url.includes(endpoint));
+}
 
 function nodeDefinitions(credentialId, credentialName) {
   return [
@@ -115,7 +125,7 @@ function validate(workflow) {
   const fetch = nodeByName(workflow, FETCH_NODE);
   const attach = nodeByName(workflow, ATTACH_NODE);
   if (!prepare?.parameters?.jsCode?.includes('unitSlug') || !attach?.parameters?.jsCode?.includes('crm_offer_contexts')) throw new Error('CRM prefetch code nodes are incomplete.');
-  if (fetch?.type !== 'n8n-nodes-base.httpRequest' || fetch.parameters?.authentication !== 'genericCredentialType' || fetch.parameters?.genericAuthType !== 'httpBearerAuth' || !fetch.credentials?.httpBearerAuth?.id || !String(fetch.parameters?.url || '').includes(CRM_URL)) throw new Error('CRM prefetch HTTP request is incomplete.');
+  if (fetch?.type !== 'n8n-nodes-base.httpRequest' || fetch.parameters?.authentication !== 'genericCredentialType' || fetch.parameters?.genericAuthType !== 'httpBearerAuth' || !fetch.credentials?.httpBearerAuth?.id || !isSupportedCrmContextUrl(fetch.parameters?.url)) throw new Error('CRM prefetch HTTP request is incomplete.');
   const inputTargets = connections?.[INPUT_NODE]?.main?.[0] || [];
   const prepareTargets = connections?.[PREPARE_NODE]?.main?.[0] || [];
   const fetchTargets = connections?.[FETCH_NODE]?.main?.[0] || [];
@@ -172,4 +182,13 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { CRM_URL, PREPARE_NODE, FETCH_NODE, ATTACH_NODE, transform, validate };
+module.exports = {
+  CRM_URL,
+  CRM_META_ADS_COMPATIBILITY_URL,
+  PREPARE_NODE,
+  FETCH_NODE,
+  ATTACH_NODE,
+  isSupportedCrmContextUrl,
+  transform,
+  validate,
+};

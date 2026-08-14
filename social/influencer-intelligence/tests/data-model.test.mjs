@@ -14,10 +14,16 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_data_model_v1.up.sql');
 const snapshotMetadataMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_snapshots_v1.up.sql');
+const snapshotFencingMigrationPath = path.join(here, '..', 'migrations', '20260812_influencer_intelligence_snapshot_fencing_v1.up.sql');
 const scoringMigrationPath = path.join(here, '..', 'migrations', '20260811_influencer_intelligence_scoring_v0.up.sql');
+const commentsMigrationPath = path.join(here, '..', 'migrations', '20260812_influencer_intelligence_comments_v1.up.sql');
+const campaignFitMigrationPath = path.join(here, '..', 'migrations', '20260812_influencer_intelligence_campaign_fit_v1.up.sql');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const snapshotMetadataMigration = fs.readFileSync(snapshotMetadataMigrationPath, 'utf8');
+const snapshotFencingMigration = fs.readFileSync(snapshotFencingMigrationPath, 'utf8');
 const scoringMigration = fs.readFileSync(scoringMigrationPath, 'utf8');
+const commentsMigration = fs.readFileSync(commentsMigrationPath, 'utf8');
+const campaignFitMigration = fs.readFileSync(campaignFitMigrationPath, 'utf8');
 const digestA = 'a'.repeat(64);
 const digestB = 'b'.repeat(64);
 const observedAt = '2026-08-11T12:00:00.000Z';
@@ -94,7 +100,7 @@ test('defines the complete additive PostgreSQL model with immutable evidence', (
   assert.match(migration, /creator_key, observed_at DESC/);
   assert.match(migration, /creator_key, computed_at DESC/);
   assert.match(migration, /provider ~ '\^\[a-z\]/);
-  assert.doesNotMatch(migration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(migration, /\bDROP\s+/i);
   assert.doesNotMatch(migration, /GRANT\s+PUBLIC/i);
   assert.doesNotMatch(migration, /\b(?:access_token|refresh_token|password|secret|email|phone|caption|biography|raw_text)\b/i);
 });
@@ -113,13 +119,47 @@ test('defines additive durable coverage and freshness metadata for snapshot coll
   assert.match(snapshotMetadataMigration, /COMMIT;\s*$/);
 });
 
+test('defines additive collector attempt fencing without destructive DDL', () => {
+  assert.match(snapshotFencingMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
+  assert.match(snapshotFencingMigration, /ADD COLUMN IF NOT EXISTS attempt_token/);
+  assert.match(snapshotFencingMigration, /collector_run_attempt_token_check/);
+  assert.match(snapshotFencingMigration, /collector_run_attempt_token_idx/);
+  assert.doesNotMatch(snapshotFencingMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(snapshotFencingMigration, /TRUNCATE\s+/i);
+  assert.match(snapshotFencingMigration, /COMMIT;\s*$/);
+});
+
 test('defines additive score weights version metadata without destructive DDL', () => {
   assert.match(scoringMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
   assert.match(scoringMigration, /ADD COLUMN IF NOT EXISTS weights_version/);
   assert.match(scoringMigration, /creator_score/);
-  assert.doesNotMatch(scoringMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(scoringMigration, /\bDROP\s+/i);
+  assert.doesNotMatch(scoringMigration, /INSERT\s+INTO\s+public\.schema_migrations/i);
   assert.doesNotMatch(scoringMigration, /TRUNCATE\s+/i);
   assert.match(scoringMigration, /COMMIT;\s*$/);
+});
+
+test('defines additive comment sampling, quality, and algorithm metadata without destructive DDL', () => {
+  assert.match(commentsMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
+  for (const column of ['sampling_version', 'sampling_config', 'algorithm_version', 'quality_score', 'quality_confidence']) {
+    assert.match(commentsMigration, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`), column);
+  }
+  assert.match(commentsMigration, /creator_comment_sample_quality_fields_check/);
+  assert.match(commentsMigration, /creator_comment_sample_quality_confidence_check/);
+  assert.doesNotMatch(commentsMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(commentsMigration, /TRUNCATE\s+/i);
+  assert.match(commentsMigration, /COMMIT;\s*$/);
+});
+
+test('defines additive Campaign Fit weights and component provenance metadata', () => {
+  assert.match(campaignFitMigration, /BEGIN;[\s\S]*SET LOCAL TIME ZONE 'UTC'/);
+  assert.match(campaignFitMigration, /ADD COLUMN IF NOT EXISTS weights_version/);
+  assert.match(campaignFitMigration, /ADD COLUMN IF NOT EXISTS components jsonb/);
+  assert.match(campaignFitMigration, /campaign_creator_fit_components_object_check/);
+  assert.match(campaignFitMigration, /campaign_creator_fit_weights_version_check/);
+  assert.doesNotMatch(campaignFitMigration, /DROP\s+(?:TABLE|SCHEMA|COLUMN)/i);
+  assert.doesNotMatch(campaignFitMigration, /TRUNCATE\s+/i);
+  assert.match(campaignFitMigration, /COMMIT;\s*$/);
 });
 
 test('repository exposes a parameterized, injected PostgreSQL boundary', async () => {
@@ -144,6 +184,7 @@ test('repository exposes a parameterized, injected PostgreSQL boundary', async (
   assert.equal(queryable.calls[0].values[2], 'tiktok');
   assert.doesNotMatch(queryable.calls[0].text, /tiktok|collect-1/);
   assert.equal(typeof SQL.createCollectorRun, 'string');
+  assert.match(SQL.upsertCampaign, /where target\.criteria = excluded\.criteria/);
 });
 
 test('collector run idempotency rejects a changed request fingerprint', async () => {
@@ -188,6 +229,8 @@ test('profile snapshots preserve provenance and reject reversed timestamps or ra
     isPrivate: false,
     isVerified: true,
     retentionPolicyVersion: 'retention/v1',
+    runKey: 'run-1',
+    leaseKey: 'attempt-token-0001',
   });
   const values = queryable.calls[0].values;
   assert.equal(values[2], 'creator-1');
@@ -200,6 +243,7 @@ test('profile snapshots preserve provenance and reject reversed timestamps or ra
       snapshotKey: 'snapshot-2', ingestKey: 'profile-ingest-2', creatorKey: 'creator-1', identityKey: 'identity-1', evidenceKey: 'evidence-1',
       provider: 'tiktok', providerAdapterVersion: 'adapter/v1', contractVersion: 'contract/v1', evidenceState: 'observed',
       observedAt: retrievedAt, retrievedAt: observedAt, sourceRef: 'synthetic-fixture/profile', retentionPolicyVersion: 'retention/v1',
+      runKey: 'run-1', leaseKey: 'attempt-token-0001',
     }),
     (error) => error.code === 'SNAPSHOT_TIMESTAMP_ORDER_INVALID',
   );
@@ -208,6 +252,7 @@ test('profile snapshots preserve provenance and reject reversed timestamps or ra
       snapshotKey: 'snapshot-3', ingestKey: 'profile-ingest-3', creatorKey: 'creator-1', identityKey: 'identity-1', evidenceKey: 'evidence-1',
       provider: 'tiktok', providerAdapterVersion: 'adapter/v1', contractVersion: 'contract/v1', evidenceState: 'observed',
       observedAt, retrievedAt, sourceRef: 'synthetic-fixture/profile', normalizedMetrics: { caption: 'do not persist' }, retentionPolicyVersion: 'retention/v1',
+      runKey: 'run-1', leaseKey: 'attempt-token-0001',
     }),
     /not permitted|KEY_INVALID|FIELD_FORBIDDEN/,
   );
@@ -217,6 +262,67 @@ test('media identity reconciliation does not rewrite historical metric snapshots
   assert.match(SQL.upsertMedia, /on conflict \(media_key\) do update/i);
   assert.match(SQL.recordMediaSnapshot, /on conflict \(ingest_key\) do nothing/i);
   assert.doesNotMatch(SQL.recordMediaSnapshot, /on conflict \(media_key\) do update/i);
+});
+
+test('stale-run reclamation is bounded by the same attempt cap as failed retries', () => {
+  assert.match(SQL.reclaimStaleCollectorRun, /status = 'running'[\s\S]*attempt_count < \$5/i);
+});
+
+test('fenced snapshot writes lock the collector lease before inserting', () => {
+  for (const statement of [SQL.recordEvidence, SQL.recordProfileSnapshot, SQL.upsertMedia, SQL.recordMediaSnapshot]) {
+    assert.match(statement, /select run_key[\s\S]*for update/i);
+  }
+});
+
+test('comment intelligence persists only bounded aggregates with sampling and algorithm provenance', async () => {
+  const queryable = fakeQueryable([{ rows: [{ sample_key: 'comment-sample-1' }] }]);
+  const repository = createInfluencerIntelligenceRepository({ queryable });
+  const aggregateMetrics = {
+    sample_size: 7,
+    metrics: { duplicate_ratio: 0.14, language_distribution: { counts: { en: 4, pt: 2 } } },
+    quality_components: { originality: { value: 84 } },
+  };
+  await repository.recordCommentSample({
+    sampleKey: 'comment-sample-1',
+    ingestKey: 'comment-ingest-1',
+    creatorKey: 'creator-1',
+    mediaKey: 'media-1',
+    evidenceKey: 'evidence-1',
+    provider: 'meta-graph',
+    providerAdapterVersion: 'meta-graph-adapter-v1',
+    evidenceState: 'derived',
+    observedAt,
+    retrievedAt,
+    sourceRef: 'synthetic-fixture/comments-1',
+    commentCount: 7,
+    aggregateMetrics,
+    samplingVersion: 'influencer-intelligence-comments-sampling/v1',
+    samplingConfig: { requested_limit: 50, selected_count: 7, retention: 'aggregate_only' },
+    algorithmVersion: 'influencer-intelligence-comments/v1',
+    qualityScore: 84,
+    qualityConfidence: 0.42,
+    modelVersion: 'semantic-comments-fixture/v1',
+    retentionPolicyVersion: 'retention/v1',
+  });
+  const call = queryable.calls[0];
+  assert.equal(call.values[2], 'creator-1');
+  assert.equal(call.values[20], 'influencer-intelligence-comments-sampling/v1');
+  assert.deepEqual(JSON.parse(call.values[21]).retention, 'aggregate_only');
+  assert.equal(call.values[22], 'influencer-intelligence-comments/v1');
+  assert.equal(call.values[23], 84);
+  assert.equal(call.values[24], 0.42);
+  assert.doesNotMatch(call.text, /duplicate_ratio|semantic-comments/);
+  assert.doesNotMatch(JSON.stringify(call.values), /raw comment|comment text|commenter/);
+
+  await assert.rejects(
+    repository.recordCommentSample({
+      sampleKey: 'comment-sample-2', ingestKey: 'comment-ingest-2', creatorKey: 'creator-1', evidenceKey: 'evidence-1',
+      provider: 'meta-graph', providerAdapterVersion: 'meta-graph-adapter-v1', evidenceState: 'derived', observedAt, retrievedAt,
+      sourceRef: 'synthetic-fixture/comments-2', aggregateMetrics: {}, algorithmVersion: 'influencer-intelligence-comments/v1',
+      qualityScore: 80, retentionPolicyVersion: 'retention/v1',
+    }),
+    (error) => error.code === 'COMMENT_SAMPLE_QUALITY_FIELDS_REQUIRED',
+  );
 });
 
 test('scores accept future provider slugs but require auditable provenance and versions', async () => {
@@ -258,6 +364,35 @@ test('scoring v0 persistence requires and binds the exact weights version', asyn
     })),
     (error) => error.code === 'WEIGHTS_VERSION_REQUIRED',
   );
+  await assert.rejects(
+    repository.recordScore(baseScore({
+      scoreKey: 'score-inferred-missing-model',
+      ingestKey: 'score-inferred-missing-model',
+      evidenceState: 'inferred',
+      modelVersion: null,
+    })),
+    (error) => error.code === 'SCORE_MODEL_VERSION_REQUIRED',
+  );
+  await assert.rejects(
+    repository.recordScoreComponent({
+      componentKey: 'component-inferred-missing-model',
+      ingestKey: 'component-inferred-missing-model',
+      scoreKey: 'score-v0',
+      componentName: 'engagement_quality',
+      value: 80,
+      weight: 0.2,
+      contribution: 16,
+      evidenceState: 'inferred',
+      confidence: 0.5,
+      algorithmVersion: 'score/v1',
+      modelVersion: null,
+      providers: ['tiktok'],
+      evidenceRefs: ['synthetic-fixture.score'],
+      provenance: { entries: [provenanceEntry()] },
+      retentionPolicyVersion: 'retention/v1',
+    }),
+    (error) => error.code === 'SCORE_COMPONENT_MODEL_VERSION_REQUIRED',
+  );
 });
 
 test('analysis and campaign fit enforce coverage, model versions, and bounded reads', async () => {
@@ -282,9 +417,19 @@ test('analysis and campaign fit enforce coverage, model versions, and bounded re
   );
   await repository.recordCampaignFit({
     fitKey: 'fit-1', ingestKey: 'fit-ingest-1', campaignKey: 'campaign-1', campaignVersion: 1, creatorKey: 'creator-1', score: 75,
-    confidence: 0.7, coverageAvailable: 3, coverageExpected: 4, evidenceState: 'derived', algorithmVersion: 'fit/v1', providers: ['tiktok'],
-    provenance: [provenanceEntry()], inputFingerprint: digestB, computedAt: retrievedAt, retentionPolicyVersion: 'retention/v1',
+    confidence: 0.7, coverageAvailable: 3, coverageExpected: 4, evidenceState: 'derived', algorithmVersion: 'influencer-intelligence-campaign-fit/v1', weightsVersion: 'influencer-intelligence-campaign-fit-weights/v1', providers: ['tiktok'],
+    provenance: [provenanceEntry()], inputFingerprint: digestB, computedAt: retrievedAt, components: { topic_affinity: { explanation: { inputs: { positive_targets: ['skincare'] } }, score: 80 } }, retentionPolicyVersion: 'retention/v1',
   });
+  assert.equal(queryable.calls[1].values[17], 'influencer-intelligence-campaign-fit-weights/v1');
+  assert.deepEqual(JSON.parse(queryable.calls[1].values[18]), { topic_affinity: { explanation: { inputs: { positive_targets: ['skincare'] } }, score: 80 } });
+  await assert.rejects(
+    repository.recordCampaignFit({
+      fitKey: 'fit-2', ingestKey: 'fit-ingest-2', campaignKey: 'campaign-1', campaignVersion: 1, creatorKey: 'creator-1', score: 75,
+      confidence: 0.7, coverageAvailable: 3, coverageExpected: 4, evidenceState: 'derived', algorithmVersion: 'influencer-intelligence-campaign-fit/v1', providers: ['tiktok'],
+      provenance: [provenanceEntry()], inputFingerprint: digestB, computedAt: retrievedAt, retentionPolicyVersion: 'retention/v1',
+    }),
+    (error) => error.code === 'CAMPAIGN_FIT_WEIGHTS_VERSION_REQUIRED',
+  );
   const rows = await repository.latestScores({ creatorKey: 'creator-1', limit: 2 });
   assert.deepEqual(rows, [{ score_key: 'score-1' }]);
   assert.deepEqual(queryable.calls.at(-1).values, ['creator-1', 2]);

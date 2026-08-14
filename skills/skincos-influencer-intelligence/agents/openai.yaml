@@ -1,0 +1,4 @@
+interface:
+  display_name: "SKINCOS Influencer Intelligence"
+  short_description: "Analyze creators with governed evidence"
+  default_prompt: "Use $skincos-influencer-intelligence to analyze this creator with evidence, confidence, coverage, and limitations."

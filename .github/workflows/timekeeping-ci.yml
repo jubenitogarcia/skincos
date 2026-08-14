@@ -28,6 +28,17 @@ on:
       - '.github/workflows/module-availability.yml'
       - '.github/workflows/ponto-*.yml'
       - '.github/scripts/ponto-*.mjs'
+      - 'scripts/bootstrap-ponto-jit-runner.ps1'
+      - 'scripts/runtime/install-ponto-jit-runner.sh'
+      - 'scripts/runtime/ponto-jit-*.mjs'
+      - 'scripts/runtime/provision-ponto-jit-custody.sh'
+      - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
+      - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
+      - 'ops/runtime/github-actions-runner/skincos-native-custody.sudoers'
+      - 'ops/runtime/units/skincos-ponto-jit-runner.service'
+      - 'ops/runtime/units/skincos-ponto-jit-credential-cleanup.service'
+      - 'ops/runtime/units/skincos-ponto-jit-credential-cleanup.timer'
+      - 'ops/runtime/units/skincos-native-custody-runner.service'
       - '.github/governance/progressive-release-policy.json'
       - 'platform/deploy/operational-units.json'
       - '.github/workflows/timekeeping-ci.yml'
@@ -59,6 +70,17 @@ on:
       - '.github/workflows/module-availability.yml'
       - '.github/workflows/ponto-*.yml'
       - '.github/scripts/ponto-*.mjs'
+      - 'scripts/bootstrap-ponto-jit-runner.ps1'
+      - 'scripts/runtime/install-ponto-jit-runner.sh'
+      - 'scripts/runtime/ponto-jit-*.mjs'
+      - 'scripts/runtime/provision-ponto-jit-custody.sh'
+      - 'scripts/tests/ponto-jit-custody-runner.test.mjs'
+      - 'ops/runtime/github-actions-runner/ponto-jit-*.sh'
+      - 'ops/runtime/github-actions-runner/skincos-native-custody.sudoers'
+      - 'ops/runtime/units/skincos-ponto-jit-runner.service'
+      - 'ops/runtime/units/skincos-ponto-jit-credential-cleanup.service'
+      - 'ops/runtime/units/skincos-ponto-jit-credential-cleanup.timer'
+      - 'ops/runtime/units/skincos-native-custody-runner.service'
       - '.github/governance/progressive-release-policy.json'
       - 'platform/deploy/operational-units.json'
 
@@ -118,10 +140,15 @@ jobs:
           set -euo pipefail
           node --test \
             .github/scripts/ponto-*.test.mjs \
+            scripts/tests/ponto-jit-custody-runner.test.mjs \
             workforce/timekeeping/scripts/ponto-staging-journey-fixtures.test.mjs \
             shared/identity-runtime/workforce-onboarding.test.mjs \
             inventory/tests/releaseHealth.test.mjs
-          for script in .github/scripts/ponto-*.mjs; do node --check "$script"; done
+          for script in .github/scripts/ponto-*.mjs scripts/runtime/ponto-jit-*.mjs; do node --check "$script"; done
+          bash -n scripts/runtime/install-ponto-jit-runner.sh
+          bash -n scripts/runtime/provision-ponto-jit-custody.sh
+          bash -n ops/runtime/github-actions-runner/ponto-jit-before-job.sh
+          bash -n ops/runtime/github-actions-runner/ponto-jit-after-job.sh
           node .github/scripts/validate-progressive-release.mjs
       - name: Typecheck and test CRM proxy
         run: |

@@ -86,10 +86,10 @@ test('models evidence as append-only and provenance-complete', () => {
   assert.match(DATA_MODEL.invariants.join('\n'), /never silently imputed as zero/i);
 });
 
-test('maps the reviewed physical data-model artifact without enabling runtime', () => {
+test('maps the reviewed physical data-model artifact without enabling production runtime', () => {
   assert.equal(DATA_MODEL.persistence.migration, 'migrations/20260811_influencer_intelligence_data_model_v1.up.sql');
   assert.equal(DATA_MODEL.persistence.dependsOn, 'migrations/20260810_influencer_intelligence_registry_v1.up.sql');
-  assert.match(DATA_MODEL.persistence.artifactStatus, /not applied/i);
+  assert.match(DATA_MODEL.persistence.artifactStatus, /staging only/i);
   const relations = new Map(DATA_MODEL.persistence.relations.map((relation) => [relation.name, relation]));
   for (const name of [
     'creator_identity',
@@ -122,20 +122,97 @@ test('requires deterministic score identity, coverage, and structured signals', 
 
 test('keeps API reads and MCP tools read-only while isolating Orb collection', () => {
   const snapshotRoute = API_CONTRACT.routes.find(({ path }) => path.endsWith('/snapshots'));
+  const registryRoute = API_CONTRACT.routes.find(({ path }) => path.endsWith('/creators'));
   assert.equal(snapshotRoute?.readOnly, false);
   assert.equal(snapshotRoute?.caller, 'Orb-only controlled collection operation');
-  assert.ok(API_CONTRACT.routes.filter(({ path }) => !path.endsWith('/snapshots')).every(({ readOnly }) => readOnly === true));
+  assert.equal(registryRoute?.readOnly, false);
+  assert.equal(registryRoute?.caller, 'CRM-authenticated registry request');
+  assert.ok(API_CONTRACT.routes.filter(({ path }) => !path.endsWith('/snapshots') && !path.endsWith('/creators')).every(({ readOnly }) => readOnly === true));
   assert.equal(API_CONTRACT.requestRules.maxCreatorsPerRequest, 20);
   assert.equal(API_CONTRACT.requestRules.maxWindowDays, 365);
   for (const control of ['authentication', 'server-side grant', 'schema sanitization', 'rate limit', 'timeout and abort', 'audit event', 'read-only database role']) {
     assert.ok(MCP_CONTRACT.controls.includes(control), `missing MCP control: ${control}`);
   }
   assert.ok(MCP_CONTRACT.tools.every(({ readOnly }) => readOnly === true));
+  assert.equal(MCP_CONTRACT.contractVersion, 'influencer-intelligence/mcp/v1.1');
+  assert.deepEqual(MCP_CONTRACT.tools.map(({ name }) => name), [
+    'search_creators',
+    'get_creator_profile',
+    'get_creator_snapshots',
+    'get_creator_media',
+    'get_creator_analytics',
+    'get_creator_score',
+    'get_campaign_fit',
+    'compare_creators',
+  ]);
+  assert.deepEqual(MCP_CONTRACT.deferredTools, []);
+  assert.deepEqual(MCP_CONTRACT.limits, {
+    maxRequestBytes: 65536,
+    maxResponseBytes: 524288,
+    maxPageSize: 50,
+    maxCreatorsPerRequest: 20,
+    maxWindowDays: 365,
+    maxConcurrentRequests: 4,
+    timeoutMs: 12000,
+    rateLimitPerMinute: 60,
+  });
   assert.equal(MCP_CONTRACT.limits.timeoutMs, 12000);
   assert.match(MCP_CONTRACT.forbidden.join('\n'), /arbitrary SQL/i);
 });
 
-test('keeps this architecture milestone off and runtime-free', () => {
+test('records the M7 skill and keeps access disabled after runtime registration', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M7');
+  assert.match(milestone.status, /versioned skill and contract tests implemented/i);
+  assert.match(milestone.status, /MCP\/runtime registration remains governed|later gates/i);
+  assert.equal(FEATURE_ACCESS.defaultValue, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeEnabled, false);
+});
+
+test('records M11 Campaign Fit as source-complete while keeping compute and runtime registration off', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M11');
+  assert.match(milestone.status, /source implemented/i);
+  assert.match(milestone.status, /runtime remains off/i);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.campaignFitSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.campaignFitMigrationArtifactAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.campaignFitRuntimeWired, false);
+  assert.ok(DATA_MODEL.persistence.additiveMigrations.some((path) => path.includes('campaign_fit_v1')));
+  assert.ok(DATA_MODEL.persistence.additiveMigrations.some((path) => path.includes('snapshot_fencing_v1')));
+});
+
+test('records M12 calibration as source-complete without live runtime calls', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M12');
+  assert.match(milestone.status, /source implemented/i);
+  assert.match(milestone.status, /synthetic report/i);
+  assert.match(milestone.status, /no live provider or runtime calls/i);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.calibrationSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.calibrationDatasetVersion, 'influencer-intelligence-calibration-golden/v1');
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.calibrationRuntimeWired, false);
+});
+
+test('records M9 comments intelligence as source-complete without wiring runtime collection', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M9');
+  assert.match(milestone.status, /aggregate-only analyzer/i);
+  assert.match(milestone.status, /runtime\/provider wiring remains off/i);
+  assert.ok(DATA_MODEL.persistence.additiveMigrations.includes(
+    'migrations/20260812_influencer_intelligence_comments_v1.up.sql',
+  ));
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsMigrationArtifactAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.commentsRuntimeWired, false);
+});
+
+test('records M10 content analysis as source-complete without media/runtime wiring', () => {
+  const milestone = IMPLEMENTATION_PLAN.find(({ id }) => id === 'M10');
+  assert.match(milestone.status, /bounded feature projection/i);
+  assert.match(milestone.status, /runtime\/media adapter remains off/i);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.contentSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.contentRuntimeWired, false);
+  assert.equal(DATA_MODEL.resources.some(({ name }) => name === 'content_analysis_features'), true);
+  assert.equal(PRIVACY_CONTRACT.neverPersisted.includes('raw captions or transcripts'), true);
+});
+
+test('keeps architecture activation off while recording disabled runtime registration', () => {
   assert.equal(FEATURE_ACCESS.defaultValue, false);
   assert.equal(FEATURE_ACCESS.initialMode, 'off');
   assert.equal(FEATURE_ACCESS.wired, false);
@@ -148,16 +225,29 @@ test('keeps this architecture milestone off and runtime-free', () => {
   assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerSourceAdded, true);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowImported, false);
   assert.equal(RELEASE_CONTRACT.currentSourceScope.schedulerWorkflowActive, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeRegistered, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.mcpRuntimeEnabled, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmSourceAdded, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmRuntimeEnabled, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmUpstreamConfigured, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.crmFeatureFlagDefault, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.internalServiceRuntimeRegistered, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.internalServiceRuntimeEnabled, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.orbRuntimeRegistered, true);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.orbWorkflowImported, false);
+  assert.equal(RELEASE_CONTRACT.currentSourceScope.orbWorkflowActive, false);
+  assert.equal(RELEASE_CONTRACT.runtimeRegistration.registrationMarker, 'INFLUENCER_INTELLIGENCE_RUNTIME_REGISTERED=true');
 
   const source = fs.readFileSync(architecturePath, 'utf8');
   assert.doesNotMatch(source, /\b(?:fetch|spawn|exec|execFile|createServer|listen)\s*\(/i);
   assert.doesNotMatch(source, /from\s+['"](?:node:)?(?:http|https|net|tls|child_process|pg)['"]/i);
 });
 
-test('covers architecture plus every M0-M13 milestone', () => {
+test('covers architecture plus every M0-M13 milestone and runtime registration gate', () => {
   const ids = IMPLEMENTATION_PLAN.map(({ id }) => id);
   assert.equal(ids[0], 'architecture');
-  assert.deepEqual(ids.slice(1), Array.from({ length: 14 }, (_, index) => `M${index}`));
+  assert.deepEqual(ids.slice(1), [...Array.from({ length: 14 }, (_, index) => `M${index}`), 'runtime-registration']);
 });
 
 test('keeps the ADR synchronized with the required architecture decisions', () => {

@@ -36,7 +36,7 @@ const SURFACES = Object.freeze({
   identityWorkforce: {
     workflowPath: ".github/workflows/deploy-core-workers.yml",
     titlePrefix: (stage, sha, runId) =>
-      `Core inventory ${stage} ${sha} orchestrator=${runId}`,
+      `Core inventory ${stage} team=true ${sha} orchestrator=${runId}`,
     runFile: "runs/identity.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-identity-workforce-${stage}-${sha}`, "surfaces/identity"],
@@ -46,7 +46,7 @@ const SURFACES = Object.freeze({
   coreApi: {
     workflowPath: ".github/workflows/deploy-core-workers.yml",
     titlePrefix: (stage, sha, runId) =>
-      `Core api ${stage} ${sha} orchestrator=${runId}`,
+      `Core api ${stage} team=false ${sha} orchestrator=${runId}`,
     runFile: "runs/core.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-core-api-${stage}-${sha}`, "surfaces/core"],
@@ -242,7 +242,7 @@ export async function reconstructWatchdogJournal({
     || ![".github/workflows/ponto-progressive-release.yml", ".github/workflows/ponto-progressive-release.yml@refs/heads/main"].includes(coordinator?.path)
     || coordinator?.event !== "workflow_dispatch"
     || coordinator?.head_branch !== "main"
-    || String(coordinator?.head_sha || "").toLowerCase() !== releaseSha
+    || !pontoSourceClosureMatches(releaseSha, String(coordinator?.head_sha || "").trim().toLowerCase())
     || coordinator?.repository?.full_name !== repository
     || coordinator?.head_repository?.full_name !== repository
     || !Number.isFinite(coordinatorCreated)

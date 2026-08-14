@@ -10,6 +10,9 @@ const path = require('path');
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
 const { validate: validateCrmContextPrefetch } = require('./patch-meta-ads-crm-context-prefetch');
+const { validate: validateAdvantagePlusDriftReadback } = require('./patch-meta-ads-advantage-plus-drift-readback');
+const { validate: validateTrackingReconciliation } = require('./patch-meta-ads-tracking-reconciliation');
+const { assertCodeSourceCoverage } = require('./lib/meta-ads-publish-code-sources');
 const args = new Set(process.argv.slice(2));
 const sourcePath = [...args].find((value) => value.endsWith('.json'));
 const expectedVersion = [...args].find((value) => value.startsWith('--expected-version='))?.slice('--expected-version='.length);
@@ -46,6 +49,7 @@ function assertCandidate(candidate) {
   if (!Array.isArray(candidate.nodes) || candidate.nodes.some((node) => node.type === 'n8n-nodes-base.googleSheetsTool')) {
     throw new Error('Candidate still contains a Google Sheets tool.');
   }
+  assertCodeSourceCoverage(candidate);
   validateCrmContextPrefetch(candidate);
   const codeByName = (name) => String(candidate.nodes.find((node) => node.name === name)?.parameters?.jsCode || '');
   const revision = (code) => /const\s+WORKFLOW_CONTRACT_REVISION\s*=\s*'([^']+)'/.exec(code)?.[1] || '';
@@ -59,6 +63,8 @@ function assertCandidate(candidate) {
     throw new Error('Candidate does not fail closed on Token Vault workflow contract revision drift.');
   }
   validateVideoUploadReplay(candidate);
+  validateAdvantagePlusDriftReadback(candidate);
+  validateTrackingReconciliation(candidate);
 }
 
 async function main() {

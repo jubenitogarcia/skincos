@@ -16,6 +16,7 @@ test("local preview is synthetic, blocks production, and cannot open the real Wh
     assert.match(preview, /isLocalPreview/);
     assert.doesNotMatch(preview, /\/api\/beleza-em-movimento/);
     assert.doesNotMatch(preview, /trackEvent|trackSiteBehaviorEvent/);
-    assert.match(experience, /isLocalPreview \? \(/);
+    assert.match(experience, /if \(isLocalPreview\) \{/);
+    assert.match(experience, /<button className=\{className\} type="button" onClick=\{handleWhatsappClick\}>/);
     assert.match(experience, /Prévia local: a abertura do WhatsApp foi simulada\./);
 });

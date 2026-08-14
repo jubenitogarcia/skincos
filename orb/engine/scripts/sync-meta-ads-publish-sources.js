@@ -3,7 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { CODE_SOURCES } = require('./lib/meta-ads-publish-code-sources');
+const { CODE_SOURCES, assertCodeSourceCoverage } = require('./lib/meta-ads-publish-code-sources');
 
 const moduleRoot = path.resolve(__dirname, '..');
 const workflowArg = process.argv.slice(2).find((value) => value.startsWith('--workflow='));
@@ -29,6 +29,7 @@ function findNode(workflow, name) {
 
 function extract() {
   const workflow = readWorkflow();
+  assertCodeSourceCoverage(workflow);
   fs.mkdirSync(sourceRoot, { recursive: true });
   for (const [nodeName, fileName] of Object.entries(CODE_SOURCES)) {
     const code = String(findNode(workflow, nodeName).parameters.jsCode || '');
@@ -39,6 +40,7 @@ function extract() {
 
 function inject({ write = true } = {}) {
   const workflow = readWorkflow();
+  assertCodeSourceCoverage(workflow);
   const drift = [];
   for (const [nodeName, fileName] of Object.entries(CODE_SOURCES)) {
     const filePath = path.join(sourceRoot, fileName);

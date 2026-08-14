@@ -7,10 +7,21 @@ function degradedResponse(bindingName, mode) {
   return new Response(JSON.stringify({ ok: false, error: 'domain_service_degraded', dependency: bindingName, mode, pendingSynchronization: true }), { status: 503, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-skincos-dependency-status': mode, 'x-skincos-sync-state': 'pending' } });
 }
 
-export async function fetchBoundService(request, env, bindingName, { timeoutMs = 800, failureThreshold = 2, cooldownMs = 15_000, cacheTtlMs = 0 } = {}) {
+export async function fetchBoundService(request, env, bindingName, {
+  timeoutMs = 800,
+  failureThreshold = 2,
+  cooldownMs = 15_000,
+  cacheTtlMs = 0,
+  passThroughErrorStatuses = [],
+} = {}) {
   const binding = env?.[bindingName]; if (!binding || typeof binding.fetch !== 'function') return degradedResponse(bindingName, 'unavailable');
+  const passThroughStatuses = new Set(
+    Array.isArray(passThroughErrorStatuses)
+      ? passThroughErrorStatuses.filter((status) => Number.isInteger(status) && status >= 400 && status <= 599)
+      : [],
+  );
   const cacheKey = request.method === 'GET' && cacheTtlMs > 0 ? `${bindingName}:${request.url}` : null;
-  const result = await callOptionalDependency({ dependency: bindingName, state: serviceDependencyState, cache: safeResponseCache, cacheKey, cacheTtlMs, timeoutMs, failureThreshold, cooldownMs, invoke: async (signal) => { const response = await binding.fetch(new Request(request, { signal })); if (response.status >= 500) throw new Error(`upstream status ${response.status}`); return cacheKey ? response.clone() : response; }, fallback: ({ mode }) => degradedResponse(bindingName, mode) });
+  const result = await callOptionalDependency({ dependency: bindingName, state: serviceDependencyState, cache: safeResponseCache, cacheKey, cacheTtlMs, timeoutMs, failureThreshold, cooldownMs, invoke: async (signal) => { const response = await binding.fetch(new Request(request, { signal })); if (response.status >= 500 && !passThroughStatuses.has(response.status)) throw new Error(`upstream status ${response.status}`); return cacheKey ? response.clone() : response; }, fallback: ({ mode }) => degradedResponse(bindingName, mode) });
   const response = result.mode === 'live' ? result.value : result.value.clone ? result.value.clone() : result.value;
   const headers = new Headers(response.headers); headers.set('x-skincos-dependency-status', result.mode); headers.set('x-skincos-sync-state', result.pendingSynchronization ? 'pending' : 'current');
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });

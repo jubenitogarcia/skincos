@@ -117,6 +117,46 @@ test('invite activation has an audited retry boundary and does not mint a second
   assert.doesNotMatch(activationBlock, /randomInviteToken\(\)/);
 });
 
+test('Workforce recovery is backend-only and invitation delivery auto-reconciles before any invite mutation', async () => {
+  const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
+  const localApi = await readFile(new URL('../../crm/api/server.js', import.meta.url), 'utf8');
+  const reconcileBlock = admin.slice(
+    admin.indexOf('const reconcileWorkforceMatch'),
+    admin.indexOf('const resendInviteMatch'),
+  );
+  const resendBlock = admin.slice(
+    admin.indexOf('const resendInviteMatch'),
+    admin.indexOf('const revokeInviteMatch'),
+  );
+  const localResendBlock = localApi.slice(
+    localApi.indexOf("app.post(['/api/crm/admin/team/:id/invite/resend'"),
+    localApi.indexOf("app.post(['/api/crm/admin/team/:id/invite/revoke'"),
+  );
+  const updateBlock = admin.slice(admin.indexOf('const teamMemberMatch'), admin.indexOf("if (url.pathname === '/admin/team' && request.method === 'GET')"));
+
+  assert.match(reconcileBlock, /workforce.*reconcile/);
+  assert.match(reconcileBlock, /reconcilePendingWorkforceOnboarding/);
+  assert.match(admin, /syncIdentityWorkforceOnboarding\(env/);
+  assert.match(reconcileBlock, /EMPLOYEE_TEAM_WORKFORCE_RECONCILED/);
+  assert.match(reconcileBlock, /inviteDeliveryChanged: false/);
+  assert.doesNotMatch(reconcileBlock, /sendAccountInviteEmail/);
+  assert.match(resendBlock, /reconcilePendingWorkforceOnboarding/);
+  assert.doesNotMatch(resendBlock, /TEAM_WORKFORCE_BINDING_REQUIRED/);
+  assert.ok(
+    resendBlock.indexOf('reconcilePendingWorkforceOnboarding') < resendBlock.indexOf('UPDATE ${invitesTable} SET revoked=1'),
+    'automatic Workforce reconciliation must finish before any invite revocation',
+  );
+  assert.match(localResendBlock, /automaticBeforeInviteResend/);
+  assert.doesNotMatch(localResendBlock, /TEAM_WORKFORCE_BINDING_REQUIRED/);
+  assert.ok(
+    localResendBlock.indexOf('automaticBeforeInviteResend') < localResendBlock.indexOf('store.invites.forEach'),
+    'the local preview reconciliation must run before any invite revocation',
+  );
+  assert.match(updateBlock, /const workforce = await syncIdentityWorkforceOnboarding\(env/);
+  assert.match(updateBlock, /sets\.push\('workforce_employee_id=\?'\)/);
+  assert.match(updateBlock, /UPDATE crm_employee_team SET workforce_employee_id=\?/);
+});
+
 test('onboarding status changes stay hierarchical, synchronized, audited and fail closed', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   assert.ok(admin.includes("const statusMatch = url.pathname.match(/^\\/admin\\/(onboarding|team)\\/([^/]+)\\/status$/);"));
@@ -207,8 +247,7 @@ test('team edits expose a fail-closed local persistence compensation boundary', 
   const workforceSyncIndex = updateBlock.indexOf('await syncIdentityWorkforceOnboarding');
   assert.ok(teamValidationIndex >= 0 && teamValidationIndex < workforceSyncIndex, 'team input must be validated before Workforce synchronization');
   assert.match(updateBlock, /let workforceSynchronized = false/);
-  assert.match(updateBlock, /localPersistenceStage = 'ONBOARDING_UPDATE'/);
-  assert.match(updateBlock, /localPersistenceStage = 'TEAM_UPDATE'/);
+  assert.match(updateBlock, /localPersistenceStage = 'ONBOARDING_TEAM_SCOPE_UPDATE'/);
   assert.match(updateBlock, /LOCAL_TEAM_UPDATE_PENDING/);
   assert.match(updateBlock, /EMPLOYEE_TEAM_COMPENSATION_PENDING/);
   assert.match(updateBlock, /TEAM_LOCAL_PERSISTENCE_PENDING/);
@@ -233,11 +272,11 @@ test('team usernames remain reserved across lifecycle history', async () => {
 test('centralized team mode disables every legacy password-management route', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   const localApi = await readFile(new URL('../../crm/api/server.js', import.meta.url), 'utf8');
-  assert.equal((admin.match(/UNIFIED_TEAM_ROUTE_DISABLED/g) || []).length, 4);
+  assert.equal((admin.match(/UNIFIED_TEAM_ROUTE_DISABLED/g) || []).length, 5);
   assert.match(admin, /A senha deve ser criada pelo próprio integrante/);
   assert.equal((admin.match(/legacyUserRoutesDisabled\(env\)/g) || []).length, 5);
   assert.ok((admin.match(/status: 410/g) || []).length >= 4);
-  assert.equal((localApi.match(/UNIFIED_TEAM_ROUTE_DISABLED/g) || []).length, 4);
+  assert.equal((localApi.match(/UNIFIED_TEAM_ROUTE_DISABLED/g) || []).length, 7);
   assert.match(localApi, /const localUnifiedTeamEnabled =/);
   assert.match(localApi, /Use a gestão centralizada de equipe/);
 });

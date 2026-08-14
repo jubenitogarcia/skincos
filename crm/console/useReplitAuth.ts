@@ -70,6 +70,10 @@ export function useReplitAuth() {
       const displayName = String(insumosUser.displayName || insumosUser.name || insumosUser.username || insumosUser.email || '')
       const allowedUnits = Array.isArray(insumosUser.allowedUnits) ? insumosUser.allowedUnits : undefined
       const allowedModules = Array.isArray(insumosUser.allowedModules) ? insumosUser.allowedModules : undefined
+      const grants = Array.isArray(insumosUser.grants) ? insumosUser.grants.map(String).filter(Boolean) : undefined
+      const featureFlags = insumosUser.featureFlags && typeof insumosUser.featureFlags === 'object'
+        ? Object.fromEntries(Object.entries(insumosUser.featureFlags).map(([key, value]) => [key, value === true]))
+        : undefined
       const localFocusModule = insumosUser.localFocusModule ? String(insumosUser.localFocusModule) : undefined
 
       return {
@@ -81,6 +85,8 @@ export function useReplitAuth() {
         role: insumosUser.role ? String(insumosUser.role) : undefined,
         allowedUnits,
         allowedModules,
+        grants,
+        featureFlags,
         localFocusModule,
         createdAt: String(insumosUser.createdAt || new Date().toISOString()),
         avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,

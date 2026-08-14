@@ -1,8 +1,12 @@
 import {
   handleMetaAdsPublishRequest,
   isMetaAdsPublishPath,
+  updateMetaAdsPublishConfig,
 } from './meta-ads-publish.js';
 import { handleSocialPublishOperation } from './social-publish.js';
+import { handleAnalyticsReadonlyRequest } from './analytics-readonly.js';
+import { handleAnalyticsStagingBootstrapRequest } from './analytics-staging-bootstrap.js';
+import { decryptToken, encryptToken } from './token-crypto.js';
 
 const TOKEN_PREFIX = '/internal/token-vault';
 const JSON_HEADERS = {
@@ -29,23 +33,71 @@ export async function handleRequest(request, env) {
       return json({ ok: false, error: auth.reason, requestId }, { status: auth.status });
     }
 
+    if (auth.role === 'staging-bootstrap') {
+      if (request.method !== 'POST' || pathname !== '/v1/analytics/staging-bootstrap') {
+        return json({ ok: false, error: 'bootstrap_endpoint_required', requestId }, { status: 403 });
+      }
+      return await handleAnalyticsStagingBootstrapRequest({
+        request,
+        env,
+        requestId,
+        encryptToken,
+        prepareAuditStatement,
+        writeAudit,
+      });
+    }
+
+    if (request.method === 'POST' && pathname === '/v1/analytics/staging-bootstrap') {
+      return json({ ok: false, error: 'staging_bootstrap_credential_required', requestId }, { status: 403 });
+    }
+
     if (request.method === 'GET' && pathname === '/health') {
       return health(env, requestId);
     }
 
+    if (request.method === 'PUT' && pathname === '/v1/meta-ads-publish/config') {
+      if (auth.role !== 'admin') return adminOnly(requestId);
+      return await updateMetaAdsPublishConfig({
+        request,
+        env,
+        requestId,
+      });
+    }
+
     if (isMetaAdsPublishPath(pathname)) {
+      if (!['admin', 'operational'].includes(auth.role)) {
+        return roleRequired(requestId, 'write_gateway_credential_required');
+      }
       return await handleMetaAdsPublishRequest({
         request,
         env,
         requestId,
         pathname,
         decryptToken,
+        encryptToken,
         writeAudit,
       });
     }
 
     if (request.method === 'POST' && pathname === '/v1/social-publish/operations') {
+      if (!['admin', 'operational'].includes(auth.role)) {
+        return roleRequired(requestId, 'write_gateway_credential_required');
+      }
       return handleSocialPublishOperation({ request, env, requestId, decryptToken, writeAudit });
+    }
+
+    if (request.method === 'POST' && pathname === '/v1/analytics/operations') {
+      if (auth.role !== 'admin' && auth.role !== 'analytics') {
+        return json({ ok: false, error: 'analytics_credential_required', requestId }, { status: 403 });
+      }
+      const mode = analyticsMode(env);
+      if (mode === 'invalid') {
+        return json({ ok: false, error: 'invalid_analytics_mode', requestId }, { status: 500 });
+      }
+      if (mode === 'off' || (mode === 'active' && safeString(env.INFLUENCER_INTELLIGENCE_ENABLED).toLowerCase() !== 'true')) {
+        return json({ ok: false, error: 'analytics_disabled', requestId }, { status: 503 });
+      }
+      return handleAnalyticsReadonlyRequest({ request, env, requestId, decryptToken, writeAudit });
     }
 
     if (request.method === 'GET' && pathname === '/v1/tokens') {
@@ -81,6 +133,10 @@ function adminOnly(requestId) {
   return json({ ok: false, error: 'admin_credential_required', requestId }, { status: 403 });
 }
 
+function roleRequired(requestId, error) {
+  return json({ ok: false, error, requestId }, { status: 403 });
+}
+
 function normalizePath(pathname) {
   if (pathname === TOKEN_PREFIX) return '/';
   if (pathname.startsWith(`${TOKEN_PREFIX}/`)) return pathname.slice(TOKEN_PREFIX.length);
@@ -88,24 +144,41 @@ function normalizePath(pathname) {
 }
 
 async function health(env, requestId) {
+  const mode = analyticsMode(env);
   const checks = {
     d1: Boolean(env.TOKEN_VAULT_DB),
     apiToken: Boolean(safeString(env.TOKEN_VAULT_API_TOKEN)),
+    n8nApiToken: Boolean(safeString(env.TOKEN_VAULT_N8N_API_TOKEN)),
+    analyticsApiToken: Boolean(safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN)),
     encryptionKey: Boolean(safeString(env.TOKEN_VAULT_ENCRYPTION_KEY)),
+    analyticsMode: mode !== 'invalid',
   };
 
   if (checks.d1) {
     await env.TOKEN_VAULT_DB.prepare('SELECT 1 AS ok').first();
   }
 
-  const ok = Object.values(checks).every(Boolean);
+  const ok = checks.d1 && checks.apiToken && checks.n8nApiToken && checks.analyticsApiToken && checks.encryptionKey && checks.analyticsMode;
   return json({
     ok,
     service: 'skincos-token-vault',
     environment: safeString(env.ENVIRONMENT) || 'unknown',
+    analytics_mode: mode,
+    analytics_ready: checks.analyticsApiToken && mode !== 'off' && mode !== 'invalid',
     checks,
     requestId,
   }, { status: ok ? 200 : 500 });
+}
+
+function analyticsMode(env) {
+  const mode = safeString(env.INFLUENCER_INTELLIGENCE_ANALYTICS_MODE ?? 'off').toLowerCase();
+  return ['off', 'shadow', 'active'].includes(mode) ? mode : 'invalid';
+}
+
+function stagingBootstrapEligible(env) {
+  return safeString(env.ENVIRONMENT).toLowerCase() === 'staging'
+    && analyticsMode(env) === 'shadow'
+    && safeString(env.INFLUENCER_INTELLIGENCE_ENABLED).toLowerCase() === 'false';
 }
 
 async function listTokens(url, env, requestId) {
@@ -157,6 +230,9 @@ async function patchToken(id, request, env, requestId) {
   const body = await readJson(request);
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return json({ ok: false, error: 'invalid_payload', requestId }, { status: 400 });
+  }
+  if (hasMetaAdsPublishConfig(body.metadata)) {
+    return json({ ok: false, error: 'meta_ads_publish_config_writer_required', requestId }, { status: 409 });
   }
 
   const token = safeString(body.token || body.access_token);
@@ -235,6 +311,9 @@ async function createToken(request, env, requestId) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return json({ ok: false, error: 'invalid_payload', requestId }, { status: 400 });
   }
+  if (hasMetaAdsPublishConfig(body.metadata)) {
+    return json({ ok: false, error: 'meta_ads_publish_config_writer_required', requestId }, { status: 409 });
+  }
 
   const provider = safeString(body.provider).toLowerCase();
   if (!PROVIDERS.has(provider)) {
@@ -254,6 +333,17 @@ async function createToken(request, env, requestId) {
   const tokenType = safeString(body.token_type || body.tokenType) || 'long_lived_access_token';
   const unit = normalizeNullableString(body.unit);
   const metadata = isObject(body.metadata) ? body.metadata : {};
+  // POST is an upsert with whole-metadata replacement semantics. Never allow
+  // it to silently erase a governed tracking subtree on an existing
+  // credential; the narrow config writer is the only authority for that path.
+  const existing = await env.TOKEN_VAULT_DB.prepare(
+    `SELECT id, metadata_json
+       FROM credential_tokens
+      WHERE provider = ? AND external_account_id = ? AND token_type = ?`,
+  ).bind(provider, externalAccountId, tokenType).first();
+  if (existing && hasMetaAdsPublishConfig(parseJsonObject(existing.metadata_json))) {
+    return json({ ok: false, error: 'meta_ads_publish_config_writer_required', requestId }, { status: 409 });
+  }
   const now = new Date().toISOString();
   const encrypted = await encryptToken(token, env);
 
@@ -347,11 +437,25 @@ async function serializeToken(row, env) {
 }
 
 function authorizeRequest(request, env) {
-  if (safeString(env.REQUIRE_AUTH || 'true') !== 'true') return { ok: true };
+  const requireAuth = safeString(env.REQUIRE_AUTH ?? 'true').toLowerCase();
+  if (requireAuth !== 'true') {
+    return { ok: false, status: 500, reason: 'invalid_auth_configuration' };
+  }
 
   const adminToken = safeString(env.TOKEN_VAULT_API_TOKEN);
   const operationalToken = safeString(env.TOKEN_VAULT_N8N_API_TOKEN);
-  if (!adminToken && !operationalToken) return { ok: false, status: 500, reason: 'missing_worker_secret' };
+  const analyticsToken = safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN);
+  const stagingBootstrapToken = safeString(env.TOKEN_VAULT_STAGING_ANALYTICS_BOOTSTRAP_TOKEN);
+  if (stagingBootstrapToken && !stagingBootstrapEligible(env)) {
+    return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
+  }
+  if (!adminToken && !operationalToken && !analyticsToken && !stagingBootstrapToken) {
+    return { ok: false, status: 500, reason: 'missing_worker_secret' };
+  }
+  const configuredTokens = [adminToken, operationalToken, analyticsToken, stagingBootstrapToken].filter(Boolean);
+  if (new Set(configuredTokens).size !== configuredTokens.length) {
+    return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
+  }
 
   const headerName = safeString(env.WORKER_AUTH_HEADER_NAME || 'Authorization') || 'Authorization';
   const scheme = safeString(env.WORKER_AUTH_SCHEME || 'Bearer') || 'Bearer';
@@ -361,42 +465,25 @@ function authorizeRequest(request, env) {
   if (adminToken && constantTimeEqual(authHeader, `${scheme} ${adminToken}`.trim())) {
     return { ok: true, role: 'admin' };
   }
+  if (analyticsToken && constantTimeEqual(authHeader, `${scheme} ${analyticsToken}`.trim())) {
+    return { ok: true, role: 'analytics' };
+  }
+  if (stagingBootstrapToken && constantTimeEqual(authHeader, `${scheme} ${stagingBootstrapToken}`.trim())) {
+    return { ok: true, role: 'staging-bootstrap' };
+  }
   if (operationalToken && constantTimeEqual(authHeader, `${scheme} ${operationalToken}`.trim())) {
     return { ok: true, role: 'operational' };
   }
   return { ok: false, status: 401, reason: 'invalid_auth_header' };
 }
 
-async function encryptToken(token, env) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoded = new TextEncoder().encode(token);
-  const key = await getEncryptionKey(env);
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
-  return `v1:${base64Encode(iv)}:${base64Encode(new Uint8Array(ciphertext))}`;
-}
-
-async function decryptToken(value, env) {
-  const parts = safeString(value).split(':');
-  if (parts.length !== 3 || parts[0] !== 'v1') {
-    throw new Error('unsupported_ciphertext');
-  }
-  const iv = base64Decode(parts[1]);
-  const ciphertext = base64Decode(parts[2]);
-  const key = await getEncryptionKey(env);
-  const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
-  return new TextDecoder().decode(plaintext);
-}
-
-async function getEncryptionKey(env) {
-  const secret = safeString(env.TOKEN_VAULT_ENCRYPTION_KEY);
-  if (secret.length < 32) throw new Error('TOKEN_VAULT_ENCRYPTION_KEY must be configured');
-  const raw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
-  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
-}
-
 async function writeAudit(env, input) {
   if (!env.TOKEN_VAULT_DB) return;
-  await env.TOKEN_VAULT_DB.prepare(
+  await prepareAuditStatement(env, input).run();
+}
+
+function prepareAuditStatement(env, input) {
+  return env.TOKEN_VAULT_DB.prepare(
     `INSERT INTO credential_token_audit (
       id, token_id, event, provider, unit, token_type, status, request_id, metadata_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -410,7 +497,7 @@ async function writeAudit(env, input) {
     safeString(input.status || 'ok'),
     normalizeNullableString(input.requestId),
     JSON.stringify(input.metadata || {}),
-  ).run();
+  );
 }
 
 function contract(requestId) {
@@ -422,11 +509,17 @@ function contract(requestId) {
       listTokens: 'GET /internal/token-vault/v1/tokens?provider=threads|instagram|facebook&active=true',
       createToken: 'POST /internal/token-vault/v1/tokens',
       updateToken: 'PATCH /internal/token-vault/v1/tokens/:id',
+      updateMetaAdsPublishConfig: 'PUT /internal/token-vault/v1/meta-ads-publish/config',
+      analyticsOperation: 'POST /internal/token-vault/v1/analytics/operations',
     },
     auth: {
       header: 'Authorization',
       scheme: 'Bearer',
       secret: 'TOKEN_VAULT_API_TOKEN',
+      operational_secret: 'TOKEN_VAULT_N8N_API_TOKEN',
+      analytics_secret: 'TOKEN_VAULT_ANALYTICS_API_TOKEN',
+      analytics_scope: 'influencer-intelligence',
+      analytics_mode: 'shadow|active',
     },
     storage: {
       d1_binding: 'TOKEN_VAULT_DB',
@@ -464,6 +557,10 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasMetaAdsPublishConfig(value) {
+  return isObject(value) && Object.prototype.hasOwnProperty.call(value, 'meta_ads_publish');
+}
+
 function parseJsonObject(value) {
   try {
     const parsed = JSON.parse(value || '{}');
@@ -488,21 +585,6 @@ function constantTimeEqual(a, b) {
     diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
   }
   return diff === 0;
-}
-
-function base64Encode(bytes) {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-function base64Decode(value) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
 }
 
 function safeErrorMessage(error) {

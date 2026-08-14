@@ -19,6 +19,9 @@ store; values never belong in this repository:
 
 - `SKINCOS_GLOBAL_COORDINATOR_URL`
 - `SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET`
+- `SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY` and `SKINCOS_GLOBAL_COORDINATION_KEY_ID`
+  during an explicit key rotation; these replace the legacy secret record when
+  the key id is not `legacy-v1`;
 - `GLOBAL_COORDINATION_PROVIDER` (`codex` or `mini-pc`)
 - `GLOBAL_COORDINATION_MISSION_ID`, `GLOBAL_COORDINATION_THREAD_ID`, and
   `GLOBAL_COORDINATION_ACTOR`
@@ -39,5 +42,6 @@ mutations. The Windows Orb backup publisher invokes
 unit directly. The scheduled bridge passes the private WSL environment-file
 reference plus a fixed scheduler owner identity. The default file is
 `/etc/skincos/global-coordination/orb-backup.env`, mode `0600` or `0640`, and
-may contain only the coordinator URL and shared secret names. It is never
-stored in the repository or copied to Windows.
+may contain only the coordinator URL plus either the legacy shared-secret
+record or the active-key/key-id pair. It is never stored in the repository or
+copied to Windows.

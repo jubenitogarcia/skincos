@@ -12,7 +12,18 @@ all_args=("$@")
 
 [[ -f "$ADAPTER" ]] || { echo 'Global coordination adapter is unavailable in the immutable source release.' >&2; exit 78; }
 [[ -n "${SKINCOS_GLOBAL_COORDINATOR_URL:-}" ]] || { echo 'SKINCOS_GLOBAL_COORDINATOR_URL is required for a mini-PC mutation.' >&2; exit 78; }
-[[ -n "${SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:-}" ]] || { echo 'Global coordination custody is unavailable on the mini-PC.' >&2; exit 78; }
+if [[ -n "${SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY:-}" || -n "${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" ]]; then
+  [[ -n "${SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY:-}" && -n "${SKINCOS_GLOBAL_COORDINATION_KEY_ID:-}" ]] || {
+    echo 'Active global coordination custody requires both key and key id.' >&2
+    exit 78
+  }
+  [[ "${SKINCOS_GLOBAL_COORDINATION_KEY_ID}" != 'legacy-v1' ]] || {
+    echo 'An explicit active coordination key cannot use the legacy key id.' >&2
+    exit 78
+  }
+else
+  [[ -n "${SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:-}" ]] || { echo 'Global coordination custody is unavailable on the mini-PC.' >&2; exit 78; }
+fi
 [[ -n "${GLOBAL_COORDINATION_MISSION_ID:-}" ]] || { echo 'GLOBAL_COORDINATION_MISSION_ID is required on the mini-PC.' >&2; exit 78; }
 [[ -n "${GLOBAL_COORDINATION_THREAD_ID:-}" ]] || { echo 'GLOBAL_COORDINATION_THREAD_ID is required on the mini-PC.' >&2; exit 78; }
 [[ -n "${GLOBAL_COORDINATION_ACTOR:-}" ]] || { echo 'GLOBAL_COORDINATION_ACTOR is required on the mini-PC.' >&2; exit 78; }

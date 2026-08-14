@@ -44,6 +44,55 @@ test('small stable creator produces complete normalized profile and cadence metr
   assertNoNonFinite(result);
 });
 
+test('history counts metric-bearing media identities once and excludes follower-only context', () => {
+  const fixture = {
+    creatorKey: 'creator-history-dedup',
+    computedAt: GOLDEN_FIXTURES.smallStable.computedAt,
+    profileSnapshots: [],
+    mediaSnapshots: Array.from({ length: 4 }, (_, index) => ({
+      snapshotKey: `media-snapshot-history-${index + 1}`,
+      mediaKey: 'media-history-repeat',
+      provider: 'meta-graph',
+      observedAt: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+      publishedAt: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+      likesCount: index === 3 ? 12 : null,
+      commentsCount: null,
+      followersCount: 1000,
+    })),
+  };
+
+  const result = analyze(fixture);
+
+  assert.equal(result.history.mediaSnapshotCount, 4);
+  assert.equal(result.history.mediaMetricObservationCount, 1);
+  assert.equal(result.postingCadence.publicationCount, 1);
+  assertNoNonFinite(result);
+});
+
+test('follower-only media snapshots do not establish media performance history', () => {
+  const fixture = {
+    creatorKey: 'creator-history-follower-only',
+    computedAt: GOLDEN_FIXTURES.smallStable.computedAt,
+    profileSnapshots: [],
+    mediaSnapshots: Array.from({ length: 4 }, (_, index) => ({
+      snapshotKey: `media-snapshot-follower-only-${index + 1}`,
+      mediaKey: `media-follower-only-${index + 1}`,
+      provider: 'meta-graph',
+      observedAt: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+      publishedAt: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+      likesCount: null,
+      commentsCount: null,
+      followersCount: 1000,
+    })),
+  };
+
+  const result = analyze(fixture);
+
+  assert.equal(result.history.mediaMetricObservationCount, 0);
+  assert.equal(result.engagement.evidenceState, 'unavailable');
+  assertNoNonFinite(result);
+});
+
 test('large creator keeps quality ratios normalized instead of treating follower scale as quality', () => {
   const result = analyze(GOLDEN_FIXTURES.largeCreator);
 
@@ -232,6 +281,4 @@ test('media with no available metrics remains unavailable with an explicit reaso
   assert.equal(result.videoPerformance.unavailableReason, 'no_matching_media');
   assertNoNonFinite(result);
 });
-
-
 

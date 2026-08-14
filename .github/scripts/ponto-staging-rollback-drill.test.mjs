@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   loadConfig,
+  classifyIncumbentCompatibilityHealth,
   classifyIncumbentBundle,
   isFailClosedIncumbentHealth,
   runStagingRollbackDrill,
@@ -219,9 +220,61 @@ test("heterogeneous incumbent health accepts a safe affinity mismatch without tr
   }), false);
 });
 
+test("a coherent incumbent can be accepted only while maintenance is fail-closed", () => {
+  const expected = {
+    pagesSourceSha: "b".repeat(40),
+    identitySourceSha: "b".repeat(40),
+    coreSourceSha: "b".repeat(40),
+    timekeepingSourceSha: "b".repeat(40),
+    coreVersionId: ids.coreApi.incumbent,
+    timekeepingVersionId: ids.timekeeping.incumbent,
+  };
+  const payload = {
+    ok: false,
+    ready: false,
+    service: "workforce-timekeeping",
+    unit: "timekeeping",
+    environment: "staging",
+    database: true,
+    dependencies: {
+      module_control: { state: "unavailable" },
+      gateway_affinity: { state: "healthy" },
+    },
+    versionMetadata: {
+      releaseSha: expected.timekeepingSourceSha,
+      workerVersionId: expected.timekeepingVersionId,
+      gatewayReleaseSha: expected.coreSourceSha,
+      gatewayEnvironment: "staging",
+      gatewayVersionId: expected.coreVersionId,
+    },
+  };
+  const headers = new Map([
+    ["x-skincos-timekeeping-release-sha", expected.timekeepingSourceSha],
+    ["x-skincos-timekeeping-environment", "staging"],
+    ["x-skincos-timekeeping-version-id", expected.timekeepingVersionId],
+  ]);
+
+  assert.equal(
+    classifyIncumbentCompatibilityHealth({ status: 200, payload, headers, expected }),
+    "coherent-maintenance-health",
+  );
+  assert.equal(isFailClosedIncumbentHealth({ status: 200, payload, headers, expected }), false);
+  assert.equal(
+    classifyIncumbentCompatibilityHealth({
+      status: 200,
+      payload: { ...payload, dependencies: { ...payload.dependencies, module_control: { state: "healthy" } } },
+      headers,
+      expected,
+    }),
+    null,
+  );
+});
+
 class FakeRuntime {
   constructor(failAt = "", candidateSourceSha = config.releaseSha, incumbents = incumbentEvidence) {
     this.calls = [];
+    this.moduleStateDetails = new Map();
+    this.journeyExpected = new Map();
     this.failAt = failAt;
     this.candidateSourceSha = candidateSourceSha;
     this.incumbents = incumbents;
@@ -289,6 +342,7 @@ class FakeRuntime {
   async setModuleState(state, details, phase) {
     const call = `module:${phase}:${state}`;
     this.calls.push(call);
+    this.moduleStateDetails.set(phase, { ...details });
     this.maybeFail(call);
     return {
       passed: true,
@@ -304,7 +358,9 @@ class FakeRuntime {
     this.maybeFail(call);
     return {
       passed: true,
-      mode: "heterogeneous-fail-closed-health",
+      mode: this.failAt === "fixture:incumbent:legacy"
+        ? "coherent-maintenance-health"
+        : "heterogeneous-fail-closed-health",
       credentialsIncluded: false,
       piiIncluded: false,
     };
@@ -341,6 +397,13 @@ class FakeRuntime {
   async runJourney(handle, _url, expected) {
     const call = `fixture:${handle.label}:journey`;
     this.calls.push(call);
+    this.journeyExpected.set(handle.label, { ...expected });
+    if (this.failAt === "fixture:incumbent:legacy" && handle.label === "incumbent") {
+      const error = new Error("legacy incumbent timekeeping contract is unavailable");
+      error.code = "AUTHENTICATED_JOURNEY_FAILED";
+      error.details = '[ponto-staging-journey] FAILED: invalid PIN did not fail closed (503/domain_service_degraded; {"timekeepingReleaseSha":"","timekeepingVersionId":""})';
+      throw error;
+    }
     this.maybeFail(call);
     return {
       passed: true,
@@ -481,6 +544,25 @@ test("a coherent incumbent bundle receives the authenticated rollback journey", 
   assert.equal(report.functionalValidation.incumbentCompatibility.attempted, false);
   assert.equal(report.teardown.incumbent.passed, true);
   assert(runtime.calls.includes("fixture:incumbent:journey"));
+  assert.equal(runtime.moduleStateDetails.get("incumbent-active").releaseSha, "b".repeat(40));
+  assert.equal(runtime.journeyExpected.get("incumbent").releaseSha, "b".repeat(40));
+  assert.equal(runtime.journeyExpected.get("incumbent").sourceSha, "b".repeat(40));
+});
+
+test("a coherent historical incumbent with an unavailable timekeeping contract is verified only under maintenance", async () => {
+  const runtime = new FakeRuntime("fixture:incumbent:legacy", config.releaseSha, coherentIncumbentEvidence);
+  const report = await runStagingRollbackDrill(config, runtime);
+
+  assert.equal(report.passed, true);
+  assert.equal(report.functionalValidation.incumbentJourney.skipped, true);
+  assert.equal(report.functionalValidation.incumbentJourney.reason, "legacy-incumbent-timekeeping-contract-unavailable");
+  assert.equal(report.functionalValidation.incumbentCompatibility.passed, true);
+  assert.equal(report.functionalValidation.incumbentCompatibility.mode, "coherent-maintenance-health");
+  assert.equal(report.teardown.incumbent.passed, true);
+  assert.ok(
+    runtime.calls.indexOf("module:pre-restoration-maintenance:maintenance")
+      < runtime.calls.indexOf("incumbent:compatibility"),
+  );
 });
 
 test("a restoration failure attempts every remaining compensation and does not open the candidate", async () => {
@@ -576,6 +658,9 @@ test("the executable and workflow retain no unimplemented hard-stop and require 
   assert.match(script, /ponto-release-probe\/v1\./);
   assert.match(script, /"x-skincos-release-probe-sig":\s*signature/);
   assert.match(script, /incumbentCompatibility/);
+  assert.match(script, /coherent-maintenance-health/);
+  assert.match(script, /handle\.label !== "candidate"/);
+  assert.match(script, /await proveCandidateAffinity\(\{ url: origin\.href \}, expected\);/);
   assert.match(script, /journeyFence/);
   assert.match(script, /journeyAttempts/);
   assert.match(script, /dependencies\?\.gateway_affinity\?\.state === "healthy"/);

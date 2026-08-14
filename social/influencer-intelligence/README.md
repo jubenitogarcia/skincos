@@ -1,9 +1,15 @@
 # Influencer Intelligence
 
 Status: architecture v1 defined; M2 provider boundary, M4 deterministic
-analytics, and M5 deterministic scoring are implemented in source control, and
-data model v1 plus scoring metadata remain additive, unapplied artifacts in
-this milestone. The domain remains
+analytics, M5 deterministic scoring, M6 read-only MCP adapter, M7 Codex skill,
+M8 CRM contract/dashboard source, M9 comments intelligence, M10 bounded content
+analysis, M11 Campaign Fit, M12 synthetic calibration, and the disabled runtime
+registration are implemented in source control. The governed staging migration
+runner and additive data model are applied in staging only; production remains
+unapplied. The internal service, MCP, CRM upstream and Orb source are
+registered but remain off by default and require the server flag plus the
+explicit grant.
+The domain remains
 experimental, not exposed, and off by default.
 
 This domain provides read-only intelligence about Instagram creators for
@@ -14,16 +20,20 @@ surface, a publication surface, or a new scraping project.
 
 The canonical architecture decision is documented in
 [`docs/decisions/adr-influencer-intelligence-architecture.md`](../../docs/decisions/adr-influencer-intelligence-architecture.md).
-The versioned, runtime-free contract companion is
+The versioned contract companion is
 [`architecture.mjs`](./architecture.mjs). Together they define the provider
 boundary, append-only data model, provenance and score envelopes, internal API,
 read-only MCP tools, release/flag model, privacy rules, observability, and the
 M0--M13 implementation gates.
 
-The architecture milestone itself does not add routes, migrations, provider
-transports, CRM registration, MCP registration, Orb workflow changes, or flag
-wiring. `INFLUENCER_INTELLIGENCE_ENABLED` remains `false` and the domain stays
-off until a later milestone proves its own gates.
+The architecture and M0-M7 source milestones were source-only. The current
+transport gate adds the separate Token Vault analytics adapter and official
+Meta Graph read projection described in
+[`TRANSPORTS.md`](./TRANSPORTS.md); it still does not add live registrations or
+activation. M8 adds the bounded, authenticated CRM proxy/client/dashboard
+boundary. The runtime-registration gate adds loopback-only service/MCP
+bindings and a signed CRM upstream contract, but does not enable units, assign
+grants, import the Orb workflow, or call a provider.
 
 ## M0 decision
 
@@ -59,10 +69,11 @@ The migration is idempotent and additive. It creates the domain schema, a
 schema-migration ledger, creator registry, provider registry, and narrow
 indexes. It has no seed rows, no clear credentials, no direct contact fields,
 no public grants, and no destructive rollback SQL. M1 does not apply the
-migration to local, staging, or production PostgreSQL: the future runner must
-first prove destination identity, role custody, checkpoint, lock/statement
-timeouts, scoped grants, and post-apply verification. Until that runner exists,
-the artifact is the source-controlled schema proposal only.
+migration to local, staging, or production PostgreSQL until the staging-only
+runner first proves destination identity, role custody, private checkpoint,
+lock/statement timeouts, scoped grants, and post-apply verification. The
+artifact remains the source-controlled schema proposal until that terminal
+staging evidence exists.
 
 ## M2 decision: official-first provider router
 
@@ -88,14 +99,14 @@ interfaces only until they are explicitly enabled and allowlisted after a
 measured gap review. No new scraper, Instaloader path, or duplicate instagrapi
 implementation is introduced.
 
-The original M2 boundary is merged as PR #1305. The Meta adapter remains a
-boundary around the existing official CRM integration, not a second HTTP
-client; the instagrapi adapter remains a narrow boundary around the existing
-`social/instagram` read path. This milestone continues to use synthetic,
-injected transports only: it does not call Graph, instagrapi, Token Vault,
-PostgreSQL, Orb, or any runtime endpoint. A future transport must establish a
-separate read-only analytics allowlist and Token Vault custody before it can be
-connected.
+The original M2 boundary is merged as PR #1305. The current transport gate
+adds a separate Token Vault analytics action and
+[`provider-runtime.mjs`](./provider-runtime.mjs): Meta Graph is connected
+first through the official read-only projection, while instagrapi remains a
+narrow injected fallback around the existing `social/instagram` read path.
+Neither adapter exposes credentials or raw provider payloads. Source tests use
+fixtures; staging deployment and a scoped staging credential are still
+required before a live read is considered proven.
 
 ## Data model v1 decision
 
@@ -118,11 +129,17 @@ slugs are open in persistence for future adapters, while the current runtime
 allowlist remains official-first `meta-graph` with controlled `instagrapi`
 fallback.
 
-These migrations are not applied to local, staging, or production through an
-operational runner; they are validated as source-controlled artifacts and
-through synthetic repository tests. No UI, feature wiring, runtime, CRM, MCP,
-systemd, or external provider call is included; the Orb source added by M3 is
-inactive orchestration only.
+The staging-only operational runner is
+[`scripts/staging/influencer-intelligence-migration.mjs`](../../scripts/staging/influencer-intelligence-migration.mjs),
+with its admission and rollback contract in
+[`docs/runbooks/influencer-intelligence-staging-migrations.md`](../../docs/runbooks/influencer-intelligence-staging-migrations.md).
+It proves database/session identity, role custody, minimum DDL privileges,
+private checkpoint, advisory lock, session timeouts, source checksums,
+append-only post-validation and absence of runtime grants before committing.
+The artifact remains unapplied until a terminal staging run supplies that
+evidence. No UI, feature wiring, runtime, CRM, MCP, systemd, or external
+provider call is included; the Orb source added by M3 is inactive
+orchestration only.
 
 ## M4 decision: deterministic analytics
 
@@ -167,9 +184,11 @@ remains off.
 The operation tests use only injected fixtures and cover first collection,
 replay, metric changes, fallback/partial coverage, timeout, nonexistent and
 private profiles, unavailable media metrics, provenance classification and
-credential rejection. Token Vault transport wiring, migration application,
-service route mounting, live Orb import and real provider calls remain later
-operational gates.
+credential rejection. The internal service binding, MCP binding and signed CRM
+upstream are now registered by the separate runtime gate, but units remain
+disabled, the Orb workflow is not imported, and real bulk collection remains
+blocked. The Token Vault analytics transport itself is source-complete but
+must pass the staging gate in [`TRANSPORTS.md`](./TRANSPORTS.md).
 
 ## Concrete target architecture
 
@@ -196,21 +215,71 @@ under `social/instagram/module/api/` must not be exposed as the domain API
 without independent authentication, input, timeout, rate-limit, audit, and
 deployment hardening.
 
+## M6 decision: read-only MCP adapter
+
+[`mcp-readonly.mjs`](./mcp-readonly.mjs) implements the domain-side adapter for
+the existing `orb/engine/mcp-readonly-gateway` pattern. It exposes bounded
+`search_creators`, `get_creator_profile`, `get_creator_snapshots`,
+`get_creator_media`, `get_creator_analytics`, `get_creator_score`, and
+`get_campaign_fit` and `compare_creators` tools through an injected internal
+read service. `get_campaign_fit` reads a persisted, versioned projection and
+does not accept a raw campaign brief or start computation.
+
+The adapter requires authentication, the server-side domain grant, opaque
+actor scope, closed input schemas, bounded windows/pages/comparisons, timeout,
+abort propagation, concurrency control, rate limiting, sanitized output, and
+mandatory audit. It returns explicit classification, freshness, provenance,
+confidence, coverage, limitations, and unavailable/null states. The domain
+adapter never calls Meta, instagrapi, Token Vault, PostgreSQL, SQL, shell, Orb,
+or a scoring engine; the registered MCP transport delegates to the internal
+service and cannot mutate Instagram, workflows, or persisted scores. The
+transport remains loopback-only, bearer/grant gated, and disabled by default.
+
+See [`MCP_READONLY.md`](./MCP_READONLY.md) for the internal service contract,
+limits, sanitization boundary, and rollback posture.
+
+## Runtime registration gate
+
+[`RUNTIME.md`](./RUNTIME.md) documents the current operational binding. It
+registers `runtime/server.mjs` and `runtime/mcp-server.mjs` as strict systemd
+unit templates, adds CRM signature version 2 with the fixed grant, and carries
+private service auth in the inactive Orb source. The installer validates and
+installs the units without enabling them; the flag, grants, Token Vault
+deployment, runtime database role, workflow import, and provider calls remain
+separate gates.
+
+## M7 decision: Codex skill
+
+[`skills/skincos-influencer-intelligence/SKILL.md`](../../skills/skincos-influencer-intelligence/SKILL.md)
+is the concise, versioned instruction boundary for creator analysis requests.
+It requires MCP/data consultation before conclusions, preserves observed,
+derived, inferred, unavailable and stale states, uses the persisted
+deterministic score without mental weight recalculation, and always reports
+confidence, coverage, provenance and limitations. It separates general
+creator quality from campaign fit and treats followers, viral posts and growth
+spikes as context rather than proof of quality or fraud.
+
+The skill is read-only: it cannot call providers, expose credentials or PII,
+run SQL/shell, start Orb jobs, scrape, or perform Instagram engagement. Its
+UI metadata is generated by the skill-creator template, and a contract test
+guards triggers, output format, evidence states and forbidden bypasses.
+MCP/runtime registration and user grants remain governed by later gates.
+
 ### Incumbent integrations to reuse
 
-- Official-first collection will wrap the existing CRM Graph adapter in
-  `crm/console/functions/_lib/instagramGraph.ts` and its authenticated
-  connection boundary in `instagramStore.ts`; M2 only defines the injected
-  projection boundary, and the CRM UI must not call Graph or instagrapi
+- Official-first collection now uses the dedicated Token Vault analytics
+  action, which owns the existing Meta credential and makes fixed Graph GETs.
+  The CRM Graph helper remains an inspected incumbent integration, not a
+  credential or analytics gateway; the CRM UI must not call Graph or instagrapi
   directly.
 - The controlled fallback will reuse the existing
   `social/instagram/module/instagram_site_sync.py` and its vendored instagrapi
   session path. It will not duplicate that implementation.
 - Credentials belong in `platform/security/token-vault`. Clear tokens,
   cookies, authorization headers, and connection payloads never cross this
-  contract. The existing Token Vault publish gateway is not silently treated
-  as an analytics gateway; M2 must establish a separate read-only analytics
-  allowlist/adapter before collection is implemented.
+  contract. The existing Token Vault publish gateway remains isolated; the
+  dedicated analytics allowlist/adapter is the only transport path for this
+  domain.
 - Orb/n8n will schedule and resume jobs after the service contract exists. It
   will not become a provider, scoring engine, shell bridge, or arbitrary SQL
   executor.
@@ -263,10 +332,30 @@ ratio.
   `suspicious_growth_pattern` with confidence, coverage, provenance, and the
   algorithm/model version.
 - Comments intelligence stores aggregate, minimized signals (for example
-  topic, sentiment, safety, and spam proportions) rather than an unbounded
-  comment archive. Raw text retention requires a separate privacy decision.
+  topic, sentiment, safety, spam proportions, duplicate ratios, language
+  coverage, and bounded comment quality) rather than an unbounded comment
+  archive. Raw text retention requires a separate privacy decision. M9's
+  formulas and semantic schema are documented in [`COMMENTS.md`](./COMMENTS.md).
 - A score is not complete without score, confidence, coverage, provenance,
   timestamp, provider identifiers, evidence state, and algorithm version.
+
+## M10 decision: bounded semantic content analysis
+
+[`content-analysis.mjs`](./content-analysis.mjs) selects a bounded recent media
+sample and emits versioned features for topics, product categories, brand and
+competitor mentions, sponsorship/promotion signals, skincare affinity,
+education versus entertainment, claim types, format, and brand safety. The
+full contract and retention decisions are documented in
+[`CONTENT_ANALYSIS.md`](./CONTENT_ANALYSIS.md).
+
+The baseline is deterministic and controlled-vocabulary based. A future
+approved analyzer may be injected only through the closed structured semantic
+schema; it returns features and evidence, never an Influencer Score. Captions
+and transcripts are ephemeral inputs, while only safe features, bounded media
+keys, model metadata, and evidence references reach the existing append-only
+`creator_analysis` repository boundary. Existing Agent Zero Whisper/vision and
+Meta Ads workflow capabilities were inspected but are not connected because
+they are different runtime boundaries and may own media processing.
 
 ## Rollout and access
 
@@ -293,17 +382,48 @@ production configuration.
 | M1 | Creator registry and additive PostgreSQL schema | Merged in #1304; registry artifact only, not applied |
 | Architecture | Canonical architecture v1 | Merged in #1310; runtime-free manifest |
 | M2 | Official-first router and controlled collectors | Canonical router #1324 (supersedes #1305); injected synthetic transports only |
-| M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, and inactive Orb scheduler #1335; artifacts/import/runtime pending |
+| M3 | Append-only snapshots, retention, and Orb scheduling | Data model #1322, snapshots #1331, inactive Orb scheduler #1335, and disabled service binding; workflow import pending |
 | M4 | Robust analytics and outlier-resistant metrics | Merged in #1333; pure deterministic engine, golden fixtures, and formula documentation |
 | M5 | Deterministic score, confidence, coverage, and provenance | Merged in #1334; versioned weights, confidence factors, explanations, additive persistence metadata, and golden tests |
-| M6 | Authenticated, sanitized, rate-limited read-only MCP | Pending |
-| M7 | `skincos-influencer-intelligence` Codex skill | Pending |
-| M8 | Read-only CRM contracts and dashboard | Pending |
-| M9 | Minimized comments intelligence | Pending |
-| M10 | Semantic content and Reels signals | Pending |
-| M11 | Campaign and brand fit | Pending |
-| M12 | Synthetic validation and calibration | Pending |
-| M13 | Optional provider gap analysis | Pending; only if a measured gap remains |
+| M6 | Authenticated, sanitized, rate-limited read-only MCP | Source adapter, protocol tests, and disabled loopback transport registration |
+| M7 | `skincos-influencer-intelligence` Codex skill | Versioned skill, UI metadata and contract tests implemented; runtime/user access remains governed |
+| M8 | Read-only CRM contracts and dashboard | Source implemented; gated shadow UI, upstream/runtime off |
+| M9 | Minimized comments intelligence | Source implemented; additive quality/sampling migration and synthetic tests; runtime/provider wiring remains off |
+| M10 | Semantic content and Reels signals | Source implemented; bounded feature projection, closed semantic schema, fixtures and persistence boundary; media/runtime adapter remains off |
+| M11 | Campaign and brand fit | Source implemented; deterministic engine, additive fit metadata, persisted MCP read, CRM query surface, and golden tests; compute/runtime remains off |
+| M12 | Synthetic validation and calibration | Source implemented; versioned golden dataset, deterministic report, outlier/missing-data/confidence/campaign-fit guardrails, and focused tests; no live provider calls |
+| M13 | Optional provider gap analysis | Source implemented; source-level gap matrix/ADR; live coverage decision pending runtime evidence; no external provider integrated |
+| Runtime registration | Internal service, MCP, CRM upstream and Orb binding | Registered in source with strict units and private auth; default off, no grants, no workflow import, no provider calls |
+
+## M12 decision: synthetic calibration before commercial use
+
+The pure [`calibration.mjs`](./calibration.mjs) harness runs the versioned
+golden dataset in [`tests/fixtures/calibration-golden-fixtures.mjs`](./tests/fixtures/calibration-golden-fixtures.mjs)
+and produces the report in [`CALIBRATION.md`](./CALIBRATION.md). It checks
+follower-scale normalization, viral-outlier resistance, bounded growth-spike
+interpretation, missing-data semantics, zero-denominator behavior, sparse
+history confidence, irregular volatility, and Campaign Fit separation.
+
+The report is a deterministic policy/calculation gate, not a population
+calibration or commercial accuracy claim. It deliberately makes no weight
+adjustment and does not use real creators or live provider calls. Internal
+follower-tier benchmarks remain unavailable until an approved representative
+dataset exists.
+
+## M13 decision: no external provider in the current source scope
+
+[`EXTERNAL_PROVIDER_GAP_ANALYSIS.md`](./EXTERNAL_PROVIDER_GAP_ANALYSIS.md)
+records source-level capability gaps and compares the existing official/private
+transport, SKINCOS history, content intelligence, and comment intelligence with
+Apify, HypeAuditor, and Modash. The result is deliberately source-only: Meta
+official remains first, the existing instagrapi path remains a controlled
+fallback, and the legacy Instaloader path is not promoted into this domain.
+
+Audience demographics/overlap and a validated authenticity model are the only
+material candidates for a future shadow POC. Any such provider must be
+explicitly configured and allowlisted, use Token Vault custody, return the
+typed provider contract, remain bounded/read-only, and be calibrated before it
+can influence a score. No external provider is configured or called by M13.
 
 ## M2 risk, validation, and rollback
 
@@ -319,6 +439,36 @@ production configuration.
 - Rollback: close or revert the single-purpose change to merge SHA
   `f0dcab87d5348941d5c28e690c8a689a3bad8a3d`. No user data, provider session,
   network state, or remote database state is created by this milestone.
+
+## M6 risk, validation, and rollback
+
+- Risk: high because the adapter is a security boundary, but the change is
+  source-only and has no transport or runtime registration.
+- Surfaces: `social/influencer-intelligence/mcp-readonly.mjs`, its protocol
+  tests, architecture manifest/docs, and the architecture governance test
+  list; no provider, database, CRM, Orb, systemd, or user-facing surface.
+- Migration: none; existing additive migration artifacts remain unapplied.
+- Flag/grant: `INFLUENCER_INTELLIGENCE_ENABLED=false`; the grant is validated
+  by the adapter but not assigned to users and `mcpRuntimeRegistered=false`.
+- Validation: protocol/security tests, architecture/domain-boundary validators,
+  focused M0--M5 regression tests, diff hygiene, and terminal hosted CI on the
+  exact PR SHA.
+- Rollback: revert or close the single-purpose change. No database, credential,
+  provider session, workflow, or external business effect is created by M6.
+
+## M7 risk, validation, and rollback
+
+- Risk: medium because the Skill guides model behavior, but it has no transport,
+  provider, database, workflow, credential, or user-grant authority.
+- Surfaces: `skills/skincos-influencer-intelligence/**`, its contract test,
+  architecture manifest/docs, and the architecture governance test list.
+- Migration/runtime: none; `INFLUENCER_INTELLIGENCE_ENABLED=false` and
+  `mcpRuntimeRegistered=false` remain unchanged.
+- Validation: skill-creator `quick_validate.py` in Ubuntu-24.04, contract tests,
+  focused Influencer Intelligence regression tests, architecture/domain-boundary
+  checks, and terminal hosted CI on the exact PR SHA.
+- Rollback: revert or close this single-purpose Skill change; no runtime state
+  or user data is created.
 
 ## Data model risk, validation, and rollback
 

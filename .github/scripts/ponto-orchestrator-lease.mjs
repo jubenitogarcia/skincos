@@ -655,6 +655,7 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage }) =
       }
       continue;
     }
+    assertObservedPontoSource(releaseSha, String(run?.head_sha || "").trim().toLowerCase());
     if (
       workflow?.state !== "active"
       || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
@@ -666,7 +667,6 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage }) =
       || run?.conclusion != null
       || run?.event !== "workflow_dispatch"
       || run?.head_branch !== "main"
-      || run?.head_sha !== releaseSha
       || run?.name !== `Ponto ${stage} ${releaseSha} orchestrator=${orchestratorRunId}`
       || run?.repository?.full_name !== repository
       || String(run?.repository?.id || "") !== repositoryId
@@ -795,7 +795,11 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     || issuer?.conclusion != null
     || issuer?.event !== "workflow_dispatch"
     || issuer?.head_branch !== (delegatedIssuer ? releaseTag : "main")
-    || issuer?.head_sha !== releaseSha
+    // The direct issuer is the canonical root on main. It was already
+    // attested through assertObservedPontoSource by canonicalOrchestrator,
+    // which permits a documented disjoint main advance. A delegated issuer
+    // is itself tag-pinned and must remain exact.
+    || (delegatedIssuer && issuer?.head_sha !== releaseSha)
     || issuer?.repository?.full_name !== repository
     || String(issuer?.repository?.id || "") !== repositoryId
     || issuer?.head_repository?.full_name !== repository

@@ -1,0 +1,566 @@
+name: Influencer Intelligence Staging Shadow
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_real_router_smoke:
+        description: Run the single approved Meta-only router journey when private inputs are configured
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  # This shadow updates the same staging Worker and Worker secrets as the
+  # canonical Token Vault release. Share its Actions lane as well as its
+  # durable lease so neither workflow can replace the other mid-validation.
+  group: deploy-token-vault-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  shadow:
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+
+    steps:
+      - name: Guard Cloudflare deployment custody
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || {
+            echo 'Cloudflare deployment custody is unavailable.' >&2
+            exit 1
+          }
+
+      - name: Guard private real-read inputs
+        if: ${{ inputs.run_real_router_smoke == true }}
+        env:
+          INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN }}
+          INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID }}
+          INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE: ${{ secrets.INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE }}
+        run: |
+          set -euo pipefail
+          [[ -n "${INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN:-}" ]] || {
+            echo 'Dedicated Meta Graph token is unavailable; refusing the real Meta read.' >&2
+            exit 1
+          }
+          [[ -n "${INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID:-}" ]] || {
+            echo 'Approved Instagram professional account identifier is unavailable; refusing the real Meta read.' >&2
+            exit 1
+          }
+          [[ -n "${INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE:-}" ]] || {
+            echo 'Approved creator handle is unavailable; refusing the real Meta read.' >&2
+            exit 1
+          }
+
+      - name: Checkout exact main source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Pin manual dispatch to the current main source
+        env:
+          EXPECTED_REF: refs/heads/main
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "$EXPECTED_REF" ]] || { echo 'Staging shadow can run only from main.' >&2; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo 'Checkout does not match the dispatched source SHA.' >&2; exit 1; }
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          [[ "$(git rev-parse refs/remotes/origin/main)" == "$SOURCE_SHA" ]] || { echo 'main advanced before the staging shadow run; redispatch the current source.' >&2; exit 1; }
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.23.1"
+
+      - name: Verify staging-only source fence
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+
+          const config = fs.readFileSync('platform/security/token-vault/wrangler.toml', 'utf8');
+          const section = (name) => {
+            const marker = `[${name}]`;
+            const start = config.indexOf(marker);
+            assert.notEqual(start, -1, `missing ${marker}`);
+            const next = config.indexOf('\n[', start + marker.length);
+            return config.slice(start, next === -1 ? config.length : next);
+          };
+          assert.match(section('vars'), /INFLUENCER_INTELLIGENCE_ANALYTICS_MODE\s*=\s*"off"/);
+          assert.match(section('vars'), /INFLUENCER_INTELLIGENCE_ENABLED\s*=\s*"false"/);
+          assert.match(section('env.staging.vars'), /INFLUENCER_INTELLIGENCE_ANALYTICS_MODE\s*=\s*"shadow"/);
+          assert.match(section('env.staging.vars'), /INFLUENCER_INTELLIGENCE_ENABLED\s*=\s*"false"/);
+          NODE
+
+      - name: Acquire Token Vault release lease for staging shadow
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || '' }}
+          resource: release:token-vault
+          module: influencer-intelligence
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/influencer-intelligence-staging-shadow-lease.json
+          inputs_json: '{"target":"staging","mode":"shadow"}'
+
+      - name: Revalidate Token Vault release lease before staging mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/influencer-intelligence-staging-shadow-lease.json
+          resource: release:token-vault
+          module: influencer-intelligence
+          source_sha: ${{ github.sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || '' }}
+
+      - name: Promote bounded staging shadow and validate its contract
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RUN_REAL_ROUTER_SMOKE: ${{ inputs.run_real_router_smoke }}
+        run: |
+          set -euo pipefail
+          cd platform/security/token-vault
+          config='wrangler.toml'
+          worker='skincos-token-vault-staging'
+          base_url='https://api-staging.skincos.com.br/internal/token-vault'
+          message="influencer-intelligence:staging-shadow:${GITHUB_SHA}"
+          secret_message="influencer-intelligence:analytics-readonly-staging:${GITHUB_SHA}"
+          output_root="$RUNNER_TEMP/influencer-intelligence-staging-shadow"
+          mkdir -p "$output_root"
+
+          wrangler() {
+            npx --yes wrangler@4.123.0 "$@"
+          }
+
+          wrangler deploy --dry-run --config "$config" --env staging >/dev/null
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin main:refs/remotes/origin/main
+          [[ "$(git -C "$GITHUB_WORKSPACE" rev-parse refs/remotes/origin/main)" == "$GITHUB_SHA" ]] || {
+            echo 'main advanced before the staging mutation; refusing a stale source promotion.' >&2
+            exit 1
+          }
+          wrangler deployments status --json --config "$config" --env staging > "$output_root/incumbent.json"
+          incumbent="$(node - "$output_root/incumbent.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = value.versions || value.latest?.versions || [];
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100) {
+            throw new Error('staging Token Vault must have exactly one 100-percent incumbent before shadow promotion');
+          }
+          process.stdout.write(String(versions[0]?.version_id || versions[0]?.id || ''));
+          NODE
+          )"
+          [[ "$incumbent" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve the staging Token Vault incumbent.' >&2; exit 1; }
+          echo "INFLUENCER_INTELLIGENCE_STAGING_INCUMBENT=$incumbent" >> "$GITHUB_ENV"
+          printf '%s\n' "$incumbent" > "$output_root/incumbent-version.txt"
+
+          analytics_token="$(node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('base64url'));")"
+          bootstrap_token=''
+          trap 'unset analytics_token bootstrap_token' EXIT
+          printf '%s' "$analytics_token" | wrangler versions secret put TOKEN_VAULT_ANALYTICS_API_TOKEN \
+            --config "$config" \
+            --env staging \
+            --message "$secret_message" >/dev/null
+          umask 077
+          printf '%s' "$analytics_token" > "$output_root/analytics-token"
+          chmod 600 "$output_root/analytics-token"
+
+          if [[ "$RUN_REAL_ROUTER_SMOKE" == true ]]; then
+            bootstrap_token="$(node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('base64url'));")"
+            printf '%s' "$bootstrap_token" | wrangler versions secret put TOKEN_VAULT_STAGING_ANALYTICS_BOOTSTRAP_TOKEN \
+              --config "$config" \
+              --env staging \
+              --message "influencer-intelligence:staging-bootstrap:${GITHUB_SHA}" >/dev/null
+            printf '%s' "$bootstrap_token" > "$output_root/bootstrap-token"
+            chmod 600 "$output_root/bootstrap-token"
+          fi
+
+          WRANGLER_OUTPUT_FILE_PATH="$output_root/source-upload.ndjson" wrangler versions upload \
+            --config "$config" \
+            --env staging \
+            --keep-vars \
+            --strict \
+            --message "$message" \
+            --tag "influencer-intelligence-shadow-${GITHUB_SHA:0:12}"
+          candidate="$(node - "$output_root/source-upload.ndjson" <<'NODE'
+          const fs = require('fs');
+          const rows = fs.readFileSync(process.argv[2], 'utf8').trim().split(/\r?\n/).filter(Boolean).map(JSON.parse);
+          const result = rows.filter((row) => row.type === 'version-upload').at(-1);
+          process.stdout.write(String(result?.version_id || ''));
+          NODE
+          )"
+          [[ "$candidate" =~ ^[0-9a-fA-F-]{36}$ && "$candidate" != "$incumbent" ]] || { echo 'Invalid staging shadow candidate.' >&2; exit 1; }
+          echo "INFLUENCER_INTELLIGENCE_STAGING_CANDIDATE=$candidate" >> "$GITHUB_ENV"
+          printf '%s\n' "$candidate" > "$output_root/candidate-version.txt"
+
+          touch "$output_root/traffic-mutation-started"
+          WRANGLER_OUTPUT_FILE_PATH="$output_root/version-deploy.ndjson" wrangler versions deploy "$candidate@100%" \
+            --yes \
+            --config "$config" \
+            --env staging \
+            --message "$message"
+          wrangler deployments status --json --config "$config" --env staging > "$output_root/candidate-active.json"
+          CANDIDATE="$candidate" node - "$output_root/candidate-active.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = value.versions || value.latest?.versions || [];
+          if (
+            versions.length !== 1
+            || Number(versions[0]?.percentage) !== 100
+            || String(versions[0]?.version_id || versions[0]?.id || '').toLowerCase() !== process.env.CANDIDATE.toLowerCase()
+          ) throw new Error('staging shadow candidate is not the exact active deployment');
+          NODE
+
+          ANALYTICS_TOKEN="$analytics_token" \
+          BASE_URL="$base_url" \
+          SOURCE_SHA="$GITHUB_SHA" \
+          INCUMBENT="$incumbent" \
+          CANDIDATE="$candidate" \
+          EVIDENCE_FILE="$output_root/evidence.json" \
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { randomUUID } from 'node:crypto';
+          import fs from 'node:fs';
+
+          const baseUrl = process.env.BASE_URL;
+          const token = process.env.ANALYTICS_TOKEN;
+          const deadline = Date.now() + 45_000;
+          let health;
+          let healthStatus = 0;
+          while (Date.now() <= deadline) {
+            const response = await fetch(`${baseUrl}/health`, {
+              headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+              signal: AbortSignal.timeout(12_000),
+            });
+            healthStatus = response.status;
+            health = await response.json().catch(() => null);
+            if (response.status === 200 && health?.ok === true && health?.environment === 'staging' && health?.analytics_mode === 'shadow' && health?.analytics_ready === true) break;
+            await new Promise((resolve) => setTimeout(resolve, 3_000));
+          }
+          assert.equal(healthStatus, 200, 'staging Token Vault health did not become reachable');
+          assert.equal(health?.ok, true, 'staging Token Vault is unhealthy');
+          assert.equal(health?.environment, 'staging');
+          assert.equal(health?.analytics_mode, 'shadow');
+          assert.equal(health?.analytics_ready, true);
+
+          const contractResponse = await fetch(`${baseUrl}/contract`, {
+            headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+            signal: AbortSignal.timeout(12_000),
+          });
+          const contract = await contractResponse.json().catch(() => null);
+          assert.equal(contractResponse.status, 200, 'staging Token Vault contract is not reachable');
+          assert.equal(contract?.ok, true);
+          assert.equal(contract?.service, 'skincos-token-vault');
+          assert.equal(contract?.endpoints?.analyticsOperation, 'POST /internal/token-vault/v1/analytics/operations');
+          assert.equal(contract?.auth?.analytics_secret, 'TOKEN_VAULT_ANALYTICS_API_TOKEN');
+
+          const negativeCorrelation = `ii-shadow-negative-${randomUUID()}`;
+          const negativeResponse = await fetch(`${baseUrl}/v1/analytics/operations`, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${token}`,
+              accept: 'application/json',
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              provider: 'meta-graph',
+              operation: 'resolve_creator',
+              credential_ref: 'shadow-invalid-credential',
+              canonical_handle: 'shadow.invalid',
+              observed_at: new Date().toISOString(),
+              retrieved_at: new Date().toISOString(),
+              correlation_id: negativeCorrelation,
+              limit: 1,
+            }),
+            signal: AbortSignal.timeout(12_000),
+          });
+          const negative = await negativeResponse.json().catch(() => null);
+          assert.equal(negativeResponse.status, 403, 'invalid credential must fail closed');
+          assert.equal(negative?.error, 'permission_gap');
+          assert.equal(typeof negative?.requestId, 'string');
+
+          const evidence = {
+            schema_version: 'influencer-intelligence/staging-shadow-evidence/v1',
+            generated_at: new Date().toISOString(),
+            source_sha: process.env.SOURCE_SHA,
+            environment: 'staging',
+            mode: 'shadow',
+            worker: 'skincos-token-vault-staging',
+            incumbent_version: process.env.INCUMBENT,
+            candidate_version: process.env.CANDIDATE,
+            health: {
+              status: healthStatus,
+              environment: health.environment,
+              analytics_mode: health.analytics_mode,
+              analytics_ready: health.analytics_ready,
+              request_id: health.requestId,
+            },
+            contract: {
+              status: contractResponse.status,
+              analytics_operation: contract.endpoints.analyticsOperation,
+              analytics_secret_name: contract.auth.analytics_secret,
+              analytics_scope: contract.auth.analytics_scope,
+              request_id: contract.requestId,
+            },
+            negative_request: {
+              status: negativeResponse.status,
+              error: negative.error,
+              correlation_id: negativeCorrelation,
+              request_id: negative.requestId,
+            },
+          };
+          fs.writeFileSync(process.env.EVIDENCE_FILE, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+          process.stdout.write(`staging shadow ready: ${JSON.stringify({ worker: evidence.worker, incumbent: evidence.incumbent_version, candidate: evidence.candidate_version, negative: evidence.negative_request.error })}\n`);
+          NODE
+
+          negative_correlation="$(node -e "const v=require(process.argv[1]);process.stdout.write(v.negative_request.correlation_id)" "$output_root/evidence.json")"
+          wrangler d1 execute skincos-token-vault-staging --remote --config "$config" --env staging --json \
+            --command "SELECT request_id, status, json_extract(metadata_json, '$.operation') AS operation, json_extract(metadata_json, '$.correlation_id') AS correlation_id FROM credential_token_audit WHERE event = 'analytics.meta_graph.operation' AND json_extract(metadata_json, '$.correlation_id') = '$negative_correlation' ORDER BY created_at DESC LIMIT 1" \
+            > "$output_root/negative-audit.json"
+          EVIDENCE_FILE="$output_root/evidence.json" AUDIT_FILE="$output_root/negative-audit.json" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+
+          const evidence = JSON.parse(fs.readFileSync(process.env.EVIDENCE_FILE, 'utf8'));
+          const response = JSON.parse(fs.readFileSync(process.env.AUDIT_FILE, 'utf8'));
+          const rows = Array.isArray(response)
+            ? response.flatMap((entry) => entry?.results || [])
+            : (response?.results || []);
+          assert.equal(rows.length, 1, 'negative request audit entry is missing');
+          assert.equal(rows[0].status, 'permission_gap');
+          assert.equal(rows[0].operation, 'resolve_creator');
+          assert.equal(rows[0].correlation_id, evidence.negative_request.correlation_id);
+          evidence.negative_request.audit_status = rows[0].status;
+          fs.writeFileSync(process.env.EVIDENCE_FILE, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Seal one staging-only Meta analytics credential
+        if: ${{ inputs.run_real_router_smoke == true }}
+        env:
+          INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN }}
+          INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          cd platform/security/token-vault
+          output_root="$RUNNER_TEMP/influencer-intelligence-staging-shadow"
+          bootstrap_token_file="$output_root/bootstrap-token"
+          [[ -s "$bootstrap_token_file" ]] || {
+            echo 'Workflow-only staging bootstrap credential is unavailable.' >&2
+            exit 1
+          }
+          bootstrap_token="$(<"$bootstrap_token_file")"
+          trap 'unset bootstrap_token INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN' EXIT
+          printf '%s' "$INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN" | \
+            BOOTSTRAP_TOKEN="$bootstrap_token" \
+            INSTAGRAM_ACCOUNT_ID="$INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID" \
+            BASE_URL='https://api-staging.skincos.com.br/internal/token-vault' \
+            BOOTSTRAP_FILE="$output_root/bootstrap-result.json" \
+            EVIDENCE_FILE="$output_root/evidence.json" \
+            node scripts/seal-staging-analytics-credential.mjs
+          bootstrap_request_id="$(node -e "const v=require(process.argv[1]);process.stdout.write(v.request_id)" "$output_root/bootstrap-result.json")"
+          npx --yes wrangler@4.123.0 d1 execute skincos-token-vault-staging --remote --config wrangler.toml --env staging --json \
+            --command "SELECT request_id, status FROM credential_token_audit WHERE event = 'analytics.staging_bootstrap' AND request_id = '$bootstrap_request_id' ORDER BY created_at DESC LIMIT 1" \
+            > "$output_root/bootstrap-audit.json"
+          EVIDENCE_FILE="$output_root/evidence.json" AUDIT_FILE="$output_root/bootstrap-audit.json" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+
+          const evidence = JSON.parse(fs.readFileSync(process.env.EVIDENCE_FILE, 'utf8'));
+          const response = JSON.parse(fs.readFileSync(process.env.AUDIT_FILE, 'utf8'));
+          const rows = Array.isArray(response)
+            ? response.flatMap((entry) => entry?.results || [])
+            : (response?.results || []);
+          assert.equal(rows.length, 1, 'staging credential bootstrap audit entry is missing');
+          assert.equal(rows[0].request_id, evidence.staging_credential_bootstrap.request_id);
+          assert.ok(['ok', 'bootstrap_already_sealed'].includes(rows[0].status));
+          evidence.staging_credential_bootstrap.audit_status = rows[0].status;
+          fs.writeFileSync(process.env.EVIDENCE_FILE, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Run one approved Meta-only router smoke
+        if: ${{ inputs.run_real_router_smoke == true }}
+        env:
+          INFLUENCER_INTELLIGENCE_SHADOW_CREDENTIAL_REF: ig-analytics-staging-shadow-v1
+          INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE: ${{ secrets.INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE }}
+        run: |
+          set -euo pipefail
+          cd platform/security/token-vault
+          output_root="$RUNNER_TEMP/influencer-intelligence-staging-shadow"
+          analytics_token_file="$output_root/analytics-token"
+          [[ -s "$analytics_token_file" ]] || { echo 'Workflow-only analytics credential is unavailable.' >&2; exit 1; }
+          analytics_token="$(<"$analytics_token_file")"
+          trap 'unset analytics_token' EXIT
+          TOKEN_VAULT_ANALYTICS_API_TOKEN="$analytics_token" \
+            node ../../../social/influencer-intelligence/staging-shadow-router.mjs > "$output_root/router-smoke.json"
+          EVIDENCE_FILE="$output_root/evidence.json" SMOKE_FILE="$output_root/router-smoke.json" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+
+          const evidence = JSON.parse(fs.readFileSync(process.env.EVIDENCE_FILE, 'utf8'));
+          const smoke = JSON.parse(fs.readFileSync(process.env.SMOKE_FILE, 'utf8'));
+          assert.deepEqual(smoke.provider_order, ['meta-graph']);
+          assert.ok(['ok', 'unavailable'].includes(smoke.status));
+          assert.ok(smoke.operations.every((operation) => operation.attempts.every((attempt) => attempt.provider === 'meta-graph')));
+          assert.ok(Number.isInteger(smoke.operation_count) && smoke.operation_count >= 1 && smoke.operation_count <= 2);
+          assert.ok(
+            Number.isInteger(smoke.recorded_transport_attempts)
+            && smoke.recorded_transport_attempts >= smoke.operation_count
+            && smoke.recorded_transport_attempts <= smoke.operation_count * 2,
+          );
+          assert.equal(JSON.stringify(smoke).includes('source_ref'), false, 'router smoke must not expose raw provenance references');
+          evidence.router_smoke = smoke;
+          fs.writeFileSync(process.env.EVIDENCE_FILE, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Validate correlated Meta router audit
+        if: ${{ inputs.run_real_router_smoke == true }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          cd platform/security/token-vault
+          output_root="$RUNNER_TEMP/influencer-intelligence-staging-shadow"
+          correlation="$(node -e "const v=require(process.argv[1]);process.stdout.write(v.router_smoke.correlation_id)" "$output_root/evidence.json")"
+          max_attempts="$(node -e "const v=require(process.argv[1]);process.stdout.write(String(v.router_smoke.recorded_transport_attempts))" "$output_root/evidence.json")"
+          npx --yes wrangler@4.123.0 d1 execute skincos-token-vault-staging --remote --config wrangler.toml --env staging --json \
+            --command "SELECT request_id, status, json_extract(metadata_json, '$.operation') AS operation, json_extract(metadata_json, '$.correlation_id') AS correlation_id FROM credential_token_audit WHERE event = 'analytics.meta_graph.operation' AND json_extract(metadata_json, '$.correlation_id') = '$correlation' ORDER BY created_at ASC" \
+            > "$output_root/router-audit.json"
+          EVIDENCE_FILE="$output_root/evidence.json" AUDIT_FILE="$output_root/router-audit.json" MAX_ATTEMPTS="$max_attempts" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+
+          const evidence = JSON.parse(fs.readFileSync(process.env.EVIDENCE_FILE, 'utf8'));
+          const response = JSON.parse(fs.readFileSync(process.env.AUDIT_FILE, 'utf8'));
+          const rows = Array.isArray(response)
+            ? response.flatMap((entry) => entry?.results || [])
+            : (response?.results || []);
+          const maxAttempts = Number(process.env.MAX_ATTEMPTS);
+          assert.ok(rows.length <= maxAttempts, 'router audit exceeds the bounded router attempts');
+          assert.ok(rows.every((row) => row.correlation_id === evidence.router_smoke.correlation_id));
+          assert.ok(rows.every((row) => ['ok', 'permission_gap', 'coverage_gap', 'timeout', 'provider_unavailable', 'rate_limited', 'invalid_response'].includes(row.status)));
+          assert.ok(rows.every((row) => ['resolve_creator', 'get_profile'].includes(row.operation)));
+          const hasTransportGap = evidence.router_smoke.operations.some((operation) => operation.attempts.some((attempt) => (
+            attempt.classification === 'timeout' || attempt.classification === 'provider_unavailable' || attempt.classification === 'retry_exhausted'
+          )));
+          if (evidence.router_smoke.status === 'ok') {
+            assert.equal(rows.length, maxAttempts, 'an observed Meta result requires one audit row per recorded transport attempt');
+          } else if (rows.length === 0) {
+            assert.equal(hasTransportGap, true, 'an unavailable result without an audit row must be a bounded transport gap');
+          }
+          evidence.router_smoke.audit_event_count = rows.length;
+          evidence.router_smoke.audit_statuses = rows.map((row) => row.status);
+          evidence.router_smoke.audit_correlation = rows.length > 0 ? 'correlated' : 'not_observed_after_transport_gap';
+          fs.writeFileSync(process.env.EVIDENCE_FILE, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Verify staging candidate after validation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          cd platform/security/token-vault
+          output_root="$RUNNER_TEMP/influencer-intelligence-staging-shadow"
+          candidate="$(<"$output_root/candidate-version.txt")"
+          [[ "$candidate" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Candidate version is unavailable for final verification.' >&2; exit 1; }
+          npx --yes wrangler@4.123.0 deployments status --json --config wrangler.toml --env staging > "$output_root/candidate-active-after-validation.json"
+          EVIDENCE_FILE="$output_root/evidence.json" CANDIDATE="$candidate" node - "$output_root/candidate-active-after-validation.json" <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = value.versions || value.latest?.versions || [];
+          assert.equal(versions.length, 1, 'staging shadow must retain a single active version');
+          assert.equal(Number(versions[0]?.percentage), 100, 'staging shadow candidate must retain all traffic');
+          assert.equal(String(versions[0]?.version_id || versions[0]?.id || '').toLowerCase(), process.env.CANDIDATE.toLowerCase());
+          const evidence = JSON.parse(fs.readFileSync(process.env.EVIDENCE_FILE, 'utf8'));
+          evidence.candidate_active_after_validation = true;
+          fs.writeFileSync(process.env.EVIDENCE_FILE, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Restore staging incumbent if validation fails or the run is cancelled
+        if: ${{ always() && (failure() || cancelled()) && env.INFLUENCER_INTELLIGENCE_STAGING_INCUMBENT != '' && env.INFLUENCER_INTELLIGENCE_STAGING_CANDIDATE != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          INCUMBENT: ${{ env.INFLUENCER_INTELLIGENCE_STAGING_INCUMBENT }}
+          CANDIDATE: ${{ env.INFLUENCER_INTELLIGENCE_STAGING_CANDIDATE }}
+        run: |
+          set -euo pipefail
+          cd platform/security/token-vault
+          output_root="$RUNNER_TEMP/influencer-intelligence-staging-shadow"
+          [[ -f "$output_root/traffic-mutation-started" ]] || { echo 'No staging traffic mutation started; compensation is a no-op.'; exit 0; }
+          npx --yes wrangler@4.123.0 deployments status --json --config wrangler.toml --env staging > "$output_root/rollback-before.json"
+          ownership="$(node - "$output_root/rollback-before.json" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const versions = value.versions || value.latest?.versions || [];
+          const selected = [...versions].sort((a, b) => Number(b.percentage || 0) - Number(a.percentage || 0))[0];
+          const id = String(selected?.version_id || selected?.id || '').toLowerCase();
+          const percentage = Number(selected?.percentage || 0);
+          const incumbent = String(process.env.INCUMBENT).toLowerCase();
+          const candidate = String(process.env.CANDIDATE).toLowerCase();
+          if (id === incumbent && percentage === 100) process.stdout.write('already-incumbent');
+          else if (id === candidate && percentage === 100) process.stdout.write('candidate-owned');
+          else process.stdout.write('ownership-conflict');
+          NODE
+          )"
+          case "$ownership" in
+            already-incumbent) echo 'Staging Token Vault was already restored.' ;;
+            candidate-owned)
+              npx --yes wrangler@4.123.0 versions deploy "$INCUMBENT@100%" --yes --config wrangler.toml --env staging --message "influencer-intelligence:staging-shadow-rollback:${GITHUB_SHA}"
+              npx --yes wrangler@4.123.0 deployments status --json --config wrangler.toml --env staging > "$output_root/rollback-after.json"
+              INCUMBENT="$INCUMBENT" node - "$output_root/rollback-after.json" <<'NODE'
+              const fs = require('fs');
+              const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+              const versions = value.versions || value.latest?.versions || [];
+              if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100 || String(versions[0]?.version_id || versions[0]?.id || '').toLowerCase() !== process.env.INCUMBENT.toLowerCase()) {
+                throw new Error('rollback did not restore the exact staging incumbent');
+              }
+          NODE
+              ;;
+            *) echo 'Staging Token Vault ownership changed; refusing an unsafe rollback.' >&2; exit 1 ;;
+          esac
+
+      - name: Remove workflow-only analytics credential
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          output_root="$RUNNER_TEMP/influencer-intelligence-staging-shadow"
+          rm -f -- "$output_root/analytics-token"
+
+      - name: Publish redacted staging shadow evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: influencer-intelligence-staging-shadow-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/influencer-intelligence-staging-shadow/evidence.json
+            ${{ runner.temp }}/influencer-intelligence-staging-shadow/router-smoke.json
+            ${{ runner.temp }}/influencer-intelligence-staging-shadow/rollback-after.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Release Token Vault release lease after staging shadow
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || '' }}
+          proof_file: ${{ runner.temp }}/influencer-intelligence-staging-shadow-lease.json

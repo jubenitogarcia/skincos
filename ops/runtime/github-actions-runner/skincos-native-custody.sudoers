@@ -1,5 +1,13 @@
 # Deliberately argumentless: the helper itself has a fixed target path and a
-# fixed two-line stdin contract. No additional privileged command is granted
+# fixed bounded stdin contract. No additional privileged command is granted
 # to the runner account.
 Cmnd_Alias SKINCOS_NATIVE_CUSTODY = /usr/local/sbin/skincos-provision-global-coordination
 skincos-actions ALL=(root) NOPASSWD: SKINCOS_NATIVE_CUSTODY
+# Each Meta Ads transition is a fixed helper action. Its strictly bounded
+# operands arrive only on stdin; no caller-selected script, path or shell is
+# admitted through sudoers.
+Cmnd_Alias SKINCOS_META_ADS_TRACKING_CUSTODY = /usr/local/sbin/skincos-meta-ads-tracking-custody attest, /usr/local/sbin/skincos-meta-ads-tracking-custody audit, /usr/local/sbin/skincos-meta-ads-tracking-custody checkpoint, /usr/local/sbin/skincos-meta-ads-tracking-custody discover-current, /usr/local/sbin/skincos-meta-ads-tracking-custody checkpoint-current, /usr/local/sbin/skincos-meta-ads-tracking-custody apply, /usr/local/sbin/skincos-meta-ads-tracking-custody preflight, /usr/local/sbin/skincos-meta-ads-tracking-custody preflight-rollback, /usr/local/sbin/skincos-meta-ads-tracking-custody restore, /usr/local/sbin/skincos-meta-ads-tracking-custody promote-native, /usr/local/sbin/skincos-meta-ads-tracking-custody promote-and-apply, /usr/local/sbin/skincos-meta-ads-tracking-custody rollback-native, /usr/local/sbin/skincos-meta-ads-tracking-custody conversion-readback
+skincos-actions ALL=(root) NOPASSWD: SKINCOS_META_ADS_TRACKING_CUSTODY
+Cmnd_Alias SKINCOS_PONTO_JIT_CUSTODY = /usr/local/sbin/skincos-provision-ponto-jit materialize, /usr/local/sbin/skincos-provision-ponto-jit cleanup
+skincos-actions ALL=(root) NOPASSWD: SKINCOS_PONTO_JIT_CUSTODY
+skincos-ponto-jit ALL=(root) NOPASSWD: /usr/local/sbin/skincos-provision-ponto-jit cleanup

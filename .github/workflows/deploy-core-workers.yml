@@ -73,7 +73,7 @@ jobs:
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
-      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
     with:
       required: ${{ inputs.release_scope == 'ponto' && inputs.target != 'preview' }}
       global_lease_required: ${{ inputs.target != 'preview' }}
@@ -275,7 +275,8 @@ jobs:
           required: 'true'
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
           resource: global:ponto-workers-writer
           module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'core' }}
@@ -846,7 +847,11 @@ jobs:
           import fs from "node:fs";
           import { remoteSnapshot } from "./.github/scripts/ponto-core-baseline-publisher.mjs";
           const predecessorMode = process.env.PONTO_BOOTSTRAP_PREDECESSOR_MODE;
-          const expectedVersionMessage = predecessorMode === "staging-incumbent"
+          const isStagingIncumbent = ["staging-incumbent", "evidence-derived-staging-incumbent"].includes(predecessorMode);
+          if (!isStagingIncumbent && predecessorMode !== "historical-bootstrap") {
+            throw new Error("staging Ponto Core predecessor mode is invalid");
+          }
+          const expectedVersionMessage = isStagingIncumbent
             ? `ponto:coreApi:${process.env.PONTO_BOOTSTRAP_SOURCE_SHA}`
             : `ponto-core-baseline:${process.env.PONTO_BOOTSTRAP_SOURCE_SHA}`;
           const snapshot = await remoteSnapshot({
@@ -1112,7 +1117,8 @@ jobs:
           required: 'true'
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
           resource: global:ponto-workers-writer
           module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'core' }}
@@ -1517,7 +1523,8 @@ jobs:
           required: 'true'
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED }}
           coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
           resource: global:ponto-workers-writer
           module: ${{ inputs.release_scope == 'ponto' && 'ponto' || 'core' }}
@@ -1982,8 +1989,9 @@ jobs:
     if: ${{ always() && needs.coordination.outputs.global_lease_required == 'true' }}
     uses: ./.github/workflows/global-coordination-release.yml
     secrets:
-      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
     with:
       required: true
       proof_b64: ${{ needs.coordination.outputs.global_proof_b64 }}
       coordinator_url: ${{ needs.coordination.outputs.global_coordinator_url }}
+      key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}

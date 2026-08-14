@@ -64,7 +64,26 @@ test("coordinator initializes runner-only custody paths inside a step", () => {
   assert.doesNotMatch(jobEnvironment, /\$\{\{\s*runner\./);
   assert.match(
     initialization,
-    /echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=\$RUNNER_TEMP\/ponto-release\/global-coordination-release-ponto\.json" >> "\$GITHUB_ENV"/,
+    /if \[\[ "\$STAGE" != "preview" \]\]; then\s+echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=\$RUNNER_TEMP\/ponto-release\/global-coordination-release-ponto\.json" >> "\$GITHUB_ENV"/,
+  );
+
+  const acquireStart = coordinator.indexOf(
+    "\n      - name: Acquire the composite Ponto release lease before gate settlement",
+  );
+  const acquireEnd = coordinator.indexOf("\n      - name:", acquireStart + 1);
+  const releaseStart = coordinator.indexOf(
+    "\n      - name: Release the composite Ponto release lease",
+  );
+  const releaseEnd = coordinator.indexOf("\n\n  recovery-latch:", releaseStart);
+  assert.ok(acquireStart >= 0);
+  assert.ok(releaseStart >= 0);
+  assert.match(
+    coordinator.slice(acquireStart, acquireEnd),
+    /if: \$\{\{ inputs\.stage != 'preview' \}\}/,
+  );
+  assert.match(
+    coordinator.slice(releaseStart, releaseEnd),
+    /if: \$\{\{ always\(\) && inputs\.stage != 'preview' \}\}/,
   );
 });
 
@@ -135,7 +154,7 @@ test("ordinary and watchdog rollback revalidate governance and use dedicated int
   }
 });
 
-test("staging cleanup does not dispatch a transition before release identity exists", () => {
+test("staging cleanup dispatches the regular control transition only after the authenticated journey", () => {
   const source = workflow("ponto-progressive-release.yml");
   const cleanup = source.indexOf(
     "- name: Restore staging Ponto to maintenance after the journey",
@@ -144,8 +163,9 @@ test("staging cleanup does not dispatch a transition before release identity exi
   const cleanupBlock = source.slice(cleanup, source.indexOf("\n      - name:", cleanup + 1));
   assert.match(
     cleanupBlock,
-    /if: \$\{\{ always\(\) && inputs\.stage == 'staging' && steps\.release_identity\.outcome == 'success' \}\}/,
+    /if: \$\{\{ inputs\.stage == 'staging' && steps\.staging_journey\.outcome == 'success' \}\}/,
   );
+  assert.doesNotMatch(cleanupBlock, /always\(\)/);
 });
 
 test("every coordinator module transition carries the immutable release SHA", () => {

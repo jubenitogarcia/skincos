@@ -1,6 +1,7 @@
 import { ClipboardList, Stethoscope, WalletCards } from 'lucide-react'
 import { hasCrmModuleAccess } from '@/crmRoleAccess'
 import type { CrmModuleManifest, ModuleAccessContext, ModuleAvailability } from './types'
+import { INFLUENCER_INTELLIGENCE_FEATURE_FLAG, INFLUENCER_INTELLIGENCE_GRANT } from '@/influencerIntelligenceTypes'
 
 const fallbackFor = (label: string) => ({ loadingLabel: `Carregando ${label}`, unavailableLabel: `${label} indisponível` })
 const manifest = (entry: Omit<CrmModuleManifest, 'permissions' | 'fallback'>): CrmModuleManifest => ({ ...entry, permissions: [`module.${entry.key}.access`], fallback: fallbackFor(entry.label) })
@@ -31,6 +32,7 @@ export const crmModuleRegistry: readonly CrmModuleManifest[] = [
   manifest({ key: 'meta-sentiment', label: 'Sentimento', icon: '🧠', loader: () => import('@/MetaSentimentMonitor').then((m) => ({ default: m.MetaSentimentMonitor })) }),
   manifest({ key: 'meta-pages-review', label: 'Meta Review', icon: '🧪', loader: () => import('@/MetaPagesReviewStudio').then((m) => ({ default: m.MetaPagesReviewStudio })) }),
   manifest({ key: 'instagram-studio', label: 'Redes Sociais', icon: '🌐', loader: () => import('@/SocialNetworksStudio').then((m) => ({ default: m.SocialNetworksStudio })) }),
+  manifest({ key: 'influencer-intelligence', label: 'Influencer Intelligence', icon: '🧠', featureFlag: INFLUENCER_INTELLIGENCE_FEATURE_FLAG, requiredGrant: INFLUENCER_INTELLIGENCE_GRANT, loader: () => import('@/InfluencerIntelligenceModule').then((m) => ({ default: m.InfluencerIntelligenceModule })) }),
   manifest({ key: 'threads-studio', label: 'Threads', icon: '🧵', loader: () => import('@/ThreadsStudio').then((m) => ({ default: m.ThreadsStudio })) }),
   manifest({ key: 'workflow', label: 'Workflows', icon: '⚙️', loader: () => import('@/WorkflowEngine').then((m) => ({ default: m.WorkflowEngine })) }),
   manifest({ key: 'projects', label: 'Projetos', icon: '📁', loader: () => import('@/ProjectManagement').then((m) => ({ default: m.ProjectManagement })) }),
@@ -69,6 +71,8 @@ export const crmModuleRegistry: readonly CrmModuleManifest[] = [
 export const crmModuleByKey = new Map(crmModuleRegistry.map((entry) => [entry.key, entry]))
 export function moduleAvailability(manifestEntry: CrmModuleManifest, context: ModuleAccessContext): ModuleAvailability {
   if (!context.enabledModuleKeys.has(manifestEntry.key)) return { available: false, state: 'unreleased', reason: 'Este módulo ainda não foi liberado neste ambiente.' }
+  if (manifestEntry.featureFlag && context.featureFlags?.[manifestEntry.featureFlag] !== true) return { available: false, state: 'unreleased', reason: 'Este módulo aguarda ativação server-side.' }
+  if (manifestEntry.requiredGrant && !context.grants?.has(manifestEntry.requiredGrant)) return { available: false, state: 'forbidden', reason: 'Você não possui o grant necessário para este módulo.' }
   if (manifestEntry.key === 'finance' && !context.financeEnabled) return { available: false, state: 'unreleased', reason: 'Financeiro aguarda liberação operacional e escopo explícito.' }
   if (!hasCrmModuleAccess(context.role, context.allowedModules, manifestEntry.key)) return { available: false, state: 'forbidden', reason: 'Você não possui a permissão necessária para este módulo.' }
   if (context.maintenanceModuleKeys?.has(manifestEntry.key)) return { available: false, state: 'maintenance', reason: 'Este módulo está em manutenção programada. A navegação e os demais módulos continuam disponíveis.' }

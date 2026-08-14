@@ -9,6 +9,7 @@ export type CrmAuthUser = {
   role?: string
   allowedUnits?: string[]
   allowedModules?: string[]
+  grants?: string[]
   localFocusModule?: string
 }
 
@@ -104,6 +105,7 @@ export function getLocalDevAuthUser(context: any): CrmAuthUser {
     parseList(env.LOCAL_AUTH_ALLOWED_MODULES) ||
     parseList(env.DEV_AUTH_ALLOWED_MODULES)
   const localFocusModule = String(env.LOCAL_CRM_FOCUS_MODULE || '').trim()
+  const grants = parseList(env.LOCAL_AUTH_GRANTS) || parseList(env.DEV_AUTH_GRANTS)
 
   return {
     id: username,
@@ -114,6 +116,7 @@ export function getLocalDevAuthUser(context: any): CrmAuthUser {
     role,
     allowedUnits,
     allowedModules: effectiveAllowedModules(role, allowedModules),
+    ...(grants ? { grants } : {}),
     localFocusModule: /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(localFocusModule)
       ? localFocusModule
       : undefined,
@@ -190,6 +193,7 @@ export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
     role: normalizeRole(raw?.role || undefined) || undefined,
     allowedUnits: Array.isArray(raw?.allowedUnits) ? raw.allowedUnits : undefined,
     allowedModules: effectiveAllowedModules(raw?.role, raw?.allowedModules),
+    grants: Array.isArray(raw?.grants) ? raw.grants.map(String).filter(Boolean) : undefined,
   }
 }
 

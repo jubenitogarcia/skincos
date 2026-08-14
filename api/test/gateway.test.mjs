@@ -45,15 +45,22 @@ test('Ponto route-only health and readiness use only the Timekeeping binding', a
         inventoryHandler: async () => new Response('must-not-run'),
         timekeepingHandler: async (request) => {
             probePaths.push(new URL(request.url).pathname);
-            return new Response(JSON.stringify({ ok: true, ready: true }), { headers: { 'content-type': 'application/json' } });
+            return new Response(JSON.stringify({ ok: true, ready: true }), {
+                headers: {
+                    'content-type': 'application/json',
+                    'x-skincos-timekeeping-release-sha': 'a'.repeat(40),
+                    'x-skincos-timekeeping-version-id': '33333333-3333-4333-8333-333333333333',
+                    'x-skincos-timekeeping-environment': 'staging',
+                },
+            });
         },
     });
     const env = {
         PONTO_ROUTE_ONLY: 'true',
         TIMEKEEPING: { fetch: async () => new Response('unused') },
-        APP_VERSION: 'baseline-sha',
+        APP_VERSION: 'a'.repeat(40),
         ENVIRONMENT: 'staging',
-        CF_VERSION_METADATA: { id: 'version-id', tag: 'baseline-tag' },
+        CF_VERSION_METADATA: { id: '22222222-2222-4222-8222-222222222222', tag: 'baseline-tag' },
     };
 
     const health = await isolated(new Request('https://ponto-core.invalid/health', { headers: { 'x-request-id': 'ponto-health-1' } }), env, {});
@@ -63,11 +70,19 @@ test('Ponto route-only health and readiness use only the Timekeeping binding', a
     assert.equal(healthBody.ready, true);
     assert.equal(healthBody.dependencies.timekeeping.state, 'configured');
     assert.equal(healthBody.dependencies.d1, undefined);
-    assert.deepEqual(healthBody.version_metadata, { id: 'version-id', tag: 'baseline-tag' });
+    assert.deepEqual(healthBody.version_metadata, { id: '22222222-2222-4222-8222-222222222222', tag: 'baseline-tag' });
+    assert.equal(health.headers.get('x-skincos-gateway-release-sha'), 'a'.repeat(40));
+    assert.equal(health.headers.get('x-skincos-gateway-version-id'), '22222222-2222-4222-8222-222222222222');
 
     const readiness = await isolated(new Request('https://ponto-core.invalid/readiness?ignored=true'), env, {});
     assert.equal(readiness.status, 200);
     assert.equal((await readiness.json()).dependencies.timekeeping.state, 'healthy');
+    assert.equal(readiness.headers.get('x-skincos-gateway-release-sha'), 'a'.repeat(40));
+    assert.equal(readiness.headers.get('x-skincos-gateway-environment'), 'staging');
+    assert.equal(readiness.headers.get('x-skincos-gateway-version-id'), '22222222-2222-4222-8222-222222222222');
+    assert.equal(readiness.headers.get('x-skincos-timekeeping-release-sha'), 'a'.repeat(40));
+    assert.equal(readiness.headers.get('x-skincos-timekeeping-version-id'), '33333333-3333-4333-8333-333333333333');
+    assert.equal(readiness.headers.get('x-skincos-timekeeping-environment'), 'staging');
     assert.deepEqual(probePaths, ['/api/ponto/readiness']);
 });
 
@@ -188,6 +203,45 @@ test('dedicated Ponto entrypoint gives authenticated Timekeeping writes a bounde
     assert.equal(response.status, 401);
     assert.equal((await response.json()).error, 'PIN_INVALID');
     assert.ok(Date.now() - startedAt >= 850);
+    resetBoundServiceResilienceForTest();
+});
+
+test('dedicated Ponto readiness preserves the authoritative maintenance contract', async () => {
+    resetBoundServiceResilienceForTest();
+    let bindingCalls = 0;
+    const response = await pontoCoreWorker.fetch(new Request('https://ponto-core.invalid/api/ponto/readiness'), {
+        PONTO_ROUTE_ONLY: 'true',
+        TIMEKEEPING: {
+            fetch: async () => {
+                bindingCalls += 1;
+                return new Response(JSON.stringify({
+                    service: 'workforce-timekeeping',
+                    ok: false,
+                    ready: false,
+                    code: 'MODULE_MAINTENANCE',
+                    availability: { state: 'maintenance', source: 'control' },
+                    versionMetadata: { releaseSha: 'a'.repeat(40) },
+                }), {
+                    status: 503,
+                    headers: { 'content-type': 'application/json; charset=utf-8' },
+                });
+            },
+        },
+        APP_VERSION: 'a'.repeat(40),
+        ENVIRONMENT: 'staging',
+        TIMEKEEPING_VERSION_ID: '33333333-3333-4333-8333-333333333333',
+        CF_VERSION_METADATA: { id: '22222222-2222-4222-8222-222222222222' },
+    }, {});
+
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('x-skincos-dependency-status'), 'live');
+    const body = await response.json();
+    assert.equal(body.service, 'workforce-timekeeping');
+    assert.equal(body.ready, false);
+    assert.equal(body.code, 'MODULE_MAINTENANCE');
+    assert.equal(body.availability.state, 'maintenance');
+    assert.equal(body.versionMetadata.releaseSha, 'a'.repeat(40));
+    assert.equal(bindingCalls, 1);
     resetBoundServiceResilienceForTest();
 });
 

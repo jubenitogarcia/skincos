@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
 type BeautyMovementCardIllustrationProps = {
     cardId: string;
@@ -47,7 +47,7 @@ function DefaultArt() {
 }
 
 /** Original, monochrome editorial drawings for the card concepts. */
-export default function BeautyMovementCardIllustration({ cardId }: BeautyMovementCardIllustrationProps) {
+const BeautyMovementCardIllustration = memo(function BeautyMovementCardIllustration({ cardId }: BeautyMovementCardIllustrationProps) {
     let art: ReactNode;
 
     switch (cardId) {
@@ -310,4 +310,8 @@ export default function BeautyMovementCardIllustration({ cardId }: BeautyMovemen
             {art}
         </svg>
     );
-}
+});
+
+BeautyMovementCardIllustration.displayName = "BeautyMovementCardIllustration";
+
+export default BeautyMovementCardIllustration;

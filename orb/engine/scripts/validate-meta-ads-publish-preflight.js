@@ -6,13 +6,15 @@ const path = require('path');
 const {
   manualExecutionAuditState,
 } = require('./lib/meta-ads-publish-execution-semantics');
-const { CODE_SOURCES } = require('./lib/meta-ads-publish-code-sources');
+const { CODE_SOURCES, codeSourceCoverage } = require('./lib/meta-ads-publish-code-sources');
 const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
 const {
-  CRM_URL: CRM_COMMERCIAL_CATALOG_URL,
   FETCH_NODE: CRM_FETCH_NODE,
+  isSupportedCrmContextUrl,
   validate: validateCrmContextPrefetch,
 } = require('./patch-meta-ads-crm-context-prefetch');
+const { validate: validateAdvantagePlusDriftReadback } = require('./patch-meta-ads-advantage-plus-drift-readback');
+const { validate: validateTrackingReconciliation } = require('./patch-meta-ads-tracking-reconciliation');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 
@@ -35,7 +37,7 @@ function structuralContractDrift(nodes, connections) {
   const sheets = nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheetsTool');
   if (sheets.length) drift.push({ contract: 'commercial_offer_source', reason: 'google_sheets_tool_present', nodes: sheets.map((node) => node.name) });
   const crmFetch = nodes.find((node) => node.name === CRM_FETCH_NODE);
-  if (!crmFetch || crmFetch.type !== 'n8n-nodes-base.httpRequest' || crmFetch.parameters?.authentication !== 'genericCredentialType' || crmFetch.parameters?.genericAuthType !== 'httpBearerAuth' || !crmFetch.credentials?.httpBearerAuth?.id || !String(crmFetch.parameters?.url || '').includes(CRM_COMMERCIAL_CATALOG_URL)) {
+  if (!crmFetch || crmFetch.type !== 'n8n-nodes-base.httpRequest' || crmFetch.parameters?.authentication !== 'genericCredentialType' || crmFetch.parameters?.genericAuthType !== 'httpBearerAuth' || !crmFetch.credentials?.httpBearerAuth?.id || !isSupportedCrmContextUrl(crmFetch.parameters?.url)) {
     drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_prefetch_request_invalid' });
   }
   try {
@@ -71,6 +73,24 @@ function videoUploadContractDrift(workflow) {
   }
 }
 
+function advantagePlusDriftReadbackContractDrift(workflow) {
+  try {
+    validateAdvantagePlusDriftReadback(workflow);
+    return [];
+  } catch (error) {
+    return [{ contract: 'advantage_plus_graph_drift_readback', reason: String(error.message || error) }];
+  }
+}
+
+function trackingReconciliationContractDrift(workflow) {
+  try {
+    validateTrackingReconciliation(workflow);
+    return [];
+  } catch (error) {
+    return [{ contract: 'tracking_reconciliation', reason: String(error.message || error) }];
+  }
+}
+
 const CONTRACT_CONSTANT_PATTERNS = Object.freeze({
   WORKFLOW_CONTRACT_REVISION: /const\s+WORKFLOW_CONTRACT_REVISION\s*=\s*'([^']+)'/,
   DEFAULT_CTA_TYPE: /const\s+DEFAULT_CTA_TYPE\s*=\s*'([^']+)'/,
@@ -92,6 +112,8 @@ function creativeContractDrift(nodes) {
   const buildJobs = String(nodes.find((node) => node.name === 'Build Jobs')?.parameters?.jsCode || '');
   const validator = String(nodes.find((node) => node.name === 'Validate Meta Creative Payload')?.parameters?.jsCode || '');
   const gatewayParams = String(nodes.find((node) => node.name === 'Build Meta API Params From Vault')?.parameters?.jsCode || '');
+  const buildPayload = String(nodes.find((node) => node.name === 'Build Payload')?.parameters?.jsCode || '');
+  const verification = String(nodes.find((node) => node.name === 'Attach Advantage+ Verification')?.parameters?.jsCode || '');
   const drift = [];
   const buildRevision = codeConstant(buildJobs, 'WORKFLOW_CONTRACT_REVISION');
   const validatorRevision = codeConstant(validator, 'WORKFLOW_CONTRACT_REVISION');
@@ -113,6 +135,15 @@ function creativeContractDrift(nodes) {
   }
   if (!/source_url:\s*toHttps\(sourceUrl\)/.test(buildJobs) || !/creative_source_url_missing/.test(validator) || !/creative_source_url_primary_link_mismatch/.test(validator)) {
     drift.push({ contract: 'creative_payload', reason: 'source_url_contract_mismatch' });
+  }
+  if (!/adset_conversion_reconciliation/.test(gatewayParams) || !/creative_url_tags_readback/.test(gatewayParams) ||
+    !/tracking_contract/.test(buildPayload) || !/conversion_tracking/.test(buildPayload) ||
+    !/website_tracking_profile_not_configured/.test(buildJobs) || !/pending_reconciliation/.test(buildJobs) || !/website_url_tags_contract_missing/.test(buildJobs) ||
+    !/url_tags/.test(buildJobs) || !/validateTrackingContract/.test(validator) ||
+    !/creative_tracking_verification/.test(verification) || !/url_tags_graph_mismatch/.test(verification) ||
+    !/Prepare Tracking Reconciliation/.test(String(nodes.find((node) => node.name === 'Prepare Tracking Reconciliation')?.name || '')) ||
+    !/Attach Tracking Reconciliation/.test(String(nodes.find((node) => node.name === 'Attach Tracking Reconciliation')?.name || ''))) {
+    drift.push({ contract: 'creative_tracking', reason: 'conversion_or_url_tags_contract_missing' });
   }
   return drift;
 }
@@ -149,9 +180,15 @@ async function main() {
         drift.push({ node: nodeName, reason: 'source_live_drift' });
       }
     }
+    const coverage = codeSourceCoverage({ nodes });
+    for (const node of coverage.unmapped) drift.push({ node, reason: 'unmapped_live_code_node' });
+    for (const node of coverage.stale) drift.push({ node, reason: 'mapped_code_node_missing_live' });
+    for (const node of coverage.duplicates) drift.push({ node, reason: 'duplicate_live_code_node_name' });
     const settings = parseJson(workflow.settings, {});
     const structuralDrift = structuralContractDrift(nodes, connections);
     const videoUploadDrift = videoUploadContractDrift({ ...workflow, id: WORKFLOW_ID, nodes, connections });
+    const advantagePlusDriftReadbackDrift = advantagePlusDriftReadbackContractDrift({ ...workflow, id: WORKFLOW_ID, nodes, connections });
+    const trackingReconciliationDrift = trackingReconciliationContractDrift({ ...workflow, id: WORKFLOW_ID, nodes, connections });
     const creativeDrift = creativeContractDrift(nodes);
     const report = {
       workflow_id: WORKFLOW_ID,
@@ -166,6 +203,10 @@ async function main() {
       crm_catalog_contract_drift: structuralDrift,
       video_upload_contract_synchronized: videoUploadDrift.length === 0,
       video_upload_contract_drift: videoUploadDrift,
+      advantage_plus_graph_drift_readback_contract_synchronized: advantagePlusDriftReadbackDrift.length === 0,
+      advantage_plus_graph_drift_readback_contract_drift: advantagePlusDriftReadbackDrift,
+      tracking_reconciliation_contract_synchronized: trackingReconciliationDrift.length === 0,
+      tracking_reconciliation_contract_drift: trackingReconciliationDrift,
       creative_payload_contract_synchronized: creativeDrift.length === 0,
       creative_payload_contract_drift: creativeDrift,
       manual_execution_audit: manualExecutionAuditState(settings),
@@ -176,7 +217,7 @@ async function main() {
       service_restarts_performed: false,
     };
     console.log(JSON.stringify(report, null, 2));
-    if (drift.length || structuralDrift.length || videoUploadDrift.length || creativeDrift.length) process.exitCode = 1;
+    if (drift.length || structuralDrift.length || videoUploadDrift.length || advantagePlusDriftReadbackDrift.length || trackingReconciliationDrift.length || creativeDrift.length) process.exitCode = 1;
   } finally {
     await client.end();
   }

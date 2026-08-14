@@ -11,6 +11,7 @@ export const CLUBE_BOTOX_ASAAS_REDIRECTS: Record<string, string> = {
   "/nh/clubebotox40urec": "https://www.asaas.com/c/d6wi6vey83vare5o",
   "/nh/clubebotox50urec": "https://www.asaas.com/c/qfh7xmfkx75thufp",
   "/nh/clubebotox60urec": "https://www.asaas.com/c/s6pzbxxek5zupn20",
+  "/nh/clubebotoxa60urec": "https://www.asaas.com/c/kmqx08rera7xwnc6",
   "/nh/clubebotox90urec": "https://www.asaas.com/c/nhimvltr035trkro",
 
   // BarraShoppingSul — Clube do Botox
@@ -21,6 +22,7 @@ export const CLUBE_BOTOX_ASAAS_REDIRECTS: Record<string, string> = {
   "/bss/clubebotox40urec": "https://www.asaas.com/c/pf2r6q16tiyrp9bc",
   "/bss/clubebotox50urec": "https://www.asaas.com/c/prjvdv7v95x50y32",
   "/bss/clubebotox60urec": "https://www.asaas.com/c/lr38ej38lji2kyuz",
+  "/bss/clubebotoxa60urec": "https://www.asaas.com/c/j09bzb3zy2igqune",
   "/bss/clubebotox90urec": "https://www.asaas.com/c/zmfwvjotop3vpmjz",
 };
 
@@ -38,6 +40,7 @@ export const ESFA_REDIRECTS: Record<string, string> = {
   "/bss/fb": "https://www.facebook.com/espacofacial.barrashoppingsul",
   "/bss/giftcard": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero presentear _alguém especial_ com o *Cartão Presente* da _Espaço Facial_ – *autoestima, beleza e bem-estar* em forma de presente! 💝",
   "/bss/ig": "https://www.instagram.com/espacofacial_barrashoppingsul",
+  "/bss/iglivewa": "https://wa.me/5551980882293?text=Vim%20pela%20live%20da%20%2AEspa%C3%A7o%20Facial%2A%20e%20quero%20saber%20mais%20sobre%20a%20%5Fcondi%C3%A7%C3%A3o%20especial%5F%20que%20voc%C3%AAs%20apresentaram%21",
   "/bss/alopecia": "https://payment-link-v3.stone.com.br/pl_7ezVNbW1nym2D4cz4IVa2rR0DxXJYdLP",
   "/bss/clubebotox": "https://payment-link-v3.stone.com.br/pl_lqrbavJ9pR50k6HBBt48jYoAPENQXxek",
   "/bss/clubelavieen": "https://payment-link-v3.stone.com.br/pl_r1gLZjbQ3nX4E7UKQfXEYwRO9Eom7GlV",
@@ -55,6 +58,7 @@ export const ESFA_REDIRECTS: Record<string, string> = {
   "/nh/fgts": "https://auto.bsbank.com.br/fgts-parceiro?partner=7deea206-1e21-41ff-be10-a3e1d4ce95cb",
   "/nh/giftcard": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero presentear _alguém especial_ com o *Cartão Presente* da _Espaço Facial_ – *autoestima, beleza e bem-estar* em forma de presente! 💝",
   "/nh/ig": "https://www.instagram.com/espacofacial_novohamburgo",
+  "/nh/iglivewa": "https://wa.me/5551995811008?text=Vim%20pela%20live%20da%20%2AEspa%C3%A7o%20Facial%2A%20e%20quero%20saber%20mais%20sobre%20a%20%5Fcondi%C3%A7%C3%A3o%20especial%5F%20que%20voc%C3%AAs%20apresentaram%21",
   "/nh/alopecia": "https://payment-link-v3.stone.com.br/pl_JQ4p9nYxmGaNDO92slTBbZEdL76R1gX8",
   "/nh/clubebotox": "https://payment-link-v3.stone.com.br/pl_2xNX5qopbEQAOw2iGHqbL9wdP8VRGYkB",
   "/nh/clubelavieen": "https://payment-link-v3.stone.com.br/pl_QypjlV90JAxoW7DzTnfY8X46qDe7EO15",

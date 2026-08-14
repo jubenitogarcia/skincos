@@ -196,11 +196,45 @@ describe('Ponto CRM proxy', () => {
   it('keeps health public and preserves query strings', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
-    const response = await onRequest(context('/api/ponto/health?probe=1'))
+    const ctx = context('/api/ponto/health?probe=1')
+    const coreFetch = vi.fn().mockRejectedValue(new Error('public observability must not use the service binding'))
+    ctx.env.PONTO_CORE = { fetch: coreFetch }
+    const response = await onRequest(ctx)
     expect(response.status).toBe(200); expect(getInsumosUser).not.toHaveBeenCalled()
     expect((fetchMock.mock.calls[0][0] as Request).url).toBe('https://api.skincos.com.br/api/ponto/health?probe=1')
+    expect(coreFetch).not.toHaveBeenCalled()
     expect(response.headers.get('x-skincos-pages-release-sha')).toBe(RELEASE_SHA)
     expect(response.headers.get('x-skincos-pages-environment')).toBe('production')
+  })
+
+  it('keeps readiness on the canonical gateway and preserves its degraded status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: false,
+      error: 'domain_service_degraded',
+      dependency: 'TIMEKEEPING',
+    }), {
+      status: 503,
+      headers: {
+        'content-type': 'application/json',
+        'x-skincos-gateway-release-sha': 'gateway-release',
+      },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const ctx = context('/api/ponto/readiness?probe=maintenance')
+    const coreFetch = vi.fn().mockRejectedValue(new Error('public readiness must not use the service binding'))
+    ctx.env.PONTO_CORE = { fetch: coreFetch }
+
+    const response = await onRequest(ctx)
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: 'domain_service_degraded',
+      dependency: 'TIMEKEEPING',
+    })
+    expect((fetchMock.mock.calls[0][0] as Request).url).toBe('https://api.skincos.com.br/api/ponto/readiness?probe=maintenance')
+    expect(coreFetch).not.toHaveBeenCalled()
+    expect(response.headers.get('x-skincos-gateway-release-sha')).toBe('gateway-release')
   })
 
   it('signs canonical protected routes and strips browser cookies and authorization', async () => {

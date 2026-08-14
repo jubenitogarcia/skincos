@@ -32,6 +32,7 @@ return [{
     verified_file_count: verified.length,
     files: verified.map((item) => ({ id: text(item.id), name: text(item.fileName) })),
     meta_publish_summary: first.meta_publish_summary,
+    advantage_plus_graph_drift: first.advantage_plus_graph_drift || null,
     whatsapp_message: text(first.whatsapp_message),
     telegram_message: text(first.telegram_message),
     completion_request: {
@@ -39,6 +40,7 @@ return [{
       summary: {
         verified_file_count: verified.length,
         jobs: first.meta_publish_summary,
+        advantage_plus_graph_drift: first.advantage_plus_graph_drift || null,
       },
     },
   },

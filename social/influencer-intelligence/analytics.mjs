@@ -387,6 +387,34 @@ function sourceProvenance(profiles, media) {
   ));
 }
 
+function metricObservationCount(items, fields, { identityField = null } = {}) {
+  const observed = new Set();
+  let count = 0;
+  for (const item of items) {
+    if (!fields.some((field) => item[field]?.value !== null)) continue;
+    if (identityField) {
+      const identity = item[identityField];
+      if (observed.has(identity)) continue;
+      observed.add(identity);
+    }
+    count += 1;
+  }
+  return count;
+}
+
+function historySummary(profiles, media) {
+  return {
+    profileSnapshotCount: profiles.length,
+    profileMetricObservationCount: metricObservationCount(profiles, ['followersCount', 'followingCount', 'mediaCount']),
+    mediaSnapshotCount: media.length,
+    mediaMetricObservationCount: metricObservationCount(
+      media,
+      ['likesCount', 'commentsCount', 'viewsCount', 'reachCount'],
+      { identityField: 'mediaKey' },
+    ),
+  };
+}
+
 function observationForMetric(snapshot, field) {
   const item = snapshot[field];
   return item.value === null ? null : { value: item.value, observedAt: snapshot.observedAt, snapshotKey: snapshot.snapshotKey };
@@ -881,6 +909,7 @@ export function computeInfluencerAnalytics(input) {
     views: outlierView(views),
   };
   const growthAnomalyResult = growthAnomalies(profiles);
+  const history = historySummary(profiles, media);
   const coreAvailable = [
     ...profiles.flatMap((item) => [item.followersCount, item.followingCount, item.mediaCount]),
     ...media.flatMap((item) => [item.likesCount, item.commentsCount]),
@@ -903,6 +932,7 @@ export function computeInfluencerAnalytics(input) {
     evidenceState: anyDerived ? 'derived' : 'unavailable',
     confidence: anyDerived ? overallCoverage.ratio : 0,
     coverage: overallCoverage,
+    history,
     providers: uniqueProviders(profiles, media),
     provenance: sourceProvenance(profiles, media),
     inputSnapshotKeys: [...profiles, ...media].map((item) => item.snapshotKey).sort(),

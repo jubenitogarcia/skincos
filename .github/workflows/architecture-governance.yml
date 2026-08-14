@@ -56,12 +56,14 @@ jobs:
         run: node --test .github/scripts/ponto-core-baseline-publisher.test.mjs
       - name: Test Ponto Core staging predecessor attestation
         run: node --test .github/scripts/ponto-core-staging-precondition.test.mjs
+      - name: Test Ponto cancelled Core rollback guard
+        run: node --test .github/scripts/ponto-cancelled-core-before-mutation.test.mjs .github/scripts/ponto-automatic-rollback-safety.test.mjs
       - name: Validate module catalog, maturity and dependency graph
         run: node .github/scripts/validate-module-catalog.mjs && node .github/scripts/validate-module-maturity.mjs
       - name: Validate domain import boundaries
         run: node .github/scripts/validate-domain-boundaries.mjs
       - name: Test Influencer Intelligence contracts, providers and snapshots
-        run: node --test social/influencer-intelligence/tests/contracts.test.mjs social/influencer-intelligence/tests/registry.test.mjs social/influencer-intelligence/tests/providers.test.mjs social/influencer-intelligence/tests/provider-router-contract.test.mjs social/influencer-intelligence/tests/architecture.test.mjs social/influencer-intelligence/tests/data-model.test.mjs social/influencer-intelligence/tests/snapshots.test.mjs social/influencer-intelligence/tests/analytics.test.mjs social/influencer-intelligence/tests/scoring.test.mjs social/influencer-intelligence/tests/scheduler.test.mjs
+        run: node --test social/influencer-intelligence/tests/contracts.test.mjs social/influencer-intelligence/tests/registry.test.mjs social/influencer-intelligence/tests/providers.test.mjs social/influencer-intelligence/tests/provider-router-contract.test.mjs social/influencer-intelligence/tests/architecture.test.mjs social/influencer-intelligence/tests/data-model.test.mjs social/influencer-intelligence/tests/snapshots.test.mjs social/influencer-intelligence/tests/analytics.test.mjs social/influencer-intelligence/tests/scoring.test.mjs social/influencer-intelligence/tests/scheduler.test.mjs social/influencer-intelligence/tests/mcp-readonly.test.mjs social/influencer-intelligence/tests/mcp-runtime.test.mjs social/influencer-intelligence/tests/read-service-runtime.test.mjs social/influencer-intelligence/tests/runtime-registration.test.mjs social/influencer-intelligence/tests/skill.test.mjs social/influencer-intelligence/tests/calibration.test.mjs social/influencer-intelligence/tests/external-provider-gap-analysis.test.mjs social/influencer-intelligence/tests/migration-runner.test.mjs
       - name: Validate reproducible staging manifest
         run: node .github/scripts/validate-staging-manifest.mjs
       - name: Validate staging bootstrap safety guards

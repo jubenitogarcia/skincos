@@ -39,6 +39,7 @@ const evidenceStateSet = new Set(EVIDENCE_STATES);
 const providerSet = new Set(SUPPORTED_PROVIDER_IDS);
 const sourceTypeSet = new Set(SOURCE_TYPES);
 const scoreKindSet = new Set(SCORE_KINDS);
+const snapshotEvidenceRank = Object.freeze({ observed: 0, derived: 1, inferred: 2 });
 const forbiddenKeySet = new Set([
   'accesstoken',
   'refreshtoken',
@@ -325,6 +326,22 @@ export function normalizeProviderSnapshot(input) {
   for (const observation of observations) {
     if (observation.provenance.provider !== provider) fail('all snapshot observations must use the snapshot provider');
     if (observation.provenance.observedAt !== observedAt) fail('all snapshot observations must use the snapshot observedAt');
+  }
+  const availableObservations = observations.filter((observation) => observation.evidenceState !== 'unavailable');
+  if (availableObservations.length === 0) {
+    if (evidenceState !== 'unavailable') {
+      fail('providerSnapshot with no available observations must be unavailable');
+    }
+  } else {
+    if (evidenceState === 'unavailable') {
+      fail('providerSnapshot with available observations cannot be unavailable');
+    }
+    const snapshotRank = snapshotEvidenceRank[evidenceState];
+    for (const observation of availableObservations) {
+      if (snapshotEvidenceRank[observation.evidenceState] > snapshotRank) {
+        fail('providerSnapshot.evidenceState cannot be more optimistic than contained observation evidenceState');
+      }
+    }
   }
   const provenance = normalizeProvenance({
     ...input.provenance,

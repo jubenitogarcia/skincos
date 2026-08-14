@@ -124,7 +124,8 @@ jobs:
       # separate endpoint and custody are provisioned.
       SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
       SKINCOS_GLOBAL_COORDINATOR_URL: ${{ contains(fromJSON('["preview","staging"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_URL || contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || '' }}
-      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+      SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+      SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
@@ -132,9 +133,32 @@ jobs:
           fetch-depth: 0
       - name: Initialize private release artifact directory
         run: |
-          echo "PONTO_ARTIFACT_DIR=$RUNNER_TEMP/ponto-release" >> "$GITHUB_ENV"
-          echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=$RUNNER_TEMP/ponto-release/global-coordination-release-ponto.json" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/ponto-release"
+          artifact_dir="$RUNNER_TEMP/ponto-release"
+          echo "PONTO_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          if [[ "$STAGE" != "preview" ]]; then
+            echo "PONTO_ORCHESTRATOR_COORDINATION_PROOF_FILE=$RUNNER_TEMP/ponto-release/global-coordination-release-ponto.json" >> "$GITHUB_ENV"
+          fi
+          mkdir -p "$artifact_dir"
+          node - "$artifact_dir/recovery-intent.json" <<'NODE'
+          const fs = require("fs");
+          const stage = String(process.env.STAGE || "");
+          const releaseSha = String(process.env.RELEASE_SHA || "").toLowerCase();
+          const coordinatorRunId = String(process.env.GITHUB_RUN_ID || "");
+          if (
+            !["preview", "staging", "pilot", "canary", "production", "rollback"].includes(stage)
+            || !/^[0-9a-f]{40}$/.test(releaseSha)
+            || !/^[1-9][0-9]*$/.test(coordinatorRunId)
+          ) throw new Error("recovery intent identity is invalid");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            phase: "pre-mutation",
+            stage,
+            releaseSha,
+            coordinatorRunId,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          })}\n`, { mode: 0o600 });
+          NODE
       - name: Verify immutable source and ordered predecessor provenance
         id: source
         env:
@@ -142,10 +166,24 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
-          [[ "$GITHUB_SHA" == "$RELEASE_SHA" ]] || { echo 'release_sha must equal the immutable main coordinator SHA'; exit 1; }
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'immutable Ponto coordinator workflow SHA is invalid'; exit 1; }
           [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checkout differs from release_sha'; exit 1; }
           git fetch --no-tags origin main
-          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
+          current_main_sha="$(git rev-parse origin/main)"
+          PONTO_RELEASE_SHA="$RELEASE_SHA" PONTO_WORKFLOW_SHA="$GITHUB_SHA" PONTO_CURRENT_MAIN_SHA="$current_main_sha" node --input-type=module <<'NODE'
+          import { assertPontoSourceClosureUnchanged } from "./.github/scripts/ponto-source-closure.mjs";
+          const releaseSha = process.env.PONTO_RELEASE_SHA;
+          for (const [label, observedSha] of [
+            ["coordinator workflow", process.env.PONTO_WORKFLOW_SHA],
+            ["current main", process.env.PONTO_CURRENT_MAIN_SHA],
+          ]) {
+            try {
+              assertPontoSourceClosureUnchanged(releaseSha, observedSha);
+            } catch {
+              throw new Error(`${label} differs from the immutable Ponto release dependency closure`);
+            }
+          }
+          NODE
           tree="$(git rev-parse "${RELEASE_SHA}^{tree}")"
           echo "tree=$tree" >> "$GITHUB_OUTPUT"
           mkdir -p "$PONTO_ARTIFACT_DIR/predecessor" "$PONTO_ARTIFACT_DIR/runs" "$PONTO_ARTIFACT_DIR/surfaces" "$PONTO_ARTIFACT_DIR/module-transitions"
@@ -199,6 +237,24 @@ jobs:
           PONTO_EXPECTED_STAGE="$predecessor" PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
             node .github/scripts/ponto-release-evidence.mjs verify "$PONTO_ARTIFACT_DIR/predecessor/ponto-release-evidence.json"
           rm -f "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json"
+      # Preview never holds the composite release lease: its child publishers
+      # already take their individual global writer leases, while the watchdog
+      # must remain able to acquire release:ponto and materialize fail-close.
+      # Staging and live stages retain the closure-scoped composite lease while
+      # their required checks settle.
+      - name: Acquire the composite Ponto release lease before gate settlement
+        if: ${{ inputs.stage != 'preview' }}
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ env.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
       - name: Attest canonical merged PR and required checks for the immutable SHA
         if: ${{ inputs.stage != 'preview' }}
         env:
@@ -536,7 +592,7 @@ jobs:
               name: "PONTO_PILOT_RUNNER_LABELS_JSON",
               value: process.env.PONTO_PILOT_RUNNER_LABELS_JSON || "",
             }));
-            NODE
+          NODE
           fi
           if ! gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM" > "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json"; then
             node - "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json" <<'NODE'
@@ -545,7 +601,7 @@ jobs:
               name: "PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM",
               value: process.env.PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM || "",
             }));
-            NODE
+          NODE
           fi
           gh api "repos/$GITHUB_REPOSITORY/environments/production/variables?per_page=100" > "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json"
           node - \
@@ -637,9 +693,9 @@ jobs:
           }
           const matching = runners.filter((runner) => {
             const labels = (runner.labels || []).map(item => String(item?.name || ""));
-          const normalizedLabels = new Set(labels.map(label => label.toLowerCase()));
-          return labels.length === requiredLabels.length
-            && requiredLabels.every(label => normalizedLabels.has(label.toLowerCase()));
+            const normalizedLabels = new Set(labels.map(label => label.toLowerCase()));
+            return labels.length === requiredLabels.length
+              && requiredLabels.every(label => normalizedLabels.has(label.toLowerCase()));
           });
           if (
             matching.length !== 1
@@ -794,17 +850,6 @@ jobs:
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
           rm -f "$evidence_dir/artifact.zip"
-      - name: Acquire the composite Ponto release lease before candidate mutation
-        uses: ./.github/actions/global-coordination-acquire
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ env.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-          resource: release:ponto
-          module: ponto
-          source_sha: ${{ inputs.release_sha }}
-          proof_file: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
       - name: Establish immutable Ponto release identity
         id: release_identity
         env:
@@ -815,6 +860,14 @@ jobs:
             ponto \
             "$RELEASE_SHA" \
             "$PONTO_ARTIFACT_DIR/release-identity.json"
+      - name: Dispatch exact immutable required checks on the release tag
+        if: ${{ inputs.stage == 'preview' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-required-check-dispatch.mjs \
+            "$PONTO_ARTIFACT_DIR/runs/required-check-workflows.json"
       - name: Prove selected root separation before any candidate mutation
         if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
         env:
@@ -1195,6 +1248,11 @@ jobs:
             --dir "$PONTO_ARTIFACT_DIR/module-transitions/staging-active"
       - name: Prove exact staging Pages-to-Timekeeping affinity before authenticated journey
         if: inputs.stage == 'staging'
+        env:
+          # The protected Pages endpoint derives and verifies the same scoped
+          # release-probe key.  The root remains environment-scoped and is
+          # never written to output, artifacts, or an external request.
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
         run: |
           set -euo pipefail
           pages_url="$(node -e "process.stdout.write(require(process.argv[1]).url)" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json")"
@@ -1202,54 +1260,123 @@ jobs:
           core_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json")"
           [[ "$pages_url" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'staging Pages affinity probe requires the immutable Pages origin'; exit 1; }
           [[ "$timekeeping_id" =~ ^[0-9a-fA-F-]{36}$ && "$core_id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'staging Pages affinity probe requires exact Worker version identities'; exit 1; }
-          affinity_attested=false
-          for attempt in {1..36}; do
-            http_status="000"
-            curl_status=0
-            http_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
-              --connect-timeout 10 --max-time 30 \
-              --dump-header "$RUNNER_TEMP/staging-affinity.headers" \
-              --output "$RUNNER_TEMP/staging-affinity.json" \
-              --write-out '%{http_code}' \
-              "${pages_url%/}/api/ponto/health?staging_affinity_probe=$GITHUB_RUN_ID" \
-            )" || curl_status=$?
-            if [[ "$http_status" == "200" && "$curl_status" == "0" ]]; then
-              affinity_status=0
-              RELEASE_SHA="$RELEASE_SHA" \
-              TIMEKEEPING_VERSION_ID="$timekeeping_id" \
-              CORE_VERSION_ID="$core_id" \
-              node - "$RUNNER_TEMP/staging-affinity.json" "$RUNNER_TEMP/staging-affinity.headers" <<'NODE' || affinity_status=$?
-          const fs = require("fs");
-          let body;
-          try {
-            body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          } catch {
-            process.exit(2);
+          [[ -n "${PONTO_IDEMPOTENCY_KEY:-}" ]] || { echo 'Staging PONTO_IDEMPOTENCY_KEY is required for the protected affinity probe'; exit 1; }
+          PAGES_URL="$pages_url" \
+          TIMEKEEPING_VERSION_ID="$timekeeping_id" \
+          CORE_VERSION_ID="$core_id" \
+          AFFINITY_REPORT="$PONTO_ARTIFACT_DIR/staging-affinity.json" \
+          node --input-type=module <<'NODE'
+          import crypto from "node:crypto";
+          import fs from "node:fs";
+
+          const releaseSha = String(process.env.RELEASE_SHA || "").toLowerCase();
+          const timekeepingVersionId = String(process.env.TIMEKEEPING_VERSION_ID || "").toLowerCase();
+          const coreVersionId = String(process.env.CORE_VERSION_ID || "").toLowerCase();
+          const origin = new URL(process.env.PAGES_URL);
+          if (
+            !/^[0-9a-f]{40}$/.test(releaseSha)
+            || !/^[0-9a-f-]{36}$/.test(timekeepingVersionId)
+            || !/^[0-9a-f-]{36}$/.test(coreVersionId)
+            || origin.protocol !== "https:"
+            || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+            || origin.pathname !== "/"
+            || origin.search
+            || origin.hash
+          ) throw new Error("protected staging affinity inputs are invalid");
+
+          const pathname = "/api/ponto/_release-readiness";
+          const bodyHash = crypto.createHash("sha256").update("").digest("hex");
+          const releaseProbeKey = crypto.createHmac("sha256", process.env.PONTO_IDEMPOTENCY_KEY)
+            .update("skincos/ponto/release-probe/v1")
+            .digest("base64url");
+          const maxAttempts = 36;
+          const retryDelayMs = 5_000;
+          let lastObservation = { attempt: 0, status: 0, error: "not attempted" };
+
+          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            const timestamp = String(Date.now());
+            const nonce = crypto.randomBytes(32).toString("base64url");
+            const signature = crypto.createHmac("sha256", releaseProbeKey)
+              .update(`ponto-release-probe/v1.${timestamp}.${nonce}.GET.${pathname}.${bodyHash}.${releaseSha}`)
+              .digest("base64url");
+            const probe = new URL(pathname, origin);
+            probe.searchParams.set("staging_affinity_probe", `${process.env.GITHUB_RUN_ID}-${attempt}`);
+            let response = null;
+            let body = null;
+            try {
+              response = await fetch(probe, {
+                method: "GET",
+                redirect: "manual",
+                headers: {
+                  accept: "application/json",
+                  "cache-control": "no-store",
+                  "x-skincos-release-probe-ts": timestamp,
+                  "x-skincos-release-probe-nonce": nonce,
+                  "x-skincos-release-probe-signature-version": "1",
+                  "x-skincos-release-probe-sig": signature,
+                },
+                signal: AbortSignal.timeout(30_000),
+              });
+              body = await response.json().catch(() => null);
+            } catch {
+              // The report intentionally keeps only a bounded condition code.
+            }
+            const pagesReleaseSha = String(response?.headers.get("x-skincos-pages-release-sha") || "").toLowerCase();
+            const pagesEnvironment = String(response?.headers.get("x-skincos-pages-environment") || "").toLowerCase();
+            const exact = response?.status === 200
+              && pagesReleaseSha === releaseSha
+              && pagesEnvironment === "staging"
+              && body?.ok === true
+              && body?.ready === true
+              && String(body?.releaseSha || "").toLowerCase() === releaseSha
+              && String(body?.coreVersionId || "").toLowerCase() === coreVersionId
+              && String(body?.timekeepingVersionId || "").toLowerCase() === timekeepingVersionId;
+            if (exact) {
+              fs.writeFileSync(process.env.AFFINITY_REPORT, `${JSON.stringify({
+                schemaVersion: 1,
+                passed: true,
+                sourceSha: releaseSha,
+                environment: "staging",
+                pagesOrigin: origin.origin,
+                coreVersionId,
+                timekeepingVersionId,
+                contractMode: "protected-pages-service-binding",
+                publicVersionOverrideUsed: false,
+                releaseProbeNonceReserved: true,
+                credentialsIncluded: false,
+                piiIncluded: false,
+              }, null, 2)}\n`, { mode: 0o600 });
+              process.exit(0);
+            }
+            lastObservation = {
+              attempt,
+              status: Number(response?.status || 0),
+              error: response ? String(body?.error || "RELEASE_READINESS_VERSION_MISMATCH") : "RELEASE_READINESS_UNAVAILABLE",
+              releaseSha: String(body?.releaseSha || ""),
+              coreVersionId: String(body?.coreVersionId || ""),
+              timekeepingVersionId: String(body?.timekeepingVersionId || ""),
+              pagesReleaseSha,
+              pagesEnvironment,
+            };
+            if (attempt < maxAttempts) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
           }
-          const headers = fs.readFileSync(process.argv[3], "utf8").toLowerCase();
-          if (!body || typeof body !== "object") process.exit(2);
-          const required = [
-            `x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`,
-            "x-skincos-pages-environment: staging",
-            `x-skincos-gateway-release-sha: ${process.env.RELEASE_SHA}`,
-            "x-skincos-gateway-environment: staging",
-            `x-skincos-gateway-version-id: ${process.env.CORE_VERSION_ID}`,
-            `x-skincos-timekeeping-release-sha: ${process.env.RELEASE_SHA}`,
-            "x-skincos-timekeeping-environment: staging",
-            `x-skincos-timekeeping-version-id: ${process.env.TIMEKEEPING_VERSION_ID}`,
-          ];
-          if (required.some((value) => !headers.includes(value.toLowerCase()))) process.exit(2);
+          throw new Error(`protected staging Pages-to-Timekeeping affinity did not match the exact release after bounded propagation; last=${JSON.stringify(lastObservation)}`);
           NODE
-              if [[ "$affinity_status" == "0" ]]; then affinity_attested=true; break; fi
-              [[ "$affinity_status" == "2" ]] || exit "$affinity_status"
-            elif [[ "$http_status" != "404" && "$http_status" != "502" && "$http_status" != "503" && "$http_status" != "504" && "$http_status" != "000" ]]; then
-              echo "staging Pages affinity probe returned HTTP $http_status"
-              exit 1
-            fi
-            if [[ "$attempt" != 36 ]]; then sleep 5; fi
-          done
-          [[ "$affinity_attested" == true ]] || { echo 'Unable to attest exact staging Pages-to-Timekeeping affinity before the authenticated journey'; exit 1; }
-          rm -f "$RUNNER_TEMP/staging-affinity.json" "$RUNNER_TEMP/staging-affinity.headers"
+          node - "$PONTO_ARTIFACT_DIR/staging-affinity.json" <<'NODE'
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            report.schemaVersion !== 1
+            || report.passed !== true
+            || report.sourceSha !== process.env.RELEASE_SHA
+            || report.environment !== "staging"
+            || report.contractMode !== "protected-pages-service-binding"
+            || report.publicVersionOverrideUsed !== false
+            || report.releaseProbeNonceReserved !== true
+            || report.credentialsIncluded !== false
+            || report.piiIncluded !== false
+          ) throw new Error("protected staging affinity evidence is invalid");
+          NODE
       - name: Execute authenticated synthetic staging journey
         id: staging_journey
         if: inputs.stage == 'staging'
@@ -1283,7 +1410,10 @@ jobs:
           run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/staging-journey.json")"
           gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "timekeeping-staging-journey-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/staging-slo"
       - name: Restore staging Ponto to maintenance after the journey
-        if: ${{ always() && inputs.stage == 'staging' && steps.release_identity.outcome == 'success' }}
+        # A failed or cancelled path is closed exclusively by the emergency
+        # broker/watchdog.  Do not dispatch the regular module-control writer
+        # unless the authenticated synthetic journey actually completed.
+        if: ${{ inputs.stage == 'staging' && steps.staging_journey.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1779,19 +1909,23 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
       - name: Release the composite Ponto release lease
-        if: always()
+        if: ${{ always() && inputs.stage != 'preview' }}
         uses: ./.github/actions/global-coordination-release
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ env.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/ponto-release/global-coordination-release-ponto.json
 
   recovery-latch:
     needs: orchestrate
     if: ${{ always() && contains(fromJSON('["failure","cancelled"]'), needs.orchestrate.result) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The broker latch is written before recovery lease acquisition.  This job
+    # may then wait for one finite coordinator lease expiry without reopening
+    # the affected surface.
+    timeout-minutes: 30
     concurrency:
       group: ponto-emergency-latch-${{ inputs.stage == 'staging' && 'staging' || 'production' }}
       cancel-in-progress: false
@@ -1804,28 +1938,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
-      - name: Acquire global recovery lease
-        uses: ./.github/actions/global-coordination-acquire
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
-          resource: release:ponto
-          module: ponto
-          source_sha: ${{ inputs.release_sha }}
-          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
-      - name: Check global recovery lease before latching closed
-        uses: ./.github/actions/global-coordination-check
-        with:
-          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
-          resource: release:ponto
-          module: ponto
-          source_sha: ${{ inputs.release_sha }}
-          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
       - name: Monotonically latch Ponto closed outside the surface mutex
         env:
           PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
@@ -1836,6 +1948,20 @@ jobs:
           PONTO_FAILED_COORDINATOR_RUN_ID: ${{ github.run_id }}
           PONTO_EMERGENCY_LATCH_REPORT: ${{ runner.temp }}/ponto-ordinary-recovery/latch.json
         run: node .github/scripts/ponto-emergency-latch-write.mjs
+      - name: Acquire global recovery lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
+          wait_timeout_seconds: '960'
+          retry_interval_seconds: '10'
       - name: Check global recovery lease before overlay propagation
         uses: ./.github/actions/global-coordination-check
         with:
@@ -1846,7 +1972,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
       - name: Attempt external overlay propagation before reconciliation
         env:
           PONTO_MODULE_HEALTH_URL: ${{ inputs.stage == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
@@ -1898,12 +2025,15 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
 
   recovery-reconcile:
     needs: [orchestrate, recovery-latch]
     if: ${{ always() && needs.recovery-latch.result == 'success' }}
+    outputs:
+      rollback_required: ${{ steps.rollback_requirement.outputs.required }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -1921,7 +2051,8 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: release:ponto
           module: ponto
           source_sha: ${{ inputs.release_sha }}
@@ -1941,7 +2072,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
       - name: Cancel and reconcile children without waiting on the surface mutex
         env:
           # Recovery must retain the protected Actions-read token used by the
@@ -1992,6 +2124,25 @@ jobs:
             fi
             rm -rf "$download_dir"
           done
+      - name: Classify whether exact rollback is required
+        id: rollback_requirement
+        env:
+          PONTO_RECOVERY_ARTIFACT_ROOT: ${{ runner.temp }}/ponto-ordinary-recovery/journal
+        run: |
+          set -euo pipefail
+          node - "$PONTO_RECOVERY_ARTIFACT_ROOT/watchdog-journal.json" <<'NODE'
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            report?.passed !== true
+            || !Number.isInteger(report?.discoveredChildren)
+            || report.discoveredChildren < 0
+          ) throw new Error("watchdog did not prove the recovery child set");
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `required=${report.discoveredChildren > 0 ? "true" : "false"}\n`,
+          );
+          NODE
       - name: Upload immutable ordinary-recovery reconciliation
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -2014,7 +2165,8 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
 
   recovery-close:
@@ -2040,7 +2192,8 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: release:ponto
           module: ponto
           source_sha: ${{ inputs.release_sha }}
@@ -2055,7 +2208,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
       - name: Write regular maintenance under the exact closed latch
         env:
           PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
@@ -2076,7 +2230,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
       - name: Prove external fail-close through overlay or exact incumbent control
         env:
           PONTO_MODULE_HEALTH_URL: ${{ inputs.stage == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
@@ -2137,12 +2292,13 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
 
   recovery-rollback:
     needs: [orchestrate, recovery-reconcile, recovery-close]
-    if: ${{ always() && needs.recovery-reconcile.result == 'success' && needs.recovery-close.result == 'success' && contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+    if: ${{ always() && needs.recovery-reconcile.result == 'success' && needs.recovery-reconcile.outputs.rollback_required == 'true' && needs.recovery-close.result == 'success' && contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -2164,7 +2320,8 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: release:ponto
           module: ponto
           source_sha: ${{ inputs.release_sha }}
@@ -2214,7 +2371,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
       - name: Materialize the exact broker close under the recovery surface mutex
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -2276,7 +2434,8 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
       - name: Restore every attested incumbent idempotently
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -2335,5 +2494,6 @@ jobs:
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ inputs.stage == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/ponto-ordinary-recovery/global-coordination-lease.json
