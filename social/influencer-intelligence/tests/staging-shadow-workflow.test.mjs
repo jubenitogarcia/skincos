@@ -13,6 +13,7 @@ test('staging shadow workflow is manual, staging-only, and forbids the fallback 
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /run_real_router_smoke:/);
   assert.match(workflow, /default:\s*false/);
+  assert.match(workflow, /shadow_creator_handle:\s*\n\s*description:.*Meta-only read.*\n\s*required:\s*false\s*\n\s*type:\s*string/);
   assert.match(workflow, /environment:\s*staging/);
   assert.match(workflow, /refs\/heads\/main/);
   assert.match(workflow, /--env staging/);
@@ -28,10 +29,13 @@ test('staging shadow workflow is manual, staging-only, and forbids the fallback 
     'all staging shadow lease operations must use the active coordinator key',
   );
   assert.doesNotMatch(workflow, /secrets\.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET/);
-  assert.match(workflow, /name:\s*Guard private real-read inputs/);
+  assert.match(workflow, /name:\s*Guard private real-read credentials and approved target/);
   assert.match(workflow, /if:\s*\$\{\{\s*inputs\.run_real_router_smoke\s*==\s*true\s*\}\}/);
   assert.match(workflow, /INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN/);
   assert.match(workflow, /INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID/);
+  assert.match(workflow, /INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE:\s*\$\{\{\s*inputs\.shadow_creator_handle\s*\}\}/);
+  assert.doesNotMatch(workflow, /secrets\.INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE/);
+  assert.match(workflow, /INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE"\s*=~\s*\^\[a-z0-9\._\]\{1,30\}\$/);
   assert.match(workflow, /TOKEN_VAULT_STAGING_ANALYTICS_BOOTSTRAP_TOKEN/);
   assert.match(workflow, /scripts\/seal-staging-analytics-credential\.mjs/);
   assert.match(bootstrapScript, /\/v1\/analytics\/staging-bootstrap/);

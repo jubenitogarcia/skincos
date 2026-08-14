@@ -8,6 +8,10 @@ on:
         required: true
         default: false
         type: boolean
+      shadow_creator_handle:
+        description: Single approved Instagram Business or Creator handle for the Meta-only read (without @)
+        required: false
+        type: string
 
 concurrency:
   # This shadow updates the same staging Worker and Worker secrets as the
@@ -38,12 +42,12 @@ jobs:
             exit 1
           }
 
-      - name: Guard private real-read inputs
+      - name: Guard private real-read credentials and approved target
         if: ${{ inputs.run_real_router_smoke == true }}
         env:
           INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN }}
           INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID: ${{ secrets.INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID }}
-          INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE: ${{ secrets.INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE }}
+          INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE: ${{ inputs.shadow_creator_handle }}
         run: |
           set -euo pipefail
           [[ -n "${INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN:-}" ]] || {
@@ -56,6 +60,10 @@ jobs:
           }
           [[ -n "${INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE:-}" ]] || {
             echo 'Approved creator handle is unavailable; refusing the real Meta read.' >&2
+            exit 1
+          }
+          [[ "$INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE" =~ ^[a-z0-9._]{1,30}$ ]] || {
+            echo 'Approved creator handle is invalid; refusing the real Meta read.' >&2
             exit 1
           }
 
@@ -394,7 +402,7 @@ jobs:
         if: ${{ inputs.run_real_router_smoke == true }}
         env:
           INFLUENCER_INTELLIGENCE_SHADOW_CREDENTIAL_REF: ig-analytics-staging-shadow-v1
-          INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE: ${{ secrets.INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE }}
+          INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE: ${{ inputs.shadow_creator_handle }}
         run: |
           set -euo pipefail
           cd platform/security/token-vault
