@@ -17,6 +17,11 @@ while the Skill executes it.
   staging, canary, production, smoke, rollback and cleanup. Authorization for a
   secret allows secure creation, rotation, reference or use, never disclosure or
   versioning of its value.
+- Before treating an absent secret as a human interruption, classify it by
+  issuer and validity under the autonomy policy. Use
+  `skincos-secret-provisioning` for the custody workflow: a mission-authorized
+  `INTERNAL GENERATED SECRET` with canonical-store write access proceeds
+  autonomously; an `EXTERNALLY ISSUED CREDENTIAL` remains fail-closed.
 
 ## Technical eligibility is separate
 
@@ -27,10 +32,10 @@ A missing item is a concrete technical blocker; it is not a reason to request a
 second human authorization. Neither a merge nor a health endpoint proves an
 authorized production journey.
 
-Platform trust checks, unavailable credentials, MFA and non-bypassable external
-controls remain real boundaries. The agent cannot invent access, self-approve a
-trust boundary, disclose secrets/PII, or make destructive irreversible changes
-to real data.
+Platform trust checks, unavailable externally issued credentials after canonical
+issuance/rotation, MFA and non-bypassable external controls remain real
+boundaries. The agent cannot invent access, self-approve a trust boundary,
+disclose secrets/PII, or make destructive irreversible changes to real data.
 
 ## Human interruption
 

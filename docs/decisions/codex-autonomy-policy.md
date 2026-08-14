@@ -29,7 +29,7 @@ pergunta diferente.
 
 | Ordem | Fonte | Decide |
 | --- | --- | --- |
-| 1 | Limites não contornáveis da plataforma, lei e segurança | O que o agente não pode burlar: confiança da plataforma, credenciais inexistentes, segredo/PII exposto, ação destrutiva irreversível sobre dado real e controles externos obrigatórios. |
+| 1 | Limites não contornáveis da plataforma, lei e segurança | O que o agente não pode burlar: confiança da plataforma, emissão externa indisponível, segredo/PII exposto, ação destrutiva irreversível sobre dado real e controles externos obrigatórios. |
 | 2 | Missão explícita atual do usuário | Objetivo, superfícies, ações autorizadas, exceções humanas e critério de conclusão. |
 | 3 | Esta política | Como a autorização da missão é persistida, transportada e distinguida de gates técnicos. |
 | 4 | Políticas de domínio, runbooks e contratos de release | Elegibilidade técnica: flags, grants, migrations, rollout, testes, evidência, rollback e validação por ambiente. |
@@ -58,15 +58,45 @@ produção, smoke, rollback e cleanup.
 Autorização para segredos permite somente sua criação, rotação, referência ou
 uso por canais e armazenamentos aprovados. Valores de segredo, tokens, cookies,
 chaves privadas e PII nunca são exibidos, versionados ou incluídos em
-evidência. Autorização também não cria credenciais, bypass de MFA, permissões
-de plataforma ou acesso a dados que o agente não possui.
+evidência. Autorização não fabrica credenciais emitidas externamente, bypass de
+MFA, permissões de plataforma ou acesso a dados que o agente não possui.
 
 Risco técnico e reversibilidade definem o rigor de validação, checkpoint,
 rollout e rollback. Eles não exigem nova decisão humana quando a missão já
 autorizou a ação. Ações irreversíveis ou destrutivas sobre dados reais continuam
 fora do escopo até uma decisão humana específica.
 
-### 3.1 Validação delivery-first
+### 3.1 Classificação por emissão e contrato
+
+A classificação depende de quem define a validade do valor e do contrato que o
+aceita, não de seu nome, store atual, ausência ou presença de um gerador
+versionado.
+
+**INTERNAL GENERATED SECRET** é um bearer opaco interno, webhook secret,
+application authentication secret, signing/random secret ou outro segredo cuja
+validade seja definida inteiramente por sistemas controlados pelo SKINCOS.
+Quando a missão já autoriza a superfície e o Codex tem escrita no armazenamento
+canônico, ele deve gerar o valor automaticamente com CSPRNG de ao menos 256
+bits de entropia, salvo contrato diferente; gravá-lo diretamente no store
+canônico; nunca imprimi-lo ou registrá-lo em repositório, worktree, arquivo,
+log, artifact, PR ou conversa; validar somente existência/metadados e
+comportamento autenticado; e continuar a missão sem nova autorização humana.
+
+“Absence of a versioned generator alone is not evidence that an internal generated secret requires human intervention.”
+
+**EXTERNALLY ISSUED CREDENTIAL** é OAuth, autenticação GitHub, credencial de
+API Cloudflare/provider, Meta access token, certificado/chave privada emitida
+externamente, MFA/OTP ou outra credencial cuja emissão dependa de outra
+autoridade. O Codex nunca a fabrica: tenta primeiro o mecanismo canônico e
+autenticado de emissão, refresh ou rotação. Só a trata como blocker humano
+quando MFA/autenticação interativa, permissão realmente ausente ou decisão de
+confiança externa não puderem ser concluídos pelas ferramentas disponíveis.
+
+Compatibilidade criptográfica, migração de dados, dual-key, sobreposição e
+rollback continuam gates técnicos proporcionais ao efeito. A falta de um desses
+gates não reclassifica um segredo interno ausente como exceção humana.
+
+### 3.2 Validação delivery-first
 
 O classificador versionado em `ops/codex/risk-policy.json` usa efeito, não o
 nome da ferramenta, para escolher o gate:
@@ -89,7 +119,12 @@ domínio alterado é relevante.
 ## 4. Exceções humanas
 
 Para uma missão que adota a autorização persistente desta política, o agente só
-interrompe por uma ação humana quando houver prova de uma destas situações:
+interrompe por uma ação humana quando houver prova de uma destas situações. Para
+uma `EXTERNALLY ISSUED CREDENTIAL`, a ausência só é exceção após a tentativa
+canônica autenticada de emissão ou rotação:
+
+A ausência de um `INTERNAL GENERATED SECRET` que atende às condições da seção
+3.1 não é exceção humana.
 
 1. MFA ou reautenticação interativa que nenhuma ferramenta disponível conclui;
 2. permissão realmente ausente e não provisionável pelo Codex;
@@ -138,9 +173,11 @@ O caminho canônico para custódia GitHub -> mini-PC é o runner confiável
 usa um usuário de serviço sem login e pode chamar somente o helper root que
 escreve o arquivo privado de coordenação por stdin, atomicamente e sem emitir o
 valor. A ausência de custódia no mini-PC é, portanto, uma recuperação técnica
-executável; não é uma espera humana recorrente. Somente a criação inicial de
-uma credencial inexistente, MFA/reautenticação ou confiança de plataforma fora
-do alcance continua sendo exceção humana.
+executável; não é uma espera humana recorrente. Um `INTERNAL GENERATED SECRET`
+ausente segue a classificação desta política e é gerado quando a missão e a
+escrita no store canônico o permitem. Somente a emissão indisponível de uma
+`EXTERNALLY ISSUED CREDENTIAL`, MFA/reautenticação ou confiança de plataforma
+fora do alcance continua sendo exceção humana.
 
 Quando a sessão GitHub já autenticada e o acesso root nativo existem, o
 bootstrap do runner também é uma ação autônoma: use

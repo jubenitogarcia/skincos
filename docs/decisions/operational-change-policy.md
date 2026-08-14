@@ -63,6 +63,7 @@ Antes de produção, o PR ou registro de release declara:
 - Rollback de código usa versão/deployment/release anterior comprovado.
 - Rollback de dados não apaga histórico, ledger, auditoria ou evidência. Se reversão de dado não for segura, desativar flag, bloquear escrita e recuperar de backup/checkpoint aprovado.
 - Nenhuma promoção é concluída sem prova de que o rollback identificado é executável.
+- Para rotação de secret, o rollback identifica custódia, versão ou janela de overlap previamente verificável; listagem de metadados não recompõe o valor anterior.
 
 ## 5. Feature flags e coortes
 
@@ -78,8 +79,8 @@ Antes de produção, o PR ou registro de release declara:
 | --- | --- | --- |
 | Baixo | texto, documentação, estilo sem runtime | diff check e validação estática relevante |
 | Médio | lógica isolada, componente, contrato interno | testes unitários/contrato e build/typecheck do módulo |
-| Alto | API, auth, D1/Postgres, Worker, Pages, migration, tracking, integração | domínio + integração, staging, smoke de rota/UI e rollback documentado |
-| Crítico | escrita em produção, permissões, pagamento, agenda, segredo, sessão, dado sensível | tudo de Alto, backup/checkpoint, janela para efeito externo, validação explícita e evidência pós-mudança |
+| Alto | API, auth, D1/Postgres, Worker, Pages, migration, tracking, integração, provisionamento/rotação rotineira de secret interno | testes e integração proporcionais ao domínio; staging/smoke quando a superfície exigir; rollback documentado |
+| Crítico | escrita irreversível em produção, remoção irrecuperável de acesso, pagamento/efeito financeiro, exposição de segredo/credencial ou dado sensível | tudo de Alto, backup/checkpoint, janela para efeito externo, validação explícita e evidência pós-mudança |
 
 Testes não criam booking, cobrança, campanha, mensagem ou dado real sem janela aprovada e alvo seguro.
 
@@ -94,7 +95,7 @@ Nenhuma mudança de produção ocorre enquanto faltar:
 
 1. PR mergeado ou release aprovado conforme o fluxo da superfície;
 2. todos os checks obrigatórios verdes;
-3. staging publicado e validado para risco alto/crítico;
+3. staging equivalente publicado e validado quando a política do domínio, o ambiente-alvo ou o risco concreto o exigir;
 4. migration aplicada e verificada em staging, quando existir;
 5. versão atual e rollback registrados;
 6. flag/grant não liberados mantidos desativados, salvo coorte aprovada;
