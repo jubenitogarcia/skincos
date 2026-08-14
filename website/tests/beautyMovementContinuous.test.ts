@@ -256,6 +256,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /@keyframes cardSelectedReturnToDeck/);
     assert.match(styles, /@keyframes cardFlipToDeck/);
     assert.match(styles, /@keyframes cardDealFromDeck/);
+    assert.match(styles, /\.cardButton \{[\s\S]*min-height: clamp\(312px, 27vw, 324px\)/);
+    assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*?\.cardButton \{\s*min-height: 312px;/);
     assert.match(
         styles,
         /\.tableStage\[data-hand-stage="reveal"\] \.cardButton:not\(\.cardButtonSelected\)\s*\{\s*pointer-events: none;\s*\}/,
