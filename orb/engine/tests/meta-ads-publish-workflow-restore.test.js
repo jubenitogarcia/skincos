@@ -58,6 +58,14 @@ test('checkpoint location only accepts a regular full export below the controlle
     () => restore.assertCheckpointPath(path.join(run, 'other.json'), root),
     /controlled Meta Ads checkpoint directory/,
   );
+  assert.throws(
+    () => restore.assertCheckpointPath(`${run}${path.sep}.${path.sep}workflow.live.json`, root),
+    /canonical absolute path/,
+  );
+  assert.throws(
+    () => restore.assertCheckpointPath(`${root}${path.sep}..${path.sep}${path.basename(root)}${path.sep}${path.basename(run)}${path.sep}workflow.live.json`, root),
+    /canonical absolute path/,
+  );
   const linkedRun = path.join(root, 'meta-ads-build-payload-2026-08-13T12-00-01-000Z');
   fs.mkdirSync(linkedRun);
   const linked = path.join(linkedRun, 'workflow.live.json');
@@ -126,6 +134,7 @@ test('restore transaction locks the workflow, rejects drift, and writes a fresh 
   assert.match(source, /FROM n8n_runtime\.workflow_history/);
   assert.match(source, /FOR SHARE/);
   assert.match(source, /rollback snapshot graph does not match the recorded workflow history version/);
+  assert.doesNotMatch(source, /path\.(?:join|resolve)\(/);
   assert.match(source, /INSERT INTO n8n_runtime\.workflow_history/);
   assert.match(source, /FROM n8n_runtime\.workflow_entity WHERE id = \$1 FOR UPDATE/);
   assert.match(source, /Validate the owned row before committing/);

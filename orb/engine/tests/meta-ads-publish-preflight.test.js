@@ -115,7 +115,10 @@ test('gateway parameters reject a Token Vault contract revision mismatch before 
     path.join(__dirname, '..', 'workflow-src', 'meta-ads-publish', 'build-meta-api-params-from-vault.js'),
     'utf8',
   );
-  assert.match(source, /const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_reconciliation'/);
+  assert.match(
+    source,
+    /const WORKFLOW_CONTRACT_REVISION\s*=\s*["']meta_destination_contract_v20_tracking_reconciliation["']/,
+  );
   assert.match(source, /gatewayContractRevision !== WORKFLOW_CONTRACT_REVISION/);
   assert.match(source, /adset_conversion_reconciliation/);
   assert.match(source, /creative_url_tags_readback/);

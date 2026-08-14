@@ -51,25 +51,37 @@ function requirePlainObject(value, label) {
   return value;
 }
 
-function assertCheckpointPath(snapshotPath, checkpointRoot = CHECKPOINT_ROOT) {
-  if (!path.isAbsolute(String(snapshotPath || ''))) {
-    throw new Error('rollback snapshot must be an absolute checkpoint path.');
+function assertCanonicalAbsolutePath(value, label) {
+  const candidate = String(value || '');
+  if (!path.isAbsolute(candidate) || path.normalize(candidate) !== candidate) {
+    throw new Error(`${label} must be a canonical absolute path.`);
   }
-  const root = path.resolve(checkpointRoot);
+  return candidate;
+}
+
+function assertCheckpointPath(snapshotPath, checkpointRoot = CHECKPOINT_ROOT) {
+  const root = assertCanonicalAbsolutePath(checkpointRoot, 'controlled Meta Ads checkpoint root');
+  const requested = assertCanonicalAbsolutePath(snapshotPath, 'rollback snapshot');
   const resolvedRoot = fs.realpathSync(root);
   if (resolvedRoot !== root) {
     throw new Error('controlled Meta Ads checkpoint root may not traverse symlinks.');
   }
-  const requested = path.resolve(snapshotPath);
-  const relative = path.relative(root, requested);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (!requested.startsWith(rootPrefix)) {
+    throw new Error('rollback snapshot is outside the controlled Meta Ads checkpoint directory.');
+  }
+  const relative = requested.slice(rootPrefix.length);
   const parts = relative.split(path.sep);
   if (
-    !relative || relative === '..' || relative.startsWith(`..${path.sep}`) ||
+    !relative ||
     parts.length !== 2 || !CHECKPOINT_DIRECTORY_PATTERN.test(parts[0]) || parts[1] !== 'workflow.live.json'
   ) {
     throw new Error('rollback snapshot is outside the controlled Meta Ads checkpoint directory.');
   }
-  const checkpointDirectory = path.join(root, parts[0]);
+  const checkpointDirectory = `${rootPrefix}${parts[0]}`;
+  if (requested !== `${checkpointDirectory}${path.sep}workflow.live.json`) {
+    throw new Error('rollback snapshot is outside the controlled Meta Ads checkpoint directory.');
+  }
   const rootStat = fs.lstatSync(root);
   const directoryStat = fs.lstatSync(checkpointDirectory);
   const snapshotStat = fs.lstatSync(requested);
