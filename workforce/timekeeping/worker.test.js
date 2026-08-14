@@ -935,6 +935,161 @@ test('active permits direct Identity onboarding only with its HMAC, while canary
   assert.equal((await canary.json()).code, 'TIMEKEEPING_CANARY_NOT_GRANTED')
 })
 
+test('maintenance permits only authenticated Identity provisioning while public Ponto stays closed', async () => {
+  const onboardingId = 'maintenance-onboarding-1'
+  const employee = {
+    id: 'maintenance-employee-1',
+    canonical_employee_id: `identity:${onboardingId}`,
+    login_email: 'maintenance-bootstrap@example.invalid',
+    display_name: 'Maintenance Bootstrap',
+    job_title: 'Consultor',
+    status: 'LEAVE',
+    access_state: 'INVITED',
+    metadata_json: JSON.stringify({ identityOnboardingId: onboardingId }),
+  }
+  const seenNonces = new Set()
+  const onboardingDb = {
+    prepare(sql) {
+      return {
+        values: [],
+        bind(...values) { this.values = values; return this },
+        async run() {
+          if (sql.startsWith('INSERT INTO timekeeping_request_nonces')) {
+            if (seenNonces.has(this.values[0])) throw new Error('UNIQUE constraint failed')
+            seenNonces.add(this.values[0])
+          }
+          return { meta: { changes: 1 } }
+        },
+        async first() {
+          return sql.includes('FROM workforce_employees') ? employee : null
+        },
+      }
+    },
+  }
+  const environment = {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'production',
+    DB: onboardingDb,
+    // This models the real emergency latch: the public control remains closed
+    // and carries no mutable candidate tuple while the private bootstrap runs.
+    MODULE_CONTROL: controlStore(activeControl(), openEmergencyLatch({ target: 'production', latched: true })),
+    ...criticalRuntimeBindings,
+  }
+  const onboardingPayload = {
+    onboardingId,
+    fullName: employee.display_name,
+    corporateEmail: employee.login_email,
+    profile: 'CONSULTOR',
+    accountStatus: 'INVITED',
+    jobTitle: employee.job_title,
+    department: 'Comercial',
+    units: ['novo-hamburgo'],
+  }
+  const statusPayload = { onboardingId, employeeId: employee.id, accountStatus: 'INVITED' }
+  const signedIdentityRequest = async (path, payload, nonce, {
+    method = 'POST',
+    signatureOverride = '',
+    timestamp = String(Date.now()),
+    versionId = identityVersionId,
+  } = {}) => {
+    const body = method === 'GET' ? '' : JSON.stringify(payload)
+    const bodyHash = createHash('sha256').update(body).digest('hex')
+    const signature = signatureOverride || await signHmac(
+      criticalRuntimeBindings.IDENTITY_WORKFORCE_HMAC_KEY,
+      `v2.${timestamp}.${nonce}.${method}.${path}.${bodyHash}.${releaseSha}.${versionId}`,
+    )
+    return new Request(`https://timekeeping.local${path}`, {
+      method,
+      headers: {
+        ...(method === 'GET' ? {} : { 'content-type': 'application/json' }),
+        'x-skincos-service': 'identity',
+        'x-skincos-workforce-signature-version': '2',
+        'x-skincos-workforce-ts': timestamp,
+        'x-skincos-workforce-sig': signature,
+        'x-skincos-workforce-nonce': nonce,
+        'x-skincos-identity-release-sha': releaseSha,
+        'x-skincos-identity-version-id': versionId,
+        'x-request-id': `maintenance-${nonce}`,
+      },
+      body: body || undefined,
+    })
+  }
+
+  const onboarding = await worker.fetch(await signedIdentityRequest('/api/ponto/internal/onboarding', onboardingPayload, 'maintenance-onboarding'), environment)
+  assert.equal(onboarding.status, 200)
+  assert.equal((await onboarding.json()).data.employeeId, employee.id)
+
+  const status = await worker.fetch(await signedIdentityRequest('/api/ponto/internal/onboarding/status', statusPayload, 'maintenance-status'), environment)
+  assert.equal(status.status, 200)
+  assert.equal((await status.json()).data.idempotent, true)
+
+  const forged = await worker.fetch(await signedIdentityRequest('/api/ponto/internal/onboarding', onboardingPayload, 'maintenance-forged', { signatureOverride: 'forged' }), environment)
+  assert.equal(forged.status, 401)
+  assert.equal((await forged.json()).error, 'SERVICE_UNAUTHORIZED')
+
+  const replayTimestamp = String(Date.now())
+  const firstReplay = await worker.fetch(await signedIdentityRequest('/api/ponto/internal/onboarding/status', statusPayload, 'maintenance-replay', { timestamp: replayTimestamp }), environment)
+  assert.equal(firstReplay.status, 200)
+  const secondReplay = await worker.fetch(await signedIdentityRequest('/api/ponto/internal/onboarding/status', statusPayload, 'maintenance-replay', { timestamp: replayTimestamp }), environment)
+  assert.equal(secondReplay.status, 409)
+  assert.equal((await secondReplay.json()).error, 'SERVICE_REPLAY')
+
+  const wrongMethod = await worker.fetch(await signedIdentityRequest('/api/ponto/internal/onboarding', undefined, 'maintenance-get', { method: 'GET' }), environment)
+  assert.equal(wrongMethod.status, 503)
+  assert.equal((await wrongMethod.json()).error, 'MODULE_MAINTENANCE')
+
+  const contractProbe = await worker.fetch(await signedIdentityRequest('/api/ponto/internal/onboarding/contract-probe', undefined, 'maintenance-probe', { method: 'GET' }), environment)
+  assert.equal(contractProbe.status, 503)
+  assert.equal((await contractProbe.json()).error, 'MODULE_MAINTENANCE')
+
+  const consultantRaw = Buffer.from(JSON.stringify({
+    id: 'maintenance-consultor',
+    email: 'maintenance-consultor@example.invalid',
+    role: 'CONSULTOR',
+    allowedUnits: ['novo-hamburgo'],
+    releaseSha,
+  })).toString('base64url')
+  const consultantTimestamp = String(Date.now())
+  const consultantNonce = 'maintenance-consultor-read'
+  const consultantBodyHash = createHash('sha256').update('').digest('hex')
+  const consultantSignature = await signHmac(
+    criticalRuntimeBindings.PONTO_ACTOR_HMAC_KEY,
+    [consultantTimestamp, consultantRaw, 'GET', '/api/ponto/me', consultantNonce, consultantBodyHash].join('.'),
+  )
+  const publicRequest = new Request('https://timekeeping.local/api/ponto/me', {
+    headers: {
+      'x-skincos-gateway-release-sha': releaseSha,
+      'x-skincos-gateway-environment': 'production',
+      'x-skincos-gateway-version-id': gatewayVersionId,
+      'x-skincos-actor': consultantRaw,
+      'x-skincos-actor-ts': consultantTimestamp,
+      'x-skincos-actor-sig': consultantSignature,
+      'x-skincos-signature-version': '2',
+      'x-request-nonce': consultantNonce,
+    },
+  })
+  const publicResponse = await worker.fetch(publicRequest, environment)
+  assert.equal(publicResponse.status, 503)
+  assert.equal((await publicResponse.json()).error, 'MODULE_MAINTENANCE')
+
+  const explicitMaintenanceEnvironment = {
+    ...environment,
+    MODULE_CONTROL: controlStore({
+      state: 'maintenance',
+      releaseSha,
+      versions: {
+        timekeeping: { candidate: timekeepingVersionId },
+        identityWorkforce: { candidate: identityVersionId },
+      },
+    }, openEmergencyLatch({ target: 'production' })),
+  }
+  const wrongIdentityVersion = await worker.fetch(await signedIdentityRequest('/api/ponto/internal/onboarding/status', statusPayload, 'maintenance-wrong-version', {
+    versionId: '44444444-4444-4444-8444-444444444444',
+  }), explicitMaintenanceEnvironment)
+  assert.equal(wrongIdentityVersion.status, 503)
+  assert.equal((await wrongIdentityVersion.json()).code, 'VERSION_AFFINITY_MISMATCH')
+})
+
 test('Workforce never presents pending or invited onboarding as operational', () => {
   const pending = __testables.publicEmployee({ id: 'e1', canonical_employee_id: 'identity:o1', display_name: 'Synthetic', login_email: 'synthetic@example.invalid', status: 'LEAVE', access_state: 'PENDING_ACCESS' })
   const invited = __testables.publicEmployee({ id: 'e2', canonical_employee_id: 'identity:o2', display_name: 'Synthetic', login_email: 'synthetic2@example.invalid', status: 'LEAVE', access_state: 'INVITED' })
