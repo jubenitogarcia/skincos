@@ -9,10 +9,18 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 - `GET /internal/token-vault/v1/tokens?provider=threads|instagram|facebook&active=true`
 - `POST /internal/token-vault/v1/tokens`
 - `PATCH /internal/token-vault/v1/tokens/:id`
+- `GET /internal/token-vault/v1/meta-ads-publish/config`
 - `PUT /internal/token-vault/v1/meta-ads-publish/config`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/staging-exercise`
 - `POST /internal/token-vault/v1/analytics/operations`
 
 Os endpoints administrativos exigem `Authorization: Bearer <TOKEN_VAULT_API_TOKEN>`.
+O bearer restrito `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` só pode consultar
+`health`, `contract` e a configuração Meta Ads, ou chamar o bootstrap, o
+rollback desse bootstrap e o exercício de staging. Ele não lista/altera tokens,
+não cria runs e não publica anúncios.
 O endpoint de analytics exige o secret separado
 `TOKEN_VAULT_ANALYTICS_API_TOKEN` (administradores continuam podendo operar o
 endpoint para diagnóstico controlado).
@@ -24,6 +32,12 @@ endpoint para diagnóstico controlado).
 - Secret: `TOKEN_VAULT_N8N_API_TOKEN` (gateway operacional do Orb)
 - Secret: `TOKEN_VAULT_ANALYTICS_API_TOKEN` (somente analytics read-only)
 - Secret: `TOKEN_VAULT_ENCRYPTION_KEY`
+- Secret opcional do Worker: `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` (papel
+  restrito de configuração Meta Ads; obrigatório no Environment quando há
+  promoção V20 governada)
+- Secret privado do GitHub Environment, não um binding do Worker:
+  `TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST` (somente as `entries` do bootstrap;
+  exigido apenas quando a autoridade ainda é legada)
 - Variável opcional: `META_GRAPH_VERSION` (default `v20.0`)
 - Variável de gate: `INFLUENCER_INTELLIGENCE_ANALYTICS_MODE` (`off` por
   padrão; `shadow` permite requests bounded; `active` exige também a flag
@@ -33,75 +47,65 @@ Os tokens são gravados em D1 como AES-GCM ciphertext. Logs, auditoria e respost
 
 ## Configuração governada do Meta Ads Publish
 
-O endpoint PUT /internal/token-vault/v1/meta-ads-publish/config é o único
-writer para metadata.meta_ads_publish. Ele exige o bearer administrativo,
-aceita somente um corpo fechado com operation_key,
-expected_tracking_binding_revision e updates; cada item de updates contém
-somente token_id e meta_ads_publish. Nenhum campo de token, access token,
-secret, ciphertext ou metadata externo é aceito.
+`PUT /internal/token-vault/v1/meta-ads-publish/config` continua sendo o writer
+administrativo para uma configuração V20 já conhecida. Ele aceita somente
+`operation_key`, `expected_tracking_binding_revision` e `updates`, preserva os
+outros campos de `metadata_json` e substitui `metadata.meta_ads_publish` em um
+batch D1 condicionado às versões lidas. `POST`/`PATCH /v1/tokens` rejeitam essa
+metadata, pois um merge raso não é seguro.
 
-O writer recebe todos os destinos que precisam mudar no mesmo lote. Ele
-preserva os outros campos de metadata_json de cada credencial e substitui
-somente metadata.meta_ads_publish com uma única operação D1 condicionada a
-todas as versões anteriores. Operação, atualizações e auditoria sanitizada são
-atômicas. POST/PATCH /v1/tokens rejeitam qualquer metadata.meta_ads_publish,
-pois o merge raso desses endpoints não é seguro para essa configuração.
-
-O operador primeiro consulta GET /v1/meta-ads-publish/config com a credencial
-administrativa e usa exatamente config_authority_revision como
-expected_tracking_binding_revision. Quando a fonte ainda é legada, esse valor
-tem o formato legacy:<hash> e é derivado da configuração atual; não existe
-valor curinga ou bypass. Após a substituição, a resposta do writer retorna
-somente hashes, status e requestId; uma repetição com o mesmo operation_key e
-o mesmo corpo é idempotente.
-
-O manifesto deve ficar em custódia privada, fora do repositório, logs e
-histórico de shell. A forma do corpo é:
+Para converter a autoridade legada, use somente o bootstrap restrito. O deploy
+consulta `GET /v1/meta-ads-publish/config`; se `config_authority_mode` for
+`legacy_bootstrap`, monta o corpo fechado abaixo com a revisão opaca devolvida
+pelo GET e as `entries` do manifesto privado. Se já for `tracking_ready`, ele
+apenas faz o readback e não solicita o manifesto.
 
     {
-      "operation_key": "...",
-      "expected_tracking_binding_revision": "...",
-      "updates": [
+      "operation_key": "meta-ads-bootstrap:<sha>:<run>:<attempt>",
+      "expected_config_authority_revision": "legacy:<hash>",
+      "entries": [
         {
-          "token_id": "...",
-          "meta_ads_publish": {
-            "destination_group": "...",
-            "api_version": "...",
-            "account_id": "...",
-            "campaign_id": "...",
-            "adset_id": "...",
-            "page_id": "...",
-            "instagram_user_id": "...",
-            "allowed_link_hosts": ["..."],
-            "landing_pages_by_creative_group": {},
-            "destination_type": "website",
-            "tracking_contract": {
-              "url_tags": "...",
-              "profile_ref": "...",
-              "production_url_tags_readback_fixture": {
-                "ad_id": "...",
-                "creative_id": "..."
-              }
-            },
-            "tracking_profiles": {}
-          }
+          "config_token_id": "...",
+          "destination_type": "website",
+          "source_config_token_id": "...",
+          "url_tags": "key1=value1&key2=value2"
+        },
+        {
+          "config_token_id": "...",
+          "destination_type": "whatsapp"
         }
       ]
     }
 
-Para destination_type="website", o contrato exige parâmetros url_tags válidos
-(pares arbitrários key=value separados por &, preservados sem double encoding),
-um perfil Website com requisitos explícitos para evento de website e dataset
-offline, e uma fixture de criativo pausado. IDs de pixel, evento e dataset não
-são aceitos no manifesto: o Gateway os lê do ad set fonte autorizado. Para
-destination_type="whatsapp", use whatsapp_destination_url HTTPS de WhatsApp e
-omita integralmente tracking_contract, tracking_profiles e campos de carousel.
+Cada Website usa uma fonte autorizada já existente (`source_config_token_id` ou
+`source_adset_id`, nunca ambos). O Vault resolve internamente credenciais e
+IDs, lê pixel/evento Website e dataset offline da fonte e cria ou reutiliza a
+fixture de criativo pausado. `url_tags` aceita pares arbitrários `key=value`
+separados por `&`, preserva UTMs quando fornecidas e não aplica double encoding.
+Click-to-WhatsApp não recebe `url_tags`, perfil Website nem configuração de
+conversão Website.
 
-Fluxo seguro: obter a revisão opaca via GET, preparar o manifesto privado,
-enviar o PUT com bearer injetado pela custódia sem imprimir o valor, repetir
-GET /v1/meta-ads-publish/config para readback e só então executar o preflight
-Meta Ads Publish. Não inclua manifestos privados, headers Authorization ou
-respostas detalhadas em Git, comentários de PR ou logs.
+No manifesto de staging, exatamente uma entry Website marca
+`staging_synthetic_fixture: true`; `fixture_source_ad_id` é opcional e serve
+somente para fixar uma cópia pausada já autorizada. A seleção nunca aceita um
+token Graph, pixel, evento ou dataset fornecido pelo chamador.
+
+O bootstrap exige que todas as credenciais Facebook já participantes sejam
+incluídas, mantém journal D1 com estado Graph cifrado e responde apenas com
+estado/revisão agregados. É idempotente por `operation_key`; não aceita tokens,
+access tokens, secrets, ciphertexts nem IDs de pixel/evento/dataset no
+manifesto. Não inclua manifestos, headers `Authorization` ou respostas
+detalhadas em Git, comentários de PR ou logs.
+
+`POST .../config/bootstrap/rollback` não é um rollback genérico: exige a mesma
+`operation_key` aplicada e a revisão V20 exata. Ele restaura primeiro o baseline
+Graph cifrado e só então a metadata legada; conflito ou readback ambíguo ficam
+em fail-closed (`reconciliation_required`).
+
+`POST .../config/staging-exercise` funciona exclusivamente no Worker staging.
+Ele seleciona uma única fixture sintética autorizada, prova a reconciliação
+GET-POST-GET do evento Website/dataset offline e restaura o snapshot antes de
+retornar `reconciled_and_rolled_back`.
 
 ## Analytics read-only
 
@@ -207,18 +211,29 @@ feita depois pelo router Meta-only, com timeout de 12 s e retry seguro limitado.
 O Token Vault é publicado exclusivamente por
 `.github/workflows/deploy-token-vault.yml`: Preview -> Staging -> Production.
 O workflow exige o gate imutável de promoção, lease global
-`release:token-vault`, checkpoint D1 cifrado, migrations aditivas, upload de
-versão imutável e readback sanitizado. Preview só emite evidência depois de
-testar o Worker e do dry-run; staging exerce a fixture reversível. Em produção,
-o workflow exige a source release nativa exata, aplica o Orb inativo com versão
-esperada, ativa só então o Worker e termina com o preflight Orb. Ele só atesta
-nomes de secrets; não cria nem imprime valores. Não execute `wrangler deploy`,
-`secret put` ou migrations remotas manualmente para publicar este serviço.
+`release:token-vault`, bookmark D1 Time Travel antes das migrations aditivas,
+upload de versão imutável e readback sanitizado. O bookmark registra somente a
+recuperação manual: restaurar D1 exige um novo lease `release:token-vault`,
+confirmação do incumbent e ausência de writers conflitantes; não há restore
+automático do banco.
+
+O upload preserva bindings incumbentes com `--keep-vars --strict`; só fornece o
+bearer restrito do Environment e, se o binding analytics ainda não existir,
+pode gerar seu valor privado para a versão candidata. Preview só emite evidência
+depois do teste e dry-run. Em staging e produção, após ativar o Worker candidato,
+o workflow faz bootstrap apenas para autoridade legada, valida o readback V20 e
+em staging executa a fixture reversível. Em produção, ele exige a source release
+nativa exata, aplica o Orb inativo com versão esperada e termina com o preflight
+Orb. Não execute `wrangler deploy`, `secret put` ou migrations remotas
+manualmente para publicar este serviço.
 
 Antes da primeira promoção, disponibilize em cada GitHub Environment os
-segredos independentes exigidos pelo workflow e um perfil de tracking sintético
-e autorizado em staging. A ausência de credencial, fixture, checkpoint ou
-evidência de staging é um bloqueio fail-closed para produção.
+segredos independentes exigidos pelo workflow, em especial
+`TOKEN_VAULT_META_ADS_CONFIG_TOKEN`; disponibilize
+`TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST` somente com as fontes/tags autorizadas
+quando a autoridade for legada, e um perfil de tracking sintético autorizado em
+staging. A ausência de credencial, manifesto legada necessário, fixture,
+bookmark ou evidência de staging é um bloqueio fail-closed para produção.
 
 ## Import inicial
 

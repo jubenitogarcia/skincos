@@ -163,6 +163,21 @@ const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_recon
 const CONFIG_WRITER_LOCK_RESOURCE_KEY = 'meta_ads_publish_config_authority';
 const CONFIG_WRITER_LOCK_TTL_MS = 60 * 1000;
 const CONFIG_WRITER_MAX_REQUEST_BYTES = 150 * 1024;
+const BOOTSTRAP_LOCK_TTL_MS = 15 * 60 * 1000;
+// A bootstrap holds the same authority lease as the normal writer. Keeping
+// this batch deliberately small makes its renewable lease observable and
+// prevents a broad legacy migration from starving normal configuration work.
+const BOOTSTRAP_MAX_ENTRIES = 10;
+const BOOTSTRAP_OPERATION_KEY_PATTERN = /^[A-Za-z0-9_.:-]{8,160}$/;
+const STAGING_EXERCISE_OPERATION_KEY_PATTERN = /^staging-tracking-fixture:[A-Za-z0-9_.:-]{8,120}$/;
+const BOOTSTRAP_FIXTURE_NAME_PREFIX = 'Meta Ads URL Tags Fixture';
+const BOOTSTRAP_AD_FIELDS = [
+  'id',
+  'adset_id',
+  'status',
+  'effective_status',
+  'creative{id,name,url_tags,object_story_spec,asset_feed_spec}',
+].join(',');
 const CONFIG_WRITER_TOKEN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 const CONFIG_WRITER_OPERATION_KEY_PATTERN = /^[A-Za-z0-9_.:-]{8,160}$/;
 const CONFIG_WRITER_TOP_LEVEL_KEYS = new Set([
@@ -296,6 +311,18 @@ export async function handleMetaAdsPublishRequest(input) {
     return getConfig(env, requestId);
   }
 
+  if (request.method === 'POST' && pathname === `${PREFIX}/config/bootstrap`) {
+    return bootstrapMetaAdsPublishConfig({ request, env, requestId, decryptToken, encryptToken, writeAudit });
+  }
+
+  if (request.method === 'POST' && pathname === `${PREFIX}/config/bootstrap/rollback`) {
+    return rollbackBootstrapMetaAdsPublishConfig({ request, env, requestId, decryptToken, encryptToken, writeAudit });
+  }
+
+  if (request.method === 'POST' && pathname === `${PREFIX}/config/staging-exercise`) {
+    return exerciseStagingMetaAdsTrackingFixture({ request, env, requestId, decryptToken, encryptToken, writeAudit });
+  }
+
   if (request.method === 'POST' && pathname === `${PREFIX}/inventory`) {
     return getInventory({ request, env, requestId, decryptToken, writeAudit });
   }
@@ -342,18 +369,46 @@ export async function handleMetaAdsPublishRequest(input) {
 // credential ciphertext is never accepted, decrypted, or re-encrypted here:
 // the only mutable subtree is metadata.meta_ads_publish.
 export async function updateMetaAdsPublishConfig({ request, env, requestId }) {
-  let lockOwner = '';
-  let lockAcquired = false;
   try {
     const body = await readConfigWriterRequest(request);
     const input = await validateConfigWriterInput(body);
+    const result = await applyMetaAdsPublishConfigAtomically({ input, env, requestId });
+    return configWriterSuccessResponse({
+      replayed: result.replayed,
+      revision: result.revision,
+      requestId,
+    }, result.status);
+  } catch (error) {
+    return configWriterFailureResponse(error, requestId);
+  }
+}
+
+// Both the administrative writer and the narrowly-scoped bootstrap saga use
+// this core.  It deliberately accepts an already validated input rather than
+// an HTTP request so the bootstrap never re-enters the public handler.
+async function applyMetaAdsPublishConfigAtomically({ input, env, requestId, lockAlreadyHeld = false, assertLease = null }) {
+  let lockOwner = '';
+  let lockAcquired = false;
+  try {
     if (!env?.TOKEN_VAULT_DB || typeof env.TOKEN_VAULT_DB.batch !== 'function') {
       throw configWriterFailure('meta_ads_publish_config_authority_unavailable', 503);
     }
+    if (
+      clean(env.ENVIRONMENT).toLowerCase() !== 'staging' &&
+      safeArray(input?.updates).some((update) => hasStagingSyntheticFixture(update?.metaAdsPublish))
+    ) {
+      throw configWriterFailure('meta_ads_publish_config_invalid', 409);
+    }
 
-    lockOwner = crypto.randomUUID();
-    await acquireConfigWriterLock(env, lockOwner);
-    lockAcquired = true;
+    if (!lockAlreadyHeld) {
+      lockOwner = crypto.randomUUID();
+      await acquireConfigWriterLock(env, lockOwner);
+      lockAcquired = true;
+    } else if (typeof assertLease !== 'function') {
+      throw configWriterFailure('meta_ads_publish_config_locked', 409);
+    }
+
+    if (assertLease) await assertLease();
 
     const existingOperation = await dbFirst(
       env,
@@ -379,11 +434,11 @@ export async function updateMetaAdsPublishConfig({ request, env, requestId }) {
       ) {
         throw configWriterFailure('meta_ads_publish_config_operation_state_stale', 409);
       }
-      return configWriterSuccessResponse({
+      return {
         replayed: true,
         revision: currentAuthority.revision,
-        requestId,
-      });
+        status: 200,
+      };
     }
 
     if (currentAuthority.revision !== input.expectedTrackingBindingRevision) {
@@ -478,6 +533,7 @@ export async function updateMetaAdsPublishConfig({ request, env, requestId }) {
         'WHERE id = ? AND status = \'pending\'',
       ].join(' ')).bind(operationId),
     );
+    if (assertLease) await assertLease();
     const batchResults = await env.TOKEN_VAULT_DB.batch(batchStatements);
     if (
       batchChanges(batchResults, 1) !== plans.length ||
@@ -490,13 +546,11 @@ export async function updateMetaAdsPublishConfig({ request, env, requestId }) {
     if (!readbackAuthority.ready || readbackAuthority.revision !== candidateAuthority.revision) {
       throw configWriterFailure('meta_ads_publish_config_readback_mismatch', 409);
     }
-    return configWriterSuccessResponse({
+    return {
       replayed: false,
       revision: readbackAuthority.revision,
-      requestId,
-    }, 201);
-  } catch (error) {
-    return configWriterFailureResponse(error, requestId);
+      status: 201,
+    };
   } finally {
     if (lockAcquired) {
       await releaseConfigWriterLock(env, lockOwner);
@@ -702,6 +756,11 @@ function normalizeConfigWriterWebsiteTracking(value, targetAdsetId) {
     tracking_profiles: trackingProfiles,
     carousel: normalizeConfigWriterCarousel(value, selectedProfile),
   };
+}
+
+function hasStagingSyntheticFixture(value) {
+  return Object.values(asObject(asObject(value).tracking_profiles))
+    .some((profile) => asObject(profile).staging_synthetic_fixture === true);
 }
 
 function normalizeConfigWriterPausedFixture(value) {
@@ -924,14 +983,17 @@ function buildConfigWriterAppliedOperationUpdate(env, { plans, now, operationId 
   );
 }
 
-async function acquireConfigWriterLock(env, ownerId) {
+async function acquireConfigWriterLock(env, ownerId, {
+  resourceKey = CONFIG_WRITER_LOCK_RESOURCE_KEY,
+  ttlMs = CONFIG_WRITER_LOCK_TTL_MS,
+} = {}) {
   try {
     const now = nowIso();
-    const expiresAt = new Date(Date.now() + CONFIG_WRITER_LOCK_TTL_MS).toISOString();
+    const expiresAt = new Date(Date.now() + ttlMs).toISOString();
     await dbRun(
       env,
       'DELETE FROM meta_ads_publish_config_locks WHERE resource_key = ? AND expires_at <= ?',
-      CONFIG_WRITER_LOCK_RESOURCE_KEY,
+      resourceKey,
       now,
     );
     await dbRun(
@@ -943,7 +1005,7 @@ async function acquireConfigWriterLock(env, ownerId) {
         'expires_at = excluded.expires_at, updated_at = excluded.updated_at',
         'WHERE meta_ads_publish_config_locks.expires_at <= ?',
       ].join(' '),
-      CONFIG_WRITER_LOCK_RESOURCE_KEY,
+      resourceKey,
       ownerId,
       expiresAt,
       now,
@@ -953,7 +1015,7 @@ async function acquireConfigWriterLock(env, ownerId) {
     const lock = await dbFirst(
       env,
       'SELECT resource_key, owner_id FROM meta_ads_publish_config_locks WHERE resource_key = ?',
-      CONFIG_WRITER_LOCK_RESOURCE_KEY,
+      resourceKey,
     );
     if (!lock || clean(lock.owner_id) !== ownerId) {
       throw configWriterFailure('meta_ads_publish_config_locked', 409);
@@ -964,17 +1026,46 @@ async function acquireConfigWriterLock(env, ownerId) {
   }
 }
 
-async function releaseConfigWriterLock(env, ownerId) {
+async function releaseConfigWriterLock(env, ownerId, {
+  resourceKey = CONFIG_WRITER_LOCK_RESOURCE_KEY,
+} = {}) {
   try {
     await dbRun(
       env,
       'DELETE FROM meta_ads_publish_config_locks WHERE resource_key = ? AND owner_id = ?',
-      CONFIG_WRITER_LOCK_RESOURCE_KEY,
+      resourceKey,
       ownerId,
     );
   } catch {
     // The lock has a short expiry; a release failure cannot rewrite a committed
     // configuration and must not turn a durable result into a false failure.
+  }
+}
+
+async function renewConfigWriterLock(env, ownerId, {
+  resourceKey = CONFIG_WRITER_LOCK_RESOURCE_KEY,
+  ttlMs = CONFIG_WRITER_LOCK_TTL_MS,
+} = {}) {
+  try {
+    const now = nowIso();
+    const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+    const result = await dbRun(
+      env,
+      `UPDATE meta_ads_publish_config_locks
+          SET expires_at = ?, updated_at = ?
+        WHERE resource_key = ? AND owner_id = ? AND expires_at > ?`,
+      expiresAt,
+      now,
+      resourceKey,
+      ownerId,
+      now,
+    );
+    if (statementChanges(result) !== 1) {
+      throw configWriterFailure('meta_ads_publish_config_locked', 409);
+    }
+  } catch (error) {
+    if (isConfigWriterFailure(error)) throw error;
+    throw configWriterFailure('meta_ads_publish_config_authority_unavailable', 503);
   }
 }
 
@@ -1019,6 +1110,2129 @@ function configWriterFailureResponse(error, requestId) {
         ? 503
         : 400;
   return response({ ok: false, error: code, requestId }, status);
+}
+
+// The legacy configuration predates the v20 tracking contract, so it cannot
+// create a normal creative in order to obtain the mandatory paused URL-tags
+// fixture.  This narrowly-scoped saga is the only bootstrap escape hatch. It
+// resolves every identifier and credential inside the Vault, journals all
+// Graph-side state encrypted, and commits the v20 configuration with the same
+// CAS core used by the administrative writer.
+export async function bootstrapMetaAdsPublishConfig({ request, env, requestId, decryptToken, encryptToken, writeAudit }) {
+  let input;
+  let operation;
+  let state;
+  let context;
+  let lockOwner = '';
+  let lockAcquired = false;
+  try {
+    input = await validateBootstrapInput(await readBootstrapRequest(request));
+    if (!env?.TOKEN_VAULT_DB || typeof env.TOKEN_VAULT_DB.batch !== 'function') {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_unavailable', 503);
+    }
+    if (input.entries.some((entry) => entry.stagingSyntheticFixture === true) && clean(env.ENVIRONMENT).toLowerCase() !== 'staging') {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_staging_fixture_forbidden', 409);
+    }
+
+    lockOwner = crypto.randomUUID();
+    await acquireConfigWriterLock(env, lockOwner, {
+      ttlMs: BOOTSTRAP_LOCK_TTL_MS,
+    });
+    lockAcquired = true;
+
+    const currentRows = await listMetaAdsPublishConfigRows(env);
+    assertBootstrapTargetsComplete(input.entries, currentRows);
+    const authority = await configWriterAuthorityState(currentRows);
+    operation = await loadBootstrapOperation(env, input.operationKey);
+    if (operation) {
+      if (clean(operation.request_hash) !== input.requestHash) {
+        throw bootstrapFailure('meta_ads_publish_bootstrap_operation_conflict', 409);
+      }
+      state = await decryptBootstrapState(operation, decryptToken, env);
+      if (clean(operation.status) === 'applied') {
+        if (!authority.ready || clean(operation.resulting_tracking_binding_revision) !== authority.revision) {
+          throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+        }
+        return bootstrapSuccessResponse({ input, state, revision: authority.revision, requestId, replayed: true });
+      }
+      if (['rolled_back', 'reconciliation_required'].includes(clean(operation.status))) {
+        throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+      }
+    } else {
+      if (authority.mode !== 'legacy_bootstrap' || authority.ready) {
+        throw bootstrapFailure('meta_ads_publish_bootstrap_not_legacy', 409);
+      }
+      if (authority.revision !== input.expectedConfigAuthorityRevision) {
+        throw bootstrapFailure('meta_ads_publish_bootstrap_binding_stale', 409);
+      }
+      state = {
+        schema: 'meta_ads_publish_bootstrap/v1',
+        input: {
+          operation_key: input.operationKey,
+          expected_config_authority_revision: input.expectedConfigAuthorityRevision,
+          entries: input.entries,
+        },
+        items: [],
+        config_input: null,
+        config_applied: false,
+      };
+      operation = await createBootstrapOperation({ env, input, state, encryptToken });
+    }
+
+    context = {
+      env,
+      requestId,
+      operationKey: input.operationKey,
+      ...bootstrapMutationLockIdentity(input.operationKey),
+      bootstrapMutationLockKeys: [],
+      bootstrapMutationLocksHeld: false,
+      action: 'bootstrap_meta_ads_publish_config',
+      decryptToken,
+      encryptToken,
+      attempts: 0,
+      rateUsage: {},
+      traceId: '',
+      assertBootstrapLease: async () => {
+        try {
+          await renewConfigWriterLock(env, lockOwner, { ttlMs: BOOTSTRAP_LOCK_TTL_MS });
+          await renewBootstrapMutationLocks(context);
+        } catch (error) {
+          const locked = isConfigWriterFailure(error) || clean(error?.message).startsWith('resource_locked:');
+          throw bootstrapFailure(
+            locked
+              ? 'meta_ads_publish_bootstrap_locked'
+              : 'meta_ads_publish_bootstrap_unavailable',
+            locked ? 409 : Number(error?.http_status) || 503,
+          );
+        }
+      },
+    };
+    try {
+      context.bootstrapMutationLockKeys = bootstrapMutationLockKeysForInput(input.entries, currentRows);
+      await acquireLocks(
+        env,
+        context.bootstrapMutationRunId,
+        context.bootstrapMutationOperationKey,
+        context.bootstrapMutationLockKeys,
+      );
+      context.bootstrapMutationLocksHeld = true;
+    } catch (error) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_locked', 409);
+    }
+    const result = await executeBootstrapSaga({
+      input,
+      state,
+      operation,
+      currentRows,
+      authority,
+      context,
+      requestId,
+    });
+    // The durable D1 commit is the source of truth. Audit delivery is useful
+    // but must never turn a committed v20 authority into a false failed
+    // bootstrap that a deploy may try to compensate.
+    await writeBootstrapAudit(writeAudit, env, requestId, 'ok', result.state).catch(() => undefined);
+    return bootstrapSuccessResponse({
+      input,
+      state: result.state,
+      revision: result.revision,
+      requestId,
+      replayed: result.replayed,
+    }, result.status);
+  } catch (error) {
+    const configCommitted = state && !state.config_applied
+      ? await bootstrapConfigWasCommitted(env, state).catch(() => false)
+      : Boolean(state?.config_applied);
+    if (state && configCommitted) {
+      state.config_applied = true;
+      const authority = await configWriterAuthorityState(await listMetaAdsPublishConfigRows(env)).catch(() => null);
+      if (authority?.ready) {
+        try {
+          await persistBootstrapState({
+            env,
+            operation,
+            state,
+            status: 'applied',
+            resultingRevision: authority.revision,
+            encryptToken,
+            context,
+          });
+        } catch {
+          // A Graph/D1 bootstrap is only externally compensable if its journal
+          // durably records the candidate revision and encrypted baseline.
+          // Do not report success when that evidence cannot be persisted.
+          error = bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+          await writeBootstrapAudit(writeAudit, env, requestId, 'failed', state).catch(() => undefined);
+          return bootstrapFailureResponse(error, requestId);
+        }
+        await writeBootstrapAudit(writeAudit, env, requestId, 'ok', state).catch(() => undefined);
+        return bootstrapSuccessResponse({
+          input: input || { operationKey: clean(operation?.operation_key) },
+          state,
+          revision: authority.revision,
+          requestId,
+          replayed: false,
+        });
+      }
+    }
+    if (operation && state && !configCommitted) {
+      const cleanupContext = context || {
+        env,
+        requestId,
+        operationKey: input?.operationKey || clean(operation.operation_key),
+        ...bootstrapMutationLockIdentity(input?.operationKey || clean(operation.operation_key)),
+        bootstrapMutationLockKeys: [],
+        bootstrapMutationLocksHeld: false,
+        action: 'bootstrap_meta_ads_publish_config_cleanup',
+        decryptToken,
+        encryptToken,
+        attempts: 0,
+        rateUsage: {},
+        traceId: '',
+        assertBootstrapLease: async () => undefined,
+      };
+      if (cleanupContext.bootstrapMutationLocksHeld === true) {
+        const compensated = await compensateBootstrapState({ state, context: cleanupContext }).catch(() => false);
+        const terminalStatus = compensated ? 'rolled_back' : 'reconciliation_required';
+        await persistBootstrapState({ env, operation, state, status: terminalStatus, encryptToken, context: cleanupContext }).catch(() => undefined);
+        if (!compensated) error = bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+      } else if (bootstrapStateMayHaveGraphMutation(state)) {
+        // We failed to establish the shared ad-set lease. Do not attempt a
+        // best-effort Graph cleanup that could overwrite an active v20 run.
+        await persistBootstrapState({ env, operation, state, status: 'reconciliation_required', encryptToken, context: cleanupContext }).catch(() => undefined);
+        error = bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+      }
+    }
+    await writeBootstrapAudit(writeAudit, env, requestId, 'failed', state).catch(() => undefined);
+    return bootstrapFailureResponse(error, requestId);
+  } finally {
+    if (context?.bootstrapMutationLocksHeld === true) {
+      await releaseOperationLocks(
+        env,
+        context.bootstrapMutationRunId,
+        context.bootstrapMutationOperationKey,
+      ).catch(() => undefined);
+    }
+    if (lockAcquired) {
+      await releaseConfigWriterLock(env, lockOwner);
+    }
+  }
+}
+
+// A deployment can cross several independently recoverable surfaces after a
+// bootstrap has committed.  This endpoint is intentionally narrower than the
+// normal configuration writer: it can only undo the exact encrypted baseline
+// captured by its own applied bootstrap operation, and only while the current
+// authority is still that operation's resulting v20 revision.
+export async function rollbackBootstrapMetaAdsPublishConfig({ request, env, requestId, decryptToken, encryptToken, writeAudit }) {
+  let input;
+  let operation;
+  let state;
+  let lockOwner = '';
+  let lockAcquired = false;
+  let context;
+  try {
+    input = validateBootstrapRollbackInput(await readBootstrapRollbackRequest(request));
+    if (!env?.TOKEN_VAULT_DB || typeof env.TOKEN_VAULT_DB.batch !== 'function') {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_unavailable', 503);
+    }
+    lockOwner = crypto.randomUUID();
+    await acquireConfigWriterLock(env, lockOwner, { ttlMs: BOOTSTRAP_LOCK_TTL_MS });
+    lockAcquired = true;
+    context = {
+      env,
+      requestId,
+      operationKey: input.operationKey,
+      ...bootstrapMutationLockIdentity(input.operationKey),
+      bootstrapMutationLockKeys: [],
+      bootstrapMutationLocksHeld: false,
+      action: 'rollback_meta_ads_publish_bootstrap',
+      decryptToken,
+      encryptToken,
+      attempts: 0,
+      rateUsage: {},
+      traceId: '',
+      assertBootstrapLease: async () => {
+        try {
+          await renewConfigWriterLock(env, lockOwner, { ttlMs: BOOTSTRAP_LOCK_TTL_MS });
+          await renewBootstrapMutationLocks(context);
+        } catch (error) {
+          const locked = isConfigWriterFailure(error) || clean(error?.message).startsWith('resource_locked:');
+          throw bootstrapFailure(
+            locked
+              ? 'meta_ads_publish_bootstrap_locked'
+              : 'meta_ads_publish_bootstrap_unavailable',
+            locked ? 409 : Number(error?.http_status) || 503,
+          );
+        }
+      },
+    };
+    operation = await loadBootstrapOperation(env, input.operationKey);
+    if (!operation) throw bootstrapFailure('meta_ads_publish_bootstrap_operation_not_found', 404);
+    if (clean(operation.resulting_tracking_binding_revision) !== input.expectedTrackingBindingRevision) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+    }
+    state = await decryptBootstrapState(operation, decryptToken, env);
+    const currentRows = await listMetaAdsPublishConfigRows(env);
+    const currentAuthority = await configWriterAuthorityState(currentRows);
+    if (clean(operation.status) === 'rolled_back') {
+      if (currentAuthority.ready || currentAuthority.revision !== clean(state.input?.expected_config_authority_revision)) {
+        throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+      }
+      return bootstrapRollbackSuccessResponse({ state, revision: currentAuthority.revision, requestId, replayed: true });
+    }
+    if (clean(operation.status) !== 'applied' || !state.config_applied) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+    }
+    if (!currentAuthority.ready || currentAuthority.revision !== input.expectedTrackingBindingRevision) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+    }
+    try {
+      context.bootstrapMutationLockKeys = bootstrapMutationLockKeysForState(state, currentRows);
+      await acquireLocks(
+        env,
+        context.bootstrapMutationRunId,
+        context.bootstrapMutationOperationKey,
+        context.bootstrapMutationLockKeys,
+      );
+      context.bootstrapMutationLocksHeld = true;
+    } catch {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_locked', 409);
+    }
+
+    // Do not restore legacy metadata until Graph has been returned to the
+    // encrypted baseline.  On a failed Graph compensation we retain v20 and
+    // fail closed rather than reactivating a v18 publisher against unknown
+    // tracking state.
+    const graphCompensated = await compensateBootstrapState({ state, context });
+    if (!graphCompensated) {
+      await persistBootstrapState({
+        env,
+        operation,
+        state,
+        status: 'reconciliation_required',
+        encryptToken,
+        context,
+      });
+      throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+    }
+
+    const restored = await restoreBootstrapConfigAuthority({
+      env,
+      operation,
+      state,
+      expectedTrackingBindingRevision: input.expectedTrackingBindingRevision,
+      encryptToken,
+      context,
+    });
+    await writeBootstrapAudit(writeAudit, env, requestId, 'rolled_back', state).catch(() => undefined);
+    return bootstrapRollbackSuccessResponse({ state, revision: restored.revision, requestId, replayed: false });
+  } catch (error) {
+    await writeBootstrapAudit(writeAudit, env, requestId, 'rollback_failed', state).catch(() => undefined);
+    return bootstrapFailureResponse(error, requestId);
+  } finally {
+    if (context?.bootstrapMutationLocksHeld === true) {
+      await releaseOperationLocks(
+        env,
+        context.bootstrapMutationRunId,
+        context.bootstrapMutationOperationKey,
+      ).catch(() => undefined);
+    }
+    if (lockAcquired) await releaseConfigWriterLock(env, lockOwner);
+  }
+}
+
+async function readBootstrapRollbackRequest(request) {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 8 * 1024) throw bootstrapFailure('meta_ads_publish_bootstrap_request_too_large', 413);
+  try {
+    const body = await request.json();
+    if (!isJsonObject(body)) throw bootstrapFailure('meta_ads_publish_bootstrap_request_invalid', 400);
+    return body;
+  } catch (error) {
+    if (isBootstrapFailure(error)) throw error;
+    throw bootstrapFailure('meta_ads_publish_bootstrap_request_invalid', 400);
+  }
+}
+
+function validateBootstrapRollbackInput(body) {
+  assertBootstrapExactKeys(body, new Set(['operation_key', 'expected_tracking_binding_revision']));
+  const operationKey = clean(body.operation_key);
+  const expectedTrackingBindingRevision = clean(body.expected_tracking_binding_revision).toLowerCase();
+  if (!BOOTSTRAP_OPERATION_KEY_PATTERN.test(operationKey)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_operation_key_invalid', 400);
+  }
+  if (!/^[a-f0-9]{64}$/.test(expectedTrackingBindingRevision)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_expected_revision_invalid', 400);
+  }
+  return { operationKey, expectedTrackingBindingRevision };
+}
+
+async function restoreBootstrapConfigAuthority({ env, operation, state, expectedTrackingBindingRevision, encryptToken, context }) {
+  await assertBootstrapLease(context);
+  const configInput = asObject(state.config_input);
+  const updates = safeArray(configInput.updates);
+  const priorConfigs = asObject(state.previous_meta_ads_publish);
+  if (!updates.length || !Object.keys(priorConfigs).length) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+  }
+  const currentRows = await listMetaAdsPublishConfigRows(env);
+  const plans = updates.map((update) => {
+    const tokenId = clean(update.tokenId);
+    const target = currentRows.find((row) => clean(row.id) === tokenId);
+    const expectedV20 = asObject(update.metaAdsPublish);
+    const previous = asObject(priorConfigs[tokenId]);
+    if (
+      !target || Number(target.active) !== 1 || !Object.keys(expectedV20).length || !Object.keys(previous).length
+    ) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+    }
+    const currentMetadata = parseConfigWriterMetadata(target.metadata_json);
+    if (stableStringify(asObject(currentMetadata.meta_ads_publish)) !== stableStringify(expectedV20)) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+    }
+    return {
+      tokenId,
+      target,
+      nextMetadataJson: JSON.stringify({ ...currentMetadata, meta_ads_publish: previous }),
+    };
+  });
+  const previousAuthorityRevision = clean(state.input?.expected_config_authority_revision);
+  if (!/^legacy:[a-f0-9]{64}$/.test(previousAuthorityRevision)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+  }
+  state.config_applied = false;
+  state.config_rolled_back = true;
+  const stateCiphertext = await encryptBootstrapState(state, encryptToken, env);
+  const now = nowIso();
+  await assertBootstrapLease(context);
+  const results = await env.TOKEN_VAULT_DB.batch([
+    buildBootstrapAtomicMetadataRestore(env, { plans, now }),
+    buildBootstrapRolledBackOperationUpdate(env, {
+      plans,
+      now,
+      operation,
+      expectedTrackingBindingRevision,
+      stateCiphertext,
+      summaryJson: JSON.stringify(summarizeBootstrapState(state)),
+    }),
+  ]);
+  if (batchChanges(results, 0) !== plans.length || batchChanges(results, 1) !== 1) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+  }
+  const authority = await configWriterAuthorityState(await listMetaAdsPublishConfigRows(env));
+  if (authority.ready || authority.revision !== previousAuthorityRevision) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+  }
+  operation.status = 'rolled_back';
+  return { revision: authority.revision };
+}
+
+function buildBootstrapAtomicMetadataRestore(env, { plans, now }) {
+  const caseClauses = plans.map(() => 'WHEN ? THEN ?').join(' ');
+  const targetPlaceholders = plans.map(() => '?').join(', ');
+  const oldConditions = plans.map(() => '(id = ? AND metadata_json = ?)').join(' OR ');
+  return env.TOKEN_VAULT_DB.prepare([
+    'UPDATE credential_tokens',
+    `SET metadata_json = CASE id ${caseClauses} ELSE metadata_json END, updated_at = ?`,
+    `WHERE id IN (${targetPlaceholders}) AND provider = 'facebook' AND active = 1`,
+    'AND (SELECT COUNT(*) FROM credential_tokens',
+    `WHERE provider = 'facebook' AND active = 1 AND (${oldConditions})) = ?`,
+  ].join(' ')).bind(
+    ...plans.flatMap((plan) => [plan.tokenId, plan.nextMetadataJson]),
+    now,
+    ...plans.map((plan) => plan.tokenId),
+    ...plans.flatMap((plan) => [plan.tokenId, plan.target.metadata_json]),
+    plans.length,
+  );
+}
+
+function buildBootstrapRolledBackOperationUpdate(env, {
+  plans,
+  now,
+  operation,
+  expectedTrackingBindingRevision,
+  stateCiphertext,
+  summaryJson,
+}) {
+  const newConditions = plans.map(() => '(id = ? AND metadata_json = ?)').join(' OR ');
+  return env.TOKEN_VAULT_DB.prepare([
+    "UPDATE meta_ads_publish_bootstrap_operations SET status = 'rolled_back', state_ciphertext = ?, summary_json = ?, updated_at = ?",
+    "WHERE id = ? AND operation_key = ? AND request_hash = ? AND status = 'applied'",
+    'AND resulting_tracking_binding_revision = ?',
+    'AND (SELECT COUNT(*) FROM credential_tokens',
+    `WHERE provider = 'facebook' AND active = 1 AND (${newConditions})) = ?`,
+  ].join(' ')).bind(
+    stateCiphertext,
+    summaryJson,
+    now,
+    clean(operation.id),
+    clean(operation.operation_key),
+    clean(operation.request_hash),
+    expectedTrackingBindingRevision,
+    ...plans.flatMap((plan) => [plan.tokenId, plan.nextMetadataJson]),
+    plans.length,
+  );
+}
+
+function bootstrapRollbackSuccessResponse({ state, revision, requestId, replayed }) {
+  const summary = summarizeBootstrapState(state);
+  return response({
+    ok: true,
+    rolled_back: true,
+    replayed: Boolean(replayed),
+    operation_status: 'rolled_back',
+    config_authority_revision: revision,
+    website_fixture_count: summary.website_fixture_count,
+    requestId,
+  });
+}
+
+// The staging deployment proves a deliberately isolated source/target pair can
+// reconcile the authorized conversion contract and restore the exact prior
+// state.  It is not a generic Meta operation: selectors stay in the private
+// configuration, the endpoint only accepts a bounded idempotency key, and it
+// is disabled outside the staging Worker.
+export async function exerciseStagingMetaAdsTrackingFixture({ request, env, requestId, decryptToken, encryptToken, writeAudit }) {
+  let input;
+  let fixture;
+  let context;
+  let snapshotId = '';
+  let runId = '';
+  let transactionOperationKey = '';
+  let transactionLockHeld = false;
+  let configLockOwner = '';
+  let configLockHeld = false;
+  let bindingRevision = '';
+  try {
+    input = await validateStagingExerciseInput(await readStagingExerciseRequest(request));
+    if (clean(env?.ENVIRONMENT).toLowerCase() !== 'staging') {
+      throw stagingExerciseFailure('staging_tracking_fixture_exercise_disabled', 503);
+    }
+    if (!env?.TOKEN_VAULT_DB || typeof env.TOKEN_VAULT_DB.prepare !== 'function') {
+      throw stagingExerciseFailure('staging_tracking_fixture_exercise_unavailable', 503);
+    }
+
+    configLockOwner = crypto.randomUUID();
+    try {
+      await acquireConfigWriterLock(env, configLockOwner, { ttlMs: BOOTSTRAP_LOCK_TTL_MS });
+      configLockHeld = true;
+    } catch (error) {
+      throw stagingExerciseFailure(
+        isConfigWriterFailure(error)
+          ? 'staging_tracking_fixture_config_locked'
+          : 'staging_tracking_fixture_exercise_unavailable',
+        Number(error?.http_status) || 503,
+      );
+    }
+
+    const rows = await listMetaAdsPublishConfigRows(env);
+    const authority = await configWriterAuthorityState(rows);
+    const binding = await deriveTrackingBindingState(rows);
+    if (!authority.ready || !binding.ready) {
+      throw stagingExerciseFailure('staging_tracking_fixture_config_not_ready', 409);
+    }
+    bindingRevision = binding.revision;
+    fixture = resolveStagingTrackingFixture(rows);
+    runId = await ensureStagingExerciseRun({ env, input, bindingRevision: binding.revision });
+    context = {
+      env,
+      runId,
+      operationKey: '',
+      action: 'staging_tracking_fixture_exercise',
+      decryptToken,
+      encryptToken,
+      attempts: 0,
+      rateUsage: {},
+      traceId: '',
+      stagingExerciseLockOperationKey: '',
+      stagingExerciseLockKeys: [],
+      assertBootstrapLease: async () => {
+        try {
+          await renewConfigWriterLock(env, configLockOwner, { ttlMs: BOOTSTRAP_LOCK_TTL_MS });
+          if (transactionLockHeld) {
+            await acquireLocks(
+              env,
+              runId,
+              transactionOperationKey,
+              context.stagingExerciseLockKeys,
+            );
+          }
+        } catch (error) {
+          const locked = isConfigWriterFailure(error) || clean(error?.message).startsWith('resource_locked:');
+          throw stagingExerciseFailure(
+            locked
+              ? 'staging_tracking_fixture_config_locked'
+              : 'staging_tracking_fixture_exercise_unavailable',
+            locked ? 409 : Number(error?.http_status) || 503,
+          );
+        }
+      },
+    };
+
+    // Keep the exact ad-set resource locked for the complete synthetic
+    // exercise. Releasing it between ensure and rollback would let a normal
+    // publication attest the temporary promoted_object and then have that
+    // state restored underneath its subsequent ad mutation.
+    transactionOperationKey = stagingExerciseOperationKey(input.operationKey, 'transaction');
+    context.stagingExerciseLockOperationKey = transactionOperationKey;
+    context.stagingExerciseLockKeys = [stagingExerciseAdsetLockKey(fixture)];
+    await acquireLocks(env, runId, transactionOperationKey, context.stagingExerciseLockKeys);
+    transactionLockHeld = true;
+
+    const creativeReadback = await readAuthorizedCreativeUrlTagsContract({
+      action: 'read_authorized_creative_url_tags_contract',
+      operation_key: stagingExerciseOperationKey(input.operationKey, 'creative-readback'),
+      token_id: fixture.tokenId,
+      account_id: fixture.accountId,
+      api_version: fixture.apiVersion,
+    }, {
+      ...context,
+      operationKey: stagingExerciseOperationKey(input.operationKey, 'creative-readback'),
+      action: 'read_authorized_creative_url_tags_contract',
+    });
+    assertStagingExerciseCreativeReadback(creativeReadback);
+
+    const ensureOperationKey = stagingExerciseOperationKey(input.operationKey, 'ensure');
+    const existingSnapshot = await loadTrackingSnapshotByOperation(env, ensureOperationKey);
+    if (existingSnapshot && clean(existingSnapshot.status) === 'restored') {
+      await completeStagingExerciseRun(env, runId, input.operationKey, true);
+      await writeStagingExerciseAudit(writeAudit, env, requestId, 'replayed');
+      return stagingExerciseSuccessResponse(requestId, true);
+    }
+    if (existingSnapshot) {
+      // A previous transport failure can leave a captured/reconciled snapshot.
+      // Restore it before refusing the replay so the next deployment attempt
+      // begins from the documented synthetic baseline rather than stale Graph
+      // state.  It never retries a potentially ambiguous Graph mutation.
+      snapshotId = clean(existingSnapshot.id);
+      const recovered = await rollbackStagingExerciseSnapshot({
+        fixture,
+        snapshotId,
+        context,
+        operationKey: stagingExerciseOperationKey(input.operationKey, 'rollback-recovery'),
+        lockOperationKey: transactionOperationKey,
+        releaseLocks: false,
+      });
+      if (!['restored', 'already_restored', 'not_applied'].includes(clean(recovered.status))) {
+        throw stagingExerciseFailure('staging_tracking_fixture_rollback_unconfirmed', 502);
+      }
+      await setRunState(env, runId, 'rolled_back', stagingExerciseRunSummary(input.operationKey, 'recovered'));
+      await writeStagingExerciseAudit(writeAudit, env, requestId, 'rolled_back');
+      return stagingExerciseFailureResponse(
+        stagingExerciseFailure('staging_tracking_fixture_retry_requires_new_operation', 409),
+        requestId,
+      );
+    }
+
+    const ensureContext = {
+      ...context,
+      operationKey: ensureOperationKey,
+      action: 'ensure_adset_conversion_contract',
+    };
+    const ensured = await ensureAdsetConversionContract(stagingExerciseEnsureBody(fixture), ensureContext);
+    snapshotId = clean(ensured?.snapshot_id);
+    if (
+      ensured?.status !== 'reconciled' ||
+      ensured?.graph_mutation !== 'promoted_object_updated' ||
+      !snapshotId ||
+      ensured?.website_event?.configured !== true ||
+      ensured?.website_event?.required !== true ||
+      ensured?.offline_event_dataset?.configured !== true ||
+      ensured?.offline_event_dataset?.required !== true
+    ) {
+      throw stagingExerciseFailure('staging_tracking_fixture_not_reconciled', 409);
+    }
+
+    const rolledBack = await rollbackStagingExerciseSnapshot({
+      fixture,
+      snapshotId,
+      context,
+      operationKey: stagingExerciseOperationKey(input.operationKey, 'rollback'),
+      lockOperationKey: transactionOperationKey,
+      releaseLocks: false,
+    });
+    if (rolledBack.status !== 'restored' || rolledBack.graph_mutation !== 'promoted_object_restored') {
+      throw stagingExerciseFailure('staging_tracking_fixture_rollback_unconfirmed', 502);
+    }
+    await assertStagingExerciseBinding(env, bindingRevision);
+    await completeStagingExerciseRun(env, runId, input.operationKey, false);
+    await writeStagingExerciseAudit(writeAudit, env, requestId, 'ok');
+    return stagingExerciseSuccessResponse(requestId, false);
+  } catch (error) {
+    const compensationSnapshotId = snapshotId || stagingExerciseCompensationSnapshotId(error);
+    let cleanupStatus = '';
+    if (fixture && context && compensationSnapshotId) {
+      try {
+        const cleanup = await rollbackStagingExerciseSnapshot({
+          fixture,
+          snapshotId: compensationSnapshotId,
+          context,
+          operationKey: stagingExerciseOperationKey(input?.operationKey || 'staging-tracking-fixture:cleanup', 'rollback-cleanup'),
+          lockOperationKey: transactionLockHeld
+            ? transactionOperationKey
+            : stagingExerciseOperationKey(input?.operationKey || 'staging-tracking-fixture:cleanup', 'rollback-cleanup'),
+          releaseLocks: !transactionLockHeld,
+        });
+        cleanupStatus = clean(cleanup.status);
+      } catch {
+        cleanupStatus = 'reconciliation_required';
+      }
+    }
+    if (runId) {
+      const terminal = ['restored', 'already_restored', 'not_applied'].includes(cleanupStatus)
+        ? 'rolled_back'
+        : 'reconciliation_required';
+      await setRunState(env, runId, terminal, stagingExerciseRunSummary(input?.operationKey || '', cleanupStatus || 'failed')).catch(() => undefined);
+    }
+    await writeStagingExerciseAudit(
+      writeAudit,
+      env,
+      requestId,
+      ['restored', 'already_restored', 'not_applied'].includes(cleanupStatus) ? 'rolled_back' : 'failed',
+    ).catch(() => undefined);
+    return stagingExerciseFailureResponse(error, requestId);
+  } finally {
+    if (transactionLockHeld && context && runId) {
+      await releaseOperationLocks(env, runId, transactionOperationKey).catch(() => undefined);
+    }
+    if (configLockHeld) await releaseConfigWriterLock(env, configLockOwner);
+  }
+}
+
+async function readStagingExerciseRequest(request) {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 8 * 1024) throw stagingExerciseFailure('staging_tracking_fixture_request_too_large', 413);
+  try {
+    const body = await request.json();
+    if (!isJsonObject(body) || Object.keys(body).length !== 1 || !Object.prototype.hasOwnProperty.call(body, 'operation_key')) {
+      throw stagingExerciseFailure('staging_tracking_fixture_request_invalid', 400);
+    }
+    return body;
+  } catch (error) {
+    if (isStagingExerciseFailure(error)) throw error;
+    throw stagingExerciseFailure('staging_tracking_fixture_request_invalid', 400);
+  }
+}
+
+function validateStagingExerciseInput(body) {
+  const operationKey = clean(body.operation_key);
+  if (!STAGING_EXERCISE_OPERATION_KEY_PATTERN.test(operationKey)) {
+    throw stagingExerciseFailure('staging_tracking_fixture_operation_key_invalid', 400);
+  }
+  return { operationKey };
+}
+
+function resolveStagingTrackingFixture(rows) {
+  const candidates = [];
+  for (const row of safeArray(rows)) {
+    const config = asObject(parseObject(row.metadata_json).meta_ads_publish);
+    if (!Object.keys(config).length) continue;
+    const contract = normalizeTrackingContract(config.tracking_contract, config.tracking_profiles, config.adset_id);
+    if (
+      normalizeDestinationKind(config.destination_type) !== 'website' ||
+      contract.destination_kind !== 'website' ||
+      contract.staging_synthetic_fixture !== true ||
+      contract.website_event_requirement !== 'required' ||
+      contract.offline_event_dataset_requirement !== 'required'
+    ) {
+      continue;
+    }
+    const profile = asObject(asObject(config.tracking_profiles)[contract.profile_ref]);
+    const sourceAdsetId = normalizeNumericId(profile.source_adset_id, 'staging_tracking_fixture_source_adset_id');
+    const targetAdsetId = normalizeNumericId(config.adset_id, 'staging_tracking_fixture_target_adset_id');
+    if (sourceAdsetId === targetAdsetId) continue;
+    candidates.push({
+      tokenId: clean(row.id),
+      accountId: normalizeNumericId(config.account_id, 'staging_tracking_fixture_account_id'),
+      apiVersion: normalizeApiVersion(config.api_version || 'v25.0'),
+      adsetId: targetAdsetId,
+      profileRef: contract.profile_ref,
+    });
+  }
+  if (candidates.length !== 1) {
+    throw stagingExerciseFailure('staging_tracking_fixture_not_unique', 409);
+  }
+  return candidates[0];
+}
+
+async function ensureStagingExerciseRun({ env, input, bindingRevision }) {
+  const fingerprint = await sha256(`staging-tracking-fixture:${input.operationKey}`);
+  const existing = await dbFirst(env,
+    `SELECT id, config_revision FROM meta_ads_publish_runs WHERE batch_fingerprint = ?`,
+    fingerprint,
+  );
+  if (existing) {
+    if (clean(existing.config_revision) !== clean(bindingRevision)) {
+      throw stagingExerciseFailure('staging_tracking_fixture_binding_stale', 409);
+    }
+    return clean(existing.id);
+  }
+  const runId = `stx_${fingerprint.slice(0, 24)}`;
+  const now = nowIso();
+  const result = await dbRun(env,
+    `INSERT INTO meta_ads_publish_runs (
+      id, batch_fingerprint, request_hash, workflow_execution_id, config_revision,
+      status, files_json, summary_json, error_json, heartbeat_at, lock_expires_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'processing', '[]', '{}', '{}', ?, ?, ?, ?)`,
+    runId,
+    fingerprint,
+    fingerprint,
+    `staging-tracking-fixture:${shortKey(input.operationKey)}`,
+    bindingRevision,
+    now,
+    new Date(Date.now() + LOCK_TTL_MS).toISOString(),
+    now,
+    now,
+  );
+  if (statementChanges(result) !== 1) {
+    throw stagingExerciseFailure('staging_tracking_fixture_run_unavailable', 503);
+  }
+  return runId;
+}
+
+function stagingExerciseOperationKey(operationKey, phase) {
+  const normalized = clean(operationKey);
+  const suffix = clean(phase).replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 32);
+  return `${normalized}:${suffix}`.slice(0, 160);
+}
+
+function stagingExerciseAdsetLockKey(fixture) {
+  return `adset-contract:${clean(fixture.accountId)}:${clean(fixture.adsetId)}`;
+}
+
+function stagingExerciseEnsureBody(fixture) {
+  return {
+    token_id: fixture.tokenId,
+    account_id: fixture.accountId,
+    api_version: fixture.apiVersion,
+    object_id: fixture.adsetId,
+    destination_kind: 'website',
+    profile_ref: fixture.profileRef,
+    workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
+  };
+}
+
+async function assertStagingExerciseBinding(env, expectedRevision) {
+  const rows = await listMetaAdsPublishConfigRows(env);
+  const authority = await configWriterAuthorityState(rows);
+  const binding = await deriveTrackingBindingState(rows);
+  if (!authority.ready || !binding.ready || clean(binding.revision) !== clean(expectedRevision)) {
+    throw stagingExerciseFailure('staging_tracking_fixture_binding_stale', 409);
+  }
+}
+
+async function rollbackStagingExerciseSnapshot({
+  fixture,
+  snapshotId,
+  context,
+  operationKey,
+  lockOperationKey = operationKey,
+  releaseLocks = true,
+}) {
+  const normalizedSnapshotId = normalizeSnapshotId(snapshotId);
+  const normalizedLockOperationKey = clean(lockOperationKey);
+  const lockKeys = [
+    stagingExerciseAdsetLockKey(fixture),
+    `adset-contract-snapshot:${normalizedSnapshotId}`,
+  ];
+  const rollbackContext = {
+    ...context,
+    operationKey,
+    action: 'rollback_adset_conversion_contract',
+  };
+  await acquireLocks(context.env, context.runId, normalizedLockOperationKey, lockKeys);
+  if (clean(context.stagingExerciseLockOperationKey) === normalizedLockOperationKey) {
+    context.stagingExerciseLockKeys = [...new Set([
+      ...safeArray(context.stagingExerciseLockKeys),
+      ...lockKeys,
+    ])].sort();
+  }
+  try {
+    return await rollbackAdsetConversionContract({
+      token_id: fixture.tokenId,
+      account_id: fixture.accountId,
+      api_version: fixture.apiVersion,
+      object_id: fixture.adsetId,
+      snapshot_id: normalizedSnapshotId,
+    }, rollbackContext);
+  } finally {
+    if (releaseLocks) await releaseOperationLocks(context.env, context.runId, normalizedLockOperationKey);
+  }
+}
+
+function assertStagingExerciseCreativeReadback(result) {
+  if (
+    asObject(result).destination_kind !== 'website' ||
+    asObject(result).creative_url_tags?.required !== true ||
+    asObject(result).creative_url_tags?.paused_fixture_verified !== true ||
+    asObject(result).creative_url_tags?.exact_match !== true
+  ) {
+    throw stagingExerciseFailure('staging_tracking_fixture_creative_readback_mismatch', 409);
+  }
+}
+
+async function completeStagingExerciseRun(env, runId, operationKey, replayed) {
+  await setRunState(env, runId, 'completed', stagingExerciseRunSummary(operationKey, replayed ? 'replayed' : 'reconciled_and_rolled_back'));
+}
+
+function stagingExerciseRunSummary(operationKey, status) {
+  return {
+    kind: 'staging_tracking_fixture',
+    operation: shortKey(operationKey),
+    status: clean(status),
+    reconciliation: status === 'reconciled_and_rolled_back' ? 'reconciled' : '',
+    rollback: status === 'reconciled_and_rolled_back' ? 'restored' : '',
+    fixture_count: 1,
+  };
+}
+
+async function writeStagingExerciseAudit(writeAudit, env, requestId, status) {
+  if (typeof writeAudit !== 'function') return;
+  await writeAudit(env, {
+    event: 'meta_ads_publish.config.staging_tracking_fixture',
+    status,
+    requestId,
+    metadata: {
+      environment: 'staging',
+      fixture_count: 1,
+      reconciliation: status === 'ok' ? 'reconciled' : '',
+      rollback: status === 'ok' ? 'restored' : '',
+    },
+  });
+}
+
+function stagingExerciseCompensationSnapshotId(error) {
+  const normalized = normalizeFailure(error);
+  const candidate = clean(asObject(normalized.compensation).snapshot_id);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate)
+    ? candidate
+    : '';
+}
+
+function stagingExerciseSuccessResponse(requestId, replayed) {
+  return response({
+    ok: true,
+    replayed: Boolean(replayed),
+    exercise: {
+      status: 'reconciled_and_rolled_back',
+      reconciliation: 'reconciled',
+      rollback: 'restored',
+      fixture_count: 1,
+    },
+    requestId,
+  });
+}
+
+function stagingExerciseFailure(code, httpStatus = 400) {
+  return Object.assign(new Error(code), { staging_exercise_error: true, http_status: httpStatus });
+}
+
+function isStagingExerciseFailure(error) {
+  return Boolean(error && error.staging_exercise_error === true);
+}
+
+function stagingExerciseFailureResponse(error, requestId) {
+  const code = isStagingExerciseFailure(error)
+    ? clean(error.message)
+    : 'staging_tracking_fixture_exercise_failed';
+  const status = Number(error?.http_status) === 409
+    ? 409
+    : Number(error?.http_status) === 404
+      ? 404
+    : Number(error?.http_status) === 503
+      ? 503
+      : Number(error?.http_status) === 413
+        ? 413
+        : 400;
+  return response({ ok: false, error: code, requestId }, status);
+}
+
+async function executeBootstrapSaga({ input, state, operation, currentRows, authority, context, requestId }) {
+  let configInput = state.config_input;
+  if (!configInput) {
+    if (authority.mode !== 'legacy_bootstrap' || authority.revision !== input.expectedConfigAuthorityRevision) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_binding_stale', 409);
+    }
+    if (!isJsonObject(state.previous_meta_ads_publish)) {
+      state.previous_meta_ads_publish = captureBootstrapPreviousMetaAdsPublish(input.entries, currentRows);
+      await persistBootstrapState({ env: context.env, operation, state, status: 'pending', encryptToken: context.encryptToken, context });
+    }
+    const updates = await buildBootstrapUpdates({ input, state, operation, currentRows, context });
+    configInput = await validateConfigWriterInput({
+      operation_key: bootstrapConfigOperationKey(input.operationKey),
+      expected_tracking_binding_revision: input.expectedConfigAuthorityRevision,
+      updates,
+    });
+    state.config_input = configInput;
+    await persistBootstrapState({ env: context.env, operation, state, status: 'configuring', encryptToken: context.encryptToken, context });
+  }
+
+  const applied = await applyMetaAdsPublishConfigAtomically({
+    input: configInput,
+    env: context.env,
+    requestId,
+    lockAlreadyHeld: true,
+    assertLease: context.assertBootstrapLease,
+  });
+  state.config_applied = true;
+  state.resulting_tracking_binding_revision = applied.revision;
+  await persistBootstrapState({
+    env: context.env,
+    operation,
+    state,
+    status: 'applied',
+    resultingRevision: applied.revision,
+    encryptToken: context.encryptToken,
+    context,
+  });
+  return { state, revision: applied.revision, replayed: applied.replayed, status: applied.status };
+}
+
+function bootstrapMutationLockIdentity(operationKey) {
+  const normalized = clean(operationKey);
+  return {
+    bootstrapMutationRunId: `bootstrap:${normalized}`,
+    bootstrapMutationOperationKey: `bootstrap-mutation:${normalized}`,
+  };
+}
+
+function bootstrapAdsetContractLockKey(accountId, adsetId) {
+  return `adset-contract:${normalizeNumericId(accountId, 'bootstrap_lock_account_id')}:${normalizeNumericId(adsetId, 'bootstrap_lock_adset_id')}`;
+}
+
+function bootstrapMutationLockKeysForInput(entries, rows) {
+  const rowsByTokenId = new Map(safeArray(rows).map((row) => [clean(row.id), row]));
+  const keys = [];
+  for (const entry of safeArray(entries)) {
+    if (clean(entry.destinationType) !== 'website') continue;
+    const targetConfig = asObject(parseObject(rowsByTokenId.get(clean(entry.configTokenId))?.metadata_json).meta_ads_publish);
+    if (!Object.keys(targetConfig).length) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_legacy_config_invalid', 409);
+    }
+    keys.push(bootstrapAdsetContractLockKey(targetConfig.account_id, targetConfig.adset_id));
+    if (clean(entry.sourceAdsetId)) {
+      keys.push(bootstrapAdsetContractLockKey(targetConfig.account_id, entry.sourceAdsetId));
+      continue;
+    }
+    const sourceConfig = asObject(parseObject(rowsByTokenId.get(clean(entry.sourceConfigTokenId))?.metadata_json).meta_ads_publish);
+    if (!Object.keys(sourceConfig).length) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_legacy_config_invalid', 409);
+    }
+    keys.push(bootstrapAdsetContractLockKey(sourceConfig.account_id, sourceConfig.adset_id));
+  }
+  return [...new Set(keys)].sort();
+}
+
+function bootstrapMutationLockKeysForState(state, rows) {
+  const rowsByTokenId = new Map(safeArray(rows).map((row) => [clean(row.id), row]));
+  const keys = [];
+  for (const item of safeArray(state?.items)) {
+    if (clean(item.destination_type) !== 'website') continue;
+    const targetConfig = asObject(parseObject(rowsByTokenId.get(clean(item.config_token_id))?.metadata_json).meta_ads_publish);
+    if (!Object.keys(targetConfig).length) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+    }
+    keys.push(bootstrapAdsetContractLockKey(targetConfig.account_id, targetConfig.adset_id));
+  }
+  return [...new Set(keys)].sort();
+}
+
+async function renewBootstrapMutationLocks(context) {
+  if (context?.bootstrapMutationLocksHeld !== true || !safeArray(context.bootstrapMutationLockKeys).length) return;
+  await acquireLocks(
+    context.env,
+    clean(context.bootstrapMutationRunId),
+    clean(context.bootstrapMutationOperationKey),
+    context.bootstrapMutationLockKeys,
+  );
+}
+
+function bootstrapStateMayHaveGraphMutation(state) {
+  return safeArray(state?.items).some((item) => {
+    if (clean(item.destination_type) !== 'website') return false;
+    const tracking = asObject(item.tracking);
+    const fixture = asObject(item.fixture);
+    return safeArray(tracking.keys).length > 0 ||
+      fixture.copy_pending === true ||
+      fixture.copy_ambiguous === true ||
+      Boolean(clean(fixture.ad_id));
+  });
+}
+
+function captureBootstrapPreviousMetaAdsPublish(entries, currentRows) {
+  const rowsById = new Map(safeArray(currentRows).map((row) => [clean(row.id), row]));
+  const prior = {};
+  for (const entry of safeArray(entries)) {
+    const tokenId = clean(entry.configTokenId);
+    const row = rowsById.get(tokenId);
+    const metaAdsPublish = asObject(parseObject(row?.metadata_json).meta_ads_publish);
+    if (!row || !Object.keys(metaAdsPublish).length) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_token_not_eligible', 409);
+    }
+    prior[tokenId] = metaAdsPublish;
+  }
+  return prior;
+}
+
+async function readBootstrapRequest(request) {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > CONFIG_WRITER_MAX_REQUEST_BYTES) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_request_too_large', 413);
+  }
+  try {
+    const body = await request.json();
+    if (!isJsonObject(body)) throw bootstrapFailure('meta_ads_publish_bootstrap_request_invalid', 400);
+    return body;
+  } catch (error) {
+    if (isBootstrapFailure(error)) throw error;
+    throw bootstrapFailure('meta_ads_publish_bootstrap_request_invalid', 400);
+  }
+}
+
+async function validateBootstrapInput(body) {
+  assertBootstrapExactKeys(body, new Set([
+    'operation_key',
+    'expected_config_authority_revision',
+    'entries',
+  ]));
+  const operationKey = clean(body.operation_key);
+  if (!BOOTSTRAP_OPERATION_KEY_PATTERN.test(operationKey)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_operation_key_invalid', 400);
+  }
+  const expectedConfigAuthorityRevision = clean(body.expected_config_authority_revision).toLowerCase();
+  if (!/^legacy:[a-f0-9]{64}$/.test(expectedConfigAuthorityRevision)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_expected_revision_invalid', 400);
+  }
+  if (!Array.isArray(body.entries) || body.entries.length < 2 || body.entries.length > BOOTSTRAP_MAX_ENTRIES) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_request_invalid', 400);
+  }
+  const seen = new Set();
+  const entries = body.entries.map((value) => normalizeBootstrapEntry(value, seen))
+    .sort((left, right) => left.configTokenId.localeCompare(right.configTokenId));
+  const requestHash = await sha256(stableStringify({
+    operation_key: operationKey,
+    expected_config_authority_revision: expectedConfigAuthorityRevision,
+    entries,
+  }));
+  return { operationKey, expectedConfigAuthorityRevision, entries, requestHash };
+}
+
+function normalizeBootstrapEntry(value, seen) {
+  if (!isJsonObject(value)) throw bootstrapFailure('meta_ads_publish_bootstrap_request_invalid', 400);
+  const destinationType = normalizeDestinationKind(value.destination_type);
+  const allowed = destinationType === 'website'
+    ? new Set(['config_token_id', 'destination_type', 'source_config_token_id', 'source_adset_id', 'fixture_source_ad_id', 'url_tags', 'staging_synthetic_fixture'])
+    : new Set(['config_token_id', 'destination_type']);
+  assertBootstrapExactKeys(value, allowed);
+  const configTokenId = clean(value.config_token_id);
+  if (!CONFIG_WRITER_TOKEN_ID_PATTERN.test(configTokenId) || seen.has(configTokenId)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_token_invalid', 400);
+  }
+  seen.add(configTokenId);
+  if (destinationType === 'whatsapp') return { configTokenId, destinationType };
+  const sourceConfigTokenId = clean(value.source_config_token_id);
+  const sourceAdsetId = clean(value.source_adset_id);
+  const hasSourceConfigToken = Boolean(sourceConfigTokenId);
+  const hasSourceAdset = Boolean(sourceAdsetId);
+  if (hasSourceConfigToken === hasSourceAdset) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_source_invalid', 400);
+  }
+  const entry = {
+    configTokenId,
+    destinationType,
+    urlTags: normalizeUrlTags(value.url_tags, { required: true }),
+  };
+  if (hasSourceConfigToken) {
+    if (!CONFIG_WRITER_TOKEN_ID_PATTERN.test(sourceConfigTokenId)) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_source_invalid', 400);
+    }
+    entry.sourceConfigTokenId = sourceConfigTokenId;
+  } else {
+    entry.sourceAdsetId = normalizeNumericId(sourceAdsetId, 'bootstrap_source_adset_id');
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'staging_synthetic_fixture')) {
+    if (typeof value.staging_synthetic_fixture !== 'boolean') {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_request_invalid', 400);
+    }
+    if (value.staging_synthetic_fixture) entry.stagingSyntheticFixture = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'fixture_source_ad_id')) {
+    entry.fixtureSourceAdId = normalizeNumericId(value.fixture_source_ad_id, 'bootstrap_fixture_source_ad_id');
+  }
+  return entry;
+}
+
+function assertBootstrapExactKeys(value, allowed) {
+  if (!isJsonObject(value) || Object.keys(value).some((key) => !allowed.has(key))) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_request_invalid', 400);
+  }
+}
+
+function assertBootstrapTargetsComplete(entries, rows) {
+  // A Vault may carry unrelated active Facebook credentials.  This migration
+  // is scoped strictly to rows that already opt into meta_ads_publish; do not
+  // force a configuration write for a token that has no publishing contract.
+  const configuredIds = safeArray(rows)
+    .filter((row) => Object.keys(asObject(parseObject(row?.metadata_json).meta_ads_publish)).length > 0)
+    .map((row) => clean(row.id))
+    .sort();
+  const requestedIds = safeArray(entries).map((entry) => entry.configTokenId).sort();
+  if (configuredIds.length !== requestedIds.length || configuredIds.some((id, index) => id !== requestedIds[index])) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_targets_incomplete', 409);
+  }
+}
+
+function bootstrapConfigOperationKey(operationKey) {
+  const prefix = 'bootstrap-config:';
+  return `${prefix}${clean(operationKey).slice(0, 160 - prefix.length)}`;
+}
+
+function bootstrapFailure(code, httpStatus = 400) {
+  return Object.assign(new Error(code), { bootstrap_error: true, http_status: httpStatus });
+}
+
+function isBootstrapFailure(error) {
+  return Boolean(error && error.bootstrap_error === true);
+}
+
+function bootstrapFailureResponse(error, requestId) {
+  const code = isBootstrapFailure(error)
+    ? clean(error.message)
+    : 'meta_ads_publish_bootstrap_failed';
+  const status = Number(error?.http_status) === 409
+    ? 409
+    : Number(error?.http_status) === 503
+      ? 503
+      : Number(error?.http_status) === 413
+        ? 413
+        : 400;
+  return response({ ok: false, error: code, requestId }, status);
+}
+
+async function loadBootstrapOperation(env, operationKey) {
+  return dbFirst(env, [
+    'SELECT id, operation_key, request_hash, expected_config_authority_revision,',
+    'resulting_tracking_binding_revision, status, state_ciphertext, summary_json',
+    'FROM meta_ads_publish_bootstrap_operations WHERE operation_key = ?',
+  ].join(' '), operationKey);
+}
+
+async function createBootstrapOperation({ env, input, state, encryptToken }) {
+  const id = crypto.randomUUID();
+  const now = nowIso();
+  const stateCiphertext = await encryptBootstrapState(state, encryptToken, env);
+  const result = await dbRun(env, [
+    'INSERT INTO meta_ads_publish_bootstrap_operations (',
+    'id, operation_key, request_hash, expected_config_authority_revision, status,',
+    'state_ciphertext, summary_json, created_at, updated_at',
+    ") VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+  ].join(' '),
+  id,
+  input.operationKey,
+  input.requestHash,
+  input.expectedConfigAuthorityRevision,
+  stateCiphertext,
+  JSON.stringify(summarizeBootstrapState(state)),
+  now,
+  now);
+  if (statementChanges(result) !== 1) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_operation_conflict', 409);
+  }
+  return {
+    id,
+    operation_key: input.operationKey,
+    request_hash: input.requestHash,
+    expected_config_authority_revision: input.expectedConfigAuthorityRevision,
+    status: 'pending',
+  };
+}
+
+async function persistBootstrapState({ env, operation, state, status, resultingRevision = '', encryptToken, context = null }) {
+  if (context?.assertBootstrapLease) await context.assertBootstrapLease();
+  const stateCiphertext = await encryptBootstrapState(state, encryptToken, env);
+  const result = await dbRun(env, [
+    'UPDATE meta_ads_publish_bootstrap_operations',
+    'SET status = ?, state_ciphertext = ?, summary_json = ?,',
+    'resulting_tracking_binding_revision = COALESCE(NULLIF(?, \'\'), resulting_tracking_binding_revision),',
+    'updated_at = ?',
+    'WHERE id = ? AND operation_key = ? AND request_hash = ?',
+  ].join(' '),
+  status,
+  stateCiphertext,
+  JSON.stringify(summarizeBootstrapState(state)),
+  clean(resultingRevision),
+  nowIso(),
+  clean(operation.id),
+  clean(operation.operation_key),
+  clean(operation.request_hash));
+  if (statementChanges(result) !== 1) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+  }
+  operation.status = status;
+  if (resultingRevision) operation.resulting_tracking_binding_revision = resultingRevision;
+}
+
+async function assertBootstrapLease(context) {
+  if (typeof context?.assertBootstrapLease !== 'function') {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_locked', 409);
+  }
+  await context.assertBootstrapLease();
+}
+
+async function encryptBootstrapState(state, encryptToken, env) {
+  if (typeof encryptToken !== 'function') {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_unavailable', 503);
+  }
+  try {
+    return await encryptToken(JSON.stringify(state), env);
+  } catch {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_unavailable', 503);
+  }
+}
+
+async function decryptBootstrapState(operation, decryptToken, env) {
+  if (typeof decryptToken !== 'function') {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+  }
+  try {
+    const parsed = JSON.parse(await decryptToken(clean(operation.state_ciphertext), env));
+    if (!isJsonObject(parsed) || parsed.schema !== 'meta_ads_publish_bootstrap/v1' || !Array.isArray(parsed.items)) {
+      throw new Error('invalid_bootstrap_state');
+    }
+    return parsed;
+  } catch {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+  }
+}
+
+function summarizeBootstrapState(state) {
+  const items = safeArray(state?.items);
+  const websites = items.filter((item) => clean(item.destination_type) === 'website');
+  const whatsapp = items.filter((item) => clean(item.destination_type) === 'whatsapp');
+  return {
+    destination_count: items.length,
+    website_destination_count: websites.length,
+    whatsapp_destination_count: whatsapp.length,
+    website_fixture_count: websites.filter((item) => Boolean(clean(item?.fixture?.ad_id))).length,
+    website_event_required_count: websites.filter((item) => clean(item?.profile?.website_event_requirement) === 'required').length,
+    offline_dataset_required_count: websites.filter((item) => clean(item?.profile?.offline_event_dataset_requirement) === 'required').length,
+    website_url_tags_verified: websites.length > 0 && websites.every((item) => item?.fixture?.verified === true),
+    conversion_contract_verified: websites.every((item) => item?.tracking?.verified === true),
+  };
+}
+
+function bootstrapSuccessResponse({ input, state, revision, requestId, replayed }, status = 200) {
+  const summary = summarizeBootstrapState(state);
+  return response({
+    ok: true,
+    applied: !replayed,
+    replayed: Boolean(replayed),
+    operation_key: input.operationKey,
+    operation_status: 'applied',
+    config_authority_revision: revision,
+    config_revision: revision,
+    tracking_binding_revision: revision,
+    workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
+    website_fixture_count: summary.website_fixture_count,
+    offline_dataset_count: summary.offline_dataset_required_count,
+    website_url_tags_verified: summary.website_url_tags_verified,
+    conversion_contract_verified: summary.conversion_contract_verified,
+    requestId,
+  }, status);
+}
+
+async function bootstrapConfigWasCommitted(env, state) {
+  const configInput = asObject(state?.config_input);
+  const operationKey = clean(configInput.operationKey);
+  if (!operationKey) return false;
+  const operation = await dbFirst(env, [
+    'SELECT resulting_tracking_binding_revision, status',
+    'FROM meta_ads_publish_config_operations WHERE operation_key = ?',
+  ].join(' '), operationKey);
+  if (!operation || clean(operation.status) !== 'applied') return false;
+  const authority = await configWriterAuthorityState(await listMetaAdsPublishConfigRows(env));
+  return authority.ready && clean(operation.resulting_tracking_binding_revision) === authority.revision;
+}
+
+async function writeBootstrapAudit(writeAudit, env, requestId, status, state) {
+  if (typeof writeAudit !== 'function') return;
+  const summary = summarizeBootstrapState(state);
+  await writeAudit(env, {
+    event: 'meta_ads_publish.config.bootstrap',
+    status,
+    requestId,
+    metadata: {
+      workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
+      ...summary,
+    },
+  });
+}
+
+function statementChanges(result) {
+  return Number(result?.meta?.changes ?? result?.changes ?? 0);
+}
+
+async function buildBootstrapUpdates({ input, state, operation, currentRows, context }) {
+  const rowsById = new Map(currentRows.map((row) => [clean(row.id), row]));
+  const itemsByTokenId = new Map(safeArray(state.items).map((item) => [clean(item.config_token_id), item]));
+  const updates = [];
+  for (const entry of input.entries) {
+    const targetRow = rowsById.get(entry.configTokenId);
+    if (!targetRow) throw bootstrapFailure('meta_ads_publish_bootstrap_token_not_eligible', 409);
+    let item = itemsByTokenId.get(entry.configTokenId);
+    if (!item) {
+      item = {
+        config_token_id: entry.configTokenId,
+        destination_type: entry.destinationType,
+        source_config_token_id: entry.sourceConfigTokenId || '',
+        source_adset_id: entry.sourceAdsetId || '',
+        url_tags: entry.urlTags || '',
+        fixture_source_ad_id: entry.fixtureSourceAdId || '',
+        staging_synthetic_fixture: entry.stagingSyntheticFixture === true,
+      };
+      state.items.push(item);
+      itemsByTokenId.set(entry.configTokenId, item);
+      await persistBootstrapState({ env: context.env, operation, state, status: 'pending', encryptToken: context.encryptToken, context });
+    }
+    if (clean(item.destination_type) !== entry.destinationType ||
+      clean(item.source_config_token_id) !== clean(entry.sourceConfigTokenId) ||
+      clean(item.source_adset_id) !== clean(entry.sourceAdsetId) ||
+      String(item.url_tags || '') !== String(entry.urlTags || '') ||
+      Boolean(item.staging_synthetic_fixture) !== Boolean(entry.stagingSyntheticFixture)) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+    }
+    const targetAuth = await resolveLegacyBootstrapGraphAuth(entry.configTokenId, context);
+    const targetAdset = await readAdsetConversionState(targetAuth, targetAuth.config.adset_id, context);
+    if (entry.destinationType === 'website') {
+      const sourceAuth = await resolveLegacyBootstrapSourceAuth(entry, targetAuth, context);
+      // The v20 runtime later reads the authorized source ad set through the
+      // destination credential. Prove that exact access path now rather than
+      // committing a profile that only the bootstrap's separate source token
+      // can inspect.
+      const sourceAdset = await readAdsetConversionState(targetAuth, sourceAuth.config.adset_id, context);
+      const profile = buildBootstrapTrackingProfile({
+        sourceAuth,
+        sourceAdset,
+        targetAuth,
+        targetAdset,
+        targetConfig: targetAuth.config,
+        stagingSyntheticFixture: entry.stagingSyntheticFixture === true,
+      });
+      item.profile = profile;
+      item.target_adset_id = targetAuth.config.adset_id;
+      item.source_adset_id = sourceAuth.config.adset_id;
+      await reconcileBootstrapTracking({ item, sourceAdset, targetAdset, sourceAuth, targetAuth, state, operation, context });
+      await createOrReuseBootstrapFixture({
+        item,
+        sourceAdsetId: sourceAuth.config.adset_id,
+        targetAuth,
+        state,
+        operation,
+        context,
+      });
+      if (item.profile?.staging_synthetic_fixture === true) {
+        await restoreBootstrapTrackingBaseline({ item, targetAuth, state, operation, context });
+      }
+      updates.push({
+        token_id: entry.configTokenId,
+        meta_ads_publish: buildBootstrapWebsiteConfig(targetAuth.config, item),
+      });
+      continue;
+    }
+
+    const whatsappDestinationUrl = await discoverBootstrapWhatsAppDestination(targetAuth, targetAdset, context, item);
+    item.whatsapp_destination_url = whatsappDestinationUrl;
+    await persistBootstrapState({ env: context.env, operation, state, status: 'pending', encryptToken: context.encryptToken, context });
+    updates.push({
+      token_id: entry.configTokenId,
+      meta_ads_publish: buildBootstrapWhatsAppConfig(targetAuth.config, whatsappDestinationUrl),
+    });
+  }
+  return updates;
+}
+
+async function resolveLegacyBootstrapGraphAuth(configTokenId, context) {
+  const tokenId = clean(configTokenId);
+  if (!CONFIG_WRITER_TOKEN_ID_PATTERN.test(tokenId)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_token_invalid', 400);
+  }
+  const row = await dbFirst(context.env, [
+    'SELECT id, provider, active, token_ciphertext, metadata_json',
+    'FROM credential_tokens WHERE id = ?',
+  ].join(' '), tokenId);
+  if (!row || clean(row.provider) !== 'facebook' || Number(row.active) !== 1) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_token_not_eligible', 409);
+  }
+  const config = asObject(parseObject(row.metadata_json).meta_ads_publish);
+  let accountId;
+  let apiVersion;
+  let adsetId;
+  try {
+    accountId = normalizeNumericId(config.account_id, 'bootstrap_account_id');
+    apiVersion = normalizeApiVersion(config.api_version || 'v25.0');
+    adsetId = normalizeNumericId(config.adset_id, 'bootstrap_adset_id');
+  } catch {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_legacy_config_invalid', 409);
+  }
+  let accessToken;
+  try {
+    accessToken = await context.decryptToken(row.token_ciphertext, context.env);
+  } catch {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_token_unavailable', 503);
+  }
+  const appSecretProof = clean(context.env.META_APP_SECRET)
+    ? await hmacSha256(clean(context.env.META_APP_SECRET), accessToken)
+    : '';
+  return {
+    tokenId,
+    accountId,
+    apiVersion,
+    accessToken,
+    appSecretProof,
+    config: { ...config, adset_id: adsetId, account_id: accountId, api_version: apiVersion },
+  };
+}
+
+// A bootstrap manifest may either identify a separately-authorized legacy
+// source destination or point directly to a source ad set that the target
+// credential is already authorized to read.  In both cases, all Graph reads
+// use the target credential: that is the credential the v20 runtime retains.
+async function resolveLegacyBootstrapSourceAuth(entry, targetAuth, context) {
+  let sourceAdsetId = clean(entry.sourceAdsetId);
+  let sourceAccountId = targetAuth.accountId;
+  const sourceConfigTokenId = clean(entry.sourceConfigTokenId);
+  if (sourceConfigTokenId) {
+    if (!CONFIG_WRITER_TOKEN_ID_PATTERN.test(sourceConfigTokenId)) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_source_invalid', 400);
+    }
+    const row = await dbFirst(context.env, [
+      'SELECT id, provider, active, metadata_json',
+      'FROM credential_tokens WHERE id = ?',
+    ].join(' '), sourceConfigTokenId);
+    if (!row || clean(row.provider) !== 'facebook' || Number(row.active) !== 1) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_token_not_eligible', 409);
+    }
+    const config = asObject(parseObject(row.metadata_json).meta_ads_publish);
+    try {
+      sourceAdsetId = normalizeNumericId(config.adset_id, 'bootstrap_source_adset_id');
+      sourceAccountId = normalizeNumericId(config.account_id, 'bootstrap_source_account_id');
+    } catch {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_legacy_config_invalid', 409);
+    }
+  }
+  sourceAdsetId = normalizeNumericId(sourceAdsetId, 'bootstrap_source_adset_id');
+  return {
+    ...targetAuth,
+    accountId: sourceAccountId,
+    config: {
+      ...asObject(targetAuth.config),
+      adset_id: sourceAdsetId,
+      account_id: sourceAccountId,
+    },
+  };
+}
+
+function buildBootstrapTrackingProfile({ sourceAuth, sourceAdset, targetAuth, targetAdset, targetConfig, stagingSyntheticFixture = false }) {
+  const source = asObject(sourceAdset);
+  const target = asObject(targetAdset);
+  const sourceKind = normalizeDestinationKind(source.destination_type, { optional: true });
+  const targetKind = normalizeDestinationKind(target.destination_type, { optional: true });
+  if (sourceKind !== 'website' || targetKind !== 'website') {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_website_destination_required', 409);
+  }
+  assertAdsetAccountAuthorized(source, target, targetAuth.accountId);
+  const websiteRequired = websiteEventRequiredForDelivery(
+    asObject(source.campaign).objective,
+    source.optimization_goal,
+  );
+  const offlineRequired = Boolean(clean(asObject(source.promoted_object).offline_conversion_data_set_id));
+  const profile = {
+    profile_ref: bootstrapProfileRef(targetAuth.tokenId),
+    source_adset_id: sourceAuth.config.adset_id,
+    destination_kind: 'website',
+    website_event_requirement: websiteRequired ? 'required' : 'not_required',
+    offline_event_dataset_requirement: offlineRequired ? 'required' : 'not_required',
+  };
+  if (stagingSyntheticFixture) {
+    if (
+      sourceAuth.config.adset_id === targetAuth.config.adset_id ||
+      profile.website_event_requirement !== 'required' ||
+      profile.offline_event_dataset_requirement !== 'required'
+    ) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_staging_fixture_invalid', 409);
+    }
+    profile.staging_synthetic_fixture = true;
+  }
+  assertWebsiteTrackingCompatibility(source, target, profile);
+  // Retain an already verified native-carousel route rather than silently
+  // disabling an existing campaign during the legacy-to-v20 transition.
+  const carouselAdsetId = clean(targetConfig.carousel_native_adset_id);
+  if (
+    targetConfig.carousel_native_adset_verified === true &&
+    targetConfig.carousel_native_route_active === true &&
+    carouselAdsetId
+  ) {
+    profile.authorized_destination_adset_ids = [
+      normalizeNumericId(carouselAdsetId, 'bootstrap_carousel_native_adset_id'),
+    ];
+  }
+  return profile;
+}
+
+function bootstrapProfileRef(tokenId) {
+  const suffix = clean(tokenId).replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 64);
+  return `bootstrap.${suffix}`;
+}
+
+function buildBootstrapWebsiteConfig(legacyConfig, item) {
+  const base = buildBootstrapConfigBase(legacyConfig, 'website');
+  const profile = {
+    source_adset_id: clean(item.profile?.source_adset_id),
+    destination_kind: 'website',
+    website_event_requirement: clean(item.profile?.website_event_requirement),
+    offline_event_dataset_requirement: clean(item.profile?.offline_event_dataset_requirement),
+  };
+  if (item.profile?.staging_synthetic_fixture === true) profile.staging_synthetic_fixture = true;
+  if (safeArray(item.profile?.authorized_destination_adset_ids).length) {
+    profile.authorized_destination_adset_ids = safeArray(item.profile.authorized_destination_adset_ids);
+    Object.assign(base, bootstrapCarouselConfig(legacyConfig));
+  }
+  const profileRef = clean(item.profile?.profile_ref);
+  return validateGovernedMetaAdsPublishConfig({
+    ...base,
+    tracking_contract: {
+      url_tags: String(item.url_tags || ''),
+      profile_ref: profileRef,
+      production_url_tags_readback_fixture: {
+        ad_id: clean(item.fixture?.ad_id),
+        creative_id: clean(item.fixture?.creative_id),
+      },
+    },
+    tracking_profiles: { [profileRef]: profile },
+  });
+}
+
+function buildBootstrapWhatsAppConfig(legacyConfig, whatsappDestinationUrl) {
+  return validateGovernedMetaAdsPublishConfig({
+    ...buildBootstrapConfigBase(legacyConfig, 'whatsapp'),
+    whatsapp_destination_url: whatsappDestinationUrl,
+  });
+}
+
+function buildBootstrapConfigBase(value, destinationType) {
+  const config = asObject(value);
+  const base = {
+    destination_group: clean(config.destination_group),
+    api_version: clean(config.api_version),
+    account_id: clean(config.account_id),
+    campaign_id: clean(config.campaign_id),
+    adset_id: clean(config.adset_id),
+    page_id: clean(config.page_id),
+    instagram_user_id: clean(config.instagram_user_id),
+    allowed_link_hosts: safeArray(config.allowed_link_hosts),
+    landing_pages_by_creative_group: asObject(config.landing_pages_by_creative_group),
+    freshness_window_days: config.freshness_window_days,
+    destination_type: destinationType,
+  };
+  if (Object.prototype.hasOwnProperty.call(config, 'row_number')) base.row_number = config.row_number;
+  return base;
+}
+
+function bootstrapCarouselConfig(value) {
+  const config = asObject(value);
+  return {
+    carousel_native_campaign_id: clean(config.carousel_native_campaign_id),
+    carousel_native_adset_id: clean(config.carousel_native_adset_id),
+    carousel_native_adset_verified: true,
+    carousel_native_route_active: true,
+  };
+}
+
+async function reconcileBootstrapTracking({ item, sourceAdset, targetAdset, sourceAuth, targetAuth, state, operation, context }) {
+  if (sourceAuth.accountId !== targetAuth.accountId) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_source_account_incompatible', 409);
+  }
+  const profile = asObject(item.profile);
+  const desired = projectAuthorizedTrackingPromotedObject(sourceAdset, targetAdset, profile);
+  const keys = trackingKeysForProfile(profile);
+  const previousTracking = selectTrackingKeys(asObject(targetAdset).promoted_object, keys);
+  const desiredTracking = selectTrackingKeys(desired.tracking_promoted_object, keys);
+  const stored = asObject(item.tracking);
+  if (Object.keys(stored).length) {
+    if (
+      stableStringify(safeArray(stored.keys)) !== stableStringify(keys) ||
+      stableStringify(asObject(stored.desired_tracking_promoted_object)) !== stableStringify(desiredTracking)
+    ) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+    }
+  } else {
+    item.tracking = {
+      keys,
+      previous_tracking_promoted_object: previousTracking,
+      desired_tracking_promoted_object: desiredTracking,
+      verified: false,
+    };
+    await persistBootstrapState({ env: context.env, operation, state, status: 'pending', encryptToken: context.encryptToken, context });
+  }
+
+  const current = asObject(targetAdset).promoted_object;
+  if (!trackingKeysMatch(current, desiredTracking, keys)) {
+    const expectedPrevious = asObject(item.tracking.previous_tracking_promoted_object);
+    if (!trackingKeysMatch(current, expectedPrevious, keys)) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_tracking_concurrent_drift', 409);
+    }
+    await assertBootstrapLease(context);
+    await updateAdsetTrackingWithReconciliation(targetAuth, targetAuth.config.adset_id, desired.full_promoted_object, profile, context);
+  }
+  const readback = await readAdsetConversionState(targetAuth, targetAuth.config.adset_id, context);
+  if (!trackingKeysMatch(readback.promoted_object, desiredTracking, keys)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_tracking_readback_mismatch', 502);
+  }
+  item.tracking.verified = true;
+  item.tracking.graph_mutation = keys.length && !trackingKeysMatch(current, desiredTracking, keys)
+    ? 'promoted_object_updated'
+    : 'none';
+  // Keep an explicit source/target proof in the encrypted state only. The
+  // public summary exposes booleans, never the pixel, event, dataset or IDs.
+  item.tracking.source = summarizeAdsetConversionTracking(sourceAdset);
+  item.tracking.target = summarizeAdsetConversionTracking(readback);
+  await persistBootstrapState({ env: context.env, operation, state, status: 'tracking_configured', encryptToken: context.encryptToken, context });
+}
+
+// A staging-only synthetic fixture must begin from a known, intentionally
+// mismatched state so the deployment can prove GET -> POST -> GET
+// reconciliation and its rollback. We create and read back the fixture while
+// the target is conforming, then restore exactly the encrypted pre-bootstrap
+// tracking fields before committing the staging profile.
+async function restoreBootstrapTrackingBaseline({ item, targetAuth, state, operation, context }) {
+  const tracking = asObject(item.tracking);
+  const keys = safeArray(tracking.keys);
+  const previous = asObject(tracking.previous_tracking_promoted_object);
+  const desired = asObject(tracking.desired_tracking_promoted_object);
+  if (!keys.length || !tracking.verified) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_staging_fixture_tracking_unverified', 409);
+  }
+  const current = await readAdsetConversionState(targetAuth, targetAuth.config.adset_id, context);
+  if (trackingKeysMatch(current.promoted_object, previous, keys)) {
+    item.tracking.staging_baseline_restored = true;
+    await persistBootstrapState({ env: context.env, operation, state, status: 'fixture_created', encryptToken: context.encryptToken, context });
+    return;
+  }
+  if (!trackingKeysMatch(current.promoted_object, desired, keys)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_tracking_concurrent_drift', 409);
+  }
+  const restored = { ...asObject(current.promoted_object) };
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(previous, key)) restored[key] = previous[key];
+    else delete restored[key];
+  }
+  await assertBootstrapLease(context);
+  await updateAdsetPromotedObject(targetAuth, targetAuth.config.adset_id, restored, context);
+  const readback = await readAdsetConversionState(targetAuth, targetAuth.config.adset_id, context);
+  if (!trackingKeysMatch(readback.promoted_object, previous, keys)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_staging_fixture_restore_mismatch', 502);
+  }
+  item.tracking.staging_baseline_restored = true;
+  await persistBootstrapState({ env: context.env, operation, state, status: 'fixture_created', encryptToken: context.encryptToken, context });
+}
+
+function selectTrackingKeys(value, keys) {
+  const source = asObject(value);
+  const selected = {};
+  for (const key of safeArray(keys)) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) selected[key] = source[key];
+  }
+  return selected;
+}
+
+async function createOrReuseBootstrapFixture({ item, sourceAdsetId, targetAuth, state, operation, context }) {
+  const fixtureName = clean(item.fixture?.name) || await bootstrapFixtureName(context.operationKey, item.config_token_id);
+  item.fixture = { ...asObject(item.fixture), name: fixtureName };
+  await persistBootstrapState({ env: context.env, operation, state, status: 'tracking_configured', encryptToken: context.encryptToken, context });
+
+  const recordedFixture = asObject(item.fixture);
+  if (recordedFixture.copy_pending === true || recordedFixture.copy_ambiguous === true) {
+    // A process may have stopped after the single allowed POST but before a
+    // durable owned ad id was recorded. Never issue another copy or claim a
+    // clean rollback from this ambiguous state.
+    throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_copy_reconciliation_required', 409);
+  }
+
+  const recordedAdId = clean(recordedFixture.ad_id);
+  if (recordedAdId) {
+    if (recordedFixture.owned_by_operation !== true) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_ownership_unconfirmed', 409);
+    }
+    try {
+      const verified = await validateBootstrapFixture(
+        targetAuth,
+        recordedAdId,
+        targetAuth.config.adset_id,
+        fixtureName,
+        item.url_tags,
+        context,
+      );
+      item.fixture = {
+        name: fixtureName,
+        source_ad_id: clean(recordedFixture.source_ad_id),
+        ad_id: verified.adId,
+        creative_id: verified.creativeId,
+        verified: true,
+        owned_by_operation: true,
+        copy_pending: false,
+      };
+      await persistBootstrapState({ env: context.env, operation, state, status: 'fixture_created', encryptToken: context.encryptToken, context });
+      return;
+    } catch (error) {
+      if (isBootstrapFailure(error)) throw error;
+      // Do not fall through to a second copy when the exact fixture recorded
+      // by this saga has changed or cannot be read. Its ownership must be
+      // reconciled explicitly before any retry.
+      throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_owned_state_drift', 409);
+    }
+  }
+
+  const existing = await findBootstrapFixture(targetAuth, targetAuth.config.adset_id, fixtureName, item.url_tags, context);
+  if (existing) {
+    // A fixture with our deterministic marker but without a durable owned id
+    // may belong to a failed/foreign operation. It is never adopted or
+    // archived by this saga.
+    throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_ownership_unconfirmed', 409);
+  }
+
+  // The target credential is the only credential retained by v20. It was
+  // already used to read the source ad set above; use it again here so the
+  // fixture cannot depend on a one-off bootstrap-only Facebook grant.
+  const sourceAdId = await resolveBootstrapFixtureSourceAd({
+    item,
+    auth: targetAuth,
+    expectedAdsetId: sourceAdsetId,
+    context,
+  });
+  // Persist the intent before the only mutating copy request. If the Worker
+  // dies at any later point, the next attempt refuses to duplicate an unknown
+  // paused fixture and records reconciliation as required.
+  item.fixture = {
+    ...asObject(item.fixture),
+    name: fixtureName,
+    source_ad_id: sourceAdId,
+    copy_pending: true,
+    copy_ambiguous: false,
+  };
+  await persistBootstrapState({ env: context.env, operation, state, status: 'tracking_configured', encryptToken: context.encryptToken, context });
+
+  let copiedId = '';
+  let copyIssued = false;
+  try {
+    await assertBootstrapLease(context);
+    const result = await graphRequest(
+      graphUrl(targetAuth.apiVersion, `${sourceAdId}/copies`),
+      jsonRequest('POST', {
+        adset_id: targetAuth.config.adset_id,
+        status_option: 'PAUSED',
+        creative_parameters: {
+          name: fixtureName,
+          url_tags: String(item.url_tags),
+        },
+      }),
+      targetAuth,
+      context,
+      { maxAttempts: 1 },
+    );
+    copyIssued = true;
+    copiedId = normalizeBootstrapCopiedAdId(result.body);
+  } catch (error) {
+    const normalized = normalizeFailure(error);
+    if (copyIssued || normalized.ambiguous || normalized.retryable) {
+      // The marker allows a governed recovery process to find a possible
+      // orphan, but this request does not claim ownership from a timeout.
+      // Retrying the copy could duplicate an ad; continuing could archive a
+      // human-created fixture. Preserve the encrypted intent and fail closed.
+      item.fixture = {
+        ...asObject(item.fixture),
+        copy_pending: true,
+        copy_ambiguous: true,
+      };
+      await persistBootstrapState({ env: context.env, operation, state, status: 'reconciliation_required', encryptToken: context.encryptToken, context }).catch(() => undefined);
+      throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_copy_reconciliation_required', 409);
+    }
+    throw error;
+  }
+  if (!copiedId) {
+    item.fixture = {
+      ...asObject(item.fixture),
+      copy_pending: true,
+      copy_ambiguous: true,
+    };
+    await persistBootstrapState({ env: context.env, operation, state, status: 'reconciliation_required', encryptToken: context.encryptToken, context }).catch(() => undefined);
+    throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_copy_reconciliation_required', 409);
+  }
+  // Persist the opaque ad ID before its Graph readback. A successful POST can
+  // still be followed by a transport/readback failure; cleanup may archive
+  // only this explicitly owned fixture after proving its marker and tags.
+  item.fixture = {
+    ...asObject(item.fixture),
+    name: fixtureName,
+    source_ad_id: sourceAdId,
+    ad_id: copiedId,
+    verified: false,
+    owned_by_operation: true,
+    copy_pending: false,
+    copy_ambiguous: false,
+  };
+  await persistBootstrapState({ env: context.env, operation, state, status: 'tracking_configured', encryptToken: context.encryptToken, context });
+  const verified = await validateBootstrapFixture(targetAuth, copiedId, targetAuth.config.adset_id, fixtureName, item.url_tags, context);
+  item.fixture = {
+    name: fixtureName,
+    source_ad_id: sourceAdId,
+    ad_id: verified.adId,
+    creative_id: verified.creativeId,
+    verified: true,
+    owned_by_operation: true,
+    copy_pending: false,
+  };
+  await persistBootstrapState({ env: context.env, operation, state, status: 'fixture_created', encryptToken: context.encryptToken, context });
+}
+
+async function bootstrapFixtureName(operationKey, configTokenId) {
+  // Never derive ownership from a shared human-readable prefix. The marker is
+  // collision-resistant across operations and token rows, but contains no raw
+  // account/ad-set ID or URL tag value.
+  const marker = await sha256(`meta-ads-bootstrap-fixture\n${clean(operationKey)}\n${clean(configTokenId)}`);
+  return `${BOOTSTRAP_FIXTURE_NAME_PREFIX} [sk:${marker.slice(0, 32)}]`.slice(0, 255);
+}
+
+async function resolveBootstrapFixtureSourceAd({ item, auth, expectedAdsetId, context }) {
+  const sourceAdsetId = normalizeNumericId(expectedAdsetId, 'bootstrap_fixture_source_adset_id');
+  const existingId = clean(item.fixture?.source_ad_id || item.fixture_source_ad_id);
+  if (existingId) {
+    const ad = await readBootstrapAd(auth, existingId, context);
+    assertBootstrapFixtureSourceAd(ad, sourceAdsetId);
+    return normalizeNumericId(ad.id, 'bootstrap_fixture_source_ad_id');
+  }
+  const candidates = (await listBootstrapAdsetAds(auth, sourceAdsetId, context))
+    .filter((entry) => isBootstrapFixtureSourceCandidate(entry, sourceAdsetId));
+  if (candidates.length !== 1) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_source_ambiguous', 409);
+  }
+  return normalizeNumericId(candidates[0].id, 'bootstrap_fixture_source_ad_id');
+}
+
+function assertBootstrapFixtureSourceAd(value, expectedAdsetId) {
+  const ad = asObject(value);
+  if (
+    normalizeNumericId(ad.adset_id, 'bootstrap_fixture_source_adset_id') !== expectedAdsetId ||
+    !isBootstrapFixtureSourceCandidate(ad, expectedAdsetId)
+  ) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_source_invalid', 409);
+  }
+}
+
+function isBootstrapFixtureSourceCandidate(value, expectedAdsetId) {
+  const ad = asObject(value);
+  const status = clean(ad.status).toUpperCase();
+  const effectiveStatus = clean(ad.effective_status).toUpperCase();
+  const creativeId = clean(asObject(ad.creative).id);
+  return clean(ad.adset_id) === clean(expectedAdsetId) &&
+    ['ACTIVE', 'PAUSED'].includes(status) &&
+    (!effectiveStatus || ['ACTIVE', 'PAUSED'].includes(effectiveStatus)) &&
+    /^\d{5,30}$/.test(creativeId);
+}
+
+async function findBootstrapFixture(auth, adsetId, fixtureName, urlTags, context) {
+  const named = (await listBootstrapAdsetAds(auth, adsetId, context)).filter((entry) => {
+    const creative = asObject(entry.creative);
+    return clean(entry.adset_id) === clean(adsetId) &&
+      clean(creative.name) === fixtureName;
+  });
+  const matches = named.filter((entry) => String(asObject(entry.creative).url_tags ?? '') === String(urlTags));
+  if (named.length !== matches.length) {
+    // The deterministic marker belongs to a fixture with different raw tags.
+    // Never overwrite its state with a new copy: it may be an interrupted
+    // prior saga whose ownership cannot be established from a list response.
+    throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_marker_conflict', 409);
+  }
+  if (matches.length > 1) throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_ambiguous', 409);
+  return matches[0] || null;
+}
+
+function normalizeBootstrapCopiedAdId(value) {
+  const body = asObject(value);
+  const candidate = clean(body.copied_ad_id || body.ad_id || body.id);
+  if (!candidate) return '';
+  try {
+    return normalizeNumericId(candidate, 'bootstrap_fixture_ad_id');
+  } catch {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_create_unconfirmed', 502);
+  }
+}
+
+async function validateBootstrapFixture(auth, adId, expectedAdsetId, fixtureName, urlTags, context) {
+  const ad = await readBootstrapAd(auth, adId, context);
+  if (
+    normalizeNumericId(ad.adset_id, 'bootstrap_fixture_adset_id') !== expectedAdsetId ||
+    clean(ad.status).toUpperCase() !== 'PAUSED'
+  ) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_readback_mismatch', 502);
+  }
+  const creativeId = normalizeNumericId(asObject(ad.creative).id, 'bootstrap_fixture_creative_id');
+  const creativeResult = await graphRequest(
+    graphUrl(auth.apiVersion, creativeId, { fields: CREATIVE_READ_FIELDS.join(',') }),
+    { method: 'GET' },
+    auth,
+    context,
+  );
+  const creative = asObject(creativeResult.body);
+  if (clean(creative.name) !== fixtureName || String(creative.url_tags ?? '') !== String(urlTags)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_readback_mismatch', 502);
+  }
+  return { adId: normalizeNumericId(ad.id, 'bootstrap_fixture_ad_id'), creativeId };
+}
+
+async function readBootstrapAd(auth, adId, context) {
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, normalizeNumericId(adId, 'bootstrap_ad_id'), { fields: BOOTSTRAP_AD_FIELDS }),
+    { method: 'GET' },
+    auth,
+    context,
+  );
+  return asObject(result.body);
+}
+
+async function listBootstrapAdsetAds(auth, adsetId, context) {
+  let url = graphUrl(auth.apiVersion, `${normalizeNumericId(adsetId, 'bootstrap_adset_id')}/ads`, {
+    fields: BOOTSTRAP_AD_FIELDS,
+    limit: '100',
+  });
+  const ads = [];
+  let pages = 0;
+  while (url) {
+    pages += 1;
+    if (pages > MAX_AD_PAGES || ads.length > MAX_ADS) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_fixture_discovery_limit', 409);
+    }
+    const result = await graphRequest(url, { method: 'GET' }, auth, context);
+    ads.push(...safeArray(result.body.data).map(asObject));
+    url = validatePagingUrl(result.body?.paging?.next, auth.apiVersion);
+  }
+  return ads;
+}
+
+async function discoverBootstrapWhatsAppDestination(auth, targetAdset, context, item) {
+  const graphDestination = clean(asObject(targetAdset).destination_type).toUpperCase();
+  if (graphDestination && !isBootstrapWhatsAppGraphDestination(graphDestination)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_whatsapp_destination_required', 409);
+  }
+  const urls = new Set();
+  for (const ad of await listBootstrapAdsetAds(auth, auth.config.adset_id, context)) {
+    const status = clean(ad.status).toUpperCase();
+    if (!['ACTIVE', 'PAUSED'].includes(status)) continue;
+    for (const rawUrl of bootstrapCreativeDestinationUrls(asObject(ad.creative))) {
+      try {
+        const normalized = normalizeConfigWriterWhatsAppUrl(rawUrl);
+        urls.add(normalized);
+      } catch {
+        // An arbitrary creative field is not evidence of a WhatsApp route.
+      }
+    }
+  }
+  if (urls.size !== 1) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_whatsapp_destination_ambiguous', 409);
+  }
+  const destination = [...urls][0];
+  if (clean(item.whatsapp_destination_url) && clean(item.whatsapp_destination_url) !== destination) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+  }
+  return destination;
+}
+
+function isBootstrapWhatsAppGraphDestination(value) {
+  const normalized = clean(value).toUpperCase();
+  return normalized === 'WHATSAPP' || /^MESSAGING(?:_[A-Z0-9]+)*_WHATSAPP$/.test(normalized);
+}
+
+function bootstrapCreativeDestinationUrls(value) {
+  const creative = asObject(value);
+  const story = asObject(creative.object_story_spec);
+  const linkData = asObject(story.link_data);
+  const videoData = asObject(story.video_data);
+  const videoCtaValue = asObject(asObject(videoData.call_to_action).value);
+  const feed = asObject(creative.asset_feed_spec);
+  return [
+    linkData.link,
+    videoCtaValue.link,
+    ...safeArray(feed.link_urls).map((entry) => asObject(entry).website_url),
+  ].map(clean).filter(Boolean);
+}
+
+async function compensateBootstrapState({ state, context }) {
+  let safe = true;
+  const items = [...safeArray(state.items)].reverse();
+  for (const item of items) {
+    if (clean(item.destination_type) !== 'website') continue;
+    try {
+      const targetAuth = await resolveLegacyBootstrapGraphAuth(clean(item.config_token_id), context);
+      const fixture = asObject(item.fixture);
+      const tracking = asObject(item.tracking);
+      const keys = safeArray(tracking.keys);
+      if (keys.length) {
+        const current = await readAdsetConversionState(targetAuth, targetAuth.config.adset_id, context);
+        const desired = asObject(tracking.desired_tracking_promoted_object);
+        const previous = asObject(tracking.previous_tracking_promoted_object);
+        if (!trackingKeysMatch(current.promoted_object, previous, keys)) {
+          if (!trackingKeysMatch(current.promoted_object, desired, keys)) {
+            safe = false;
+            continue;
+          }
+          const restored = { ...asObject(current.promoted_object) };
+          for (const key of keys) {
+            if (Object.prototype.hasOwnProperty.call(previous, key)) restored[key] = previous[key];
+            else delete restored[key];
+          }
+          await assertBootstrapLease(context);
+          await updateAdsetPromotedObject(targetAuth, targetAuth.config.adset_id, restored, context);
+          const readback = await readAdsetConversionState(targetAuth, targetAuth.config.adset_id, context);
+          if (!trackingKeysMatch(readback.promoted_object, previous, keys)) {
+            safe = false;
+            continue;
+          }
+        }
+      }
+
+      // Do not archive the known-good paused creative before tracking has
+      // been restored. If Graph refuses the promoted_object restore, v20 stays
+      // authoritative and its required fixture remains usable for recovery.
+      if (fixture.copy_pending === true || fixture.copy_ambiguous === true) {
+        safe = false;
+        continue;
+      }
+      const fixtureAdId = clean(fixture.ad_id);
+      if (fixtureAdId && fixture.owned_by_operation === true) {
+        // Do not archive a merely discovered fixture. Even a deterministic
+        // marker is not ownership proof until this saga recorded a successful
+        // copy response; read back its exact target/name/tags before cleanup.
+        const currentFixture = await readBootstrapAd(targetAuth, fixtureAdId, context);
+        if (clean(currentFixture.status).toUpperCase() !== 'ARCHIVED') {
+          const verified = await validateBootstrapFixture(
+            targetAuth,
+            fixtureAdId,
+            targetAuth.config.adset_id,
+            clean(fixture.name),
+            String(item.url_tags || ''),
+            context,
+          );
+          await assertBootstrapLease(context);
+          await updateAdWithReconciliation(targetAuth, verified.adId, { status: 'ARCHIVED' }, context);
+          const archived = await readBootstrapAd(targetAuth, verified.adId, context);
+          if (clean(archived.status).toUpperCase() !== 'ARCHIVED') safe = false;
+        }
+      }
+    } catch {
+      safe = false;
+    }
+  }
+  return safe;
 }
 
 async function getInventory({ request, env, requestId, decryptToken, writeAudit }) {
@@ -2979,10 +5193,18 @@ async function resolveGraphAuth(body, context) {
   return { tokenId, accountId, apiVersion, accessToken, appSecretProof, config };
 }
 
-async function graphRequest(url, init, auth, context) {
+async function graphRequest(url, init, auth, context, { maxAttempts = MAX_GRAPH_ATTEMPTS } = {}) {
   let lastFailure;
   const started = Date.now();
-  for (let attempt = 1; attempt <= MAX_GRAPH_ATTEMPTS; attempt += 1) {
+  const attemptsAllowed = clampInteger(maxAttempts, MAX_GRAPH_ATTEMPTS, 1, MAX_GRAPH_ATTEMPTS);
+  for (let attempt = 1; attempt <= attemptsAllowed; attempt += 1) {
+    // Bootstrap may spend several retry windows walking a source ad set.  Its
+    // configuration lease must be renewed before every Graph request, not
+    // only before a later POST/persist, otherwise an expired saga could leave
+    // an already-mutated target without a live owner able to compensate it.
+    if (typeof context?.assertBootstrapLease === 'function') {
+      await context.assertBootstrapLease();
+    }
     context.attempts += 1;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), GRAPH_TIMEOUT_MS);
@@ -3006,14 +5228,14 @@ async function graphRequest(url, init, auth, context) {
 
       const normalized = normalizeMetaError(body, graphResponse.status, graphResponse.headers, context.action);
       lastFailure = normalized;
-      if (!normalized.retryable || attempt === MAX_GRAPH_ATTEMPTS) throw Object.assign(new Error(normalized.message), normalized);
+      if (!normalized.retryable || attempt === attemptsAllowed) throw Object.assign(new Error(normalized.message), normalized);
       const delay = retryDelayMs(attempt, graphResponse.headers, started, normalized);
       if (delay <= 0) throw Object.assign(new Error(normalized.message), normalized);
       await (context.env.META_GRAPH_SLEEP || sleep)(delay);
     } catch (error) {
       const normalized = normalizeFailure(error);
       lastFailure = normalized;
-      if (!normalized.retryable || attempt === MAX_GRAPH_ATTEMPTS) throw Object.assign(new Error(normalized.message), normalized);
+      if (!normalized.retryable || attempt === attemptsAllowed) throw Object.assign(new Error(normalized.message), normalized);
       const delay = retryDelayMs(attempt, null, started);
       if (delay <= 0) throw Object.assign(new Error(normalized.message), normalized);
       await (context.env.META_GRAPH_SLEEP || sleep)(delay);
@@ -3454,48 +5676,83 @@ async function acquireLocks(env, runId, operationKey, resourceKeys) {
   const keys = [...new Set(safeArray(resourceKeys).map(clean).filter(Boolean))].sort();
   const now = nowIso();
   const expiresAt = new Date(Date.now() + LOCK_TTL_MS).toISOString();
-  for (const resourceKey of keys) {
-    const current = await dbFirst(env,
-      `SELECT resource_key, run_id, operation_key, expires_at FROM meta_ads_publish_locks WHERE resource_key = ?`,
-      resourceKey,
-    );
-    // A run is not a blanket lock owner. Re-entrancy is permitted only for
-    // the same idempotent operation so a same-run rollback/ensure cannot
-    // replace a stage batch's fresh ad-set attestation between its Graph GET
-    // and ad POST.
-    if (
-      current &&
-      Date.parse(current.expires_at) > Date.now() &&
-      (clean(current.run_id) !== runId || clean(current.operation_key) !== operationKey)
-    ) {
-      throw new Error(`resource_locked:${resourceKey}`);
+  const newlyAcquired = [];
+  try {
+    for (const resourceKey of keys) {
+      const current = await dbFirst(env,
+        `SELECT resource_key, run_id, operation_key, expires_at FROM meta_ads_publish_locks WHERE resource_key = ?`,
+        resourceKey,
+      );
+      const reentrant = Boolean(
+        current &&
+        Date.parse(current.expires_at) > Date.now() &&
+        clean(current.run_id) === runId &&
+        clean(current.operation_key) === operationKey,
+      );
+      // A run is not a blanket lock owner. Re-entrancy is permitted only for
+      // the same idempotent operation so a same-run rollback/ensure cannot
+      // replace a stage batch's fresh ad-set attestation between its Graph GET
+      // and ad POST.
+      if (
+        current &&
+        Date.parse(current.expires_at) > Date.now() &&
+        !reentrant
+      ) {
+        throw new Error(`resource_locked:${resourceKey}`);
+      }
+      await dbRun(env,
+        `INSERT INTO meta_ads_publish_locks (
+          resource_key, run_id, operation_key, heartbeat_at, expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(resource_key) DO UPDATE SET
+          run_id = excluded.run_id,
+          operation_key = excluded.operation_key,
+          heartbeat_at = excluded.heartbeat_at,
+          expires_at = excluded.expires_at,
+          updated_at = excluded.updated_at
+        WHERE meta_ads_publish_locks.expires_at <= ? OR
+          (meta_ads_publish_locks.run_id = ? AND meta_ads_publish_locks.operation_key = ?)`,
+        resourceKey, runId, operationKey, now, expiresAt, now, now, now, runId, operationKey,
+      );
+      const acquired = await dbFirst(env,
+        `SELECT run_id, operation_key FROM meta_ads_publish_locks WHERE resource_key = ?`,
+        resourceKey,
+      );
+      if (
+        !acquired ||
+        clean(acquired.run_id) !== runId ||
+        clean(acquired.operation_key) !== operationKey
+      ) {
+        throw new Error(`resource_locked:${resourceKey}`);
+      }
+      if (!reentrant) newlyAcquired.push(resourceKey);
     }
-    await dbRun(env,
-      `INSERT INTO meta_ads_publish_locks (
-        resource_key, run_id, operation_key, heartbeat_at, expires_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(resource_key) DO UPDATE SET
-        run_id = excluded.run_id,
-        operation_key = excluded.operation_key,
-        heartbeat_at = excluded.heartbeat_at,
-        expires_at = excluded.expires_at,
-        updated_at = excluded.updated_at
-      WHERE meta_ads_publish_locks.expires_at <= ? OR
-        (meta_ads_publish_locks.run_id = ? AND meta_ads_publish_locks.operation_key = ?)`,
-      resourceKey, runId, operationKey, now, expiresAt, now, now, now, runId, operationKey,
-    );
-    const acquired = await dbFirst(env,
-      `SELECT run_id, operation_key FROM meta_ads_publish_locks WHERE resource_key = ?`,
-      resourceKey,
-    );
-    if (
-      !acquired ||
-      clean(acquired.run_id) !== runId ||
-      clean(acquired.operation_key) !== operationKey
-    ) {
-      throw new Error(`resource_locked:${resourceKey}`);
+  } catch (error) {
+    if (newlyAcquired.length) {
+      try {
+        await releaseSpecificOperationLocks(env, runId, operationKey, newlyAcquired);
+      } catch {
+        // The caller must fail closed if D1 cannot prove that a partial lease
+        // was released. Retrying a Graph mutation in that state could race a
+        // stale owner until the bounded lease expires.
+        throw new Error('resource_lock_cleanup_failed');
+      }
     }
+    throw error;
   }
+}
+
+async function releaseSpecificOperationLocks(env, runId, operationKey, resourceKeys) {
+  const keys = [...new Set(safeArray(resourceKeys).map(clean).filter(Boolean))].sort();
+  if (!keys.length) return;
+  const placeholders = keys.map(() => '?').join(', ');
+  await dbRun(env,
+    `DELETE FROM meta_ads_publish_locks
+      WHERE run_id = ? AND operation_key = ? AND resource_key IN (${placeholders})`,
+    runId,
+    operationKey,
+    ...keys,
+  );
 }
 
 async function releaseOperationLocks(env, runId, operationKey) {

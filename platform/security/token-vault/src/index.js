@@ -9,6 +9,10 @@ import { handleAnalyticsStagingBootstrapRequest } from './analytics-staging-boot
 import { decryptToken, encryptToken } from './token-crypto.js';
 
 const TOKEN_PREFIX = '/internal/token-vault';
+const META_ADS_PUBLISH_CONFIG_PATH = '/v1/meta-ads-publish/config';
+const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH = `${META_ADS_PUBLISH_CONFIG_PATH}/bootstrap`;
+const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_ROLLBACK_PATH = `${META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH}/rollback`;
+const META_ADS_PUBLISH_CONFIG_STAGING_EXERCISE_PATH = `${META_ADS_PUBLISH_CONFIG_PATH}/staging-exercise`;
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'no-store',
@@ -51,16 +55,74 @@ export async function handleRequest(request, env) {
       return json({ ok: false, error: 'staging_bootstrap_credential_required', requestId }, { status: 403 });
     }
 
+    // This credential is deliberately isolated from the generic Meta Ads
+    // gateway. It can inspect the public contract and configuration, and its
+    // one future mutation is a dedicated bootstrap route handled by the
+    // Meta Ads module itself. Do not add it to the operational role allowlist.
+    if (auth.role === 'meta-ads-config') {
+      if (request.method === 'GET' && pathname === '/health') {
+        return health(env, requestId);
+      }
+      if (request.method === 'GET' && pathname === '/contract') {
+        return contract(requestId);
+      }
+      if (
+        (request.method === 'GET' && pathname === META_ADS_PUBLISH_CONFIG_PATH) ||
+        (request.method === 'POST' && [
+          META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH,
+          META_ADS_PUBLISH_CONFIG_BOOTSTRAP_ROLLBACK_PATH,
+          META_ADS_PUBLISH_CONFIG_STAGING_EXERCISE_PATH,
+        ].includes(pathname))
+      ) {
+        return await handleMetaAdsPublishRequest({
+          request,
+          env,
+          requestId,
+          pathname,
+          decryptToken,
+          encryptToken,
+          writeAudit,
+        });
+      }
+      return roleRequired(requestId, 'meta_ads_config_credential_scope_required');
+    }
+
     if (request.method === 'GET' && pathname === '/health') {
       return health(env, requestId);
     }
 
-    if (request.method === 'PUT' && pathname === '/v1/meta-ads-publish/config') {
+    if (request.method === 'PUT' && pathname === META_ADS_PUBLISH_CONFIG_PATH) {
       if (auth.role !== 'admin') return adminOnly(requestId);
       return await updateMetaAdsPublishConfig({
         request,
         env,
         requestId,
+      });
+    }
+
+    // Bootstrap and staging exercise can mutate a Graph ad set and private
+    // configuration.  They are intentionally not part of the broad
+    // operational publishing gateway: only an administrator or the dedicated
+    // constrained configuration credential may invoke them.
+    if (
+      request.method === 'POST' &&
+      [
+        META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH,
+        META_ADS_PUBLISH_CONFIG_BOOTSTRAP_ROLLBACK_PATH,
+        META_ADS_PUBLISH_CONFIG_STAGING_EXERCISE_PATH,
+      ].includes(pathname)
+    ) {
+      if (auth.role !== 'admin') {
+        return roleRequired(requestId, 'meta_ads_config_credential_required');
+      }
+      return await handleMetaAdsPublishRequest({
+        request,
+        env,
+        requestId,
+        pathname,
+        decryptToken,
+        encryptToken,
+        writeAudit,
       });
     }
 
@@ -445,14 +507,15 @@ function authorizeRequest(request, env) {
   const adminToken = safeString(env.TOKEN_VAULT_API_TOKEN);
   const operationalToken = safeString(env.TOKEN_VAULT_N8N_API_TOKEN);
   const analyticsToken = safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN);
+  const metaAdsConfigToken = safeString(env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN);
   const stagingBootstrapToken = safeString(env.TOKEN_VAULT_STAGING_ANALYTICS_BOOTSTRAP_TOKEN);
   if (stagingBootstrapToken && !stagingBootstrapEligible(env)) {
     return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
   }
-  if (!adminToken && !operationalToken && !analyticsToken && !stagingBootstrapToken) {
+  if (!adminToken && !operationalToken && !analyticsToken && !metaAdsConfigToken && !stagingBootstrapToken) {
     return { ok: false, status: 500, reason: 'missing_worker_secret' };
   }
-  const configuredTokens = [adminToken, operationalToken, analyticsToken, stagingBootstrapToken].filter(Boolean);
+  const configuredTokens = [adminToken, operationalToken, analyticsToken, metaAdsConfigToken, stagingBootstrapToken].filter(Boolean);
   if (new Set(configuredTokens).size !== configuredTokens.length) {
     return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
   }
@@ -467,6 +530,9 @@ function authorizeRequest(request, env) {
   }
   if (analyticsToken && constantTimeEqual(authHeader, `${scheme} ${analyticsToken}`.trim())) {
     return { ok: true, role: 'analytics' };
+  }
+  if (metaAdsConfigToken && constantTimeEqual(authHeader, `${scheme} ${metaAdsConfigToken}`.trim())) {
+    return { ok: true, role: 'meta-ads-config' };
   }
   if (stagingBootstrapToken && constantTimeEqual(authHeader, `${scheme} ${stagingBootstrapToken}`.trim())) {
     return { ok: true, role: 'staging-bootstrap' };
@@ -520,6 +586,8 @@ function contract(requestId) {
       analytics_secret: 'TOKEN_VAULT_ANALYTICS_API_TOKEN',
       analytics_scope: 'influencer-intelligence',
       analytics_mode: 'shadow|active',
+      meta_ads_config_secret: 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN',
+      meta_ads_config_scope: 'health|contract|meta-ads-config-read|meta-ads-config-bootstrap|meta-ads-config-bootstrap-rollback|meta-ads-config-staging-exercise',
     },
     storage: {
       d1_binding: 'TOKEN_VAULT_DB',
