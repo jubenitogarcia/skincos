@@ -19,6 +19,10 @@ const RELEASE_WORKFLOW = '.github/workflows/ponto-progressive-release.yml';
 const DEFAULT_CATALOG = path.resolve('platform/deploy/operational-units.json');
 const EVIDENCE_DERIVED_STAGING_INCURBENT = 'evidence-derived-staging-incumbent';
 const RECENT_STAGING_RUN_LIMIT = 25;
+// The GitHub workflow-runs payload can exceed spawnSync's 1 MiB default in
+// an active repository. Keep a bounded allowance so a valid predecessor is
+// not discarded before its source-bound evidence can be verified.
+const GITHUB_HISTORY_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 
 function requireValue(condition, message) {
   if (!condition) throw new Error(message);
@@ -28,12 +32,13 @@ function jsonFile(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
-function run(command, args, options = {}) {
+export function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || process.cwd(),
     env: options.env || process.env,
     encoding: 'utf8',
     stdio: options.stdio || ['ignore', 'pipe', 'pipe'],
+    maxBuffer: options.maxBuffer ?? GITHUB_HISTORY_MAX_BUFFER_BYTES,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
