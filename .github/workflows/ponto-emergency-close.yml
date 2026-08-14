@@ -112,22 +112,30 @@ jobs:
             || !["control", "emergency-latch-active"].includes(availability?.source)
             || !Number.isFinite(Date.parse(String(availability?.changedAt || "")))
           ) throw new Error("live Ponto health did not prove maintenance under the closed latch");
-          fs.writeFileSync(process.argv[3], `${JSON.stringify({
-            state: "maintenance",
-            changedAt: maintenance.latchChangedAt,
-          })}\n`, { mode: 0o600 });
-          fs.writeFileSync(process.argv[4], `${JSON.stringify({
-            state: "maintenance",
-            changedAt: availability.changedAt,
-            source: "control",
-          })}\n`, { mode: 0o600 });
+          if (availability.source === "emergency-latch-active") {
+            // A monotonic latch can already be visible at the edge before a
+            // broker-backed re-attestation transfers its ownership. The
+            // direct broker evidence remains the exact custody boundary.
+            fs.writeFileSync(process.argv[3], `${JSON.stringify({ state: "maintenance", changedAt: availability.changedAt })}\n`, { mode: 0o600 });
+            fs.rmSync(process.argv[4], { force: true });
+          } else {
+            fs.writeFileSync(process.argv[3], `${JSON.stringify({ state: "maintenance", changedAt: maintenance.latchChangedAt })}\n`, { mode: 0o600 });
+            fs.writeFileSync(process.argv[4], `${JSON.stringify({ state: "maintenance", changedAt: availability.changedAt, source: "control" })}\n`, { mode: 0o600 });
+          }
           })().catch((error) => { console.error(error); process.exitCode = 1; });
           NODE
-          PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
-          PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
-          PONTO_MODULE_ALTERNATE_EXPECTATION_FILE="$directory/control-fallback-expectation.json" \
-          PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
-            node .github/scripts/ponto-module-propagation.mjs
+          if [[ -f "$directory/control-fallback-expectation.json" ]]; then
+            PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+            PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+            PONTO_MODULE_ALTERNATE_EXPECTATION_FILE="$directory/control-fallback-expectation.json" \
+            PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+              node .github/scripts/ponto-module-propagation.mjs
+          else
+            PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+            PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+            PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+              node .github/scripts/ponto-module-propagation.mjs
+          fi
           rm -f "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json"
       - name: Upload sanitized immutable emergency-close evidence
         if: always()
@@ -237,14 +245,19 @@ jobs:
             const response = await fetch(probe, { headers: { accept: "application/json", "cache-control": "no-cache" } });
             const body = await response.json().catch(() => null);
             const availability = body?.availability;
-            const expectedChangedAt = availability?.source === "emergency-latch-active"
-              ? report.emergencyLatch.changedAt
-              : report.moduleControl.changedAt;
+            const validAvailabilityChangedAt = Number.isFinite(Date.parse(String(availability?.changedAt || "")));
+            // Exact current ownership is proved by the direct materialized KV
+            // readback. An already-active latch may still expose its prior
+            // monotonic timestamp at the public edge while remaining closed.
+            const exactControlChangedAt = availability?.source === "control"
+              ? availability.changedAt === report.moduleControl.changedAt
+              : true;
             if (
               response.status === 200
               && availability?.state === "maintenance"
               && ["control", "emergency-latch-active"].includes(availability?.source)
-              && availability?.changedAt === expectedChangedAt
+              && validAvailabilityChangedAt
+              && exactControlChangedAt
             ) return;
             lastObservation = `HTTP ${response.status}, source=${String(availability?.source || "")}, changedAt=${String(availability?.changedAt || "")}`;
             if (attempt < 11) await new Promise((resolve) => setTimeout(resolve, 5_000));
