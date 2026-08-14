@@ -937,7 +937,8 @@ export async function onRequest(context: any): Promise<Response> {
     return authorizedReleaseReadinessProbe(env, configuration, request, requestId)
   }
 
-  const isPublicRoute = ['/health', '/health/', '/readiness', '/readiness/', '/_proxy-status', '/_proxy-status/'].includes(rest)
+  const isOperationalProbe = rest === '/health' || rest === '/health/' || rest === '/readiness' || rest === '/readiness/'
+  const isPublicRoute = isOperationalProbe || rest === '/_proxy-status' || rest === '/_proxy-status/'
   const isDeviceRoute = rest === '/device' || rest.startsWith('/device/')
   const isAdminRoute = rest === '/admin' || rest.startsWith('/admin/')
   const requiresActor = !isPublicRoute && !isDeviceRoute
@@ -1098,6 +1099,29 @@ export async function onRequest(context: any): Promise<Response> {
     }
   }
 
+  // Public health normally goes through the externally routed gateway, which
+  // prevents an arbitrary or stale Pages binding from masking a degraded
+  // public contract. During an exact, live staged release, though, that public
+  // gateway can still be an incumbent while authenticated Ponto traffic is
+  // deliberately pinned to the candidate Core. In that narrow state, make the
+  // observability request follow the same server-owned candidate binding and
+  // version override. The control record is checked server-side; a browser can
+  // neither select a version nor cause this routing change.
+  let useReleaseBoundCoreForOperationalProbe = false
+  if (
+    isOperationalProbe
+    && !configuration.localDirectTimekeeping
+    && CLOUDFLARE_VERSION_ID_RE.test(configuration.coreVersionId)
+    && ['staging', 'pilot', 'canary'].includes(configuration.rolloutStage)
+  ) {
+    const control = await readPontoControl(env)
+    useReleaseBoundCoreForOperationalProbe = exactLiveControl(control, configuration)
+    if (useReleaseBoundCoreForOperationalProbe) {
+      const coreService = configuration.environment === 'staging' ? 'skincos-ponto-core-staging' : 'skincos-ponto-core'
+      headers.set('cloudflare-workers-version-overrides', `${coreService}="${configuration.coreVersionId}"`)
+    }
+  }
+
   const upstreamRequest = new Request(targetUrl.toString(), {
     method,
     headers,
@@ -1105,11 +1129,10 @@ export async function onRequest(context: any): Promise<Response> {
     redirect: 'manual',
   })
 
-  // Health and readiness are public observability contracts. They must be read
-  // from the canonical gateway, rather than a possibly stale Pages service
-  // binding, so a maintenance/degraded response cannot be reintroduced as a
-  // legacy ready=true result through the CRM alias.
-  const useCanonicalGateway = rest === '/health' || rest === '/health/' || rest === '/readiness' || rest === '/readiness/'
+  // Outside the exact candidate state above, health and readiness remain on
+  // the canonical external gateway. This preserves the public fail-closed
+  // contract rather than trusting a stale Pages binding.
+  const useCanonicalGateway = isOperationalProbe && !useReleaseBoundCoreForOperationalProbe
   let upstream: Response
   try {
     upstream = configuration.localDirectTimekeeping || useCanonicalGateway
