@@ -49,6 +49,11 @@
       "purpose": "Compatibility writer group for Finance Worker and its governed staging database operations."
     },
     {
+      "id": "token-vault-writer",
+      "resource": "release:token-vault",
+      "purpose": "Serializes Token Vault Worker publication and its D1 migrations across isolated environments."
+    },
+    {
       "id": "finance-ui-writer",
       "resource": "deploy:finance-ui:<environment>",
       "purpose": "Dedicated Finance UI Pages projects; staging and production are isolated projects."
@@ -67,11 +72,6 @@
       "id": "staging-d1-writer",
       "resource": "global:staging-d1",
       "purpose": "Shared synthetic/staging D1 mutation authority."
-    },
-    {
-      "id": "token-vault-staging-writer",
-      "resource": "global:token-vault-staging",
-      "purpose": "Serializes staging Token Vault Worker version and dedicated analytics-secret custody for the read-only Influencer Intelligence shadow transport."
     },
     {
       "id": "global-coordinator-writer",
@@ -171,6 +171,16 @@
       ]
     },
     {
+      "id": "token-vault-worker-and-d1",
+      "platform": "cloudflare-worker-d1",
+      "canonicalDeployWorkflow": ".github/workflows/deploy-token-vault.yml",
+      "coordinationGroup": "token-vault-writer",
+      "mutationWorkflows": [
+        ".github/workflows/deploy-token-vault.yml",
+        ".github/workflows/influencer-intelligence-staging-shadow.yml"
+      ]
+    },
+    {
       "id": "finance-ui-pages",
       "platform": "cloudflare-pages",
       "projects": ["skincos-finance-ui", "skincos-finance-ui-staging"],
@@ -213,15 +223,6 @@
       "mutationWorkflows": [
         ".github/workflows/insumos-staging-rbac-smoke.yml",
         ".github/workflows/timekeeping-staging-journey.yml"
-      ]
-    },
-    {
-      "id": "token-vault-staging-shadow",
-      "platform": "cloudflare-worker",
-      "canonicalDeployWorkflow": ".github/workflows/influencer-intelligence-staging-shadow.yml",
-      "coordinationGroup": "token-vault-staging-writer",
-      "mutationWorkflows": [
-        ".github/workflows/influencer-intelligence-staging-shadow.yml"
       ]
     },
     {

@@ -642,7 +642,7 @@
   gap: clamp(14px, 2.8vw, 30px);
   width: min(100%, 920px);
   margin: 2px auto 0;
-  --finale-card-height: 360px;
+  --finale-card-height: clamp(280px, 25vw, 304px);
   --finale-special-card-height: 430px;
 }
 
@@ -664,6 +664,19 @@
 .finaleCard:nth-child(3) {
   --finale-x: clamp(-320px, -23vw, -170px);
   --finale-rotate: 8deg;
+}
+
+.tableStage[data-hand-stage="finale"] {
+  overflow: visible;
+}
+
+.tableStage[data-hand-stage="finale"] .tableSurface {
+  overflow: visible;
+}
+
+.tableStage[data-hand-stage="finale"] .finaleCardGridMerging {
+  z-index: 4;
+  overflow: visible;
 }
 
 .tableStage[data-hand-stage="finale"] .deckStage,
@@ -735,9 +748,9 @@
   min-height: inherit;
   align-items: stretch;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   overflow: hidden;
-  padding: 28px;
+  padding: 22px;
   border: 1px solid var(--bm-line-strong);
   border-top: 3px solid var(--bm-yellow);
   border-radius: 12px;
@@ -747,8 +760,8 @@
 
 .finaleCardIllustration {
   display: grid;
-  width: 126px;
-  height: 126px;
+  width: 110px;
+  height: 110px;
   place-items: center;
   align-self: center;
   margin: 0 auto 2px;
@@ -774,10 +787,17 @@
 .finaleCardFace strong {
   color: var(--bm-ink);
   font-family: var(--font-brand-ui);
-  font-size: clamp(1.85rem, 3.5vw, 2.8rem);
+  font-size: clamp(1.55rem, 3vw, 2.35rem);
   font-weight: 700;
   letter-spacing: -0.06em;
   line-height: 0.95;
+}
+
+.finaleCardMessage {
+  color: var(--bm-muted);
+  font-family: var(--font-brand-text);
+  font-size: 0.95rem;
+  line-height: 1.55;
 }
 
 .specialCardStage {
@@ -2479,7 +2499,7 @@
   .finaleCardGrid {
     grid-template-columns: 1fr;
     width: min(100%, 420px);
-    --finale-card-height: 334px;
+    --finale-card-height: 280px;
     --finale-special-card-height: 410px;
   }
 

@@ -1,4 +1,5 @@
 const inputItems = $input.all();
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_reconciliation';
 
 const SLOT_CONFIG = [
   // Feed uses 4:5 when that exact source asset exists. Other accepted source
@@ -1605,6 +1606,13 @@ const configRevisions = uniqueStrings(destinations.map((destination) => destinat
 if (configRevisions.length !== 1) {
   return buildFailure({ config_revisions: configRevisions }, 'Os destinos nao compartilham a mesma revisao de configuracao do gateway.');
 }
+const trackingBindingRevisions = uniqueStrings(destinations.map((destination) => destination.tracking_binding_revision || destination.config_revision));
+if (trackingBindingRevisions.length !== 1) {
+  return buildFailure(
+    { tracking_binding_revisions: trackingBindingRevisions },
+    'Os destinos nao compartilham a mesma revisao estavel de tracking do gateway.',
+  );
+}
 
 const normalizedSourceAds = sourceAds.map((ad) => {
   const searchText = buildAdSearchText(ad);
@@ -1846,8 +1854,12 @@ for (const group of groupedCreatives) {
       token_id: safeString(destination.token_id),
       allowed_link_hosts: safeArray(destination.allowed_link_hosts),
       landing_pages_by_creative_group: deepClone(destination.landing_pages_by_creative_group || {}),
+      tracking_contract: deepClone(destination.tracking_contract || {}),
       landing_page_validation: deepClone(destination.landing_page_validation || {}),
       placement_eligibility: deepClone(placementCheck || {}),
+      // This is a reduced Graph readback: it contains only contract booleans
+      // and safe enums, never Pixel, custom-conversion or dataset IDs.
+      conversion_tracking: deepClone(placementCheck && placementCheck.conversion_tracking || {}),
       freshness_window_days: Number(destination.freshness_window_days || 7),
       // Live ad-set data wins over an optional Token Vault metadata mirror.
       // In particular, OUTCOME_LEADS dynamic creatives cannot stage BOOK_NOW.
@@ -1860,6 +1872,7 @@ for (const group of groupedCreatives) {
       carousel_native_adset_verified: destination.carousel_native_adset_verified === true,
       carousel_native_route_active: destination.carousel_native_route_active === true,
       config_revision: safeString(destination.config_revision),
+      tracking_binding_revision: safeString(destination.tracking_binding_revision || destination.config_revision),
       destination_id_source: 'token_vault',
       suffix_hint: group.suffix_hint,
       warnings: destinationWarnings,
@@ -1987,8 +2000,10 @@ for (const group of groupedCreatives) {
         token_id: destination.token_id,
         allowed_link_hosts: destination.allowed_link_hosts,
         landing_pages_by_creative_group: destination.landing_pages_by_creative_group,
+        tracking_contract: destination.tracking_contract,
         landing_page_validation: destination.landing_page_validation,
         placement_eligibility: destination.placement_eligibility,
+        conversion_tracking: destination.conversion_tracking,
         freshness_window_days: destination.freshness_window_days,
         campaign_objective: destination.campaign_objective,
         optimization_goal: destination.optimization_goal,
@@ -1999,6 +2014,7 @@ for (const group of groupedCreatives) {
         carousel_native_adset_verified: destination.carousel_native_adset_verified,
         carousel_native_route_active: destination.carousel_native_route_active,
         config_revision: destination.config_revision,
+        tracking_binding_revision: destination.tracking_binding_revision,
         destination_id_source: destination.destination_id_source,
         suffix_hint: destination.suffix_hint,
         warnings: destination.warnings,
@@ -2077,6 +2093,8 @@ for (const group of groupedCreatives) {
       source_ads: deepClone(sourceAds),
       batch_files: deepClone(batchFiles),
       config_revision: configRevisions[0],
+      tracking_binding_revision: trackingBindingRevisions[0],
+      workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
 
       debug_grouping: {
         drive_items_in_group: group.all_candidates.length,

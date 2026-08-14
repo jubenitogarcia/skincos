@@ -29,7 +29,7 @@ const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
 const REQUIRED_CTA = 'BOOK_NOW';
 const OUTCOME_LEADS_CTA = 'LEARN_MORE';
 const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v20_tracking_reconciliation';
 const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'add_text_overlay',
   'image_touchups',
@@ -137,6 +137,67 @@ function destinationContractKind(source) {
   const kind = safeString(asObject(source.destination_contract).kind).toLowerCase();
   assert(kind === 'whatsapp' || kind === 'website', 'destination_contract_missing_or_invalid', { kind });
   return kind;
+}
+
+// Keep generic, query-safe parameter names: URL tags are not restricted to
+// UTMs. Values remain raw so already-encoded bytes are not encoded twice.
+const URL_TAG_PARAMETER_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
+const URL_TAG_FORBIDDEN_KEY_PATTERN = /(?:token|secret|password|authorization|signature|api_?key)/i;
+const URL_TAG_VALUE_PATTERN = /^[A-Za-z0-9._~%{}|:+,\-@!$'()*\/;=]+$/;
+
+function validUrlTags(value) {
+  const raw = value === undefined || value === null ? '' : String(value);
+  if (!raw || raw !== raw.trim() || raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw) || /%(?![0-9A-Fa-f]{2})/.test(raw)) return false;
+  const seen = new Set();
+  for (const pair of raw.split('&')) {
+    const separator = pair.indexOf('=');
+    if (separator <= 0) return false;
+    const key = pair.slice(0, separator).toLowerCase();
+    const parameterValue = pair.slice(separator + 1);
+    if (!URL_TAG_PARAMETER_KEY_PATTERN.test(key) || URL_TAG_FORBIDDEN_KEY_PATTERN.test(key) || seen.has(key) || !parameterValue || !URL_TAG_VALUE_PATTERN.test(parameterValue)) return false;
+    seen.add(key);
+  }
+  return true;
+}
+
+function trackingFingerprint(value) {
+  let hash = 2166136261;
+  for (const char of safeString(value)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function validateTrackingContract(source, payload, destinationKind) {
+  const tracking = asObject(source.tracking_contract);
+  const urlTags = safeString(payload.url_tags);
+  if (destinationKind === 'whatsapp') {
+    assert(safeString(tracking.url_tags_status) === 'not_applicable', 'whatsapp_url_tags_contract_invalid', {});
+    assert(!urlTags, 'whatsapp_url_tags_forbidden', {});
+    return { status: 'not_applicable', fingerprint: '' };
+  }
+  assert(tracking.profile_configured === true, 'website_tracking_profile_not_configured', {});
+  const websiteEventRequirement = safeString(tracking.website_event_requirement);
+  assert(['required', 'not_required'].includes(websiteEventRequirement), 'website_event_requirement_invalid', {});
+  const websiteEventRequired = websiteEventRequirement === 'required';
+  const reconciliationStatus = safeString(tracking.reconciliation_status);
+  assert(['pending', 'verified', 'reconciled'].includes(reconciliationStatus), 'website_tracking_reconciliation_status_invalid', { reconciliation_status: reconciliationStatus });
+  if (reconciliationStatus === 'pending') {
+    assert(safeString(tracking.website_event_status) === (websiteEventRequired ? 'pending_reconciliation' : 'not_required'), 'website_tracking_reconciliation_pending_invalid', {});
+    if (safeString(tracking.offline_event_dataset_requirement) === 'required') {
+      assert(safeString(tracking.offline_event_dataset_status) === 'pending_reconciliation', 'offline_tracking_reconciliation_pending_invalid', {});
+    }
+  } else {
+    assert(safeString(tracking.website_event_status) === (websiteEventRequired ? 'configured' : 'not_required'), 'website_conversion_contract_missing', {});
+    if (safeString(tracking.offline_event_dataset_requirement) === 'required') {
+      assert(safeString(tracking.offline_event_dataset_status) === 'configured', 'offline_conversion_dataset_contract_missing', {});
+    }
+  }
+  assert(safeString(tracking.url_tags_status) === 'expected', 'website_url_tags_contract_missing', {});
+  assert(validUrlTags(urlTags), 'url_tags_invalid', {});
+  assert(safeString(tracking.url_tags_fingerprint) === trackingFingerprint(urlTags), 'url_tags_contract_mismatch', {});
+  return { status: reconciliationStatus === 'pending' ? 'pending_reconciliation' : 'expected', fingerprint: trackingFingerprint(urlTags) };
 }
 
 function labelNames(assets) {
@@ -486,6 +547,7 @@ return $input.all().map((item) => {
   const legacyCarousel = isCarousel && Object.keys(asObject(story.link_data)).length > 0;
   const hosts = allowedHosts(source);
   const destinationKind = destinationContractKind(source);
+  const trackingValidation = validateTrackingContract(source, payload, destinationKind);
   // This value is also checked inside validateAdvantagePlus(), but the main
   // payload contract needs it in this scope to prove that Token Vault receives
   // the same destination as the primary asset-feed link. Native carousels are
@@ -636,6 +698,8 @@ return $input.all().map((item) => {
         vertical_crop_key: VERTICAL_CROP_KEY,
         media_variant: safeString(source.media_variant || 'static_flexible'),
         destination_contract_kind: destinationKind,
+        tracking_contract_status: trackingValidation.status,
+        url_tags_fingerprint: trackingValidation.fingerprint,
         workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
         vertical_placement_rule_count: isVideoOnly ? Number(placementValidation.video_only_placement_rule_count || 0) : 1,
         video_only_placement_rule_count: Number(placementValidation.video_only_placement_rule_count || 0),

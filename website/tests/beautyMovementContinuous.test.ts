@@ -155,6 +155,10 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /className=\{styles\.cardSparkles\}/);
     assert.match(experience, /className=\{styles\.deckStage\}/);
     assert.match(experience, /className=\{styles\.finaleSpecialCardTransform\}/);
+    assert.match(experience, /function renderFinaleCard\(line: ReturnType<typeof getBeautyMovementReading>\[number\]\)/);
+    assert.match(experience, /<BeautyMovementCardIllustration cardId=\{card\.id\} \/>/);
+    assert.match(experience, /<strong>\{card\.title\}<\/strong>/);
+    assert.match(experience, /<span className=\{styles\.finaleCardMessage\}>\{card\.shortMessage\}<\/span>/);
     assert.match(experience, /type HandStage =\s*\|\s*"waiting"/);
     assert.match(experience, /"expand"\s*\|\s*"deal"/);
     assert.match(experience, /function scheduleDealSequence\(token: number, onReady: \(\) => void\)/);
@@ -290,7 +294,12 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /@keyframes finaleIllustrationPulse/);
     assert.match(styles, /@keyframes finaleIllustrationPulse[\s\S]*100%[\s\S]*opacity: 1/);
     assert.match(styles, /\.finaleCardGrid/);
+    assert.match(styles, /--finale-card-height: clamp\(280px, 25vw, 304px\)/);
+    assert.match(styles, /\.finaleCardMessage/);
     assert.match(styles, /\.finaleSpecialCardTransform \{/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \{[\s\S]*overflow: visible;/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.tableSurface \{[\s\S]*overflow: visible;/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.finaleCardGridMerging \{[\s\S]*z-index: 4;[\s\S]*overflow: visible;/);
     assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.deckStage[\s\S]*pointer-events: none/);
     assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.deckStage,[\s\S]*visibility: hidden/);
     assert.match(styles, /\.specialCardStage/);

@@ -14,10 +14,9 @@ ExecStart=/var/lib/skincos-runtime/github-actions-runner/run.sh
 Restart=always
 RestartSec=10
 TimeoutStopSec=300
-# The only privileged transition is the fixed, argumentless sudoers command
-# below. NoNewPrivileges must remain disabled so that this narrowly scoped
-# helper can atomically reconcile native custody; the runner still has no
-# general root command, shell, or writable system path.
+# The only privileged transitions are fixed sudoers helper actions. Their
+# bounded stdin contracts are validated by root-owned helpers; the runner has
+# no general root command, shell, or writable system path.
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
@@ -30,6 +29,14 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadWritePaths=/var/lib/skincos-runtime/github-actions-runner
 ReadWritePaths=/etc/skincos/global-coordination
 ReadWritePaths=/var/lib/skincos/ponto-jit
+# Root-only Meta Ads release custody: full workflow checkpoints, the scoped
+# maintenance lock, two private lease-proof roots, and only the current-source
+# pointer. The unprivileged runner remains blocked by POSIX permissions.
+ReadWritePaths=/var/lib/skincos-runtime/orb/exports/workflow-patches
+ReadWritePaths=/var/lib/skincos-runtime/orb/state/livia-maintenance
+ReadWritePaths=/var/lib/skincos-runtime/global-coordination
+ReadWritePaths=/var/lib/skincos-runtime/orb/global-coordination
+ReadWritePaths=/opt/skincos/current
 UMask=0077
 
 [Install]
