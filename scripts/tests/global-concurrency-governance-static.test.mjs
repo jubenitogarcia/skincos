@@ -261,6 +261,16 @@ test("legacy recovery and WAF mutators are fail-closed through the same authorit
   assert.ok(stagingRecovery.indexOf("Check global Ponto recovery lease immediately before staging rollback") < stagingRecovery.indexOf("node .github/scripts/ponto-automatic-rollback.mjs"));
 });
 
+test("Ponto watchdog recovery leases use the trusted watchdog source, not the failed candidate", () => {
+  const watchdog = read(".github/workflows/ponto-release-watchdog.yml");
+  for (const jobName of ["fail-close", "rollback"]) {
+    const block = jobBlock(watchdog, jobName);
+    assert.match(block, /source_sha: \$\{\{ github\.sha \}\}/);
+    assert.doesNotMatch(block, /source_sha: \$\{\{ needs\.context\.outputs\.release_sha \}\}/);
+    assert.doesNotMatch(block, /observed_source_sha:/);
+  }
+});
+
 test("the reusable check action accepts either an external proof file or an encoded proof", () => {
   const action = read(".github/actions/global-coordination-check/action.yml");
   assert.match(action, /proof_b64:[\s\S]*?required: false/);

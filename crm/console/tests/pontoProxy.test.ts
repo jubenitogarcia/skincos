@@ -19,6 +19,10 @@ const OPEN_EMERGENCY_LATCH = {
   changedAt: '2026-07-30T00:00:00.000Z',
   changedBy: 'ponto-emergency-latch-reset',
 }
+const OPEN_STAGING_EMERGENCY_LATCH = {
+  ...OPEN_EMERGENCY_LATCH,
+  target: 'staging',
+}
 
 async function reserveProbeForTest(env: any, used: Set<string>, request: Request): Promise<Response> {
   const nonce = String(request.headers.get('x-request-nonce') || '')
@@ -235,6 +239,91 @@ describe('Ponto CRM proxy', () => {
     expect((fetchMock.mock.calls[0][0] as Request).url).toBe('https://api.skincos.com.br/api/ponto/readiness?probe=maintenance')
     expect(coreFetch).not.toHaveBeenCalled()
     expect(response.headers.get('x-skincos-gateway-release-sha')).toBe('gateway-release')
+  })
+
+  it('uses the exact release-bound Core for public staging health and readiness only while its control is active', async () => {
+    const externalGateway = vi.fn().mockRejectedValue(new Error('active staging candidate must not fall back to the external gateway'))
+    vi.stubGlobal('fetch', externalGateway)
+
+    for (const path of ['/api/ponto/health?probe=candidate', '/api/ponto/readiness?probe=candidate']) {
+      const ctx = context(path)
+      Object.assign(ctx.env, {
+        SKINCOS_DEPLOYMENT_ENV: 'staging',
+        PONTO_API_TARGET: 'https://api-staging.skincos.com.br',
+        PONTO_ROLLOUT_STAGE: 'staging',
+        PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+        PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+      })
+      ctx.env.MODULE_CONTROL = {
+        get: async (key: string) => {
+          if (key === 'module-control:timekeeping:emergency-latch') return OPEN_STAGING_EMERGENCY_LATCH
+          if (key !== 'module-control:timekeeping') return null
+          return {
+            state: 'active',
+            schemaVersion: 2,
+            rolloutStage: 'staging',
+            releaseSha: RELEASE_SHA,
+            syntheticOnly: true,
+            versions: {
+              coreApi: { candidate: CORE_VERSION_ID },
+              identityWorkforce: { candidate: IDENTITY_VERSION_ID },
+            },
+          }
+        },
+      }
+      const coreFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, ready: true }), {
+        headers: {
+          'content-type': 'application/json',
+          'x-skincos-gateway-release-sha': RELEASE_SHA,
+          'x-skincos-gateway-environment': 'staging',
+          'x-skincos-gateway-version-id': CORE_VERSION_ID,
+        },
+      }))
+      ctx.env.PONTO_CORE = { fetch: coreFetch }
+
+      const response = await onRequest(ctx)
+
+      expect(response.status).toBe(200)
+      expect(coreFetch).toHaveBeenCalledOnce()
+      const upstream = coreFetch.mock.calls[0][0] as Request
+      expect(upstream.url).toBe(`https://api-staging.skincos.com.br${path}`)
+      expect(upstream.headers.get('cloudflare-workers-version-overrides'))
+        .toBe(`skincos-ponto-core-staging="${CORE_VERSION_ID}"`)
+      expect(response.headers.get('x-skincos-gateway-release-sha')).toBe(RELEASE_SHA)
+    }
+
+    expect(externalGateway).not.toHaveBeenCalled()
+    expect(getInsumosUser).not.toHaveBeenCalled()
+  })
+
+  it('keeps staging health on the canonical gateway when the candidate control is not exact', async () => {
+    const externalGateway = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, ready: false }), {
+      status: 503,
+      headers: { 'content-type': 'application/json', 'x-skincos-gateway-release-sha': 'incumbent-gateway' },
+    }))
+    vi.stubGlobal('fetch', externalGateway)
+    const ctx = context('/api/ponto/health?probe=inactive')
+    Object.assign(ctx.env, {
+      SKINCOS_DEPLOYMENT_ENV: 'staging',
+      PONTO_API_TARGET: 'https://api-staging.skincos.com.br',
+      PONTO_ROLLOUT_STAGE: 'staging',
+      PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+      PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+      PONTO_CORE: { fetch: vi.fn().mockRejectedValue(new Error('inactive staged control must not use candidate Core')) },
+      MODULE_CONTROL: {
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? OPEN_STAGING_EMERGENCY_LATCH
+          : { state: 'maintenance' },
+      },
+    })
+
+    const response = await onRequest(ctx)
+
+    expect(response.status).toBe(503)
+    expect((externalGateway.mock.calls[0][0] as Request).url)
+      .toBe('https://api-staging.skincos.com.br/api/ponto/health?probe=inactive')
+    expect(ctx.env.PONTO_CORE.fetch).not.toHaveBeenCalled()
+    expect(response.headers.get('x-skincos-gateway-release-sha')).toBe('incumbent-gateway')
   })
 
   it('signs canonical protected routes and strips browser cookies and authorization', async () => {

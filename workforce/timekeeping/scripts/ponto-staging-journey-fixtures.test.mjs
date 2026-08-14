@@ -152,6 +152,7 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
       assert.equal(coreResiduals.teardown_audit, 1);
       assert.equal(timekeepingResiduals.employees, 0);
       assert.equal(timekeepingResiduals.audit_count, 0);
+      assert.equal(timekeepingResiduals.expected_audit_minimum, 1);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM crm_users WHERE username IN (?, ?)').get(
         fixture.username,
         fixture.adminUsername,
@@ -187,6 +188,27 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
       database.close();
       timekeepingDatabase.close();
     }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('teardown permits a safely aborted journey before it reaches a Ponto mutation', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'skincos-ponto-fixture-abort-'));
+  const paths = {
+    fixture: join(directory, 'fixture.json'),
+    core: join(directory, 'core.sql'),
+    timekeeping: join(directory, 'timekeeping.sql'),
+    coreAttestation: join(directory, 'core-attestation.sql'),
+    timekeepingAttestation: join(directory, 'timekeeping-attestation.sql'),
+  };
+
+  try {
+    generate('provision', paths);
+    generate('teardown', paths, '', true);
+    const attestation = readFileSync(paths.timekeepingAttestation, 'utf8');
+    assert.match(attestation, /0 AS expected_audit_minimum/);
+    assert.match(attestation, /timekeeping_audit_events WHERE request_id IN \(''\)/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

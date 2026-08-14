@@ -18,6 +18,7 @@ import {
 import { releaseTagFor } from "./ponto-release-identity.mjs";
 import { attestBrokerFailCloseEvidence } from "./ponto-recovery-evidence.mjs";
 import { readCloudflareKvJson } from "./ponto-kv-readback.mjs";
+import { assessPagesEnvironmentPrerequisite } from "./ponto-pages-environment-prerequisite.mjs";
 import { resolveStagingCorePrecondition } from "./ponto-core-staging-precondition.mjs";
 import {
   inspectCancelledBeforeRunnerDeployJob,
@@ -476,21 +477,20 @@ if (fs.existsSync(pagesProvisionRunFile)) {
         disposition: "no-remote-mutation",
       };
     } else {
-      const retainedSafely = run.conclusion === "success"
-        && journal.mutationCompleted === true
-        && journal.remoteAttestationCompleted === true
-        && journal.mutationSafety?.maintenanceRequired === true
-        && journal.mutationSafety?.deterministicRerun === true
-        && journal.mutationSafety?.retainedOnCodeRollback === true;
+      const prerequisite = assessPagesEnvironmentPrerequisite({
+        conclusion: String(run.conclusion || ""),
+        journal,
+      });
+      const retainedSafely = prerequisite.passed;
       environmentPrerequisites.pagesEnvironmentSecrets = {
         passed: retainedSafely,
         childRunId: String(run.runId || ""),
+        childConclusion: String(run.conclusion || ""),
         mutationStarted: true,
         mutationCompleted: journal.mutationCompleted === true,
         remoteAttestationCompleted: journal.remoteAttestationCompleted === true,
-        disposition: retainedSafely
-          ? "retained-environment-prerequisite-under-maintenance"
-          : "unresolved-secret-configuration-mutation",
+        cancelledAfterAttestedProvision: prerequisite.cancelledAfterAttestedProvision,
+        disposition: prerequisite.disposition,
       };
       if (!retainedSafely) {
         unresolved.push({

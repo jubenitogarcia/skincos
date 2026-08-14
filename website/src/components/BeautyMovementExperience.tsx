@@ -17,7 +17,6 @@ import {
     type BeautyMovementCard,
     type BeautyMovementPalette,
     type BeautyMovementSelections,
-    buildBeautyMovementSummary,
     getBeautyMovementCard,
     getBeautyMovementCardsForAct,
     getBeautyMovementReading,
@@ -149,13 +148,6 @@ type ProgressMotion = {
     key: number;
 };
 
-type ShareNavigator = Navigator & {
-    canShare?: (data?: ShareData) => boolean;
-    share?: (data?: ShareData) => Promise<void>;
-};
-
-const STORY_WIDTH = 1080;
-const STORY_HEIGHT = 1920;
 // Keep the intro/prompt compact while preserving enough room for the deck to
 // cross the lower edge of the surface without being visually detached from the copy.
 const INITIAL_TABLE_HEIGHT = 112;
@@ -261,370 +253,6 @@ function getCurrentActIndex(selections: BeautyMovementSelections): number {
     return index === -1 ? BEAUTY_MOVEMENT_ACTS.length : index;
 }
 
-function formatRewardDiscount(discount: NonNullable<BeautyMovementBenefit["discount"]>): string {
-    if (discount.kind === "percent") return `${discount.value}% de desconto`;
-    return `R$ ${discount.value.toFixed(2).replace(".", ",")} de desconto`;
-}
-
-function roundedRect(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
-    const safeRadius = Math.min(radius, width / 2, height / 2);
-    context.beginPath();
-    context.moveTo(x + safeRadius, y);
-    context.arcTo(x + width, y, x + width, y + height, safeRadius);
-    context.arcTo(x + width, y + height, x, y + height, safeRadius);
-    context.arcTo(x, y + height, x, y, safeRadius);
-    context.arcTo(x, y, x + width, y, safeRadius);
-    context.closePath();
-}
-
-function drawWrappedText(
-    context: CanvasRenderingContext2D,
-    text: string,
-    x: number,
-    y: number,
-    maxWidth: number,
-    lineHeight: number,
-): number {
-    const words = text.split(/\s+/).filter(Boolean);
-    let line = "";
-    let currentY = y;
-
-    for (const word of words) {
-        const candidate = line ? `${line} ${word}` : word;
-        if (line && context.measureText(candidate).width > maxWidth) {
-            context.fillText(line, x, currentY);
-            currentY += lineHeight;
-            line = word;
-        } else {
-            line = candidate;
-        }
-    }
-
-    if (line) {
-        context.fillText(line, x, currentY);
-        currentY += lineHeight;
-    }
-
-    return currentY;
-}
-
-function getStoryCanvasFont(cssVariable: "--font-brand-ui" | "--font-brand-text", fallback: string): string {
-    const probe = document.createElement("span");
-    probe.style.fontFamily = `var(${cssVariable})`;
-    probe.style.position = "absolute";
-    probe.style.visibility = "hidden";
-    document.body.appendChild(probe);
-    const fontFamily = window.getComputedStyle(probe).fontFamily.trim();
-    probe.remove();
-    return fontFamily && !fontFamily.includes("var(") ? fontFamily : fallback;
-}
-
-function drawStorySpark(context: CanvasRenderingContext2D, x: number, y: number, size: number, color: string) {
-    context.save();
-    context.strokeStyle = color;
-    context.lineWidth = 3;
-    context.lineCap = "round";
-    context.beginPath();
-    context.moveTo(x, y - size);
-    context.lineTo(x, y + size);
-    context.moveTo(x - size, y);
-    context.lineTo(x + size, y);
-    context.stroke();
-    context.restore();
-}
-
-/** Keeps the shared Story in the same illustrated language as the chosen cards. */
-function drawStoryCardIllustration(context: CanvasRenderingContext2D, cardId: string, centerX: number, centerY: number) {
-    const ink = "#303030";
-    const yellow = "#f5b301";
-    const line = (fromX: number, fromY: number, toX: number, toY: number, color = ink, width = 4) => {
-        context.beginPath();
-        context.strokeStyle = color;
-        context.lineWidth = width;
-        context.lineCap = "round";
-        context.moveTo(fromX, fromY);
-        context.lineTo(toX, toY);
-        context.stroke();
-    };
-    const dot = (x: number, y: number, radius = 4, color = ink) => {
-        context.beginPath();
-        context.fillStyle = color;
-        context.arc(x, y, radius, 0, Math.PI * 2);
-        context.fill();
-    };
-    const ring = (x: number, y: number, radius: number, color = ink, width = 4) => {
-        context.beginPath();
-        context.strokeStyle = color;
-        context.lineWidth = width;
-        context.arc(x, y, radius, 0, Math.PI * 2);
-        context.stroke();
-    };
-
-    context.save();
-    context.translate(centerX, centerY);
-    context.scale(0.56, 0.56);
-    context.lineJoin = "round";
-
-    switch (cardId) {
-        case "beleza-presenca":
-            ring(0, 0, 43);
-            ring(0, 0, 16);
-            dot(0, 0, 5);
-            context.beginPath();
-            context.strokeStyle = yellow;
-            context.lineWidth = 3;
-            context.arc(0, 0, 58, -1.6, -0.1);
-            context.stroke();
-            dot(45, -38, 3, yellow);
-            break;
-        case "beleza-autocuidado":
-            context.strokeStyle = ink;
-            context.lineWidth = 4;
-            context.strokeRect(-42, 9, 84, 25);
-            context.beginPath();
-            context.arc(0, 9, 31, Math.PI, 0);
-            context.stroke();
-            context.beginPath();
-            context.moveTo(0, -22);
-            context.quadraticCurveTo(-4, -42, 18, -52);
-            context.quadraticCurveTo(18, -30, 0, -22);
-            context.stroke();
-            line(0, -22, 17, -51, yellow, 3);
-            break;
-        case "beleza-radiancia":
-            ring(0, 0, 35);
-            dot(0, 0, 20);
-            for (let index = 0; index < 8; index += 1) {
-                const angle = (index * Math.PI) / 4;
-                line(Math.cos(angle) * 47, Math.sin(angle) * 47, Math.cos(angle) * 61, Math.sin(angle) * 61);
-            }
-            drawStorySpark(context, -50, 0, 6, yellow);
-            break;
-        case "beleza-autoria":
-            context.beginPath();
-            context.strokeStyle = ink;
-            context.lineWidth = 4;
-            context.ellipse(-3, 3, 46, 14, -0.67, 0, Math.PI * 2);
-            context.stroke();
-            line(-36, 28, 35, -35, yellow, 3);
-            context.beginPath();
-            context.moveTo(33, -39);
-            context.lineTo(48, -52);
-            context.lineTo(52, -34);
-            context.lineTo(38, -23);
-            context.closePath();
-            context.stroke();
-            break;
-        case "beleza-harmonia":
-            ring(-18, 0, 30);
-            ring(18, 0, 30);
-            dot(0, 0, 5);
-            line(0, -44, 0, -56, yellow, 3);
-            line(0, 44, 0, 56, yellow, 3);
-            break;
-        case "movimento-constancia":
-            context.beginPath();
-            context.strokeStyle = ink;
-            context.lineWidth = 4;
-            context.moveTo(-50, 31);
-            context.lineTo(-20, 15);
-            context.lineTo(8, -3);
-            context.lineTo(38, -28);
-            context.stroke();
-            [-50, -20, 8, 38].forEach((x, index) => dot(x, [31, 15, -3, -28][index], index === 3 ? 5 : 4));
-            line(-52, 42, 44, -32, yellow, 3);
-            break;
-        case "movimento-potencia":
-            context.beginPath();
-            context.strokeStyle = ink;
-            context.lineWidth = 4;
-            for (let index = 0; index < 10; index += 1) {
-                const angle = -Math.PI / 2 + (index * Math.PI) / 5;
-                const radius = index % 2 === 0 ? 49 : 23;
-                const x = Math.cos(angle) * radius;
-                const y = Math.sin(angle) * radius;
-                if (index === 0) context.moveTo(x, y);
-                else context.lineTo(x, y);
-            }
-            context.closePath();
-            context.stroke();
-            dot(0, 0, 8);
-            drawStorySpark(context, 0, 56, 5, yellow);
-            break;
-        case "movimento-leveza":
-            context.beginPath();
-            context.strokeStyle = ink;
-            context.lineWidth = 4;
-            context.moveTo(-48, 20);
-            context.quadraticCurveTo(-9, -49, 50, -33);
-            context.quadraticCurveTo(12, -4, -48, 20);
-            context.stroke();
-            line(-37, 13, 34, -25, yellow, 3);
-            drawStorySpark(context, 41, 34, 6, ink);
-            break;
-        case "movimento-ritmo":
-            [-20, 0, 20].forEach((offset) => {
-                context.beginPath();
-                context.strokeStyle = ink;
-                context.lineWidth = 4;
-                context.moveTo(-54, offset);
-                context.bezierCurveTo(-32, offset - 24, -12, offset + 24, 10, offset);
-                context.bezierCurveTo(32, offset - 24, 42, offset + 12, 56, offset - 6);
-                context.stroke();
-            });
-            dot(-36, -27, 4, yellow);
-            dot(0, 1, 4);
-            dot(37, 20, 4);
-            break;
-        case "movimento-sintonia":
-            ring(0, 0, 16);
-            ring(0, 0, 33);
-            ring(0, 0, 50);
-            dot(-50, 0, 4);
-            dot(50, 0, 4);
-            line(-64, 0, -55, 0, yellow, 3);
-            line(55, 0, 64, 0, yellow, 3);
-            break;
-        case "celebracao-confianca":
-            context.beginPath();
-            context.strokeStyle = ink;
-            context.lineWidth = 4;
-            context.moveTo(0, -51);
-            context.lineTo(40, -34);
-            context.lineTo(40, 2);
-            context.quadraticCurveTo(37, 33, 0, 54);
-            context.quadraticCurveTo(-37, 33, -40, 2);
-            context.lineTo(-40, -34);
-            context.closePath();
-            context.stroke();
-            context.beginPath();
-            context.arc(-9, 2, 11, 0, Math.PI);
-            context.arc(9, 2, 11, 0, Math.PI);
-            context.stroke();
-            dot(0, 31, 3, yellow);
-            break;
-        case "celebracao-renovacao":
-            context.beginPath();
-            context.strokeStyle = ink;
-            context.lineWidth = 4;
-            context.arc(0, 0, 43, -1.7, 0.6);
-            context.stroke();
-            context.beginPath();
-            context.arc(0, 0, 43, 1.45, 3.7);
-            context.stroke();
-            line(42, 14, 49, 27, yellow, 3);
-            line(-42, -14, -49, -27, yellow, 3);
-            context.beginPath();
-            context.moveTo(0, 33);
-            context.quadraticCurveTo(-7, 9, 16, -2);
-            context.quadraticCurveTo(17, 20, 0, 33);
-            context.stroke();
-            break;
-        case "celebracao-brilho":
-        case "celebracao-impulso":
-        case "celebracao-encontro":
-        default:
-            drawStorySpark(context, 0, 0, 45, ink);
-            drawStorySpark(context, 0, 0, 27, yellow);
-            dot(-43, 34, 3, yellow);
-            dot(42, -34, 3, yellow);
-    }
-
-    context.restore();
-}
-
-function createStoryBlob(
-    reading: ReturnType<typeof getBeautyMovementReading>,
-    partnerName?: string | null,
-): Promise<Blob | null> {
-    return new Promise((resolve) => {
-        const canvas = document.createElement("canvas");
-        canvas.width = STORY_WIDTH;
-        canvas.height = STORY_HEIGHT;
-        const context = canvas.getContext("2d");
-
-        if (!context) {
-            resolve(null);
-            return;
-        }
-
-        context.fillStyle = "#FAFAFA";
-        context.fillRect(0, 0, STORY_WIDTH, STORY_HEIGHT);
-        context.fillStyle = "#303030";
-        context.fillRect(0, 0, STORY_WIDTH, 20);
-        context.fillRect(0, STORY_HEIGHT - 20, STORY_WIDTH, 20);
-
-        context.strokeStyle = "#D0D0D0";
-        context.lineWidth = 2;
-        context.strokeRect(54, 54, STORY_WIDTH - 108, STORY_HEIGHT - 108);
-
-        const uiFont = getStoryCanvasFont("--font-brand-ui", '"Eurostile", system-ui, sans-serif');
-        const textFont = getStoryCanvasFont("--font-brand-text", '"Cicle Fina", system-ui, sans-serif');
-
-        context.fillStyle = "#303030";
-        context.font = `700 31px ${uiFont}`;
-        context.fillText("ESPAÇO FACIAL", 102, 142);
-
-        context.font = `700 66px ${uiFont}`;
-        context.fillText("Cartas da", 102, 254);
-        context.fillText("Beleza em Movimento", 102, 332);
-
-        context.fillStyle = "#505050";
-        context.font = `400 32px ${textFont}`;
-        drawWrappedText(context, "Uma leitura editorial para acompanhar o seu momento.", 104, 408, 760, 45);
-
-        const cardStartY = 612;
-        const cardHeight = 258;
-        const cardGap = 36;
-
-        reading.slice(0, 3).forEach((line, index) => {
-            const y = cardStartY + index * (cardHeight + cardGap);
-            context.fillStyle = "#FFFFFF";
-            roundedRect(context, 102, y, 876, cardHeight, 16);
-            context.fill();
-
-            context.strokeStyle = "#D0D0D0";
-            context.lineWidth = 2;
-            roundedRect(context, 102, y, 876, cardHeight, 16);
-            context.stroke();
-
-            context.fillStyle = "#505050";
-            context.font = `700 24px ${uiFont}`;
-            context.fillText(`${String(index + 1).padStart(2, "0")}  ${line.actLabel.toUpperCase()}`, 148, y + 62);
-
-            context.fillStyle = "#303030";
-            context.font = `700 55px ${uiFont}`;
-            context.fillText(line.title, 148, y + 132);
-
-            context.fillStyle = "#505050";
-            context.font = `400 27px ${textFont}`;
-            drawWrappedText(context, line.message, 148, y + 186, 570, 38);
-            drawStoryCardIllustration(context, line.cardId, 852, y + 128);
-        });
-
-        context.fillStyle = "#303030";
-        context.font = `700 36px ${uiFont}`;
-        context.fillText("Beleza que se move com você.", 104, 1644);
-        context.font = `400 26px ${textFont}`;
-        context.fillStyle = "#505050";
-        context.fillText(partnerName?.trim() || "Espaço Facial · 3 anos em movimento", 104, 1700);
-
-        canvas.toBlob((blob) => resolve(blob), "image/png", 0.96);
-    });
-}
-
-function downloadStory(blob: Blob) {
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "cartas-da-beleza-em-movimento.png";
-    anchor.style.display = "none";
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 export default function BeautyMovementExperience({
     initialState,
     onReveal,
@@ -664,7 +292,6 @@ export default function BeautyMovementExperience({
     const openedRef = useRef(false);
     const viewedActsRef = useRef(new Set<number>());
     const viewedResultRef = useRef(false);
-    const conditionsOpenedRef = useRef(false);
     const autoAdvanceTimerRef = useRef<number | null>(null);
     const autoAdvanceFrameRef = useRef<number | null>(null);
     const handTransitionTimerRef = useRef<number | null>(null);
@@ -677,7 +304,6 @@ export default function BeautyMovementExperience({
     const tableSurfaceRef = useRef<HTMLDivElement | null>(null);
     const progressListRef = useRef<HTMLOListElement | null>(null);
     const progressButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-    const finaleRef = useRef<HTMLElement | null>(null);
     const confirmationActionRef = useRef<HTMLElement | null>(null);
     const specialCardModalCloseRef = useRef<HTMLButtonElement | null>(null);
     const specialCardReopenActionRef = useRef<HTMLButtonElement | null>(null);
@@ -800,10 +426,6 @@ export default function BeautyMovementExperience({
             });
             return;
         }
-        if (finaleStage !== "result") return;
-        window.requestAnimationFrame(() => {
-            finaleRef.current?.focus({ preventScroll: true });
-        });
     }, [finaleStage, isLocalPreview]);
 
     useEffect(() => {
@@ -868,10 +490,6 @@ export default function BeautyMovementExperience({
     );
     const consentInvalid = confirmationAttempted && !operationalConsent;
     const primaryWhatsappLabel = initialState.campaign.whatsappLabel?.trim() || "Falar com a equipe";
-    const invitationTitle = initialState.campaign.invitationTitle?.trim() || "Seu convite para celebrar";
-    const invitationText =
-        initialState.campaign.invitationText?.trim() ||
-        "A equipe da Espaço Facial Novo Hamburgo vai confirmar os próximos detalhes com você.";
     const hasCourtesyClass = initialState.velocity?.enabled === true;
 
     function setCurrentSelections(next: BeautyMovementSelections | ((current: BeautyMovementSelections) => BeautyMovementSelections)) {
@@ -1055,10 +673,6 @@ export default function BeautyMovementExperience({
     function scrollToTable() {
         cancelAutoAdvance();
         scrollToElement(tableRef.current);
-    }
-
-    function scrollToFinale() {
-        scrollToElement(finaleRef.current);
     }
 
     function clearHandTransitionTimer() {
@@ -1245,11 +859,7 @@ export default function BeautyMovementExperience({
                             setCurrentHandStage("ready");
                             setCurrentFinaleStage(confirmed ? "result" : "confirmation");
                             setIsSpecialCardModalOpen(confirmed);
-                            if (confirmed) {
-                                window.requestAnimationFrame(() => {
-                                    window.requestAnimationFrame(scrollToFinale);
-                                });
-                            } else {
+                            if (!confirmed) {
                                 window.requestAnimationFrame(() => {
                                     const confirmationAction = confirmationActionRef.current;
                                     const focusTarget = isLocalPreview
@@ -1574,53 +1184,6 @@ export default function BeautyMovementExperience({
         );
     }
 
-    function handleConditionsClick() {
-        if (conditionsOpenedRef.current) return;
-        conditionsOpenedRef.current = true;
-        onTrack?.("beauty_movement_conditions_open", { stage: "result" });
-    }
-
-    async function handleShare() {
-        if (reading.length !== BEAUTY_MOVEMENT_ACTS.length) return;
-
-        setShareStatus(null);
-        const blob = await createStoryBlob(reading, initialState.campaign.partnerName);
-        if (!blob) {
-            setShareStatus("Não foi possível preparar o Story neste navegador.");
-            return;
-        }
-
-        const shareNavigator = navigator as ShareNavigator;
-
-        try {
-            const storyFile = new File([blob], "cartas-da-beleza-em-movimento.png", { type: "image/png" });
-            const shareData: ShareData = {
-                files: [storyFile],
-                title: "Cartas da Beleza em Movimento",
-                text: "Cartas da Beleza em Movimento · Espaço Facial",
-            };
-            if (shareNavigator.share && (!shareNavigator.canShare || shareNavigator.canShare(shareData))) {
-                await shareNavigator.share(shareData);
-                setShareStatus("Story compartilhado.");
-                onTrack?.("beauty_movement_share", { stage: "result", method: "web_share" });
-                return;
-            }
-
-            downloadStory(blob);
-            setShareStatus("Seu Story foi preparado para publicar.");
-            onTrack?.("beauty_movement_share", { stage: "result", method: "download" });
-        } catch (error) {
-            if (error instanceof DOMException && error.name === "AbortError") {
-                setShareStatus("Compartilhamento cancelado.");
-                return;
-            }
-
-            downloadStory(blob);
-            setShareStatus("Seu Story foi preparado para publicar.");
-            onTrack?.("beauty_movement_share", { stage: "result", method: "download" });
-        }
-    }
-
     const tableAct = BEAUTY_MOVEMENT_ACTS[displayedActIndex] ?? BEAUTY_MOVEMENT_ACTS[0];
     const tableDefinition = BEAUTY_MOVEMENT_ACT_DEFINITIONS[displayedActIndex] ?? BEAUTY_MOVEMENT_ACT_DEFINITIONS[0];
     const initialExperienceCopy = getInitialExperienceCopy(initialState.campaign.description);
@@ -1831,6 +1394,7 @@ export default function BeautyMovementExperience({
                                 specialCardWhatsappLabel,
                             )
                             : null}
+                        {revealed && shareStatus ? <span className={styles.specialCardCopy} role="status">{shareStatus}</span> : null}
                     </div>
                 </div>
             </article>
@@ -1865,84 +1429,6 @@ export default function BeautyMovementExperience({
                 >
                     {isConfirming ? "Confirmando…" : "Garantir presente e confirmar presença"}
                 </button>
-            </section>
-        );
-    }
-
-    function renderResultStage() {
-        return (
-            <section className={styles.resultStage} aria-labelledby="beauty-movement-inline-result-title">
-                <div className={styles.resultLead}>
-                    <h2 id="beauty-movement-inline-result-title">{buildBeautyMovementSummary(reading)}</h2>
-                    <p>As cartas formam a leitura da celebração. O benefício reservado foi configurado previamente para este convite.</p>
-                </div>
-
-                <section className={styles.invitationPanel} aria-labelledby="beauty-movement-inline-invitation-title">
-                    <p className={styles.sectionLabel}>Convite</p>
-                    <h3 id="beauty-movement-inline-invitation-title">{invitationTitle}</h3>
-                    <p>{invitationText}</p>
-                </section>
-
-                <section className={styles.benefitPanel} aria-labelledby="beauty-movement-inline-benefit-title">
-                    <p className={styles.sectionLabel}>Seu cuidado</p>
-                    {initialState.benefit ? (
-                        <>
-                            <h3 id="beauty-movement-inline-benefit-title">
-                                {initialState.benefit.type === "free_procedure"
-                                    ? "Procedimento reservado para você."
-                                    : "Condição especial reservada para você."}
-                            </h3>
-                            <p className={styles.benefitProcedure}>{initialState.benefit.procedureName}</p>
-                            <p>{initialState.benefit.displayText}</p>
-                            {initialState.benefit.discount ? (
-                                <p className={styles.benefitDiscount}>{formatRewardDiscount(initialState.benefit.discount)}</p>
-                            ) : (
-                                <p className={styles.benefitDiscount}>Cortesia de celebração</p>
-                            )}
-                            <p className={styles.benefitMeta}>{initialState.benefit.validity}</p>
-                            <p className={styles.benefitRules}>{initialState.benefit.rules}</p>
-                        </>
-                    ) : (
-                        <>
-                            <h3 id="beauty-movement-inline-benefit-title">Seu benefício reservado será confirmado pela equipe.</h3>
-                            <p>Confira os detalhes diretamente com a unidade de Novo Hamburgo.</p>
-                        </>
-                    )}
-                    <p className={styles.benefitNote}>
-                        Esta condição foi definida antes da sua leitura e não depende das cartas escolhidas.
-                    </p>
-                    {initialState.campaign.conditionsText?.trim() ? (
-                        <details
-                            className={styles.conditionsDetails}
-                            onToggle={(event) => {
-                                if (event.currentTarget.open) handleConditionsClick();
-                            }}
-                        >
-                            <summary>{initialState.campaign.conditionsLabel?.trim() || "Ler condições da campanha"}</summary>
-                            <p>{initialState.campaign.conditionsText.trim()}</p>
-                        </details>
-                    ) : null}
-                    {initialState.benefit?.termsVersion ? (
-                        <small className={styles.termsVersion}>Condições da campanha: versão {initialState.benefit.termsVersion}</small>
-                    ) : null}
-                </section>
-
-                {hasCourtesyClass && initialState.velocity ? (
-                    <section className={styles.benefitPanel} aria-labelledby="beauty-movement-inline-velocity-title">
-                        <p className={styles.sectionLabel}>Seu movimento</p>
-                        <h3 id="beauty-movement-inline-velocity-title">{initialState.velocity.label}</h3>
-                        <p>{initialState.velocity.text}</p>
-                    </section>
-                ) : null}
-
-                <div className={styles.resultActions}>
-                    {renderWhatsappAction(styles.primaryButton)}
-                    <button className={styles.secondaryButton} type="button" onClick={() => void handleShare()}>
-                        Preparar Story para compartilhar
-                    </button>
-                </div>
-                <p className={styles.shareNote}>O Story mostra apenas as três cartas e a assinatura das marcas.</p>
-                {shareStatus ? <p className={styles.shareStatus} role="status">{shareStatus}</p> : null}
             </section>
         );
     }
@@ -2171,24 +1657,6 @@ export default function BeautyMovementExperience({
                     <p className={styles.inlineError} role="alert">
                         {actionError}
                     </p>
-                ) : null}
-
-                {finaleStage === "result" ? (
-                    <section
-                        ref={finaleRef}
-                        className={styles.inlineFinale}
-                        tabIndex={-1}
-                        aria-labelledby="beauty-movement-finale-title"
-                        data-finale-view={finaleStage}
-                    >
-                        <div className={styles.inlineFinaleHeader}>
-                            <p className={styles.sectionLabel}>{finaleStage === "result" ? "Leitura completa" : "Confirmação"}</p>
-                            <h2 id="beauty-movement-finale-title">
-                                {finaleStage === "result" ? "O seu presente de celebração" : "Um último passo para confirmar"}
-                            </h2>
-                        </div>
-                        {renderResultStage()}
-                    </section>
                 ) : null}
 
             </section>

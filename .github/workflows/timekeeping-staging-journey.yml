@@ -601,7 +601,8 @@ jobs:
             "corrections", "pin_failures", "pin_credentials", "request_nonces", "departments", "policies",
           ].reduce((total, key) => total + numeric(timekeeping[key]), 0);
           const coreAuditPreserved = numeric(core.audit_count) >= 2 && numeric(core.teardown_audit) >= 1;
-          const timekeepingAuditPreserved = numeric(timekeeping.audit_count) >= 1;
+          const expectedTimekeepingAuditMinimum = numeric(timekeeping.expected_audit_minimum);
+          const timekeepingAuditPreserved = numeric(timekeeping.audit_count) >= expectedTimekeepingAuditMinimum;
           if (coreResidualCount !== 0 || timekeepingResidualCount !== 0 || !coreAuditPreserved || !timekeepingAuditPreserved) {
             throw new Error("synthetic teardown did not prove zero operational residue and preserved audit");
           }
@@ -613,6 +614,7 @@ jobs:
             timekeepingResidualCount,
             coreAuditPreserved,
             timekeepingAuditPreserved,
+            expectedTimekeepingAuditMinimum,
             credentialsIncluded: false,
             piiIncluded: false,
           }, null, 2)}\n`, { mode: 0o600 });

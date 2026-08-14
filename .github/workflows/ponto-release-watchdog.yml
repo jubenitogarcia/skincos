@@ -178,6 +178,10 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
       - name: Acquire global Ponto recovery lease for fail-close materialization
+        # The watchdog runs from GitHub's trusted default-branch source. Its
+        # lease fences only recovery mutations under an already-closed latch;
+        # the failed coordinator SHA remains bound to the rollback evidence,
+        # not to this current recovery implementation.
         uses: ./.github/actions/global-coordination-acquire
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -187,7 +191,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: release:ponto
           module: ponto
-          source_sha: ${{ needs.context.outputs.release_sha }}
+          source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-watchdog-close.json
           wait_timeout_seconds: '960'
           retry_interval_seconds: '10'
@@ -198,7 +202,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-watchdog-close.json
           resource: release:ponto
           module: ponto
-          source_sha: ${{ needs.context.outputs.release_sha }}
+          source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ contains(fromJSON('["pilot","canary","production"]'), needs.context.outputs.target) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
@@ -319,6 +323,10 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
       - name: Acquire global Ponto recovery lease for watchdog rollback
+        # The rollback procedure is executed from the trusted default branch;
+        # its lease must not be invalidated by unrelated main advancement after
+        # the failed candidate was selected. Exact rollback targets still come
+        # exclusively from the failed coordinator's immutable evidence.
         uses: ./.github/actions/global-coordination-acquire
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -328,7 +336,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: release:ponto
           module: ponto
-          source_sha: ${{ needs.context.outputs.release_sha }}
+          source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-watchdog-rollback.json
       - name: Revalidate protected target environment before watchdog rollback
         env:
@@ -375,7 +383,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-watchdog-rollback.json
           resource: release:ponto
           module: ponto
-          source_sha: ${{ needs.context.outputs.release_sha }}
+          source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ contains(fromJSON('["pilot","canary","production"]'), needs.context.outputs.target) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
@@ -472,7 +480,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-watchdog-rollback.json
           resource: release:ponto
           module: ponto
-          source_sha: ${{ needs.context.outputs.release_sha }}
+          source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ contains(fromJSON('["pilot","canary","production"]'), needs.context.outputs.target) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
