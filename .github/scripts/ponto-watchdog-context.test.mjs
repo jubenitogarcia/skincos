@@ -62,6 +62,24 @@ test("watchdog accepts only an exact failed first-attempt coordinator from main"
   assert.equal(context.releaseSha, sha);
 });
 
+test("watchdog maps a failed bootstrap coordinator to the production fail-close target", async () => {
+  const bootstrapRun = {
+    ...run,
+    name: `Ponto bootstrap ${sha} orchestrator=99`,
+    display_title: `Ponto bootstrap ${sha} orchestrator=99`,
+  };
+  const context = await validateWatchdogContext(input({
+    request: async (pathname) => {
+      if (pathname.endsWith("ponto-progressive-release.yml")) return workflow;
+      if (pathname.endsWith("/jobs?per_page=100")) return jobs;
+      return bootstrapRun;
+    },
+  }));
+  assert.equal(context.stage, "bootstrap");
+  assert.equal(context.target, "production");
+  assert.equal(context.requiresClose, true);
+});
+
 test("watchdog defers a duplicate failure to an exact active coordinator", async () => {
   const peer = {
     ...run,

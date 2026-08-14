@@ -9,7 +9,7 @@ on:
         required: true
         default: staging
         type: choice
-        options: [preview, staging, pilot, canary, production, rollback]
+        options: [preview, staging, bootstrap, pilot, canary, production, rollback]
       release_sha:
         description: Immutable main commit SHA
         required: true
@@ -29,7 +29,7 @@ on:
         type: choice
         options: [ponto]
       predecessor_run_id:
-        description: Required for pilot, canary, production, and rollback
+        description: Required for bootstrap, pilot, canary, production, and rollback
         required: false
         type: string
       baseline_run_id:
@@ -37,7 +37,7 @@ on:
         required: false
         type: string
       root_custody_run_id:
-        description: Required for staging and pilot; exact successful pre-mutation root-custody child run
+        description: Required for staging, bootstrap, and pilot; exact successful pre-mutation root-custody child run
         required: false
         type: string
       rollback_from_stage:
@@ -87,7 +87,7 @@ jobs:
       global_lease_required: ${{ inputs.target != 'preview' }}
       global_resource: global:ponto-workers-writer
       global_module: ponto
-      global_coordinator_url: ${{ contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+      global_coordinator_url: ${{ contains(fromJSON('["bootstrap","pilot","canary","production","rollback"]'), inputs.target) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
       lease_key: timekeeping
       stage: ${{ inputs.orchestrator_stage || inputs.target }}
       target: ${{ inputs.target == 'staging' && 'staging' || 'production' }}
@@ -107,7 +107,7 @@ jobs:
 
   progressive:
     needs: coordination
-    if: ${{ contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
+    if: ${{ contains(fromJSON('["bootstrap","pilot","canary","production","rollback"]'), inputs.target) }}
     uses: ./.github/workflows/ponto-release-gate.yml
     with:
       stage: ${{ inputs.target }}
@@ -190,7 +190,7 @@ jobs:
         inputs.target != 'preview' &&
         (
           (inputs.target == 'staging' && needs.promotion.result == 'success') ||
-          (contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) && needs.progressive.result == 'success')
+          (contains(fromJSON('["bootstrap","pilot","canary","production","rollback"]'), inputs.target) && needs.progressive.result == 'success')
         )
       }}
     runs-on: ubuntu-latest
@@ -248,7 +248,7 @@ jobs:
               D1_ID="$STAGING_D1_ID_RAW"; OPPOSITE_D1_ID="$PRODUCTION_D1_ID_RAW"
               MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"; OPPOSITE_MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
               ;;
-            pilot|canary|production|rollback)
+            bootstrap|pilot|canary|production|rollback)
               D1_ID="$PRODUCTION_D1_ID_RAW"; OPPOSITE_D1_ID="$STAGING_D1_ID_RAW"
               MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"; OPPOSITE_MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
               ;;
@@ -264,7 +264,7 @@ jobs:
           if [[ "$TARGET" != staging ]]; then
             [[ "$ENABLE_PRODUCTION" == true ]] || { echo 'ENABLE_PONTO_TIMEKEEPING_PRODUCTION_DEPLOY must be explicitly true'; exit 1; }
           fi
-          if [[ "$TARGET" =~ ^(staging|pilot)$ ]]; then
+          if [[ "$TARGET" =~ ^(staging|bootstrap|pilot)$ ]]; then
             [[ -n "${TIMEKEEPING_BACKUP_PASSPHRASE:-}" ]] || { echo 'TIMEKEEPING_BACKUP_PASSPHRASE is required before migrations'; exit 1; }
           fi
           {
@@ -296,13 +296,13 @@ jobs:
           export PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$OPPOSITE_MODULE_CONTROL_KV_ID"
           node .github/scripts/ponto-cloudflare-resource-identity.mjs
       - name: Fetch the exact staging root custody predecessor
-        if: ${{ inputs.target == 'pilot' }}
+        if: ${{ inputs.target == 'bootstrap' || inputs.target == 'pilot' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
         run: |
           set -euo pipefail
-          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'pilot requires the exact staging predecessor'; exit 1; }
+          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'bootstrap and pilot require the exact staging predecessor'; exit 1; }
           mkdir -p "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence"
           gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "ponto-release-evidence-staging-$RELEASE_SHA" \
@@ -323,7 +323,7 @@ jobs:
           NODE
           rm -rf "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence"
       - name: Prove environment root separation before checkpoint or migration
-        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        if: ${{ inputs.target == 'staging' || inputs.target == 'bootstrap' || inputs.target == 'pilot' }}
         env:
           PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
           PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
@@ -334,7 +334,7 @@ jobs:
         run: |
           set -euo pipefail
           target=staging
-          [[ "$TARGET" == pilot ]] && target=production
+          [[ "$TARGET" == bootstrap || "$TARGET" == pilot ]] && target=production
           mkdir -p "$RUNNER_TEMP/timekeeping-root-custody"
           staging_args=()
           if [[ "$target" == production ]]; then
@@ -366,7 +366,7 @@ jobs:
           fi
           ! grep -q '__CONFIGURE_.*_ID__' workforce/timekeeping/wrangler.toml || { echo 'Unresolved binding placeholder'; exit 1; }
       - name: Require selected-environment custody for both candidate root secrets
-        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        if: ${{ inputs.target == 'staging' || inputs.target == 'bootstrap' || inputs.target == 'pilot' }}
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           TARGET_ENVIRONMENT: ${{ inputs.target == 'staging' && 'staging' || 'production' }}
@@ -433,8 +433,8 @@ jobs:
           }
           NODE
           rm -f "$list"
-      - name: Resolve incumbent version before pilot mutation
-        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+      - name: Resolve incumbent version before bootstrap or pilot mutation
+        if: ${{ inputs.target == 'staging' || inputs.target == 'bootstrap' || inputs.target == 'pilot' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -477,7 +477,7 @@ jobs:
           echo "TIMEKEEPING_INCUMBENT_VERSION_ID=$INCUMBENT_ID" >> "$GITHUB_ENV"
       - name: Capture encrypted D1 checkpoint
         id: checkpoint
-        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        if: ${{ inputs.target == 'staging' || inputs.target == 'bootstrap' || inputs.target == 'pilot' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -505,7 +505,7 @@ jobs:
           retention-days: 90
           if-no-files-found: error
       - name: Resolve exact root custody artifact before mutation
-        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        if: ${{ inputs.target == 'staging' || inputs.target == 'bootstrap' || inputs.target == 'pilot' }}
         env:
           GH_TOKEN: ${{ github.token }}
           ROOT_CUSTODY_RUN_ID: ${{ inputs.root_custody_run_id }}
@@ -515,7 +515,7 @@ jobs:
           [[ "$ROOT_CUSTODY_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'root_custody_run_id must be numeric'; exit 1; }
           [[ "$ORCHESTRATOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'orchestrator_run_id must be numeric'; exit 1; }
           target=staging
-          [[ "$TARGET" == pilot ]] && target=production
+          [[ "$TARGET" == bootstrap || "$TARGET" == pilot ]] && target=production
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ROOT_CUSTODY_RUN_ID" > "$RUNNER_TEMP/timekeeping-root-custody-run.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cloudflare-workers-sync-ponto-secrets.yml" > "$RUNNER_TEMP/timekeeping-root-custody-workflow.json"
           node --input-type=module - \
@@ -648,7 +648,7 @@ jobs:
             "$artifact_list" \
             "$artifact_metadata"
       - name: Compare live root custody immediately before mutation
-        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        if: ${{ inputs.target == 'staging' || inputs.target == 'bootstrap' || inputs.target == 'pilot' }}
         env:
           ROOT_CUSTODY_RUN_ID: ${{ inputs.root_custody_run_id }}
           ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
@@ -663,7 +663,7 @@ jobs:
           [[ "$ROOT_CUSTODY_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'root_custody_run_id must be numeric'; exit 1; }
           [[ "$ORCHESTRATOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'orchestrator_run_id must be numeric'; exit 1; }
           target=staging
-          [[ "$TARGET" == pilot ]] && target=production
+          [[ "$TARGET" == bootstrap || "$TARGET" == pilot ]] && target=production
           node --input-type=module - \
             "$RUNNER_TEMP/timekeeping-root-custody/preflight-root-custody.json" \
             "$RUNNER_TEMP/timekeeping-root-custody/root-custody.json" \
@@ -749,7 +749,7 @@ jobs:
             "$RUNNER_TEMP/timekeeping-root-custody/preflight-root-custody.json" \
             "$RUNNER_TEMP/timekeeping-root-custody-provenance.json"
       - name: Apply additive Timekeeping migrations
-        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        if: ${{ inputs.target == 'staging' || inputs.target == 'bootstrap' || inputs.target == 'pilot' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -762,7 +762,7 @@ jobs:
           ./node_modules/.bin/wrangler d1 migrations apply "$database" --remote --config wrangler.toml "${env_args[@]}"
           touch "$RUNNER_TEMP/timekeeping-migration-completed"
       - name: Upload immutable candidate version
-        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        if: ${{ inputs.target == 'staging' || inputs.target == 'bootstrap' || inputs.target == 'pilot' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -944,7 +944,7 @@ jobs:
             env_args=(--env staging); candidate=100; incumbent=0
           elif [[ "$TARGET" == pilot || "$TARGET" == canary ]]; then
             env_args=(); candidate=0; incumbent=100
-          elif [[ "$TARGET" == production ]]; then
+          elif [[ "$TARGET" == bootstrap || "$TARGET" == production ]]; then
             env_args=(); candidate=100; incumbent=0
           else
             env_args=(); candidate=0; incumbent=100
@@ -978,12 +978,32 @@ jobs:
           echo "incumbent_percent=$incumbent" >> "$GITHUB_OUTPUT"
           rm -f "$RUNNER_TEMP/timekeeping-version-deploy.ndjson" "$RUNNER_TEMP/timekeeping-deployment.json"
       - name: Read-only Timekeeping health probe
+        id: health
         env:
           BASE_URL: ${{ inputs.target == 'staging' && 'https://api-staging.skincos.com.br' || 'https://api.skincos.com.br' }}
+          TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 5 --retry-delay 4 "$BASE_URL/api/ponto/health" > "$RUNNER_TEMP/timekeeping-health.json"
-          node -e "const p=require(process.argv[1]);if(typeof p.ok!=='boolean'||!p.version)process.exit(1)" "$RUNNER_TEMP/timekeeping-health.json"
+          node - "$RUNNER_TEMP/timekeeping-health.json" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const payload = fs.readFileSync(process.argv[2], "utf8");
+          const health = JSON.parse(payload);
+          if (typeof health.ok !== "boolean" || !health.version) process.exit(1);
+          if (process.env.TARGET === "bootstrap") {
+            if (
+              health.ok !== false
+              || health.ready !== false
+              || health?.availability?.state !== "maintenance"
+            ) throw new Error("bootstrap must leave public Ponto fail-closed in maintenance");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, [
+              "maintenance_confirmed=true",
+              `maintenance_health_sha256=${crypto.createHash("sha256").update(payload).digest("hex")}`,
+              "",
+            ].join("\n"));
+          }
+          NODE
       - name: Roll back this publisher after a failed mutation
         if: ${{ always() && (failure() || cancelled()) && env.TIMEKEEPING_INCUMBENT_VERSION_ID != '' }}
         env:
@@ -1042,7 +1062,7 @@ jobs:
           printf '%s\n' rolled-back > "$RUNNER_TEMP/timekeeping-compensation-disposition"
           touch "$RUNNER_TEMP/timekeeping-rollback-completed"
       - name: Write sanitized Timekeeping mutation journal
-        if: ${{ always() && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.target) }}
+        if: ${{ always() && contains(fromJSON('["staging","bootstrap","pilot","canary","production","rollback"]'), inputs.target) }}
         env:
           DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
           BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
@@ -1085,7 +1105,7 @@ jobs:
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
       - name: Upload Timekeeping mutation journal
-        if: ${{ always() && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.target) }}
+        if: ${{ always() && contains(fromJSON('["staging","bootstrap","pilot","canary","production","rollback"]'), inputs.target) }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ponto-mutation-timekeeping-${{ inputs.target }}-${{ env.RELEASE_SHA }}
@@ -1100,6 +1120,8 @@ jobs:
           INCUMBENT_PERCENT: ${{ steps.deployment.outputs.incumbent_percent }}
           CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
           BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+          MAINTENANCE_CONFIRMED: ${{ steps.health.outputs.maintenance_confirmed }}
+          MAINTENANCE_HEALTH_SHA256: ${{ steps.health.outputs.maintenance_health_sha256 }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/timekeeping-surface"
@@ -1111,7 +1133,7 @@ jobs:
           const rootCustodyFile = process.env.RUNNER_TEMP + "/timekeeping-root-custody/root-custody.json";
           if (!fs.existsSync(rootCustodyFile)) throw new Error("Timekeeping root custody evidence is absent");
           const rootCustody = JSON.parse(fs.readFileSync(rootCustodyFile, "utf8"));
-          const migrations = stage === "staging" || stage === "pilot"
+          const migrations = stage === "staging" || stage === "bootstrap" || stage === "pilot"
             ? fs.readdirSync("workforce/timekeeping/migrations")
               .filter(name => /^\d+.*\.sql$/.test(name))
               .sort()
@@ -1135,6 +1157,13 @@ jobs:
             incumbentPercent: Number(process.env.INCUMBENT_PERCENT),
             candidateTag: `ponto:timekeeping:${process.env.RELEASE_SHA}`,
             rootCustody,
+            maintenance: stage === "bootstrap" ? {
+              state: "maintenance",
+              publicAvailable: false,
+              ready: false,
+              healthSha256: process.env.MAINTENANCE_HEALTH_SHA256,
+              confirmed: process.env.MAINTENANCE_CONFIRMED === "true",
+            } : null,
             url: stage === "staging" ? "https://api-staging.skincos.com.br/api/ponto/health" : "https://api.skincos.com.br/api/ponto/health",
             checkpoint: process.env.CHECKPOINT_DIGEST ? {
               artifactName: `timekeeping-${stage}-pre-migration-${process.env.RELEASE_SHA}`,
