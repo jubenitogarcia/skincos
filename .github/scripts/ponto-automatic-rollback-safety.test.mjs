@@ -91,6 +91,18 @@ test("recovery accepts only children from the exact immutable Ponto release tag"
   assert.doesNotMatch(source, /run\.headBranch !== "main"/);
 });
 
+test("Core provenance recovery accepts only its exact immutable child release tag", () => {
+  const recovery = fs.readFileSync(
+    new URL("../workflows/ponto-staging-core-provenance-recovery.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    recovery,
+    /const expectedChildReleaseTag = `skincos\/release\/ponto\/\$\{process\.env\.RELEASE_SHA\}`;/,
+  );
+  assert.match(recovery, /run\.headBranch !== expectedChildReleaseTag/);
+});
+
 test("a cancelled staging Core child is untouched only with runner and live-incumbent proof", () => {
   assert.match(source, /const preMutationJobNames = Object\.freeze\(\{\s*coreApi: "deploy",/s);
   assert.match(source, /actions\/runs\/\$\{encodeURIComponent\(childRunId\)\}\/jobs\?filter=latest&per_page=100/);
