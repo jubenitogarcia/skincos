@@ -714,6 +714,7 @@ describe('Ponto CRM proxy', () => {
   it('pins public staging health to the exact controlled Core candidate', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, ready: true })))
     vi.stubGlobal('fetch', fetchMock)
+    const initialGetInsumosCalls = (getInsumosUser as Mock).mock.calls.length
     const stagingControl = (syntheticOnly: boolean) => ({
       state: 'active',
       schemaVersion: 2,
@@ -745,7 +746,7 @@ describe('Ponto CRM proxy', () => {
     expect(upstream.headers.get('cloudflare-workers-version-overrides'))
       .toBe(`skincos-ponto-core-staging="${CORE_VERSION_ID}"`)
     expect(upstream.headers.get('x-skincos-actor')).toBeNull()
-    expect(getInsumosUser).not.toHaveBeenCalled()
+    expect(getInsumosUser).toHaveBeenCalledTimes(initialGetInsumosCalls)
 
     const drifted = context('/api/ponto/health')
     Object.assign(drifted.env, {
