@@ -36,3 +36,18 @@ test("Core provenance recovery is staging-only, exact, and fail-closed", () => {
   assert.match(workflow, /name: Upload immutable Core provenance recovery evidence[\s\S]*?if: always\(\)/);
   assert.doesNotMatch(workflow, /target:\s*production/);
 });
+
+test("Core provenance recovery leases its trusted workflow source separately from historical custody", () => {
+  for (const name of [
+    "Acquire global Core staging recovery lease",
+    "Check global Core staging recovery lease immediately before materialization",
+    "Check global Core staging recovery lease immediately before Core rollback",
+  ]) {
+    const start = workflow.indexOf(`- name: ${name}`);
+    assert.notEqual(start, -1, `missing recovery lease step: ${name}`);
+    const end = workflow.indexOf("\n      - name:", start + 1);
+    const step = workflow.slice(start, end === -1 ? undefined : end);
+    assert.match(step, /source_sha: \$\{\{ github\.sha \}\}/);
+    assert.doesNotMatch(step, /source_sha: \$\{\{ inputs\.release_sha \}\}/);
+  }
+});

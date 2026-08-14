@@ -240,7 +240,9 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: global:ponto-workers-writer
           module: ponto
-          source_sha: ${{ inputs.release_sha }}
+          # The lease fences mutations executed by this trusted main workflow;
+          # the historical failed release remains bound by the custody checks below.
+          source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
 
       - name: Download the exact close and historical Core custody
@@ -279,7 +281,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
           resource: global:ponto-workers-writer
           module: ponto
-          source_sha: ${{ inputs.release_sha }}
+          source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
@@ -412,7 +414,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
           resource: global:ponto-workers-writer
           module: ponto
-          source_sha: ${{ inputs.release_sha }}
+          source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}

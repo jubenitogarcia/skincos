@@ -63,3 +63,18 @@ test("staging recovery rollback is exact, serialized, and environment protected"
   assert.match(workflow, /name: Upload immutable staging recovery evidence[\s\S]*?if: always\(\)/);
   assert.doesNotMatch(workflow, /target:\s*production/);
 });
+
+test("staging recovery rollback leases its trusted workflow source separately from historical custody", () => {
+  for (const name of [
+    "Acquire global Ponto recovery lease for staging rollback",
+    "Check global Ponto recovery lease immediately before staging materialization",
+    "Check global Ponto recovery lease immediately before staging rollback",
+  ]) {
+    const start = workflow.indexOf(`- name: ${name}`);
+    assert.notEqual(start, -1, `missing recovery lease step: ${name}`);
+    const end = workflow.indexOf("\n      - name:", start + 1);
+    const step = workflow.slice(start, end === -1 ? undefined : end);
+    assert.match(step, /source_sha: \$\{\{ github\.sha \}\}/);
+    assert.doesNotMatch(step, /source_sha: \$\{\{ inputs\.release_sha \}\}/);
+  }
+});
