@@ -1122,7 +1122,7 @@
 .cardButton {
   position: relative;
   display: block;
-  min-height: clamp(280px, 25vw, 304px);
+  min-height: clamp(312px, 27vw, 324px);
   padding: 0;
   overflow: hidden;
   border: 0;
@@ -2371,7 +2371,7 @@
   }
 
   .cardButton {
-    min-height: 280px;
+    min-height: 312px;
   }
 
   .cardIllustration {
@@ -2410,7 +2410,7 @@
   }
 
   .cardButton {
-    min-height: 280px;
+    min-height: 312px;
   }
 
   .cardFront,
