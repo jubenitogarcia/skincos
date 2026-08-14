@@ -63,6 +63,18 @@ test("zero-surface recovery uses a fresh external maintenance probe instead of f
   assert.match(source, /no-dispatched-surface-noop/);
 });
 
+test("external composite recovery readback waits for bounded edge propagation before failing", () => {
+  assert.match(source, /const EXTERNAL_COMPOSITE_MAX_ATTEMPTS = 36/);
+  assert.match(source, /const EXTERNAL_COMPOSITE_RETRY_DELAY_MS = 5_000/);
+  assert.match(source, /automatic_rollback_readback/);
+  assert.match(source, /cache-control": "no-store"/);
+  assert.match(source, /await waitForPropagation\(EXTERNAL_COMPOSITE_RETRY_DELAY_MS\)/);
+  assert.match(source, /propagationTimedOut: true/);
+  assert.match(source, /external\.composite = await attestExternalComposite\(\)/);
+  assert.match(source, /plan\.coreApi\.incumbentVersionId/);
+  assert.match(source, /plan\.timekeeping\.incumbentVersionId/);
+});
+
 test("Pages recovery skips rollback intent custody when no owned candidate exists", () => {
   assert.match(
     source,
@@ -77,4 +89,15 @@ test("recovery accepts only children from the exact immutable Ponto release tag"
   assert.match(source, /run\.headBranch === expectedReleaseBranch/);
   assert.match(source, /String\(run\.headSha \|\| ""\)\.toLowerCase\(\) === releaseSha/);
   assert.doesNotMatch(source, /run\.headBranch !== "main"/);
+});
+
+test("a cancelled staging Core child is untouched only with runner and live-incumbent proof", () => {
+  assert.match(source, /const preMutationJobNames = Object\.freeze\(\{\s*coreApi: "deploy",/s);
+  assert.match(source, /actions\/runs\/\$\{encodeURIComponent\(childRunId\)\}\/jobs\?filter=latest&per_page=100/);
+  assert.match(source, /inspectCancelledBeforeRunnerDeployJob/);
+  assert.match(source, /resolveStagingCorePrecondition/);
+  assert.match(source, /validateAttestedStagingCorePredecessor/);
+  assert.match(source, /cancelled-before-runner-no-worker-mutation/);
+  assert.match(source, /fs\.existsSync\(surfaceFile\)/);
+  assert.match(source, /fs\.existsSync\(journalFile\)/);
 });

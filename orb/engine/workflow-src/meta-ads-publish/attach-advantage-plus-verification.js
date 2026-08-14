@@ -257,6 +257,68 @@ function buildEffectiveReport(source, reportedOptIn, removedOrIneligible, notRep
   };
 }
 
+function trackingFingerprint(value) {
+  let hash = 2166136261;
+  for (const char of text(value)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function verifyCreativeTracking(source, creative, graphReadbackAvailable) {
+  const destination = object(source.destination_contract);
+  const tracking = object(source.tracking_contract);
+  const kind = text(destination.kind).toLowerCase();
+  const expected = text(object(source.creativePayload).url_tags);
+  const actual = text(creative && creative.url_tags);
+  if (kind === 'whatsapp') {
+    // URL tags are neither requested nor required for a WhatsApp handoff.
+    // Keep an inherited Graph value observable without preventing the normal
+    // WhatsApp publication route from staging a creative.
+    const inherited = Boolean(actual);
+    return {
+      status: 'not_applicable',
+      graph_request_method: 'GET',
+      expected_fingerprint: '',
+      observed_fingerprint: inherited ? trackingFingerprint(actual) : '',
+      inherited_url_tags_observed: inherited,
+      reason: inherited ? 'whatsapp_inherited_url_tags_observed' : 'whatsapp_destination',
+    };
+  }
+  const websiteEventRequired = text(tracking.website_event_requirement) === 'required';
+  const offlineDatasetRequired = text(tracking.offline_event_dataset_requirement) === 'required';
+  const websiteEventStatusValid = text(tracking.website_event_status) === (websiteEventRequired ? 'configured' : 'not_required');
+  const offlineDatasetStatusValid = text(tracking.offline_event_dataset_status) === (offlineDatasetRequired ? 'configured' : 'not_required');
+  if (kind !== 'website' || tracking.profile_configured !== true || !['verified', 'reconciled'].includes(text(tracking.reconciliation_status)) ||
+    !websiteEventStatusValid || !offlineDatasetStatusValid ||
+    text(tracking.url_tags_status) !== 'expected' || !expected) {
+    return {
+      status: 'mismatch',
+      graph_request_method: 'GET',
+      expected_fingerprint: expected ? trackingFingerprint(expected) : '',
+      observed_fingerprint: actual ? trackingFingerprint(actual) : '',
+      reason: 'website_tracking_contract_missing',
+    };
+  }
+  if (!graphReadbackAvailable) {
+    return {
+      status: 'unavailable',
+      graph_request_method: 'GET',
+      expected_fingerprint: trackingFingerprint(expected),
+      observed_fingerprint: '',
+      reason: 'creative_readback_unavailable',
+    };
+  }
+  return {
+    status: actual === expected ? 'verified' : 'mismatch',
+    graph_request_method: 'GET',
+    expected_fingerprint: trackingFingerprint(expected),
+    observed_fingerprint: actual ? trackingFingerprint(actual) : '',
+    reason: actual === expected ? 'exact_graph_readback' : 'url_tags_graph_mismatch',
+  };
+}
+
 const sources = $items('Attach Creative Result') || [];
 const placementItems = $items('Validate Meta Placement Eligibility') || [];
 return $input.all().map((item, index) => {
@@ -266,11 +328,20 @@ return $input.all().map((item, index) => {
   const response = object(item.json);
   const requested = unique(source.advantage_plus_requested_features);
   if (response.ok !== true || response.operation?.status !== 'completed') {
+    const creativeTrackingVerification = verifyCreativeTracking(source, {}, false);
+    if (creativeTrackingVerification.status !== 'not_applicable') {
+      throw new Error(`Creative tracking readback nao confirmou url_tags antes do stage: ${JSON.stringify({
+        destination_group: text(source.destination_group),
+        status: creativeTrackingVerification.status,
+        reason: creativeTrackingVerification.reason,
+      })}`);
+    }
     const detail = object(response.detail);
     return {
       json: {
         ...source,
         advantage_plus_effective_report: buildEffectiveReport(source, [], [], requested, 'none'),
+        creative_tracking_verification: creativeTrackingVerification,
         advantage_plus_verification: {
           status: 'unavailable',
           checked_at: new Date().toISOString(),
@@ -298,6 +369,16 @@ return $input.all().map((item, index) => {
     };
   }
   const creative = object(response.operation.result);
+  const creativeTrackingVerification = verifyCreativeTracking(source, creative, true);
+  if (!['verified', 'not_applicable'].includes(creativeTrackingVerification.status)) {
+    throw new Error(`Creative tracking readback divergiu antes do stage: ${JSON.stringify({
+      destination_group: text(source.destination_group),
+      status: creativeTrackingVerification.status,
+      reason: creativeTrackingVerification.reason,
+      expected_fingerprint: creativeTrackingVerification.expected_fingerprint,
+      observed_fingerprint: creativeTrackingVerification.observed_fingerprint,
+    })}`);
+  }
   const mixedMediaReadback = verifyMixedCreativeReadback(source, creative, placementItems);
   const videoOnlyMediaReadback = verifyVideoOnlyCreativeReadback(source, creative, placementItems);
   const carouselMediaReadback = verifyCarouselCreativeReadback(source, creative);
@@ -320,6 +401,7 @@ return $input.all().map((item, index) => {
       mixed_media_readback: mixedMediaReadback,
       video_only_media_readback: videoOnlyMediaReadback,
       carousel_media_readback: carouselMediaReadback,
+      creative_tracking_verification: creativeTrackingVerification,
       advantage_plus_effective_report: buildEffectiveReport(
         source,
         reportedOptIn,

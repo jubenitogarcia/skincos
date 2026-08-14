@@ -10,8 +10,17 @@ readonly RUNNER_ROOT='/var/lib/skincos-runtime/github-actions-runner'
 readonly RUNNER_USER='skincos-actions'
 readonly UNIT_NAME='skincos-native-custody-runner.service'
 readonly CUSTODY_HELPER='/usr/local/sbin/skincos-provision-global-coordination'
+readonly META_ADS_CUSTODY_HELPER='/usr/local/sbin/skincos-meta-ads-tracking-custody'
+readonly META_ADS_HELPER_LIB='/usr/local/lib/skincos'
+readonly META_ADS_ATTESTATION_HELPER="$META_ADS_HELPER_LIB/meta-ads-tracking-custody-attestation.mjs"
 readonly SUDOERS_FILE='/etc/sudoers.d/skincos-native-custody'
 readonly CUSTODY_DIR='/etc/skincos/global-coordination'
+readonly META_ADS_CHECKPOINT_DIR='/var/lib/skincos-runtime/orb/exports/workflow-patches'
+readonly META_ADS_MAINTENANCE_DIR='/var/lib/skincos-runtime/orb/state/livia-maintenance'
+readonly META_ADS_COORDINATION_PROOF_DIR='/var/lib/skincos-runtime/global-coordination'
+readonly META_ADS_FALLBACK_PROOF_DIR='/var/lib/skincos-runtime/orb/global-coordination'
+readonly META_ADS_APPROVAL_DIR="$META_ADS_COORDINATION_PROOF_DIR/meta-ads-tracking-approvals"
+readonly META_ADS_FENCE_UNIT='orb-restart-fence.service'
 
 REPOSITORY=''
 RUNNER_VERSION=''
@@ -49,9 +58,14 @@ done
 [[ "$RUNNER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'runner version must be a semantic version' >&2; exit 78; }
 [[ "$RUNNER_SHA256" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo 'runner SHA-256 is invalid' >&2; exit 78; }
 [[ -f "$ROOT_DIR/scripts/runtime/provision-global-coordination-custody.sh" ]] || { echo 'custody helper source is missing' >&2; exit 78; }
+[[ -f "$ROOT_DIR/scripts/runtime/meta-ads-tracking-custody.sh" ]] || { echo 'Meta Ads custody helper source is missing' >&2; exit 78; }
+[[ -f "$ROOT_DIR/scripts/runtime/meta-ads-tracking-custody-attestation.mjs" ]] || { echo 'Meta Ads OIDC attestation source is missing' >&2; exit 78; }
 [[ -f "$ROOT_DIR/ops/runtime/units/$UNIT_NAME" ]] || { echo 'runner systemd unit is missing' >&2; exit 78; }
+[[ -f "$ROOT_DIR/ops/runtime/units/$META_ADS_FENCE_UNIT" ]] || { echo 'Meta Ads restart fence unit is missing' >&2; exit 78; }
 [[ -f "$ROOT_DIR/ops/runtime/github-actions-runner/skincos-native-custody.sudoers" ]] || { echo 'runner sudoers contract is missing' >&2; exit 78; }
 bash -n "$ROOT_DIR/scripts/runtime/provision-global-coordination-custody.sh"
+bash -n "$ROOT_DIR/scripts/runtime/meta-ads-tracking-custody.sh"
+node --check "$ROOT_DIR/scripts/runtime/meta-ads-tracking-custody-attestation.mjs"
 
 if [[ "$APPLY" != '1' ]]; then
   printf 'native_custody_runner_contract=valid repository=%s version=%s\n' "$REPOSITORY" "$RUNNER_VERSION"
@@ -65,6 +79,7 @@ command -v tar >/dev/null 2>&1 || { echo 'tar is required' >&2; exit 78; }
 command -v sha256sum >/dev/null 2>&1 || { echo 'sha256sum is required' >&2; exit 78; }
 command -v systemctl >/dev/null 2>&1 || { echo 'systemctl is required' >&2; exit 78; }
 command -v visudo >/dev/null 2>&1 || { echo 'visudo is required' >&2; exit 78; }
+command -v node >/dev/null 2>&1 || { echo 'node is required' >&2; exit 78; }
 
 if ! id "$RUNNER_USER" >/dev/null 2>&1; then
   useradd --system --user-group --home-dir "$RUNNER_ROOT" --create-home --shell /usr/sbin/nologin "$RUNNER_USER"
@@ -74,6 +89,11 @@ install -d -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0750 "$RUNNER_ROOT"
 
 install -o root -g root -m 0755 \
   "$ROOT_DIR/scripts/runtime/provision-global-coordination-custody.sh" "$CUSTODY_HELPER"
+install -o root -g root -m 0755 \
+  "$ROOT_DIR/scripts/runtime/meta-ads-tracking-custody.sh" "$META_ADS_CUSTODY_HELPER"
+install -d -o root -g root -m 0755 "$META_ADS_HELPER_LIB"
+install -o root -g root -m 0755 \
+  "$ROOT_DIR/scripts/runtime/meta-ads-tracking-custody-attestation.mjs" "$META_ADS_ATTESTATION_HELPER"
 install -o root -g root -m 0440 \
   "$ROOT_DIR/ops/runtime/github-actions-runner/skincos-native-custody.sudoers" "$SUDOERS_FILE"
 visudo -cf "$SUDOERS_FILE" >/dev/null
@@ -82,6 +102,20 @@ visudo -cf "$SUDOERS_FILE" >/dev/null
 # the custody file and its secret remain workflow-owned and are written later
 # by the fixed helper.
 install -d -o root -g admin -m 0750 "$CUSTODY_DIR"
+# The Meta Ads helper needs exactly these private write locations inside the
+# runner's ProtectSystem=strict namespace.  The unprivileged runner account
+# still cannot access any of them through their POSIX ownership and mode.
+install -d -o postgres -g postgres -m 0750 "$META_ADS_CHECKPOINT_DIR"
+install -d -o skincos -g skincos -m 0750 "$META_ADS_MAINTENANCE_DIR"
+install -d -o root -g admin -m 0750 "$META_ADS_COORDINATION_PROOF_DIR"
+install -d -o root -g admin -m 0750 "$META_ADS_FALLBACK_PROOF_DIR"
+# The OIDC approval records are distinct from the lease proofs and writable
+# only by root.  They remain under an existing exact systemd mount exception;
+# no broad /var/lib or /opt write access is introduced for the runner.
+install -d -o root -g root -m 0700 "$META_ADS_APPROVAL_DIR"
+[[ -d /opt/skincos/current && ! -L /opt/skincos/current ]] || { echo 'native source pointer directory is unavailable' >&2; exit 78; }
+install -o root -g root -m 0644 \
+  "$ROOT_DIR/ops/runtime/units/$META_ADS_FENCE_UNIT" "/etc/systemd/system/$META_ADS_FENCE_UNIT"
 
 if [[ ! -f "$RUNNER_ROOT/.runner" ]]; then
   IFS= read -r RUNNER_TOKEN || { echo 'runner registration token is missing' >&2; exit 78; }

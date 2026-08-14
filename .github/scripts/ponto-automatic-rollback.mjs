@@ -18,6 +18,11 @@ import {
 import { releaseTagFor } from "./ponto-release-identity.mjs";
 import { attestBrokerFailCloseEvidence } from "./ponto-recovery-evidence.mjs";
 import { readCloudflareKvJson } from "./ponto-kv-readback.mjs";
+import { resolveStagingCorePrecondition } from "./ponto-core-staging-precondition.mjs";
+import {
+  inspectCancelledBeforeRunnerDeployJob,
+  validateAttestedStagingCorePredecessor,
+} from "./ponto-cancelled-core-before-mutation.mjs";
 
 const [artifactRoot, reportFile] = process.argv.slice(2);
 const releaseSha = String(process.env.RELEASE_SHA || "").trim().toLowerCase();
@@ -302,6 +307,7 @@ const plan = {};
 const unresolved = [];
 const untouched = {};
 const retainedDataChanges = {};
+const preMutationCancellationCandidates = [];
 for (const [name, spec] of Object.entries(surfaceSpecs)) {
   const surfaceFile = path.join(artifactRoot, spec.path);
   const runFile = path.join(artifactRoot, spec.run);
@@ -325,7 +331,16 @@ for (const [name, spec] of Object.entries(surfaceSpecs)) {
     && String(journal.orchestratorRunId) === orchestratorRunId
     && journal.credentialsIncluded === false
     && journal.piiIncluded === false;
-  if (!journalValid) unresolved.push({ surface: name, childRunId: String(run.runId), reason: "mutation-journal-missing-or-invalid" });
+  if (!journalValid) {
+    preMutationCancellationCandidates.push({
+      surface: name,
+      childRunId: String(run.runId),
+      run,
+      surfaceFile,
+      journalFile,
+      spec,
+    });
+  }
   const migrationStarted = journalValid && journal.migrationStarted === true;
   if (migrationStarted) {
     const migrationResolved = journal.migrationCompleted === true
@@ -720,6 +735,98 @@ const github = async (pathname, init = {}) => {
   return payload;
 };
 
+// A cancelled child normally leaves an always-uploaded mutation journal. The
+// one safe exception is the Core staging publisher cancelled before its only
+// mutable `deploy` job ever ran. Resolve that exception from the GitHub job
+// record itself; any unavailable, renamed, started, or otherwise ambiguous
+// job remains unresolved and therefore fail-closed.
+const preMutationJobNames = Object.freeze({
+  coreApi: "deploy",
+});
+const attestCancelledBeforeMutation = async ({
+  surface,
+  childRunId,
+  run,
+  surfaceFile,
+  journalFile,
+  spec,
+}) => {
+  const expectedJobName = preMutationJobNames[surface];
+  if (
+    !staging
+    || !expectedJobName
+    || run.conclusion !== "cancelled"
+    || !/^[1-9][0-9]*$/.test(childRunId)
+    || fs.existsSync(surfaceFile)
+    || fs.existsSync(journalFile)
+  ) {
+    return { passed: false, reason: "mutation-journal-missing-or-invalid" };
+  }
+
+  let jobProof;
+  try {
+    const payload = await github(
+      `/repos/${repository}/actions/runs/${encodeURIComponent(childRunId)}/jobs?filter=latest&per_page=100`,
+    );
+    jobProof = inspectCancelledBeforeRunnerDeployJob(payload);
+  } catch {
+    return { passed: false, reason: "pre-mutation-job-attestation-unavailable" };
+  }
+  if (!jobProof.passed) return { passed: false, reason: "mutation-journal-missing-or-invalid" };
+
+  let predecessorProof;
+  try {
+    const catalogPath = path.resolve("platform/deploy/operational-units.json");
+    if (!fs.existsSync(catalogPath)) {
+      return { passed: false, reason: "staging-core-predecessor-catalog-missing" };
+    }
+    predecessorProof = await resolveStagingCorePrecondition({
+      catalog: readJson(catalogPath),
+      accountId,
+      apiToken,
+      repository,
+      catalogPath,
+    });
+  } catch {
+    return { passed: false, reason: "staging-core-predecessor-proof-unavailable" };
+  }
+  const incumbent = validateAttestedStagingCorePredecessor({
+    proof: predecessorProof,
+    releaseSha,
+    workerName: spec.workerName,
+  });
+  if (!incumbent.passed) return { passed: false, reason: incumbent.reason };
+
+  return {
+    passed: true,
+    jobName: expectedJobName,
+    disposition: "cancelled-before-runner-no-worker-mutation",
+    deployJob: jobProof.job,
+    predecessor: incumbent.predecessor,
+  };
+};
+const preMutationCancellations = {};
+for (const candidate of preMutationCancellationCandidates) {
+  const proof = await attestCancelledBeforeMutation(candidate);
+  if (proof.passed) {
+    untouched[candidate.surface] = proof.disposition;
+    preMutationCancellations[candidate.surface] = {
+      passed: true,
+      childRunId: candidate.childRunId,
+      jobName: proof.jobName,
+      disposition: proof.disposition,
+      deployJob: proof.deployJob,
+      predecessor: proof.predecessor,
+    };
+    continue;
+  }
+  unresolved.push({
+    surface: candidate.surface,
+    childRunId: candidate.childRunId,
+    reason: proof.reason,
+  });
+}
+
 let pagesCreatedDeploymentId = "";
 let pagesMutationAttempted = false;
 let pagesMutationObserved = false;
@@ -989,6 +1096,49 @@ for (const name of ["coreApi", "identityWorkforce", "timekeeping"]) {
 }
 
 const external = {};
+const EXTERNAL_COMPOSITE_MAX_ATTEMPTS = 36;
+const EXTERNAL_COMPOSITE_RETRY_DELAY_MS = 5_000;
+const waitForPropagation = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const attestExternalComposite = async () => {
+  const origin = staging
+    ? "https://crm-staging.skincos.com.br/api/ponto/health"
+    : "https://crm.skincos.com.br/api/ponto/health";
+  let latest = { passed: false, status: 0, reason: "external-composite-probe-not-attempted" };
+  for (let attempt = 1; attempt <= EXTERNAL_COMPOSITE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const probe = new URL(origin);
+      probe.searchParams.set("automatic_rollback_readback", `${recoveryRunId}-${attempt}`);
+      const response = await fetch(probe, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(15_000),
+        headers: { accept: "application/json", "cache-control": "no-store", ...accessHeaders },
+      });
+      const json = await response.json().catch(() => null);
+      const dependencies = json?.dependencies && typeof json.dependencies === "object" ? Object.entries(json.dependencies) : [];
+      const maintenanceOnly = json?.ok === false
+        && json?.ready === false
+        && json?.availability?.state === "maintenance"
+        && json?.dependencies?.module_control?.state === "unavailable"
+        && json?.dependencies?.module_control?.reason === "MODULE_MAINTENANCE"
+        && dependencies.every(([name, dependency]) => name === "module_control" || dependency?.required !== true || dependency?.state === "healthy");
+      latest = {
+        passed: response.status === 200
+          && maintenanceOnly
+          && String(response.headers.get("x-skincos-gateway-version-id") || "").toLowerCase() === plan.coreApi.incumbentVersionId.toLowerCase()
+          && String(response.headers.get("x-skincos-timekeeping-version-id") || "").toLowerCase() === plan.timekeeping.incumbentVersionId.toLowerCase(),
+        status: response.status,
+        coreVersionId: String(response.headers.get("x-skincos-gateway-version-id") || ""),
+        timekeepingVersionId: String(response.headers.get("x-skincos-timekeeping-version-id") || ""),
+        attempt,
+      };
+    } catch {
+      latest = { passed: false, status: 0, reason: "external-composite-probe-failed", attempt };
+    }
+    if (latest.passed) return latest;
+    if (attempt < EXTERNAL_COMPOSITE_MAX_ATTEMPTS) await waitForPropagation(EXTERNAL_COMPOSITE_RETRY_DELAY_MS);
+  }
+  return { ...latest, propagationTimedOut: true, attempts: EXTERNAL_COMPOSITE_MAX_ATTEMPTS };
+};
 if (plan.identityWorkforce && proofs.identityWorkforce?.passed) {
   try {
     const response = await fetch(staging
@@ -1011,34 +1161,7 @@ if (plan.identityWorkforce && proofs.identityWorkforce?.passed) {
   }
 }
 if (plan.coreApi && plan.timekeeping && proofs.coreApi?.passed && proofs.timekeeping?.passed) {
-  try {
-    const response = await fetch(staging
-      ? "https://crm-staging.skincos.com.br/api/ponto/health"
-      : "https://crm.skincos.com.br/api/ponto/health", {
-      redirect: "manual",
-      signal: AbortSignal.timeout(15_000),
-      headers: { accept: "application/json", ...accessHeaders },
-    });
-    const json = await response.json().catch(() => null);
-    const dependencies = json?.dependencies && typeof json.dependencies === "object" ? Object.entries(json.dependencies) : [];
-    const maintenanceOnly = json?.ok === false
-      && json?.ready === false
-      && json?.availability?.state === "maintenance"
-      && json?.dependencies?.module_control?.state === "unavailable"
-      && json?.dependencies?.module_control?.reason === "MODULE_MAINTENANCE"
-      && dependencies.every(([name, dependency]) => name === "module_control" || dependency?.required !== true || dependency?.state === "healthy");
-    external.composite = {
-      passed: response.status === 200
-        && maintenanceOnly
-        && String(response.headers.get("x-skincos-gateway-version-id") || "").toLowerCase() === plan.coreApi.incumbentVersionId.toLowerCase()
-        && String(response.headers.get("x-skincos-timekeeping-version-id") || "").toLowerCase() === plan.timekeeping.incumbentVersionId.toLowerCase(),
-      status: response.status,
-      coreVersionId: String(response.headers.get("x-skincos-gateway-version-id") || ""),
-      timekeepingVersionId: String(response.headers.get("x-skincos-timekeeping-version-id") || ""),
-    };
-  } catch {
-    external.composite = { passed: false, status: 0 };
-  }
+  external.composite = await attestExternalComposite();
 }
 
 // Re-read after every mutation while still holding the surface mutex. A reset,
@@ -1101,6 +1224,7 @@ const report = {
   plannedSurfaces: plannedNames,
   planSource: Object.fromEntries(Object.entries(plan).map(([name, item]) => [name, item.source])),
   untouchedSurfaces: untouched,
+  preMutationCancellations,
   unresolved,
   proofs,
   environmentPrerequisites,

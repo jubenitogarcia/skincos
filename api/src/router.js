@@ -105,6 +105,25 @@ function setGatewayReleaseHeaders(headers, env) {
     else headers.delete('x-skincos-gateway-version-tag');
 }
 
+function copyTimekeepingReleaseHeaders(target, upstream) {
+    for (const name of [
+        'x-skincos-timekeeping-release-sha',
+        'x-skincos-timekeeping-version-id',
+        'x-skincos-timekeeping-environment',
+    ]) {
+        const value = String(upstream?.headers?.get(name) || '').trim();
+        if (value) target.set(name, value);
+        else target.delete(name);
+    }
+}
+
+function pontoOperationalResponse(status, env, requestId, ready, dependencyState, upstream) {
+    const response = json(status, pontoOperationalPayload(env, requestId, ready, dependencyState), requestId);
+    setGatewayReleaseHeaders(response.headers, env);
+    copyTimekeepingReleaseHeaders(response.headers, upstream);
+    return response;
+}
+
 function operationalLog(env, requestId, status, route) {
     console.log({
         domain: 'api',
@@ -132,7 +151,7 @@ function pontoOperationalLog(env, requestId, status, route) {
 async function pontoReadiness(request, env, ctx, timekeepingHandler, requestId) {
     if (!hasTimekeepingBinding(env) || typeof timekeepingHandler !== 'function') {
         pontoOperationalLog(env, requestId, 503, '/readiness');
-        return json(503, pontoOperationalPayload(env, requestId, false, 'unavailable'), requestId);
+        return pontoOperationalResponse(503, env, requestId, false, 'unavailable');
     }
 
     const probeUrl = new URL(request.url);
@@ -152,10 +171,10 @@ async function pontoReadiness(request, env, ctx, timekeepingHandler, requestId) 
         await response.body?.cancel().catch(() => {});
         const status = ready ? 200 : 503;
         pontoOperationalLog(env, requestId, status, '/readiness');
-        return json(status, pontoOperationalPayload(env, requestId, ready, ready ? 'healthy' : 'degraded'), requestId);
+        return pontoOperationalResponse(status, env, requestId, ready, ready ? 'healthy' : 'degraded', response);
     } catch {
         pontoOperationalLog(env, requestId, 503, '/readiness');
-        return json(503, pontoOperationalPayload(env, requestId, false, 'unavailable'), requestId);
+        return pontoOperationalResponse(503, env, requestId, false, 'unavailable');
     }
 }
 
@@ -180,7 +199,7 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
             if (request.method === 'GET' && url.pathname === '/health') {
                 const configured = hasTimekeepingBinding(env);
                 pontoOperationalLog(env, requestId, 200, '/health');
-                return json(200, pontoOperationalPayload(env, requestId, configured, configured ? 'configured' : 'unavailable'), requestId);
+                return pontoOperationalResponse(200, env, requestId, configured, configured ? 'configured' : 'unavailable');
             }
 
             if (request.method === 'GET' && url.pathname === '/readiness') {

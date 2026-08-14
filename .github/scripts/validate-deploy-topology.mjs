@@ -217,6 +217,7 @@ const pagesSecretWriters = [
   '.github/workflows/cloudflare-pages-sync-meta-ads-report-secret.yml',
   '.github/workflows/cloudflare-sync-integrations-encryption-secret.yml',
 ];
+const escalaSecretSync = read('.github/workflows/cloudflare-pages-sync-escala.yml');
 const trustedGateCheckout = [
   'ref: ${{ github.sha }}',
   'ref: ${{ github.workflow_sha }}',
@@ -610,6 +611,14 @@ for (const workflow of pagesSecretWriters) {
   ) {
     fail(`${workflow} must serialize every CRM Pages secret mutation with the global Ponto surface mutex and never dispatch the retired auxiliary publisher`);
   }
+}
+const activeCoordinationKey = "shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}";
+const activeCoordinationKeyId = "key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}";
+if (
+  escalaSecretSync.split(activeCoordinationKey).length - 1 !== 5
+  || escalaSecretSync.split(activeCoordinationKeyId).length - 1 !== 5
+) {
+  fail('Escala secret synchronization must use the active global coordination key and key ID at every lease boundary');
 }
 if (
   !timekeepingPublisher.includes('default: ponto')

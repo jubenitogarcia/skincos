@@ -38,6 +38,7 @@ test("Clube Botox aliases resolve to the requested Asaas payment links", () => {
         "/nh/ClubeBotox40URec": "https://www.asaas.com/c/d6wi6vey83vare5o",
         "/nh/ClubeBotox50URec": "https://www.asaas.com/c/qfh7xmfkx75thufp",
         "/nh/ClubeBotox60URec": "https://www.asaas.com/c/s6pzbxxek5zupn20",
+        "/nh/ClubeBotoxA60URec": "https://www.asaas.com/c/kmqx08rera7xwnc6",
         "/nh/ClubeBotox90URec": "https://www.asaas.com/c/nhimvltr035trkro",
         "/bss/ClubeBotox40U": "https://www.asaas.com/c/bv1wikkg0l1h53wc",
         "/bss/ClubeBotox50U": "https://www.asaas.com/c/tfy2w7livbb3pby9",
@@ -46,6 +47,7 @@ test("Clube Botox aliases resolve to the requested Asaas payment links", () => {
         "/bss/ClubeBotox40URec": "https://www.asaas.com/c/pf2r6q16tiyrp9bc",
         "/bss/ClubeBotox50URec": "https://www.asaas.com/c/prjvdv7v95x50y32",
         "/bss/ClubeBotox60URec": "https://www.asaas.com/c/lr38ej38lji2kyuz",
+        "/bss/ClubeBotoxA60URec": "https://www.asaas.com/c/j09bzb3zy2igqune",
         "/bss/ClubeBotox90URec": "https://www.asaas.com/c/zmfwvjotop3vpmjz",
     };
 
@@ -56,6 +58,27 @@ test("Clube Botox aliases resolve to the requested Asaas payment links", () => {
         const seed = buildEsfaManagedRedirectSeed({ slugPath, destinationUrl, now: 789 });
         assert.equal(seed.destinationHost, "www.asaas.com");
         assert.equal(seed.placement, "payment");
+        assert.equal(seed.unitSlug, slugPath.startsWith("/nh/") ? "novo-hamburgo" : "barrashoppingsul");
+    }
+});
+
+test("Instagram live WhatsApp aliases preserve the unit-specific prefilled message", () => {
+    const message = "Vim pela live da *Espaço Facial* e quero saber mais sobre a _condição especial_ que vocês apresentaram!";
+    const expected = {
+        "/nh/iglivewa": "5551995811008",
+        "/bss/iglivewa": "5551980882293",
+    };
+
+    for (const [slugPath, phone] of Object.entries(expected)) {
+        const destinationUrl = ESFA_REDIRECTS[slugPath];
+        const destination = new URL(destinationUrl);
+        assert.equal(destination.hostname, "wa.me");
+        assert.equal(destination.pathname, `/${phone}`);
+        assert.equal(destination.searchParams.get("text"), message);
+
+        const seed = buildEsfaManagedRedirectSeed({ slugPath, destinationUrl, now: 789 });
+        assert.equal(seed.destinationHost, "wa.me");
+        assert.equal(seed.placement, "whatsapp");
         assert.equal(seed.unitSlug, slugPath.startsWith("/nh/") ? "novo-hamburgo" : "barrashoppingsul");
     }
 });

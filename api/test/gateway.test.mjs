@@ -45,15 +45,22 @@ test('Ponto route-only health and readiness use only the Timekeeping binding', a
         inventoryHandler: async () => new Response('must-not-run'),
         timekeepingHandler: async (request) => {
             probePaths.push(new URL(request.url).pathname);
-            return new Response(JSON.stringify({ ok: true, ready: true }), { headers: { 'content-type': 'application/json' } });
+            return new Response(JSON.stringify({ ok: true, ready: true }), {
+                headers: {
+                    'content-type': 'application/json',
+                    'x-skincos-timekeeping-release-sha': 'a'.repeat(40),
+                    'x-skincos-timekeeping-version-id': '33333333-3333-4333-8333-333333333333',
+                    'x-skincos-timekeeping-environment': 'staging',
+                },
+            });
         },
     });
     const env = {
         PONTO_ROUTE_ONLY: 'true',
         TIMEKEEPING: { fetch: async () => new Response('unused') },
-        APP_VERSION: 'baseline-sha',
+        APP_VERSION: 'a'.repeat(40),
         ENVIRONMENT: 'staging',
-        CF_VERSION_METADATA: { id: 'version-id', tag: 'baseline-tag' },
+        CF_VERSION_METADATA: { id: '22222222-2222-4222-8222-222222222222', tag: 'baseline-tag' },
     };
 
     const health = await isolated(new Request('https://ponto-core.invalid/health', { headers: { 'x-request-id': 'ponto-health-1' } }), env, {});
@@ -63,11 +70,19 @@ test('Ponto route-only health and readiness use only the Timekeeping binding', a
     assert.equal(healthBody.ready, true);
     assert.equal(healthBody.dependencies.timekeeping.state, 'configured');
     assert.equal(healthBody.dependencies.d1, undefined);
-    assert.deepEqual(healthBody.version_metadata, { id: 'version-id', tag: 'baseline-tag' });
+    assert.deepEqual(healthBody.version_metadata, { id: '22222222-2222-4222-8222-222222222222', tag: 'baseline-tag' });
+    assert.equal(health.headers.get('x-skincos-gateway-release-sha'), 'a'.repeat(40));
+    assert.equal(health.headers.get('x-skincos-gateway-version-id'), '22222222-2222-4222-8222-222222222222');
 
     const readiness = await isolated(new Request('https://ponto-core.invalid/readiness?ignored=true'), env, {});
     assert.equal(readiness.status, 200);
     assert.equal((await readiness.json()).dependencies.timekeeping.state, 'healthy');
+    assert.equal(readiness.headers.get('x-skincos-gateway-release-sha'), 'a'.repeat(40));
+    assert.equal(readiness.headers.get('x-skincos-gateway-environment'), 'staging');
+    assert.equal(readiness.headers.get('x-skincos-gateway-version-id'), '22222222-2222-4222-8222-222222222222');
+    assert.equal(readiness.headers.get('x-skincos-timekeeping-release-sha'), 'a'.repeat(40));
+    assert.equal(readiness.headers.get('x-skincos-timekeeping-version-id'), '33333333-3333-4333-8333-333333333333');
+    assert.equal(readiness.headers.get('x-skincos-timekeeping-environment'), 'staging');
     assert.deepEqual(probePaths, ['/api/ponto/readiness']);
 });
 

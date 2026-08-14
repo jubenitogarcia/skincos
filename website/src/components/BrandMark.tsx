@@ -5,11 +5,12 @@ import Image from "next/image";
 
 type Props = {
     className?: string;
+    loading?: "eager" | "lazy";
     title?: string;
     tone?: "dark" | "light";
 };
 
-export default function BrandMark({ className, title = "Espaço Facial", tone = "dark" }: Props) {
+export default function BrandMark({ className, loading = "lazy", title = "Espaço Facial", tone = "dark" }: Props) {
     const candidates = useMemo(() => {
         if (tone === "light") {
             return ["/mark-white.png", "/mark.png"] as const;
@@ -34,6 +35,7 @@ export default function BrandMark({ className, title = "Espaço Facial", tone = 
                 width={484}
                 height={432}
                 sizes="64px"
+                loading={loading}
                 draggable={false}
                 style={shouldInvert ? { filter: "invert(1)" } : undefined}
                 onError={() => {

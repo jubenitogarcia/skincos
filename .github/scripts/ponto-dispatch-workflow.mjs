@@ -74,6 +74,25 @@ export function assertPontoDependencyClosureUnchanged(orchestratorDigest, mainDi
   return assertDependencyClosureUnchanged(orchestratorDigest, mainDigest);
 }
 
+export function assertPontoReleaseIsCurrentMain(
+  releaseSha,
+  currentMainSha,
+  assertReleaseSource = assertPontoSourceClosureUnchanged,
+) {
+  const release = String(releaseSha || "").trim().toLowerCase();
+  const currentMain = String(currentMainSha || "").trim().toLowerCase();
+  if (!FULL_SHA.test(release)) throw new Error("Ponto release SHA must be a full SHA");
+  if (!FULL_SHA.test(currentMain)) throw new Error("current main SHA is unavailable");
+  if (release !== currentMain) {
+    try {
+      assertReleaseSource(release, currentMain);
+    } catch (error) {
+      throw new Error("Ponto release dependency closure no longer matches current main", { cause: error });
+    }
+  }
+  return { releaseSha: release, currentMainSha: currentMain };
+}
+
 export function globalResourceFor(workflow, inputs) {
   const target = String(inputs?.target || "").trim().toLowerCase();
   const stage = String(inputs?.stage || inputs?.orchestrator_stage || "").trim().toLowerCase();
@@ -439,14 +458,10 @@ const cancelActiveChildBestEffort = async (candidate) => {
 
 const currentMain = await request(`/repos/${repository}/commits/main`);
 const currentMainSha = String(currentMain?.sha || "").trim().toLowerCase();
-if (!/^[0-9a-f]{40}$/.test(currentMainSha)) throw new Error("current main SHA is unavailable");
+assertPontoReleaseIsCurrentMain(orchestratorHeadSha, currentMainSha);
 ensureCommitAvailable(currentMainSha);
-assertPontoDependencyClosureUnchanged(
-  pontoDependencyClosureDigest(orchestratorHeadSha),
-  pontoDependencyClosureDigest(currentMainSha),
-);
 await revalidatePontoCompositeLease({
-  observedDependencyClosureDigest: pontoDependencyClosureDigest(currentMainSha),
+  observedDependencyClosureDigest: pontoDependencyClosureDigest(orchestratorHeadSha),
 });
 
 const inputs = JSON.parse(fs.readFileSync(inputsFile, "utf8"));
@@ -580,15 +595,11 @@ fs.writeFileSync(outputFile, `${JSON.stringify({
   releaseTag: releaseIdentity.releaseTag,
   releaseIdentityDigest: releaseIdentity.identity.releaseIdentityDigest,
 }, null, 2)}\n`, { mode: 0o600 });
-const dispatchMain = await request(`/repos/${repository}/commits/main`);
-const dispatchMainSha = String(dispatchMain?.sha || "").trim().toLowerCase();
-if (!/^[0-9a-f]{40}$/.test(dispatchMainSha)) throw new Error("current main SHA is unavailable before child dispatch");
-ensureCommitAvailable(dispatchMainSha);
-const dispatchClosureDigest = pontoDependencyClosureDigest(dispatchMainSha);
-assertPontoDependencyClosureUnchanged(
-  pontoDependencyClosureDigest(orchestratorHeadSha),
-  dispatchClosureDigest,
-);
+  const dispatchMain = await request(`/repos/${repository}/commits/main`);
+  const dispatchMainSha = String(dispatchMain?.sha || "").trim().toLowerCase();
+  assertPontoReleaseIsCurrentMain(orchestratorHeadSha, dispatchMainSha);
+  ensureCommitAvailable(dispatchMainSha);
+  const dispatchClosureDigest = pontoDependencyClosureDigest(orchestratorHeadSha);
 await revalidatePontoCompositeLease({ observedDependencyClosureDigest: dispatchClosureDigest });
 compositeLeaseLastRenewedAt = Date.now();
 await revalidateGlobalDispatchLease(globalDispatchLease, {
@@ -625,9 +636,9 @@ while (Date.now() - startedAt < timeoutMs) {
     try {
       const observedMain = await request(`/repos/${repository}/commits/main`);
       const observedMainSha = String(observedMain?.sha || "").trim().toLowerCase();
-      if (!/^[0-9a-f]{40}$/.test(observedMainSha)) throw new Error("current main SHA is unavailable during child dispatch");
+      assertPontoReleaseIsCurrentMain(orchestratorHeadSha, observedMainSha);
       ensureCommitAvailable(observedMainSha);
-      const observedClosureDigest = pontoDependencyClosureDigest(observedMainSha);
+      const observedClosureDigest = pontoDependencyClosureDigest(orchestratorHeadSha);
       await revalidatePontoCompositeLease({ observedDependencyClosureDigest: observedClosureDigest });
       compositeLeaseLastRenewedAt = Date.now();
     } catch (coordinationError) {

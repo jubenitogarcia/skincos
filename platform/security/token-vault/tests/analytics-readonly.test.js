@@ -32,6 +32,10 @@ class FakeStatement {
   async run() {
     if (this.sql.includes('INSERT INTO credential_token_audit')) {
       if (this.db.failAudit) throw new Error('audit unavailable');
+      const tokenId = this.values[1];
+      if (this.db.enforceAuditForeignKey && tokenId && !this.db.tokens.some((row) => row.id === tokenId)) {
+        throw new Error('FOREIGN KEY constraint failed');
+      }
       this.db.audit.push([...this.values]);
       return { success: true };
     }
@@ -44,6 +48,7 @@ class FakeDb {
     this.tokens = [];
     this.audit = [];
     this.failAudit = false;
+    this.enforceAuditForeignKey = false;
   }
 
   prepare(sql) {
@@ -189,6 +194,7 @@ test('analytics role can read a bounded Meta profile without returning credentia
     assert.equal(new URL(calls[0].url).searchParams.has('access_token'), false);
     assert.equal(calls[0].url, 'https://graph.facebook.com/v20.0/17841400000000001?fields=business_discovery.username%28synthetic.creator%29%7Bid%2Cusername%2Cfollowers_count%2Cmedia_count%7D');
     assert.equal(db.audit.length, 1);
+    assert.equal(JSON.parse(db.audit[0][8]).correlation_id, 'ii:get_profile:creator:synthetic-001');
     assert.equal(JSON.stringify(db.audit).includes(GRAPH_TOKEN), false);
   });
 });
@@ -220,6 +226,35 @@ test('operational credentials cannot invoke analytics and missing scope fails cl
   assert.equal(missingScope.status, 403);
   assert.equal((await missingScope.json()).error, 'permission_gap');
   assert.equal(db.audit.length, 1);
+});
+
+test('an unknown analytics credential is audited without violating the token foreign key', async () => {
+  const db = new FakeDb();
+  db.enforceAuditForeignKey = true;
+  const env = environment(db);
+
+  await withFetch(env, async () => {
+    throw new Error('Meta must not be called for an unknown credential');
+  }, async () => {
+    const response = await handleRequest(
+      new Request('https://api-staging.skincos.com.br/internal/token-vault/v1/analytics/operations', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify(profileRequest({ credential_ref: 'ig_analytics_missing' })),
+      }),
+      env,
+    );
+
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, 'permission_gap');
+  });
+
+  assert.equal(db.audit.length, 1);
+  assert.equal(db.audit[0][1], null);
+  const metadata = JSON.parse(db.audit[0][8]);
+  assert.equal(metadata.credential_ref_state, 'unmatched');
+  assert.equal(metadata.correlation_id, 'ii:get_profile:creator:synthetic-001');
+  assert.equal(JSON.stringify(db.audit).includes('ig_analytics_missing'), false);
 });
 
 test('official transport preserves explicit zero metrics and omits unavailable fields', async () => {
