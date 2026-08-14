@@ -4,8 +4,8 @@ import path from "node:path";
 import { validateRootCustody } from "./ponto-root-custody.mjs";
 import { verifyReleaseIdentity } from "./ponto-release-identity.mjs";
 
-const STAGES = ["preview", "staging", "pilot", "canary", "production", "rollback"];
-const PREDECESSOR = { staging: "preview", pilot: "staging", canary: "pilot", production: "canary" };
+const STAGES = ["preview", "staging", "bootstrap", "pilot", "canary", "production", "rollback"];
+const PREDECESSOR = { staging: "preview", bootstrap: "staging", pilot: "staging", canary: "pilot", production: "canary" };
 const ROLLBACK_PREDECESSORS = new Set(["pilot", "canary", "production"]);
 const SHA = /^[0-9a-f]{40}$/i;
 const SHA256 = /^[0-9a-f]{64}$/i;
@@ -43,21 +43,27 @@ const assertSha256 = (value, name) => assert(SHA256.test(String(value || "")), `
 
 function validateSurfaces(surfaces, stage, sourceSha, repository) {
   assert(surfaces && typeof surfaces === "object" && !Array.isArray(surfaces), "surfaces must be an object");
-  for (const unit of ["timekeeping", "coreApi", "identityWorkforce", "crmPages"]) {
+  const bootstrap = stage === "bootstrap";
+  const units = bootstrap ? ["timekeeping"] : ["timekeeping", "coreApi", "identityWorkforce", "crmPages"];
+  if (bootstrap) {
+    assert(JSON.stringify(Object.keys(surfaces).sort()) === JSON.stringify(["timekeeping"]), "bootstrap may publish only the Timekeeping surface");
+  }
+  for (const unit of units) {
     assert(surfaces[unit] && typeof surfaces[unit] === "object", `missing ${unit} surface`);
     assert(surfaces[unit].sourceSha === sourceSha, `${unit}.sourceSha differs`);
     assert(surfaces[unit].stage === stage, `${unit}.stage differs`);
     assert(/^[0-9]+$/.test(String(surfaces[unit].runId || "")), `${unit}.runId must be numeric`);
   }
-  if (!["staging", "pilot", "canary", "production", "rollback"].includes(stage)) return;
+  if (!["staging", "bootstrap", "pilot", "canary", "production", "rollback"].includes(stage)) return;
   const expectedWeights = {
     staging: { timekeeping: 100, coreApi: 100, identityWorkforce: 100 },
+    bootstrap: { timekeeping: 100 },
     pilot: { timekeeping: 0, coreApi: 0, identityWorkforce: 0 },
     canary: { timekeeping: 0, coreApi: 0, identityWorkforce: 0 },
     production: { timekeeping: 100, coreApi: 100, identityWorkforce: 100 },
     rollback: { timekeeping: 0, coreApi: 0, identityWorkforce: 0 },
   };
-  for (const unit of ["timekeeping", "coreApi", "identityWorkforce"]) {
+  for (const unit of (bootstrap ? ["timekeeping"] : ["timekeeping", "coreApi", "identityWorkforce"])) {
     const surface = surfaces[unit];
     assertUuid(surface.candidateVersionId, `${unit}.candidateVersionId`);
     assertUuid(surface.incumbentVersionId, `${unit}.incumbentVersionId`);
@@ -78,6 +84,16 @@ function validateSurfaces(surfaces, stage, sourceSha, repository) {
     requireProvenance: true,
     repository,
   });
+  if (bootstrap) {
+    const maintenance = surfaces.timekeeping.maintenance;
+    assert(maintenance && typeof maintenance === "object" && !Array.isArray(maintenance), "bootstrap requires maintenance evidence");
+    assert(maintenance.state === "maintenance", "bootstrap must leave Ponto in maintenance");
+    assert(maintenance.publicAvailable === false, "bootstrap must keep public Ponto unavailable");
+    assert(maintenance.ready === false, "bootstrap must keep Ponto unready");
+    assert(maintenance.confirmed === true, "bootstrap maintenance was not confirmed");
+    assertSha256(maintenance.healthSha256, "bootstrap maintenance healthSha256");
+    return;
+  }
   assertUuid(surfaces.crmPages.deploymentId, "crmPages.deploymentId");
   assertUuid(surfaces.crmPages.rollbackDeploymentId, "crmPages.rollbackDeploymentId");
   assert(surfaces.crmPages.candidateTag === `ponto:crmPages:${sourceSha}`, "crmPages.candidateTag does not identify source SHA");
@@ -91,7 +107,7 @@ function validateSurfaces(surfaces, stage, sourceSha, repository) {
 }
 
 function validateEdgeGuard(edgeGuard, stage, sourceSha) {
-  if (!["staging", "pilot", "canary", "production"].includes(stage)) {
+  if (!["staging", "bootstrap", "pilot", "canary", "production"].includes(stage)) {
     assert(edgeGuard === null, `${stage} must not claim a live edge guard`);
     return;
   }
@@ -290,7 +306,25 @@ function validateEvidence(evidence) {
       assert(checkpoint?.releaseSha === evidence.sourceSha, `${unit} checkpoint releaseSha differs`);
     }
   }
-  if (["staging", "pilot", "canary", "production", "rollback"].includes(evidence.stage)) {
+  if (evidence.stage === "bootstrap") {
+    const slo = evidence.slo;
+    assert(slo?.passed === true, "bootstrap maintenance confirmation did not pass");
+    assert(slo?.mode === "maintenance-bootstrap", "bootstrap SLO mode is invalid");
+    assert(Number.isInteger(slo.samples) && slo.samples === 1, "bootstrap SLO samples must equal one");
+    assert(Number.isInteger(slo.errors) && slo.errors === 0, "bootstrap SLO errors must be zero");
+    assert(Number.isFinite(slo.p95Ms) && slo.p95Ms >= 0, "bootstrap SLO p95Ms is invalid");
+    assert(Number.isInteger(slo.windowSeconds) && slo.windowSeconds > 0, "bootstrap SLO windowSeconds must be positive");
+    assertSha256(slo.digest, "bootstrap SLO digest");
+    assert(slo.digest === evidence.surfaces.timekeeping.maintenance.healthSha256, "bootstrap SLO digest differs from maintenance health");
+    assert(evidence.checkpoint?.timekeeping, "bootstrap requires a Timekeeping checkpoint");
+    assert(evidence.rollback?.executed === false, "bootstrap must not claim a full rollback");
+    assert(evidence.rollback?.mode === "timekeeping-bootstrap-maintenance", "bootstrap rollback mode is invalid");
+    assertUuid(evidence.rollback?.timekeepingVersionId, "bootstrap rollback.timekeepingVersionId");
+    assert(
+      evidence.rollback?.timekeepingVersionId === evidence.surfaces.timekeeping.incumbentVersionId,
+      "bootstrap rollback Timekeeping version differs from the incumbent",
+    );
+  } else if (["staging", "pilot", "canary", "production", "rollback"].includes(evidence.stage)) {
     const slo = evidence.slo;
     assert(slo?.passed === true, "external SLO did not pass");
     assert(Number.isInteger(slo.samples) && slo.samples > 0, "SLO samples must be positive");
@@ -399,14 +433,14 @@ if (mode === "write") {
       `artifact_sha256=${digestFile(file)}`,
       `timekeeping_candidate_version_id=${evidence.surfaces.timekeeping.candidateVersionId || ""}`,
       `timekeeping_incumbent_version_id=${evidence.surfaces.timekeeping.incumbentVersionId || ""}`,
-      `core_candidate_version_id=${evidence.surfaces.coreApi.candidateVersionId || ""}`,
-      `core_incumbent_version_id=${evidence.surfaces.coreApi.incumbentVersionId || ""}`,
-      `identity_candidate_version_id=${evidence.surfaces.identityWorkforce.candidateVersionId || ""}`,
-      `identity_incumbent_version_id=${evidence.surfaces.identityWorkforce.incumbentVersionId || ""}`,
+      `core_candidate_version_id=${evidence.surfaces.coreApi?.candidateVersionId || ""}`,
+      `core_incumbent_version_id=${evidence.surfaces.coreApi?.incumbentVersionId || ""}`,
+      `identity_candidate_version_id=${evidence.surfaces.identityWorkforce?.candidateVersionId || ""}`,
+      `identity_incumbent_version_id=${evidence.surfaces.identityWorkforce?.incumbentVersionId || ""}`,
       `identity_checkpoint_artifact=${evidence.checkpoint?.identityWorkforce?.artifactName || ""}`,
       `identity_checkpoint_sha256=${evidence.checkpoint?.identityWorkforce?.sha256 || ""}`,
-      `pages_deployment_id=${evidence.surfaces.crmPages.deploymentId || ""}`,
-      `pages_rollback_deployment_id=${evidence.surfaces.crmPages.rollbackDeploymentId || ""}`,
+      `pages_deployment_id=${evidence.surfaces.crmPages?.deploymentId || ""}`,
+      `pages_rollback_deployment_id=${evidence.surfaces.crmPages?.rollbackDeploymentId || ""}`,
       "",
     ].join("\n"));
   }
