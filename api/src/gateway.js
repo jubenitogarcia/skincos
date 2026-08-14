@@ -5,6 +5,7 @@ import { createSignedDomainContext } from '../../shared/service-adapters/signed-
 
 const gatewayError = (status, error) => new Response(JSON.stringify({ ok: false, error }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const isOperationalProbe = (request) => request.method === 'GET' && ['/health', '/readiness'].includes(new URL(request.url).pathname);
+const isPontoReadinessProbe = (request) => request.method === 'GET' && new URL(request.url).pathname === '/api/ponto/readiness';
 const FINANCE_PROBE_TIMEOUT_MS = 3_000;
 const FINANCE_READ_TIMEOUT_MS = 3_000;
 const FINANCE_WRITE_TIMEOUT_MS = 5_000;
@@ -148,6 +149,12 @@ export { createGatewayHandler } from './router.js';
 
 export const handleGatewayRequest = createApiGateway({
     inventoryHandler: (request, env) => fetchBoundService(request, env, 'INVENTORY', { timeoutMs: inventoryServiceTimeout(request) }),
-    timekeepingHandler: (request, env) => fetchBoundService(request, env, 'TIMEKEEPING', { timeoutMs: 800 }),
+    timekeepingHandler: (request, env) => fetchBoundService(request, env, 'TIMEKEEPING', {
+        timeoutMs: 800,
+        // A failed Ponto readiness probe is often the authoritative
+        // maintenance contract. Preserve that body and its release identity
+        // instead of replacing it with the generic dependency fallback.
+        passThroughErrorStatuses: isPontoReadinessProbe(request) ? [503] : [],
+    }),
     financeDomainHandler: forwardFinanceToService,
 });

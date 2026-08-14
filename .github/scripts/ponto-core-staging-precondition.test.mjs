@@ -4,12 +4,22 @@ import test from 'node:test';
 
 import {
   discoverEvidenceDerivedStagingIncumbents,
+  run,
   resolveStagingCorePrecondition,
   validateEvidenceDerivedStagingIncumbent,
   validateStagingCoreIncumbentLive,
   validateStagingHistoricalBootstrapLive,
   validateStagingIncumbentCatalog,
 } from './ponto-core-staging-precondition.mjs';
+
+test('keeps a bounded buffer above the default spawn limit for GitHub run history', () => {
+  const characters = 1_100_000;
+  const output = run(process.execPath, [
+    '-e',
+    `process.stdout.write('x'.repeat(${characters}))`,
+  ]);
+  assert.equal(output.length, characters);
+});
 
 const sourceSha = '6daa6eaee7c4c49f047e97944e70ea1aa320ca61';
 const deploymentId = '2688c47a-efbb-4b97-98f7-6a1734eac354';
