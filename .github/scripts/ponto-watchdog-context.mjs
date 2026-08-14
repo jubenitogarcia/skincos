@@ -3,7 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertPontoSourceClosureUnchanged } from "./ponto-source-closure.mjs";
 
-const TITLE = /^Ponto (preview|staging|pilot|canary|production|rollback) ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/;
+const TITLE = /^Ponto (preview|staging|bootstrap|pilot|canary|production|rollback) ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/;
 const FAILURE_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out"]);
 const NON_TERMINAL_STATUSES = ["queued", "in_progress", "waiting", "pending", "requested"];
 

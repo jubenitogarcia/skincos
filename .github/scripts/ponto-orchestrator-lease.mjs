@@ -15,7 +15,7 @@ const capabilityPublicKeysJson = String(
 );
 const UUIDISH_KEY = /^[a-z][a-z0-9-]{1,63}$/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
-const GOVERNED_STAGES = ["staging", "pilot", "canary", "production", "rollback"];
+const GOVERNED_STAGES = ["staging", "bootstrap", "pilot", "canary", "production", "rollback"];
 const DOMAIN = "skincos/ponto/orchestrator-capability/v6";
 const CLAIM_FIELDS = [
   "schemaVersion", "domain", "repositoryId", "repository",

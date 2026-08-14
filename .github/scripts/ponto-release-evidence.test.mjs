@@ -23,6 +23,7 @@ const previewSurfaces = {
 };
 const stageWeights = {
   staging: { timekeeping: 100, coreApi: 100, identityWorkforce: 100 },
+  bootstrap: { timekeeping: 100, coreApi: 0, identityWorkforce: 0 },
   pilot: { timekeeping: 0, coreApi: 0, identityWorkforce: 0 },
   canary: { timekeeping: 0, coreApi: 0, identityWorkforce: 0 },
   production: { timekeeping: 100, coreApi: 100, identityWorkforce: 100 },
@@ -119,6 +120,35 @@ const stagingSloSummary = () => ({
     piiIncluded: false,
     digest,
   },
+});
+const bootstrapSurfaces = () => {
+  const { timekeeping } = liveSurfaces("bootstrap");
+  return {
+    timekeeping: {
+      ...timekeeping,
+      maintenance: {
+        state: "maintenance",
+        publicAvailable: false,
+        ready: false,
+        healthSha256: digest,
+        confirmed: true,
+      },
+    },
+  };
+};
+const bootstrapSloSummary = () => ({
+  passed: true,
+  samples: 1,
+  errors: 0,
+  p95Ms: 0,
+  windowSeconds: 1,
+  digest,
+  mode: "maintenance-bootstrap",
+});
+const bootstrapRollbackSummary = () => ({
+  executed: false,
+  mode: "timekeeping-bootstrap-maintenance",
+  timekeepingVersionId: uuid2,
 });
 const stagingBootstrapCore = () => ({
   schemaVersion: 1,
@@ -285,6 +315,54 @@ test("rejects staging evidence when the bootstrap predecessor differs from the e
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Core bootstrap version differs from the staging incumbent/);
+});
+
+test("bootstrap evidence publishes only Timekeeping while public Ponto remains in maintenance", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-evidence-"));
+  const { staging } = writePreviewAndStaging(dir);
+  const file = path.join(dir, "bootstrap.json");
+  const env = {
+    PONTO_RELEASE_STAGE: "bootstrap",
+    PONTO_RELEASE_SHA: sha,
+    PONTO_RELEASE_TREE: tree,
+    PONTO_PREDECESSOR_STAGE: "staging",
+    PONTO_PREDECESSOR_RUN_ID: "200",
+    PONTO_PREDECESSOR_SHA: sha,
+    PONTO_PREDECESSOR_ARTIFACT: `ponto-release-evidence-staging-${sha}`,
+    PONTO_PREDECESSOR_FILE: staging,
+    PONTO_RELEASE_SURFACES_JSON: JSON.stringify(bootstrapSurfaces()),
+    PONTO_RELEASE_EDGE_GUARD_JSON: JSON.stringify(edgeGuard("bootstrap")),
+    PONTO_RELEASE_CHECKPOINT_JSON: JSON.stringify({
+      timekeeping: { artifactName: `timekeeping-bootstrap-pre-migration-${sha}`, sha256: digest, releaseSha: sha },
+    }),
+    PONTO_RELEASE_MIGRATIONS_JSON: "[]",
+    PONTO_RELEASE_SLO_JSON: JSON.stringify(bootstrapSloSummary()),
+    PONTO_RELEASE_ROLLBACK_JSON: JSON.stringify(bootstrapRollbackSummary()),
+    GITHUB_RUN_ID: "250",
+    GITHUB_REPOSITORY: "skincos/skincos",
+  };
+  let result = run("write", file, env);
+  assert.equal(result.status, 0, result.stderr);
+  const evidence = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.deepEqual(Object.keys(evidence.surfaces), ["timekeeping"]);
+  assert.equal(evidence.surfaces.timekeeping.maintenance.publicAvailable, false);
+  result = run("verify", file, {
+    PONTO_EXPECTED_STAGE: "bootstrap",
+    PONTO_EXPECTED_SHA: sha,
+    PONTO_EXPECTED_REPOSITORY: "skincos/skincos",
+    PONTO_PREDECESSOR_FILE: staging,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  evidence.surfaces.timekeeping.maintenance.confirmed = false;
+  fs.writeFileSync(file, JSON.stringify(evidence));
+  result = run("verify", file, {
+    PONTO_EXPECTED_STAGE: "bootstrap",
+    PONTO_EXPECTED_SHA: sha,
+    PONTO_EXPECTED_REPOSITORY: "skincos/skincos",
+    PONTO_PREDECESSOR_FILE: staging,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /bootstrap maintenance was not confirmed/);
 });
 
 test("writes and verifies schema v2 pilot evidence with a digested predecessor", () => {
