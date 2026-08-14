@@ -13,7 +13,7 @@ const {
   transform,
   validate,
 } = require('../scripts/patch-meta-ads-advantage-plus-drift-readback');
-const { CODE_SOURCES } = require('../scripts/lib/meta-ads-publish-code-sources');
+const { CODE_SOURCES, assertCodeSourceCoverage } = require('../scripts/lib/meta-ads-publish-code-sources');
 
 const workflowRoot = path.join(__dirname, '..');
 const sourceRoot = path.join(workflowRoot, 'workflow-src', 'meta-ads-publish');
@@ -202,7 +202,9 @@ test('workflow patch sequences the delayed readback before Drive finalization an
 });
 
 test('all mutable Advantage+ drift Code nodes are tracked and the Graph creative reader remains GET-only', () => {
-  assert.equal(Object.keys(CODE_SOURCES).length, 51);
+  const workflow = JSON.parse(fs.readFileSync(path.join(workflowRoot, 'workflows', 'meta-ads-publish.current.json'), 'utf8'));
+  const coverage = assertCodeSourceCoverage(workflow);
+  assert.equal(coverage.code_node_count, coverage.mapped_node_count);
   assert.equal(CODE_SOURCES[PREPARE_NODE], 'prepare-advantage-plus-drift-readback.js');
   assert.equal(CODE_SOURCES[CLASSIFY_NODE], 'classify-advantage-plus-graph-drift.js');
   const gateway = fs.readFileSync(path.join(workflowRoot, '..', '..', 'platform', 'security', 'token-vault', 'src', 'meta-ads-publish.js'), 'utf8');

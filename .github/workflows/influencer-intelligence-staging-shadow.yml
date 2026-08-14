@@ -10,7 +10,10 @@ on:
         type: boolean
 
 concurrency:
-  group: influencer-intelligence-token-vault-staging-shadow
+  # This shadow updates the same staging Worker and Worker secrets as the
+  # canonical Token Vault release. Share its Actions lane as well as its
+  # durable lease so neither workflow can replace the other mid-validation.
+  group: deploy-token-vault-staging
   cancel-in-progress: false
 
 permissions:
@@ -73,7 +76,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '22.23.1'
+          node-version: "22.23.1"
 
       - name: Verify staging-only source fence
         run: |
@@ -96,7 +99,7 @@ jobs:
           assert.match(section('env.staging.vars'), /INFLUENCER_INTELLIGENCE_ENABLED\s*=\s*"false"/);
           NODE
 
-      - name: Acquire staging Token Vault coordination lease
+      - name: Acquire Token Vault release lease for staging shadow
         uses: ./.github/actions/global-coordination-acquire
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -104,18 +107,18 @@ jobs:
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || '' }}
-          resource: global:token-vault-staging
+          resource: release:token-vault
           module: influencer-intelligence
           source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/influencer-intelligence-staging-shadow-lease.json
           inputs_json: '{"target":"staging","mode":"shadow"}'
 
-      - name: Revalidate coordination before staging mutation
+      - name: Revalidate Token Vault release lease before staging mutation
         uses: ./.github/actions/global-coordination-check
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/influencer-intelligence-staging-shadow-lease.json
-          resource: global:token-vault-staging
+          resource: release:token-vault
           module: influencer-intelligence
           source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -552,7 +555,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      - name: Release staging Token Vault coordination lease
+      - name: Release Token Vault release lease after staging shadow
         if: ${{ always() }}
         uses: ./.github/actions/global-coordination-release
         with:

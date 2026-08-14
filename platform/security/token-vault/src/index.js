@@ -1,6 +1,7 @@
 import {
   handleMetaAdsPublishRequest,
   isMetaAdsPublishPath,
+  updateMetaAdsPublishConfig,
 } from './meta-ads-publish.js';
 import { handleSocialPublishOperation } from './social-publish.js';
 import { handleAnalyticsReadonlyRequest } from './analytics-readonly.js';
@@ -54,6 +55,15 @@ export async function handleRequest(request, env) {
       return health(env, requestId);
     }
 
+    if (request.method === 'PUT' && pathname === '/v1/meta-ads-publish/config') {
+      if (auth.role !== 'admin') return adminOnly(requestId);
+      return await updateMetaAdsPublishConfig({
+        request,
+        env,
+        requestId,
+      });
+    }
+
     if (isMetaAdsPublishPath(pathname)) {
       if (!['admin', 'operational'].includes(auth.role)) {
         return roleRequired(requestId, 'write_gateway_credential_required');
@@ -64,6 +74,7 @@ export async function handleRequest(request, env) {
         requestId,
         pathname,
         decryptToken,
+        encryptToken,
         writeAudit,
       });
     }
@@ -137,6 +148,7 @@ async function health(env, requestId) {
   const checks = {
     d1: Boolean(env.TOKEN_VAULT_DB),
     apiToken: Boolean(safeString(env.TOKEN_VAULT_API_TOKEN)),
+    n8nApiToken: Boolean(safeString(env.TOKEN_VAULT_N8N_API_TOKEN)),
     analyticsApiToken: Boolean(safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN)),
     encryptionKey: Boolean(safeString(env.TOKEN_VAULT_ENCRYPTION_KEY)),
     analyticsMode: mode !== 'invalid',
@@ -146,7 +158,7 @@ async function health(env, requestId) {
     await env.TOKEN_VAULT_DB.prepare('SELECT 1 AS ok').first();
   }
 
-  const ok = checks.d1 && checks.apiToken && checks.analyticsApiToken && checks.encryptionKey && checks.analyticsMode;
+  const ok = checks.d1 && checks.apiToken && checks.n8nApiToken && checks.analyticsApiToken && checks.encryptionKey && checks.analyticsMode;
   return json({
     ok,
     service: 'skincos-token-vault',
@@ -218,6 +230,9 @@ async function patchToken(id, request, env, requestId) {
   const body = await readJson(request);
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return json({ ok: false, error: 'invalid_payload', requestId }, { status: 400 });
+  }
+  if (hasMetaAdsPublishConfig(body.metadata)) {
+    return json({ ok: false, error: 'meta_ads_publish_config_writer_required', requestId }, { status: 409 });
   }
 
   const token = safeString(body.token || body.access_token);
@@ -296,6 +311,9 @@ async function createToken(request, env, requestId) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return json({ ok: false, error: 'invalid_payload', requestId }, { status: 400 });
   }
+  if (hasMetaAdsPublishConfig(body.metadata)) {
+    return json({ ok: false, error: 'meta_ads_publish_config_writer_required', requestId }, { status: 409 });
+  }
 
   const provider = safeString(body.provider).toLowerCase();
   if (!PROVIDERS.has(provider)) {
@@ -315,6 +333,17 @@ async function createToken(request, env, requestId) {
   const tokenType = safeString(body.token_type || body.tokenType) || 'long_lived_access_token';
   const unit = normalizeNullableString(body.unit);
   const metadata = isObject(body.metadata) ? body.metadata : {};
+  // POST is an upsert with whole-metadata replacement semantics. Never allow
+  // it to silently erase a governed tracking subtree on an existing
+  // credential; the narrow config writer is the only authority for that path.
+  const existing = await env.TOKEN_VAULT_DB.prepare(
+    `SELECT id, metadata_json
+       FROM credential_tokens
+      WHERE provider = ? AND external_account_id = ? AND token_type = ?`,
+  ).bind(provider, externalAccountId, tokenType).first();
+  if (existing && hasMetaAdsPublishConfig(parseJsonObject(existing.metadata_json))) {
+    return json({ ok: false, error: 'meta_ads_publish_config_writer_required', requestId }, { status: 409 });
+  }
   const now = new Date().toISOString();
   const encrypted = await encryptToken(token, env);
 
@@ -480,12 +509,14 @@ function contract(requestId) {
       listTokens: 'GET /internal/token-vault/v1/tokens?provider=threads|instagram|facebook&active=true',
       createToken: 'POST /internal/token-vault/v1/tokens',
       updateToken: 'PATCH /internal/token-vault/v1/tokens/:id',
+      updateMetaAdsPublishConfig: 'PUT /internal/token-vault/v1/meta-ads-publish/config',
       analyticsOperation: 'POST /internal/token-vault/v1/analytics/operations',
     },
     auth: {
       header: 'Authorization',
       scheme: 'Bearer',
       secret: 'TOKEN_VAULT_API_TOKEN',
+      operational_secret: 'TOKEN_VAULT_N8N_API_TOKEN',
       analytics_secret: 'TOKEN_VAULT_ANALYTICS_API_TOKEN',
       analytics_scope: 'influencer-intelligence',
       analytics_mode: 'shadow|active',
@@ -524,6 +555,10 @@ function normalizeNullableString(value) {
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasMetaAdsPublishConfig(value) {
+  return isObject(value) && Object.prototype.hasOwnProperty.call(value, 'meta_ads_publish');
 }
 
 function parseJsonObject(value) {
