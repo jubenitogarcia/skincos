@@ -917,6 +917,7 @@ jobs:
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID TOKEN_VAULT_META_ADS_CONFIG_TOKEN; do
             [[ -n "${!name:-}" ]] || { echo "Missing required environment secret: $name"; exit 1; }
           done
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN="$TOKEN_VAULT_META_ADS_CONFIG_TOKEN" node -e "const token=String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN||'');if(!/^[\\x21-\\x7e]+$/.test(token))throw new Error('Token Vault Meta Ads config bearer must be printable ASCII without BOM or control characters');"
           [[ "$OPERATION" == deploy ]] || { echo 'Cross-SHA Token Vault rollback is fail-closed because it cannot prove restoration of the matching native Orb snapshot; the deployment path compensates its own transaction automatically.'; exit 1; }
           if [[ "$TARGET" == staging ]]; then
             [[ "$ENABLE_TOKEN_VAULT_DEPLOY_STAGING" == true ]] || { echo 'ENABLE_TOKEN_VAULT_DEPLOY_STAGING must be true'; exit 1; }
