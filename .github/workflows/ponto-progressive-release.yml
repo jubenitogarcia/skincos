@@ -2126,6 +2126,8 @@ jobs:
           done
       - name: Classify whether exact rollback is required
         id: rollback_requirement
+        env:
+          PONTO_RECOVERY_ARTIFACT_ROOT: ${{ runner.temp }}/ponto-ordinary-recovery/journal
         run: |
           set -euo pipefail
           node - "$PONTO_RECOVERY_ARTIFACT_ROOT/watchdog-journal.json" <<'NODE'
