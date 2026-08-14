@@ -4,7 +4,7 @@ import test from "node:test";
 
 const sourceUrl = (relativePath: string) => new URL(`../${relativePath}`, import.meta.url);
 
-test("continuous experience reuses the real shell and keeps the inline finale flow", async () => {
+test("continuous experience reuses the real shell and keeps the special-card finale flow", async () => {
     const [page, localPage, experience, styles, campaignStyles, illustrations, header, headerScrollBehavior, globalStyles, cards, brandMark] = await Promise.all([
         readFile(sourceUrl("src/app/beleza-em-movimento/page.tsx"), "utf8"),
         readFile(sourceUrl("src/app/beleza-em-movimento/local-preview/page.tsx"), "utf8"),
@@ -77,9 +77,10 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /setCurrentFinaleStage\("assembling"\)/);
     assert.match(experience, /BEAUTY_MOVEMENT_MOTION\.finaleCardsEnterMs/);
     assert.match(experience, /BEAUTY_MOVEMENT_MOTION\.finaleMergeMs/);
-    assert.match(experience, /className=\{styles\.inlineFinale\}/);
     assert.match(experience, /renderConfirmationAction/);
-    assert.match(experience, /renderResultStage/);
+    assert.doesNotMatch(experience, /inlineFinale|renderResultStage|Leitura completa|O seu presente de celebração/);
+    assert.match(experience, /isSpecialCardModalOpen/);
+    assert.match(experience, /specialCardReopenActionRef/);
     assert.match(experience, /automática em \{AUTO_ADVANCE_SECONDS\} segundos/);
     assert.doesNotMatch(experience, /confirmationTriggerRef/);
     assert.match(experience, /className=\{styles\.progressButton\}/);
@@ -309,7 +310,7 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(styles, /\.specialCard/);
     assert.match(styles, /@keyframes specialCardFlip/);
     assert.match(styles, /@keyframes specialCardIconFloat/);
-    assert.match(styles, /\.inlineFinale/);
+    assert.doesNotMatch(styles, /\.inlineFinale|\.resultStage|\.invitationPanel|\.benefitPanel|\.resultActions/);
     const heroInstructionStyles = styles.slice(
         styles.indexOf(".heroDeckInstruction {"),
         styles.indexOf(".tableDeckPromptArrow {"),
@@ -431,10 +432,6 @@ test("continuous experience reuses the real shell and keeps the inline finale fl
     assert.match(experience, /onClick=\{action === "confirm" \? \(\) => void handleConfirm\(\) : openSpecialCardModal\}/);
     assert.doesNotMatch(experience, /role=\{interactive \? "button" : undefined\}/);
     assert.doesNotMatch(experience, /aria-label="Cartas finais"/);
-    assert.match(experience, /function drawStoryCardIllustration/);
-    assert.match(experience, /drawStoryCardIllustration\(context, line\.cardId/);
-    assert.match(experience, /createStoryBlob\(reading, initialState\.campaign\.partnerName\)/);
-    assert.match(experience, /getStoryCanvasFont\("--font-brand-ui"/);
     assert.match(illustrations, /case "reward-reserved"/);
     assert.match(illustrations, /case "reward-procedure"/);
     assert.match(illustrations, /case "reward-discount"/);
