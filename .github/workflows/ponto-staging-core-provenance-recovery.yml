@@ -108,6 +108,7 @@ jobs:
           const run = JSON.parse(fs.readFileSync(runPath, "utf8"));
           const surface = JSON.parse(fs.readFileSync(surfacePath, "utf8"));
           const uuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+          const expectedChildReleaseTag = `skincos/release/ponto/${process.env.RELEASE_SHA}`;
           if (
             run.schemaVersion !== 1
             || run.workflow !== "deploy-core-workers.yml"
@@ -115,7 +116,7 @@ jobs:
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
-            || run.headBranch !== "main"
+            || run.headBranch !== expectedChildReleaseTag
             || run.headSha !== process.env.RELEASE_SHA
             || run.repository !== process.env.GITHUB_REPOSITORY
             || run.runId !== surface.runId
@@ -239,7 +240,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: global:ponto-workers-writer
           module: ponto
-          source_sha: ${{ inputs.release_sha }}
+          source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
 
       - name: Download the exact close and historical Core custody
@@ -278,7 +279,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
           resource: global:ponto-workers-writer
           module: ponto
-          source_sha: ${{ inputs.release_sha }}
+          source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
@@ -411,7 +412,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-core-recovery.json
           resource: global:ponto-workers-writer
           module: ponto
-          source_sha: ${{ inputs.release_sha }}
+          source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}

@@ -36,3 +36,11 @@ test("Core provenance recovery is staging-only, exact, and fail-closed", () => {
   assert.match(workflow, /name: Upload immutable Core provenance recovery evidence[\s\S]*?if: always\(\)/);
   assert.doesNotMatch(workflow, /target:\s*production/);
 });
+
+test("Core provenance recovery leases the current trusted controller SHA", () => {
+  assert.equal(
+    (workflow.match(/source_sha: \$\{\{ github\.sha \}\}/g) || []).length,
+    3,
+  );
+  assert.doesNotMatch(workflow, /source_sha:\s*\$\{\{ inputs\.release_sha \}\}/);
+});

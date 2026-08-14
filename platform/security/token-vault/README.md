@@ -159,9 +159,9 @@ durante este gate.
 
 Quando o D1 de staging ainda não contém credencial `instagram`, o workflow
 manual `Influencer Intelligence Staging Shadow` pode selar exatamente uma
-credencial dedicada no Vault. O operador configura os valores somente como
-**environment secrets** do ambiente GitHub `staging`, nunca em chat, URL,
-terminal, commit, artefato ou variável de repositório:
+credencial dedicada no Vault. O operador configura os valores de credencial
+somente como **environment secrets** do ambiente GitHub `staging`, nunca em
+chat, URL, terminal, commit, artefato ou variável de repositório:
 
 - `INFLUENCER_INTELLIGENCE_META_GRAPH_TOKEN`: token long-lived de Login do
   Facebook/Business Login, dedicado ao gate. Não reutilizar `META_ACCESS_TOKEN`
@@ -169,15 +169,20 @@ terminal, commit, artefato ou variável de repositório:
 - `INFLUENCER_INTELLIGENCE_META_GRAPH_INSTAGRAM_ACCOUNT_ID`: identificador
   numérico da conta Instagram profissional conectada à Página que autorizou o
   token.
-- `INFLUENCER_INTELLIGENCE_SHADOW_CREATOR_HANDLE`: único `@handle` aprovado
-  para a jornada posterior `resolve_creator` e `get_profile`.
+
+O creator alvo não é um segredo. O operador o informa como input não secreto
+`shadow_creator_handle` no dispatch manual, exclusivamente quando
+`run_real_router_smoke=true`. O workflow aceita somente uma jornada para esse
+`@handle` aprovado, falha fechada quando ele estiver ausente e não o inclui nas
+evidências redigidas ou nos logs do job.
 
 Para este smoke, o token deve ser de um operador que tem acesso à Página e à
 conta profissional conectada, com os escopos de leitura aprovados no app (em
-particular `instagram_basic`, `pages_show_list`, `pages_read_engagement` e,
-quando disponível, `instagram_manage_insights` e `business_management`). Não
-conceder escopos de publicação, mensagens, follow, like ou comentários para
-esse gate.
+particular `instagram_basic`, `instagram_manage_insights` e
+`pages_read_engagement`). `pages_show_list` só é necessário para descobrir a
+conta raiz; se a função do usuário na Página foi concedida pelo Gerenciador de
+Negócios, acrescentar `ads_read` ou `ads_management`. Não conceder escopos de
+publicação, mensagens, follow, like ou comentários para esse gate.
 
 O endpoint interno de bootstrap não aparece no contrato normal e só aceita
 `POST /internal/token-vault/v1/analytics/staging-bootstrap` autenticado por um
