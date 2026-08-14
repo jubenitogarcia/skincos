@@ -97,6 +97,23 @@ function timekeepingControlStatus(availability, releaseSha, workerVersionId, pee
   if (availability.rolloutStage === 'pilot' && (availability.pilotEmployeeRefs.length !== 1 || availability.pilotIdentityRefs.length !== 1 || availability.pilotIdentityLoginRefs.length !== 1 || availability.pilotNetworkContexts.length !== 1 || availability.pilotUnits.length !== 1 || availability.percentage !== 100)) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
   return { ready: true, code: availability.rolloutStage.toUpperCase() }
 }
+function maintenanceInternalProvisioningStatus(availability, releaseSha, workerVersionId, identityReleaseSha, identityVersionId) {
+  if (availability?.state !== 'maintenance') return { ready: false, code: 'MODULE_MAINTENANCE' }
+  if (!FULL_RELEASE_SHA.test(releaseSha) || identityReleaseSha !== releaseSha) return { ready: false, code: 'RELEASE_AFFINITY_MISMATCH' }
+  if (!CLOUDFLARE_VERSION_ID.test(workerVersionId) || !CLOUDFLARE_VERSION_ID.test(identityVersionId)) return { ready: false, code: 'VERSION_AFFINITY_MISMATCH' }
+
+  // A latched emergency control deliberately omits mutable release metadata.
+  // When an explicit maintenance tuple exists, it remains an exact affinity
+  // requirement; otherwise the signed Identity version and local immutable SHA
+  // are the only bootstrap identity available while public traffic stays closed.
+  const configuredReleaseSha = String(availability?.releaseSha || '').trim().toLowerCase()
+  if (configuredReleaseSha && configuredReleaseSha !== releaseSha) return { ready: false, code: 'RELEASE_AFFINITY_MISMATCH' }
+  const configuredTimekeepingVersion = String(availability?.versions?.timekeeping?.candidate || '').trim()
+  const configuredIdentityVersion = String(availability?.versions?.identityWorkforce?.candidate || '').trim()
+  if (!configuredTimekeepingVersion && !configuredIdentityVersion) return { ready: true, code: 'MAINTENANCE_INTERNAL_BOOTSTRAP' }
+  if (!exactControlledVersions(availability, workerVersionId, identityVersionId, 'identityWorkforce')) return { ready: false, code: 'VERSION_AFFINITY_MISMATCH' }
+  return { ready: true, code: 'MAINTENANCE_INTERNAL_BOOTSTRAP' }
+}
 function gatewayAffinityFor(request, env, releaseSha = releaseShaFor(env)) {
   const gatewayReleaseSha = String(request.headers.get('x-skincos-gateway-release-sha') || '').trim().toLowerCase()
   const gatewayEnvironment = String(request.headers.get('x-skincos-gateway-environment') || '').trim().toLowerCase()
@@ -1002,6 +1019,7 @@ export async function handleTimekeeping(request, env) {
   const runtimeReady = runtimeBindingsReady(env)
   const scheduleReady = Boolean(env.SCHEDULE) && hasRuntimeBinding(env, 'ESCALA_ACTOR_HMAC_KEY')
   const moduleHeaders = { 'x-skincos-module-state': availability.state }
+  const maintenanceInternalProvisioning = availability.state === 'maintenance' && internalOnboarding && request.method === 'POST'
   const dependencies = {
     d1: dependencyState(Boolean(env.DB)),
     schedule: dependencyState(scheduleReady, { required: false, reason: scheduleReady ? '' : 'NOT_CONFIGURED' }),
@@ -1075,7 +1093,7 @@ export async function handleTimekeeping(request, env) {
   if (availability.state === 'canary' && internalOnboarding) {
     return json(403, { ok: false, error: 'TIMEKEEPING_CANARY_NOT_GRANTED', code: 'TIMEKEEPING_CANARY_NOT_GRANTED' }, requestId, moduleHeaders)
   }
-  if (!controlStatus.ready) {
+  if (!controlStatus.ready && !maintenanceInternalProvisioning) {
     if (availability.state === 'maintenance' || availability.state === 'disabled') {
       return moduleUnavailableResponse('timekeeping', availability, requestId, { publicOnly: true })
     }
@@ -1109,6 +1127,19 @@ export async function handleTimekeeping(request, env) {
     }
   }
   const db = env.DB
+  let maintenanceInternalServiceAuth = null
+  if (maintenanceInternalProvisioning) {
+    const bootstrapStatus = maintenanceInternalProvisioningStatus(
+      availability,
+      releaseSha,
+      workerVersionIdFor(env),
+      identityReleaseSha,
+      identityVersionId,
+    )
+    if (!bootstrapStatus.ready) return json(503, { ok: false, error: bootstrapStatus.code, code: bootstrapStatus.code }, requestId, moduleHeaders)
+    maintenanceInternalServiceAuth = await identityServiceAuthorized(request, env, bodyHash, db)
+    if (!maintenanceInternalServiceAuth.ok) return json(maintenanceInternalServiceAuth.error === 'SERVICE_REPLAY' ? 409 : 401, { ok: false, error: maintenanceInternalServiceAuth.error }, requestId, moduleHeaders)
+  }
   if (internalContractProbe && request.method === 'GET') {
     const serviceAuth = await identityServiceAuthorized(request, env, bodyHash, db, { consumeNonce: false })
     if (!serviceAuth.ok) return json(401, { ok: false, error: serviceAuth.error }, requestId, moduleHeaders)
@@ -1126,7 +1157,7 @@ export async function handleTimekeeping(request, env) {
     }, requestId, moduleHeaders)
   }
   if (path === '/api/ponto/internal/onboarding' && request.method === 'POST') {
-    const serviceAuth = await identityServiceAuthorized(request, env, bodyHash, db)
+    const serviceAuth = maintenanceInternalServiceAuth || await identityServiceAuthorized(request, env, bodyHash, db)
     if (!serviceAuth.ok) return json(serviceAuth.error === 'SERVICE_REPLAY' ? 409 : 401, { ok: false, error: serviceAuth.error }, requestId)
     try {
       const data = await syncIdentityOnboarding(db, await readJson(request), requestId)
@@ -1138,7 +1169,7 @@ export async function handleTimekeeping(request, env) {
     }
   }
   if (path === '/api/ponto/internal/onboarding/status' && request.method === 'POST') {
-    const serviceAuth = await identityServiceAuthorized(request, env, bodyHash, db)
+    const serviceAuth = maintenanceInternalServiceAuth || await identityServiceAuthorized(request, env, bodyHash, db)
     if (!serviceAuth.ok) return json(serviceAuth.error === 'SERVICE_REPLAY' ? 409 : 401, { ok: false, error: serviceAuth.error }, requestId)
     try {
       const data = await syncIdentityOnboardingStatus(db, await readJson(request), requestId)

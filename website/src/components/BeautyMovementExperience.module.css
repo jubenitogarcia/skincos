@@ -641,7 +641,7 @@
   gap: clamp(14px, 2.8vw, 30px);
   width: min(100%, 920px);
   margin: 2px auto 0;
-  --finale-card-height: clamp(280px, 25vw, 304px);
+  --finale-card-height: clamp(312px, 27vw, 324px);
   --finale-special-card-height: 430px;
 }
 
@@ -2311,7 +2311,7 @@
   .finaleCardGrid {
     grid-template-columns: 1fr;
     width: min(100%, 420px);
-    --finale-card-height: 280px;
+    --finale-card-height: 312px;
     --finale-special-card-height: 410px;
   }
 
