@@ -51,7 +51,7 @@ test("preview dispatches never require a capability while every governed mutatio
     target: "preview",
     release_scope: "ponto",
   }), "");
-  for (const target of ["staging", "pilot", "canary", "production", "rollback"]) {
+  for (const target of ["staging", "bootstrap", "pilot", "canary", "production", "rollback"]) {
     assert.equal(governedLeaseKeyFor("deploy-timekeeping.yml", {
       target,
       release_scope: "ponto",

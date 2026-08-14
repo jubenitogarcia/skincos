@@ -9,7 +9,7 @@ on:
         required: true
         default: preview
         type: choice
-        options: [preview, staging, pilot, canary, production, rollback]
+        options: [preview, staging, bootstrap, pilot, canary, production, rollback]
       release_sha:
         description: Exact immutable coordinator SHA at main for every surface
         required: true
@@ -123,7 +123,7 @@ jobs:
       # uses the dedicated coordinator; production remains blocked until its
       # separate endpoint and custody are provisioned.
       SKINCOS_GLOBAL_COORDINATION_REQUIRED: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
-      SKINCOS_GLOBAL_COORDINATOR_URL: ${{ contains(fromJSON('["preview","staging"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_URL || contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || '' }}
+      SKINCOS_GLOBAL_COORDINATOR_URL: ${{ contains(fromJSON('["preview","staging"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_URL || contains(fromJSON('["bootstrap","pilot","canary","production","rollback"]'), inputs.stage) && vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL || '' }}
       SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
       SKINCOS_GLOBAL_COORDINATION_KEY_ID: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
     steps:
@@ -145,7 +145,7 @@ jobs:
           const releaseSha = String(process.env.RELEASE_SHA || "").toLowerCase();
           const coordinatorRunId = String(process.env.GITHUB_RUN_ID || "");
           if (
-            !["preview", "staging", "pilot", "canary", "production", "rollback"].includes(stage)
+            !["preview", "staging", "bootstrap", "pilot", "canary", "production", "rollback"].includes(stage)
             || !/^[0-9a-f]{40}$/.test(releaseSha)
             || !/^[1-9][0-9]*$/.test(coordinatorRunId)
           ) throw new Error("recovery intent identity is invalid");
@@ -190,6 +190,7 @@ jobs:
           case "$STAGE" in
             preview) predecessor='' ;;
             staging) predecessor=preview ;;
+            bootstrap) predecessor=staging ;;
             pilot) predecessor=staging ;;
             canary) predecessor=pilot ;;
             production) predecessor=canary ;;
@@ -307,7 +308,7 @@ jobs:
             "$RUNNER_TEMP/ponto-environment.json" \
             "$RUNNER_TEMP/ponto-environment-branch-policies.json"
       - name: Refuse a latched Ponto emergency stop before issuing capabilities
-        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        if: ${{ contains(fromJSON('["staging","bootstrap","pilot","canary","production","rollback"]'), inputs.stage) }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -317,7 +318,7 @@ jobs:
           set -euo pipefail
           case "$STAGE" in
             staging) NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW"; OPPOSITE_NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW" ;;
-            pilot|canary|production|rollback) NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW"; OPPOSITE_NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW" ;;
+            bootstrap|pilot|canary|production|rollback) NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW"; OPPOSITE_NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW" ;;
             *) echo 'Unsupported emergency-latch release stage'; exit 1 ;;
           esac
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID NAMESPACE_ID; do
@@ -400,7 +401,7 @@ jobs:
           NODE
           rm -f "$RUNNER_TEMP"/ponto-capability-*.json
       - name: Preflight selected environment secret-root custody
-        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        if: ${{ contains(fromJSON('["staging","bootstrap","pilot","canary","production","rollback"]'), inputs.stage) }}
         env:
           # Environment secret/variable metadata requires the protected
           # read-only administration token; the automatic token is not granted
@@ -484,7 +485,7 @@ jobs:
             "$RUNNER_TEMP/ponto-root-environment-variables.json" \
             "$RUNNER_TEMP/ponto-root-repository-variables.json"
       - name: Require the single-operator no-review true-only emergency close path
-        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        if: ${{ contains(fromJSON('["staging","bootstrap","pilot","canary","production","rollback"]'), inputs.stage) }}
         env:
           # Emergency environment secret/variable metadata requires the protected
           # read-only administration token; the automatic token is not granted
@@ -728,7 +729,7 @@ jobs:
             "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json" \
             "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json"
       - name: Attest unconditional edge blocks before any candidate mutation
-        if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+        if: ${{ contains(fromJSON('["staging","bootstrap","pilot","canary","production"]'), inputs.stage) }}
         env:
           PONTO_WAF_READ_API_TOKEN: ${{ secrets.PONTO_WAF_READ_API_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
@@ -869,7 +870,7 @@ jobs:
           node .github/scripts/ponto-required-check-dispatch.mjs \
             "$PONTO_ARTIFACT_DIR/runs/required-check-workflows.json"
       - name: Prove selected root separation before any candidate mutation
-        if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
+        if: ${{ inputs.stage == 'staging' || inputs.stage == 'bootstrap' || inputs.stage == 'pilot' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
@@ -877,7 +878,7 @@ jobs:
         run: |
           set -euo pipefail
           target="$STAGE"
-          [[ "$target" == pilot ]] && target=production
+          [[ "$target" == bootstrap || "$target" == pilot ]] && target=production
           staging_run=''
           [[ "$target" == production ]] && staging_run="$PREDECESSOR_RUN_ID"
           node - "$RUNNER_TEMP/provision-workers.json" "$target" "$staging_run" <<'NODE'
@@ -987,7 +988,7 @@ jobs:
           echo "PONTO_BASELINE_RUN_ID=$baseline_run_id" >> "$GITHUB_ENV"
           rm -f "$RUNNER_TEMP/baseline-workflow.json" "$RUNNER_TEMP/baseline-runs.json" "$RUNNER_TEMP/reused-baseline-run.json"
       - name: Put Ponto in maintenance before staging or live mutation
-        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        if: ${{ contains(fromJSON('["staging","bootstrap","pilot","canary","production","rollback"]'), inputs.stage) }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1082,14 +1083,16 @@ jobs:
           const fs = require("fs");
           const inputs = { target: process.env.STAGE, release_scope: "ponto", release_sha: process.env.RELEASE_SHA, orchestrator_run_id: process.env.GITHUB_RUN_ID };
           if (process.env.STAGE === "staging") inputs.preview_run_id = process.env.PREDECESSOR_RUN_ID;
-          if (["staging", "pilot"].includes(process.env.STAGE)) {
+          if (["staging", "bootstrap", "pilot"].includes(process.env.STAGE)) {
             if (!/^[0-9]+$/.test(process.env.PONTO_ROOT_CUSTODY_RUN_ID || "")) {
-              throw new Error("staging and pilot require the exact pre-mutation root custody run");
+              throw new Error("staging, bootstrap, and pilot require the exact pre-mutation root custody run");
             }
             inputs.root_custody_run_id = process.env.PONTO_ROOT_CUSTODY_RUN_ID;
           }
-          if (["pilot", "canary", "production", "rollback"].includes(process.env.STAGE)) {
+          if (["bootstrap", "pilot", "canary", "production", "rollback"].includes(process.env.STAGE)) {
             inputs.predecessor_run_id = process.env.PREDECESSOR_RUN_ID;
+          }
+          if (["pilot", "canary", "production", "rollback"].includes(process.env.STAGE)) {
             inputs.rollback_from_stage = process.env.ROLLBACK_FROM_STAGE;
             if (process.env.STAGE === "pilot") inputs.baseline_run_id = process.env.PONTO_BASELINE_RUN_ID;
           }
@@ -1105,6 +1108,7 @@ jobs:
           fi
       - name: Publish and attest canonical Identity/Workforce surface
         id: identity
+        if: ${{ inputs.stage != 'bootstrap' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
@@ -1147,6 +1151,7 @@ jobs:
           fi
       - name: Publish and attest canonical Core API surface
         id: core
+        if: ${{ inputs.stage != 'bootstrap' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
@@ -1181,6 +1186,7 @@ jobs:
           fi
       - name: Publish and attest canonical CRM Pages surface
         id: pages
+        if: ${{ inputs.stage != 'bootstrap' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
@@ -1623,13 +1629,18 @@ jobs:
           const path = require("path");
           const root = process.argv[2];
           const read = file => JSON.parse(fs.readFileSync(file, "utf8"));
-          const surfaces = {
-            timekeeping: read(path.join(root, "surfaces/timekeeping/surface.json")),
-            coreApi: read(path.join(root, "surfaces/core/surface.json")),
-            identityWorkforce: read(path.join(root, "surfaces/identity/surface.json")),
-            crmPages: read(path.join(root, "surfaces/pages/surface.json")),
-          };
-          if (process.env.STAGE === "staging" || process.env.STAGE === "pilot") {
+          const bootstrap = process.env.STAGE === "bootstrap";
+          const surfaces = bootstrap
+            ? {
+                timekeeping: read(path.join(root, "surfaces/timekeeping/surface.json")),
+              }
+            : {
+                timekeeping: read(path.join(root, "surfaces/timekeeping/surface.json")),
+                coreApi: read(path.join(root, "surfaces/core/surface.json")),
+                identityWorkforce: read(path.join(root, "surfaces/identity/surface.json")),
+                crmPages: read(path.join(root, "surfaces/pages/surface.json")),
+              };
+          if (["staging", "bootstrap", "pilot"].includes(process.env.STAGE)) {
             const preflightFile = path.join(root, "provisioning/workers/root-custody.json");
             const preflightRaw = fs.readFileSync(preflightFile);
             const preflight = JSON.parse(preflightRaw);
@@ -1668,29 +1679,53 @@ jobs:
           fs.writeFileSync(path.join(root, "surfaces.json"), JSON.stringify(surfaces));
           const checkpoints = Object.fromEntries([
             ["timekeeping", surfaces.timekeeping.checkpoint],
-            ["identityWorkforce", surfaces.identityWorkforce.checkpoint],
+            ["identityWorkforce", surfaces.identityWorkforce?.checkpoint],
           ].filter(([, value]) => value));
           fs.writeFileSync(path.join(root, "checkpoint.json"), JSON.stringify(Object.keys(checkpoints).length ? checkpoints : null));
           const migrations = [
             ...(surfaces.timekeeping.migrations || []).map(migration => ({ unit: "timekeeping", ...migration })),
-            ...(surfaces.identityWorkforce.migrations || []).map(migration => ({ unit: "identityWorkforce", ...migration })),
+            ...(surfaces.identityWorkforce?.migrations || []).map(migration => ({ unit: "identityWorkforce", ...migration })),
           ];
           fs.writeFileSync(path.join(root, "migrations.json"), JSON.stringify(migrations));
           const stagingDrill = process.env.STAGE === "staging"
             ? read(path.join(root, "staging-rollback-drill/ponto-staging-rollback-drill.json"))
             : null;
-          fs.writeFileSync(path.join(root, "rollback.json"), JSON.stringify({
-            executed: process.env.STAGE === "rollback" || stagingDrill?.passed === true,
-            mode: stagingDrill ? "staging-drill-restored-candidate" : (process.env.STAGE === "rollback" ? "live-rollback" : "not-executed"),
-            evidenceRunId: stagingDrill?.runId || "",
-            predecessorRunId: stagingDrill?.predecessor?.runId || "",
-            restoredCandidate: stagingDrill?.passed === true,
-            timekeepingVersionId: surfaces.timekeeping.incumbentVersionId,
-            coreVersionId: surfaces.coreApi.incumbentVersionId,
-            identityVersionId: surfaces.identityWorkforce.incumbentVersionId,
-            pagesDeploymentId: surfaces.crmPages.rollbackDeploymentId,
-          }));
-          if (process.env.STAGE === "staging") {
+          fs.writeFileSync(path.join(root, "rollback.json"), JSON.stringify(
+            bootstrap
+              ? {
+                  executed: false,
+                  mode: "timekeeping-bootstrap-maintenance",
+                  timekeepingVersionId: surfaces.timekeeping.incumbentVersionId,
+                }
+              : {
+                  executed: process.env.STAGE === "rollback" || stagingDrill?.passed === true,
+                  mode: stagingDrill ? "staging-drill-restored-candidate" : (process.env.STAGE === "rollback" ? "live-rollback" : "not-executed"),
+                  evidenceRunId: stagingDrill?.runId || "",
+                  predecessorRunId: stagingDrill?.predecessor?.runId || "",
+                  restoredCandidate: stagingDrill?.passed === true,
+                  timekeepingVersionId: surfaces.timekeeping.incumbentVersionId,
+                  coreVersionId: surfaces.coreApi.incumbentVersionId,
+                  identityVersionId: surfaces.identityWorkforce.incumbentVersionId,
+                  pagesDeploymentId: surfaces.crmPages.rollbackDeploymentId,
+                },
+          ));
+          if (bootstrap) {
+            const maintenance = surfaces.timekeeping.maintenance;
+            const passed = maintenance?.confirmed === true
+              && maintenance?.state === "maintenance"
+              && maintenance?.publicAvailable === false
+              && maintenance?.ready === false
+              && /^[0-9a-f]{64}$/.test(String(maintenance?.healthSha256 || ""));
+            fs.writeFileSync(path.join(root, "slo-summary.json"), JSON.stringify({
+              passed,
+              samples: 1,
+              errors: passed ? 0 : 1,
+              p95Ms: 0,
+              windowSeconds: 1,
+              digest: maintenance?.healthSha256 || "",
+              mode: "maintenance-bootstrap",
+            }));
+          } else if (process.env.STAGE === "staging") {
             const reportFile = path.join(root, "staging-slo/ponto-staging-report.json");
             const contractFile = path.join(root, "staging-slo/ponto-staging-contract.json");
             const teardownFile = path.join(root, "staging-slo/ponto-staging-teardown-report.json");

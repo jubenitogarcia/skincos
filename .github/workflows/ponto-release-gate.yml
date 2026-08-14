@@ -107,6 +107,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$STAGE" in
+            bootstrap) predecessor=staging ;;
             pilot) predecessor=staging ;;
             canary) predecessor=pilot ;;
             production) predecessor=canary ;;
@@ -114,7 +115,7 @@ jobs:
               [[ "$ROLLBACK_FROM_STAGE" =~ ^(pilot|canary|production)$ ]] || { echo 'rollback_from_stage must identify the current live stage'; exit 1; }
               predecessor="$ROLLBACK_FROM_STAGE"
               ;;
-            *) echo 'Ponto progressive gate accepts only pilot, canary, production, or rollback'; exit 1 ;;
+            *) echo 'Ponto progressive gate accepts only bootstrap, pilot, canary, production, or rollback'; exit 1 ;;
           esac
           echo "predecessor=$predecessor" >> "$GITHUB_OUTPUT"
       - name: Verify source ancestry and predecessor run provenance

@@ -474,7 +474,7 @@ let capabilityTarget = "";
 let capabilityVerifier;
 if (leaseKey) {
   const orchestratorStage = String(process.env.STAGE || "").trim().toLowerCase();
-  if (!["staging", "pilot", "canary", "production", "rollback"].includes(orchestratorStage)) {
+  if (!["staging", "bootstrap", "pilot", "canary", "production", "rollback"].includes(orchestratorStage)) {
     throw new Error("governed child dispatch requires the exact orchestrator stage");
   }
   capabilityTarget = orchestratorStage === "staging" ? "staging" : "production";
