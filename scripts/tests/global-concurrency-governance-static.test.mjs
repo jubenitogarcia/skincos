@@ -94,6 +94,7 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
     "ENABLE_TOKEN_VAULT_DEPLOY_STAGING",
     "ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY",
     "TOKEN_VAULT_META_ADS_CONFIG_TOKEN",
+    "TOKEN_VAULT_N8N_API_TOKEN",
     "TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST",
     "Capture Token Vault D1 Time Travel recovery bookmark before migrations",
     "d1 time-travel info",
@@ -115,11 +116,12 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.doesNotMatch(workflow, /TOKEN_VAULT_BACKUP_PASSPHRASE/);
   for (const legacySecret of [
     "TOKEN_VAULT_API_TOKEN",
-    "TOKEN_VAULT_N8N_API_TOKEN",
     "TOKEN_VAULT_ENCRYPTION_KEY",
   ]) {
     assert.doesNotMatch(workflow, new RegExp(`secrets\\.${legacySecret}`));
   }
+  assert.match(workflow, /inputs\.target == 'staging' && secrets\.TOKEN_VAULT_N8N_API_TOKEN \|\| ''/);
+  assert.doesNotMatch(workflow, /TOKEN_VAULT_N8N_API_TOKEN:\s*\$\{\{\s*secrets\.TOKEN_VAULT_N8N_API_TOKEN\s*}}/);
   assert.match(workflow, /versions upload[\s\S]*?--keep-vars[\s\S]*?--strict[\s\S]*?--secrets-file/);
   assert.match(workflow, /legacy alpha backend; Time Travel recovery is unavailable and the release is ineligible/);
   assert.ok(workflow.indexOf("Capture Token Vault D1 Time Travel recovery bookmark before migrations") < workflow.indexOf("Apply additive Token Vault migrations atomically"));
@@ -133,6 +135,10 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.doesNotMatch(release, /for name [^\n]*TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST/);
   assert.match(release, /Object\.keys\(manifest\)\.length !== 1/);
   assert.match(release, /TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST is required only when legacy bootstrap is detected/);
+  assert.match(release, /TOKEN_VAULT_N8N_API_TOKEN must be owned by the staging Environment/);
+  assert.match(release, /if \[\[ "\$TARGET" == staging \]\]; then[\s\S]*?TOKEN_VAULT_N8N_API_TOKEN/);
+  assert.match(release, /if \(process\.env\.TARGET === 'production'\) requiredInherited\.push\('TOKEN_VAULT_N8N_API_TOKEN'\)/);
+  assert.match(release, /if \(process\.env\.TARGET === 'staging'\) \{[\s\S]*?secrets\.TOKEN_VAULT_N8N_API_TOKEN/);
   assert.match(release, /expected_config_authority_revision: expectedRevision/);
   assert.match(release, /entries: manifest\.entries/);
   assert.match(release, /bootstrap_operation_key="meta-ads-bootstrap:\$\{RELEASE_SHA:0:12\}:\$\{GITHUB_RUN_ID\}:\$\{GITHUB_RUN_ATTEMPT\}"/);
