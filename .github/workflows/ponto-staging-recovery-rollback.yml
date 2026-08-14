@@ -307,7 +307,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: release:ponto
           module: ponto
-          source_sha: ${{ inputs.release_sha }}
+          source_sha: ${{ github.sha }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-staging-rollback.json
 
       - name: Validate current source and exact failed-run provenance
@@ -495,7 +495,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-staging-rollback.json
           resource: release:ponto
           module: ponto
-          source_sha: ${{ inputs.release_sha }}
+          source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
@@ -633,7 +633,7 @@ jobs:
           proof_file: ${{ runner.temp }}/skincos-global-coordination-ponto-staging-rollback.json
           resource: release:ponto
           module: ponto
-          source_sha: ${{ inputs.release_sha }}
+          source_sha: ${{ github.sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
