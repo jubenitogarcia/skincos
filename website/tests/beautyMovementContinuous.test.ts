@@ -233,12 +233,15 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /role="dialog"/);
     assert.match(experience, /aria-modal="true"/);
 
-    assert.match(styles, /--bm-bg: #fafafa/i);
-    assert.match(styles, /--bm-ink: #303030/i);
-    assert.match(styles, /--bm-muted: #505050/i);
-    assert.match(styles, /--bm-line: #d0d0d0/i);
-    assert.match(styles, /--bm-yellow: #f5b301/i);
+    assert.match(styles, /--bm-bg: #102720/i);
+    assert.match(styles, /--bm-ink: #17362e/i);
+    assert.match(styles, /--bm-muted: #5d7168/i);
+    assert.match(styles, /--bm-line: #c5b58f/i);
+    assert.match(styles, /--bm-yellow: #e5bd31/i);
     assert.doesNotMatch(styles, /Georgia|--bm-plum|--bm-coral|linear-gradient/i);
+    assert.match(styles, /\.rhythmThread \{/);
+    assert.match(styles, /\.heroKicker \{/);
+    assert.match(styles, /--font-beauty-movement-editorial/);
     assert.doesNotMatch(styles, /\.autoAdvanceNumber/);
     assert.match(styles, /@keyframes autoAdvanceProgress/);
     assert.match(styles, /@keyframes cardIllustrationDraw/);
@@ -247,7 +250,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /@keyframes cardFlipAndSettle/);
     assert.match(styles, /@keyframes cardSparkle/);
     assert.match(styles, /@keyframes deckDealPulse/);
-    assert.doesNotMatch(styles, /@keyframes deckReceivePulse/);
+    assert.match(styles, /@keyframes deckReceivePulse/);
     assert.match(styles, /@keyframes deckStageDeal/);
     assert.match(styles, /@keyframes deckStageExpand/);
     assert.match(styles, /@keyframes deckStageCollect/);
@@ -355,7 +358,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /\.specialCardStage \{[\s\S]*gap: 0;/);
     assert.match(styles, /\.specialCardStageReopen \{[\s\S]*min-height: 430px/);
     assert.doesNotMatch(styles, /\.specialCardReopenCard/);
-    assert.match(styles, /\.specialCardModalOverlay \{[\s\S]*--bm-ink: #303030[\s\S]*position: fixed[\s\S]*backdrop-filter: blur\(10px\)/);
+    assert.match(styles, /\.specialCardModalOverlay \{[\s\S]*--bm-ink: #17362e[\s\S]*position: fixed[\s\S]*backdrop-filter: none/);
     assert.match(styles, /\.specialCardModalDialog \{[\s\S]*place-items: center/);
     assert.match(styles, /\.specialCardModalClose \{[\s\S]*position: absolute/);
     assert.match(styles, /@keyframes specialCardModalBackdropEnter/);
@@ -442,7 +445,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.doesNotMatch(experience, /Arial, sans-serif/);
     assert.match(illustrations, /beleza-presenca/);
     assert.match(illustrations, /celebracao-encontro/);
-    assert.match(campaignStyles, /background: #fafafa/i);
+    assert.match(campaignStyles, /#f4eedf/i);
     assert.doesNotMatch(campaignStyles, /Georgia|coral|plum|linear-gradient|#fffaf2/i);
     assert.doesNotMatch(experience, /confirmationStage|confirmationIntro|contactSummary|confirmationForm/);
     assert.doesNotMatch(styles, /confirmationStage|confirmationIntro|contactSummary|confirmationForm/);

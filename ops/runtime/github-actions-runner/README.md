@@ -106,7 +106,9 @@ apply, without extending approval to another release or arbitrary operation.
 
 The bridge removes the previous manual GitHub-to-mini-PC copy gap. If an
 authenticated GitHub session and native root/platform trust already exist,
-runner registration is executable by Codex; genuinely nonexistent secrets,
-MFA/re-authentication, or unavailable platform trust remain the only bootstrap
-boundaries. Routine rotation and reconciliation are automated through the same
-guarded workflow.
+runner registration is executable by Codex. An absent `INTERNAL GENERATED
+SECRET` follows the autonomy policy and is provisioned when the mission and
+canonical-store access permit it; MFA/re-authentication, unavailable external
+credential issuance/rotation, or unavailable platform trust remain the only
+bootstrap boundaries. Routine rotation and reconciliation are automated through
+the same guarded workflow.

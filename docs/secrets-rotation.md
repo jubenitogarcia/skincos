@@ -1,7 +1,7 @@
 # Secrets & Rotation Playbook
 
 ## Objetivo
-Garantir que segredos críticos (GitHub, Cloudflare, backend) tenham **escopo mínimo**, **rotação periódica** e **procedimento de emergência** documentado.
+Garantir que segredos de GitHub, Cloudflare e backend tenham **escopo mínimo**, **rotação periódica** e **procedimento de emergência** documentado; o risco decorre do efeito e da reversibilidade, não do nome do secret.
 
 ## Inventário mínimo (por área)
 
