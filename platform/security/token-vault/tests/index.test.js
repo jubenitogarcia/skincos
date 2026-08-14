@@ -6,6 +6,7 @@ const encoder = new TextEncoder();
 const TEST_API_TOKEN = ['unit', 'auth', 'token'].join('-');
 const TEST_OPERATIONAL_TOKEN = ['unit', 'operational', 'token'].join('-');
 const TEST_ANALYTICS_TOKEN = ['unit', 'analytics', 'token'].join('-');
+const TEST_META_ADS_CONFIG_TOKEN = ['unit', 'meta', 'ads', 'config', 'token'].join('-');
 const TEST_ENCRYPTION_KEY = ['unit', 'encryption', 'key', 'with', 'enough', 'length'].join('-');
 const THREADS_TOKEN = ['threads', 'fixture', 'token'].join('-');
 const FACEBOOK_TOKEN = ['facebook', 'fixture', 'token'].join('-');
@@ -85,6 +86,7 @@ function env(db) {
     TOKEN_VAULT_API_TOKEN: TEST_API_TOKEN,
     TOKEN_VAULT_N8N_API_TOKEN: TEST_OPERATIONAL_TOKEN,
     TOKEN_VAULT_ANALYTICS_API_TOKEN: TEST_ANALYTICS_TOKEN,
+    TOKEN_VAULT_META_ADS_CONFIG_TOKEN: TEST_META_ADS_CONFIG_TOKEN,
     TOKEN_VAULT_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
     REQUIRE_AUTH: 'true',
     WORKER_AUTH_HEADER_NAME: 'Authorization',
@@ -99,6 +101,10 @@ function authHeaders() {
 
 function operationalAuthHeaders() {
   return { Authorization: `Bearer ${TEST_OPERATIONAL_TOKEN}` };
+}
+
+function metaAdsConfigAuthHeaders() {
+  return { Authorization: `Bearer ${TEST_META_ADS_CONFIG_TOKEN}` };
 }
 
 async function encryptForSeed(token, secret) {
@@ -161,6 +167,18 @@ test('health stays unhealthy when the operational Orb credential is absent', asy
   assert.equal(body.checks.n8nApiToken, false);
 });
 
+test('meta ads config credential is optional for worker health', async () => {
+  const db = new FakeDb();
+  const environment = env(db);
+  delete environment.TOKEN_VAULT_META_ADS_CONFIG_TOKEN;
+  const response = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: authHeaders() }),
+    environment,
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).ok, true);
+});
+
 test('analytics credential cannot reach write-capable sibling gateways', async () => {
   const db = new FakeDb();
   const socialResponse = await handleRequest(
@@ -198,13 +216,128 @@ test('invalid authentication configuration fails closed', async () => {
 test('configured worker secrets must remain pairwise distinct', async () => {
   const db = new FakeDb();
   const environment = env(db);
-  environment.TOKEN_VAULT_ANALYTICS_API_TOKEN = TEST_API_TOKEN;
+  environment.TOKEN_VAULT_META_ADS_CONFIG_TOKEN = TEST_API_TOKEN;
   const response = await handleRequest(
     new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: authHeaders() }),
     environment,
   );
   assert.equal(response.status, 500);
   assert.equal((await response.json()).error, 'invalid_worker_secret_configuration');
+});
+
+test('meta ads config credential is limited to configuration reads and governed bootstrap routing', async () => {
+  const db = new FakeDb();
+  const healthResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: metaAdsConfigAuthHeaders() }),
+    env(db),
+  );
+  assert.equal(healthResponse.status, 200);
+
+  const contractResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/contract', { headers: metaAdsConfigAuthHeaders() }),
+    env(db),
+  );
+  assert.equal(contractResponse.status, 200);
+  assert.equal((await contractResponse.json()).auth.meta_ads_config_secret, 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN');
+
+  const configResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config', { headers: metaAdsConfigAuthHeaders() }),
+    env(db),
+  );
+  assert.equal(configResponse.status, 409);
+  assert.equal((await configResponse.json()).config_authority_mode, 'legacy_bootstrap');
+
+  const bootstrapResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config/bootstrap', {
+      method: 'POST',
+      headers: { ...metaAdsConfigAuthHeaders(), 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    env(db),
+  );
+  assert.notEqual(bootstrapResponse.status, 403);
+  assert.notEqual((await bootstrapResponse.json()).error, 'meta_ads_config_credential_scope_required');
+
+  const rollbackResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback', {
+      method: 'POST',
+      headers: { ...metaAdsConfigAuthHeaders(), 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    env(db),
+  );
+  assert.notEqual(rollbackResponse.status, 403);
+  assert.notEqual((await rollbackResponse.json()).error, 'meta_ads_config_credential_scope_required');
+
+  const exerciseResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config/staging-exercise', {
+      method: 'POST',
+      headers: { ...metaAdsConfigAuthHeaders(), 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    env(db),
+  );
+  assert.notEqual(exerciseResponse.status, 403);
+  assert.notEqual((await exerciseResponse.json()).error, 'meta_ads_config_credential_scope_required');
+});
+
+test('operational credential cannot invoke Meta Ads bootstrap or staging exercise mutations', async () => {
+  const db = new FakeDb();
+  for (const pathname of [
+    '/v1/meta-ads-publish/config/bootstrap',
+    '/v1/meta-ads-publish/config/bootstrap/rollback',
+    '/v1/meta-ads-publish/config/staging-exercise',
+  ]) {
+    const response = await handleRequest(
+      new Request(`https://api.skincos.com.br/internal/token-vault${pathname}`, {
+        method: 'POST',
+        headers: { ...operationalAuthHeaders(), 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      env(db),
+    );
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, 'meta_ads_config_credential_required');
+  }
+});
+
+test('meta ads config credential cannot access token, analytics, social, or Meta Ads run gateways', async () => {
+  const db = new FakeDb();
+  const requests = [
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/tokens?active=true', { headers: metaAdsConfigAuthHeaders() }),
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/analytics/operations', {
+      method: 'POST',
+      headers: { ...metaAdsConfigAuthHeaders(), 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/social-publish/operations', {
+      method: 'POST',
+      headers: { ...metaAdsConfigAuthHeaders(), 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/runs', {
+      method: 'POST',
+      headers: { ...metaAdsConfigAuthHeaders(), 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/runs/test-run/operations', {
+      method: 'POST',
+      headers: { ...metaAdsConfigAuthHeaders(), 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config', {
+      method: 'PUT',
+      headers: { ...metaAdsConfigAuthHeaders(), 'content-type': 'application/json' },
+      body: '{}',
+    }),
+  ];
+
+  for (const request of requests) {
+    const response = await handleRequest(request, env(db));
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, 'meta_ads_config_credential_scope_required');
+  }
+  assert.equal(db.tokens.length, 0);
 });
 
 test('routes social publication requests to the fail-closed gateway', async () => {

@@ -331,28 +331,154 @@ jobs:
           }
           NODE
 
-      - name: Read back production Token Vault authenticated health after activation
-        id: worker_health_readback
+      - name: Bootstrap legacy Token Vault Meta Ads configuration only when production requires it
+        id: tracking_bootstrap
         if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success'
         env:
-          TOKEN_VAULT_API_TOKEN: ${{ secrets.TOKEN_VAULT_API_TOKEN }}
-          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
+          # The manifest stays in the protected Environment and is read only
+          # after the activated Worker proves that its authority is legacy.
+          TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST: ${{ secrets.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST }}
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+          TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ -n "${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" ]] || { echo 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN must be owned by the production Environment for bootstrap'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'bootstrap release SHA is invalid'; exit 1; }
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || { echo 'bootstrap run identity is invalid'; exit 1; }
+          bootstrap_operation_key="meta-ads-bootstrap:${RELEASE_SHA:0:12}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
+          [[ "$bootstrap_operation_key" =~ ^[A-Za-z0-9_.:-]{8,160}$ ]] || { echo 'bootstrap operation key is invalid'; exit 1; }
+          bootstrap_state="$(BOOTSTRAP_OPERATION_KEY="$bootstrap_operation_key" node --input-type=module <<'NODE'
+          const base = String(process.env.TOKEN_VAULT_PRODUCTION_BASE_URL || '').replace(/\/$/, '');
+          const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
+          const operationKey = String(process.env.BOOTSTRAP_OPERATION_KEY || '');
+          if (!/^https:\/\/[^/]+$/.test(base) || !token) throw new Error('Token Vault production bootstrap endpoint or credential is unavailable');
+          if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(operationKey)) throw new Error('bootstrap operation identity is invalid');
+
+          const safeError = (payload) => {
+            const value = String(payload?.error || '');
+            return /^[a-z0-9_:-]{1,120}$/i.test(value) ? value : 'unknown';
+          };
+          const request = async (path, { method = 'GET', body } = {}) => {
+            const headers = { Authorization: `Bearer ${token}` };
+            if (body !== undefined) headers['content-type'] = 'application/json';
+            const response = await fetch(`${base}/internal/token-vault${path}`, {
+              method,
+              headers,
+              body: body === undefined ? undefined : JSON.stringify(body),
+              redirect: 'error',
+            });
+            let payload = null;
+            try { payload = await response.json(); } catch {}
+            return { response, payload };
+          };
+          const requireReady = ({ response, payload }, context) => {
+            if (
+              !response.ok ||
+              payload?.ok !== true ||
+              payload?.ready !== true ||
+              payload?.config_authority_mode !== 'tracking_ready' ||
+              !/^[a-f0-9]{64}$/.test(String(payload?.config_authority_revision || ''))
+            ) {
+              throw new Error(`${context} did not return a ready tracking authority`);
+            }
+          };
+
+          const initial = await request('/v1/meta-ads-publish/config');
+          if (![200, 409].includes(initial.response.status) || !initial.payload || typeof initial.payload !== 'object' || Array.isArray(initial.payload)) {
+            throw new Error(`Token Vault configuration authority readback failed: ${initial.response.status} ${safeError(initial.payload)}`);
+          }
+          const mode = String(initial.payload.config_authority_mode || '');
+          if (mode === 'tracking_ready') {
+            requireReady(initial, 'Token Vault configuration authority readback');
+            process.stdout.write('not_required\n');
+          } else if (mode === 'legacy_bootstrap') {
+            const expectedRevision = String(initial.payload.config_authority_revision || '').toLowerCase();
+            if (!/^legacy:[a-f0-9]{64}$/.test(expectedRevision)) throw new Error('legacy Token Vault authority revision is invalid');
+            const rawManifest = String(process.env.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '');
+            if (!rawManifest) throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST is required only when legacy bootstrap is detected');
+            let manifest;
+            try { manifest = JSON.parse(rawManifest); } catch { throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must be valid JSON containing only entries'); }
+            if (
+              !manifest ||
+              typeof manifest !== 'object' ||
+              Array.isArray(manifest) ||
+              Object.keys(manifest).length !== 1 ||
+              !Object.prototype.hasOwnProperty.call(manifest, 'entries') ||
+              !Array.isArray(manifest.entries) ||
+              manifest.entries.length < 2 ||
+              manifest.entries.length > 10 ||
+              new TextEncoder().encode(JSON.stringify(manifest)).length > 150 * 1024
+            ) {
+              throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must contain only 2 to 10 bounded entries');
+            }
+            const bootstrap = await request('/v1/meta-ads-publish/config/bootstrap', {
+              method: 'POST',
+              body: {
+                operation_key: operationKey,
+                expected_config_authority_revision: expectedRevision,
+                entries: manifest.entries,
+              },
+            });
+            if (!bootstrap.response.ok || bootstrap.payload?.ok !== true) {
+              throw new Error(`Token Vault legacy bootstrap failed: ${bootstrap.response.status} ${safeError(bootstrap.payload)}`);
+            }
+            const bootstrapRevision = String(bootstrap.payload?.config_authority_revision || '').toLowerCase();
+            if (!/^[a-f0-9]{64}$/.test(bootstrapRevision)) throw new Error('Token Vault legacy bootstrap did not return a tracking revision');
+            const postBootstrap = await request('/v1/meta-ads-publish/config');
+            requireReady(postBootstrap, 'Token Vault post-bootstrap authority readback');
+            if (String(postBootstrap.payload?.config_authority_revision || '').toLowerCase() !== bootstrapRevision) {
+              throw new Error('Token Vault post-bootstrap authority revision changed unexpectedly');
+            }
+            process.stdout.write(`applied\t${operationKey}\t${bootstrapRevision}\n`);
+          } else {
+            throw new Error('Token Vault configuration authority mode is unsupported');
+          }
+          NODE
+          )"
+          bootstrap_status=''
+          bootstrap_recorded_operation_key=''
+          bootstrap_revision=''
+          IFS=$'\t' read -r bootstrap_status bootstrap_recorded_operation_key bootstrap_revision <<< "$bootstrap_state" || true
+          case "$bootstrap_status" in
+            not_required)
+              [[ -z "$bootstrap_recorded_operation_key" && -z "$bootstrap_revision" ]] || { echo 'Token Vault bootstrap returned an invalid no-op state'; exit 1; }
+              echo 'did_bootstrap=false' >> "$GITHUB_OUTPUT"
+              ;;
+            applied)
+              [[ "$bootstrap_recorded_operation_key" == "$bootstrap_operation_key" ]] || { echo 'Token Vault bootstrap operation key did not round-trip'; exit 1; }
+              [[ "$bootstrap_revision" =~ ^[a-f0-9]{64}$ ]] || { echo 'Token Vault bootstrap revision is invalid'; exit 1; }
+              printf '%s\n' 'did_bootstrap=true' "bootstrap_operation_key=$bootstrap_recorded_operation_key" "bootstrap_revision=$bootstrap_revision" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo 'Token Vault bootstrap returned an invalid state'; exit 1
+              ;;
+          esac
+
+      - name: Read back production Token Vault authenticated health after activation
+        id: worker_health_readback
+        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.tracking_bootstrap.outcome == 'success'
+        env:
+          # This release-scoped credential is intentionally narrower than the
+          # incumbent admin and Orb credentials.  It may read health/config and
+          # perform only the bounded config bootstrap; it cannot publish ads or
+          # read generic token records.
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
           TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
         run: |
           set -euo pipefail
+          [[ -n "${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" ]] || { echo 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN must be owned by the production Environment for v20 readback'; exit 1; }
           BASE_URL="$TOKEN_VAULT_PRODUCTION_BASE_URL"
           anonymous_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$BASE_URL/internal/token-vault/health")"
           [[ "$anonymous_code" == 401 ]] || { echo 'Token Vault anonymous health must remain unauthorized'; exit 1; }
-          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
-            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true||x.checks?.n8nApiToken!==true)throw new Error('Token Vault admin health/readback failed');"
-          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_N8N_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
-            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true)throw new Error('Token Vault operational health/readback failed');"
-          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/v1/meta-ads-publish/config" \
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_META_ADS_CONFIG_TOKEN" "$BASE_URL/internal/token-vault/health" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true||x.checks?.apiToken!==true||x.checks?.n8nApiToken!==true||x.checks?.analyticsApiToken!==true||x.checks?.encryptionKey!==true)throw new Error('Token Vault restricted health/readback failed');"
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_META_ADS_CONFIG_TOKEN" "$BASE_URL/internal/token-vault/v1/meta-ads-publish/config" \
             | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const websites=(x.destinations||[]).filter(d=>d.tracking_contract?.destination_kind==='website');const valid=websites.length>0&&websites.every(d=>d.tracking_contract?.profile_configured===true&&d.tracking_contract?.url_tags_configured===true&&['required','not_required'].includes(d.tracking_contract?.website_event_requirement)&&['required','not_required'].includes(d.tracking_contract?.offline_event_dataset_requirement));if(x.ready!==true||x.capabilities?.workflow_contract_revision!=='meta_destination_contract_v20_tracking_reconciliation'||x.capabilities?.tracking?.adset_conversion_reconciliation!==true||!valid)throw new Error('production Token Vault tracking configuration readback is incomplete');"
 
       - name: Refresh candidate OIDC custody approval before final native readback
         id: candidate_final_readback_attestation
-        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.worker_health_readback.outcome == 'success'
+        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.tracking_bootstrap.outcome == 'success' && steps.worker_health_readback.outcome == 'success'
         run: |
           set -euo pipefail
           request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
@@ -405,7 +531,7 @@ jobs:
 
       - name: Read back required Website conversion and offline-dataset contracts from Graph
         id: conversion_contract_readback
-        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.worker_health_readback.outcome == 'success' && steps.candidate_conversion_readback_attestation.outcome == 'success'
+        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.tracking_bootstrap.outcome == 'success' && steps.worker_health_readback.outcome == 'success' && steps.candidate_conversion_readback_attestation.outcome == 'success'
         env:
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
@@ -440,7 +566,7 @@ jobs:
 
       - name: Revalidate the shared lease before cross-surface production compensation
         id: cross_surface_compensation_lease
-        if: always() && steps.native_orb_promotion.outputs.applied == 'true' && (steps.orb_pre_worker_readback.outcome != 'success' || steps.worker_activation.outcome != 'success' || steps.worker_deployment_readback.outcome != 'success' || steps.worker_health_readback.outcome != 'success' || steps.orb_live_readback.outcome != 'success' || steps.conversion_contract_readback.outcome != 'success')
+        if: always() && steps.native_orb_promotion.outputs.applied == 'true' && (steps.orb_pre_worker_readback.outcome != 'success' || steps.worker_activation.outcome != 'success' || steps.worker_deployment_readback.outcome != 'success' || steps.tracking_bootstrap.outcome != 'success' || steps.worker_health_readback.outcome != 'success' || steps.orb_live_readback.outcome != 'success' || steps.conversion_contract_readback.outcome != 'success')
         uses: ./.github/actions/global-coordination-check
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -453,9 +579,75 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
+      - name: Roll back an applied Token Vault legacy bootstrap before cross-surface compensation
+        id: tracking_bootstrap_rollback
+        if: always() && steps.cross_surface_compensation_lease.outcome == 'success'
+        env:
+          BOOTSTRAP_STEP_OUTCOME: ${{ steps.tracking_bootstrap.outcome }}
+          DID_BOOTSTRAP: ${{ steps.tracking_bootstrap.outputs.did_bootstrap }}
+          BOOTSTRAP_OPERATION_KEY: ${{ steps.tracking_bootstrap.outputs.bootstrap_operation_key }}
+          BOOTSTRAP_REVISION: ${{ steps.tracking_bootstrap.outputs.bootstrap_revision }}
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+          TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
+        run: |
+          set -euo pipefail
+          case "$BOOTSTRAP_STEP_OUTCOME" in
+            skipped)
+              echo 'Token Vault bootstrap was not reached; no bootstrap rollback is required.'
+              exit 0
+              ;;
+            success)
+              ;;
+            *)
+              echo 'Token Vault bootstrap has no trusted terminal outcome; retaining the candidate Worker and native source.' >&2
+              exit 1
+              ;;
+          esac
+          case "$DID_BOOTSTRAP" in
+            false)
+              echo 'Token Vault was already tracking-ready; no bootstrap rollback is required.'
+              exit 0
+              ;;
+            true)
+              ;;
+            *)
+              echo 'Token Vault bootstrap result is indeterminate; retaining the candidate Worker and native source.' >&2
+              exit 1
+              ;;
+          esac
+          [[ -n "${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" ]] || { echo 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN is required for bootstrap compensation'; exit 1; }
+          [[ "$BOOTSTRAP_OPERATION_KEY" =~ ^[A-Za-z0-9_.:-]{8,160}$ ]] || { echo 'Token Vault bootstrap operation key is invalid for compensation'; exit 1; }
+          [[ "$BOOTSTRAP_REVISION" =~ ^[a-f0-9]{64}$ ]] || { echo 'Token Vault bootstrap revision is invalid for compensation'; exit 1; }
+          node --input-type=module <<'NODE'
+          const base = String(process.env.TOKEN_VAULT_PRODUCTION_BASE_URL || '').replace(/\/$/, '');
+          const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
+          const operationKey = String(process.env.BOOTSTRAP_OPERATION_KEY || '');
+          const revision = String(process.env.BOOTSTRAP_REVISION || '');
+          if (!/^https:\/\/[^/]+$/.test(base) || !token) throw new Error('Token Vault production bootstrap rollback endpoint or credential is unavailable');
+          if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(operationKey) || !/^[a-f0-9]{64}$/.test(revision)) throw new Error('Token Vault bootstrap rollback identity is invalid');
+          const response = await fetch(`${base}/internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              operation_key: operationKey,
+              expected_tracking_binding_revision: revision,
+            }),
+            redirect: 'error',
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+          if (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || payload?.operation_status !== 'rolled_back') {
+            throw new Error(`Token Vault bootstrap rollback failed: ${response.status} ${error}`);
+          }
+          NODE
+
       - name: Refresh candidate OIDC custody approval before cross-surface compensation
         id: candidate_compensation_attestation
-        if: always() && steps.cross_surface_compensation_lease.outcome == 'success'
+        if: always() && steps.cross_surface_compensation_lease.outcome == 'success' && steps.tracking_bootstrap_rollback.outcome == 'success'
         run: |
           set -euo pipefail
           request_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=skincos-meta-ads-tracking-custody%2Fv1%2Frelease%2F${RELEASE_SHA}"
@@ -512,22 +704,19 @@ jobs:
           }
           NODE
 
-      - name: Read back the incumbent Token Vault health before restoring the Orb snapshot
+      - name: Read back the incumbent Token Vault version and public auth boundary before restoring the Orb snapshot
         id: worker_incumbent_health
         if: always() && steps.worker_compensation.outcome == 'success'
         env:
-          TOKEN_VAULT_API_TOKEN: ${{ secrets.TOKEN_VAULT_API_TOKEN }}
-          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
           TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
         run: |
           set -euo pipefail
           BASE_URL="$TOKEN_VAULT_PRODUCTION_BASE_URL"
           anonymous_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$BASE_URL/internal/token-vault/health")"
           [[ "$anonymous_code" == 401 ]] || { echo 'Token Vault anonymous health must remain unauthorized after compensation'; exit 1; }
-          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
-            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true||x.checks?.n8nApiToken!==true)throw new Error('Token Vault incumbent admin health/readback failed');"
-          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_N8N_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
-            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true)throw new Error('Token Vault incumbent operational health/readback failed');"
+          # The exact incumbent version was already proved in worker_compensation.
+          # Never reuse legacy admin/Orb bearers here: an older incumbent may not
+          # know the restricted v20 credential, and GitHub must not hold it.
 
       - name: Revalidate the shared lease before restoring the owned Orb snapshot
         id: orb_compensation_lease
@@ -708,11 +897,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TOKEN_VAULT_API_TOKEN: ${{ secrets.TOKEN_VAULT_API_TOKEN }}
-          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
-          TOKEN_VAULT_ANALYTICS_API_TOKEN: ${{ secrets.TOKEN_VAULT_ANALYTICS_API_TOKEN }}
-          TOKEN_VAULT_ENCRYPTION_KEY: ${{ secrets.TOKEN_VAULT_ENCRYPTION_KEY }}
-          TOKEN_VAULT_BACKUP_PASSPHRASE: ${{ secrets.TOKEN_VAULT_BACKUP_PASSPHRASE }}
+          # This optional Worker binding becomes a mandatory Environment input
+          # only for the governed v20 promotion: it is the least-privileged
+          # bearer that can perform the config/exercise readbacks below.
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
           TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
           TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
           ENABLE_TOKEN_VAULT_DEPLOY_STAGING: ${{ vars.ENABLE_TOKEN_VAULT_DEPLOY_STAGING }}
@@ -722,7 +910,7 @@ jobs:
           CONFIRM_STAGING_TRACKING_FIXTURE: ${{ inputs.confirm_staging_tracking_fixture }}
         run: |
           set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID TOKEN_VAULT_API_TOKEN TOKEN_VAULT_N8N_API_TOKEN TOKEN_VAULT_ANALYTICS_API_TOKEN TOKEN_VAULT_ENCRYPTION_KEY TOKEN_VAULT_BACKUP_PASSPHRASE; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID TOKEN_VAULT_META_ADS_CONFIG_TOKEN; do
             [[ -n "${!name:-}" ]] || { echo "Missing required environment secret: $name"; exit 1; }
           done
           [[ "$OPERATION" == deploy ]] || { echo 'Cross-SHA Token Vault rollback is fail-closed because it cannot prove restoration of the matching native Orb snapshot; the deployment path compensates its own transaction automatically.'; exit 1; }
@@ -737,7 +925,7 @@ jobs:
           if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-token-vault; else ENV_ARGS=(--env staging); DB=skincos-token-vault-staging; fi
           npx --yes wrangler@4.120.0 d1 list --json | DB="$DB" node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync(0,'utf8'));if(!rows.some(row=>row.name===process.env.DB)){throw new Error('configured Token Vault D1 is absent')}"
           secrets_json="$(npx --yes wrangler@4.120.0 secret list --format json --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}")"
-          printf '%s' "$secrets_json" | node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync(0,'utf8'));const names=new Set(rows.map(row=>row.name||row));for(const name of ['TOKEN_VAULT_API_TOKEN','TOKEN_VAULT_N8N_API_TOKEN','TOKEN_VAULT_ANALYTICS_API_TOKEN','TOKEN_VAULT_ENCRYPTION_KEY'])if(!names.has(name))throw new Error('required Worker secret is absent: '+name);"
+          printf '%s' "$secrets_json" | node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync(0,'utf8'));const names=new Set(rows.map(row=>row.name||row));for(const name of ['TOKEN_VAULT_API_TOKEN','TOKEN_VAULT_N8N_API_TOKEN','TOKEN_VAULT_ENCRYPTION_KEY'])if(!names.has(name))throw new Error('required inherited Worker secret is absent: '+name);"
 
       - name: Validate Token Vault and Meta Ads Publish source
         timeout-minutes: 8
@@ -783,33 +971,75 @@ jobs:
           [[ "$incumbent" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve the exact Token Vault Worker incumbent'; exit 1; }
           echo "TOKEN_VAULT_INCUMBENT_VERSION_ID=$incumbent" >> "$GITHUB_ENV"
 
-      - name: Capture encrypted Token Vault D1 checkpoint before migrations
+      - name: Capture Token Vault D1 Time Travel recovery bookmark before migrations
+        id: d1_time_travel_checkpoint
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TOKEN_VAULT_BACKUP_PASSPHRASE: ${{ secrets.TOKEN_VAULT_BACKUP_PASSPHRASE }}
           TARGET: ${{ inputs.target }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
-          [[ -n "${TOKEN_VAULT_BACKUP_PASSPHRASE:-}" ]] || { echo 'Missing TOKEN_VAULT_BACKUP_PASSPHRASE'; exit 1; }
           if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-token-vault; else ENV_ARGS=(--env staging); DB=skincos-token-vault-staging; fi
-          plain="$RUNNER_TEMP/token-vault-${TARGET}-pre-migration-${RELEASE_SHA}.sql"
-          encrypted="${plain}.gpg"
-          npx --yes wrangler@4.120.0 d1 export "$DB" --remote --output "$plain" --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}"
-          printf '%s' "$TOKEN_VAULT_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
-          rm -f "$plain"
-          sha256sum "$encrypted" | awk '{print $1}' > "$encrypted.sha256"
-          echo "CHECKPOINT=$encrypted" >> "$GITHUB_ENV"
-          echo "CHECKPOINT_DIGEST=$encrypted.sha256" >> "$GITHUB_ENV"
+          info_file="$RUNNER_TEMP/token-vault-${TARGET}-d1-info.json"
+          npx --yes wrangler@4.120.0 d1 info "$DB" --json --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" > "$info_file"
+          node - "$info_file" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const version = String(value?.version ?? value?.result?.version ?? '').trim().toLowerCase();
+          if (version === 'alpha') {
+            throw new Error('Token Vault D1 uses the legacy alpha backend; Time Travel recovery is unavailable and the release is ineligible');
+          }
+          NODE
+          bookmark_file="$RUNNER_TEMP/token-vault-${TARGET}-d1-time-travel.json"
+          npx --yes wrangler@4.120.0 d1 time-travel info "$DB" --json --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" > "$bookmark_file"
+          bookmark="$(node - "$bookmark_file" <<'NODE'
+          const fs = require('fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const bookmark = String(value?.bookmark ?? value?.result?.bookmark ?? '').trim();
+          if (!/^[A-Za-z0-9-]{16,256}$/.test(bookmark)) throw new Error('D1 Time Travel did not return a valid recovery bookmark');
+          process.stdout.write(bookmark);
+          NODE
+          )"
+          checkpoint="$RUNNER_TEMP/token-vault-${TARGET}-pre-migration-${RELEASE_SHA}.time-travel.json"
+          TARGET="$TARGET" DB="$DB" BOOKMARK="$bookmark" CHECKPOINT="$checkpoint" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
 
-      - name: Upload encrypted Token Vault D1 checkpoint
+          const envArgs = process.env.TARGET === 'production' ? [] : ['--env', 'staging'];
+          const value = {
+            schema_version: 1,
+            kind: 'cloudflare_d1_time_travel_bookmark',
+            target: process.env.TARGET,
+            database: process.env.DB,
+            backend: 'production',
+            captured_at: new Date().toISOString(),
+            bookmark: process.env.BOOKMARK,
+            recovery: {
+              action: 'manual_restore_under_release_lease',
+              command: [
+                'npx', '--yes', 'wrangler@4.120.0', 'd1', 'time-travel', 'restore', process.env.DB,
+                '--bookmark', process.env.BOOKMARK,
+                '--config', 'platform/security/token-vault/wrangler.toml',
+                ...envArgs,
+              ],
+              command_line: `npx --yes wrangler@4.120.0 d1 time-travel restore ${process.env.DB} --bookmark ${process.env.BOOKMARK} --config platform/security/token-vault/wrangler.toml${envArgs.length ? ' --env staging' : ''}`,
+              note: 'Restore overwrites the database in place. Reacquire release:token-vault, confirm the exact incumbent and stop conflicting writers before execution.',
+            },
+          };
+          fs.writeFileSync(process.env.CHECKPOINT, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          digest="${checkpoint}.sha256"
+           sha256sum "$checkpoint" | awk '{print $1}' > "$digest"
+           echo "D1_TIME_TRAVEL_CHECKPOINT=$checkpoint" >> "$GITHUB_ENV"
+           echo "D1_TIME_TRAVEL_CHECKPOINT_DIGEST=$digest" >> "$GITHUB_ENV"
+
+      - name: Upload Token Vault D1 Time Travel recovery checkpoint
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: token-vault-${{ inputs.target }}-pre-migration-${{ needs.promotion.outputs.source_sha }}
+          name: token-vault-${{ inputs.target }}-pre-migration-time-travel-${{ needs.promotion.outputs.source_sha }}
           path: |
-            ${{ env.CHECKPOINT }}
-            ${{ env.CHECKPOINT_DIGEST }}
+            ${{ env.D1_TIME_TRAVEL_CHECKPOINT }}
+            ${{ env.D1_TIME_TRAVEL_CHECKPOINT_DIGEST }}
           retention-days: 30
           if-no-files-found: error
 
@@ -895,12 +1125,54 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Analytics is supplied only when the incumbent has no binding.  A
+          # generated value remains private to the candidate version; it is
+          # deliberately never printed or persisted in GitHub.
+          TOKEN_VAULT_ANALYTICS_API_TOKEN: ${{ secrets.TOKEN_VAULT_ANALYTICS_API_TOKEN }}
+          # The Worker treats this binding as optional, but the governed v20
+          # release preflight already required the Environment-held bearer.
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
           TARGET: ${{ inputs.target }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
           if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
-          upload_output="$(npx --yes wrangler@4.120.0 versions upload --config platform/security/token-vault/wrangler.toml --keep-vars --message "token-vault:deploy:$RELEASE_SHA" "${ENV_ARGS[@]}")"
+          secrets_file="$RUNNER_TEMP/token-vault-${TARGET}-candidate-secrets.json"
+          secret_inventory="$RUNNER_TEMP/token-vault-${TARGET}-remote-secrets.json"
+          trap 'rm -f "$secrets_file" "$secret_inventory"; unset analytics_value' EXIT
+          npx --yes wrangler@4.120.0 secret list --format json --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" > "$secret_inventory"
+          analytics_required="$(node - "$secret_inventory" <<'NODE'
+          const fs = require('fs');
+          const rows = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const names = new Set(rows.map((row) => row?.name || row));
+          for (const name of ['TOKEN_VAULT_API_TOKEN', 'TOKEN_VAULT_N8N_API_TOKEN', 'TOKEN_VAULT_ENCRYPTION_KEY']) {
+            if (!names.has(name)) throw new Error(`required inherited Worker secret is absent: ${name}`);
+          }
+          process.stdout.write(names.has('TOKEN_VAULT_ANALYTICS_API_TOKEN') ? 'false' : 'true');
+          NODE
+          )"
+          analytics_value=''
+          if [[ "$analytics_required" == true ]]; then
+            analytics_value="${TOKEN_VAULT_ANALYTICS_API_TOKEN:-}"
+            if [[ -z "$analytics_value" ]]; then
+              analytics_value="$(node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('base64url'));")"
+            fi
+          fi
+          ANALYTICS_REQUIRED="$analytics_required" ANALYTICS_VALUE="$analytics_value" META_ADS_CONFIG_VALUE="${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" SECRETS_FILE="$secrets_file" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const secrets = {};
+          if (process.env.ANALYTICS_REQUIRED === 'true') {
+            const value = String(process.env.ANALYTICS_VALUE || '');
+            if (value.length < 32) throw new Error('generated Token Vault analytics binding is invalid');
+            secrets.TOKEN_VAULT_ANALYTICS_API_TOKEN = value;
+          }
+          const configToken = String(process.env.META_ADS_CONFIG_VALUE || '');
+          if (configToken) secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN = configToken;
+          fs.writeFileSync(process.env.SECRETS_FILE, `${JSON.stringify(secrets)}\n`, { mode: 0o600 });
+          NODE
+          chmod 600 "$secrets_file"
+          upload_output="$(npx --yes wrangler@4.120.0 versions upload --config platform/security/token-vault/wrangler.toml --keep-vars --strict --secrets-file "$secrets_file" --message "token-vault:deploy:$RELEASE_SHA" "${ENV_ARGS[@]}")"
           printf '%s\n' "$upload_output"
           VERSION_ID="$(printf '%s\n' "$upload_output" | sed -n 's/^Worker Version ID: //p' | tail -n 1)"
           [[ "$VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to capture immutable Token Vault Worker version ID'; exit 1; }
@@ -959,170 +1231,185 @@ jobs:
           }
           NODE
 
-      - name: Read back staging Token Vault deployment and authenticated health
-        id: worker_health_readback
-        if: inputs.target == 'staging'
+      - name: Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it
+        id: tracking_bootstrap
+        if: always() && inputs.target == 'staging' && steps.worker_deploy.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success'
         env:
-          TOKEN_VAULT_API_TOKEN: ${{ secrets.TOKEN_VAULT_API_TOKEN }}
-          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
-          TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
-        run: |
-          set -euo pipefail
-          BASE_URL="$TOKEN_VAULT_STAGING_BASE_URL"
-          anonymous_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$BASE_URL/internal/token-vault/health")"
-          [[ "$anonymous_code" == 401 ]] || { echo 'Token Vault anonymous health must remain unauthorized'; exit 1; }
-          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
-            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true||x.checks?.n8nApiToken!==true)throw new Error('Token Vault admin health/readback failed');"
-          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_N8N_API_TOKEN" "$BASE_URL/internal/token-vault/health" \
-            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true)throw new Error('Token Vault operational health/readback failed');"
-          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_API_TOKEN" "$BASE_URL/internal/token-vault/v1/meta-ads-publish/config" \
-            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const fixture=(x.destinations||[]).filter(d=>d.tracking_contract?.destination_kind==='website'&&d.tracking_contract?.profile_configured&&d.tracking_contract?.url_tags_configured&&d.tracking_contract?.staging_synthetic_fixture===true);if(x.ready!==true||x.capabilities?.tracking?.adset_conversion_reconciliation!==true||fixture.length!==1)throw new Error('exactly one authorized synthetic Website tracking fixture is required in staging');"
-
-      - name: Exercise reversible Meta tracking reconciliation against the isolated staging fixture
-        id: tracking_fixture
-        if: inputs.target == 'staging'
-        env:
-          TOKEN_VAULT_N8N_API_TOKEN: ${{ secrets.TOKEN_VAULT_N8N_API_TOKEN }}
+          # The manifest stays in the protected Environment and is read only
+          # after the activated Worker proves that its authority is legacy.
+          TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST: ${{ secrets.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST }}
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
           TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
-          node --input-type=module <<'NODE'
+          [[ -n "${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" ]] || { echo 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN must be owned by the staging Environment for bootstrap'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'bootstrap release SHA is invalid'; exit 1; }
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || { echo 'bootstrap run identity is invalid'; exit 1; }
+          bootstrap_operation_key="meta-ads-bootstrap:${RELEASE_SHA:0:12}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
+          [[ "$bootstrap_operation_key" =~ ^[A-Za-z0-9_.:-]{8,160}$ ]] || { echo 'bootstrap operation key is invalid'; exit 1; }
+          bootstrap_state="$(BOOTSTRAP_OPERATION_KEY="$bootstrap_operation_key" node --input-type=module <<'NODE'
           const base = String(process.env.TOKEN_VAULT_STAGING_BASE_URL || '').replace(/\/$/, '');
-           const token = String(process.env.TOKEN_VAULT_N8N_API_TOKEN || '');
-           const nonce = `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}-${process.env.RELEASE_SHA.slice(0, 12)}`;
-           let runId = '';
-           let fixture = null;
-           let snapshotId = '';
-           let rollbackConfirmed = false;
-           let completed = false;
-           const snapshotIdFromFailure = (value) => {
-             const candidate = String(value?.detail?.compensation?.snapshot_id || '');
-             return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate) ? candidate : '';
-           };
+          const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
+          const operationKey = String(process.env.BOOTSTRAP_OPERATION_KEY || '');
+          if (!/^https:\/\/[^/]+$/.test(base) || !token) throw new Error('Token Vault staging bootstrap endpoint or credential is unavailable');
+          if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(operationKey)) throw new Error('bootstrap operation identity is invalid');
+
+          const safeError = (payload) => {
+            const value = String(payload?.error || '');
+            return /^[a-z0-9_:-]{1,120}$/i.test(value) ? value : 'unknown';
+          };
           const request = async (path, { method = 'GET', body } = {}) => {
+            const headers = { Authorization: `Bearer ${token}` };
+            if (body !== undefined) headers['content-type'] = 'application/json';
             const response = await fetch(`${base}/internal/token-vault${path}`, {
               method,
-              headers: {
-                Authorization: `Bearer ${token}`,
-                ...(body ? { 'content-type': 'application/json' } : {}),
-              },
-              ...(body ? { body: JSON.stringify(body) } : {}),
+              headers,
+              body: body === undefined ? undefined : JSON.stringify(body),
+              redirect: 'error',
             });
-            let payload = {};
+            let payload = null;
             try { payload = await response.json(); } catch {}
-            if (!response.ok || payload.ok !== true) {
-              const error = new Error(`staging tracking fixture request failed: ${response.status} ${String(payload.error || 'unknown')}`);
-              // Never print the response body. The finally block may use only
-              // its validated opaque snapshot UUID to compensate a Graph POST
-              // that was accepted before a failed operation readback.
-              error.payload = payload;
-              throw error;
-             }
-             return payload;
-           };
-           const rollback = async (operationKey) => {
-             if (!runId || !fixture || !snapshotId) return;
-             const rolledBack = await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}/operations`, {
-               method: 'POST',
-               body: {
-                 action: 'rollback_adset_conversion_contract',
-                 operation_key: operationKey,
-                 token_id: fixture.token_id,
-                 account_id: fixture.account_id,
-                 api_version: fixture.api_version,
-                 object_id: fixture.adset_id,
-                 snapshot_id: snapshotId,
-               },
-             });
-             const rollbackResult = rolledBack.operation?.result || {};
-             const confirmedRollback =
-               (rollbackResult.status === 'restored' && rollbackResult.graph_mutation === 'promoted_object_restored') ||
-               (['already_restored', 'not_applied'].includes(rollbackResult.status) && rollbackResult.graph_mutation === 'none');
-             if (!confirmedRollback) {
-               throw new Error('staging tracking fixture rollback was not confirmed');
-             }
-             rollbackConfirmed = true;
-           };
-           try {
-            const config = await request('/v1/meta-ads-publish/config');
-            const fixtures = (config.destinations || []).filter((destination) => {
-              const tracking = destination?.tracking_contract || {};
-              return tracking.destination_kind === 'website' && tracking.profile_configured === true &&
-                tracking.staging_synthetic_fixture === true && tracking.website_event_requirement === 'required' &&
-                tracking.offline_event_dataset_requirement === 'required';
-            });
-            if (config.capabilities?.workflow_contract_revision !== 'meta_destination_contract_v20_tracking_reconciliation' || fixtures.length !== 1) {
-              throw new Error('staging tracking fixture contract is not eligible');
+            return { response, payload };
+          };
+          const requireReady = ({ response, payload }, context) => {
+            if (
+              !response.ok ||
+              payload?.ok !== true ||
+              payload?.ready !== true ||
+              payload?.config_authority_mode !== 'tracking_ready' ||
+              !/^[a-f0-9]{64}$/.test(String(payload?.config_authority_revision || ''))
+            ) {
+              throw new Error(`${context} did not return a ready tracking authority`);
             }
-            fixture = fixtures[0];
-            const created = await request('/v1/meta-ads-publish/runs', {
+          };
+
+          const initial = await request('/v1/meta-ads-publish/config');
+          if (![200, 409].includes(initial.response.status) || !initial.payload || typeof initial.payload !== 'object' || Array.isArray(initial.payload)) {
+            throw new Error(`Token Vault configuration authority readback failed: ${initial.response.status} ${safeError(initial.payload)}`);
+          }
+          const mode = String(initial.payload.config_authority_mode || '');
+          if (mode === 'tracking_ready') {
+            requireReady(initial, 'Token Vault configuration authority readback');
+            process.stdout.write('not_required\n');
+          } else if (mode === 'legacy_bootstrap') {
+            const expectedRevision = String(initial.payload.config_authority_revision || '').toLowerCase();
+            if (!/^legacy:[a-f0-9]{64}$/.test(expectedRevision)) throw new Error('legacy Token Vault authority revision is invalid');
+            const rawManifest = String(process.env.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '');
+            if (!rawManifest) throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST is required only when legacy bootstrap is detected');
+            let manifest;
+            try { manifest = JSON.parse(rawManifest); } catch { throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must be valid JSON containing only entries'); }
+            if (
+              !manifest ||
+              typeof manifest !== 'object' ||
+              Array.isArray(manifest) ||
+              Object.keys(manifest).length !== 1 ||
+              !Object.prototype.hasOwnProperty.call(manifest, 'entries') ||
+              !Array.isArray(manifest.entries) ||
+              manifest.entries.length < 2 ||
+              manifest.entries.length > 10 ||
+              new TextEncoder().encode(JSON.stringify(manifest)).length > 150 * 1024
+            ) {
+              throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must contain only 2 to 10 bounded entries');
+            }
+            const bootstrap = await request('/v1/meta-ads-publish/config/bootstrap', {
               method: 'POST',
               body: {
-                config_revision: config.config_revision,
-                tracking_binding_revision: config.tracking_binding_revision,
-                workflow_contract_revision: config.capabilities.workflow_contract_revision,
-                workflow_execution_id: `staging-tracking-fixture-${nonce}`,
-                files: [{ id: `synthetic-tracking-fixture-${nonce}`, name: 'tracking-fixture.txt', modified_time: nonce, size: '0' }],
+                operation_key: operationKey,
+                expected_config_authority_revision: expectedRevision,
+                entries: manifest.entries,
               },
             });
-            runId = String(created.run?.id || '');
-            if (!runId) throw new Error('staging tracking fixture run was not created');
-            let ensured;
-            try {
-              ensured = await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}/operations`, {
-                method: 'POST',
-                body: {
-                  action: 'ensure_adset_conversion_contract',
-                  operation_key: `tracking-fixture:${nonce}`,
-                  token_id: fixture.token_id,
-                  account_id: fixture.account_id,
-                  api_version: fixture.api_version,
-                  object_id: fixture.adset_id,
-                  destination_kind: 'website',
-                  profile_ref: fixture.tracking_contract.profile_ref,
-                },
-              });
-            } catch (error) {
-              snapshotId = snapshotIdFromFailure(error?.payload);
-              throw error;
+            if (!bootstrap.response.ok || bootstrap.payload?.ok !== true) {
+              throw new Error(`Token Vault legacy bootstrap failed: ${bootstrap.response.status} ${safeError(bootstrap.payload)}`);
             }
-             const reconciliation = ensured.operation?.result || {};
-             // Store the snapshot before asserting the rest of the attestation:
-             // a successful Graph mutation with a failed readback assertion must
-             // still be compensable in this same synthetic staging run.
-             snapshotId = String(reconciliation.snapshot_id || '');
-             if (reconciliation.status !== 'reconciled' || reconciliation.website_event?.configured !== true ||
-               reconciliation.offline_event_dataset?.configured !== true || reconciliation.graph_mutation !== 'promoted_object_updated' ||
-               !snapshotId) {
-               throw new Error('staging tracking fixture did not prove Graph GET-POST-GET reconciliation');
-             }
-            await rollback(`tracking-fixture-rollback:${nonce}`);
-            completed = true;
-            process.stdout.write(`${JSON.stringify({ tracking_fixture: { reconciliation: 'reconciled', rollback: 'restored' } })}\n`);
-           } finally {
-             let cleanupFailure = '';
-             if (snapshotId && !rollbackConfirmed) {
-               try {
-                 await rollback(`tracking-fixture-cleanup:${nonce}`);
-                 process.stdout.write(`${JSON.stringify({ tracking_fixture: { cleanup_rollback: 'restored' } })}\n`);
-               } catch (error) {
-                 cleanupFailure = String(error?.message || error || 'unknown');
-               }
-             }
-             if (runId) {
-               try {
-                 await request(`/v1/meta-ads-publish/runs/${encodeURIComponent(runId)}`, {
-                   method: 'PATCH',
-                   body: {
-                     status: completed && rollbackConfirmed && !cleanupFailure ? 'completed' : 'failed',
-                     summary: { staging_tracking_fixture: true, rollback_confirmed: rollbackConfirmed },
-                   },
-                 });
-               } catch {}
-             }
-             if (cleanupFailure) throw new Error(`staging tracking fixture cleanup rollback failed: ${cleanupFailure}`);
-           }
+            const bootstrapRevision = String(bootstrap.payload?.config_authority_revision || '').toLowerCase();
+            if (!/^[a-f0-9]{64}$/.test(bootstrapRevision)) throw new Error('Token Vault legacy bootstrap did not return a tracking revision');
+            const postBootstrap = await request('/v1/meta-ads-publish/config');
+            requireReady(postBootstrap, 'Token Vault post-bootstrap authority readback');
+            if (String(postBootstrap.payload?.config_authority_revision || '').toLowerCase() !== bootstrapRevision) {
+              throw new Error('Token Vault post-bootstrap authority revision changed unexpectedly');
+            }
+            process.stdout.write(`applied\t${operationKey}\t${bootstrapRevision}\n`);
+          } else {
+            throw new Error('Token Vault configuration authority mode is unsupported');
+          }
+          NODE
+          )"
+          bootstrap_status=''
+          bootstrap_recorded_operation_key=''
+          bootstrap_revision=''
+          IFS=$'\t' read -r bootstrap_status bootstrap_recorded_operation_key bootstrap_revision <<< "$bootstrap_state" || true
+          case "$bootstrap_status" in
+            not_required)
+              [[ -z "$bootstrap_recorded_operation_key" && -z "$bootstrap_revision" ]] || { echo 'Token Vault bootstrap returned an invalid no-op state'; exit 1; }
+              echo 'did_bootstrap=false' >> "$GITHUB_OUTPUT"
+              ;;
+            applied)
+              [[ "$bootstrap_recorded_operation_key" == "$bootstrap_operation_key" ]] || { echo 'Token Vault bootstrap operation key did not round-trip'; exit 1; }
+              [[ "$bootstrap_revision" =~ ^[a-f0-9]{64}$ ]] || { echo 'Token Vault bootstrap revision is invalid'; exit 1; }
+              printf '%s\n' 'did_bootstrap=true' "bootstrap_operation_key=$bootstrap_recorded_operation_key" "bootstrap_revision=$bootstrap_revision" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo 'Token Vault bootstrap returned an invalid state'; exit 1
+              ;;
+          esac
+
+      - name: Read back staging Token Vault deployment and authenticated health
+        id: worker_health_readback
+        if: always() && inputs.target == 'staging' && steps.tracking_bootstrap.outcome == 'success'
+        env:
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+          TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
+        run: |
+          set -euo pipefail
+          [[ -n "${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" ]] || { echo 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN must be owned by the staging Environment for v20 readback'; exit 1; }
+          BASE_URL="$TOKEN_VAULT_STAGING_BASE_URL"
+          anonymous_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$BASE_URL/internal/token-vault/health")"
+          [[ "$anonymous_code" == 401 ]] || { echo 'Token Vault anonymous health must remain unauthorized'; exit 1; }
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_META_ADS_CONFIG_TOKEN" "$BASE_URL/internal/token-vault/health" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));if(x.ok!==true||x.checks?.apiToken!==true||x.checks?.n8nApiToken!==true||x.checks?.analyticsApiToken!==true||x.checks?.encryptionKey!==true)throw new Error('Token Vault restricted health/readback failed');"
+          curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN_VAULT_META_ADS_CONFIG_TOKEN" "$BASE_URL/internal/token-vault/v1/meta-ads-publish/config" \
+            | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const fixture=(x.destinations||[]).filter(d=>d.tracking_contract?.destination_kind==='website'&&d.tracking_contract?.profile_configured&&d.tracking_contract?.url_tags_configured&&d.tracking_contract?.staging_synthetic_fixture===true);if(x.ready!==true||x.capabilities?.tracking?.adset_conversion_reconciliation!==true||fixture.length!==1)throw new Error('exactly one authorized synthetic Website tracking fixture is required in staging');"
+
+      - name: Exercise reversible Meta tracking reconciliation against the isolated staging fixture
+        id: tracking_fixture
+        if: always() && inputs.target == 'staging' && steps.tracking_bootstrap.outcome == 'success' && steps.worker_health_readback.outcome == 'success'
+        env:
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+          TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ -n "${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" ]] || { echo 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN must be owned by the staging Environment for the isolated tracking exercise'; exit 1; }
+          node --input-type=module <<'NODE'
+          const base = String(process.env.TOKEN_VAULT_STAGING_BASE_URL || '').replace(/\/$/, '');
+          const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
+          const nonce = `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}-${process.env.RELEASE_SHA.slice(0, 12)}`;
+          const response = await fetch(`${base}/internal/token-vault/v1/meta-ads-publish/config/staging-exercise`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({ operation_key: `staging-tracking-fixture:${nonce}` }),
+          });
+          let payload = {};
+          try { payload = await response.json(); } catch {}
+          const error = /^[a-z0-9_:-]+$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+          if (!response.ok || payload.ok !== true) {
+            throw new Error(`staging tracking fixture exercise failed: ${response.status} ${error}`);
+          }
+          const exercise = payload.exercise || {};
+          if (
+            exercise.status !== 'reconciled_and_rolled_back' ||
+            exercise.reconciliation !== 'reconciled' ||
+            exercise.rollback !== 'restored' ||
+            exercise.fixture_count !== 1
+          ) {
+            throw new Error('staging tracking fixture did not prove bounded GET-POST-GET reconciliation and rollback');
+          }
+          process.stdout.write(`${JSON.stringify({ tracking_fixture: { reconciliation: exercise.reconciliation, rollback: exercise.rollback } })}\n`);
           NODE
 
       - name: Write staging Token Vault promotion evidence
@@ -1146,7 +1433,7 @@ jobs:
 
       - name: Revalidate the release lease before staging Worker compensation
         id: staging_worker_compensation_lease
-        if: always() && inputs.target == 'staging' && steps.worker_deploy.outcome != 'skipped' && (steps.worker_deploy.outcome != 'success' || steps.worker_deployment_readback.outcome != 'success' || steps.worker_health_readback.outcome != 'success' || steps.tracking_fixture.outcome != 'success' || steps.staging_evidence.outcome != 'success' || steps.staging_evidence_upload.outcome != 'success')
+        if: always() && inputs.target == 'staging' && steps.worker_deploy.outcome != 'skipped' && (steps.worker_deploy.outcome != 'success' || steps.worker_deployment_readback.outcome != 'success' || steps.tracking_bootstrap.outcome != 'success' || steps.worker_health_readback.outcome != 'success' || steps.tracking_fixture.outcome != 'success' || steps.staging_evidence.outcome != 'success' || steps.staging_evidence_upload.outcome != 'success')
         uses: ./.github/actions/global-coordination-check
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -1159,8 +1446,74 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
-      - name: Compensate the staging Worker only when this release still owns traffic
+      - name: Roll back an applied Token Vault legacy bootstrap before staging Worker compensation
+        id: tracking_bootstrap_rollback
         if: always() && steps.staging_worker_compensation_lease.outcome == 'success'
+        env:
+          BOOTSTRAP_STEP_OUTCOME: ${{ steps.tracking_bootstrap.outcome }}
+          DID_BOOTSTRAP: ${{ steps.tracking_bootstrap.outputs.did_bootstrap }}
+          BOOTSTRAP_OPERATION_KEY: ${{ steps.tracking_bootstrap.outputs.bootstrap_operation_key }}
+          BOOTSTRAP_REVISION: ${{ steps.tracking_bootstrap.outputs.bootstrap_revision }}
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+          TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
+        run: |
+          set -euo pipefail
+          case "$BOOTSTRAP_STEP_OUTCOME" in
+            skipped)
+              echo 'Token Vault bootstrap was not reached; no bootstrap rollback is required.'
+              exit 0
+              ;;
+            success)
+              ;;
+            *)
+              echo 'Token Vault bootstrap has no trusted terminal outcome; retaining the candidate Worker.' >&2
+              exit 1
+              ;;
+          esac
+          case "$DID_BOOTSTRAP" in
+            false)
+              echo 'Token Vault was already tracking-ready; no bootstrap rollback is required.'
+              exit 0
+              ;;
+            true)
+              ;;
+            *)
+              echo 'Token Vault bootstrap result is indeterminate; retaining the candidate Worker.' >&2
+              exit 1
+              ;;
+          esac
+          [[ -n "${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" ]] || { echo 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN is required for bootstrap compensation'; exit 1; }
+          [[ "$BOOTSTRAP_OPERATION_KEY" =~ ^[A-Za-z0-9_.:-]{8,160}$ ]] || { echo 'Token Vault bootstrap operation key is invalid for compensation'; exit 1; }
+          [[ "$BOOTSTRAP_REVISION" =~ ^[a-f0-9]{64}$ ]] || { echo 'Token Vault bootstrap revision is invalid for compensation'; exit 1; }
+          node --input-type=module <<'NODE'
+          const base = String(process.env.TOKEN_VAULT_STAGING_BASE_URL || '').replace(/\/$/, '');
+          const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
+          const operationKey = String(process.env.BOOTSTRAP_OPERATION_KEY || '');
+          const revision = String(process.env.BOOTSTRAP_REVISION || '');
+          if (!/^https:\/\/[^/]+$/.test(base) || !token) throw new Error('Token Vault staging bootstrap rollback endpoint or credential is unavailable');
+          if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(operationKey) || !/^[a-f0-9]{64}$/.test(revision)) throw new Error('Token Vault bootstrap rollback identity is invalid');
+          const response = await fetch(`${base}/internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              operation_key: operationKey,
+              expected_tracking_binding_revision: revision,
+            }),
+            redirect: 'error',
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+          if (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || payload?.operation_status !== 'rolled_back') {
+            throw new Error(`Token Vault bootstrap rollback failed: ${response.status} ${error}`);
+          }
+          NODE
+
+      - name: Compensate the staging Worker only when this release still owns traffic
+        if: always() && steps.staging_worker_compensation_lease.outcome == 'success' && steps.tracking_bootstrap_rollback.outcome == 'success'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
