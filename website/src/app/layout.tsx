@@ -2,7 +2,7 @@ import "@/styles/globals.css";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { headers } from "next/headers";
-import { Oxanium, Urbanist } from "next/font/google";
+import { Bodoni_Moda, Oxanium, Urbanist } from "next/font/google";
 import Script from "next/script";
 import CookieBanner from "@/components/CookieBanner";
 import Analytics from "@/components/Analytics";
@@ -30,6 +30,17 @@ const brandTextFont = Urbanist({
   preload: false,
   variable: "--font-brand-text-loaded",
   weight: ["300", "400", "500", "600", "700", "800"],
+});
+
+// Loaded as an inert variable and consumed only by the Beauty Movement module.
+// Keeping it at the layout layer lets Next package the font without changing the
+// typography of the institutional surface.
+const beautyMovementEditorialFont = Bodoni_Moda({
+  subsets: ["latin"],
+  display: "swap",
+  preload: false,
+  variable: "--font-beauty-movement-editorial",
+  weight: ["400", "500", "600", "700"],
 });
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -124,7 +135,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         };
 
   return (
-    <html lang="pt-BR" className={`${brandUiFont.variable} ${brandTextFont.variable}`}>
+    <html lang="pt-BR" className={`${brandUiFont.variable} ${brandTextFont.variable} ${beautyMovementEditorialFont.variable}`}>
       <head>
         {buildSha ? <meta name="x-app-build" content={buildSha} /> : null}
         {buildTime ? <meta name="x-app-build-time" content={buildTime} /> : null}

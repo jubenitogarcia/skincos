@@ -206,7 +206,19 @@ configuração inválida fora de `staging` + `shadow` com o módulo desabilitado
 exigindo remoção/rotação explícita antes de qualquer promoção futura. A única chamada Graph do gate é
 feita depois pelo router Meta-only, com timeout de 12 s e retry seguro limitado.
 
-## Deploy
+## Governed deploy
+
+Use `.github/workflows/deploy-token-vault.yml` for every staging or production
+promotion. It creates an immutable Worker candidate, preserves inherited
+production bindings, and activates only after its environment-specific gates
+and rollback evidence pass.
+
+Staging has no Orb consumer for the Token Vault operational bearer. Its
+`TOKEN_VAULT_N8N_API_TOKEN` is therefore an independent, high-entropy protected
+GitHub Environment secret. The canonical workflow writes it only to the
+candidate `--secrets-file` with private permissions and never prints it or uses
+`wrangler secret put`. Production retains its already-attested Orb/Worker
+binding; it is not copied into staging.
 
 O Token Vault é publicado exclusivamente por
 `.github/workflows/deploy-token-vault.yml`: Preview -> Staging -> Production.
@@ -229,7 +241,8 @@ manualmente para publicar este serviço.
 
 Antes da primeira promoção, disponibilize em cada GitHub Environment os
 segredos independentes exigidos pelo workflow, em especial
-`TOKEN_VAULT_META_ADS_CONFIG_TOKEN`; disponibilize
+`TOKEN_VAULT_META_ADS_CONFIG_TOKEN` e, em staging,
+`TOKEN_VAULT_N8N_API_TOKEN`; disponibilize
 `TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST` somente com as fontes/tags autorizadas
 quando a autoridade for legada, e um perfil de tracking sintético autorizado em
 staging. A ausência de credencial, manifesto legada necessário, fixture,

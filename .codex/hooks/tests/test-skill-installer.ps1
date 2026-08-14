@@ -15,6 +15,8 @@ $targetRoot = Join-Path $testRoot 'installed'
 $target = Join-Path $targetRoot 'skincos-project-orchestrator'
 $defaultTargetRoot = Join-Path $testRoot 'default-installed'
 $defaultTarget = Join-Path $defaultTargetRoot 'skincos-project-orchestrator'
+$customSkillName = 'skincos-secret-provisioning'
+$customTarget = Join-Path $defaultTargetRoot $customSkillName
 $installer = Join-Path $RepositoryRoot 'scripts\install-project-skill.ps1'
 
 try {
@@ -24,6 +26,27 @@ try {
     throw 'Installer did not resolve its default source root.'
   }
   & $installer -TargetRoot $defaultTargetRoot -Uninstall
+
+  & $installer -TargetRoot $defaultTargetRoot -SkillName $customSkillName
+  $customLink = Get-Item -LiteralPath $customTarget -Force
+  if (-not ($customLink.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw 'Installer did not install the requested versioned skill.'
+  }
+  & $installer -TargetRoot $defaultTargetRoot -SkillName $customSkillName
+  & $installer -TargetRoot $defaultTargetRoot -SkillName $customSkillName -Uninstall
+  if (Test-Path -LiteralPath $customTarget) {
+    throw 'Custom skill uninstall left the junction in place.'
+  }
+
+  $invalidSkillNameRefused = $false
+  try {
+    & $installer -TargetRoot $defaultTargetRoot -SkillName '..\outside'
+  } catch {
+    $invalidSkillNameRefused = $true
+  }
+  if (-not $invalidSkillNameRefused) {
+    throw 'Installer accepted an unsafe skill name.'
+  }
 
   foreach ($source in @($sourceOne, $sourceTwo)) {
     New-Item -ItemType Directory -Path (Join-Path $source 'skills\skincos-project-orchestrator') -Force | Out-Null

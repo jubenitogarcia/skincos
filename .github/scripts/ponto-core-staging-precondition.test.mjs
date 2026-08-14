@@ -25,6 +25,7 @@ const sourceSha = '6daa6eaee7c4c49f047e97944e70ea1aa320ca61';
 const deploymentId = '2688c47a-efbb-4b97-98f7-6a1734eac354';
 const versionId = 'e71704e3-0d6d-4327-83cf-3121010995b1';
 const evidenceDerivedSourceSha = 'd0abd96c8d35f7028150c25d74ca4f5aabe923f8';
+const evidenceDerivedWorkflowSha = '4f5df5c1fbc844a1a36ab699947c4f552c5b8daf';
 const evidenceDerivedDeploymentId = 'e6845b49-0d6d-4327-83cf-3121010995b1';
 const evidenceDerivedVersionId = 'b71704e3-0d6d-4327-83cf-3121010995b1';
 const evidenceDerivedRun = {
@@ -275,6 +276,17 @@ test('derives the active staging predecessor only from terminal source-bound rel
 
 test('discovers only a reachable terminal staging release with one exact evidence artifact', async () => {
   const calls = [];
+  const releasedFromDifferentWorkflowSha = {
+    ...evidenceDerivedRun,
+    head_sha: evidenceDerivedWorkflowSha,
+  };
+  const releasedFromDifferentWorkflowArtifact = {
+    ...evidenceDerivedArtifact,
+    workflow_run: {
+      ...evidenceDerivedArtifact.workflow_run,
+      head_sha: evidenceDerivedWorkflowSha,
+    },
+  };
   const discovered = await discoverEvidenceDerivedStagingIncumbents({
     repository: 'jubenitogarcia/skincos',
     ghApi(pathname) {
@@ -283,15 +295,18 @@ test('discovers only a reachable terminal staging release with one exact evidenc
         return {
           workflow_runs: [
             { ...evidenceDerivedRun, status: 'completed', conclusion: 'failure' },
-            evidenceDerivedRun,
+            releasedFromDifferentWorkflowSha,
           ],
         };
       }
       if (pathname === `repos/jubenitogarcia/skincos/compare/${evidenceDerivedSourceSha}...main`) {
         return { status: 'ahead' };
       }
+      if (pathname === `repos/jubenitogarcia/skincos/compare/${evidenceDerivedWorkflowSha}...main`) {
+        return { status: 'ahead' };
+      }
       if (pathname === `repos/jubenitogarcia/skincos/actions/runs/${evidenceDerivedRun.id}/artifacts?per_page=100`) {
-        return { artifacts: [evidenceDerivedArtifact] };
+        return { artifacts: [releasedFromDifferentWorkflowArtifact] };
       }
       throw new Error(`unexpected GitHub API path: ${pathname}`);
     },
@@ -303,7 +318,8 @@ test('discovers only a reachable terminal staging release with one exact evidenc
   });
   assert.equal(discovered.failures.length, 0);
   assert.deepEqual(discovered.candidates.map(candidate => candidate.sourceSha), [evidenceDerivedSourceSha]);
-  assert.equal(calls.filter(pathname => pathname.includes('/compare/')).length, 1);
+  assert.equal(discovered.candidates[0].workflowSha, evidenceDerivedWorkflowSha);
+  assert.equal(calls.filter(pathname => pathname.includes('/compare/')).length, 2);
 });
 
 test('resolves the cataloged incumbent through the same read-only Cloudflare attestation path', async () => {

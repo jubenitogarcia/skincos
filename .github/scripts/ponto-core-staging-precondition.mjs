@@ -148,9 +148,11 @@ export function validateStagingHistoricalBootstrapLive({ live, expected }) {
 }
 
 function validateRun(run, expected, repository) {
+  const workflowSha = String(expected.workflowSha || expected.sourceSha || '').trim().toLowerCase();
   requireValue(String(run?.id || '') === String(expected.workflowRunId), 'staging incumbent workflow run ID differs');
   requireValue(run.path === RELEASE_WORKFLOW, 'staging incumbent workflow path differs');
-  requireValue(run.head_sha === expected.sourceSha, 'staging incumbent workflow SHA differs');
+  requireValue(SHA_PATTERN.test(workflowSha), 'staging incumbent workflow SHA is invalid');
+  requireValue(String(run.head_sha || '').trim().toLowerCase() === workflowSha, 'staging incumbent workflow SHA differs');
   requireValue(run.head_branch === 'main', 'staging incumbent workflow branch differs');
   requireValue(run.event === 'workflow_dispatch', 'staging incumbent workflow event differs');
   requireValue(run.status === 'completed' && run.conclusion === 'success', 'staging incumbent workflow did not succeed');
@@ -161,17 +163,27 @@ function validateRun(run, expected, repository) {
 
 function validateArtifact(artifact, expected, repository) {
   const selected = expected.releaseEvidenceArtifact;
+  const workflowSha = String(expected.workflowSha || expected.sourceSha || '').trim().toLowerCase();
   requireValue(String(artifact?.id || '') === String(selected.id), 'staging incumbent artifact ID differs');
   requireValue(artifact.name === selected.name, 'staging incumbent artifact name differs');
   requireValue(artifact.digest === selected.digest, 'staging incumbent artifact digest differs');
   requireValue(artifact.expired === false, 'staging incumbent artifact is expired');
   requireValue(artifact.workflow_run?.id === Number(expected.workflowRunId), 'staging incumbent artifact workflow run differs');
-  requireValue(artifact.workflow_run?.head_sha === expected.sourceSha, 'staging incumbent artifact SHA differs');
+  requireValue(String(artifact.workflow_run?.head_sha || '').trim().toLowerCase() === workflowSha, 'staging incumbent artifact SHA differs');
   requireValue(artifact.workflow_run?.head_branch === 'main', 'staging incumbent artifact branch differs');
 }
 
 function stagingRunTitle(sourceSha, workflowRunId) {
   return `Ponto staging ${sourceSha} orchestrator=${workflowRunId}`;
+}
+
+function stagingRunIdentity(run) {
+  const match = /^Ponto staging ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/i.exec(String(run?.display_title || '').trim());
+  if (!match) return null;
+  return {
+    sourceSha: match[1].toLowerCase(),
+    workflowRunId: match[2],
+  };
 }
 
 export function validateEvidenceDerivedStagingIncumbent({
@@ -182,9 +194,15 @@ export function validateEvidenceDerivedStagingIncumbent({
   currentRunId = '',
 }) {
   const workflowRunId = String(run?.id || '');
-  const sourceSha = String(run?.head_sha || '').trim().toLowerCase();
+  const workflowSha = String(run?.head_sha || '').trim().toLowerCase();
+  const title = stagingRunIdentity(run);
   requireValue(ID_PATTERN.test(workflowRunId), 'evidence-derived staging Ponto Core workflow run is invalid');
-  requireValue(SHA_PATTERN.test(sourceSha), 'evidence-derived staging Ponto Core source SHA is invalid');
+  requireValue(SHA_PATTERN.test(workflowSha), 'evidence-derived staging Ponto Core workflow SHA is invalid');
+  requireValue(
+    title?.workflowRunId === workflowRunId,
+    'evidence-derived staging Ponto Core workflow title differs',
+  );
+  const sourceSha = title.sourceSha;
   requireValue(
     !currentRunId || workflowRunId !== String(currentRunId),
     'current Ponto coordinator cannot attest itself as a staging predecessor',
@@ -195,6 +213,7 @@ export function validateEvidenceDerivedStagingIncumbent({
       state: 'published-and-attested',
       repository,
       sourceSha,
+      workflowSha,
       workflowRunId,
       workflowPath: RELEASE_WORKFLOW,
       runAttempt: 1,
@@ -211,10 +230,6 @@ export function validateEvidenceDerivedStagingIncumbent({
   });
 
   validateRun(run, incumbent, repository);
-  requireValue(
-    run.display_title === stagingRunTitle(sourceSha, workflowRunId),
-    'evidence-derived staging Ponto Core workflow title differs',
-  );
   validateArtifact(artifact, incumbent, repository);
   return incumbent;
 }
@@ -273,14 +288,17 @@ export async function discoverEvidenceDerivedStagingIncumbents({
   for (const run of Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : []) {
     if (candidates.length >= RECENT_STAGING_RUN_LIMIT) break;
     const workflowRunId = String(run?.id || '');
-    const sourceSha = String(run?.head_sha || '').trim().toLowerCase();
+    const workflowSha = String(run?.head_sha || '').trim().toLowerCase();
+    const title = stagingRunIdentity(run);
     try {
       if (run?.status !== 'completed' || run?.conclusion !== 'success') continue;
-      if (run?.display_title !== stagingRunTitle(sourceSha, workflowRunId)) continue;
+      if (!title || title.workflowRunId !== workflowRunId) continue;
       if (currentRunId && workflowRunId === currentRunId) continue;
-      sourceIsReachableFromMain({ repository, sourceSha, ghApi });
+      requireValue(SHA_PATTERN.test(workflowSha), 'evidence-derived staging Ponto Core workflow SHA is invalid');
+      sourceIsReachableFromMain({ repository, sourceSha: title.sourceSha, ghApi });
+      sourceIsReachableFromMain({ repository, sourceSha: workflowSha, ghApi });
       const artifactsPayload = ghApi(`repos/${repository}/actions/runs/${workflowRunId}/artifacts?per_page=100`);
-      const artifactName = `ponto-release-evidence-staging-${sourceSha}`;
+      const artifactName = `ponto-release-evidence-staging-${title.sourceSha}`;
       const matches = (Array.isArray(artifactsPayload?.artifacts) ? artifactsPayload.artifacts : [])
         .filter(artifact => artifact?.name === artifactName);
       requireValue(matches.length === 1, 'evidence-derived staging Ponto Core artifact is absent or ambiguous');
