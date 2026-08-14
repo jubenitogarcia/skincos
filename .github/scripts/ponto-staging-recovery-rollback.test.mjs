@@ -63,3 +63,11 @@ test("staging recovery rollback is exact, serialized, and environment protected"
   assert.match(workflow, /name: Upload immutable staging recovery evidence[\s\S]*?if: always\(\)/);
   assert.doesNotMatch(workflow, /target:\s*production/);
 });
+
+test("staging recovery rollback leases the current trusted controller SHA", () => {
+  assert.equal(
+    (workflow.match(/source_sha: \$\{\{ github\.sha \}\}/g) || []).length,
+    3,
+  );
+  assert.doesNotMatch(workflow, /source_sha:\s*\$\{\{ inputs\.release_sha \}\}/);
+});

@@ -48,3 +48,14 @@ test("manual emergency close materializes under the surface mutex and proves liv
   assert.match(emergencyClose, /for \(let attempt = 0; attempt < 12; attempt \+= 1\)/);
   assert.match(emergencyClose, /close:\n[\s\S]*?group: ponto-emergency-latch-\$\{\{ inputs\.target \}\}/);
 });
+
+test("manual emergency re-attestation accepts a still-visible monotonic latch without weakening direct custody", () => {
+  assert.match(
+    emergencyClose,
+    /if \(availability\.source === "emergency-latch-active"\) \{[\s\S]*?changedAt: availability\.changedAt[\s\S]*?fs\.rmSync\(process\.argv\[4\], \{ force: true \}\)/,
+  );
+  assert.match(emergencyClose, /if \[\[ -f "\$directory\/control-fallback-expectation\.json" \]\]; then/);
+  assert.match(emergencyClose, /const validAvailabilityChangedAt = Number\.isFinite\(Date\.parse\(String\(availability\?\.changedAt \|\| ""\)\)\);/);
+  assert.match(emergencyClose, /const exactControlChangedAt = availability\?\.source === "control"/);
+  assert.match(emergencyClose, /&& validAvailabilityChangedAt\s*&& exactControlChangedAt/);
+});

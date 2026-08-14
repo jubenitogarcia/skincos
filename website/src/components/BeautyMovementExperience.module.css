@@ -402,8 +402,7 @@
   will-change: font-size;
 }
 
-.tableStage,
-.resultStage {
+.tableStage {
   width: min(100%, 1040px);
   margin: clamp(8px, 1.2vw, 12px) auto 0;
   scroll-margin-top: 32px;
@@ -1123,7 +1122,7 @@
 .cardButton {
   position: relative;
   display: block;
-  min-height: clamp(280px, 25vw, 304px);
+  min-height: clamp(312px, 27vw, 324px);
   padding: 0;
   overflow: hidden;
   border: 0;
@@ -2157,56 +2156,6 @@
   text-align: center;
 }
 
-.inlineFinale {
-  width: min(100%, 1040px);
-  margin: clamp(28px, 4vw, 52px) auto 0;
-  padding: clamp(28px, 4vw, 48px) 0 clamp(12px, 2vw, 24px);
-  border-top: 1px solid var(--bm-line);
-  scroll-margin-top: 32px;
-  animation: finalePanelEnter 720ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
-}
-
-.inlineFinaleHeader {
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-  margin: 0 auto 18px;
-  text-align: center;
-}
-
-.inlineFinaleHeader h2 {
-  margin: 0;
-  color: var(--bm-ink);
-  font-family: var(--font-brand-ui);
-  font-size: clamp(1.85rem, 4vw, 3.2rem);
-  font-weight: 700;
-  letter-spacing: -0.06em;
-  line-height: 0.98;
-  text-wrap: balance;
-}
-
-.inlineFinale > .resultStage {
-  width: 100%;
-  margin: 0;
-  padding: clamp(20px, 4vw, 34px);
-  border: 1px solid var(--bm-line);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.5);
-  box-shadow: 0 18px 40px rgba(48, 48, 48, 0.06);
-}
-
-@keyframes finalePanelEnter {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 .primaryButton,
 .secondaryButton {
   display: inline-flex;
@@ -2264,26 +2213,6 @@
   transform: none;
 }
 
-.resultStage {
-  display: grid;
-  gap: 22px;
-  width: auto;
-  margin: 0;
-  padding: 24px;
-}
-
-.resultLead {
-  text-align: center;
-}
-
-.invitationPanel,
-.benefitPanel {
-  border: 1px solid var(--bm-line);
-  border-radius: 10px;
-  background: var(--bm-surface);
-  box-shadow: var(--bm-shadow);
-}
-
 .consentField {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2307,123 +2236,6 @@
 
 .consentFieldInvalid {
   border-color: var(--bm-ink);
-}
-
-.invitationPanel h3,
-.benefitPanel h3 {
-  color: var(--bm-ink);
-  font-family: var(--font-brand-ui);
-  font-size: clamp(1.5rem, 3vw, 2.05rem);
-  font-weight: 700;
-  letter-spacing: -0.05em;
-  line-height: 1;
-}
-
-.benefitProcedure {
-  margin-top: 14px !important;
-  color: var(--bm-ink) !important;
-  font-family: var(--font-brand-ui) !important;
-  font-size: 1.08rem;
-  font-weight: 700;
-}
-
-.benefitDiscount {
-  margin-top: 14px !important;
-  color: var(--bm-ink) !important;
-  font-family: var(--font-brand-ui) !important;
-  font-size: 0.95rem;
-  font-weight: 700;
-}
-
-.benefitMeta,
-.benefitRules {
-  font-size: 0.86rem;
-}
-
-.invitationPanel > p:not(.sectionLabel),
-.benefitPanel > p:not(.sectionLabel) {
-  margin: 4px 0 0;
-  color: var(--bm-muted);
-  font-family: var(--font-brand-text);
-  line-height: 1.56;
-}
-
-.invitationPanel,
-.benefitPanel {
-  padding: clamp(22px, 4vw, 32px);
-}
-
-.invitationPanel h3,
-.benefitPanel h3 {
-  margin: 10px 0 0;
-}
-
-.benefitNote {
-  margin-top: 18px !important;
-  padding-top: 16px;
-  border-top: 1px solid var(--bm-line);
-  color: var(--bm-muted) !important;
-  font-size: 0.87rem;
-}
-
-.conditionsDetails summary {
-  display: inline-flex;
-  width: fit-content;
-  margin-top: 16px;
-  color: var(--bm-ink);
-  font-family: var(--font-brand-ui);
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-decoration: underline;
-  text-underline-offset: 4px;
-}
-
-.conditionsDetails {
-  margin-top: 16px;
-}
-
-.conditionsDetails summary {
-  cursor: pointer;
-}
-
-.conditionsDetails > p {
-  margin: 12px 0 0;
-  padding: 14px;
-  border-left: 2px solid var(--bm-ink);
-  background: var(--bm-surface-soft);
-  color: var(--bm-muted);
-  font-size: 0.9rem;
-  line-height: 1.55;
-  white-space: pre-line;
-}
-
-.termsVersion {
-  display: block;
-  margin-top: 14px;
-  color: var(--bm-muted);
-  font-size: 0.74rem;
-}
-
-.resultActions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px;
-}
-
-.shareNote,
-.shareStatus {
-  margin: -7px 0 0;
-  color: var(--bm-muted);
-  font-size: 0.84rem;
-  line-height: 1.5;
-  text-align: center;
-}
-
-.shareStatus {
-  color: var(--bm-ink);
-  font-weight: 700;
 }
 
 .srOnly {
@@ -2559,7 +2371,7 @@
   }
 
   .cardButton {
-    min-height: 280px;
+    min-height: 312px;
   }
 
   .cardIllustration {
@@ -2581,23 +2393,6 @@
     height: 104px;
   }
 
-  .resultStage {
-    padding: 18px;
-  }
-
-  .resultActions {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
-  .resultActions > * {
-    width: 100%;
-  }
-
-  .inlineFinale > .resultStage {
-    padding: 14px;
-    border-radius: 10px;
-  }
 }
 
 @media (max-width: 440px) {
@@ -2615,7 +2410,7 @@
   }
 
   .cardButton {
-    min-height: 280px;
+    min-height: 312px;
   }
 
   .cardFront,
@@ -2627,10 +2422,6 @@
     font-size: 2.2rem;
   }
 
-  .invitationPanel,
-  .benefitPanel {
-    border-radius: 8px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

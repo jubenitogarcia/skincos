@@ -159,6 +159,11 @@ if (action === 'provision') {
   const requestIdList = requestIds.length ? requestIds.map(sql).join(',') : "''";
   const eventIds = Array.from(new Set(fixture.teardownEventIds || []));
   const eventIdList = eventIds.length ? eventIds.map(sql).join(',') : "''";
+  // A journey can fail safely before it makes a Ponto mutation (for example,
+  // while proving release affinity). In that case there is no Timekeeping
+  // audit event to preserve. Once a request reached Ponto, retain the prior
+  // minimum-one-audit proof without requiring a one-to-one count for retries.
+  const expectedAuditMinimum = requestIds.length ? 1 : 0;
   const separateAttestation = Boolean(coreAttestationSqlPath && timekeepingAttestationSqlPath);
   const coreAttestation = `SELECT
       (SELECT COUNT(*) FROM crm_users WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS users,
@@ -214,7 +219,8 @@ if (action === 'provision') {
       (SELECT COUNT(*) FROM timekeeping_request_nonces WHERE request_id IN (${requestIdList})) AS request_nonces,
       (SELECT COUNT(*) FROM workforce_departments WHERE normalized_name=${sql(fixture.onboardingDepartment.toLowerCase())}) AS departments,
       (SELECT COUNT(*) FROM timekeeping_unit_presence_policies WHERE unit_id=${sql(fixture.unitId)} AND updated_by=${sql(`${prefix}:presence-policy`)}) AS policies,
-      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count;`]),
+      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count,
+      ${expectedAuditMinimum} AS expected_audit_minimum;`]),
   ];
   const timekeepingAttestation = `SELECT
       (SELECT COUNT(*) FROM workforce_employees WHERE id=${sql(fixture.employeeId)} OR canonical_employee_id=${sql(`identity:${fixture.onboardingId}`)}) AS employees,
@@ -229,7 +235,8 @@ if (action === 'provision') {
       (SELECT COUNT(*) FROM timekeeping_request_nonces WHERE request_id IN (${requestIdList})) AS request_nonces,
       (SELECT COUNT(*) FROM workforce_departments WHERE normalized_name=${sql(fixture.onboardingDepartment.toLowerCase())}) AS departments,
       (SELECT COUNT(*) FROM timekeeping_unit_presence_policies WHERE unit_id=${sql(fixture.unitId)} AND updated_by=${sql(`${prefix}:presence-policy`)}) AS policies,
-      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count;`;
+      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count,
+      ${expectedAuditMinimum} AS expected_audit_minimum;`;
   writeFileSync(coreSqlPath, `${coreStatements.join('\n')}\n`, { mode: 0o600 });
   writeFileSync(timekeepingSqlPath, `${timekeepingStatements.join('\n')}\n`, { mode: 0o600 });
   if (separateAttestation) {
