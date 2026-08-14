@@ -75,8 +75,16 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   ]);
 
   const catalog = JSON.parse(read("platform/deploy/operational-units.json"));
-  assert.ok(catalog.units.some((unit) => unit.id === "token-vault"));
+  const tokenVaultUnit = catalog.units.find((unit) => unit.id === "token-vault");
+  assert.ok(tokenVaultUnit);
   assert.ok(!catalog.nonPublishingSurfaces.some((entry) => entry.id === "token-vault"));
+  assert.ok(tokenVaultUnit.resources.includes("Governed Meta Ads tracking bootstrap, rollback journal and paused creative fixture"));
+  assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_CONFIG_TOKEN"));
+  assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST"));
+  assert.ok(!tokenVaultUnit.secrets.includes("TOKEN_VAULT_BACKUP_PASSPHRASE"));
+  assert.equal(tokenVaultUnit.promotion.trackingFixture, "synthetic authorized ad-set profile required before staging");
+  assert.equal(tokenVaultUnit.promotion.trackingBootstrap, "legacy authority only; restricted config bearer plus private entries manifest");
+  assert.equal(tokenVaultUnit.promotion.d1Recovery, "Time Travel bookmark; manual restore only under release:token-vault");
 
   const workflow = read(".github/workflows/deploy-token-vault.yml");
   for (const marker of [
@@ -85,19 +93,36 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
     "confirm_staging_tracking_fixture",
     "ENABLE_TOKEN_VAULT_DEPLOY_STAGING",
     "ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY",
-    "TOKEN_VAULT_N8N_API_TOKEN",
-    "Capture encrypted Token Vault D1 checkpoint before migrations",
+    "TOKEN_VAULT_META_ADS_CONFIG_TOKEN",
+    "TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST",
+    "Capture Token Vault D1 Time Travel recovery bookmark before migrations",
+    "d1 time-travel info",
+    "d1 time-travel restore",
+    "manual_restore_under_release_lease",
     "Apply additive Token Vault migrations atomically",
     "versions upload",
+    "--secrets-file",
+    "--strict",
     "versions deploy",
     "promotion-evidence-token-vault",
+    "/v1/meta-ads-publish/config/bootstrap/rollback",
   ]) assert.match(workflow, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-check/);
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-release/);
   assert.doesNotMatch(workflow, /\bsecret\s+put\b/);
   assert.doesNotMatch(workflow, /secrets:\s*inherit/);
-  assert.ok(workflow.indexOf("Capture encrypted Token Vault D1 checkpoint before migrations") < workflow.indexOf("Apply additive Token Vault migrations atomically"));
+  assert.doesNotMatch(workflow, /TOKEN_VAULT_BACKUP_PASSPHRASE/);
+  for (const legacySecret of [
+    "TOKEN_VAULT_API_TOKEN",
+    "TOKEN_VAULT_N8N_API_TOKEN",
+    "TOKEN_VAULT_ENCRYPTION_KEY",
+  ]) {
+    assert.doesNotMatch(workflow, new RegExp(`secrets\\.${legacySecret}`));
+  }
+  assert.match(workflow, /versions upload[\s\S]*?--keep-vars[\s\S]*?--strict[\s\S]*?--secrets-file/);
+  assert.match(workflow, /legacy alpha backend; Time Travel recovery is unavailable and the release is ineligible/);
+  assert.ok(workflow.indexOf("Capture Token Vault D1 Time Travel recovery bookmark before migrations") < workflow.indexOf("Apply additive Token Vault migrations atomically"));
   assert.ok(workflow.indexOf("Check Token Vault release lease before version upload") < workflow.indexOf("Upload immutable Token Vault version"));
   const release = jobBlock(workflow, "release");
   const orbContract = jobBlock(workflow, "orb_contract");
@@ -105,7 +130,30 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.match(release, /Cross-SHA Token Vault rollback is fail-closed/);
   assert.match(release, /Export immutable Worker and incumbent identities for the activation gate/);
   assert.match(release, /Activate only the selected Token Vault version in staging[\s\S]*?if: inputs\.target == 'staging'/);
+  assert.doesNotMatch(release, /for name [^\n]*TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST/);
+  assert.match(release, /Object\.keys\(manifest\)\.length !== 1/);
+  assert.match(release, /TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST is required only when legacy bootstrap is detected/);
+  assert.match(release, /expected_config_authority_revision: expectedRevision/);
+  assert.match(release, /entries: manifest\.entries/);
+  assert.match(release, /bootstrap_operation_key="meta-ads-bootstrap:\$\{RELEASE_SHA:0:12\}:\$\{GITHUB_RUN_ID\}:\$\{GITHUB_RUN_ATTEMPT\}"/);
+  assert.match(release, /did_bootstrap=true/);
+  assert.match(release, /bootstrap_operation_key=\$bootstrap_recorded_operation_key/);
+  assert.match(release, /bootstrap_revision=\$bootstrap_revision/);
+  assert.match(release, /mode === 'tracking_ready'/);
+  assert.match(release, /mode === 'legacy_bootstrap'/);
+  assert.match(release, /\/v1\/meta-ads-publish\/config\/bootstrap/);
+  assert.match(release, /\/v1\/meta-ads-publish\/config\/bootstrap\/rollback/);
+  assert.match(release, /payload\?\.rolled_back !== true/);
+  assert.match(release, /payload\?\.operation_status !== 'rolled_back'/);
+  assert.equal((workflow.match(/const postBootstrap = await request\('\/v1\/meta-ads-publish\/config'\);/g) || []).length, 2);
+  assert.equal((workflow.match(/process\.stdout\.write\(`applied\\t\$\{operationKey\}\\t\$\{bootstrapRevision\}\\n`\);/g) || []).length, 2);
+  assert.equal((workflow.match(/id: tracking_bootstrap_rollback/g) || []).length, 2);
+  assert.equal((workflow.match(/\/v1\/meta-ads-publish\/config\/bootstrap\/rollback/g) || []).length, 2);
+  assert.doesNotMatch(release, /process\.stdout\.write\([^\n]*manifest/i);
   assert.ok(release.indexOf("Upload immutable Token Vault version") < release.indexOf("Activate only the selected Token Vault version in staging"));
+  assert.ok(release.indexOf("Read back the exact active Token Vault Worker version in staging") < release.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it"));
+  assert.ok(release.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it") < release.indexOf("Read back staging Token Vault deployment and authenticated health"));
+  assert.ok(release.indexOf("Roll back an applied Token Vault legacy bootstrap before staging Worker compensation") < release.indexOf("Compensate the staging Worker only when this release still owns traffic"));
   assert.match(orbContract, /needs: \[promotion, release\]/);
   assert.match(orbContract, /RELEASE_SHA: \$\{\{ needs\.promotion\.outputs\.source_sha \}\}/);
   assert.match(orbContract, /id-token: write/);
@@ -127,11 +175,15 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.ok(orbContract.indexOf("Promote and apply the version-checked inactive Meta Ads tracking workflow atomically") < orbContract.indexOf("Read back the promoted native Orb source and live workflow before Worker activation"));
   assert.ok(orbContract.indexOf("Refresh candidate OIDC custody approval before pre-Worker native readback") < orbContract.indexOf("Read back the promoted native Orb source and live workflow before Worker activation"));
   assert.ok(orbContract.indexOf("Read back the promoted native Orb source and live workflow before Worker activation") < orbContract.indexOf("Activate the exact immutable Token Vault Worker after native Orb readback"));
+  assert.ok(orbContract.indexOf("Read back the exact active Token Vault Worker version after the native Orb apply") < orbContract.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when production requires it"));
+  assert.ok(orbContract.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when production requires it") < orbContract.indexOf("Read back production Token Vault authenticated health after activation"));
+  assert.ok(orbContract.indexOf("Roll back an applied Token Vault legacy bootstrap before cross-surface compensation") < orbContract.indexOf("Refresh candidate OIDC custody approval before cross-surface compensation"));
+  assert.ok(orbContract.indexOf("Roll back an applied Token Vault legacy bootstrap before cross-surface compensation") < orbContract.indexOf("Compensate the production Worker first only when this release still owns traffic"));
   assert.ok(orbContract.indexOf("Activate the exact immutable Token Vault Worker after native Orb readback") < orbContract.indexOf("Revalidate final native Orb source and live workflow after Worker activation"));
   assert.ok(orbContract.indexOf("Revalidate final native Orb source and live workflow after Worker activation") < orbContract.indexOf("Refresh candidate OIDC custody approval before Graph conversion readback"));
   assert.ok(orbContract.indexOf("Refresh candidate OIDC custody approval before Graph conversion readback") < orbContract.indexOf("Read back required Website conversion and offline-dataset contracts from Graph"));
-  assert.ok(orbContract.indexOf("Compensate the production Worker first only when this release still owns traffic") < orbContract.indexOf("Read back the incumbent Token Vault health before restoring the Orb snapshot"));
-  assert.ok(orbContract.indexOf("Read back the incumbent Token Vault health before restoring the Orb snapshot") < orbContract.indexOf("Revalidate the shared lease before restoring the owned Orb snapshot"));
+  assert.ok(orbContract.indexOf("Compensate the production Worker first only when this release still owns traffic") < orbContract.indexOf("Read back the incumbent Token Vault version and public auth boundary before restoring the Orb snapshot"));
+  assert.ok(orbContract.indexOf("Read back the incumbent Token Vault version and public auth boundary before restoring the Orb snapshot") < orbContract.indexOf("Revalidate the shared lease before restoring the owned Orb snapshot"));
   assert.ok(orbContract.indexOf("Revalidate the shared lease before restoring the owned Orb snapshot") < orbContract.indexOf("Refresh candidate OIDC custody approval before restoring the owned Orb snapshot"));
   assert.ok(orbContract.indexOf("Refresh candidate OIDC custody approval before restoring the owned Orb snapshot") < orbContract.indexOf("Restore the pre-apply Orb snapshot only after the Worker incumbent readback"));
   assert.ok(orbContract.indexOf("Restore the pre-apply Orb snapshot only after the Worker incumbent readback") < orbContract.indexOf("Restore the prior immutable native source after the Worker and Orb rollback"));
@@ -163,12 +215,17 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.match(workflow, /pausedFixtureVerifiedCreativeUrlTagFixtures/);
   assert.match(workflow, /exactMatchCreativeUrlTagFixtures/);
   assert.match(workflow, /production Token Vault tracking configuration readback is incomplete/);
+  assert.match(workflow, /\/v1\/meta-ads-publish\/config\/bootstrap/);
+  assert.match(workflow, /config_authority_mode/);
+  assert.match(workflow, /legacy_bootstrap/);
+  assert.match(workflow, /tracking_ready/);
+  assert.equal((workflow.match(/steps\.tracking_bootstrap\.outcome != 'success'/g) || []).length, 2);
   assert.match(workflow, /Exercise reversible Meta tracking reconciliation against the isolated staging fixture/);
-  assert.match(workflow, /snapshotIdFromFailure/);
-  assert.match(workflow, /detail\?\.compensation\?\.snapshot_id/);
-  assert.match(workflow, /rollbackResult\.status === 'restored'/);
-  assert.match(workflow, /\['already_restored', 'not_applied'\]/);
-  assert.match(workflow, /tracking-fixture-cleanup/);
+  assert.match(workflow, /\/v1\/meta-ads-publish\/config\/staging-exercise/);
+  assert.match(workflow, /reconciled_and_rolled_back/);
+  assert.match(workflow, /fixture_count !== 1/);
+  assert.match(workflow, /operation_key: `staging-tracking-fixture:\$\{nonce\}`/);
+  assert.doesNotMatch(workflow, /\/v1\/meta-ads-publish\/runs/);
   assert.match(workflow, /Revalidate the release lease before staging Worker compensation/);
   assert.match(workflow, /Validate immutable Token Vault preview source/);
   assert.match(workflow, /if: \$\{\{ inputs\.target != 'preview' \}\}/);
