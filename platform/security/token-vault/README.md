@@ -220,6 +220,11 @@ candidate `--secrets-file` with private permissions and never prints it or uses
 `wrangler secret put`. Production retains its already-attested Orb/Worker
 binding; it is not copied into staging.
 
+The restricted `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` must be an opaque printable
+ASCII bearer without a UTF-8 BOM or control characters. The release gate checks
+that representation before it acquires a lease, migrates D1, or changes Worker
+traffic.
+
 O Token Vault é publicado exclusivamente por
 `.github/workflows/deploy-token-vault.yml`: Preview -> Staging -> Production.
 O workflow exige o gate imutável de promoção, lease global
