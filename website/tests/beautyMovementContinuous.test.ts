@@ -297,7 +297,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /@keyframes finaleIllustrationPulse/);
     assert.match(styles, /@keyframes finaleIllustrationPulse[\s\S]*100%[\s\S]*opacity: 1/);
     assert.match(styles, /\.finaleCardGrid/);
-    assert.match(styles, /--finale-card-height: clamp\(280px, 25vw, 304px\)/);
+    assert.match(styles, /--finale-card-height: clamp\(312px, 27vw, 324px\)/);
+    assert.match(styles, /\.finaleCardGrid[\s\S]*--finale-card-height: 312px/);
     assert.match(styles, /\.finaleCardMessage/);
     assert.match(styles, /\.finaleSpecialCardTransform \{/);
     assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \{[\s\S]*overflow: visible;/);
