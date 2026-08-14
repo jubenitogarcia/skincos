@@ -77,12 +77,15 @@ The routine path is
 `.github/workflows/provision-native-global-coordination-custody.yml`. The
 native production runner uses `SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL`; a
 staging coordinator is a separate trust plane and is never silently reused for
-production custody. The
-An already existing GitHub secret, staging, merge, release, shadow, active or
-rollback state is not a reason for a manual interruption. Human action remains
-necessary only when the authenticated GitHub session, native root/platform
-trust, or a genuinely nonexistent credential is unavailable; the normal
-registration, custody reconciliation and recovery path is otherwise
+production custody. An already existing GitHub secret, staging, merge, release,
+shadow, active or rollback state is not a reason for a manual interruption.
+Apply the autonomy policy's emission-and-contract classification before
+blocking: a mission-authorized `INTERNAL GENERATED SECRET` with write access to
+its canonical store is provisioned and verified autonomously. Human action
+remains necessary only when an `EXTERNALLY ISSUED CREDENTIAL` cannot be issued
+or rotated through its canonical authenticated mechanism because MFA,
+unavailable permission, or external platform trust cannot be completed; the
+normal registration, custody reconciliation and recovery path is otherwise
 Codex-executable and fail-closed.
 
 ## Evidence and recovery

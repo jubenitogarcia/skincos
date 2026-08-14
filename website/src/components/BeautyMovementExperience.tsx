@@ -1378,7 +1378,9 @@ export default function BeautyMovementExperience({
                             </div>
                         ) : null}
                         <span className={styles.specialCardSeal} aria-hidden="true">
-                            ✦
+                            <i />
+                            <i />
+                            <i />
                         </span>
                     </div>
                     <div className={`${styles.specialCardFace} ${styles.specialCardFront}`} aria-hidden={!revealed}>
@@ -1438,9 +1440,19 @@ export default function BeautyMovementExperience({
         <main className={styles.page} aria-hidden={isSpecialCardModalOpen || undefined}>
             <div className={styles.backgroundOrbOne} aria-hidden="true" />
             <div className={styles.backgroundOrbTwo} aria-hidden="true" />
+            <div className={styles.rhythmThread} aria-hidden="true">
+                <svg viewBox="0 0 1200 420" preserveAspectRatio="none" focusable="false">
+                    <path className={styles.rhythmThreadRail} d="M 0 56 H 208" />
+                    <path className={styles.rhythmThreadVein} d="M 208 56 C 306 56 310 166 412 166 C 516 166 522 86 628 86 C 742 86 728 244 844 244 C 960 244 976 156 1200 156" />
+                    <circle className={styles.rhythmThreadBeat} cx="844" cy="244" r="4" />
+                    <circle className={styles.rhythmThreadBeat} cx="876" cy="226" r="3.5" />
+                    <circle className={styles.rhythmThreadBeat} cx="908" cy="210" r="3" />
+                </svg>
+            </div>
 
             <section className={styles.shell} aria-labelledby="beauty-movement-title">
                 <header className={styles.hero}>
+                    <p className={styles.heroKicker}>3 anos. 3 cartas.</p>
                     <h1 id="beauty-movement-title">{initialState.campaign.title?.trim() || "Beleza que se move com você."}</h1>
                     <p
                         className={`${styles.heroDeckInstruction} ${waitingForInitialDeal ? "" : styles.heroDeckInstructionHidden}`.trim()}

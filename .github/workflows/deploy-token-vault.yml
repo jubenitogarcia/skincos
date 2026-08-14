@@ -901,6 +901,10 @@ jobs:
           # only for the governed v20 promotion: it is the least-privileged
           # bearer that can perform the config/exercise readbacks below.
           TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+          # Staging has no Orb consumer. Its operational bearer is a distinct
+          # Environment secret and is injected only into the candidate version.
+          # Production continues to inherit its established Orb-bound bearer.
+          TOKEN_VAULT_N8N_API_TOKEN: ${{ inputs.target == 'staging' && secrets.TOKEN_VAULT_N8N_API_TOKEN || '' }}
           TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
           TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
           ENABLE_TOKEN_VAULT_DEPLOY_STAGING: ${{ vars.ENABLE_TOKEN_VAULT_DEPLOY_STAGING }}
@@ -925,7 +929,14 @@ jobs:
           if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-token-vault; else ENV_ARGS=(--env staging); DB=skincos-token-vault-staging; fi
           npx --yes wrangler@4.120.0 d1 list --json | DB="$DB" node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync(0,'utf8'));if(!rows.some(row=>row.name===process.env.DB)){throw new Error('configured Token Vault D1 is absent')}"
           secrets_json="$(npx --yes wrangler@4.120.0 secret list --format json --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}")"
-          printf '%s' "$secrets_json" | node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync(0,'utf8'));const names=new Set(rows.map(row=>row.name||row));for(const name of ['TOKEN_VAULT_API_TOKEN','TOKEN_VAULT_N8N_API_TOKEN','TOKEN_VAULT_ENCRYPTION_KEY'])if(!names.has(name))throw new Error('required inherited Worker secret is absent: '+name);"
+          printf '%s' "$secrets_json" | node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync(0,'utf8'));const names=new Set(rows.map(row=>row.name||row));for(const name of ['TOKEN_VAULT_API_TOKEN','TOKEN_VAULT_ENCRYPTION_KEY'])if(!names.has(name))throw new Error('required inherited Worker secret is absent: '+name);"
+          if [[ "$TARGET" == staging ]]; then
+            [[ -n "${TOKEN_VAULT_N8N_API_TOKEN:-}" ]] || { echo 'TOKEN_VAULT_N8N_API_TOKEN must be owned by the staging Environment'; exit 1; }
+            [[ ${#TOKEN_VAULT_N8N_API_TOKEN} -ge 32 ]] || { echo 'staging operational bearer is invalid'; exit 1; }
+            [[ "$TOKEN_VAULT_N8N_API_TOKEN" != "$TOKEN_VAULT_META_ADS_CONFIG_TOKEN" ]] || { echo 'staging operational and config bearers must differ'; exit 1; }
+          else
+            printf '%s' "$secrets_json" | node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync(0,'utf8'));const names=new Set(rows.map(row=>row.name||row));if(!names.has('TOKEN_VAULT_N8N_API_TOKEN'))throw new Error('required inherited Worker secret is absent: TOKEN_VAULT_N8N_API_TOKEN');"
+          fi
 
       - name: Validate Token Vault and Meta Ads Publish source
         timeout-minutes: 8
@@ -1132,6 +1143,10 @@ jobs:
           # The Worker treats this binding as optional, but the governed v20
           # release preflight already required the Environment-held bearer.
           TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+          # Environment-scoped source for the isolated staging operational
+          # bearer. It is intentionally ignored for production, where Orb and
+          # Worker must retain their already-attested shared binding.
+          TOKEN_VAULT_N8N_API_TOKEN: ${{ inputs.target == 'staging' && secrets.TOKEN_VAULT_N8N_API_TOKEN || '' }}
           TARGET: ${{ inputs.target }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
@@ -1139,13 +1154,15 @@ jobs:
           if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
           secrets_file="$RUNNER_TEMP/token-vault-${TARGET}-candidate-secrets.json"
           secret_inventory="$RUNNER_TEMP/token-vault-${TARGET}-remote-secrets.json"
-          trap 'rm -f "$secrets_file" "$secret_inventory"; unset analytics_value' EXIT
+          trap 'rm -f "$secrets_file" "$secret_inventory"; unset analytics_value n8n_value' EXIT
           npx --yes wrangler@4.120.0 secret list --format json --config platform/security/token-vault/wrangler.toml "${ENV_ARGS[@]}" > "$secret_inventory"
           analytics_required="$(node - "$secret_inventory" <<'NODE'
           const fs = require('fs');
           const rows = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
           const names = new Set(rows.map((row) => row?.name || row));
-          for (const name of ['TOKEN_VAULT_API_TOKEN', 'TOKEN_VAULT_N8N_API_TOKEN', 'TOKEN_VAULT_ENCRYPTION_KEY']) {
+          const requiredInherited = ['TOKEN_VAULT_API_TOKEN', 'TOKEN_VAULT_ENCRYPTION_KEY'];
+          if (process.env.TARGET === 'production') requiredInherited.push('TOKEN_VAULT_N8N_API_TOKEN');
+          for (const name of requiredInherited) {
             if (!names.has(name)) throw new Error(`required inherited Worker secret is absent: ${name}`);
           }
           process.stdout.write(names.has('TOKEN_VAULT_ANALYTICS_API_TOKEN') ? 'false' : 'true');
@@ -1158,7 +1175,8 @@ jobs:
               analytics_value="$(node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('base64url'));")"
             fi
           fi
-          ANALYTICS_REQUIRED="$analytics_required" ANALYTICS_VALUE="$analytics_value" META_ADS_CONFIG_VALUE="${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" SECRETS_FILE="$secrets_file" node --input-type=module <<'NODE'
+          n8n_value="${TOKEN_VAULT_N8N_API_TOKEN:-}"
+          ANALYTICS_REQUIRED="$analytics_required" ANALYTICS_VALUE="$analytics_value" META_ADS_CONFIG_VALUE="${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" N8N_VALUE="$n8n_value" TARGET="$TARGET" SECRETS_FILE="$secrets_file" node --input-type=module <<'NODE'
           import fs from 'node:fs';
 
           const secrets = {};
@@ -1169,6 +1187,12 @@ jobs:
           }
           const configToken = String(process.env.META_ADS_CONFIG_VALUE || '');
           if (configToken) secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN = configToken;
+          if (process.env.TARGET === 'staging') {
+            const operationalToken = String(process.env.N8N_VALUE || '');
+            if (operationalToken.length < 32) throw new Error('staging operational bearer is invalid');
+            if (operationalToken === configToken) throw new Error('staging operational and config bearers must differ');
+            secrets.TOKEN_VAULT_N8N_API_TOKEN = operationalToken;
+          }
           fs.writeFileSync(process.env.SECRETS_FILE, `${JSON.stringify(secrets)}\n`, { mode: 0o600 });
           NODE
           chmod 600 "$secrets_file"

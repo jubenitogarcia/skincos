@@ -30,7 +30,7 @@ Secret values must never be committed or printed in logs. The preflight only che
 
 ## Local preflight
 
-Run before critical deploy, secret rotation, or when Codex needs full autonomy:
+Run before a production deploy, an elevated secret/credential operation, or when Codex needs full autonomy:
 
 ```bash
 npm run codex:preflight
