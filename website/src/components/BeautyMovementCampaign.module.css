@@ -6,19 +6,19 @@
   gap: 1rem;
   padding: 3rem 1.5rem;
   text-align: center;
-  color: #303030;
-  background: #fafafa;
+  color: #17362e;
+  background: radial-gradient(circle at 72% 24%, rgba(229, 189, 49, 0.16), transparent 18rem), #f4eedf;
 }
 
 .statusPage h1 {
   max-width: 32rem;
   margin: 0;
-  font: 600 clamp(1.75rem, 5vw, 3.2rem) / 1.08 var(--font-brand-ui), sans-serif;
+  font: 500 clamp(2rem, 5vw, 3.4rem) / 0.96 var(--font-beauty-movement-editorial), "Bodoni Moda", serif;
 }
 
 .statusEyebrow {
   margin: 0;
-  color: #505050;
+  color: #5d7168;
   font: 700 0.76rem / 1.2 var(--font-brand-ui), sans-serif;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -32,8 +32,8 @@
 .loader {
   width: 2.5rem;
   height: 2.5rem;
-  border: 3px solid #d0d0d0;
-  border-top-color: #303030;
+  border: 2px solid #c5b58f;
+  border-top-color: #e5bd31;
   border-radius: 50%;
   animation: beautyMovementSpin 850ms linear infinite;
 }
