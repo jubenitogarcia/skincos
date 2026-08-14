@@ -223,7 +223,12 @@ binding; it is not copied into staging.
 The restricted `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` must be an opaque printable
 ASCII bearer without a UTF-8 BOM or control characters. The release gate checks
 that representation before it acquires a lease, migrates D1, or changes Worker
-traffic.
+traffic. Every immutable candidate must then authenticate with that bearer at
+its version preview URL before it can receive traffic. After an activation, the
+workflow waits for the canonical route to accept that bearer before it runs
+bootstrap or the reversible fixture exercise; the preview proves candidate
+authentication, while the canonical-route check proves data-plane auth
+readiness.
 
 O Token Vault é publicado exclusivamente por
 `.github/workflows/deploy-token-vault.yml`: Preview -> Staging -> Production.

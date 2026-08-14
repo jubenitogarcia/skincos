@@ -331,9 +331,44 @@ jobs:
           }
           NODE
 
+      - name: Wait for production Token Vault route to accept the candidate config bearer
+        id: production_route_auth_convergence
+        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success'
+        env:
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+          TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base = String(process.env.TOKEN_VAULT_PRODUCTION_BASE_URL || '').replace(/\/$/, '');
+          const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
+          if (!/^https:\/\/[^/]+$/.test(base) || !token) {
+            throw new Error('Token Vault production route endpoint or credential is unavailable');
+          }
+          function authenticatedAuthority(response, payload) {
+            if (!payload || typeof payload !== 'object') return false;
+            return (response.status === 200 && payload.ready === true && payload.config_authority_mode === 'tracking_ready')
+              || (response.status === 409 && payload.ready === false && payload.config_authority_mode === 'legacy_bootstrap');
+          }
+          const deadline = Date.now() + 90_000;
+          while (Date.now() < deadline) {
+            try {
+              const response = await fetch(`${base}/internal/token-vault/v1/meta-ads-publish/config`, {
+                headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store',
+                redirect: 'error',
+                signal: AbortSignal.timeout(10_000),
+              });
+              if (authenticatedAuthority(response, await response.json())) process.exit(0);
+            } catch {}
+            await new Promise((resolve) => setTimeout(resolve, 3_000));
+          }
+          throw new Error('Token Vault production route did not accept the candidate config bearer before bootstrap');
+          NODE
+
       - name: Bootstrap legacy Token Vault Meta Ads configuration only when production requires it
         id: tracking_bootstrap
-        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success'
+        if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.production_route_auth_convergence.outcome == 'success'
         env:
           # The manifest stays in the protected Environment and is read only
           # after the activated Worker proves that its authority is legacy.
@@ -566,7 +601,7 @@ jobs:
 
       - name: Revalidate the shared lease before cross-surface production compensation
         id: cross_surface_compensation_lease
-        if: always() && steps.native_orb_promotion.outputs.applied == 'true' && (steps.orb_pre_worker_readback.outcome != 'success' || steps.worker_activation.outcome != 'success' || steps.worker_deployment_readback.outcome != 'success' || steps.tracking_bootstrap.outcome != 'success' || steps.worker_health_readback.outcome != 'success' || steps.orb_live_readback.outcome != 'success' || steps.conversion_contract_readback.outcome != 'success')
+        if: always() && steps.native_orb_promotion.outputs.applied == 'true' && (steps.orb_pre_worker_readback.outcome != 'success' || steps.worker_activation.outcome != 'success' || steps.worker_deployment_readback.outcome != 'success' || steps.production_route_auth_convergence.outcome != 'success' || steps.tracking_bootstrap.outcome != 'success' || steps.worker_health_readback.outcome != 'success' || steps.orb_live_readback.outcome != 'success' || steps.conversion_contract_readback.outcome != 'success')
         uses: ./.github/actions/global-coordination-check
         with:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
@@ -1201,7 +1236,16 @@ jobs:
           printf '%s\n' "$upload_output"
           VERSION_ID="$(printf '%s\n' "$upload_output" | sed -n 's/^Worker Version ID: //p' | tail -n 1)"
           [[ "$VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to capture immutable Token Vault Worker version ID'; exit 1; }
+          case "$TARGET" in
+            staging) expected_preview_suffix='-skincos-token-vault-staging.skincos.workers.dev' ;;
+            production) expected_preview_suffix='-skincos-token-vault.skincos.workers.dev' ;;
+            *) echo 'Token Vault target has no trusted Workers preview hostname'; exit 1 ;;
+          esac
+          expected_preview_url="https://${VERSION_ID%%-*}${expected_preview_suffix}"
+          CANDIDATE_PREVIEW_URL="$(printf '%s\n' "$upload_output" | sed -n 's/^Version Preview URL: //p' | sed 's:/*$::' | grep -F -x "$expected_preview_url" || true)"
+          [[ "$CANDIDATE_PREVIEW_URL" == "$expected_preview_url" ]] || { echo 'Unable to capture immutable Token Vault candidate preview URL'; exit 1; }
           echo "TOKEN_VAULT_VERSION_ID=$VERSION_ID" >> "$GITHUB_ENV"
+          echo "TOKEN_VAULT_CANDIDATE_PREVIEW_URL=$CANDIDATE_PREVIEW_URL" >> "$GITHUB_ENV"
 
       - name: Export immutable Worker and incumbent identities for the activation gate
         id: selected_worker_version
@@ -1211,6 +1255,40 @@ jobs:
           [[ "${TOKEN_VAULT_INCUMBENT_VERSION_ID:-}" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Token Vault incumbent version was not captured'; exit 1; }
           echo "version_id=$TOKEN_VAULT_VERSION_ID" >> "$GITHUB_OUTPUT"
           echo "incumbent_version_id=$TOKEN_VAULT_INCUMBENT_VERSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Verify immutable Token Vault candidate config bearer before traffic
+        id: candidate_config_bearer
+        if: inputs.operation == 'deploy'
+        env:
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base = String(process.env.TOKEN_VAULT_CANDIDATE_PREVIEW_URL || '').replace(/\/$/, '');
+          const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(base) || !token) {
+            throw new Error('Token Vault immutable candidate preview endpoint or credential is unavailable');
+          }
+          function authenticatedAuthority(response, payload) {
+            if (!payload || typeof payload !== 'object') return false;
+            return (response.status === 200 && payload.ready === true && payload.config_authority_mode === 'tracking_ready')
+              || (response.status === 409 && payload.ready === false && payload.config_authority_mode === 'legacy_bootstrap');
+          }
+          const deadline = Date.now() + 90_000;
+          while (Date.now() < deadline) {
+            try {
+              const response = await fetch(`${base}/internal/token-vault/v1/meta-ads-publish/config`, {
+                headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store',
+                redirect: 'error',
+                signal: AbortSignal.timeout(10_000),
+              });
+              if (authenticatedAuthority(response, await response.json())) process.exit(0);
+            } catch {}
+            await new Promise((resolve) => setTimeout(resolve, 3_000));
+          }
+          throw new Error('Token Vault immutable candidate config bearer did not authenticate before traffic');
+          NODE
 
       - name: Check Token Vault release lease before staging version deployment
         if: inputs.target == 'staging'
@@ -1256,9 +1334,44 @@ jobs:
           }
           NODE
 
+      - name: Wait for staging Token Vault route to accept the candidate config bearer
+        id: staging_route_auth_convergence
+        if: always() && inputs.target == 'staging' && steps.worker_deploy.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success'
+        env:
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
+          TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base = String(process.env.TOKEN_VAULT_STAGING_BASE_URL || '').replace(/\/$/, '');
+          const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
+          if (!/^https:\/\/[^/]+$/.test(base) || !token) {
+            throw new Error('Token Vault staging route endpoint or credential is unavailable');
+          }
+          function authenticatedAuthority(response, payload) {
+            if (!payload || typeof payload !== 'object') return false;
+            return (response.status === 200 && payload.ready === true && payload.config_authority_mode === 'tracking_ready')
+              || (response.status === 409 && payload.ready === false && payload.config_authority_mode === 'legacy_bootstrap');
+          }
+          const deadline = Date.now() + 90_000;
+          while (Date.now() < deadline) {
+            try {
+              const response = await fetch(`${base}/internal/token-vault/v1/meta-ads-publish/config`, {
+                headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store',
+                redirect: 'error',
+                signal: AbortSignal.timeout(10_000),
+              });
+              if (authenticatedAuthority(response, await response.json())) process.exit(0);
+            } catch {}
+            await new Promise((resolve) => setTimeout(resolve, 3_000));
+          }
+          throw new Error('Token Vault staging route did not accept the candidate config bearer before bootstrap');
+          NODE
+
       - name: Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it
         id: tracking_bootstrap
-        if: always() && inputs.target == 'staging' && steps.worker_deploy.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success'
+        if: always() && inputs.target == 'staging' && steps.worker_deploy.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.staging_route_auth_convergence.outcome == 'success'
         env:
           # The manifest stays in the protected Environment and is read only
           # after the activated Worker proves that its authority is legacy.
