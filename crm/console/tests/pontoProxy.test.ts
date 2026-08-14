@@ -711,6 +711,65 @@ describe('Ponto CRM proxy', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('pins public staging health to the exact controlled Core candidate', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, ready: true })))
+    vi.stubGlobal('fetch', fetchMock)
+    const stagingControl = (syntheticOnly: boolean) => ({
+      state: 'active',
+      schemaVersion: 2,
+      rolloutStage: 'staging',
+      releaseSha: RELEASE_SHA,
+      syntheticOnly,
+      versions: {
+        coreApi: { candidate: CORE_VERSION_ID },
+        identityWorkforce: { candidate: IDENTITY_VERSION_ID },
+      },
+    })
+    const allowed = context('/api/ponto/health?probe=candidate')
+    Object.assign(allowed.env, {
+      SKINCOS_DEPLOYMENT_ENV: 'staging',
+      PONTO_API_TARGET: 'https://api-staging.skincos.com.br',
+      PONTO_ROLLOUT_STAGE: 'staging',
+      PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+      PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+      MODULE_CONTROL: {
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? { ...OPEN_EMERGENCY_LATCH, target: 'staging' }
+          : stagingControl(true),
+      },
+    })
+
+    expect((await onRequest(allowed)).status).toBe(200)
+    const upstream = fetchMock.mock.calls[0][0] as Request
+    expect(upstream.url).toBe('https://api-staging.skincos.com.br/api/ponto/health?probe=candidate')
+    expect(upstream.headers.get('cloudflare-workers-version-overrides'))
+      .toBe(`skincos-ponto-core-staging="${CORE_VERSION_ID}"`)
+    expect(upstream.headers.get('x-skincos-actor')).toBeNull()
+    expect(getInsumosUser).not.toHaveBeenCalled()
+
+    const drifted = context('/api/ponto/health')
+    Object.assign(drifted.env, {
+      SKINCOS_DEPLOYMENT_ENV: 'staging',
+      PONTO_API_TARGET: 'https://api-staging.skincos.com.br',
+      PONTO_ROLLOUT_STAGE: 'staging',
+      PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+      PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+      MODULE_CONTROL: {
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? { ...OPEN_EMERGENCY_LATCH, target: 'staging' }
+          : stagingControl(false),
+      },
+    })
+
+    const driftedResponse = await onRequest(drifted)
+    expect(driftedResponse.status).toBe(503)
+    await expect(driftedResponse.json()).resolves.toMatchObject({
+      ok: false,
+      error: 'PONTO_RELEASE_CONTROL_NOT_AUTHORIZED',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('proves candidate Identity auth, grants, session read and teardown only through the internal binding', async () => {
     const login = 'pilot@example.test'
     const password = 'synthetic-password-123'

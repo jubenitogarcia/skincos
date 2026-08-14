@@ -1022,6 +1022,7 @@ export async function onRequest(context: any): Promise<Response> {
   const basePath = targetUrl.pathname.replace(/\/$/, '')
   targetUrl.pathname = `${basePath}/api/ponto${rest.startsWith('/') ? '' : '/'}${rest}`
   targetUrl.search = url.search
+  const useCanonicalGateway = rest === '/health' || rest === '/health/' || rest === '/readiness' || rest === '/readiness/'
 
   // Cookies and browser Authorization never cross this boundary. Device tokens are
   // accepted only on explicit device routes; CRM users receive signed actor claims.
@@ -1031,6 +1032,21 @@ export async function onRequest(context: any): Promise<Response> {
   if (configuration.localDirectTimekeeping) {
     headers.set('x-skincos-gateway-release-sha', configuration.releaseSha)
     headers.set('x-skincos-gateway-environment', 'local')
+  }
+  if (
+    useCanonicalGateway
+    && configuration.rolloutStage === 'staging'
+    && CLOUDFLARE_VERSION_ID_RE.test(configuration.coreVersionId)
+  ) {
+    const control = await readPontoControl(env)
+    if (!exactLiveControl(control, configuration)) {
+      return json(
+        503,
+        { ok: false, error: 'PONTO_RELEASE_CONTROL_NOT_AUTHORIZED' },
+        releaseHeaders,
+      )
+    }
+    headers.set('cloudflare-workers-version-overrides', `skincos-ponto-core-staging="${configuration.coreVersionId}"`)
   }
   const method = (request.method || 'GET').toUpperCase()
   let body: ArrayBuffer | undefined
@@ -1109,7 +1125,6 @@ export async function onRequest(context: any): Promise<Response> {
   // from the canonical gateway, rather than a possibly stale Pages service
   // binding, so a maintenance/degraded response cannot be reintroduced as a
   // legacy ready=true result through the CRM alias.
-  const useCanonicalGateway = rest === '/health' || rest === '/health/' || rest === '/readiness' || rest === '/readiness/'
   let upstream: Response
   try {
     upstream = configuration.localDirectTimekeeping || useCanonicalGateway
