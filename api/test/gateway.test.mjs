@@ -348,6 +348,52 @@ test('a timing-out optional Workforce binding degrades only workforce and opens 
     assert.equal(health.status, 200);
 });
 
+test('canonical public Ponto readiness preserves the authoritative maintenance contract', async () => {
+    resetBoundServiceResilienceForTest();
+    const releaseSha = 'a'.repeat(40);
+    const timekeepingVersionId = '33333333-3333-4333-8333-333333333333';
+    let forwarded = null;
+    const response = await handleGatewayRequest(new Request('https://api-staging.skincos.com.br/api/ponto/readiness'), {
+        APP_VERSION: 'b'.repeat(40),
+        ENVIRONMENT: 'staging',
+        TIMEKEEPING: {
+            fetch: async (request) => {
+                forwarded = request;
+                return new Response(JSON.stringify({
+                    service: 'workforce-timekeeping',
+                    ok: false,
+                    ready: false,
+                    code: 'MODULE_MAINTENANCE',
+                    availability: { state: 'maintenance', source: 'control' },
+                    versionMetadata: { releaseSha },
+                }), {
+                    status: 503,
+                    headers: {
+                        'content-type': 'application/json; charset=utf-8',
+                        'x-skincos-timekeeping-release-sha': releaseSha,
+                        'x-skincos-timekeeping-version-id': timekeepingVersionId,
+                        'x-skincos-timekeeping-environment': 'staging',
+                    },
+                });
+            },
+        },
+    }, {});
+
+    assert.equal(response.status, 503);
+    assert.equal(new URL(forwarded.url).pathname, '/api/ponto/readiness');
+    assert.equal(response.headers.get('x-skincos-dependency-status'), 'live');
+    assert.equal(response.headers.get('x-skincos-timekeeping-release-sha'), releaseSha);
+    assert.equal(response.headers.get('x-skincos-timekeeping-version-id'), timekeepingVersionId);
+    assert.equal(response.headers.get('x-skincos-timekeeping-environment'), 'staging');
+    const body = await response.json();
+    assert.equal(body.service, 'workforce-timekeeping');
+    assert.equal(body.ready, false);
+    assert.equal(body.code, 'MODULE_MAINTENANCE');
+    assert.equal(body.availability.state, 'maintenance');
+    assert.equal(body.versionMetadata.releaseSha, releaseSha);
+    resetBoundServiceResilienceForTest();
+});
+
 test('workforce owns the canonical public Ponto mount', async () => {
     const response = await gateway(new Request('https://api.skincos.com.br/api/ponto/health', { headers: { 'x-request-id': 'ponto-1' } }), {}, {});
     assert.equal(response.status, 200);
