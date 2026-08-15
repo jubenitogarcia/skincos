@@ -23,7 +23,7 @@ if (!rulesetFile || !reportFile) throw new Error("ruleset and report paths are r
 if (
   !/^[0-9a-f]{32}$/.test(zoneId)
   || !/^[0-9a-f]{40}$/.test(releaseSha)
-  || !["staging", "pilot", "canary", "production"].includes(stage)
+  || !["bootstrap", "staging", "pilot", "canary", "production"].includes(stage)
   || ![expectedRulesetId, expectedHeaderRuleId, expectedContractRuleId].every(value => /^[0-9a-f]{32}$/.test(value))
 ) {
   throw new Error("edge guard provenance is invalid");
