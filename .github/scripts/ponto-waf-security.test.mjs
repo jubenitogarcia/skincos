@@ -286,7 +286,7 @@ test("expression identity preserves literal case after whitespace normalization"
   assert.equal(reconciled.length, 2);
 });
 
-test("release edge attestation also preserves literal case", () => {
+test("release edge attestation supports bootstrap and preserves literal case", () => {
   const source = fs.readFileSync(
     path.resolve(import.meta.dirname, "ponto-edge-override-guard.mjs"),
     "utf8",
@@ -294,6 +294,10 @@ test("release edge attestation also preserves literal case", () => {
   const normalization = source.match(
     /const normalizeExpression = value =>[\s\S]*?\.replace\(\/\\s\+\/g, " "\);/,
   )?.[0] || "";
+  assert.match(
+    source,
+    /\["bootstrap", "staging", "pilot", "canary", "production"\]\.includes\(stage\)/,
+  );
   assert.match(normalization, /\.trim\(\)/);
   assert.doesNotMatch(normalization, /\.toLowerCase\(\)/);
 });
