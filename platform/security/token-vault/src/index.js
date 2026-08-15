@@ -12,6 +12,8 @@ const TOKEN_PREFIX = '/internal/token-vault';
 const META_ADS_PUBLISH_CONFIG_PATH = '/v1/meta-ads-publish/config';
 const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH = `${META_ADS_PUBLISH_CONFIG_PATH}/bootstrap`;
 const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_ROLLBACK_PATH = `${META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH}/rollback`;
+const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_DERIVE_PLAN_PATH = `${META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH}/derive-plan`;
+const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_DERIVE_PATH = `${META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH}/derive`;
 const META_ADS_PUBLISH_CONFIG_STAGING_EXERCISE_PATH = `${META_ADS_PUBLISH_CONFIG_PATH}/staging-exercise`;
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -71,6 +73,8 @@ export async function handleRequest(request, env) {
         (request.method === 'POST' && [
           META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH,
           META_ADS_PUBLISH_CONFIG_BOOTSTRAP_ROLLBACK_PATH,
+          META_ADS_PUBLISH_CONFIG_BOOTSTRAP_DERIVE_PLAN_PATH,
+          META_ADS_PUBLISH_CONFIG_BOOTSTRAP_DERIVE_PATH,
           META_ADS_PUBLISH_CONFIG_STAGING_EXERCISE_PATH,
         ].includes(pathname))
       ) {
@@ -109,6 +113,8 @@ export async function handleRequest(request, env) {
       [
         META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH,
         META_ADS_PUBLISH_CONFIG_BOOTSTRAP_ROLLBACK_PATH,
+        META_ADS_PUBLISH_CONFIG_BOOTSTRAP_DERIVE_PLAN_PATH,
+        META_ADS_PUBLISH_CONFIG_BOOTSTRAP_DERIVE_PATH,
         META_ADS_PUBLISH_CONFIG_STAGING_EXERCISE_PATH,
       ].includes(pathname)
     ) {
@@ -587,7 +593,7 @@ function contract(requestId) {
       analytics_scope: 'influencer-intelligence',
       analytics_mode: 'shadow|active',
       meta_ads_config_secret: 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN',
-      meta_ads_config_scope: 'health|contract|meta-ads-config-read|meta-ads-config-bootstrap|meta-ads-config-bootstrap-rollback|meta-ads-config-staging-exercise',
+      meta_ads_config_scope: 'health|contract|meta-ads-config-read|meta-ads-config-bootstrap|meta-ads-config-bootstrap-rollback|meta-ads-config-bootstrap-derive-plan|meta-ads-config-bootstrap-derive|meta-ads-config-staging-exercise',
     },
     storage: {
       d1_binding: 'TOKEN_VAULT_DB',

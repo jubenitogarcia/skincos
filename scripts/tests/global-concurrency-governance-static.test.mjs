@@ -78,12 +78,12 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   const tokenVaultUnit = catalog.units.find((unit) => unit.id === "token-vault");
   assert.ok(tokenVaultUnit);
   assert.ok(!catalog.nonPublishingSurfaces.some((entry) => entry.id === "token-vault"));
-  assert.ok(tokenVaultUnit.resources.includes("Governed Meta Ads tracking bootstrap, rollback journal and paused creative fixture"));
+  assert.ok(tokenVaultUnit.resources.includes("Governed Meta Ads tracking bootstrap derivation, rollback journal and paused creative fixture"));
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_CONFIG_TOKEN"));
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST"));
   assert.ok(!tokenVaultUnit.secrets.includes("TOKEN_VAULT_BACKUP_PASSPHRASE"));
   assert.equal(tokenVaultUnit.promotion.trackingFixture, "synthetic authorized ad-set profile required before staging");
-  assert.equal(tokenVaultUnit.promotion.trackingBootstrap, "legacy authority only; restricted config bearer plus private entries manifest");
+  assert.equal(tokenVaultUnit.promotion.trackingBootstrap, "legacy authority only; restricted config bearer plus hash-bound internal derivation or protected entries override");
   assert.equal(tokenVaultUnit.promotion.d1Recovery, "Time Travel bookmark; manual restore only under release:token-vault");
 
   const workflow = read(".github/workflows/deploy-token-vault.yml");
@@ -106,6 +106,8 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
     "--strict",
     "versions deploy",
     "promotion-evidence-token-vault",
+    "/v1/meta-ads-publish/config/bootstrap/derive-plan",
+    "/v1/meta-ads-publish/config/bootstrap/derive",
     "/v1/meta-ads-publish/config/bootstrap/rollback",
   ]) assert.match(workflow, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(workflow, /uses: \.\/\.github\/actions\/global-coordination-acquire/);
@@ -134,7 +136,6 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.match(release, /Activate only the selected Token Vault version in staging[\s\S]*?if: inputs\.target == 'staging'/);
   assert.doesNotMatch(release, /for name [^\n]*TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST/);
   assert.match(release, /Object\.keys\(manifest\)\.length !== 1/);
-  assert.match(release, /TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST is required only when legacy bootstrap is detected/);
   assert.match(release, /TOKEN_VAULT_N8N_API_TOKEN must be owned by the staging Environment/);
   assert.match(release, /if \[\[ "\$TARGET" == staging \]\]; then[\s\S]*?TOKEN_VAULT_N8N_API_TOKEN/);
   assert.match(release, /if \(process\.env\.TARGET === 'production'\) requiredInherited\.push\('TOKEN_VAULT_N8N_API_TOKEN'\)/);
@@ -152,21 +153,31 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.match(release, /grep -F -x "\$expected_preview_url"/);
   assert.match(release, /Verify immutable Token Vault candidate config bearer before traffic/);
   assert.match(release, /Token Vault immutable candidate config bearer did not authenticate before traffic/);
-  assert.match(release, /config_authority_mode=\$\{mode\}/);
-  assert.match(release, /Verify protected legacy Token Vault bootstrap manifest before traffic/);
+  assert.match(release, /config_authority_mode=\$\{authority\.mode\}/);
+  assert.match(release, /config_authority_revision=\$\{authority\.revision\}/);
+  assert.match(release, /Seal a private or internally-derived legacy Token Vault bootstrap plan before traffic/);
   assert.match(release, /CANDIDATE_CONFIG_AUTHORITY_MODE: \$\{\{ steps\.candidate_config_bearer\.outputs\.config_authority_mode \}\}/);
+  assert.match(release, /CANDIDATE_CONFIG_AUTHORITY_REVISION: \$\{\{ steps\.candidate_config_bearer\.outputs\.config_authority_revision \}\}/);
   assert.match(release, /outputs\.config_authority_mode == 'legacy_bootstrap' && secrets\.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST \|\| ''/);
   assert.match(release, /Token Vault tracking-ready candidate must not receive a bootstrap manifest/);
   assert.match(release, /Token Vault bootstrap manifest has an unsafe entry envelope/);
   assert.match(release, /Token Vault bootstrap manifest has an unsafe Website entry/);
   assert.match(release, /forbiddenUrlTagKeyPattern/);
-  assert.match(release, /config_authority_mode === 'tracking_ready'/);
-  assert.match(release, /config_authority_mode === 'legacy_bootstrap'/);
+  assert.match(release, /mode === 'tracking_ready'/);
+  assert.match(release, /mode === 'legacy_bootstrap'/);
   assert.match(release, /signal: AbortSignal\.timeout\(10_000\)/);
+  assert.match(release, /signal: AbortSignal\.timeout\(20_000\)/);
+  assert.match(release, /TOKEN_VAULT_CANDIDATE_PREVIEW_URL=\$CANDIDATE_PREVIEW_URL/);
+  assert.match(release, /process\.env\.TOKEN_VAULT_CANDIDATE_PREVIEW_URL/);
+  assert.match(release, /\/v1\/meta-ads-publish\/config\/bootstrap\/derive-plan/);
+  assert.match(release, /bootstrap_strategy=\$\{strategy\}/);
+  assert.match(release, /bootstrap_plan_revision=\$\{authorityRevision\}/);
+  assert.match(release, /bootstrap_manifest_sha256=\$\{manifestSha256\}/);
   assert.ok(release.indexOf("Verify immutable Token Vault candidate config bearer before traffic") < release.indexOf("Activate only the selected Token Vault version in staging"));
-  assert.ok(release.indexOf("Verify immutable Token Vault candidate config bearer before traffic") < release.indexOf("Verify protected legacy Token Vault bootstrap manifest before traffic"));
-  assert.ok(release.indexOf("Verify protected legacy Token Vault bootstrap manifest before traffic") < release.indexOf("Activate only the selected Token Vault version in staging"));
-  assert.ok(release.indexOf("Verify protected legacy Token Vault bootstrap manifest before traffic") < release.indexOf("Check Token Vault release lease before staging version deployment"));
+  assert.ok(release.indexOf("Verify immutable Token Vault candidate config bearer before traffic") < release.indexOf("Seal a private or internally-derived legacy Token Vault bootstrap plan before traffic"));
+  assert.ok(release.indexOf("Seal a private or internally-derived legacy Token Vault bootstrap plan before traffic") < release.indexOf("Validate sealed Token Vault bootstrap plan before staging traffic"));
+  assert.ok(release.indexOf("Validate sealed Token Vault bootstrap plan before staging traffic") < release.indexOf("Activate only the selected Token Vault version in staging"));
+  assert.ok(release.indexOf("Validate sealed Token Vault bootstrap plan before staging traffic") < release.indexOf("Check Token Vault release lease before staging version deployment"));
   assert.match(release, /Wait for staging Token Vault route to accept the candidate config bearer/);
   assert.match(release, /Token Vault staging route did not accept the candidate config bearer before bootstrap/);
   assert.ok(release.indexOf("Read back the exact active Token Vault Worker version in staging") < release.indexOf("Wait for staging Token Vault route to accept the candidate config bearer"));
@@ -180,6 +191,12 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.match(orbContract, /steps\.production_route_auth_convergence\.outcome != 'success'/);
   assert.match(release, /expected_config_authority_revision: expectedRevision/);
   assert.match(release, /entries: manifest\.entries/);
+  assert.equal((workflow.match(/import \{ createHash \} from 'node:crypto';/g) || []).length, 3);
+  assert.match(release, /expected_manifest_sha256: planDigest/);
+  assert.match(release, /\/v1\/meta-ads-publish\/config\/bootstrap\/derive/);
+  assert.match(release, /BOOTSTRAP_STRATEGY: \$\{\{ steps\.candidate_bootstrap_plan\.outputs\.bootstrap_strategy \}\}/);
+  assert.match(release, /BOOTSTRAP_PLAN_REVISION: \$\{\{ steps\.candidate_bootstrap_plan\.outputs\.bootstrap_plan_revision \}\}/);
+  assert.match(release, /BOOTSTRAP_MANIFEST_SHA256: \$\{\{ steps\.candidate_bootstrap_plan\.outputs\.bootstrap_manifest_sha256 \}\}/);
   assert.match(release, /bootstrap_operation_key="meta-ads-bootstrap:\$\{RELEASE_SHA:0:12\}:\$\{GITHUB_RUN_ID\}:\$\{GITHUB_RUN_ATTEMPT\}"/);
   assert.match(release, /did_bootstrap=true/);
   assert.match(release, /bootstrap_operation_key=\$bootstrap_recorded_operation_key/);
@@ -195,12 +212,18 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.equal((workflow.match(/id: tracking_bootstrap_rollback/g) || []).length, 2);
   assert.equal((workflow.match(/\/v1\/meta-ads-publish\/config\/bootstrap\/rollback/g) || []).length, 2);
   assert.doesNotMatch(release, /process\.stdout\.write\([^\n]*manifest/i);
+  assert.doesNotMatch(release, /GITHUB_OUTPUT[^\n]*(?:entries|summary|TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST)/i);
   assert.ok(release.indexOf("Upload immutable Token Vault version") < release.indexOf("Activate only the selected Token Vault version in staging"));
   assert.ok(release.indexOf("Read back the exact active Token Vault Worker version in staging") < release.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it"));
   assert.ok(release.indexOf("Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it") < release.indexOf("Read back staging Token Vault deployment and authenticated health"));
   assert.ok(release.indexOf("Roll back an applied Token Vault legacy bootstrap before staging Worker compensation") < release.indexOf("Compensate the staging Worker only when this release still owns traffic"));
   assert.match(orbContract, /needs: \[promotion, release\]/);
   assert.match(orbContract, /RELEASE_SHA: \$\{\{ needs\.promotion\.outputs\.source_sha \}\}/);
+  assert.match(orbContract, /BOOTSTRAP_STRATEGY: \$\{\{ needs\.release\.outputs\.bootstrap_strategy \}\}/);
+  assert.match(orbContract, /BOOTSTRAP_PLAN_REVISION: \$\{\{ needs\.release\.outputs\.bootstrap_plan_revision \}\}/);
+  assert.match(orbContract, /BOOTSTRAP_MANIFEST_SHA256: \$\{\{ needs\.release\.outputs\.bootstrap_manifest_sha256 \}\}/);
+  assert.match(orbContract, /Validate sealed Token Vault bootstrap plan before native mutation/);
+  assert.ok(orbContract.indexOf("Validate sealed Token Vault bootstrap plan before native mutation") < orbContract.indexOf("Attest the already staged immutable candidate through GitHub OIDC"));
   assert.match(orbContract, /id-token: write/);
   assert.match(orbContract, /Attest the already staged immutable candidate through GitHub OIDC/);
   assert.match(orbContract, /Capture the complete incumbent inactive Orb checkpoint before compound transition/);

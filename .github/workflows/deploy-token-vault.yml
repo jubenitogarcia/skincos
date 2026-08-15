@@ -121,6 +121,25 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Validate sealed Token Vault bootstrap plan before native mutation
+        env:
+          BOOTSTRAP_STRATEGY: ${{ needs.release.outputs.bootstrap_strategy }}
+          BOOTSTRAP_PLAN_REVISION: ${{ needs.release.outputs.bootstrap_plan_revision }}
+          BOOTSTRAP_MANIFEST_SHA256: ${{ needs.release.outputs.bootstrap_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          case "$BOOTSTRAP_STRATEGY" in
+            not_required)
+              [[ "$BOOTSTRAP_PLAN_REVISION" =~ ^[a-f0-9]{64}$ && -z "$BOOTSTRAP_MANIFEST_SHA256" ]] || { echo 'Token Vault ready bootstrap plan identity is invalid'; exit 1; }
+              ;;
+            derive|manifest)
+              [[ "$BOOTSTRAP_PLAN_REVISION" =~ ^legacy:[a-f0-9]{64}$ && "$BOOTSTRAP_MANIFEST_SHA256" =~ ^[a-f0-9]{64}$ ]] || { echo 'Token Vault legacy bootstrap plan identity is invalid'; exit 1; }
+              ;;
+            *)
+              echo 'Token Vault bootstrap strategy is invalid'; exit 1
+              ;;
+          esac
+
       - name: Attest the already staged immutable candidate through GitHub OIDC
         id: candidate_initial_attestation
         run: |
@@ -370,9 +389,13 @@ jobs:
         id: tracking_bootstrap
         if: always() && steps.worker_activation.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.production_route_auth_convergence.outcome == 'success'
         env:
-          # The manifest stays in the protected Environment and is read only
-          # after the activated Worker proves that its authority is legacy.
-          TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST: ${{ secrets.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST }}
+          # A protected manifest remains an optional explicit override. The
+          # default legacy path rederives its bounded plan privately inside the
+          # Vault from the candidate-bound digest sealed before traffic.
+          BOOTSTRAP_STRATEGY: ${{ needs.release.outputs.bootstrap_strategy }}
+          BOOTSTRAP_PLAN_REVISION: ${{ needs.release.outputs.bootstrap_plan_revision }}
+          BOOTSTRAP_MANIFEST_SHA256: ${{ needs.release.outputs.bootstrap_manifest_sha256 }}
+          TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST: ${{ needs.release.outputs.bootstrap_strategy == 'manifest' && secrets.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '' }}
           TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
           TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -384,11 +407,21 @@ jobs:
           bootstrap_operation_key="meta-ads-bootstrap:${RELEASE_SHA:0:12}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
           [[ "$bootstrap_operation_key" =~ ^[A-Za-z0-9_.:-]{8,160}$ ]] || { echo 'bootstrap operation key is invalid'; exit 1; }
           bootstrap_state="$(BOOTSTRAP_OPERATION_KEY="$bootstrap_operation_key" node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+
           const base = String(process.env.TOKEN_VAULT_PRODUCTION_BASE_URL || '').replace(/\/$/, '');
           const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
           const operationKey = String(process.env.BOOTSTRAP_OPERATION_KEY || '');
+          const strategy = String(process.env.BOOTSTRAP_STRATEGY || '');
+          const planRevision = String(process.env.BOOTSTRAP_PLAN_REVISION || '').toLowerCase();
+          const planDigest = String(process.env.BOOTSTRAP_MANIFEST_SHA256 || '').toLowerCase();
+          const rawManifest = String(process.env.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '');
           if (!/^https:\/\/[^/]+$/.test(base) || !token) throw new Error('Token Vault production bootstrap endpoint or credential is unavailable');
           if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(operationKey)) throw new Error('bootstrap operation identity is invalid');
+          if (!['not_required', 'manifest', 'derive'].includes(strategy)) throw new Error('Token Vault candidate bootstrap strategy is unavailable');
+          if (!/^(?:legacy:)?[a-f0-9]{64}$/.test(planRevision)) throw new Error('Token Vault candidate bootstrap plan revision is invalid');
+          if ((strategy === 'derive' || strategy === 'manifest') && !/^[a-f0-9]{64}$/.test(planDigest)) throw new Error('Token Vault candidate bootstrap plan digest is invalid');
+          if (strategy !== 'manifest' && rawManifest) throw new Error('Token Vault derived or ready bootstrap strategy must not receive a protected manifest');
 
           const safeError = (payload) => {
             const value = String(payload?.error || '');
@@ -402,6 +435,7 @@ jobs:
               headers,
               body: body === undefined ? undefined : JSON.stringify(body),
               redirect: 'error',
+              signal: AbortSignal.timeout(20_000),
             });
             let payload = null;
             try { payload = await response.json(); } catch {}
@@ -426,37 +460,43 @@ jobs:
           const mode = String(initial.payload.config_authority_mode || '');
           if (mode === 'tracking_ready') {
             requireReady(initial, 'Token Vault configuration authority readback');
+            if (strategy !== 'not_required' || planRevision !== String(initial.payload?.config_authority_revision || '').toLowerCase() || planDigest || rawManifest) {
+              throw new Error('Token Vault configuration authority changed after candidate planning');
+            }
             process.stdout.write('not_required\n');
           } else if (mode === 'legacy_bootstrap') {
             const expectedRevision = String(initial.payload.config_authority_revision || '').toLowerCase();
             if (!/^legacy:[a-f0-9]{64}$/.test(expectedRevision)) throw new Error('legacy Token Vault authority revision is invalid');
-            const rawManifest = String(process.env.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '');
-            if (!rawManifest) throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST is required only when legacy bootstrap is detected');
-            let manifest;
-            try { manifest = JSON.parse(rawManifest); } catch { throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must be valid JSON containing only entries'); }
-            if (
-              !manifest ||
-              typeof manifest !== 'object' ||
-              Array.isArray(manifest) ||
-              Object.keys(manifest).length !== 1 ||
-              !Object.prototype.hasOwnProperty.call(manifest, 'entries') ||
-              !Array.isArray(manifest.entries) ||
-              manifest.entries.length < 2 ||
-              manifest.entries.length > 10 ||
-              new TextEncoder().encode(JSON.stringify(manifest)).length > 150 * 1024
-            ) {
-              throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must contain only 2 to 10 bounded entries');
+            if (planRevision !== expectedRevision || !['manifest', 'derive'].includes(strategy)) throw new Error('Token Vault legacy authority changed after candidate planning');
+            let bootstrap;
+            if (strategy === 'manifest') {
+              const actualHex = createHash('sha256').update(rawManifest).digest('hex');
+              if (!rawManifest || actualHex !== planDigest) throw new Error('Token Vault protected bootstrap manifest changed after candidate planning');
+              let manifest;
+              try { manifest = JSON.parse(rawManifest); } catch { throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must be valid JSON containing only entries'); }
+              if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || Object.keys(manifest).length !== 1 || !Object.prototype.hasOwnProperty.call(manifest, 'entries') || !Array.isArray(manifest.entries) || manifest.entries.length < 2 || manifest.entries.length > 10 || new TextEncoder().encode(JSON.stringify(manifest)).length > 150 * 1024) {
+                throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must contain only 2 to 10 bounded entries');
+              }
+              bootstrap = await request('/v1/meta-ads-publish/config/bootstrap', {
+                method: 'POST',
+                body: {
+                  operation_key: operationKey,
+                  expected_config_authority_revision: expectedRevision,
+                  entries: manifest.entries,
+                },
+              });
+            } else {
+              bootstrap = await request('/v1/meta-ads-publish/config/bootstrap/derive', {
+                method: 'POST',
+                body: {
+                  operation_key: operationKey,
+                  expected_config_authority_revision: expectedRevision,
+                  expected_manifest_sha256: planDigest,
+                },
+              });
             }
-            const bootstrap = await request('/v1/meta-ads-publish/config/bootstrap', {
-              method: 'POST',
-              body: {
-                operation_key: operationKey,
-                expected_config_authority_revision: expectedRevision,
-                entries: manifest.entries,
-              },
-            });
             if (!bootstrap.response.ok || bootstrap.payload?.ok !== true) {
-              throw new Error(`Token Vault legacy bootstrap failed: ${bootstrap.response.status} ${safeError(bootstrap.payload)}`);
+              throw new Error(`Token Vault ${strategy} bootstrap failed: ${bootstrap.response.status} ${safeError(bootstrap.payload)}`);
             }
             const bootstrapRevision = String(bootstrap.payload?.config_authority_revision || '').toLowerCase();
             if (!/^[a-f0-9]{64}$/.test(bootstrapRevision)) throw new Error('Token Vault legacy bootstrap did not return a tracking revision');
@@ -912,6 +952,9 @@ jobs:
     outputs:
       token_vault_version_id: ${{ steps.selected_worker_version.outputs.version_id }}
       token_vault_incumbent_version_id: ${{ steps.selected_worker_version.outputs.incumbent_version_id }}
+      bootstrap_strategy: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_strategy }}
+      bootstrap_plan_revision: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_plan_revision }}
+      bootstrap_manifest_sha256: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_manifest_sha256 }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
     steps:
@@ -1269,11 +1312,17 @@ jobs:
           if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(base) || !token) {
             throw new Error('Token Vault immutable candidate preview endpoint or credential is unavailable');
           }
-          function authenticatedAuthorityMode(response, payload) {
-            if (!payload || typeof payload !== 'object') return '';
-            if (response.status === 200 && payload.ready === true && payload.config_authority_mode === 'tracking_ready') return 'tracking_ready';
-            if (response.status === 409 && payload.ready === false && payload.config_authority_mode === 'legacy_bootstrap') return 'legacy_bootstrap';
-            return '';
+          function authenticatedAuthority(response, payload) {
+            if (!payload || typeof payload !== 'object') return null;
+            const mode = String(payload.config_authority_mode || '');
+            const revision = String(payload.config_authority_revision || '').toLowerCase();
+            if (response.status === 200 && payload.ready === true && mode === 'tracking_ready' && /^[a-f0-9]{64}$/.test(revision)) {
+              return { mode, revision };
+            }
+            if (response.status === 409 && payload.ready === false && mode === 'legacy_bootstrap' && /^legacy:[a-f0-9]{64}$/.test(revision)) {
+              return { mode, revision };
+            }
+            return null;
           }
           const deadline = Date.now() + 90_000;
           while (Date.now() < deadline) {
@@ -1284,10 +1333,10 @@ jobs:
                 redirect: 'error',
                 signal: AbortSignal.timeout(10_000),
               });
-              const mode = authenticatedAuthorityMode(response, await response.json());
-              if (mode) {
+              const authority = authenticatedAuthority(response, await response.json());
+              if (authority) {
                 const fs = await import('node:fs');
-                fs.appendFileSync(process.env.GITHUB_OUTPUT, `config_authority_mode=${mode}\n`);
+                fs.appendFileSync(process.env.GITHUB_OUTPUT, `config_authority_mode=${authority.mode}\nconfig_authority_revision=${authority.revision}\n`);
                 process.exit(0);
               }
             } catch {}
@@ -1296,20 +1345,31 @@ jobs:
           throw new Error('Token Vault immutable candidate config bearer did not authenticate before traffic');
           NODE
 
-      - name: Verify protected legacy Token Vault bootstrap manifest before traffic
-        id: candidate_bootstrap_manifest
+      - name: Seal a private or internally-derived legacy Token Vault bootstrap plan before traffic
+        id: candidate_bootstrap_plan
         if: inputs.operation == 'deploy' && steps.candidate_config_bearer.outcome == 'success'
         env:
           CANDIDATE_CONFIG_AUTHORITY_MODE: ${{ steps.candidate_config_bearer.outputs.config_authority_mode }}
+          CANDIDATE_CONFIG_AUTHORITY_REVISION: ${{ steps.candidate_config_bearer.outputs.config_authority_revision }}
+          TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
           # The protected manifest is injected only for a candidate that has
           # already authenticated as legacy_bootstrap. A tracking-ready
-          # candidate deliberately receives no manifest.
+          # candidate deliberately receives no manifest; an absent legacy
+          # manifest falls back to the Worker-internal, Graph-read-only plan.
           TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST: ${{ steps.candidate_config_bearer.outputs.config_authority_mode == 'legacy_bootstrap' && secrets.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '' }}
+          TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { createHash } from 'node:crypto';
+
           const mode = String(process.env.CANDIDATE_CONFIG_AUTHORITY_MODE || '');
+          const authorityRevision = String(process.env.CANDIDATE_CONFIG_AUTHORITY_REVISION || '').toLowerCase();
+          const preview = String(process.env.TOKEN_VAULT_CANDIDATE_PREVIEW_URL || '').replace(/\/$/, '');
+          const configToken = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
           const rawManifest = String(process.env.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '');
+          const target = String(process.env.TARGET || '');
           const maxBytes = 150 * 1024;
           const tokenIdPattern = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
           const urlTagKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
@@ -1334,12 +1394,53 @@ jobs:
             });
           };
 
+          const writeOutput = (strategy, manifestSha256 = '') => {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, [
+              `bootstrap_strategy=${strategy}`,
+              `bootstrap_plan_revision=${authorityRevision}`,
+              `bootstrap_manifest_sha256=${manifestSha256}`,
+              '',
+            ].join('\n'));
+          };
+          const validateSummary = (summary) => {
+            if (!isJsonObject(summary) || !Object.keys(summary).every((key) => new Set(['destination_count', 'website_destination_count', 'whatsapp_destination_count', 'staging_fixture_count']).has(key))) return false;
+            const values = ['destination_count', 'website_destination_count', 'whatsapp_destination_count', 'staging_fixture_count'].map((key) => summary[key]);
+            if (!values.every((value) => Number.isInteger(value) && value >= 0)) return false;
+            if (summary.destination_count < 2 || summary.destination_count > 10 || summary.website_destination_count < 1 || summary.destination_count !== summary.website_destination_count + summary.whatsapp_destination_count) return false;
+            return target === 'staging' ? summary.staging_fixture_count === 1 : summary.staging_fixture_count === 0;
+          };
+
           if (mode === 'tracking_ready') {
             if (rawManifest) throw new Error('Token Vault tracking-ready candidate must not receive a bootstrap manifest');
+            if (!/^[a-f0-9]{64}$/.test(authorityRevision)) throw new Error('Token Vault candidate tracking authority revision is invalid');
+            writeOutput('not_required');
             process.exit(0);
           }
           if (mode !== 'legacy_bootstrap') throw new Error('Token Vault candidate authority mode is unavailable for manifest validation');
-          if (!rawManifest) throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST is required for a legacy Token Vault candidate before traffic');
+          if (!/^legacy:[a-f0-9]{64}$/.test(authorityRevision)) throw new Error('Token Vault candidate legacy authority revision is invalid');
+          if (!rawManifest) {
+            if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !configToken) throw new Error('Token Vault immutable candidate derivation endpoint or credential is unavailable');
+            const response = await fetch(`${preview}/internal/token-vault/v1/meta-ads-publish/config/bootstrap/derive-plan`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${configToken}`,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({ expected_config_authority_revision: authorityRevision }),
+              cache: 'no-store',
+              redirect: 'error',
+              signal: AbortSignal.timeout(20_000),
+            });
+            let payload = null;
+            try { payload = await response.json(); } catch {}
+            const digest = String(payload?.manifest_sha256 || '').toLowerCase();
+            if (!response.ok || payload?.ok !== true || String(payload?.config_authority_revision || '').toLowerCase() !== authorityRevision || !/^[a-f0-9]{64}$/.test(digest) || !validateSummary(payload?.summary)) {
+              const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+              throw new Error(`Token Vault internal bootstrap derivation failed: ${response.status} ${error}`);
+            }
+            writeOutput('derive', digest);
+            process.exit(0);
+          }
           if (new TextEncoder().encode(rawManifest).length > maxBytes) throw new Error('Token Vault bootstrap manifest exceeds the bounded request size');
 
           let manifest;
@@ -1374,7 +1475,32 @@ jobs:
               throw new Error('Token Vault bootstrap manifest has an unsafe Website entry');
             }
           }
+          writeOutput('manifest', createHash('sha256').update(rawManifest).digest('hex'));
           NODE
+
+      - name: Validate sealed Token Vault bootstrap plan before staging traffic
+        # No D1 or traffic mutation can start unless the candidate emitted a
+        # complete opaque plan identity. The plan contents never leave the
+        # Worker; only strategy, authority revision and digest travel here.
+        id: validate_staging_bootstrap_plan
+        if: inputs.target == 'staging' && steps.candidate_bootstrap_plan.outcome == 'success'
+        env:
+          BOOTSTRAP_STRATEGY: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_strategy }}
+          BOOTSTRAP_PLAN_REVISION: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_plan_revision }}
+          BOOTSTRAP_MANIFEST_SHA256: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          case "$BOOTSTRAP_STRATEGY" in
+            not_required)
+              [[ "$BOOTSTRAP_PLAN_REVISION" =~ ^[a-f0-9]{64}$ && -z "$BOOTSTRAP_MANIFEST_SHA256" ]] || { echo 'Token Vault ready bootstrap plan identity is invalid'; exit 1; }
+              ;;
+            derive|manifest)
+              [[ "$BOOTSTRAP_PLAN_REVISION" =~ ^legacy:[a-f0-9]{64}$ && "$BOOTSTRAP_MANIFEST_SHA256" =~ ^[a-f0-9]{64}$ ]] || { echo 'Token Vault legacy bootstrap plan identity is invalid'; exit 1; }
+              ;;
+            *)
+              echo 'Token Vault bootstrap strategy is invalid'; exit 1
+              ;;
+          esac
 
       - name: Check Token Vault release lease before staging version deployment
         if: inputs.target == 'staging'
@@ -1459,9 +1585,13 @@ jobs:
         id: tracking_bootstrap
         if: always() && inputs.target == 'staging' && steps.worker_deploy.outcome == 'success' && steps.worker_deployment_readback.outcome == 'success' && steps.staging_route_auth_convergence.outcome == 'success'
         env:
-          # The manifest stays in the protected Environment and is read only
-          # after the activated Worker proves that its authority is legacy.
-          TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST: ${{ secrets.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST }}
+          # A protected manifest remains an optional explicit override. The
+          # default legacy path rederives its bounded plan privately inside the
+          # Vault from the candidate-bound digest sealed before traffic.
+          BOOTSTRAP_STRATEGY: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_strategy }}
+          BOOTSTRAP_PLAN_REVISION: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_plan_revision }}
+          BOOTSTRAP_MANIFEST_SHA256: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_manifest_sha256 }}
+          TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST: ${{ steps.candidate_bootstrap_plan.outputs.bootstrap_strategy == 'manifest' && secrets.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '' }}
           TOKEN_VAULT_META_ADS_CONFIG_TOKEN: ${{ secrets.TOKEN_VAULT_META_ADS_CONFIG_TOKEN }}
           TOKEN_VAULT_STAGING_BASE_URL: ${{ vars.TOKEN_VAULT_STAGING_BASE_URL }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -1473,11 +1603,21 @@ jobs:
           bootstrap_operation_key="meta-ads-bootstrap:${RELEASE_SHA:0:12}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
           [[ "$bootstrap_operation_key" =~ ^[A-Za-z0-9_.:-]{8,160}$ ]] || { echo 'bootstrap operation key is invalid'; exit 1; }
           bootstrap_state="$(BOOTSTRAP_OPERATION_KEY="$bootstrap_operation_key" node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+
           const base = String(process.env.TOKEN_VAULT_STAGING_BASE_URL || '').replace(/\/$/, '');
           const token = String(process.env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN || '');
           const operationKey = String(process.env.BOOTSTRAP_OPERATION_KEY || '');
+          const strategy = String(process.env.BOOTSTRAP_STRATEGY || '');
+          const planRevision = String(process.env.BOOTSTRAP_PLAN_REVISION || '').toLowerCase();
+          const planDigest = String(process.env.BOOTSTRAP_MANIFEST_SHA256 || '').toLowerCase();
+          const rawManifest = String(process.env.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '');
           if (!/^https:\/\/[^/]+$/.test(base) || !token) throw new Error('Token Vault staging bootstrap endpoint or credential is unavailable');
           if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(operationKey)) throw new Error('bootstrap operation identity is invalid');
+          if (!['not_required', 'manifest', 'derive'].includes(strategy)) throw new Error('Token Vault candidate bootstrap strategy is unavailable');
+          if (!/^(?:legacy:)?[a-f0-9]{64}$/.test(planRevision)) throw new Error('Token Vault candidate bootstrap plan revision is invalid');
+          if ((strategy === 'derive' || strategy === 'manifest') && !/^[a-f0-9]{64}$/.test(planDigest)) throw new Error('Token Vault candidate bootstrap plan digest is invalid');
+          if (strategy !== 'manifest' && rawManifest) throw new Error('Token Vault derived or ready bootstrap strategy must not receive a protected manifest');
 
           const safeError = (payload) => {
             const value = String(payload?.error || '');
@@ -1491,6 +1631,7 @@ jobs:
               headers,
               body: body === undefined ? undefined : JSON.stringify(body),
               redirect: 'error',
+              signal: AbortSignal.timeout(20_000),
             });
             let payload = null;
             try { payload = await response.json(); } catch {}
@@ -1515,37 +1656,43 @@ jobs:
           const mode = String(initial.payload.config_authority_mode || '');
           if (mode === 'tracking_ready') {
             requireReady(initial, 'Token Vault configuration authority readback');
+            if (strategy !== 'not_required' || planRevision !== String(initial.payload?.config_authority_revision || '').toLowerCase() || planDigest || rawManifest) {
+              throw new Error('Token Vault configuration authority changed after candidate planning');
+            }
             process.stdout.write('not_required\n');
           } else if (mode === 'legacy_bootstrap') {
             const expectedRevision = String(initial.payload.config_authority_revision || '').toLowerCase();
             if (!/^legacy:[a-f0-9]{64}$/.test(expectedRevision)) throw new Error('legacy Token Vault authority revision is invalid');
-            const rawManifest = String(process.env.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '');
-            if (!rawManifest) throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST is required only when legacy bootstrap is detected');
-            let manifest;
-            try { manifest = JSON.parse(rawManifest); } catch { throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must be valid JSON containing only entries'); }
-            if (
-              !manifest ||
-              typeof manifest !== 'object' ||
-              Array.isArray(manifest) ||
-              Object.keys(manifest).length !== 1 ||
-              !Object.prototype.hasOwnProperty.call(manifest, 'entries') ||
-              !Array.isArray(manifest.entries) ||
-              manifest.entries.length < 2 ||
-              manifest.entries.length > 10 ||
-              new TextEncoder().encode(JSON.stringify(manifest)).length > 150 * 1024
-            ) {
-              throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must contain only 2 to 10 bounded entries');
+            if (planRevision !== expectedRevision || !['manifest', 'derive'].includes(strategy)) throw new Error('Token Vault legacy authority changed after candidate planning');
+            let bootstrap;
+            if (strategy === 'manifest') {
+              const actualHex = createHash('sha256').update(rawManifest).digest('hex');
+              if (!rawManifest || actualHex !== planDigest) throw new Error('Token Vault protected bootstrap manifest changed after candidate planning');
+              let manifest;
+              try { manifest = JSON.parse(rawManifest); } catch { throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must be valid JSON containing only entries'); }
+              if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || Object.keys(manifest).length !== 1 || !Object.prototype.hasOwnProperty.call(manifest, 'entries') || !Array.isArray(manifest.entries) || manifest.entries.length < 2 || manifest.entries.length > 10 || new TextEncoder().encode(JSON.stringify(manifest)).length > 150 * 1024) {
+                throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST must contain only 2 to 10 bounded entries');
+              }
+              bootstrap = await request('/v1/meta-ads-publish/config/bootstrap', {
+                method: 'POST',
+                body: {
+                  operation_key: operationKey,
+                  expected_config_authority_revision: expectedRevision,
+                  entries: manifest.entries,
+                },
+              });
+            } else {
+              bootstrap = await request('/v1/meta-ads-publish/config/bootstrap/derive', {
+                method: 'POST',
+                body: {
+                  operation_key: operationKey,
+                  expected_config_authority_revision: expectedRevision,
+                  expected_manifest_sha256: planDigest,
+                },
+              });
             }
-            const bootstrap = await request('/v1/meta-ads-publish/config/bootstrap', {
-              method: 'POST',
-              body: {
-                operation_key: operationKey,
-                expected_config_authority_revision: expectedRevision,
-                entries: manifest.entries,
-              },
-            });
             if (!bootstrap.response.ok || bootstrap.payload?.ok !== true) {
-              throw new Error(`Token Vault legacy bootstrap failed: ${bootstrap.response.status} ${safeError(bootstrap.payload)}`);
+              throw new Error(`Token Vault ${strategy} bootstrap failed: ${bootstrap.response.status} ${safeError(bootstrap.payload)}`);
             }
             const bootstrapRevision = String(bootstrap.payload?.config_authority_revision || '').toLowerCase();
             if (!/^[a-f0-9]{64}$/.test(bootstrapRevision)) throw new Error('Token Vault legacy bootstrap did not return a tracking revision');
