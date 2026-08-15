@@ -165,6 +165,7 @@ test("Ponto child mutations expose the canonical global resource and conflict sc
   assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "inventory", target: "preview" }), "global:ponto-workers-writer");
   assert.equal(globalResourceFor("deploy-crm-pages.yml", { release_scope: "ponto", target: "preview" }), "global:crm-cloudflare-writer");
   assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "staging" }), "global:ponto-workers-writer");
+  assert.equal(globalResourceFor("deploy-timekeeping.yml", { release_scope: "ponto", target: "bootstrap" }), "global:ponto-workers-writer");
   assert.equal(globalResourceFor("cloudflare-pages-sync-ponto.yml", { target: "staging" }), "global:crm-cloudflare-writer");
   assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "api", target: "staging" }), "global:ponto-workers-writer");
   assert.equal(globalResourceFor("deploy-core-workers.yml", { release_scope: "ponto", unit: "all", target: "staging" }), "global:ponto-workers-writer");
