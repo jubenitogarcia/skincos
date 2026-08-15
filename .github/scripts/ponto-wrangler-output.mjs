@@ -16,11 +16,18 @@ const actualName = String(record.worker_name || record.project_name || record.na
 if (actualName !== expectedName) throw new Error(`Wrangler output target differs: ${actualName || "missing"}`);
 const expectedEnvironment = String(process.env.PONTO_EXPECTED_WRANGLER_ENV || "").trim();
 const actualEnvironment = String(record.wrangler_environment || record.environment || "");
-// Wrangler's version-deploy NDJSON record identifies the exact Worker and
-// deployment, but does not currently repeat the --env value. Keep strict
-// environment validation for records that expose it and for version-upload;
-// the exact Worker name remains mandatory for version-deploy.
-const missingEnvironmentAllowed = expectedType === "version-deploy" && !actualEnvironment;
+// Wrangler's top-level production version-upload and version-deploy NDJSON
+// records identify the exact Worker and version/deployment, but do not always
+// repeat the --env value. Keep strict environment validation for every named
+// environment, especially staging; the exact Worker name remains mandatory.
+const missingEnvironmentAllowed = !actualEnvironment && (
+  expectedType === "version-deploy"
+  || (
+    expectedType === "version-upload"
+    && expectedEnvironment === "production"
+    && expectedName === "skincos-timekeeping"
+  )
+);
 if (expectedEnvironment && actualEnvironment !== expectedEnvironment && !missingEnvironmentAllowed) {
   throw new Error(`Wrangler output environment differs: ${actualEnvironment || "missing"}`);
 }
