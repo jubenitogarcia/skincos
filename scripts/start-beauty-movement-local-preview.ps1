@@ -60,23 +60,30 @@ function Get-Sha256 {
 }
 
 function Get-SourceIdentity {
-    $commit = (& git -C $projectRoot rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
-    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
+    $commitOutput = @(& git -C $projectRoot rev-parse --verify 'HEAD^{commit}' 2>$null)
+    $commitExitCode = $LASTEXITCODE
+    $commit = ([string]($commitOutput | Select-Object -First 1)).Trim().ToLowerInvariant()
+    if ($commitExitCode -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
         throw "Could not resolve the checkout commit from $projectRoot."
     }
 
-    $trackedDiff = (& git -C $projectRoot diff --binary HEAD -- website 2>$null | Out-String)
-    if ($LASTEXITCODE -ne 0) {
+    $trackedDiffOutput = @(& git -C $projectRoot diff --binary HEAD -- website 2>$null)
+    $trackedDiffExitCode = $LASTEXITCODE
+    $trackedDiff = $trackedDiffOutput -join "`n"
+    if ($trackedDiffExitCode -ne 0) {
         throw "Could not inspect website changes in $projectRoot."
     }
 
-    $status = (& git -C $projectRoot status --short --untracked-files=all -- website 2>$null | Out-String)
-    if ($LASTEXITCODE -ne 0) {
+    $statusOutput = @(& git -C $projectRoot status --short --untracked-files=all -- website 2>$null)
+    $statusExitCode = $LASTEXITCODE
+    $status = $statusOutput -join "`n"
+    if ($statusExitCode -ne 0) {
         throw "Could not inspect website status in $projectRoot."
     }
 
     $untrackedPaths = @(& git -C $projectRoot ls-files --others --exclude-standard -- 'website/*' 2>$null)
-    if ($LASTEXITCODE -ne 0) {
+    $untrackedExitCode = $LASTEXITCODE
+    if ($untrackedExitCode -ne 0) {
         throw "Could not inspect untracked website files in $projectRoot."
     }
 
