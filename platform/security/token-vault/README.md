@@ -12,15 +12,17 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 - `GET /internal/token-vault/v1/meta-ads-publish/config`
 - `PUT /internal/token-vault/v1/meta-ads-publish/config`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/derive-plan`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/derive`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-exercise`
 - `POST /internal/token-vault/v1/analytics/operations`
 
 Os endpoints administrativos exigem `Authorization: Bearer <TOKEN_VAULT_API_TOKEN>`.
 O bearer restrito `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` só pode consultar
-`health`, `contract` e a configuração Meta Ads, ou chamar o bootstrap, o
-rollback desse bootstrap e o exercício de staging. Ele não lista/altera tokens,
-não cria runs e não publica anúncios.
+`health`, `contract` e a configuração Meta Ads, ou chamar o planejamento e
+bootstrap governados, o rollback desse bootstrap e o exercício de staging. Ele
+não lista/altera tokens, não cria runs e não publica anúncios.
 O endpoint de analytics exige o secret separado
 `TOKEN_VAULT_ANALYTICS_API_TOKEN` (administradores continuam podendo operar o
 endpoint para diagnóstico controlado).
@@ -35,9 +37,9 @@ endpoint para diagnóstico controlado).
 - Secret opcional do Worker: `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` (papel
   restrito de configuração Meta Ads; obrigatório no Environment quando há
   promoção V20 governada)
-- Secret privado do GitHub Environment, não um binding do Worker:
-  `TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST` (somente as `entries` do bootstrap;
-  exigido apenas quando a autoridade ainda é legada)
+- Secret privado opcional do GitHub Environment, não um binding do Worker:
+  `TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST` (override explícito das `entries`
+  do bootstrap legado; nunca é recebido quando o plano interno é derivável)
 - Variável opcional: `META_GRAPH_VERSION` (default `v20.0`)
 - Variável de gate: `INFLUENCER_INTELLIGENCE_ANALYTICS_MODE` (`off` por
   padrão; `shadow` permite requests bounded; `active` exige também a flag
@@ -55,10 +57,23 @@ batch D1 condicionado às versões lidas. `POST`/`PATCH /v1/tokens` rejeitam ess
 metadata, pois um merge raso não é seguro.
 
 Para converter a autoridade legada, use somente o bootstrap restrito. O deploy
-autentica primeiro a URL Preview imutável candidata; se
-`config_authority_mode` for `legacy_bootstrap`, valida o envelope privado do
-manifesto antes de qualquer ativação de tráfego e só então monta o corpo fechado
-abaixo com a revisão opaca devolvida pelo GET e as `entries` do manifesto. Se já
+autentica primeiro a URL Preview imutável candidata. Se
+`config_authority_mode` for `legacy_bootstrap`, ele prefere
+`POST .../bootstrap/derive-plan`: o Vault faz apenas Graph GETs sobre os
+destinos já configurados, aceita fonte e tags somente quando há seletor privado
+explícito ou peer distinto na mesma linhagem única/compatível (nunca adota a
+creative do próprio target como fonte), e devolve exclusivamente a revisão
+opaca, hash do plano completo e contagens agregadas. O hash cobre os fatos
+Graph que influenciam perfil e reconciliação. Após o candidato receber tráfego,
+`POST .../bootstrap/derive` refaz essa leitura e só invoca a saga journalizada
+se o hash e a revisão ainda coincidirem. IDs, tags e entries nunca atravessam o
+Worker.
+
+`TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST` continua como override protegido para
+uma fonte já autorizada que não seja derivável; nesse caso o deploy valida e
+hash-vincula seu envelope antes do tráfego. Se a derivação for ambígua,
+incompatível, indisponível ou mudar entre as duas fases, o rollout falha fechado
+sem ativar tráfego novo ou escolher uma campanha por inventário de conta. Se já
 for `tracking_ready`, ele apenas faz o readback e não solicita nem recebe o
 manifesto.
 
@@ -254,11 +269,12 @@ manualmente para publicar este serviço.
 Antes da primeira promoção, disponibilize em cada GitHub Environment os
 segredos independentes exigidos pelo workflow, em especial
 `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` e, em staging,
-`TOKEN_VAULT_N8N_API_TOKEN`; disponibilize
-`TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST` somente com as fontes/tags autorizadas
-quando a autoridade for legada, e um perfil de tracking sintético autorizado em
-staging. A ausência de credencial, manifesto legada necessário, fixture,
-bookmark ou evidência de staging é um bloqueio fail-closed para produção.
+`TOKEN_VAULT_N8N_API_TOKEN`. Para uma autoridade legada, o Vault primeiro tenta
+derivar internamente um plano único e hash-vinculado; disponibilize
+`TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST` somente como override protegido quando
+essa prova não for derivável. A ausência de credencial, uma derivação/override
+factualmente inválida, fixture, bookmark ou evidência de staging é um bloqueio
+fail-closed para produção.
 
 ## Import inicial
 

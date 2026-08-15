@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   __test as metaAdsPublishTest,
   bootstrapMetaAdsPublishConfig,
+  bootstrapMetaAdsPublishConfigFromDerivedPlan,
+  deriveMetaAdsPublishBootstrapPlan,
   exerciseStagingMetaAdsTrackingFixture,
   handleMetaAdsPublishRequest,
   rollbackBootstrapMetaAdsPublishConfig,
@@ -403,7 +405,7 @@ class BootstrapGraph {
     ]);
     this.targetBefore = clone(this.adsets.get(TARGET_ADSET_ID));
     this.ads = new Map([
-      ['723456780', ad('723456780', SOURCE_ADSET_ID, '823456780')],
+      ['723456780', ad('723456780', SOURCE_ADSET_ID, '823456780', RAW_URL_TAGS)],
       ['723456792', {
         ...ad('723456792', WHATSAPP_ADSET_ID, '823456792'),
         creative: {
@@ -452,6 +454,11 @@ class BootstrapGraph {
     }
     if (method !== 'GET') throw new Error(`Unexpected graph mutation ${method} ${parsed.pathname}`);
 
+    if (child === 'adsets' && id === 'act_123456789') {
+      return json({
+        data: [...this.adsets.entries()].map(([adsetId, value]) => ({ id: adsetId, ...clone(value) })),
+      });
+    }
     if (child === 'ads') {
       return json({ data: [...this.ads.values()].filter((entry) => entry.adset_id === id).map(clone) });
     }
@@ -543,14 +550,21 @@ function websiteAdset(promotedObject) {
   };
 }
 
-function ad(id, adsetId, creativeId) {
+function ad(id, adsetId, creativeId, urlTags = '') {
   return {
     id,
     adset_id: adsetId,
     status: 'ACTIVE',
     effective_status: 'ACTIVE',
-    creative: { id: creativeId },
+    creative: { id: creativeId, ...(urlTags ? { url_tags: urlTags } : {}) },
   };
+}
+
+function enableDerivedStagingLineage(graph) {
+  // Each legacy Website destination must have a distinct, already-enrolled
+  // peer source. The source row itself is never implicitly adopted from its
+  // own delivery creative.
+  graph.ads.set('723456791', ad('723456791', TARGET_ADSET_ID, '823456791', RAW_URL_TAGS));
 }
 
 function json(body, status = 200) {
@@ -611,6 +625,26 @@ function bootstrapRequest(body) {
   });
 }
 
+function bootstrapDerivePlanRequest(expectedConfigAuthorityRevision) {
+  return new Request('https://token-vault.test/v1/meta-ads-publish/config/bootstrap/derive-plan', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ expected_config_authority_revision: expectedConfigAuthorityRevision }),
+  });
+}
+
+function bootstrapDeriveRequest({ operationKey, expectedConfigAuthorityRevision, expectedManifestSha256 }) {
+  return new Request('https://token-vault.test/v1/meta-ads-publish/config/bootstrap/derive', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      operation_key: operationKey,
+      expected_config_authority_revision: expectedConfigAuthorityRevision,
+      expected_manifest_sha256: expectedManifestSha256,
+    }),
+  });
+}
+
 function bootstrapRollbackRequest(operationKey, expectedTrackingBindingRevision) {
   return new Request('https://token-vault.test/v1/meta-ads-publish/config/bootstrap/rollback', {
     method: 'POST',
@@ -664,6 +698,273 @@ async function applyHappyBootstrap({ db, graph, state, operationKey }) {
   assert.equal(result.status, 201, JSON.stringify(payload));
   return { env, decryptToken, encryptToken, body, payload };
 }
+
+test('autonomous bootstrap derivation keeps the manifest private and applies only its hash-bound plan', async () => {
+  const db = new BootstrapDb();
+  const graph = new BootstrapGraph();
+  enableDerivedStagingLineage(graph);
+  const state = new Map();
+  const { env, decryptToken, encryptToken } = bootstrapContext({ db, graph, state });
+  env.ENVIRONMENT = 'staging';
+  const expectedRevision = await legacyAuthorityRevision(env);
+
+  const plan = await deriveMetaAdsPublishBootstrapPlan({
+    request: bootstrapDerivePlanRequest(expectedRevision),
+    env,
+    requestId: 'bootstrap-derive-plan-private',
+    decryptToken,
+  });
+  const planPayload = await plan.json();
+  assert.equal(plan.status, 200, JSON.stringify(planPayload));
+  assert.equal(planPayload.ok, true);
+  assert.equal(planPayload.config_authority_revision, expectedRevision);
+  assert.match(planPayload.manifest_sha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(planPayload.summary, {
+    destination_count: 3,
+    website_destination_count: 2,
+    whatsapp_destination_count: 1,
+    staging_fixture_count: 1,
+  });
+  const serializedPlan = JSON.stringify(planPayload);
+  assert.equal(serializedPlan.includes(RAW_URL_TAGS), false);
+  assert.equal(serializedPlan.includes(SOURCE_ADSET_ID), false);
+  assert.equal(graph.calls.some((call) => call.method !== 'GET'), false);
+
+  const applied = await bootstrapMetaAdsPublishConfigFromDerivedPlan({
+    request: bootstrapDeriveRequest({
+      operationKey: 'bootstrap-derive-apply-private-001',
+      expectedConfigAuthorityRevision: expectedRevision,
+      expectedManifestSha256: planPayload.manifest_sha256,
+    }),
+    env,
+    requestId: 'bootstrap-derive-apply-private',
+    decryptToken,
+    encryptToken,
+    writeAudit: async () => {},
+  });
+  const appliedPayload = await applied.json();
+  assert.equal(applied.status, 201, JSON.stringify(appliedPayload));
+  assert.equal(appliedPayload.ok, true);
+  assert.equal(appliedPayload.website_fixture_count, 2);
+  const targetConfig = JSON.parse(db.tokens.find((row) => row.id === 'facebook_b_target').metadata_json).meta_ads_publish;
+  assert.equal(targetConfig.tracking_contract.url_tags, RAW_URL_TAGS);
+  assert.equal(targetConfig.tracking_profiles[targetConfig.tracking_contract.profile_ref].staging_synthetic_fixture, true);
+  assert.deepEqual(graph.adsets.get(TARGET_ADSET_ID).promoted_object, graph.targetBefore.promoted_object);
+
+  const callsBeforeReplay = graph.calls.length;
+  const replay = await bootstrapMetaAdsPublishConfigFromDerivedPlan({
+    request: bootstrapDeriveRequest({
+      operationKey: 'bootstrap-derive-apply-private-001',
+      expectedConfigAuthorityRevision: expectedRevision,
+      expectedManifestSha256: planPayload.manifest_sha256,
+    }),
+    env,
+    requestId: 'bootstrap-derive-apply-private-replay',
+    decryptToken,
+    encryptToken,
+    writeAudit: async () => {},
+  });
+  const replayPayload = await replay.json();
+  assert.equal(replay.status, 200, JSON.stringify(replayPayload));
+  assert.equal(replayPayload.ok, true);
+  assert.equal(replayPayload.replayed, true);
+  assert.equal(graph.calls.length, callsBeforeReplay);
+});
+
+test('autonomous bootstrap derivation rejects digest, authority and source ambiguity before any Graph mutation', async () => {
+  const db = new BootstrapDb();
+  const graph = new BootstrapGraph();
+  enableDerivedStagingLineage(graph);
+  const state = new Map();
+  const { env, decryptToken, encryptToken } = bootstrapContext({ db, graph, state });
+  env.ENVIRONMENT = 'staging';
+  const expectedRevision = await legacyAuthorityRevision(env);
+  const plan = await deriveMetaAdsPublishBootstrapPlan({
+    request: bootstrapDerivePlanRequest(expectedRevision),
+    env,
+    requestId: 'bootstrap-derive-plan-stale',
+    decryptToken,
+  });
+  const planPayload = await plan.json();
+  assert.equal(plan.status, 200, JSON.stringify(planPayload));
+
+  const callsBeforeWrongDigest = graph.calls.length;
+  const wrongDigest = await bootstrapMetaAdsPublishConfigFromDerivedPlan({
+    request: bootstrapDeriveRequest({
+      operationKey: 'bootstrap-derive-wrong-digest-001',
+      expectedConfigAuthorityRevision: expectedRevision,
+      expectedManifestSha256: '0'.repeat(64),
+    }),
+    env,
+    requestId: 'bootstrap-derive-wrong-digest',
+    decryptToken,
+    encryptToken,
+    writeAudit: async () => {},
+  });
+  const wrongDigestPayload = await wrongDigest.json();
+  assert.equal(wrongDigest.status, 409);
+  assert.equal(wrongDigestPayload.error, 'meta_ads_publish_bootstrap_derive_plan_stale');
+  assert.equal(graph.calls.slice(callsBeforeWrongDigest).some((call) => call.method !== 'GET'), false);
+
+  const contractDb = new BootstrapDb();
+  const contractGraph = new BootstrapGraph();
+  enableDerivedStagingLineage(contractGraph);
+  const contractState = new Map();
+  const contract = bootstrapContext({ db: contractDb, graph: contractGraph, state: contractState });
+  contract.env.ENVIRONMENT = 'staging';
+  const contractRevision = await legacyAuthorityRevision(contract.env);
+  const contractPlan = await deriveMetaAdsPublishBootstrapPlan({
+    request: bootstrapDerivePlanRequest(contractRevision),
+    env: contract.env,
+    requestId: 'bootstrap-derive-plan-contract-drift',
+    decryptToken: contract.decryptToken,
+  });
+  const contractPlanPayload = await contractPlan.json();
+  assert.equal(contractPlan.status, 200, JSON.stringify(contractPlanPayload));
+  contractGraph.adsets.get(SOURCE_ADSET_ID).promoted_object.offline_conversion_data_set_id = '823456788';
+  const callsBeforeContractDrift = contractGraph.calls.length;
+  const contractDrift = await bootstrapMetaAdsPublishConfigFromDerivedPlan({
+    request: bootstrapDeriveRequest({
+      operationKey: 'bootstrap-derive-contract-drift-001',
+      expectedConfigAuthorityRevision: contractRevision,
+      expectedManifestSha256: contractPlanPayload.manifest_sha256,
+    }),
+    env: contract.env,
+    requestId: 'bootstrap-derive-contract-drift',
+    decryptToken: contract.decryptToken,
+    encryptToken: contract.encryptToken,
+    writeAudit: async () => {},
+  });
+  const contractDriftPayload = await contractDrift.json();
+  assert.equal(contractDrift.status, 409);
+  assert.equal(contractDriftPayload.error, 'meta_ads_publish_bootstrap_derive_plan_stale');
+  assert.equal(contractGraph.calls.slice(callsBeforeContractDrift).some((call) => call.method !== 'GET'), false);
+
+  graph.ads.get('723456780').creative.url_tags = 'source=changed&value=1';
+  const callsBeforeApply = graph.calls.length;
+  const stale = await bootstrapMetaAdsPublishConfigFromDerivedPlan({
+    request: bootstrapDeriveRequest({
+      operationKey: 'bootstrap-derive-stale-apply-001',
+      expectedConfigAuthorityRevision: expectedRevision,
+      expectedManifestSha256: planPayload.manifest_sha256,
+    }),
+    env,
+    requestId: 'bootstrap-derive-stale-apply',
+    decryptToken,
+    encryptToken,
+    writeAudit: async () => {},
+  });
+  const stalePayload = await stale.json();
+  assert.equal(stale.status, 409);
+  assert.equal(stalePayload.error, 'meta_ads_publish_bootstrap_derive_plan_stale');
+  assert.equal(graph.calls.slice(callsBeforeApply).some((call) => call.method !== 'GET'), false);
+
+  const revisionDb = new BootstrapDb();
+  const revisionGraph = new BootstrapGraph();
+  enableDerivedStagingLineage(revisionGraph);
+  const revisionState = new Map();
+  const revision = bootstrapContext({ db: revisionDb, graph: revisionGraph, state: revisionState });
+  revision.env.ENVIRONMENT = 'staging';
+  const revisionBefore = await legacyAuthorityRevision(revision.env);
+  const revisionPlan = await deriveMetaAdsPublishBootstrapPlan({
+    request: bootstrapDerivePlanRequest(revisionBefore),
+    env: revision.env,
+    requestId: 'bootstrap-derive-plan-authority-drift',
+    decryptToken: revision.decryptToken,
+  });
+  const revisionPlanPayload = await revisionPlan.json();
+  assert.equal(revisionPlan.status, 200, JSON.stringify(revisionPlanPayload));
+  const changedMetadata = JSON.parse(revisionDb.tokens[0].metadata_json);
+  changedMetadata.meta_ads_publish.legacy_marker = 'v18-source-revised';
+  revisionDb.tokens[0].metadata_json = JSON.stringify(changedMetadata);
+  const callsBeforeAuthorityDrift = revisionGraph.calls.length;
+  const authorityDrift = await bootstrapMetaAdsPublishConfigFromDerivedPlan({
+    request: bootstrapDeriveRequest({
+      operationKey: 'bootstrap-derive-authority-drift-001',
+      expectedConfigAuthorityRevision: revisionBefore,
+      expectedManifestSha256: revisionPlanPayload.manifest_sha256,
+    }),
+    env: revision.env,
+    requestId: 'bootstrap-derive-authority-drift',
+    decryptToken: revision.decryptToken,
+    encryptToken: revision.encryptToken,
+    writeAudit: async () => {},
+  });
+  const authorityDriftPayload = await authorityDrift.json();
+  assert.equal(authorityDrift.status, 409);
+  assert.equal(authorityDriftPayload.error, 'meta_ads_publish_bootstrap_binding_stale');
+  assert.equal(revisionGraph.calls.slice(callsBeforeAuthorityDrift).some((call) => call.method !== 'GET'), false);
+
+  const ambiguousDb = new BootstrapDb();
+  const ambiguousGraph = new BootstrapGraph();
+  const ambiguousState = new Map();
+  const ambiguous = bootstrapContext({ db: ambiguousDb, graph: ambiguousGraph, state: ambiguousState });
+  ambiguous.env.ENVIRONMENT = 'staging';
+  const peerAdsetId = '323456793';
+  ambiguousDb.tokens.push(tokenRow('facebook_d_peer', 'Website peer source', peerAdsetId, 4));
+  ambiguousGraph.adsets.set(peerAdsetId, clone(ambiguousGraph.adsets.get(SOURCE_ADSET_ID)));
+  ambiguousGraph.ads.set('723456781', ad('723456781', peerAdsetId, '823456781', 'source=other&value=2'));
+  const ambiguousRevision = await legacyAuthorityRevision(ambiguous.env);
+  const rejected = await deriveMetaAdsPublishBootstrapPlan({
+    request: bootstrapDerivePlanRequest(ambiguousRevision),
+    env: ambiguous.env,
+    requestId: 'bootstrap-derive-plan-ambiguous',
+    decryptToken: ambiguous.decryptToken,
+  });
+  const rejectedPayload = await rejected.json();
+  assert.equal(rejected.status, 409);
+  assert.equal(rejectedPayload.error, 'meta_ads_publish_bootstrap_derive_source_ambiguous');
+  assert.equal(ambiguousGraph.calls.some((call) => call.method !== 'GET'), false);
+});
+
+test('autonomous bootstrap derivation fails closed instead of falling back after a source Graph authorization failure', async () => {
+  const db = new BootstrapDb();
+  const graph = new BootstrapGraph();
+  const state = new Map();
+  const { env, decryptToken } = bootstrapContext({ db, graph, state });
+  env.ENVIRONMENT = 'staging';
+  const unreadableAdsetId = '323456793';
+  db.tokens.push(tokenRow('facebook_d_unreadable', 'Website unreadable peer', unreadableAdsetId, 4));
+  const graphFetch = graph.fetch.bind(graph);
+  env.META_GRAPH_FETCH = async (url, init) => {
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith(`/${unreadableAdsetId}`)) {
+      return json({ error: { message: 'permission denied' } }, 403);
+    }
+    return graphFetch(url, init);
+  };
+  const expectedRevision = await legacyAuthorityRevision(env);
+  const result = await deriveMetaAdsPublishBootstrapPlan({
+    request: bootstrapDerivePlanRequest(expectedRevision),
+    env,
+    requestId: 'bootstrap-derive-source-auth-failure',
+    decryptToken,
+  });
+  const payload = await result.json();
+  assert.equal(result.status, 503);
+  assert.equal(payload.error, 'meta_ads_publish_bootstrap_derive_unavailable');
+  assert.equal(JSON.stringify(payload).includes(unreadableAdsetId), false);
+  assert.equal(graph.calls.some((call) => call.method !== 'GET'), false);
+});
+
+test('autonomous bootstrap derivation never promotes a target creative into its own production source', async () => {
+  const db = new BootstrapDb();
+  const graph = new BootstrapGraph();
+  const state = new Map();
+  const { env, decryptToken } = bootstrapContext({ db, graph, state });
+  env.ENVIRONMENT = 'production';
+  const expectedRevision = await legacyAuthorityRevision(env);
+  const result = await deriveMetaAdsPublishBootstrapPlan({
+    request: bootstrapDerivePlanRequest(expectedRevision),
+    env,
+    requestId: 'bootstrap-derive-no-self-source',
+    decryptToken,
+  });
+  const payload = await result.json();
+  assert.equal(result.status, 409);
+  assert.equal(payload.error, 'meta_ads_publish_bootstrap_derive_source_unavailable');
+  assert.equal(graph.calls.some((call) => call.method !== 'GET'), false);
+});
 
 async function recordBootstrapAdsetLockContention({ db, env, lockKey, phase, observations }) {
   const lock = db.operationLocks.get(lockKey);

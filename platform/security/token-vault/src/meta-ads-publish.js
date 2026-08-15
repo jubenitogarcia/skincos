@@ -57,6 +57,8 @@ const ADSET_CONVERSION_CONTRACT_FIELDS = [
   'attribution_spec',
   'promoted_object',
 ].join(',');
+// The autonomous legacy bootstrap may inspect candidate source ad sets, but it
+// must not use the broad inventory endpoint or persist raw account inventory.
 const TRACKING_PROMOTED_OBJECT_KEYS = Object.freeze([
   'pixel_id',
   'custom_event_type',
@@ -313,6 +315,14 @@ export async function handleMetaAdsPublishRequest(input) {
 
   if (request.method === 'POST' && pathname === `${PREFIX}/config/bootstrap`) {
     return bootstrapMetaAdsPublishConfig({ request, env, requestId, decryptToken, encryptToken, writeAudit });
+  }
+
+  if (request.method === 'POST' && pathname === `${PREFIX}/config/bootstrap/derive-plan`) {
+    return deriveMetaAdsPublishBootstrapPlan({ request, env, requestId, decryptToken });
+  }
+
+  if (request.method === 'POST' && pathname === `${PREFIX}/config/bootstrap/derive`) {
+    return bootstrapMetaAdsPublishConfigFromDerivedPlan({ request, env, requestId, decryptToken, encryptToken, writeAudit });
   }
 
   if (request.method === 'POST' && pathname === `${PREFIX}/config/bootstrap/rollback`) {
@@ -1112,6 +1122,685 @@ function configWriterFailureResponse(error, requestId) {
   return response({ ok: false, error: code, requestId }, status);
 }
 
+// A legacy v18 destination has enough private authority to identify its target,
+// but not enough governed v20 metadata to name an authorized source or raw URL
+// tag fragment. The derive endpoints keep those values inside the Vault: they
+// use only bounded Graph GETs, return a digest/count summary, and then bind the
+// normal encrypted bootstrap saga to the exact plan that was observed on the
+// immutable Worker candidate.
+export async function deriveMetaAdsPublishBootstrapPlan({ request, env, requestId, decryptToken }) {
+  try {
+    const input = validateBootstrapDerivePlanInput(await readBootstrapDeriveRequest(request));
+    const plan = await deriveBootstrapManifestPlan({
+      env,
+      requestId,
+      decryptToken,
+      expectedConfigAuthorityRevision: input.expectedConfigAuthorityRevision,
+    });
+    return bootstrapDerivePlanResponse(plan, requestId);
+  } catch (error) {
+    return bootstrapFailureResponse(normalizeBootstrapDeriveFailure(error), requestId);
+  }
+}
+
+export async function bootstrapMetaAdsPublishConfigFromDerivedPlan({
+  request,
+  env,
+  requestId,
+  decryptToken,
+  encryptToken,
+  writeAudit,
+}) {
+  try {
+    const input = validateBootstrapDeriveApplyInput(await readBootstrapDeriveRequest(request));
+    const replay = await replayDerivedBootstrapIfApplied({
+      env,
+      requestId,
+      decryptToken,
+      input,
+    });
+    if (replay) return replay;
+    const plan = await deriveBootstrapManifestPlan({
+      env,
+      requestId,
+      decryptToken,
+      expectedConfigAuthorityRevision: input.expectedConfigAuthorityRevision,
+    });
+    if (plan.manifestSha256 !== input.expectedManifestSha256) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_derive_plan_stale', 409);
+    }
+    const bootstrapRequest = new Request('https://token-vault.invalid/internal/token-vault/v1/meta-ads-publish/config/bootstrap', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        operation_key: input.operationKey,
+        expected_config_authority_revision: input.expectedConfigAuthorityRevision,
+        derived_plan_sha256: input.expectedManifestSha256,
+        entries: plan.entries,
+      }),
+    });
+    return bootstrapMetaAdsPublishConfig({
+      request: bootstrapRequest,
+      env,
+      requestId,
+      decryptToken,
+      encryptToken,
+      writeAudit,
+    });
+  } catch (error) {
+    return bootstrapFailureResponse(normalizeBootstrapDeriveFailure(error), requestId);
+  }
+}
+
+function normalizeBootstrapDeriveFailure(error) {
+  if (isBootstrapFailure(error)) return error;
+  return bootstrapFailure('meta_ads_publish_bootstrap_derive_unavailable', 503);
+}
+
+async function replayDerivedBootstrapIfApplied({ env, requestId, decryptToken, input }) {
+  if (!env?.TOKEN_VAULT_DB || typeof env.TOKEN_VAULT_DB.prepare !== 'function') {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_unavailable', 503);
+  }
+  const operation = await loadBootstrapOperation(env, input.operationKey);
+  if (!operation || clean(operation.status) !== 'applied') return null;
+  if (clean(operation.expected_config_authority_revision) !== input.expectedConfigAuthorityRevision) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_operation_conflict', 409);
+  }
+  const state = await decryptBootstrapState(operation, decryptToken, env);
+  const stateInput = asObject(state.input);
+  if (
+    clean(stateInput.operation_key) !== input.operationKey ||
+    clean(stateInput.expected_config_authority_revision) !== input.expectedConfigAuthorityRevision ||
+    !Array.isArray(stateInput.entries)
+  ) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_reconciliation_required', 409);
+  }
+  if (clean(stateInput.derived_plan_sha256) !== input.expectedManifestSha256) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_operation_conflict', 409);
+  }
+  const authority = await configWriterAuthorityState(await listMetaAdsPublishConfigRows(env));
+  if (!authority.ready || clean(operation.resulting_tracking_binding_revision) !== authority.revision) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_operation_state_stale', 409);
+  }
+  return bootstrapSuccessResponse({
+    input: { operationKey: input.operationKey },
+    state,
+    revision: authority.revision,
+    requestId,
+    replayed: true,
+  });
+}
+
+async function readBootstrapDeriveRequest(request) {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 8 * 1024) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_request_too_large', 413);
+  }
+  try {
+    const body = await request.json();
+    if (!isJsonObject(body)) throw bootstrapFailure('meta_ads_publish_bootstrap_derive_request_invalid', 400);
+    return body;
+  } catch (error) {
+    if (isBootstrapFailure(error)) throw error;
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_request_invalid', 400);
+  }
+}
+
+function validateBootstrapDerivePlanInput(body) {
+  assertBootstrapExactKeys(body, new Set(['expected_config_authority_revision']));
+  return {
+    expectedConfigAuthorityRevision: normalizeBootstrapDeriveRevision(body.expected_config_authority_revision),
+  };
+}
+
+function validateBootstrapDeriveApplyInput(body) {
+  assertBootstrapExactKeys(body, new Set([
+    'operation_key',
+    'expected_config_authority_revision',
+    'expected_manifest_sha256',
+  ]));
+  const operationKey = clean(body.operation_key);
+  if (!BOOTSTRAP_OPERATION_KEY_PATTERN.test(operationKey)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_operation_key_invalid', 400);
+  }
+  const expectedManifestSha256 = clean(body.expected_manifest_sha256).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(expectedManifestSha256)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_digest_invalid', 400);
+  }
+  return {
+    operationKey,
+    expectedConfigAuthorityRevision: normalizeBootstrapDeriveRevision(body.expected_config_authority_revision),
+    expectedManifestSha256,
+  };
+}
+
+function normalizeBootstrapDeriveRevision(value) {
+  const revision = clean(value).toLowerCase();
+  if (!/^legacy:[a-f0-9]{64}$/.test(revision)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_expected_revision_invalid', 400);
+  }
+  return revision;
+}
+
+async function deriveBootstrapManifestPlan({ env, requestId, decryptToken, expectedConfigAuthorityRevision }) {
+  if (!env?.TOKEN_VAULT_DB || typeof env.TOKEN_VAULT_DB.prepare !== 'function') {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_unavailable', 503);
+  }
+  if (typeof decryptToken !== 'function') {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_token_unavailable', 503);
+  }
+  const currentRows = await listMetaAdsPublishConfigRows(env);
+  const authority = await configWriterAuthorityState(currentRows);
+  if (authority.ready || authority.mode !== 'legacy_bootstrap') {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_not_legacy', 409);
+  }
+  if (authority.revision !== expectedConfigAuthorityRevision) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_binding_stale', 409);
+  }
+  const context = {
+    env,
+    requestId,
+    action: 'derive_meta_ads_publish_bootstrap_plan',
+    decryptToken,
+    attempts: 0,
+    rateUsage: {},
+    traceId: '',
+  };
+  const plan = await deriveBootstrapManifestEntries({
+    rows: currentRows,
+    context,
+    staging: clean(env.ENVIRONMENT).toLowerCase() === 'staging',
+  });
+  // The digest is an execution seal, not merely a manifest hash. It covers
+  // every Graph fact that can affect the persisted profile or the tracking
+  // promoted-object mutation, and it is rederived before the saga can write.
+  const manifestSha256 = await sha256(stableStringify({
+    entries: plan.entries,
+    graph_contract: plan.graphContract,
+  }));
+  return {
+    authority,
+    entries: plan.entries,
+    manifestSha256,
+    summary: summarizeBootstrapDeriveEntries(plan.entries),
+  };
+}
+
+async function deriveBootstrapManifestEntries({ rows, context, staging }) {
+  const configuredRows = safeArray(rows)
+    .filter((row) => Object.keys(asObject(parseObject(row?.metadata_json).meta_ads_publish)).length > 0)
+    .sort((left, right) => clean(left.id).localeCompare(clean(right.id)));
+  if (configuredRows.length < 2 || configuredRows.length > BOOTSTRAP_MAX_ENTRIES) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_targets_invalid', 409);
+  }
+
+  const records = [];
+  const stagingCandidates = [];
+  for (const targetRow of configuredRows) {
+    const targetAuth = await resolveLegacyBootstrapGraphAuth(clean(targetRow.id), context);
+    const targetAdset = await readAdsetConversionState(targetAuth, targetAuth.config.adset_id, context);
+    const graphDestination = safeTrackingEnum(targetAdset.destination_type);
+    if (graphDestination === 'WEBSITE') {
+      const standardRecord = await deriveWebsiteBootstrapEntry({
+        targetRow,
+        targetAuth,
+        targetAdset,
+        configuredRows,
+        context,
+        staging: false,
+      });
+      records.push(standardRecord);
+      if (staging) {
+        const stagingRecord = await tryDeriveStagingWebsiteBootstrapEntry({
+          targetRow,
+          targetAuth,
+          targetAdset,
+          configuredRows,
+          context,
+        });
+        stagingCandidates.push({ standardRecord, stagingRecord });
+      }
+      continue;
+    }
+    if (isBootstrapWhatsAppGraphDestination(graphDestination)) {
+      const whatsappDestinationUrl = await discoverBootstrapWhatsAppDestination(targetAuth, targetAdset, context, {});
+      records.push({
+        entry: {
+          config_token_id: targetAuth.tokenId,
+          destination_type: 'whatsapp',
+        },
+        graphFact: deriveWhatsAppBootstrapGraphFact({
+          targetAuth,
+          targetAdset,
+          whatsappDestinationUrl,
+        }),
+      });
+      continue;
+    }
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_destination_invalid', 409);
+  }
+
+  const websites = records.filter((record) => record.entry.destination_type === 'website');
+  if (!websites.length) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_website_destination_required', 409);
+  }
+  if (staging) {
+    const eligible = stagingCandidates.filter((candidate) => candidate.stagingRecord);
+    if (eligible.length !== 1) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_derive_staging_fixture_ambiguous', 409);
+    }
+    const selected = eligible[0];
+    const index = records.indexOf(selected.standardRecord);
+    if (index < 0) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_derive_staging_fixture_ambiguous', 409);
+    }
+    records[index] = selected.stagingRecord;
+  }
+  const ordered = records.sort((left, right) => clean(left.entry.config_token_id).localeCompare(clean(right.entry.config_token_id)));
+  return {
+    entries: ordered.map((record) => record.entry),
+    graphContract: ordered.map((record) => record.graphFact),
+  };
+}
+
+async function tryDeriveStagingWebsiteBootstrapEntry(input) {
+  try {
+    return await deriveWebsiteBootstrapEntry({ ...input, staging: true });
+  } catch (error) {
+    return derivedBootstrapCandidateOrNull(error);
+  }
+}
+
+async function deriveWebsiteBootstrapEntry({
+  targetRow,
+  targetAuth,
+  targetAdset,
+  configuredRows,
+  context,
+  staging,
+}) {
+  const targetConfig = asObject(targetAuth.config);
+  // A target-declared tag fragment is an authority fact, not a candidate
+  // preference. Validate it before examining any potential source so a bad
+  // target value can never make another source look acceptable by fallback.
+  const targetCanonicalUrlTags = resolveDerivedCanonicalUrlTags([targetConfig]);
+  const source = await deriveWebsiteBootstrapSource({
+    targetRow,
+    targetAuth,
+    targetAdset,
+    targetConfig,
+    configuredRows,
+    context,
+    staging,
+    targetCanonicalUrlTags,
+  });
+  const entry = {
+    config_token_id: targetAuth.tokenId,
+    destination_type: 'website',
+  };
+  if (source.selector.sourceConfigTokenId) {
+    entry.source_config_token_id = source.selector.sourceConfigTokenId;
+  } else {
+    entry.source_adset_id = source.sourceAuth.config.adset_id;
+  }
+  entry.fixture_source_ad_id = source.fixture.adId;
+  entry.url_tags = source.fixture.urlTags;
+  if (source.profile.staging_synthetic_fixture === true) {
+    entry.staging_synthetic_fixture = true;
+  }
+  return {
+    entry,
+    graphFact: deriveWebsiteBootstrapGraphFact({
+      targetAuth,
+      targetAdset,
+      source,
+      entry,
+    }),
+  };
+}
+
+async function deriveWebsiteBootstrapSource({
+  targetRow,
+  targetAuth,
+  targetAdset,
+  targetConfig,
+  configuredRows,
+  context,
+  staging,
+  targetCanonicalUrlTags,
+}) {
+  const canonical = deriveCanonicalBootstrapSourceSelector(targetConfig);
+  if (canonical) {
+    const resolved = await tryResolveDerivedBootstrapSource({
+      selector: canonical,
+      targetAuth,
+      targetAdset,
+      targetConfig,
+      context,
+      staging,
+    });
+    const finalized = resolved && await tryFinalizeDerivedBootstrapSource({ resolved, targetCanonicalUrlTags, context });
+    if (!finalized) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_derive_canonical_source_invalid', 409);
+    }
+    return finalized;
+  }
+
+  const pipeline = derivePipelineBootstrapSourceSelectors({
+    targetRow,
+    targetAuth,
+    targetConfig,
+    configuredRows,
+  });
+  const pipelineSource = await selectSingleDerivedBootstrapSource({
+    selectors: pipeline,
+    targetAuth,
+    targetAdset,
+    targetConfig,
+    context,
+    staging,
+    targetCanonicalUrlTags,
+  });
+  if (pipeline.length) {
+    if (pipelineSource) return pipelineSource;
+    if (staging) throw bootstrapFailure('meta_ads_publish_bootstrap_derive_source_unavailable', 409);
+  }
+
+  // The target's live creatives are delivery state, not source authority.
+  // A legacy destination may promote only an explicit private selector or a
+  // distinct peer already enrolled in the same bounded publishing lineage.
+  // In particular, never turn a single target ad into a production source.
+  throw bootstrapFailure('meta_ads_publish_bootstrap_derive_source_unavailable', 409);
+}
+
+function deriveCanonicalBootstrapSourceSelector(config) {
+  const sourceConfigTokenId = clean(config.source_config_token_id);
+  const sourceAdsetId = clean(config.source_adset_id);
+  if (!sourceConfigTokenId && !sourceAdsetId) return null;
+  if (Boolean(sourceConfigTokenId) === Boolean(sourceAdsetId)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_canonical_source_invalid', 409);
+  }
+  const fixtureSourceAdId = clean(config.fixture_source_ad_id);
+  if (sourceConfigTokenId) {
+    if (!CONFIG_WRITER_TOKEN_ID_PATTERN.test(sourceConfigTokenId)) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_derive_canonical_source_invalid', 409);
+    }
+    return { sourceConfigTokenId, fixtureSourceAdId, provenance: 'canonical_config' };
+  }
+  try {
+    return {
+      sourceAdsetId: normalizeNumericId(sourceAdsetId, 'bootstrap_derive_source_adset_id'),
+      fixtureSourceAdId,
+      provenance: 'canonical_config',
+    };
+  } catch {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_canonical_source_invalid', 409);
+  }
+}
+
+function derivePipelineBootstrapSourceSelectors({ targetRow, targetAuth, targetConfig, configuredRows }) {
+  let targetCampaignId = '';
+  try {
+    targetCampaignId = normalizeNumericId(targetConfig.campaign_id, 'bootstrap_derive_target_campaign_id');
+  } catch {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_target_invalid', 409);
+  }
+  const selectors = [];
+  for (const row of configuredRows) {
+    if (clean(row.id) === clean(targetRow.id)) continue;
+    const config = asObject(parseObject(row.metadata_json).meta_ads_publish);
+    try {
+      if (
+        normalizeNumericId(config.account_id, 'bootstrap_derive_source_account_id') !== targetAuth.accountId ||
+        normalizeNumericId(config.campaign_id, 'bootstrap_derive_source_campaign_id') !== targetCampaignId
+      ) {
+        continue;
+      }
+      selectors.push({
+        sourceAdsetId: normalizeNumericId(config.adset_id, 'bootstrap_derive_source_adset_id'),
+        provenance: 'pipeline_source',
+      });
+    } catch {
+      // A malformed or unrelated legacy destination is never evidence for a
+      // source selector. The bounded Graph compatibility test below still
+      // decides whether every remaining candidate is authorized.
+    }
+  }
+  return uniqueDerivedBootstrapSelectors(selectors);
+}
+
+function uniqueDerivedBootstrapSelectors(selectors) {
+  const byAdset = new Map();
+  for (const selector of safeArray(selectors)) {
+    const key = clean(selector?.sourceAdsetId);
+    if (!key || byAdset.has(key)) continue;
+    byAdset.set(key, selector);
+  }
+  return [...byAdset.values()].sort((left, right) => clean(left.sourceAdsetId).localeCompare(clean(right.sourceAdsetId)));
+}
+
+async function selectSingleDerivedBootstrapSource({
+  selectors,
+  targetAuth,
+  targetAdset,
+  targetConfig,
+  context,
+  staging,
+  targetCanonicalUrlTags,
+}) {
+  const resolved = [];
+  for (const selector of uniqueDerivedBootstrapSelectors(selectors)) {
+    const candidate = await tryResolveDerivedBootstrapSource({
+      selector,
+      targetAuth,
+      targetAdset,
+      targetConfig,
+      context,
+      staging,
+    });
+    if (candidate) resolved.push(candidate);
+  }
+  if (resolved.length > 1) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_source_ambiguous', 409);
+  }
+  if (!resolved[0]) return null;
+  return tryFinalizeDerivedBootstrapSource({ resolved: resolved[0], targetCanonicalUrlTags, context });
+}
+
+async function tryResolveDerivedBootstrapSource({
+  selector,
+  targetAuth,
+  targetAdset,
+  targetConfig,
+  context,
+  staging,
+}) {
+  try {
+    const sourceAuth = await resolveLegacyBootstrapSourceAuth({
+      sourceConfigTokenId: clean(selector.sourceConfigTokenId),
+      sourceAdsetId: clean(selector.sourceAdsetId),
+    }, targetAuth, context);
+    const sourceAdset = await readAdsetConversionState(targetAuth, sourceAuth.config.adset_id, context);
+    const profile = buildBootstrapTrackingProfile({
+      sourceAuth,
+      sourceAdset,
+      targetAuth,
+      targetAdset,
+      targetConfig,
+      stagingSyntheticFixture: staging,
+    });
+    return { selector, sourceAuth, sourceAdset, profile };
+  } catch (error) {
+    return derivedBootstrapCandidateOrNull(error);
+  }
+}
+
+async function tryFinalizeDerivedBootstrapSource({ resolved, targetCanonicalUrlTags, context }) {
+  try {
+    const sourceCanonicalUrlTags = resolveDerivedCanonicalUrlTags([resolved.sourceAuth.config]);
+    if (targetCanonicalUrlTags && sourceCanonicalUrlTags && targetCanonicalUrlTags !== sourceCanonicalUrlTags) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_derive_source_url_tags_incompatible', 409);
+    }
+    const canonicalUrlTags = targetCanonicalUrlTags || sourceCanonicalUrlTags;
+    const fixture = await deriveBootstrapFixtureSource({
+      source: resolved,
+      canonicalUrlTags,
+      context,
+    });
+    return { ...resolved, fixture };
+  } catch (error) {
+    return derivedBootstrapCandidateOrNull(error);
+  }
+}
+
+function derivedBootstrapCandidateOrNull(error) {
+  if (isBootstrapFailure(error)) {
+    if (Number(error?.http_status) === 409) return null;
+    throw error;
+  }
+  const normalized = normalizeFailure(error);
+  if (Number(normalized.http_status) === 409 && normalized.classification === 'permanent') {
+    return null;
+  }
+  throw bootstrapFailure('meta_ads_publish_bootstrap_derive_unavailable', 503);
+}
+
+function resolveDerivedCanonicalUrlTags(configs) {
+  const values = new Set();
+  for (const configValue of safeArray(configs)) {
+    const config = asObject(configValue);
+    const tracking = asObject(config.tracking_contract);
+    for (const value of [config.url_tags, tracking.url_tags]) {
+      if (String(value ?? '') === '') continue;
+      try {
+        values.add(normalizeUrlTags(value, { required: true }));
+      } catch {
+        throw bootstrapFailure('meta_ads_publish_bootstrap_derive_canonical_url_tags_invalid', 409);
+      }
+    }
+  }
+  if (values.size > 1) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_canonical_url_tags_ambiguous', 409);
+  }
+  return values.size === 1 ? [...values][0] : '';
+}
+
+async function deriveBootstrapFixtureSource({ source, canonicalUrlTags, context }) {
+  const sourceAdsetId = source.sourceAuth.config.adset_id;
+  let ad;
+  const requestedId = clean(source.selector.fixtureSourceAdId);
+  if (requestedId) {
+    try {
+      ad = await readBootstrapAd(source.sourceAuth, requestedId, context);
+      assertBootstrapFixtureSourceAd(ad, sourceAdsetId);
+    } catch (error) {
+      const candidate = derivedBootstrapCandidateOrNull(error);
+      if (candidate === null) throw bootstrapFailure('meta_ads_publish_bootstrap_derive_fixture_source_invalid', 409);
+      throw bootstrapFailure('meta_ads_publish_bootstrap_derive_unavailable', 503);
+    }
+  } else {
+    const candidates = (await listBootstrapAdsetAds(source.sourceAuth, sourceAdsetId, context))
+      .filter((entry) => isBootstrapFixtureSourceCandidate(entry, sourceAdsetId));
+    if (candidates.length !== 1) {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_derive_fixture_source_ambiguous', 409);
+    }
+    ad = candidates[0];
+  }
+  let urlTags = canonicalUrlTags;
+  if (!urlTags) {
+    try {
+      urlTags = normalizeUrlTags(asObject(ad.creative).url_tags, { required: true });
+    } catch {
+      throw bootstrapFailure('meta_ads_publish_bootstrap_derive_url_tags_unavailable', 409);
+    }
+  }
+  return {
+    adId: normalizeNumericId(ad.id, 'bootstrap_derive_fixture_source_ad_id'),
+    urlTags,
+  };
+}
+
+function deriveWebsiteBootstrapGraphFact({ targetAuth, targetAdset, source, entry }) {
+  const profile = asObject(source.profile);
+  const projected = projectAuthorizedTrackingPromotedObject(
+    source.sourceAdset,
+    targetAdset,
+    profile,
+  );
+  return {
+    config_token_id: targetAuth.tokenId,
+    destination_type: 'website',
+    source_adset_id: clean(source.sourceAuth.config.adset_id),
+    fixture_source_ad_id: clean(source.fixture.adId),
+    url_tags: clean(entry.url_tags),
+    profile: {
+      source_adset_id: clean(profile.source_adset_id),
+      destination_kind: clean(profile.destination_kind),
+      website_event_requirement: clean(profile.website_event_requirement),
+      offline_event_dataset_requirement: clean(profile.offline_event_dataset_requirement),
+      staging_synthetic_fixture: profile.staging_synthetic_fixture === true,
+      authorized_destination_adset_ids: safeArray(profile.authorized_destination_adset_ids),
+    },
+    source_adset: deriveAdsetGraphContractFact(source.sourceAdset),
+    target_adset: deriveAdsetGraphContractFact(targetAdset),
+    desired_tracking_promoted_object: asObject(projected.tracking_promoted_object),
+  };
+}
+
+function deriveWhatsAppBootstrapGraphFact({ targetAuth, targetAdset, whatsappDestinationUrl }) {
+  return {
+    config_token_id: targetAuth.tokenId,
+    destination_type: 'whatsapp',
+    target_adset: deriveAdsetGraphContractFact(targetAdset),
+    whatsapp_destination_url: clean(whatsappDestinationUrl),
+  };
+}
+
+function deriveAdsetGraphContractFact(value) {
+  const adset = asObject(value);
+  try {
+    const promotedObject = asObject(adset.promoted_object);
+    const trackingPromotedObject = {};
+    for (const key of TRACKING_PROMOTED_OBJECT_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(promotedObject, key)) {
+        trackingPromotedObject[key] = clean(promotedObject[key]);
+      }
+    }
+    return {
+      account_id: normalizeNumericId(adset.account_id, 'bootstrap_derive_adset_account_id'),
+      campaign_objective: safeTrackingEnum(asObject(adset.campaign).objective),
+      optimization_goal: safeTrackingEnum(adset.optimization_goal),
+      destination_type: safeTrackingEnum(adset.destination_type),
+      billing_event: safeTrackingEnum(adset.billing_event),
+      attribution_spec: safeArray(adset.attribution_spec),
+      tracking_promoted_object: trackingPromotedObject,
+    };
+  } catch {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_graph_contract_invalid', 409);
+  }
+}
+
+function summarizeBootstrapDeriveEntries(entries) {
+  const websites = safeArray(entries).filter((entry) => clean(entry.destination_type) === 'website');
+  const whatsapp = safeArray(entries).filter((entry) => clean(entry.destination_type) === 'whatsapp');
+  return {
+    destination_count: websites.length + whatsapp.length,
+    website_destination_count: websites.length,
+    whatsapp_destination_count: whatsapp.length,
+    staging_fixture_count: websites.filter((entry) => entry.staging_synthetic_fixture === true).length,
+  };
+}
+
+function bootstrapDerivePlanResponse(plan, requestId) {
+  return response({
+    ok: true,
+    config_authority_revision: plan.authority.revision,
+    manifest_sha256: plan.manifestSha256,
+    summary: plan.summary,
+    requestId,
+  });
+}
+
 // The legacy configuration predates the v20 tracking contract, so it cannot
 // create a normal creative in order to obtain the mandatory paused URL-tags
 // fixture.  This narrowly-scoped saga is the only bootstrap escape hatch. It
@@ -1170,6 +1859,7 @@ export async function bootstrapMetaAdsPublishConfig({ request, env, requestId, d
         input: {
           operation_key: input.operationKey,
           expected_config_authority_revision: input.expectedConfigAuthorityRevision,
+          ...(input.derivedPlanSha256 ? { derived_plan_sha256: input.derivedPlanSha256 } : {}),
           entries: input.entries,
         },
         items: [],
@@ -2194,6 +2884,7 @@ async function validateBootstrapInput(body) {
   assertBootstrapExactKeys(body, new Set([
     'operation_key',
     'expected_config_authority_revision',
+    'derived_plan_sha256',
     'entries',
   ]));
   const operationKey = clean(body.operation_key);
@@ -2210,12 +2901,23 @@ async function validateBootstrapInput(body) {
   const seen = new Set();
   const entries = body.entries.map((value) => normalizeBootstrapEntry(value, seen))
     .sort((left, right) => left.configTokenId.localeCompare(right.configTokenId));
+  const derivedPlanSha256 = clean(body.derived_plan_sha256).toLowerCase();
+  if (derivedPlanSha256 && !/^[a-f0-9]{64}$/.test(derivedPlanSha256)) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_digest_invalid', 400);
+  }
   const requestHash = await sha256(stableStringify({
     operation_key: operationKey,
     expected_config_authority_revision: expectedConfigAuthorityRevision,
+    derived_plan_sha256: derivedPlanSha256,
     entries,
   }));
-  return { operationKey, expectedConfigAuthorityRevision, entries, requestHash };
+  return {
+    operationKey,
+    expectedConfigAuthorityRevision,
+    derivedPlanSha256,
+    entries,
+    requestHash,
+  };
 }
 
 function normalizeBootstrapEntry(value, seen) {
