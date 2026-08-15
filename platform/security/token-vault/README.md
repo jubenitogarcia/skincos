@@ -55,10 +55,12 @@ batch D1 condicionado às versões lidas. `POST`/`PATCH /v1/tokens` rejeitam ess
 metadata, pois um merge raso não é seguro.
 
 Para converter a autoridade legada, use somente o bootstrap restrito. O deploy
-consulta `GET /v1/meta-ads-publish/config`; se `config_authority_mode` for
-`legacy_bootstrap`, monta o corpo fechado abaixo com a revisão opaca devolvida
-pelo GET e as `entries` do manifesto privado. Se já for `tracking_ready`, ele
-apenas faz o readback e não solicita o manifesto.
+autentica primeiro a URL Preview imutável candidata; se
+`config_authority_mode` for `legacy_bootstrap`, valida o envelope privado do
+manifesto antes de qualquer ativação de tráfego e só então monta o corpo fechado
+abaixo com a revisão opaca devolvida pelo GET e as `entries` do manifesto. Se já
+for `tracking_ready`, ele apenas faz o readback e não solicita nem recebe o
+manifesto.
 
     {
       "operation_key": "meta-ads-bootstrap:<sha>:<run>:<attempt>",

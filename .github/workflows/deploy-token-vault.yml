@@ -1269,10 +1269,11 @@ jobs:
           if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(base) || !token) {
             throw new Error('Token Vault immutable candidate preview endpoint or credential is unavailable');
           }
-          function authenticatedAuthority(response, payload) {
-            if (!payload || typeof payload !== 'object') return false;
-            return (response.status === 200 && payload.ready === true && payload.config_authority_mode === 'tracking_ready')
-              || (response.status === 409 && payload.ready === false && payload.config_authority_mode === 'legacy_bootstrap');
+          function authenticatedAuthorityMode(response, payload) {
+            if (!payload || typeof payload !== 'object') return '';
+            if (response.status === 200 && payload.ready === true && payload.config_authority_mode === 'tracking_ready') return 'tracking_ready';
+            if (response.status === 409 && payload.ready === false && payload.config_authority_mode === 'legacy_bootstrap') return 'legacy_bootstrap';
+            return '';
           }
           const deadline = Date.now() + 90_000;
           while (Date.now() < deadline) {
@@ -1283,11 +1284,96 @@ jobs:
                 redirect: 'error',
                 signal: AbortSignal.timeout(10_000),
               });
-              if (authenticatedAuthority(response, await response.json())) process.exit(0);
+              const mode = authenticatedAuthorityMode(response, await response.json());
+              if (mode) {
+                const fs = await import('node:fs');
+                fs.appendFileSync(process.env.GITHUB_OUTPUT, `config_authority_mode=${mode}\n`);
+                process.exit(0);
+              }
             } catch {}
             await new Promise((resolve) => setTimeout(resolve, 3_000));
           }
           throw new Error('Token Vault immutable candidate config bearer did not authenticate before traffic');
+          NODE
+
+      - name: Verify protected legacy Token Vault bootstrap manifest before traffic
+        id: candidate_bootstrap_manifest
+        if: inputs.operation == 'deploy' && steps.candidate_config_bearer.outcome == 'success'
+        env:
+          CANDIDATE_CONFIG_AUTHORITY_MODE: ${{ steps.candidate_config_bearer.outputs.config_authority_mode }}
+          # The protected manifest is injected only for a candidate that has
+          # already authenticated as legacy_bootstrap. A tracking-ready
+          # candidate deliberately receives no manifest.
+          TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST: ${{ steps.candidate_config_bearer.outputs.config_authority_mode == 'legacy_bootstrap' && secrets.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '' }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const mode = String(process.env.CANDIDATE_CONFIG_AUTHORITY_MODE || '');
+          const rawManifest = String(process.env.TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST || '');
+          const maxBytes = 150 * 1024;
+          const tokenIdPattern = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
+          const urlTagKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
+          const forbiddenUrlTagKeyPattern = /(?:token|secret|password|authorization|signature|api_?key)/i;
+          const urlTagValuePattern = /^[A-Za-z0-9._~%{}|:+,\-@!$'()*\/;=]+$/;
+          const isJsonObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+          const clean = (value) => String(value ?? '').trim();
+          const hasExactKeys = (value, allowed) => isJsonObject(value) && Object.keys(value).every((key) => allowed.has(key));
+          const isNumericId = (value) => /^\d{5,30}$/.test(clean(value).replace(/^act_/, ''));
+          const validUrlTags = (value) => {
+            const raw = String(value ?? '');
+            if (!raw || raw !== raw.trim() || raw.length > 1_000 || /[?#\s\u0000-\u001f]/.test(raw) || /:\/\//.test(raw) || /%(?![0-9A-Fa-f]{2})/.test(raw)) return false;
+            const seen = new Set();
+            return raw.split('&').every((pair) => {
+              const separator = pair.indexOf('=');
+              if (separator <= 0) return false;
+              const key = pair.slice(0, separator).toLowerCase();
+              const parameterValue = pair.slice(separator + 1);
+              if (!urlTagKeyPattern.test(key) || forbiddenUrlTagKeyPattern.test(key) || seen.has(key) || !parameterValue || !urlTagValuePattern.test(parameterValue)) return false;
+              seen.add(key);
+              return true;
+            });
+          };
+
+          if (mode === 'tracking_ready') {
+            if (rawManifest) throw new Error('Token Vault tracking-ready candidate must not receive a bootstrap manifest');
+            process.exit(0);
+          }
+          if (mode !== 'legacy_bootstrap') throw new Error('Token Vault candidate authority mode is unavailable for manifest validation');
+          if (!rawManifest) throw new Error('TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST is required for a legacy Token Vault candidate before traffic');
+          if (new TextEncoder().encode(rawManifest).length > maxBytes) throw new Error('Token Vault bootstrap manifest exceeds the bounded request size');
+
+          let manifest;
+          try { manifest = JSON.parse(rawManifest); } catch { throw new Error('Token Vault bootstrap manifest must be valid protected JSON'); }
+          if (!hasExactKeys(manifest, new Set(['entries'])) || !Array.isArray(manifest.entries) || manifest.entries.length < 2 || manifest.entries.length > 10) {
+            throw new Error('Token Vault bootstrap manifest has an unsafe entry envelope');
+          }
+          const seenConfigTokenIds = new Set();
+          for (const entry of manifest.entries) {
+            if (!isJsonObject(entry)) throw new Error('Token Vault bootstrap manifest has an unsafe entry');
+            const destinationType = clean(entry.destination_type).toLowerCase();
+            const allowed = destinationType === 'website'
+              ? new Set(['config_token_id', 'destination_type', 'source_config_token_id', 'source_adset_id', 'fixture_source_ad_id', 'url_tags', 'staging_synthetic_fixture'])
+              : destinationType === 'whatsapp'
+                ? new Set(['config_token_id', 'destination_type'])
+                : null;
+            const configTokenId = clean(entry.config_token_id);
+            if (!allowed || !hasExactKeys(entry, allowed) || !tokenIdPattern.test(configTokenId) || seenConfigTokenIds.has(configTokenId)) {
+              throw new Error('Token Vault bootstrap manifest has an unsafe entry');
+            }
+            seenConfigTokenIds.add(configTokenId);
+            if (destinationType !== 'website') continue;
+            const sourceConfigTokenId = clean(entry.source_config_token_id);
+            const sourceAdsetId = clean(entry.source_adset_id);
+            if (Boolean(sourceConfigTokenId) === Boolean(sourceAdsetId) || (sourceConfigTokenId && !tokenIdPattern.test(sourceConfigTokenId)) || (sourceAdsetId && !isNumericId(sourceAdsetId)) || !validUrlTags(entry.url_tags)) {
+              throw new Error('Token Vault bootstrap manifest has an unsafe Website entry');
+            }
+            if (Object.prototype.hasOwnProperty.call(entry, 'staging_synthetic_fixture') && typeof entry.staging_synthetic_fixture !== 'boolean') {
+              throw new Error('Token Vault bootstrap manifest has an unsafe Website entry');
+            }
+            if (Object.prototype.hasOwnProperty.call(entry, 'fixture_source_ad_id') && !isNumericId(entry.fixture_source_ad_id)) {
+              throw new Error('Token Vault bootstrap manifest has an unsafe Website entry');
+            }
+          }
           NODE
 
       - name: Check Token Vault release lease before staging version deployment
