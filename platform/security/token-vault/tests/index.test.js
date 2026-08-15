@@ -258,6 +258,22 @@ test('meta ads config credential is limited to configuration reads and governed 
   assert.notEqual(bootstrapResponse.status, 403);
   assert.notEqual((await bootstrapResponse.json()).error, 'meta_ads_config_credential_scope_required');
 
+  for (const pathname of [
+    '/v1/meta-ads-publish/config/bootstrap/derive-plan',
+    '/v1/meta-ads-publish/config/bootstrap/derive',
+  ]) {
+    const deriveResponse = await handleRequest(
+      new Request(`https://api.skincos.com.br/internal/token-vault${pathname}`, {
+        method: 'POST',
+        headers: { ...metaAdsConfigAuthHeaders(), 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      env(db),
+    );
+    assert.notEqual(deriveResponse.status, 403);
+    assert.notEqual((await deriveResponse.json()).error, 'meta_ads_config_credential_scope_required');
+  }
+
   const rollbackResponse = await handleRequest(
     new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback', {
       method: 'POST',
@@ -286,6 +302,8 @@ test('operational credential cannot invoke Meta Ads bootstrap or staging exercis
   for (const pathname of [
     '/v1/meta-ads-publish/config/bootstrap',
     '/v1/meta-ads-publish/config/bootstrap/rollback',
+    '/v1/meta-ads-publish/config/bootstrap/derive-plan',
+    '/v1/meta-ads-publish/config/bootstrap/derive',
     '/v1/meta-ads-publish/config/staging-exercise',
   ]) {
     const response = await handleRequest(
