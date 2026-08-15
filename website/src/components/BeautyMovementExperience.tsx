@@ -621,18 +621,19 @@ export default function BeautyMovementExperience({
         scrollInterruptCleanupRef.current = null;
     }, []);
 
-    function scrollToElement(target: HTMLElement | null) {
+    function scrollToElement(target: HTMLElement | null, extraOffset = 0) {
         cancelScrollAnimation();
         if (!target) return;
 
         if (reducedMotion) {
             target.scrollIntoView({ behavior: "auto", block: "start" });
+            if (extraOffset > 0) window.scrollBy({ top: -extraOffset, behavior: "auto" });
             return;
         }
 
         const startTop = window.scrollY;
         const stickyHeader = document.querySelector("header");
-        const scrollOffset = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32;
+        const scrollOffset = (stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32) + extraOffset;
         const targetTop = Math.max(0, startTop + target.getBoundingClientRect().top - scrollOffset);
         const distance = targetTop - startTop;
         const duration = Math.min(1040, Math.max(680, Math.abs(distance) * 0.55));
@@ -672,7 +673,12 @@ export default function BeautyMovementExperience({
 
     function scrollToTable() {
         cancelAutoAdvance();
-        scrollToElement(tableRef.current);
+        const title = document.getElementById("beauty-movement-title");
+        const titlePeek =
+            title instanceof HTMLElement
+                ? Math.min(184, Math.max(0, Math.round(title.getBoundingClientRect().height - 2)))
+                : 0;
+        scrollToElement(tableRef.current, titlePeek);
     }
 
     function clearHandTransitionTimer() {
@@ -1295,7 +1301,7 @@ export default function BeautyMovementExperience({
         );
     }
 
-    function renderSpecialCard(revealed: boolean, action: SpecialCardAction = "none") {
+    function renderSpecialCard(revealed: boolean, action: SpecialCardAction = "none", settled = false) {
         const showRevealAction = action !== "none";
         const kind: SpecialCardKind = revealed
             ? hasCourtesyClass
@@ -1342,7 +1348,7 @@ export default function BeautyMovementExperience({
 
         return (
             <article
-                className={styles.specialCard}
+                className={`${styles.specialCard} ${settled ? styles.specialCardSettled : ""}`.trim()}
                 data-special-state={revealed ? "revealed" : "locked"}
                 aria-label={revealed ? `Carta especial: ${title}` : "Carta especial reservada"}
             >
@@ -1452,7 +1458,6 @@ export default function BeautyMovementExperience({
 
             <section className={styles.shell} aria-labelledby="beauty-movement-title">
                 <header className={styles.hero}>
-                    <p className={styles.heroKicker}>3 anos. 3 cartas.</p>
                     <h1 id="beauty-movement-title">{initialState.campaign.title?.trim() || "Beleza que se move com você."}</h1>
                     <p
                         className={`${styles.heroDeckInstruction} ${waitingForInitialDeal ? "" : styles.heroDeckInstructionHidden}`.trim()}
@@ -1465,7 +1470,7 @@ export default function BeautyMovementExperience({
 
                 <section
                     ref={tableRef}
-                    className={`${styles.tableStage} ${waitingForInitialDeal ? "" : styles.tableStageShifted}`.trim()}
+                    className={styles.tableStage}
                     id="mesa-de-cartas"
                     aria-label={tableDefinition.label}
                     aria-describedby={tablePromptText ? "table-stage-prompt" : undefined}
@@ -1646,7 +1651,7 @@ export default function BeautyMovementExperience({
                                 aria-label="Carta especial da celebração"
                             >
                                 {!isLocalPreview ? renderConfirmationAction() : null}
-                                {renderSpecialCard(false, isLocalPreview ? "confirm" : "none")}
+                                {renderSpecialCard(false, isLocalPreview ? "confirm" : "none", true)}
                             </div>
                         ) : finaleStage === "result" ? (
                             <div

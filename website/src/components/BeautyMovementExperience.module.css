@@ -57,7 +57,7 @@
 }
 
 .heroDeckInstructionHidden {
-  visibility: hidden;
+  display: none;
 }
 
 .tableDeckPromptArrow {
@@ -108,13 +108,6 @@
 .progressRowWaiting .progressGroup {
   visibility: hidden;
   pointer-events: none;
-}
-
-.tableStageShifted {
-  /* Reuse the instruction's reserved space once the first hand begins.
-   * The category row and the complete table move as one visual group, while
-   * their normal-flow space stays intact to avoid a layout shift. */
-  transform: translateY(-38px);
 }
 
 .progressGroup {
@@ -455,6 +448,7 @@
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.48);
   box-shadow: 0 18px 40px rgba(48, 48, 48, 0.06);
+  overflow: visible;
 }
 
 .tableSurface[data-deck-state="waiting"] {
@@ -971,12 +965,17 @@
   animation: specialCardEnter 820ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
 }
 
+.specialCardSettled {
+  animation: none;
+}
+
 .specialCardStageReopen .specialCard {
   width: min(100%, 360px);
 }
 
 .specialCardInner {
   position: relative;
+  height: 100%;
   min-height: inherit;
   transform-style: preserve-3d;
 }
@@ -997,6 +996,7 @@
   padding: 28px;
   border-radius: 14px;
   backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
   text-align: center;
 }
 
@@ -1679,43 +1679,24 @@
 .cardBrandMark {
   position: relative;
   display: grid;
-  width: 140px;
-  height: 140px;
+  width: 76px;
+  height: 68px;
   place-items: center;
   align-self: center;
   margin: auto;
-  border: 1px solid rgba(245, 179, 1, 0.5);
-  border-radius: 999px;
   color: var(--bm-surface);
 }
 
 .cardBrandMark::before,
 .cardBrandMark::after {
-  position: absolute;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 999px;
-  content: "";
-  pointer-events: none;
-}
-
-.cardBrandMark::before {
-  inset: 14px;
-}
-
-.cardBrandMark::after {
-  top: 19px;
-  right: 24px;
-  width: 6px;
-  height: 6px;
-  border: 0;
-  background: var(--bm-yellow);
+  content: none;
 }
 
 .cardBrandLogo {
   position: relative;
   z-index: 1;
   display: block;
-  width: 70px;
+  width: 72px;
   height: auto;
   object-fit: contain;
 }
@@ -1843,10 +1824,10 @@
 .autoAdvance {
   display: block;
   width: 100%;
-  height: 4px;
-  margin-top: 1px;
+  height: 5px;
+  margin-top: 4px;
   border-radius: 999px;
-  background: rgba(48, 48, 48, 0.16);
+  background: rgba(244, 238, 223, 0.18);
   overflow: hidden;
   visibility: hidden;
 }
@@ -1862,6 +1843,7 @@
   border-radius: inherit;
   background: var(--bm-ink);
   content: "";
+  box-shadow: 0 0 10px rgba(229, 189, 49, 0.42);
   transform-origin: left center;
   animation: none;
 }
@@ -2556,10 +2538,10 @@
   isolation: isolate;
   justify-items: start;
   max-width: 100%;
-  min-height: clamp(260px, 29vw, 390px);
+  min-height: clamp(220px, 22vw, 292px);
   margin: 0;
-  padding: clamp(36px, 6vw, 82px) clamp(28px, 7vw, 104px) clamp(46px, 6vw, 78px);
-  gap: clamp(18px, 2.5vw, 28px);
+  padding: clamp(30px, 4vw, 50px) clamp(28px, 7vw, 104px) clamp(30px, 4vw, 48px);
+  gap: clamp(14px, 1.8vw, 20px);
   color: var(--bm-ink);
   text-align: left;
 }
@@ -2594,32 +2576,11 @@
   z-index: 1;
 }
 
-.heroKicker {
-  display: inline-flex;
-  align-items: center;
-  margin: 0;
-  color: var(--bm-muted);
-  font-family: var(--font-brand-ui), sans-serif;
-  font-size: clamp(0.68rem, 0.9vw, 0.78rem);
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  line-height: 1.15;
-  text-transform: uppercase;
-}
-
-.heroKicker::before {
-  width: 26px;
-  height: 1px;
-  margin-right: 11px;
-  background: var(--bm-yellow);
-  content: "";
-}
-
 .hero h1 {
   max-width: min(900px, 94%);
   color: var(--bm-ink);
   font-family: var(--font-beauty-movement-editorial), "Bodoni Moda", serif;
-  font-size: clamp(3.4rem, 7.2vw, 7.15rem);
+  font-size: clamp(3.2rem, 6.35vw, 6rem);
   font-weight: 500;
   letter-spacing: -0.065em;
   line-height: 0.87;
@@ -2718,11 +2679,11 @@
 }
 
 .progressItemCurrent .progressButton {
-  border-bottom-color: var(--bm-yellow);
+  border-bottom-color: rgba(197, 181, 143, 0.52);
   border-radius: 0;
   background: transparent;
   color: var(--bm-surface);
-  box-shadow: inset 0 -1px 0 rgba(229, 189, 49, 0.24);
+  box-shadow: none;
 }
 
 .progressItemCurrent .progressButton:hover {
@@ -2741,7 +2702,7 @@
 }
 
 .tableSurface {
-  overflow: hidden;
+  overflow: visible;
   border-color: rgba(197, 181, 143, 0.72);
   border-radius: clamp(10px, 1.5vw, 18px);
   background: radial-gradient(circle at 78% 12%, rgba(229, 189, 49, 0.13), transparent 16rem), radial-gradient(circle at 13% 86%, rgba(244, 238, 223, 0.08), transparent 20rem), var(--bm-bg);
@@ -2861,25 +2822,8 @@
 }
 
 .cardBrandMark {
-  width: 126px;
-  height: 78px;
-  border-color: rgba(197, 181, 143, 0.64);
-  border-radius: 0;
-}
-
-.cardBrandMark::before {
-  inset: 10px;
-  border-color: rgba(244, 238, 223, 0.18);
-  border-radius: 0;
-}
-
-.cardBrandMark::after {
-  top: 15px;
-  right: 16px;
-  width: 5px;
-  height: 5px;
-  background: var(--bm-yellow);
-  box-shadow: 0 0 10px rgba(229, 189, 49, 0.7);
+  width: 76px;
+  height: 68px;
 }
 
 .cardBrandLogo {
@@ -3150,8 +3094,9 @@
   }
 
   .hero {
-    min-height: 300px;
-    padding: 36px 26px 44px;
+    min-height: 0;
+    padding: 28px 26px 32px;
+    gap: 14px;
   }
 
   .hero::before {
@@ -3204,8 +3149,8 @@
   }
 
   .cardBrandMark {
-    width: 120px;
-    height: 74px;
+    width: 76px;
+    height: 68px;
   }
 }
 
