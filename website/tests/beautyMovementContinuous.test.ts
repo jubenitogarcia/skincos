@@ -28,10 +28,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
         assert.match(route, /<Footer \/>/);
     }
 
-    assert.match(
-        experience,
-        /className=\{`\$\{styles\.tableStage\} \$\{waitingForInitialDeal \? "" : styles\.tableStageShifted\}`\.trim\(\)\}/,
-    );
+    assert.match(experience, /className=\{styles\.tableStage\}/);
+    assert.doesNotMatch(experience, /styles\.tableStageShifted/);
     assert.match(experience, /id="mesa-de-cartas"/);
     assert.match(experience, /data-hand-stage=\{handStage\}/);
     assert.match(experience, /const tableIsBusy =/);
@@ -39,6 +37,9 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /beauty_movement_act_view/);
     assert.match(experience, /requestAnimationFrame\(animate\)/);
     assert.match(experience, /scrollIntoView\(\{ behavior: "auto"/);
+    assert.match(experience, /function scrollToElement\(target: HTMLElement \| null, extraOffset = 0\)/);
+    assert.match(experience, /const titlePeek =/);
+    assert.match(experience, /scrollToElement\(tableRef\.current, titlePeek\)/);
     assert.match(experience, /prefers-reduced-motion/);
     assert.match(experience, /import \{ BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate \}/);
     assert.match(experience, /AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION\.autoAdvanceMs \/ 1_000/);
@@ -113,6 +114,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /styles\.progressRowWaiting/);
     assert.match(experience, /className=\{styles\.progressGroup\}/);
     assert.match(experience, /styles\.heroDeckInstructionHidden/);
+    assert.doesNotMatch(experience, /className=\{styles\.heroKicker\}/);
+    assert.doesNotMatch(experience, /<p className=\{styles\.heroKicker\}>3 anos\. 3 cartas\.<\/p>/);
     assert.match(experience, /aria-hidden=\{waitingForInitialDeal \|\| undefined\}/);
     assert.match(experience, /\$\{styles\.tablePrompt\}/);
     assert.match(experience, /key=\{introStage !== "hidden" \? "experience-intro" : tableDefinition\.id\}/);
@@ -240,7 +243,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /--bm-yellow: #e5bd31/i);
     assert.doesNotMatch(styles, /Georgia|--bm-plum|--bm-coral|linear-gradient/i);
     assert.match(styles, /\.rhythmThread \{/);
-    assert.match(styles, /\.heroKicker \{/);
+    assert.doesNotMatch(styles, /\.heroKicker/);
     assert.match(styles, /--font-beauty-movement-editorial/);
     assert.doesNotMatch(styles, /\.autoAdvanceNumber/);
     assert.match(styles, /@keyframes autoAdvanceProgress/);
@@ -322,7 +325,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
         styles.indexOf(".tableDeckPromptArrow {"),
     );
     assert.match(heroInstructionStyles, /display: block[\s\S]*font-family: var\(--font-brand-text\)/);
-    assert.match(styles, /\.heroDeckInstructionHidden \{\s*visibility: hidden;/);
+    assert.match(styles, /\.heroDeckInstructionHidden \{\s*display: none;/);
     assert.match(styles, /\.progressRow \{[\s\S]*min-height: 52px;[\s\S]*align-items: flex-start;/);
     assert.doesNotMatch(heroInstructionStyles, /cursor: pointer|:hover|:focus-visible|appearance:|background:/);
     assert.match(styles, /\.tableDeckPromptArrow \{[\s\S]*position: absolute[\s\S]*bottom: calc\(32px \+ 106px \+ 8px\)[\s\S]*font-size: 1\.35rem/);
@@ -340,7 +343,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /@keyframes deckPromptArrowFloat/);
     assert.match(styles, /\.progressRowWaiting \{[\s\S]*min-height: 52px/);
     assert.match(styles, /\.progressRowWaiting \.progressGroup \{[\s\S]*visibility: hidden[\s\S]*pointer-events: none/);
-    assert.match(styles, /\.tableStageShifted \{[\s\S]*?transform: translateY\(-38px\);/);
+    assert.doesNotMatch(styles, /\.tableStageShifted/);
     assert.doesNotMatch(styles, /\.initialDeckPrompt/);
     assert.match(styles, /\.heroDeckInstruction/);
     assert.doesNotMatch(styles, /\.tableDeckPrompt \{|\.deckPrompt \{|\.deckPromptArrow \{/);
@@ -377,7 +380,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /\.progressButton \{[\s\S]*min-height: 38px/);
     assert.match(styles, /\.progressButton \{[\s\S]*width: 100%/);
     assert.match(styles, /\.progressItemCurrent \.progressButton \{[\s\S]*grid-template-rows: 25px 5px[\s\S]*height: 38px[\s\S]*min-height: 38px[\s\S]*padding: 4px 14px 1px/);
-    assert.match(styles, /\.autoAdvance \{[\s\S]*width: 100%[\s\S]*height: 4px[\s\S]*margin-top: 1px/);
+    assert.match(styles, /\.autoAdvance \{[\s\S]*width: 100%[\s\S]*height: 5px[\s\S]*margin-top: 4px/);
     assert.match(styles, /\.autoAdvance \{[\s\S]*visibility: hidden/);
     assert.match(styles, /\.autoAdvanceVisible \{[\s\S]*visibility: visible/);
     assert.match(styles, /\.autoAdvance::after \{[\s\S]*animation: none/);
@@ -393,6 +396,9 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /\.progressTransfer \{[\s\S]*animation: progressHighlightTransfer var\(--bm-progress-total-ms\)/);
     assert.match(styles, /@keyframes progressHighlightTransfer[\s\S]*calc\(var\(--progress-to-left\) \+ var\(--progress-to-width\) - var\(--progress-from-left\)\)/);
     assert.match(styles, /\.autoAdvance::after \{[\s\S]*background: var\(--bm-ink\)/);
+    assert.match(styles, /\.tableSurface \{[\s\S]*overflow: visible;/);
+    assert.match(styles, /\.specialCardSettled \{\s*animation: none;/);
+    assert.match(experience, /styles\.specialCardSettled/);
     assert.match(styles, /animation: cardLiftAndSettle var\(--bm-hand-reveal-ms\)/);
     assert.match(styles, /\.tableStage\[data-hand-stage="reveal"\] \.cardButtonSelected,\s*\.tableStage\[data-hand-stage="reveal"\] \.cardButtonSelected \.cardInner/);
     assert.match(styles, /animation: deckStageDeal var\(--bm-hand-deal-ms\)/);
@@ -418,7 +424,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /BeautyMovementCardIllustration/);
     assert.match(experience, /function renderSpecialCard/);
     assert.match(experience, /type SpecialCardAction = "none" \| "confirm" \| "reopen"/);
-    assert.match(experience, /function renderSpecialCard\(revealed: boolean, action: SpecialCardAction = "none"\)/);
+    assert.match(experience, /function renderSpecialCard\(revealed: boolean, action: SpecialCardAction = "none", settled = false\)/);
     assert.match(experience, /className=\{styles\.specialCardRevealAction\}/);
     assert.match(experience, /Garantir presente e confirmar presença/);
     assert.match(experience, /if \(!operationalConsent && !isLocalPreview\) return;/);
@@ -428,7 +434,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /styles\.specialCardWhatsappAction/);
     assert.match(experience, /finaleStage === "confirmation" \?/);
     assert.match(experience, /!isLocalPreview \? renderConfirmationAction\(\) : null/);
-    assert.match(experience, /renderSpecialCard\(false, isLocalPreview \? "confirm" : "none"\)/);
+    assert.match(experience, /renderSpecialCard\(false, isLocalPreview \? "confirm" : "none", true\)/);
     assert.match(experience, /renderSpecialCard\(false, "reopen"\)/);
     assert.doesNotMatch(experience, /specialCardPrompt|Sua carta especial está pronta\./);
     assert.match(experience, /Clique aqui para revelar sua carta especial/);
