@@ -98,7 +98,7 @@ export function globalResourceFor(workflow, inputs) {
   const stage = String(inputs?.stage || inputs?.orchestrator_stage || "").trim().toLowerCase();
   const lifecycle = target || stage;
   const environment = target || stage;
-  if (!["preview", "staging", "pilot", "canary", "production", "rollback"].includes(lifecycle)) return "";
+  if (!["preview", "staging", "bootstrap", "pilot", "canary", "production", "rollback"].includes(lifecycle)) return "";
   if (workflow === "deploy-timekeeping.yml" && inputs.release_scope === "ponto") return normalizeResourceKey("global:ponto-workers-writer");
   if (workflow === "deploy-core-workers.yml" && inputs.release_scope === "ponto" && ["api", "inventory", "all"].includes(inputs.unit)) {
     return normalizeResourceKey("global:ponto-workers-writer");
