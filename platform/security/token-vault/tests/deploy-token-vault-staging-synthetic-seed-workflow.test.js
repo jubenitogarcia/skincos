@@ -1,0 +1,218 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import test from "node:test";
+
+const workflow = fs.readFileSync(
+  new URL(
+    "../../../../.github/workflows/deploy-token-vault.yml",
+    import.meta.url,
+  ),
+  "utf8",
+);
+
+function section(start, end) {
+  const from = workflow.indexOf(start);
+  assert.notEqual(from, -1, `missing workflow section: ${start}`);
+  const to = end ? workflow.indexOf(end, from + start.length) : workflow.length;
+  assert.notEqual(to, -1, `missing workflow boundary: ${end}`);
+  return workflow.slice(from, to);
+}
+
+test("staging synthetic seed is candidate-scoped, ordered before derivation, and fails closed", () => {
+  const upload = section(
+    "      - name: Upload immutable Token Vault version",
+    "      - name: Export immutable Worker and incumbent identities for the activation gate",
+  );
+  const seed = section(
+    "      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate",
+    "      - name: Verify immutable Token Vault candidate config bearer before traffic",
+  );
+  const pretrafficRollback = section(
+    "      - name: Roll back the isolated staging synthetic seed before traffic when candidate planning fails",
+    "      - name: Check Token Vault release lease before staging version deployment",
+  );
+  const activationLeaseRollback = section(
+    "      - name: Roll back the isolated staging synthetic seed when the activation lease rejects it",
+    "      - name: Activate only the selected Token Vault version in staging",
+  );
+  const routeConvergence = section(
+    "      - name: Wait for staging Token Vault route to accept the candidate config bearer",
+    "      - name: Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it",
+  );
+  const candidatePlan = section(
+    "      - name: Seal a private or internally-derived legacy Token Vault bootstrap plan before traffic",
+    "      - name: Validate sealed Token Vault bootstrap plan before staging traffic",
+  );
+  const bootstrap = section(
+    "      - name: Bootstrap legacy Token Vault Meta Ads configuration only when staging requires it",
+    "      - name: Read back staging Token Vault deployment and authenticated health",
+  );
+  const compensationRollback = section(
+    "      - name: Roll back the isolated staging synthetic seed before Worker compensation",
+    "      - name: Compensate the staging Worker only when this release still owns traffic",
+  );
+  const cleanup = section(
+    "      - name: Remove the ephemeral staging synthetic-seed bearer",
+    "      - name: Release Token Vault release lease",
+  );
+
+  assert.match(upload, /randomBytes\(48\)\.toString\('base64url'\)/);
+  assert.match(
+    upload,
+    /\$RUNNER_TEMP\/token-vault-staging-synthetic-seed-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}/,
+  );
+  assert.match(upload, /chmod 600 "\$seed_secret_file"/);
+  assert.match(upload, /TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN = seedToken/);
+  assert.doesNotMatch(
+    upload,
+    /META_ADS_ACCESS_TOKEN|META_PIXEL_ID|META_ADS_ACCOUNT_ID|META_ADS_API_VERSION/,
+  );
+  assert.doesNotMatch(workflow, /\bwrangler\s+secret\s+put\b/i);
+
+  assert.match(
+    seed,
+    /if: inputs\.operation == 'deploy' && inputs\.target == 'staging'/,
+  );
+  assert.match(
+    seed,
+    /META_ADS_ACCESS_TOKEN: \$\{\{ inputs\.target == 'staging'/,
+  );
+  assert.match(seed, /META_PIXEL_ID: \$\{\{ inputs\.target == 'staging'/);
+  assert.match(seed, /META_ADS_ACCOUNT_ID: \$\{\{ inputs\.target == 'staging'/);
+  assert.match(
+    seed,
+    /META_ADS_API_VERSION: \$\{\{ inputs\.target == 'staging'/,
+  );
+  assert.match(seed, /staging-synthetic-seed`, \{/);
+  assert.match(
+    seed,
+    /const preview = String\(process\.env\.TOKEN_VAULT_CANDIDATE_PREVIEW_URL/,
+  );
+  assert.doesNotMatch(seed, /TOKEN_VAULT_STAGING_BASE_URL/);
+  assert.match(
+    seed,
+    /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*pixel_id: pixelId,[\s\S]*api_version: apiVersion/,
+  );
+  assert.match(seed, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+  assert.match(
+    seed,
+    /seed_attempted=true\\nseed_operation_key=\$\{operationKey\}/,
+  );
+  assert.match(
+    seed,
+    /appendFileSync\(process\.env\.GITHUB_OUTPUT, `seed_attempted=true\\nseed_operation_key=\$\{operationKey\}\\n`\);/,
+  );
+  assert.match(
+    seed,
+    /appendFileSync\(process\.env\.GITHUB_OUTPUT, seed === 'sealed'[\s\S]*`did_seed=true\\nseed_status=\$\{seed\}\\n`[\s\S]*`did_seed=false\\nseed_status=\$\{seed\}\\n`\);/,
+  );
+  assert.equal(
+    [...seed.matchAll(/process\.env\.GITHUB_OUTPUT/g)].length,
+    2,
+    "only opaque seed state may reach workflow outputs",
+  );
+  assert.doesNotMatch(seed, /console\.log|process\.stdout\.write/);
+
+  assert.match(
+    routeConvergence,
+    /const base = String\(process\.env\.TOKEN_VAULT_STAGING_BASE_URL/,
+  );
+  assert.doesNotMatch(routeConvergence, /TOKEN_VAULT_CANDIDATE_PREVIEW_URL/);
+  assert.match(
+    candidatePlan,
+    /const preview = String\(process\.env\.TOKEN_VAULT_CANDIDATE_PREVIEW_URL/,
+  );
+  assert.match(
+    candidatePlan,
+    /fetch\(`\$\{preview\}\/internal\/token-vault\/v1\/meta-ads-publish\/config\/bootstrap\/derive-plan`/,
+  );
+  assert.doesNotMatch(candidatePlan, /TOKEN_VAULT_STAGING_BASE_URL/);
+  assert.match(
+    bootstrap,
+    /const base = String\(process\.env\.TOKEN_VAULT_STAGING_BASE_URL/,
+  );
+  assert.doesNotMatch(bootstrap, /TOKEN_VAULT_CANDIDATE_PREVIEW_URL/);
+
+  const uploadAt = workflow.indexOf(
+    "      - name: Upload immutable Token Vault version",
+  );
+  const seedAt = workflow.indexOf(
+    "      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate",
+  );
+  const configAt = workflow.indexOf(
+    "      - name: Verify immutable Token Vault candidate config bearer before traffic",
+  );
+  const planAt = workflow.indexOf(
+    "      - name: Seal a private or internally-derived legacy Token Vault bootstrap plan before traffic",
+  );
+  const trafficAt = workflow.indexOf(
+    "      - name: Activate only the selected Token Vault version in staging",
+  );
+  assert.ok(
+    uploadAt < seedAt &&
+      seedAt < configAt &&
+      configAt < planAt &&
+      planAt < trafficAt,
+  );
+
+  assert.match(
+    activationLeaseRollback,
+    /steps\.staging_worker_activation_lease\.outcome != 'success'/,
+  );
+  for (const rollback of [
+    pretrafficRollback,
+    activationLeaseRollback,
+    compensationRollback,
+  ]) {
+    assert.match(
+      rollback,
+      /const preview = String\(process\.env\.TOKEN_VAULT_CANDIDATE_PREVIEW_URL/,
+    );
+    assert.match(
+      rollback,
+      /fetch\(`\$\{preview\}\/internal\/token-vault\/v1\/meta-ads-publish\/config\/staging-synthetic-seed\/rollback`/,
+    );
+    assert.doesNotMatch(rollback, /TOKEN_VAULT_STAGING_BASE_URL/);
+    assert.match(rollback, /staging-synthetic-seed\/rollback/);
+    assert.match(
+      rollback,
+      /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*api_version: apiVersion/,
+    );
+    assert.match(rollback, /payload\?\.rolled_back !== true/);
+    assert.match(rollback, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+  }
+  for (const rollback of [pretrafficRollback, activationLeaseRollback]) {
+    assert.match(rollback, /meta_ads_publish_staging_seed_operation_not_found/);
+  }
+  assert.match(compensationRollback, /TOKEN_VAULT_CANDIDATE_PREVIEW_URL/);
+  assert.doesNotMatch(compensationRollback, /TOKEN_VAULT_STAGING_BASE_URL/);
+  const sourceScopes = [
+    seed,
+    pretrafficRollback,
+    activationLeaseRollback,
+    compensationRollback,
+  ];
+  for (const sourceName of [
+    "META_ADS_ACCESS_TOKEN",
+    "META_PIXEL_ID",
+    "META_ADS_ACCOUNT_ID",
+    "META_ADS_API_VERSION",
+  ]) {
+    const total = [...workflow.matchAll(new RegExp(sourceName, "g"))].length;
+    const scoped = sourceScopes.reduce(
+      (count, scope) =>
+        count + [...scope.matchAll(new RegExp(sourceName, "g"))].length,
+      0,
+    );
+    assert.equal(
+      total,
+      scoped,
+      `${sourceName} must only reach bounded staging seed calls`,
+    );
+  }
+  assert.match(
+    cleanup,
+    /\$RUNNER_TEMP"\/token-vault-staging-synthetic-seed-\*/,
+  );
+  assert.match(cleanup, /rm -f -- "\$seed_file"/);
+});

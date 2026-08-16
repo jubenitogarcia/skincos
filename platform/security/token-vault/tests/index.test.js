@@ -7,6 +7,7 @@ const TEST_API_TOKEN = ['unit', 'auth', 'token'].join('-');
 const TEST_OPERATIONAL_TOKEN = ['unit', 'operational', 'token'].join('-');
 const TEST_ANALYTICS_TOKEN = ['unit', 'analytics', 'token'].join('-');
 const TEST_META_ADS_CONFIG_TOKEN = ['unit', 'meta', 'ads', 'config', 'token'].join('-');
+const TEST_META_ADS_STAGING_SEED_TOKEN = ['unit', 'meta', 'ads', 'staging', 'seed', 'token'].join('-');
 const TEST_ENCRYPTION_KEY = ['unit', 'encryption', 'key', 'with', 'enough', 'length'].join('-');
 const THREADS_TOKEN = ['threads', 'fixture', 'token'].join('-');
 const FACEBOOK_TOKEN = ['facebook', 'fixture', 'token'].join('-');
@@ -105,6 +106,10 @@ function operationalAuthHeaders() {
 
 function metaAdsConfigAuthHeaders() {
   return { Authorization: `Bearer ${TEST_META_ADS_CONFIG_TOKEN}` };
+}
+
+function metaAdsStagingSeedAuthHeaders() {
+  return { Authorization: `Bearer ${TEST_META_ADS_STAGING_SEED_TOKEN}` };
 }
 
 async function encryptForSeed(token, secret) {
@@ -223,6 +228,83 @@ test('configured worker secrets must remain pairwise distinct', async () => {
   );
   assert.equal(response.status, 500);
   assert.equal((await response.json()).error, 'invalid_worker_secret_configuration');
+});
+
+test('Meta Ads staging seed bearer is staging-only, pairwise distinct, and exclusive to its two POST routes', async () => {
+  const disabledDb = new FakeDb();
+  const disabledEnvironment = env(disabledDb);
+  disabledEnvironment.ENVIRONMENT = 'production';
+  disabledEnvironment.TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN = TEST_META_ADS_STAGING_SEED_TOKEN;
+  const disabledResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: authHeaders() }),
+    disabledEnvironment,
+  );
+  assert.equal(disabledResponse.status, 500);
+  assert.equal((await disabledResponse.json()).error, 'invalid_worker_secret_configuration');
+
+  const duplicateDb = new FakeDb();
+  const duplicateEnvironment = env(duplicateDb);
+  duplicateEnvironment.ENVIRONMENT = 'staging';
+  duplicateEnvironment.TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN = TEST_API_TOKEN;
+  const duplicateResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: authHeaders() }),
+    duplicateEnvironment,
+  );
+  assert.equal(duplicateResponse.status, 500);
+  assert.equal((await duplicateResponse.json()).error, 'invalid_worker_secret_configuration');
+
+  const db = new FakeDb();
+  const environment = env(db);
+  environment.ENVIRONMENT = 'staging';
+  environment.TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN = TEST_META_ADS_STAGING_SEED_TOKEN;
+
+  for (const request of [
+    new Request('https://api.skincos.com.br/internal/token-vault/health', { headers: metaAdsStagingSeedAuthHeaders() }),
+    new Request('https://api.skincos.com.br/internal/token-vault/contract', { headers: metaAdsStagingSeedAuthHeaders() }),
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config', { headers: metaAdsStagingSeedAuthHeaders() }),
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/runs', {
+      method: 'POST',
+      headers: { ...metaAdsStagingSeedAuthHeaders(), 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed', {
+      headers: metaAdsStagingSeedAuthHeaders(),
+    }),
+  ]) {
+    const response = await handleRequest(request, environment);
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, 'meta_ads_staging_seed_credential_scope_required');
+  }
+
+  for (const pathname of [
+    '/v1/meta-ads-publish/config/staging-synthetic-seed',
+    '/v1/meta-ads-publish/config/staging-synthetic-seed/rollback',
+  ]) {
+    const allowedResponse = await handleRequest(
+      new Request(`https://api.skincos.com.br/internal/token-vault${pathname}`, {
+        method: 'POST',
+        headers: { ...metaAdsStagingSeedAuthHeaders(), 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      environment,
+    );
+    assert.notEqual(allowedResponse.status, 403);
+    assert.notEqual((await allowedResponse.json()).error, 'meta_ads_staging_seed_credential_scope_required');
+  }
+
+  for (const token of [TEST_API_TOKEN, TEST_OPERATIONAL_TOKEN, TEST_META_ADS_CONFIG_TOKEN]) {
+    const response = await handleRequest(
+      new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      environment,
+    );
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, 'meta_ads_staging_seed_credential_required');
+  }
+  assert.equal(db.tokens.length, 0);
 });
 
 test('meta ads config credential is limited to configuration reads and governed bootstrap routing', async () => {
