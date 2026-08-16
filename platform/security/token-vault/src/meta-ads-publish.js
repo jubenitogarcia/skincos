@@ -177,6 +177,7 @@ const STAGING_EXERCISE_OPERATION_KEY_PATTERN = /^staging-tracking-fixture:[A-Za-
 const STAGING_SYNTHETIC_SEED_OPERATION_KEY_PATTERN = /^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/;
 const STAGING_SYNTHETIC_SEED_MAX_REQUEST_BYTES = 16 * 1024;
 const STAGING_SYNTHETIC_SEED_CONTRACT = 'meta-ads-tracking-v20/staging-synthetic-seed/v1';
+const STAGING_SYNTHETIC_SEED_ATTEST_MAX_GRAPH_ATTEMPTS = 1;
 const STAGING_SYNTHETIC_SEED_UNIT = 'meta-ads-tracking-staging-synthetic';
 const STAGING_SYNTHETIC_SEED_SOURCE_TOKEN_TYPE = 'staging_synthetic_source';
 const STAGING_SYNTHETIC_SEED_TARGET_TOKEN_TYPE = 'staging_synthetic_target';
@@ -185,6 +186,22 @@ const STAGING_SYNTHETIC_SEED_MAX_GRAPH_OBJECTS = 5;
 const STAGING_SYNTHETIC_SEED_LANDING_GROUP = 'staging_tracking_fixture';
 const STAGING_SYNTHETIC_SEED_CREATIVE_MESSAGE = 'SKINCOS staging tracking verification';
 const STAGING_SYNTHETIC_SEED_CREATIVE_CTA = 'LEARN_MORE';
+const STAGING_SYNTHETIC_SEED_DISCOVERY_FAILURES = Object.freeze({
+  sourceUnavailable: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  identityMismatch: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  identityMalformed: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  pageAmbiguous: 'meta_ads_publish_staging_seed_graph_page_ambiguous',
+  datasetAmbiguous: 'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
+  landingOrMediaUnavailable: 'meta_ads_publish_staging_seed_landing_or_media_unavailable',
+});
+const STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES = Object.freeze({
+  sourceUnavailable: 'meta_ads_publish_staging_seed_graph_source_unavailable',
+  identityMismatch: 'meta_ads_publish_staging_seed_graph_identity_mismatch',
+  identityMalformed: 'meta_ads_publish_staging_seed_graph_identity_malformed',
+  pageAmbiguous: 'meta_ads_publish_staging_seed_graph_identity_mismatch',
+  datasetAmbiguous: 'meta_ads_publish_staging_seed_graph_identity_mismatch',
+  landingOrMediaUnavailable: 'meta_ads_publish_staging_seed_graph_identity_malformed',
+});
 const STAGING_SYNTHETIC_SEED_ADSET_FIELDS = [
   'id',
   'name',
@@ -349,6 +366,10 @@ export async function handleMetaAdsPublishRequest(input) {
 
   if (request.method === 'POST' && pathname === `${PREFIX}/config/bootstrap/derive`) {
     return bootstrapMetaAdsPublishConfigFromDerivedPlan({ request, env, requestId, decryptToken, encryptToken, writeAudit });
+  }
+
+  if (request.method === 'POST' && pathname === `${PREFIX}/config/staging-synthetic-seed/attest`) {
+    return attestStagingSyntheticMetaAdsTracking({ request, env, requestId });
   }
 
   if (request.method === 'POST' && pathname === `${PREFIX}/config/staging-synthetic-seed`) {
@@ -1232,6 +1253,24 @@ export async function bootstrapMetaAdsPublishConfigFromDerivedPlan({
 // proving all external facts with bounded Graph reads. It is deliberately not
 // available to the operational/config/admin gateway roles; index.js exposes it
 // only to a release-scoped, candidate-only bearer.
+export async function attestStagingSyntheticMetaAdsTracking({ request, env, requestId }) {
+  try {
+    assertStagingSyntheticSeedAttestationEnvironment(env);
+    const input = await readStagingSyntheticSeedInput(request);
+    const auth = await buildStagingSyntheticSeedGraphAuth(input, env);
+    await discoverStagingSyntheticSeedFacts({
+      input,
+      auth,
+      context: createStagingSyntheticSeedAttestationContext(env, requestId, input.operationKey),
+      failureCodes: STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES,
+      maxGraphAttempts: STAGING_SYNTHETIC_SEED_ATTEST_MAX_GRAPH_ATTEMPTS,
+    });
+    return stagingSyntheticSeedAttestationSuccess({ requestId, operationKey: input.operationKey });
+  } catch (error) {
+    return stagingSyntheticSeedFailureResponse(normalizeStagingSyntheticSeedError(error), requestId);
+  }
+}
+
 export async function seedStagingSyntheticMetaAdsTracking({ request, env, requestId, encryptToken, writeAudit }) {
   let input;
   let operation;
@@ -1405,11 +1444,15 @@ export async function rollbackStagingSyntheticMetaAdsTracking({ request, env, re
 }
 
 function assertStagingSyntheticSeedEnvironment(env) {
-  if (clean(env?.ENVIRONMENT).toLowerCase() !== 'staging') {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_disabled', 503);
-  }
+  assertStagingSyntheticSeedAttestationEnvironment(env);
   if (!env?.TOKEN_VAULT_DB || typeof env.TOKEN_VAULT_DB.prepare !== 'function' || typeof env.TOKEN_VAULT_DB.batch !== 'function') {
     throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+}
+
+function assertStagingSyntheticSeedAttestationEnvironment(env) {
+  if (clean(env?.ENVIRONMENT).toLowerCase() !== 'staging') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_disabled', 503);
   }
 }
 
@@ -1530,6 +1573,9 @@ function stagingSyntheticSeedFailureResponse(error, requestId) {
     'meta_ads_publish_staging_seed_reconciliation_required',
     'meta_ads_publish_staging_seed_facebook_credentials_present',
     'meta_ads_publish_staging_seed_graph_identity_invalid',
+    'meta_ads_publish_staging_seed_graph_source_unavailable',
+    'meta_ads_publish_staging_seed_graph_identity_mismatch',
+    'meta_ads_publish_staging_seed_graph_identity_malformed',
     'meta_ads_publish_staging_seed_graph_page_ambiguous',
     'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
     'meta_ads_publish_staging_seed_landing_or_media_unavailable',
@@ -1569,6 +1615,28 @@ function stagingSyntheticSeedRollbackSuccess({ requestId, operationKey, replayed
     contract_version: STAGING_SYNTHETIC_SEED_CONTRACT,
     requestId,
   });
+}
+
+function stagingSyntheticSeedAttestationSuccess({ requestId, operationKey }) {
+  return response({
+    ok: true,
+    attestation: 'match',
+    operation_key: operationKey,
+    contract_version: STAGING_SYNTHETIC_SEED_CONTRACT,
+    requestId,
+  });
+}
+
+function createStagingSyntheticSeedAttestationContext(env, requestId, operationKey) {
+  return {
+    env,
+    requestId,
+    action: 'attest_staging_synthetic_meta_ads_tracking',
+    operationKey: clean(operationKey),
+    attempts: 0,
+    rateUsage: {},
+    traceId: '',
+  };
 }
 
 function createStagingSyntheticSeedContext(env, lockOwner, requestId, action, operationKey = '') {
@@ -1898,45 +1966,74 @@ async function writeStagingSyntheticSeedAudit(writeAudit, env, requestId, status
   });
 }
 
-async function discoverStagingSyntheticSeedFacts({ input, auth, context }) {
-  const pixel = await seedGraphRead(auth, input.pixelId, 'id,owner_ad_account{id}', context);
-  const pixelOwner = normalizeStagingSyntheticSeedGraphId(asObject(pixel.owner_ad_account).id, 'pixel_owner_account');
-  if (normalizeStagingSyntheticSeedGraphId(pixel.id, 'pixel_id') !== input.pixelId || pixelOwner !== input.accountId) {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_identity_invalid', 409);
+async function discoverStagingSyntheticSeedFacts({
+  input,
+  auth,
+  context,
+  failureCodes = STAGING_SYNTHETIC_SEED_DISCOVERY_FAILURES,
+  maxGraphAttempts = MAX_GRAPH_ATTEMPTS,
+}) {
+  const read = (path, fields, query = {}) => seedGraphRead(auth, path, fields, context, query, {
+    maxAttempts: maxGraphAttempts,
+    failureCode: failureCodes.sourceUnavailable,
+  });
+  const pixel = await read(input.pixelId, 'id,owner_ad_account{id}');
+  const pixelOwner = normalizeStagingSyntheticSeedGraphId(
+    asObject(pixel.owner_ad_account).id,
+    'pixel_owner_account',
+    failureCodes.identityMalformed,
+  );
+  if (
+    normalizeStagingSyntheticSeedGraphId(pixel.id, 'pixel_id', failureCodes.identityMalformed) !== input.pixelId ||
+    pixelOwner !== input.accountId
+  ) {
+    throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
   }
 
-  const pages = await seedGraphRead(auth, 'me/accounts', 'id,tasks,instagram_business_account{id}', context, { limit: '100' });
+  const pages = await read('me/accounts', 'id,tasks,instagram_business_account{id}', { limit: '100' });
   if (clean(asObject(pages.paging).next)) {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_page_ambiguous', 409);
+    throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
   }
   const eligiblePages = safeArray(pages.data).map(asObject).filter((page) => {
     const tasks = new Set(safeArray(page.tasks).map((task) => clean(task).toUpperCase()));
     return tasks.has('ADVERTISE') && /^\d{5,30}$/.test(clean(asObject(page.instagram_business_account).id));
   });
   if (eligiblePages.length !== 1) {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_page_ambiguous', 409);
+    throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
   }
-  const selectedPageId = normalizeStagingSyntheticSeedGraphId(eligiblePages[0].id, 'page_id');
-  const page = await seedGraphRead(auth, selectedPageId, 'id,instagram_business_account{id},website,picture{url}', context);
-  const pageId = normalizeStagingSyntheticSeedGraphId(page.id, 'page_id');
-  const instagramUserId = normalizeStagingSyntheticSeedGraphId(asObject(page.instagram_business_account).id, 'instagram_user_id');
+  const selectedPageId = normalizeStagingSyntheticSeedGraphId(eligiblePages[0].id, 'page_id', failureCodes.identityMalformed);
+  const page = await read(selectedPageId, 'id,instagram_business_account{id},website,picture{url}');
+  const pageId = normalizeStagingSyntheticSeedGraphId(page.id, 'page_id', failureCodes.identityMalformed);
+  const instagramUserId = normalizeStagingSyntheticSeedGraphId(
+    asObject(page.instagram_business_account).id,
+    'instagram_user_id',
+    failureCodes.identityMalformed,
+  );
   if (
     pageId !== selectedPageId ||
-    instagramUserId !== normalizeStagingSyntheticSeedGraphId(asObject(eligiblePages[0].instagram_business_account).id, 'instagram_user_id')
+    instagramUserId !== normalizeStagingSyntheticSeedGraphId(
+      asObject(eligiblePages[0].instagram_business_account).id,
+      'instagram_user_id',
+      failureCodes.identityMalformed,
+    )
   ) {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_identity_invalid', 409);
+    throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
   }
   const landing = normalizeStagingSyntheticSeedLanding(page.website);
   const pictureUrl = normalizeStagingSyntheticSeedPicture(page.picture);
   if (!landing || !pictureUrl) {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_landing_or_media_unavailable', 409);
+    throw stagingSyntheticSeedFailure(failureCodes.landingOrMediaUnavailable, 409);
   }
 
-  const datasets = await seedGraphRead(auth, `act_${input.accountId}/offline_conversion_data_sets`, 'id', context, { limit: '2' });
+  const datasets = await read(`act_${input.accountId}/offline_conversion_data_sets`, 'id', { limit: '2' });
   if (clean(asObject(datasets.paging).next) || safeArray(datasets.data).length !== 1) {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_dataset_ambiguous', 409);
+    throw stagingSyntheticSeedFailure(failureCodes.datasetAmbiguous, 409);
   }
-  const datasetId = normalizeStagingSyntheticSeedGraphId(asObject(safeArray(datasets.data)[0]).id, 'offline_dataset_id');
+  const datasetId = normalizeStagingSyntheticSeedGraphId(
+    asObject(safeArray(datasets.data)[0]).id,
+    'offline_dataset_id',
+    failureCodes.identityMalformed,
+  );
   return {
     page_id: pageId,
     instagram_user_id: instagramUserId,
@@ -1947,13 +2044,17 @@ async function discoverStagingSyntheticSeedFacts({ input, auth, context }) {
   };
 }
 
-async function seedGraphRead(auth, path, fields, context, query = {}) {
+async function seedGraphRead(auth, path, fields, context, query = {}, {
+  maxAttempts = MAX_GRAPH_ATTEMPTS,
+  failureCode = 'meta_ads_publish_staging_seed_graph_identity_invalid',
+} = {}) {
   try {
     const result = await graphRequest(
       graphUrl(auth.apiVersion, path, { fields, ...query }),
       { method: 'GET' },
       auth,
       context,
+      { maxAttempts },
     );
     return asObject(result.body);
   } catch (error) {
@@ -1961,15 +2062,15 @@ async function seedGraphRead(auth, path, fields, context, query = {}) {
     if (normalized.retryable || normalized.ambiguous || Number(normalized.http_status) >= 500) {
       throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
     }
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_identity_invalid', 409);
+    throw stagingSyntheticSeedFailure(failureCode, 409);
   }
 }
 
-function normalizeStagingSyntheticSeedGraphId(value, label) {
+function normalizeStagingSyntheticSeedGraphId(value, label, failureCode = 'meta_ads_publish_staging_seed_graph_identity_invalid') {
   try {
     return normalizeNumericId(value, `staging_seed_${label}`);
   } catch {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_identity_invalid', 409);
+    throw stagingSyntheticSeedFailure(failureCode, 409);
   }
 }
 
