@@ -15,6 +15,8 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/derive-plan`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/derive`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/rollback`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-exercise`
 - `POST /internal/token-vault/v1/analytics/operations`
 
@@ -23,6 +25,10 @@ O bearer restrito `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` só pode consultar
 `health`, `contract` e a configuração Meta Ads, ou chamar o planejamento e
 bootstrap governados, o rollback desse bootstrap e o exercício de staging. Ele
 não lista/altera tokens, não cria runs e não publica anúncios.
+O bearer efêmero distinto `TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN` só alcança
+os dois endpoints de seed/rollback sintéticos, exclusivamente no Worker
+staging; ele não ganha as permissões do bearer de configuração, operacional ou
+administrativo.
 O endpoint de analytics exige o secret separado
 `TOKEN_VAULT_ANALYTICS_API_TOKEN` (administradores continuam podendo operar o
 endpoint para diagnóstico controlado).
@@ -37,6 +43,10 @@ endpoint para diagnóstico controlado).
 - Secret opcional do Worker: `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` (papel
   restrito de configuração Meta Ads; obrigatório no Environment quando há
   promoção V20 governada)
+- Secret efêmero opcional do Worker: `TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN`
+  (capacidade exclusiva dos endpoints de seed/rollback sintéticos; o workflow
+  gera-o em `RUNNER_TEMP` somente para a versão candidata de staging, e nunca
+  o persiste como secret do GitHub)
 - Secret privado opcional do GitHub Environment, não um binding do Worker:
   `TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST` (override explícito das `entries`
   do bootstrap legado; nunca é recebido quando o plano interno é derivável)
@@ -123,6 +133,27 @@ em fail-closed (`reconciliation_required`).
 Ele seleciona uma única fixture sintética autorizada, prova a reconciliação
 GET-POST-GET do evento Website/dataset offline e restaura o snapshot antes de
 retornar `reconciled_and_rolled_back`.
+
+Quando a autoridade legada de staging está vazia, o caminho canônico não
+adivinha nem importa configuração de produção. Antes de derivar o plano, o
+workflow chama `POST .../config/staging-synthetic-seed` na Preview imutável com
+um bearer aleatório exclusivo da versão candidata. Os fatos externos entram
+somente no corpo dessa chamada privada: o token Meta Ads já custodiado,
+`META_PIXEL_ID`, `META_ADS_ACCOUNT_ID` e `META_ADS_API_VERSION`. O Vault exige
+uma conta/pixel, uma Página+Instagram elegível e um dataset offline unívocos,
+cria somente recursos `PAUSED` nomeados para staging e sela duas credenciais
+internas cifradas. Não seleciona campanhas, conjuntos ou anúncios comerciais,
+nem torna o token Meta um binding do Worker.
+
+O endpoint responde apenas `sealed` ou `not_required` e uma identidade opaca
+de operação. Se qualquer passo subsequente falhar antes do tráfego, ou se a
+compensação de staging for acionada, `POST .../staging-synthetic-seed/rollback`
+usa a mesma capacidade efêmera para arquivar exclusivamente os objetos de
+entrega marcados e desativar as credenciais seladas. Um `AdCreative` já
+desanexado não possui estado de arquivamento documentado: ele fica inerte,
+identificado somente no journal cifrado, sem ad ativo, conjunto ativo ou
+credencial ativa. Estados ambíguos falham fechados; o workflow nunca repete uma
+criação Graph incerta nem usa `wrangler secret put`.
 
 ## Analytics read-only
 
@@ -265,6 +296,17 @@ em staging executa a fixture reversível. Em produção, ele exige a source rele
 nativa exata, aplica o Orb inativo com versão esperada e termina com o preflight
 Orb. Não execute `wrangler deploy`, `secret put` ou migrations remotas
 manualmente para publicar este serviço.
+
+Para o primeiro bootstrap Meta Ads de staging, o mesmo upload gera
+`TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN` com CSPRNG em um arquivo `0600` sob
+`RUNNER_TEMP`, inclui-o somente no `--secrets-file` privado da candidata e
+remove esse arquivo no encerramento do job. A chamada Preview lê o bearer por
+arquivo e entrega os fatos Meta somente em memória ao body fechado de seed; os
+valores não entram em `GITHUB_OUTPUT`, artefatos, logs, worktree ou argv. Essa
+seed é estritamente `staging`, ocorre antes da autenticação/derivação de
+configuração e possui rollback explícito antes de qualquer ativação quando o
+planejamento falha. `META_ADS_ACCESS_TOKEN` continua uma credencial externa de
+fonte: não é copiado de production nem inventado pelo fluxo.
 
 Antes da primeira promoção, disponibilize em cada GitHub Environment os
 segredos independentes exigidos pelo workflow, em especial
