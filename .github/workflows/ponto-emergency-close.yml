@@ -97,32 +97,21 @@ jobs:
           node - "$directory/maintenance.json" \
             "$directory/overlay-expectation.json" \
             "$directory/control-fallback-expectation.json" <<'NODE'
-          (async () => {
           const fs = require("fs");
           const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const headers = { accept: "application/json", "cache-control": "no-cache" };
-          const probe = new URL(process.env.PONTO_MODULE_HEALTH_URL);
-          probe.searchParams.set("emergency_close_probe", process.env.GITHUB_RUN_ID);
-          const response = await fetch(probe, { headers });
-          const body = await response.json().catch(() => null);
-          const availability = body?.availability;
           if (
-            response.status !== 200
-            || availability?.state !== "maintenance"
-            || !["control", "emergency-latch-active"].includes(availability?.source)
-            || !Number.isFinite(Date.parse(String(availability?.changedAt || "")))
-          ) throw new Error("live Ponto health did not prove maintenance under the closed latch");
-          if (availability.source === "emergency-latch-active") {
-            // A monotonic latch can already be visible at the edge before a
-            // broker-backed re-attestation transfers its ownership. The
-            // direct broker evidence remains the exact custody boundary.
-            fs.writeFileSync(process.argv[3], `${JSON.stringify({ state: "maintenance", changedAt: availability.changedAt })}\n`, { mode: 0o600 });
-            fs.rmSync(process.argv[4], { force: true });
-          } else {
-            fs.writeFileSync(process.argv[3], `${JSON.stringify({ state: "maintenance", changedAt: maintenance.latchChangedAt })}\n`, { mode: 0o600 });
-            fs.writeFileSync(process.argv[4], `${JSON.stringify({ state: "maintenance", changedAt: availability.changedAt, source: "control" })}\n`, { mode: 0o600 });
-          }
-          })().catch((error) => { console.error(error); process.exitCode = 1; });
+            maintenance?.schemaVersion !== 1
+            || maintenance?.state !== "maintenance"
+            || maintenance?.latched !== true
+            || maintenance?.passed !== true
+            || !Number.isFinite(Date.parse(String(maintenance?.latchChangedAt || "")))
+            || !Number.isFinite(Date.parse(String(maintenance?.controlChangedAt || "")))
+          ) throw new Error("broker maintenance evidence is invalid");
+          // The broker attests both exact timestamps. Let the bounded
+          // propagation checker own all edge reads: an immediate probe can
+          // still observe the predecessor while the close is propagating.
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({ state: "maintenance", changedAt: maintenance.latchChangedAt })}\n`, { mode: 0o600 });
+          fs.writeFileSync(process.argv[4], `${JSON.stringify({ state: "maintenance", changedAt: maintenance.controlChangedAt, source: "control" })}\n`, { mode: 0o600 });
           NODE
           if [[ -f "$directory/control-fallback-expectation.json" ]]; then
             PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
