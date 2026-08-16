@@ -1,0 +1,89 @@
+name: Attest Meta Ads Source Principal
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meta-ads-source-principal-attestation-staging
+  cancel-in-progress: false
+
+jobs:
+  attest:
+    if: github.ref == 'refs/heads/main'
+    name: Read the staging source principal without deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: staging
+    steps:
+      - name: Attest the Meta Ads source principal without exposing it
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
+          META_ADS_API_VERSION: ${{ vars.META_ADS_API_VERSION }}
+          ATTESTATION_CONTEXT: ${{ github.run_id }}:${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${META_ADS_ACCESS_TOKEN:-}" ]]; then
+            echo 'Meta Ads source principal attestation failed: source_credential_unavailable' >&2
+            exit 1
+          fi
+          if [[ ! "${META_ADS_API_VERSION:-}" =~ ^v(2[5-9]|[3-9][0-9])\.0$ ]]; then
+            echo 'Meta Ads source principal attestation failed: source_api_version_invalid' >&2
+            exit 1
+          fi
+
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+
+          const token = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '');
+          const context = String(process.env.ATTESTATION_CONTEXT || '');
+
+          const fail = (code) => {
+            console.error(`Meta Ads source principal attestation failed: ${code}`);
+            process.exit(1);
+          };
+
+          if (!token || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion) || !/^\d+:\d+$/.test(context)) {
+            fail('source_contract_invalid');
+          }
+
+          let response;
+          try {
+            response = await fetch(`https://graph.facebook.com/${apiVersion}/me?fields=id`, {
+              method: 'GET',
+              headers: { Authorization: `Bearer ${token}` },
+              cache: 'no-store',
+              redirect: 'error',
+              signal: AbortSignal.timeout(12_000),
+            });
+          } catch {
+            fail('source_principal_unavailable');
+          }
+
+          if (!response || response.status !== 200) {
+            fail('source_principal_unavailable');
+          }
+
+          let payload;
+          try {
+            payload = await response.json();
+          } catch {
+            fail('source_principal_malformed');
+          }
+
+          const principalId = typeof payload?.id === 'string' ? payload.id : '';
+          if (!/^\d{5,20}$/.test(principalId) || payload?.error) {
+            fail('source_principal_malformed');
+          }
+
+          const commitment = createHash('sha256')
+            .update(`skincos-meta-source-principal/v1:${context}:${principalId}`)
+            .digest('hex');
+          process.stdout.write(
+            `source_principal_attestation=verified\nsource_principal_commitment=${commitment}\n`,
+          );
+          NODE
