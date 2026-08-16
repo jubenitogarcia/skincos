@@ -188,6 +188,10 @@ const STAGING_SYNTHETIC_SEED_CREATIVE_MESSAGE = 'SKINCOS staging tracking verifi
 const STAGING_SYNTHETIC_SEED_CREATIVE_CTA = 'LEARN_MORE';
 const STAGING_SYNTHETIC_SEED_DISCOVERY_FAILURES = Object.freeze({
   sourceUnavailable: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  sourceAuthRejected: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  pixelAccessDenied: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  pageAccessDenied: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  datasetAccessDenied: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   identityMismatch: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   identityMalformed: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   pageAmbiguous: 'meta_ads_publish_staging_seed_graph_page_ambiguous',
@@ -196,11 +200,15 @@ const STAGING_SYNTHETIC_SEED_DISCOVERY_FAILURES = Object.freeze({
 });
 const STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES = Object.freeze({
   sourceUnavailable: 'meta_ads_publish_staging_seed_graph_source_unavailable',
+  sourceAuthRejected: 'meta_ads_publish_staging_seed_graph_source_auth_rejected',
+  pixelAccessDenied: 'meta_ads_publish_staging_seed_graph_pixel_access_denied',
+  pageAccessDenied: 'meta_ads_publish_staging_seed_graph_page_access_denied',
+  datasetAccessDenied: 'meta_ads_publish_staging_seed_graph_dataset_access_denied',
   identityMismatch: 'meta_ads_publish_staging_seed_graph_identity_mismatch',
   identityMalformed: 'meta_ads_publish_staging_seed_graph_identity_malformed',
-  pageAmbiguous: 'meta_ads_publish_staging_seed_graph_identity_mismatch',
-  datasetAmbiguous: 'meta_ads_publish_staging_seed_graph_identity_mismatch',
-  landingOrMediaUnavailable: 'meta_ads_publish_staging_seed_graph_identity_malformed',
+  pageAmbiguous: 'meta_ads_publish_staging_seed_graph_page_ambiguous',
+  datasetAmbiguous: 'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
+  landingOrMediaUnavailable: 'meta_ads_publish_staging_seed_landing_or_media_unavailable',
 });
 const STAGING_SYNTHETIC_SEED_ADSET_FIELDS = [
   'id',
@@ -1574,6 +1582,10 @@ function stagingSyntheticSeedFailureResponse(error, requestId) {
     'meta_ads_publish_staging_seed_facebook_credentials_present',
     'meta_ads_publish_staging_seed_graph_identity_invalid',
     'meta_ads_publish_staging_seed_graph_source_unavailable',
+    'meta_ads_publish_staging_seed_graph_source_auth_rejected',
+    'meta_ads_publish_staging_seed_graph_pixel_access_denied',
+    'meta_ads_publish_staging_seed_graph_page_access_denied',
+    'meta_ads_publish_staging_seed_graph_dataset_access_denied',
     'meta_ads_publish_staging_seed_graph_identity_mismatch',
     'meta_ads_publish_staging_seed_graph_identity_malformed',
     'meta_ads_publish_staging_seed_graph_page_ambiguous',
@@ -1973,11 +1985,17 @@ async function discoverStagingSyntheticSeedFacts({
   failureCodes = STAGING_SYNTHETIC_SEED_DISCOVERY_FAILURES,
   maxGraphAttempts = MAX_GRAPH_ATTEMPTS,
 }) {
-  const read = (path, fields, query = {}) => seedGraphRead(auth, path, fields, context, query, {
+  const read = (path, fields, query = {}, failureCode = failureCodes.sourceUnavailable) => seedGraphRead(auth, path, fields, context, query, {
     maxAttempts: maxGraphAttempts,
-    failureCode: failureCodes.sourceUnavailable,
+    failureCode,
+    authFailureCode: failureCodes.sourceAuthRejected,
   });
-  const pixel = await read(input.pixelId, 'id,owner_ad_account{id}');
+  const pixel = await read(
+    input.pixelId,
+    'id,owner_ad_account{id}',
+    {},
+    failureCodes.pixelAccessDenied,
+  );
   const pixelOwner = normalizeStagingSyntheticSeedGraphId(
     asObject(pixel.owner_ad_account).id,
     'pixel_owner_account',
@@ -1990,7 +2008,12 @@ async function discoverStagingSyntheticSeedFacts({
     throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
   }
 
-  const pages = await read('me/accounts', 'id,tasks,instagram_business_account{id}', { limit: '100' });
+  const pages = await read(
+    'me/accounts',
+    'id,tasks,instagram_business_account{id}',
+    { limit: '100' },
+    failureCodes.pageAccessDenied,
+  );
   if (clean(asObject(pages.paging).next)) {
     throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
   }
@@ -2002,7 +2025,12 @@ async function discoverStagingSyntheticSeedFacts({
     throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
   }
   const selectedPageId = normalizeStagingSyntheticSeedGraphId(eligiblePages[0].id, 'page_id', failureCodes.identityMalformed);
-  const page = await read(selectedPageId, 'id,instagram_business_account{id},website,picture{url}');
+  const page = await read(
+    selectedPageId,
+    'id,instagram_business_account{id},website,picture{url}',
+    {},
+    failureCodes.pageAccessDenied,
+  );
   const pageId = normalizeStagingSyntheticSeedGraphId(page.id, 'page_id', failureCodes.identityMalformed);
   const instagramUserId = normalizeStagingSyntheticSeedGraphId(
     asObject(page.instagram_business_account).id,
@@ -2025,7 +2053,12 @@ async function discoverStagingSyntheticSeedFacts({
     throw stagingSyntheticSeedFailure(failureCodes.landingOrMediaUnavailable, 409);
   }
 
-  const datasets = await read(`act_${input.accountId}/offline_conversion_data_sets`, 'id', { limit: '2' });
+  const datasets = await read(
+    `act_${input.accountId}/offline_conversion_data_sets`,
+    'id',
+    { limit: '2' },
+    failureCodes.datasetAccessDenied,
+  );
   if (clean(asObject(datasets.paging).next) || safeArray(datasets.data).length !== 1) {
     throw stagingSyntheticSeedFailure(failureCodes.datasetAmbiguous, 409);
   }
@@ -2047,6 +2080,7 @@ async function discoverStagingSyntheticSeedFacts({
 async function seedGraphRead(auth, path, fields, context, query = {}, {
   maxAttempts = MAX_GRAPH_ATTEMPTS,
   failureCode = 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  authFailureCode = failureCode,
 } = {}) {
   try {
     const result = await graphRequest(
@@ -2062,8 +2096,15 @@ async function seedGraphRead(auth, path, fields, context, query = {}, {
     if (normalized.retryable || normalized.ambiguous || Number(normalized.http_status) >= 500) {
       throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
     }
+    if (isStagingSyntheticSeedSourceAuthFailure(normalized)) {
+      throw stagingSyntheticSeedFailure(authFailureCode, 409);
+    }
     throw stagingSyntheticSeedFailure(failureCode, 409);
   }
+}
+
+function isStagingSyntheticSeedSourceAuthFailure(normalized) {
+  return Number(normalized?.http_status) === 401 || [102, 190].includes(Number(normalized?.code || 0));
 }
 
 function normalizeStagingSyntheticSeedGraphId(value, label, failureCode = 'meta_ads_publish_staging_seed_graph_identity_invalid') {

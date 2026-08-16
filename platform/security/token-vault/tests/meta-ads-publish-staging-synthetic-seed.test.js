@@ -297,8 +297,10 @@ class SeedDb {
 }
 
 class FakeGraph {
-  constructor({ ambiguousCreatePath = '' } = {}) {
+  constructor({ ambiguousCreatePath = '', readFailures = {}, readResponses = {} } = {}) {
     this.ambiguousCreatePath = ambiguousCreatePath;
+    this.readFailures = new Map(Object.entries(readFailures));
+    this.readResponses = new Map(Object.entries(readResponses));
     this.calls = [];
     this.postCalls = [];
     this.resources = new Map();
@@ -314,7 +316,15 @@ class FakeGraph {
       return graphResponse({ error: { message: 'invalid auth' } }, 401);
     }
 
-    if (method === 'GET') return this.read(path);
+    if (method === 'GET') {
+      const failure = this.readFailures.get(path);
+      if (failure) {
+        return graphResponse({ error: { message: 'source read denied', code: failure.code || 0 } }, failure.status ?? 403);
+      }
+      const response = this.readResponses.get(path);
+      if (response) return graphResponse(response.body, response.status ?? 200);
+      return this.read(path);
+    }
 
     this.postCalls.push(path);
     const body = JSON.parse(init.body || '{}');
@@ -615,7 +625,7 @@ test('staging seed attestation bounds Graph discovery and returns no source fact
   }
 });
 
-test('staging seed attestation exposes only finite mismatch, malformed, and source-unavailable outcomes', async () => {
+test('staging seed attestation exposes only finite mismatch, malformed, and source-auth outcomes', async () => {
   const mismatchDb = new SeedDb();
   const mismatchGraph = new FakeGraph();
   const mismatch = await attest({
@@ -647,27 +657,167 @@ test('staging seed attestation exposes only finite mismatch, malformed, and sour
   assert.equal(malformedDb.operations.size, 0);
   assert.equal(malformedDb.tokens.length, 0);
 
-  const unavailableDb = new SeedDb();
-  const unavailable = await attest({
-    db: unavailableDb,
-    graph: new FakeGraph(),
-    operationKey: 'meta-ads-staging-seed:attestation-unavailable-001',
-    env: {
-      META_GRAPH_FETCH: async () => graphResponse({ error: { message: 'denied' } }, 403),
-    },
+  const rejectedDb = new SeedDb();
+  const rejectedGraph = new FakeGraph({
+    readFailures: { [PIXEL_ID]: { status: 400, code: 190 } },
   });
-  const unavailableBody = await unavailable.json();
-  assert.equal(unavailable.status, 409);
-  assert.equal(unavailableBody.error, 'meta_ads_publish_staging_seed_graph_source_unavailable');
-  assert.equal(unavailableDb.operations.size, 0);
-  assert.equal(unavailableDb.tokens.length, 0);
+  const rejected = await attest({
+    db: rejectedDb,
+    graph: rejectedGraph,
+    operationKey: 'meta-ads-staging-seed:attestation-unavailable-001',
+  });
+  const rejectedBody = await rejected.json();
+  assert.equal(rejected.status, 409);
+  assert.equal(rejectedBody.error, 'meta_ads_publish_staging_seed_graph_source_auth_rejected');
+  assert.equal(rejectedGraph.calls.length, 1);
+  assert.equal(rejectedDb.operations.size, 0);
+  assert.equal(rejectedDb.tokens.length, 0);
 
-  for (const body of [mismatchBody, malformedBody, unavailableBody]) {
+  for (const body of [mismatchBody, malformedBody, rejectedBody]) {
     const serialized = JSON.stringify(body);
     for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, MISMATCH_ACCOUNT_ID, PIXEL_ID]) {
       assert.equal(serialized.includes(value), false);
     }
   }
+});
+
+test('staging seed attestation returns a finite resource stage for permanent Graph source failures', async () => {
+  const cases = [
+    {
+      label: 'pixel',
+      path: PIXEL_ID,
+      expectedError: 'meta_ads_publish_staging_seed_graph_pixel_access_denied',
+      expectedReads: 1,
+      status: 403,
+    },
+    {
+      label: 'page-list',
+      path: 'me/accounts',
+      expectedError: 'meta_ads_publish_staging_seed_graph_page_access_denied',
+      expectedReads: 2,
+      status: 403,
+    },
+    {
+      label: 'page-read',
+      path: PAGE_ID,
+      expectedError: 'meta_ads_publish_staging_seed_graph_page_access_denied',
+      expectedReads: 3,
+      status: 403,
+    },
+    {
+      label: 'dataset',
+      path: `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+      expectedError: 'meta_ads_publish_staging_seed_graph_dataset_access_denied',
+      expectedReads: 4,
+      // Graph can return a 2xx envelope containing an error. It remains a
+      // permanent source capability failure and must not become a success.
+      status: 200,
+    },
+  ];
+
+  for (const entry of cases) {
+    const db = new SeedDb();
+    const graph = new FakeGraph({
+      readFailures: { [entry.path]: { status: entry.status, code: 10 } },
+    });
+    const response = await attest({
+      db,
+      graph,
+      operationKey: `meta-ads-staging-seed:attestation-${entry.label}-denied-001`,
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 409, entry.label);
+    assert.equal(body.error, entry.expectedError, entry.label);
+    assert.equal(graph.calls.length, entry.expectedReads, entry.label);
+    assert.equal(graph.postCalls.length, 0, entry.label);
+    assert.equal(db.operations.size, 0, entry.label);
+    assert.equal(db.tokens.length, 0, entry.label);
+    assert.equal(db.locks.size, 0, entry.label);
+    assert.equal(db.adsetLocks.size, 0, entry.label);
+    const serialized = JSON.stringify(body);
+    for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID]) {
+      assert.equal(serialized.includes(value), false, entry.label);
+    }
+  }
+});
+
+test('staging seed attestation preserves finite non-identity source eligibility outcomes', async () => {
+  const cases = [
+    {
+      label: 'page-ambiguous',
+      path: 'me/accounts',
+      response: { body: { data: [] } },
+      expectedError: 'meta_ads_publish_staging_seed_graph_page_ambiguous',
+      expectedReads: 2,
+    },
+    {
+      label: 'dataset-ambiguous',
+      path: `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+      response: { body: { data: [] } },
+      expectedError: 'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
+      expectedReads: 4,
+    },
+    {
+      label: 'landing-unavailable',
+      path: PAGE_ID,
+      response: {
+        body: {
+          id: PAGE_ID,
+          instagram_business_account: { id: INSTAGRAM_ID },
+          website: '',
+          picture: { data: { url: 'https://cdn.example.invalid/staging-fixture.jpg' } },
+        },
+      },
+      expectedError: 'meta_ads_publish_staging_seed_landing_or_media_unavailable',
+      expectedReads: 3,
+    },
+  ];
+
+  for (const entry of cases) {
+    const db = new SeedDb();
+    const graph = new FakeGraph({ readResponses: { [entry.path]: entry.response } });
+    const response = await attest({
+      db,
+      graph,
+      operationKey: `meta-ads-staging-seed:attestation-${entry.label}-001`,
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 409, entry.label);
+    assert.equal(body.error, entry.expectedError, entry.label);
+    assert.equal(graph.calls.length, entry.expectedReads, entry.label);
+    assert.equal(graph.postCalls.length, 0, entry.label);
+    assert.equal(db.operations.size, 0, entry.label);
+    assert.equal(db.tokens.length, 0, entry.label);
+    assert.equal(db.locks.size, 0, entry.label);
+    assert.equal(db.adsetLocks.size, 0, entry.label);
+    const serialized = JSON.stringify(body);
+    for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID]) {
+      assert.equal(serialized.includes(value), false, entry.label);
+    }
+  }
+});
+
+test('staging seed attestation keeps transient source failures retryable and bounded', async () => {
+  const db = new SeedDb();
+  const graph = new FakeGraph({
+    readFailures: { [PIXEL_ID]: { status: 429, code: 4 } },
+  });
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-transient-unavailable-001',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_unavailable');
+  assert.equal(graph.calls.length, 1);
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(JSON.stringify(body).includes(SOURCE_ACCESS_TOKEN), false);
 });
 
 test('staging seed creates exactly two distinct active Facebook credentials from PAUSED synthetic Graph resources', async () => {

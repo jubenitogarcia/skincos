@@ -140,7 +140,9 @@ adivinha nem importa configuração de produção. Antes de derivar o plano, o
 workflow chama `POST .../config/staging-synthetic-seed/attest` na Preview
 imutável com um bearer aleatório exclusivo da versão candidata. A atestação faz
 somente leituras Graph delimitadas, não toca D1 nem cria recursos, e retorna
-apenas `match` ou um código sanitizado. Só então o workflow chama
+apenas `match` ou um código sanitizado que distingue rejeição da credencial de
+fonte, acesso ao Pixel, Página ou dataset, e indisponibilidade transitória. Só
+então o workflow chama
 `POST .../config/staging-synthetic-seed`. Os fatos externos entram somente no
 corpo dessas chamadas privadas: o token Meta Ads já custodiado,
 `META_PIXEL_ID`, `META_ADS_ACCOUNT_ID` e `META_ADS_API_VERSION`. O Vault exige
