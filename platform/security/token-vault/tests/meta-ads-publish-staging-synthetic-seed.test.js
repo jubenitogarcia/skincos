@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  attestStagingSyntheticMetaAdsTracking,
   rollbackStagingSyntheticMetaAdsTracking,
   seedStagingSyntheticMetaAdsTracking,
 } from '../src/meta-ads-publish.js';
@@ -11,6 +12,7 @@ const PAGE_ID = '12000000000000001';
 const INSTAGRAM_ID = '17841400000000002';
 const DATASET_ID = '19944000000000001';
 const SOURCE_ACCESS_TOKEN = 'unit-test-source-access-token-not-a-real-secret';
+const MISMATCH_ACCOUNT_ID = '17841400000000009';
 
 class SeedStatement {
   constructor(db, sql) {
@@ -463,6 +465,29 @@ async function seed({ db, graph, operationKey, env = {} }) {
   });
 }
 
+function attestRequest(operationKey, overrides = {}) {
+  return new Request('https://token-vault.invalid/v1/meta-ads-publish/config/staging-synthetic-seed/attest', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      operation_key: operationKey,
+      access_token: SOURCE_ACCESS_TOKEN,
+      account_id: ACCOUNT_ID,
+      pixel_id: PIXEL_ID,
+      api_version: 'v25.0',
+      ...overrides,
+    }),
+  });
+}
+
+async function attest({ db, graph, operationKey, env = {}, requestOverrides = {} }) {
+  return attestStagingSyntheticMetaAdsTracking({
+    request: attestRequest(operationKey, requestOverrides),
+    env: environment(db, graph, env),
+    requestId: 'seed-attestation-test-request-id',
+  });
+}
+
 function rollbackRequest(operationKey, overrides = {}) {
   return new Request('https://token-vault.invalid/v1/meta-ads-publish/config/staging-synthetic-seed/rollback', {
     method: 'POST',
@@ -537,6 +562,112 @@ test('staging seed is staging-only and redacts all source inputs from a closed r
   assert.equal(JSON.stringify(body).includes(SOURCE_ACCESS_TOKEN), false);
   assert.equal(JSON.stringify(body).includes(ACCOUNT_ID), false);
   assert.equal(JSON.stringify(body).includes(PIXEL_ID), false);
+});
+
+test('staging seed attestation is staging-only and touches neither D1 nor Graph outside staging', async () => {
+  const db = new SeedDb();
+  const graph = new FakeGraph();
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-production-denied-001',
+    env: { ENVIRONMENT: 'production' },
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_disabled');
+  assert.equal(graph.calls.length, 0);
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(JSON.stringify(body).includes(SOURCE_ACCESS_TOKEN), false);
+  assert.equal(JSON.stringify(body).includes(ACCOUNT_ID), false);
+  assert.equal(JSON.stringify(body).includes(PIXEL_ID), false);
+});
+
+test('staging seed attestation bounds Graph discovery and returns no source facts', async () => {
+  const db = new SeedDb();
+  const graph = new FakeGraph();
+  const operationKey = 'meta-ads-staging-seed:attestation-match-001';
+  const response = await attest({ db, graph, operationKey });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(body, {
+    ok: true,
+    attestation: 'match',
+    operation_key: operationKey,
+    contract_version: 'meta-ads-tracking-v20/staging-synthetic-seed/v1',
+    requestId: 'seed-attestation-test-request-id',
+  });
+  assert.equal(graph.calls.length, 4);
+  assert.ok(graph.calls.every((call) => call.method === 'GET'));
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
+test('staging seed attestation exposes only finite mismatch, malformed, and source-unavailable outcomes', async () => {
+  const mismatchDb = new SeedDb();
+  const mismatchGraph = new FakeGraph();
+  const mismatch = await attest({
+    db: mismatchDb,
+    graph: mismatchGraph,
+    operationKey: 'meta-ads-staging-seed:attestation-mismatch-001',
+    requestOverrides: { account_id: MISMATCH_ACCOUNT_ID },
+  });
+  const mismatchBody = await mismatch.json();
+  assert.equal(mismatch.status, 409);
+  assert.equal(mismatchBody.error, 'meta_ads_publish_staging_seed_graph_identity_mismatch');
+  assert.equal(mismatchGraph.calls.length, 1);
+  assert.equal(mismatchGraph.postCalls.length, 0);
+  assert.equal(mismatchDb.operations.size, 0);
+  assert.equal(mismatchDb.tokens.length, 0);
+
+  const malformedDb = new SeedDb();
+  const malformed = await attest({
+    db: malformedDb,
+    graph: new FakeGraph(),
+    operationKey: 'meta-ads-staging-seed:attestation-malformed-001',
+    env: {
+      META_GRAPH_FETCH: async () => graphResponse({ id: PIXEL_ID, owner_ad_account: { id: 'not-a-graph-id' } }),
+    },
+  });
+  const malformedBody = await malformed.json();
+  assert.equal(malformed.status, 409);
+  assert.equal(malformedBody.error, 'meta_ads_publish_staging_seed_graph_identity_malformed');
+  assert.equal(malformedDb.operations.size, 0);
+  assert.equal(malformedDb.tokens.length, 0);
+
+  const unavailableDb = new SeedDb();
+  const unavailable = await attest({
+    db: unavailableDb,
+    graph: new FakeGraph(),
+    operationKey: 'meta-ads-staging-seed:attestation-unavailable-001',
+    env: {
+      META_GRAPH_FETCH: async () => graphResponse({ error: { message: 'denied' } }, 403),
+    },
+  });
+  const unavailableBody = await unavailable.json();
+  assert.equal(unavailable.status, 409);
+  assert.equal(unavailableBody.error, 'meta_ads_publish_staging_seed_graph_source_unavailable');
+  assert.equal(unavailableDb.operations.size, 0);
+  assert.equal(unavailableDb.tokens.length, 0);
+
+  for (const body of [mismatchBody, malformedBody, unavailableBody]) {
+    const serialized = JSON.stringify(body);
+    for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, MISMATCH_ACCOUNT_ID, PIXEL_ID]) {
+      assert.equal(serialized.includes(value), false);
+    }
+  }
 });
 
 test('staging seed creates exactly two distinct active Facebook credentials from PAUSED synthetic Graph resources', async () => {

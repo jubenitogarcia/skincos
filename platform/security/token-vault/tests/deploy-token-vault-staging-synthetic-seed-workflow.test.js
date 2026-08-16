@@ -23,6 +23,10 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     "      - name: Upload immutable Token Vault version",
     "      - name: Export immutable Worker and incumbent identities for the activation gate",
   );
+  const attestation = section(
+    "      - name: Attest the isolated staging Meta Ads synthetic source on the immutable candidate",
+    "      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate",
+  );
   const seed = section(
     "      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate",
     "      - name: Verify immutable Token Vault candidate config bearer before traffic",
@@ -55,6 +59,10 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     "      - name: Remove the ephemeral staging synthetic-seed bearer",
     "      - name: Release Token Vault release lease",
   );
+  const authorization = section(
+    "      - name: Attest Token Vault deployment authorization and remote resources before mutation",
+    "      - name: Validate Token Vault and Meta Ads Publish source",
+  );
 
   assert.match(upload, /randomBytes\(48\)\.toString\('base64url'\)/);
   assert.match(
@@ -70,8 +78,52 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   assert.doesNotMatch(workflow, /\bwrangler\s+secret\s+put\b/i);
 
   assert.match(
-    seed,
+    authorization,
+    /META_ADS_API_VERSION: \$\{\{ inputs\.target == 'staging' && vars\.META_ADS_API_VERSION \|\| '' \}\}/,
+  );
+  assert.match(
+    authorization,
+    /META_ADS_API_VERSION must be v25\.0 or a newer supported Graph API version for the governed staging seed/,
+  );
+  assert.match(authorization, /\^v\(2\[5-9\]\|\[3-9\]\[0-9\]\)\\\.0\$/);
+
+  assert.match(
+    attestation,
+    /id: candidate_staging_synthetic_seed_attestation/,
+  );
+  assert.match(
+    attestation,
     /if: inputs\.operation == 'deploy' && inputs\.target == 'staging'/,
+  );
+  for (const sourceName of [
+    "META_ADS_ACCESS_TOKEN",
+    "META_PIXEL_ID",
+    "META_ADS_ACCOUNT_ID",
+    "META_ADS_API_VERSION",
+  ]) {
+    assert.match(attestation, new RegExp(`${sourceName}: \\$\\{\\{ inputs\\.target == 'staging'`));
+  }
+  assert.match(
+    attestation,
+    /const preview = String\(process\.env\.TOKEN_VAULT_CANDIDATE_PREVIEW_URL/,
+  );
+  assert.doesNotMatch(attestation, /TOKEN_VAULT_STAGING_BASE_URL/);
+  assert.match(
+    attestation,
+    /fetch\(`\$\{preview\}\/internal\/token-vault\/v1\/meta-ads-publish\/config\/staging-synthetic-seed\/attest`/,
+  );
+  assert.match(
+    attestation,
+    /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*pixel_id: pixelId,[\s\S]*api_version: apiVersion/,
+  );
+  assert.match(attestation, /attestation \|\| ''\) === 'match'/);
+  assert.match(attestation, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+  assert.match(attestation, /AbortSignal\.timeout\(30_000\)/);
+  assert.doesNotMatch(attestation, /GITHUB_OUTPUT|console\.log|process\.stdout\.write/);
+
+  assert.match(
+    seed,
+    /if: inputs\.operation == 'deploy' && inputs\.target == 'staging' && steps\.candidate_staging_synthetic_seed_attestation\.outcome == 'success'/,
   );
   assert.match(
     seed,
@@ -94,6 +146,7 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*pixel_id: pixelId,[\s\S]*api_version: apiVersion/,
   );
   assert.match(seed, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+  assert.match(seed, /\^v\(\?:2\[5-9\]\|\[3-9\]\[0-9\]\)\\\.0\$/);
   assert.match(
     seed,
     /seed_attempted=true\\nseed_operation_key=\$\{operationKey\}/,
@@ -136,6 +189,9 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   const uploadAt = workflow.indexOf(
     "      - name: Upload immutable Token Vault version",
   );
+  const attestationAt = workflow.indexOf(
+    "      - name: Attest the isolated staging Meta Ads synthetic source on the immutable candidate",
+  );
   const seedAt = workflow.indexOf(
     "      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate",
   );
@@ -149,7 +205,8 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     "      - name: Activate only the selected Token Vault version in staging",
   );
   assert.ok(
-    uploadAt < seedAt &&
+    uploadAt < attestationAt &&
+      attestationAt < seedAt &&
       seedAt < configAt &&
       configAt < planAt &&
       planAt < trafficAt,
@@ -180,6 +237,7 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     );
     assert.match(rollback, /payload\?\.rolled_back !== true/);
     assert.match(rollback, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+    assert.match(rollback, /\^v\(\?:2\[5-9\]\|\[3-9\]\[0-9\]\)\\\.0\$/);
   }
   for (const rollback of [pretrafficRollback, activationLeaseRollback]) {
     assert.match(rollback, /meta_ads_publish_staging_seed_operation_not_found/);
@@ -187,6 +245,7 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   assert.match(compensationRollback, /TOKEN_VAULT_CANDIDATE_PREVIEW_URL/);
   assert.doesNotMatch(compensationRollback, /TOKEN_VAULT_STAGING_BASE_URL/);
   const sourceScopes = [
+    attestation,
     seed,
     pretrafficRollback,
     activationLeaseRollback,
@@ -199,7 +258,11 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     "META_ADS_API_VERSION",
   ]) {
     const total = [...workflow.matchAll(new RegExp(sourceName, "g"))].length;
-    const scoped = sourceScopes.reduce(
+    const allowedScopes =
+      sourceName === "META_ADS_API_VERSION"
+        ? [...sourceScopes, authorization]
+        : sourceScopes;
+    const scoped = allowedScopes.reduce(
       (count, scope) =>
         count + [...scope.matchAll(new RegExp(sourceName, "g"))].length,
       0,
