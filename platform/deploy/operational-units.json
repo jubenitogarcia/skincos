@@ -101,14 +101,14 @@
       "workflow": ".github/workflows/deploy-token-vault.yml",
       "concurrencyPrefix": "deploy-token-vault-",
       "publishes": ["Worker:skincos-token-vault", "Worker:skincos-token-vault-staging"],
-      "resources": ["Token Vault Worker", "skincos-token-vault D1", "skincos-token-vault-staging D1", "Token Vault route and auth bindings", "Governed Meta Ads staging synthetic seed, bootstrap derivation, rollback journal and paused creative fixture"],
+      "resources": ["Token Vault Worker", "skincos-token-vault D1", "skincos-token-vault-staging D1", "Token Vault route and auth bindings", "Governed Meta Ads staging synthetic source attestation, seed, bootstrap derivation, rollback journal and paused creative fixture"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "TOKEN_VAULT_API_TOKEN", "TOKEN_VAULT_N8N_API_TOKEN", "TOKEN_VAULT_ANALYTICS_API_TOKEN", "TOKEN_VAULT_ENCRYPTION_KEY", "TOKEN_VAULT_META_ADS_CONFIG_TOKEN", "TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST", "META_ADS_ACCESS_TOKEN", "META_PIXEL_ID"],
       "migrationPaths": ["platform/security/token-vault/migrations"],
       "environments": ["preview", "staging", "production"],
       "promotion": {
         "stagingSupported": true,
         "trackingFixture": "synthetic authorized ad-set profile required before staging",
-        "trackingBootstrap": "empty staging authority uses a restricted one-shot synthetic seed; legacy authority uses restricted config bearer plus hash-bound internal derivation or protected entries override",
+        "trackingBootstrap": "empty staging authority uses a candidate-only Graph-read attestation before a restricted one-shot synthetic seed; legacy authority uses restricted config bearer plus hash-bound internal derivation or protected entries override",
         "d1Recovery": "Time Travel bookmark; manual restore only under release:token-vault"
       }
     },

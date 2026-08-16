@@ -15,6 +15,7 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/derive-plan`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/derive`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/attest`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/rollback`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-exercise`
@@ -26,9 +27,9 @@ O bearer restrito `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` só pode consultar
 bootstrap governados, o rollback desse bootstrap e o exercício de staging. Ele
 não lista/altera tokens, não cria runs e não publica anúncios.
 O bearer efêmero distinto `TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN` só alcança
-os dois endpoints de seed/rollback sintéticos, exclusivamente no Worker
-staging; ele não ganha as permissões do bearer de configuração, operacional ou
-administrativo.
+os três endpoints de atestação, seed e rollback sintéticos, exclusivamente no
+Worker staging; ele não ganha as permissões do bearer de configuração,
+operacional ou administrativo.
 O endpoint de analytics exige o secret separado
 `TOKEN_VAULT_ANALYTICS_API_TOKEN` (administradores continuam podendo operar o
 endpoint para diagnóstico controlado).
@@ -136,9 +137,12 @@ retornar `reconciled_and_rolled_back`.
 
 Quando a autoridade legada de staging está vazia, o caminho canônico não
 adivinha nem importa configuração de produção. Antes de derivar o plano, o
-workflow chama `POST .../config/staging-synthetic-seed` na Preview imutável com
-um bearer aleatório exclusivo da versão candidata. Os fatos externos entram
-somente no corpo dessa chamada privada: o token Meta Ads já custodiado,
+workflow chama `POST .../config/staging-synthetic-seed/attest` na Preview
+imutável com um bearer aleatório exclusivo da versão candidata. A atestação faz
+somente leituras Graph delimitadas, não toca D1 nem cria recursos, e retorna
+apenas `match` ou um código sanitizado. Só então o workflow chama
+`POST .../config/staging-synthetic-seed`. Os fatos externos entram somente no
+corpo dessas chamadas privadas: o token Meta Ads já custodiado,
 `META_PIXEL_ID`, `META_ADS_ACCOUNT_ID` e `META_ADS_API_VERSION`. O Vault exige
 uma conta/pixel, uma Página+Instagram elegível e um dataset offline unívocos,
 cria somente recursos `PAUSED` nomeados para staging e sela duas credenciais
@@ -300,13 +304,14 @@ manualmente para publicar este serviço.
 Para o primeiro bootstrap Meta Ads de staging, o mesmo upload gera
 `TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN` com CSPRNG em um arquivo `0600` sob
 `RUNNER_TEMP`, inclui-o somente no `--secrets-file` privado da candidata e
-remove esse arquivo no encerramento do job. A chamada Preview lê o bearer por
-arquivo e entrega os fatos Meta somente em memória ao body fechado de seed; os
-valores não entram em `GITHUB_OUTPUT`, artefatos, logs, worktree ou argv. Essa
-seed é estritamente `staging`, ocorre antes da autenticação/derivação de
-configuração e possui rollback explícito antes de qualquer ativação quando o
-planejamento falha. `META_ADS_ACCESS_TOKEN` continua uma credencial externa de
-fonte: não é copiado de production nem inventado pelo fluxo.
+remove esse arquivo no encerramento do job. A atestação e a seed Preview leem o
+bearer por arquivo e entregam os fatos Meta somente em memória aos seus corpos
+fechados; os valores não entram em `GITHUB_OUTPUT`, artefatos, logs, worktree
+ou argv. A atestação é estritamente somente leitura; a seed é estritamente
+`staging`, ocorre antes da autenticação/derivação de configuração e possui
+rollback explícito antes de qualquer ativação quando o planejamento falha.
+`META_ADS_ACCESS_TOKEN` continua uma credencial externa de fonte: não é copiado
+de production nem inventado pelo fluxo.
 
 Antes da primeira promoção, disponibilize em cada GitHub Environment os
 segredos independentes exigidos pelo workflow, em especial
