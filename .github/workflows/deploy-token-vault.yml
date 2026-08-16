@@ -1254,8 +1254,21 @@ jobs:
               analytics_value="$(node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('base64url'));")"
             fi
           fi
+          # The staging synthetic-seed bearer is an internally generated,
+          # candidate-only capability. It never becomes a GitHub secret or
+          # crosses a step boundary as a value: only this private runner-temp
+          # file path is exported for the bounded seed and rollback calls.
+          seed_secret_file=''
+          if [[ "$TARGET" == staging ]]; then
+            seed_secret_file="$RUNNER_TEMP/token-vault-staging-synthetic-seed-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            umask 077
+            node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(48).toString('base64url'));" > "$seed_secret_file"
+            [[ "$(wc -c < "$seed_secret_file")" -ge 64 ]] || { echo 'generated staging synthetic-seed bearer is invalid'; exit 1; }
+            chmod 600 "$seed_secret_file"
+            echo "TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE=$seed_secret_file" >> "$GITHUB_ENV"
+          fi
           n8n_value="${TOKEN_VAULT_N8N_API_TOKEN:-}"
-          ANALYTICS_REQUIRED="$analytics_required" ANALYTICS_VALUE="$analytics_value" META_ADS_CONFIG_VALUE="${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" N8N_VALUE="$n8n_value" TARGET="$TARGET" SECRETS_FILE="$secrets_file" node --input-type=module <<'NODE'
+          ANALYTICS_REQUIRED="$analytics_required" ANALYTICS_VALUE="$analytics_value" META_ADS_CONFIG_VALUE="${TOKEN_VAULT_META_ADS_CONFIG_TOKEN:-}" N8N_VALUE="$n8n_value" STAGING_SYNTHETIC_SEED_FILE="$seed_secret_file" TARGET="$TARGET" SECRETS_FILE="$secrets_file" node --input-type=module <<'NODE'
           import fs from 'node:fs';
 
           const secrets = {};
@@ -1271,6 +1284,12 @@ jobs:
             if (operationalToken.length < 32) throw new Error('staging operational bearer is invalid');
             if (operationalToken === configToken) throw new Error('staging operational and config bearers must differ');
             secrets.TOKEN_VAULT_N8N_API_TOKEN = operationalToken;
+            const seedFile = String(process.env.STAGING_SYNTHETIC_SEED_FILE || '');
+            if (!seedFile) throw new Error('staging synthetic-seed bearer file is unavailable');
+            const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
+            if (!/^[A-Za-z0-9_-]{64,}$/.test(seedToken)) throw new Error('staging synthetic-seed bearer is invalid');
+            if (seedToken === configToken || seedToken === operationalToken) throw new Error('staging synthetic-seed bearer must be distinct');
+            secrets.TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN = seedToken;
           }
           fs.writeFileSync(process.env.SECRETS_FILE, `${JSON.stringify(secrets)}\n`, { mode: 0o600 });
           NODE
@@ -1298,6 +1317,82 @@ jobs:
           [[ "${TOKEN_VAULT_INCUMBENT_VERSION_ID:-}" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Token Vault incumbent version was not captured'; exit 1; }
           echo "version_id=$TOKEN_VAULT_VERSION_ID" >> "$GITHUB_OUTPUT"
           echo "incumbent_version_id=$TOKEN_VAULT_INCUMBENT_VERSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate
+        # This is deliberately before candidate config authentication and plan
+        # derivation: an empty legacy authority has no prior target from which
+        # to derive. The generated bearer has no role outside these two seed
+        # endpoints and the Meta source inputs never enter a Worker binding.
+        id: candidate_staging_synthetic_seed
+        if: inputs.operation == 'deploy' && inputs.target == 'staging'
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
+          META_PIXEL_ID: ${{ inputs.target == 'staging' && secrets.META_PIXEL_ID || '' }}
+          META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
+          META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const preview = String(process.env.TOKEN_VAULT_CANDIDATE_PREVIEW_URL || '').replace(/\/$/, '');
+          const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
+          const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const pixelId = String(process.env.META_PIXEL_ID || '').trim();
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
+          const releaseSha = String(process.env.RELEASE_SHA || '').toLowerCase();
+          const runId = String(process.env.GITHUB_RUN_ID || '');
+          const runAttempt = String(process.env.GITHUB_RUN_ATTEMPT || '');
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile) {
+            throw new Error('immutable staging synthetic-seed candidate endpoint is unavailable');
+          }
+          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion)) {
+            throw new Error('staging synthetic Meta source custody is unavailable or malformed');
+          }
+          if (!/^[a-f0-9]{40}$/.test(releaseSha) || !/^\d+$/.test(runId) || !/^\d+$/.test(runAttempt)) {
+            throw new Error('staging synthetic-seed operation identity is invalid');
+          }
+          const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
+          if (!/^[A-Za-z0-9_-]{64,}$/.test(seedToken)) throw new Error('staging synthetic-seed bearer is unavailable');
+          const operationKey = `meta-ads-staging-seed:${releaseSha.slice(0, 12)}:${runId}:${runAttempt}`;
+          // Persist only the opaque operation identity before making the
+          // network call. An interrupted request can then be reconciled by the
+          // explicit rollback step without ever emitting source credentials.
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `seed_attempted=true\nseed_operation_key=${operationKey}\n`);
+          const response = await fetch(`${preview}/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${seedToken}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              operation_key: operationKey,
+              access_token: accessToken,
+              account_id: accountId,
+              pixel_id: pixelId,
+              api_version: apiVersion,
+            }),
+            cache: 'no-store',
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+          const seed = String(payload?.seed || '');
+          const valid = response.ok && payload?.ok === true &&
+            (seed === 'sealed' || seed === 'not_required') &&
+            String(payload?.operation_status || '') === seed &&
+            typeof payload?.replayed === 'boolean' &&
+            String(payload?.operation_key || '') === operationKey &&
+            String(payload?.contract_version || '') === 'meta-ads-tracking-v20/staging-synthetic-seed/v1';
+          if (!valid) throw new Error(`staging synthetic-seed failed: ${response.status} ${error}`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, seed === 'sealed'
+            ? `did_seed=true\nseed_status=${seed}\n`
+            : `did_seed=false\nseed_status=${seed}\n`);
+          NODE
 
       - name: Verify immutable Token Vault candidate config bearer before traffic
         id: candidate_config_bearer
@@ -1502,7 +1597,57 @@ jobs:
               ;;
           esac
 
+      - name: Roll back the isolated staging synthetic seed before traffic when candidate planning fails
+        id: pretraffic_staging_synthetic_seed_rollback
+        if: always() && inputs.target == 'staging' && steps.candidate_staging_synthetic_seed.outputs.seed_attempted == 'true' && (steps.candidate_staging_synthetic_seed.outcome != 'success' || steps.candidate_config_bearer.outcome != 'success' || steps.candidate_bootstrap_plan.outcome != 'success' || steps.validate_staging_bootstrap_plan.outcome != 'success')
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
+          META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
+          META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
+          SEED_OPERATION_KEY: ${{ steps.candidate_staging_synthetic_seed.outputs.seed_operation_key }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const preview = String(process.env.TOKEN_VAULT_CANDIDATE_PREVIEW_URL || '').replace(/\/$/, '');
+          const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
+          const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
+          const operationKey = String(process.env.SEED_OPERATION_KEY || '');
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
+            throw new Error('staging synthetic-seed rollback custody or identity is invalid');
+          }
+          const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
+          if (!/^[A-Za-z0-9_-]{64,}$/.test(seedToken)) throw new Error('staging synthetic-seed rollback bearer is unavailable');
+          const response = await fetch(`${preview}/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/rollback`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${seedToken}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              operation_key: operationKey,
+              access_token: accessToken,
+              account_id: accountId,
+              api_version: apiVersion,
+            }),
+            cache: 'no-store',
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+          const absent = response.status === 409 && payload?.ok === false && payload?.error === 'meta_ads_publish_staging_seed_operation_not_found';
+          if (!absent && (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || String(payload?.operation_status || '') !== 'rolled_back' || typeof payload?.replayed !== 'boolean' || String(payload?.operation_key || '') !== operationKey || String(payload?.contract_version || '') !== 'meta-ads-tracking-v20/staging-synthetic-seed/v1')) {
+            throw new Error(`staging synthetic-seed pre-traffic rollback failed: ${response.status} ${error}`);
+          }
+          NODE
+
       - name: Check Token Vault release lease before staging version deployment
+        id: staging_worker_activation_lease
         if: inputs.target == 'staging'
         uses: ./.github/actions/global-coordination-check
         with:
@@ -1515,6 +1660,55 @@ jobs:
           coordinator_url: ${{ inputs.target == 'staging' && vars.SKINCOS_GLOBAL_COORDINATOR_URL || vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Roll back the isolated staging synthetic seed when the activation lease rejects it
+        id: activation_lease_staging_synthetic_seed_rollback
+        if: always() && inputs.target == 'staging' && steps.candidate_staging_synthetic_seed.outputs.seed_attempted == 'true' && steps.candidate_staging_synthetic_seed.outcome == 'success' && steps.candidate_config_bearer.outcome == 'success' && steps.candidate_bootstrap_plan.outcome == 'success' && steps.validate_staging_bootstrap_plan.outcome == 'success' && steps.staging_worker_activation_lease.outcome != 'success'
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
+          META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
+          META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
+          SEED_OPERATION_KEY: ${{ steps.candidate_staging_synthetic_seed.outputs.seed_operation_key }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const preview = String(process.env.TOKEN_VAULT_CANDIDATE_PREVIEW_URL || '').replace(/\/$/, '');
+          const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
+          const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
+          const operationKey = String(process.env.SEED_OPERATION_KEY || '');
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
+            throw new Error('staging synthetic-seed rollback custody or identity is invalid');
+          }
+          const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
+          if (!/^[A-Za-z0-9_-]{64,}$/.test(seedToken)) throw new Error('staging synthetic-seed rollback bearer is unavailable');
+          const response = await fetch(`${preview}/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/rollback`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${seedToken}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              operation_key: operationKey,
+              access_token: accessToken,
+              account_id: accountId,
+              api_version: apiVersion,
+            }),
+            cache: 'no-store',
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+          const absent = response.status === 409 && payload?.ok === false && payload?.error === 'meta_ads_publish_staging_seed_operation_not_found';
+          if (!absent && (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || String(payload?.operation_status || '') !== 'rolled_back' || typeof payload?.replayed !== 'boolean' || String(payload?.operation_key || '') !== operationKey || String(payload?.contract_version || '') !== 'meta-ads-tracking-v20/staging-synthetic-seed/v1')) {
+            throw new Error(`staging synthetic-seed activation-lease rollback failed: ${response.status} ${error}`);
+          }
+          NODE
 
       - name: Activate only the selected Token Vault version in staging
         id: worker_deploy
@@ -1883,8 +2077,56 @@ jobs:
           }
           NODE
 
+      - name: Roll back the isolated staging synthetic seed before Worker compensation
+        id: staging_synthetic_seed_rollback
+        if: always() && steps.staging_worker_compensation_lease.outcome == 'success' && steps.tracking_bootstrap_rollback.outcome == 'success' && steps.candidate_staging_synthetic_seed.outputs.did_seed == 'true'
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
+          META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
+          META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
+          SEED_OPERATION_KEY: ${{ steps.candidate_staging_synthetic_seed.outputs.seed_operation_key }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const preview = String(process.env.TOKEN_VAULT_CANDIDATE_PREVIEW_URL || '').replace(/\/$/, '');
+          const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
+          const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
+          const operationKey = String(process.env.SEED_OPERATION_KEY || '');
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
+            throw new Error('staging synthetic-seed rollback custody or identity is invalid');
+          }
+          const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
+          if (!/^[A-Za-z0-9_-]{64,}$/.test(seedToken)) throw new Error('staging synthetic-seed rollback bearer is unavailable');
+          const response = await fetch(`${preview}/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/rollback`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${seedToken}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              operation_key: operationKey,
+              access_token: accessToken,
+              account_id: accountId,
+              api_version: apiVersion,
+            }),
+            cache: 'no-store',
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+          if (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || String(payload?.operation_status || '') !== 'rolled_back' || typeof payload?.replayed !== 'boolean' || String(payload?.operation_key || '') !== operationKey || String(payload?.contract_version || '') !== 'meta-ads-tracking-v20/staging-synthetic-seed/v1') {
+            throw new Error(`staging synthetic-seed rollback failed: ${response.status} ${error}`);
+          }
+          NODE
+
       - name: Compensate the staging Worker only when this release still owns traffic
-        if: always() && steps.staging_worker_compensation_lease.outcome == 'success' && steps.tracking_bootstrap_rollback.outcome == 'success'
+        if: always() && steps.staging_worker_compensation_lease.outcome == 'success' && steps.tracking_bootstrap_rollback.outcome == 'success' && (steps.candidate_staging_synthetic_seed.outputs.did_seed != 'true' || steps.staging_synthetic_seed_rollback.outcome == 'success')
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -1920,6 +2162,20 @@ jobs:
             throw new Error('staging Token Vault compensation did not restore the exact incumbent Worker version');
           }
           NODE
+
+      - name: Remove the ephemeral staging synthetic-seed bearer
+        if: always() && inputs.target == 'staging'
+        run: |
+          set -euo pipefail
+          seed_file="${TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE:-}"
+          if [[ -z "$seed_file" ]]; then
+            exit 0
+          fi
+          case "$seed_file" in
+            "$RUNNER_TEMP"/token-vault-staging-synthetic-seed-*) ;;
+            *) echo 'staging synthetic-seed bearer path is outside private runner temp'; exit 1 ;;
+          esac
+          rm -f -- "$seed_file"
 
       - name: Release Token Vault release lease
         if: always()

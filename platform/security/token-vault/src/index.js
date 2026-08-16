@@ -15,6 +15,8 @@ const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_ROLLBACK_PATH = `${META_ADS_PUBLISH_CONF
 const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_DERIVE_PLAN_PATH = `${META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH}/derive-plan`;
 const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_DERIVE_PATH = `${META_ADS_PUBLISH_CONFIG_BOOTSTRAP_PATH}/derive`;
 const META_ADS_PUBLISH_CONFIG_STAGING_EXERCISE_PATH = `${META_ADS_PUBLISH_CONFIG_PATH}/staging-exercise`;
+const META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH = `${META_ADS_PUBLISH_CONFIG_PATH}/staging-synthetic-seed`;
+const META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ROLLBACK_PATH = `${META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH}/rollback`;
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'no-store',
@@ -55,6 +57,39 @@ export async function handleRequest(request, env) {
 
     if (request.method === 'POST' && pathname === '/v1/analytics/staging-bootstrap') {
       return json({ ok: false, error: 'staging_bootstrap_credential_required', requestId }, { status: 403 });
+    }
+
+    // This one-shot credential is even narrower than the Meta Ads config
+    // credential: it can only construct or compensate the isolated staging
+    // synthetic lineage. Keep it outside every general publishing role.
+    if (auth.role === 'meta-ads-staging-seed') {
+      if (
+        request.method !== 'POST' || ![
+          META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH,
+          META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ROLLBACK_PATH,
+        ].includes(pathname)
+      ) {
+        return roleRequired(requestId, 'meta_ads_staging_seed_credential_scope_required');
+      }
+      return await handleMetaAdsPublishRequest({
+        request,
+        env,
+        requestId,
+        pathname,
+        decryptToken,
+        encryptToken,
+        writeAudit,
+      });
+    }
+
+    // Intercept these paths before the generic Meta Ads gateway. The seed is
+    // not an administrative escape hatch: only its dedicated staging bearer
+    // can call either endpoint, and only with POST.
+    if ([
+      META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH,
+      META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ROLLBACK_PATH,
+    ].includes(pathname)) {
+      return roleRequired(requestId, 'meta_ads_staging_seed_credential_required');
     }
 
     // This credential is deliberately isolated from the generic Meta Ads
@@ -247,6 +282,10 @@ function stagingBootstrapEligible(env) {
   return safeString(env.ENVIRONMENT).toLowerCase() === 'staging'
     && analyticsMode(env) === 'shadow'
     && safeString(env.INFLUENCER_INTELLIGENCE_ENABLED).toLowerCase() === 'false';
+}
+
+function stagingMetaAdsSeedEligible(env) {
+  return safeString(env.ENVIRONMENT).toLowerCase() === 'staging';
 }
 
 async function listTokens(url, env, requestId) {
@@ -515,13 +554,24 @@ function authorizeRequest(request, env) {
   const analyticsToken = safeString(env.TOKEN_VAULT_ANALYTICS_API_TOKEN);
   const metaAdsConfigToken = safeString(env.TOKEN_VAULT_META_ADS_CONFIG_TOKEN);
   const stagingBootstrapToken = safeString(env.TOKEN_VAULT_STAGING_ANALYTICS_BOOTSTRAP_TOKEN);
+  const stagingMetaAdsSeedToken = safeString(env.TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN);
   if (stagingBootstrapToken && !stagingBootstrapEligible(env)) {
     return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
   }
-  if (!adminToken && !operationalToken && !analyticsToken && !metaAdsConfigToken && !stagingBootstrapToken) {
+  if (stagingMetaAdsSeedToken && !stagingMetaAdsSeedEligible(env)) {
+    return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
+  }
+  if (!adminToken && !operationalToken && !analyticsToken && !metaAdsConfigToken && !stagingBootstrapToken && !stagingMetaAdsSeedToken) {
     return { ok: false, status: 500, reason: 'missing_worker_secret' };
   }
-  const configuredTokens = [adminToken, operationalToken, analyticsToken, metaAdsConfigToken, stagingBootstrapToken].filter(Boolean);
+  const configuredTokens = [
+    adminToken,
+    operationalToken,
+    analyticsToken,
+    metaAdsConfigToken,
+    stagingBootstrapToken,
+    stagingMetaAdsSeedToken,
+  ].filter(Boolean);
   if (new Set(configuredTokens).size !== configuredTokens.length) {
     return { ok: false, status: 500, reason: 'invalid_worker_secret_configuration' };
   }
@@ -542,6 +592,9 @@ function authorizeRequest(request, env) {
   }
   if (stagingBootstrapToken && constantTimeEqual(authHeader, `${scheme} ${stagingBootstrapToken}`.trim())) {
     return { ok: true, role: 'staging-bootstrap' };
+  }
+  if (stagingMetaAdsSeedToken && constantTimeEqual(authHeader, `${scheme} ${stagingMetaAdsSeedToken}`.trim())) {
+    return { ok: true, role: 'meta-ads-staging-seed' };
   }
   if (operationalToken && constantTimeEqual(authHeader, `${scheme} ${operationalToken}`.trim())) {
     return { ok: true, role: 'operational' };
@@ -594,6 +647,8 @@ function contract(requestId) {
       analytics_mode: 'shadow|active',
       meta_ads_config_secret: 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN',
       meta_ads_config_scope: 'health|contract|meta-ads-config-read|meta-ads-config-bootstrap|meta-ads-config-bootstrap-rollback|meta-ads-config-bootstrap-derive-plan|meta-ads-config-bootstrap-derive|meta-ads-config-staging-exercise',
+      meta_ads_staging_seed_secret: 'TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN',
+      meta_ads_staging_seed_scope: 'meta-ads-config-staging-synthetic-seed|meta-ads-config-staging-synthetic-seed-rollback',
     },
     storage: {
       d1_binding: 'TOKEN_VAULT_DB',
