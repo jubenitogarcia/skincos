@@ -987,6 +987,7 @@ jobs:
           TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
           ENABLE_TOKEN_VAULT_DEPLOY_STAGING: ${{ vars.ENABLE_TOKEN_VAULT_DEPLOY_STAGING }}
           ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY: ${{ vars.ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY }}
+          META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           TARGET: ${{ inputs.target }}
           OPERATION: ${{ inputs.operation }}
           CONFIRM_STAGING_TRACKING_FIXTURE: ${{ inputs.confirm_staging_tracking_fixture }}
@@ -1001,6 +1002,7 @@ jobs:
             [[ "$ENABLE_TOKEN_VAULT_DEPLOY_STAGING" == true ]] || { echo 'ENABLE_TOKEN_VAULT_DEPLOY_STAGING must be true'; exit 1; }
             [[ "$CONFIRM_STAGING_TRACKING_FIXTURE" == true ]] || { echo 'An isolated synthetic tracking fixture must be confirmed for staging'; exit 1; }
             [[ "$TOKEN_VAULT_STAGING_BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'TOKEN_VAULT_STAGING_BASE_URL must be an HTTPS origin'; exit 1; }
+            [[ "$META_ADS_API_VERSION" =~ ^v(2[5-9]|[3-9][0-9])\.0$ ]] || { echo 'META_ADS_API_VERSION must be v25.0 or a newer supported Graph API version for the governed staging seed'; exit 1; }
           else
             [[ "$ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY" == true ]] || { echo 'ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY must be true'; exit 1; }
             [[ "$TOKEN_VAULT_PRODUCTION_BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'TOKEN_VAULT_PRODUCTION_BASE_URL must be an HTTPS origin'; exit 1; }
@@ -1348,7 +1350,7 @@ jobs:
           if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile) {
             throw new Error('immutable staging synthetic-seed candidate endpoint is unavailable');
           }
-          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion)) {
+          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
             throw new Error('staging synthetic Meta source custody is unavailable or malformed');
           }
           if (!/^[a-f0-9]{40}$/.test(releaseSha) || !/^\d+$/.test(runId) || !/^\d+$/.test(runAttempt)) {
@@ -1616,7 +1618,7 @@ jobs:
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const operationKey = String(process.env.SEED_OPERATION_KEY || '');
-          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
             throw new Error('staging synthetic-seed rollback custody or identity is invalid');
           }
           const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
@@ -1680,7 +1682,7 @@ jobs:
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const operationKey = String(process.env.SEED_OPERATION_KEY || '');
-          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
             throw new Error('staging synthetic-seed rollback custody or identity is invalid');
           }
           const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
@@ -2096,7 +2098,7 @@ jobs:
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const operationKey = String(process.env.SEED_OPERATION_KEY || '');
-          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
             throw new Error('staging synthetic-seed rollback custody or identity is invalid');
           }
           const seedToken = fs.readFileSync(seedFile, 'utf8').trim();

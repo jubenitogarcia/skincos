@@ -55,6 +55,10 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     "      - name: Remove the ephemeral staging synthetic-seed bearer",
     "      - name: Release Token Vault release lease",
   );
+  const authorization = section(
+    "      - name: Attest Token Vault deployment authorization and remote resources before mutation",
+    "      - name: Validate Token Vault and Meta Ads Publish source",
+  );
 
   assert.match(upload, /randomBytes\(48\)\.toString\('base64url'\)/);
   assert.match(
@@ -68,6 +72,16 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     /META_ADS_ACCESS_TOKEN|META_PIXEL_ID|META_ADS_ACCOUNT_ID|META_ADS_API_VERSION/,
   );
   assert.doesNotMatch(workflow, /\bwrangler\s+secret\s+put\b/i);
+
+  assert.match(
+    authorization,
+    /META_ADS_API_VERSION: \$\{\{ inputs\.target == 'staging' && vars\.META_ADS_API_VERSION \|\| '' \}\}/,
+  );
+  assert.match(
+    authorization,
+    /META_ADS_API_VERSION must be v25\.0 or a newer supported Graph API version for the governed staging seed/,
+  );
+  assert.match(authorization, /\^v\(2\[5-9\]\|\[3-9\]\[0-9\]\)\\\.0\$/);
 
   assert.match(
     seed,
@@ -94,6 +108,7 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*pixel_id: pixelId,[\s\S]*api_version: apiVersion/,
   );
   assert.match(seed, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+  assert.match(seed, /\^v\(\?:2\[5-9\]\|\[3-9\]\[0-9\]\)\\\.0\$/);
   assert.match(
     seed,
     /seed_attempted=true\\nseed_operation_key=\$\{operationKey\}/,
@@ -180,6 +195,7 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     );
     assert.match(rollback, /payload\?\.rolled_back !== true/);
     assert.match(rollback, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+    assert.match(rollback, /\^v\(\?:2\[5-9\]\|\[3-9\]\[0-9\]\)\\\.0\$/);
   }
   for (const rollback of [pretrafficRollback, activationLeaseRollback]) {
     assert.match(rollback, /meta_ads_publish_staging_seed_operation_not_found/);
@@ -199,7 +215,11 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     "META_ADS_API_VERSION",
   ]) {
     const total = [...workflow.matchAll(new RegExp(sourceName, "g"))].length;
-    const scoped = sourceScopes.reduce(
+    const allowedScopes =
+      sourceName === "META_ADS_API_VERSION"
+        ? [...sourceScopes, authorization]
+        : sourceScopes;
+    const scoped = allowedScopes.reduce(
       (count, scope) =>
         count + [...scope.matchAll(new RegExp(sourceName, "g"))].length,
       0,
