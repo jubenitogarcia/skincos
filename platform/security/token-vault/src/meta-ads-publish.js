@@ -1,3 +1,5 @@
+import { readBoundedText } from './bounded-body.js';
+
 const PREFIX = '/v1/meta-ads-publish';
 const GRAPH_ORIGIN = 'https://graph.facebook.com';
 const GRAPH_VIDEO_ORIGIN = 'https://graph-video.facebook.com';
@@ -172,6 +174,30 @@ const BOOTSTRAP_LOCK_TTL_MS = 15 * 60 * 1000;
 const BOOTSTRAP_MAX_ENTRIES = 10;
 const BOOTSTRAP_OPERATION_KEY_PATTERN = /^[A-Za-z0-9_.:-]{8,160}$/;
 const STAGING_EXERCISE_OPERATION_KEY_PATTERN = /^staging-tracking-fixture:[A-Za-z0-9_.:-]{8,120}$/;
+const STAGING_SYNTHETIC_SEED_OPERATION_KEY_PATTERN = /^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/;
+const STAGING_SYNTHETIC_SEED_MAX_REQUEST_BYTES = 16 * 1024;
+const STAGING_SYNTHETIC_SEED_CONTRACT = 'meta-ads-tracking-v20/staging-synthetic-seed/v1';
+const STAGING_SYNTHETIC_SEED_UNIT = 'meta-ads-tracking-staging-synthetic';
+const STAGING_SYNTHETIC_SEED_SOURCE_TOKEN_TYPE = 'staging_synthetic_source';
+const STAGING_SYNTHETIC_SEED_TARGET_TOKEN_TYPE = 'staging_synthetic_target';
+const STAGING_SYNTHETIC_SEED_LOCK_TTL_MS = 15 * 60 * 1000;
+const STAGING_SYNTHETIC_SEED_MAX_GRAPH_OBJECTS = 5;
+const STAGING_SYNTHETIC_SEED_LANDING_GROUP = 'staging_tracking_fixture';
+const STAGING_SYNTHETIC_SEED_CREATIVE_MESSAGE = 'SKINCOS staging tracking verification';
+const STAGING_SYNTHETIC_SEED_CREATIVE_CTA = 'LEARN_MORE';
+const STAGING_SYNTHETIC_SEED_ADSET_FIELDS = [
+  'id',
+  'name',
+  'account_id',
+  'campaign{id,objective}',
+  'campaign_id',
+  'status',
+  'billing_event',
+  'optimization_goal',
+  'destination_type',
+  'attribution_spec',
+  'promoted_object',
+].join(',');
 const BOOTSTRAP_FIXTURE_NAME_PREFIX = 'Meta Ads URL Tags Fixture';
 const BOOTSTRAP_AD_FIELDS = [
   'id',
@@ -323,6 +349,14 @@ export async function handleMetaAdsPublishRequest(input) {
 
   if (request.method === 'POST' && pathname === `${PREFIX}/config/bootstrap/derive`) {
     return bootstrapMetaAdsPublishConfigFromDerivedPlan({ request, env, requestId, decryptToken, encryptToken, writeAudit });
+  }
+
+  if (request.method === 'POST' && pathname === `${PREFIX}/config/staging-synthetic-seed`) {
+    return seedStagingSyntheticMetaAdsTracking({ request, env, requestId, encryptToken, writeAudit });
+  }
+
+  if (request.method === 'POST' && pathname === `${PREFIX}/config/staging-synthetic-seed/rollback`) {
+    return rollbackStagingSyntheticMetaAdsTracking({ request, env, requestId, decryptToken, encryptToken, writeAudit });
   }
 
   if (request.method === 'POST' && pathname === `${PREFIX}/config/bootstrap/rollback`) {
@@ -1190,6 +1224,1371 @@ export async function bootstrapMetaAdsPublishConfigFromDerivedPlan({
   } catch (error) {
     return bootstrapFailureResponse(normalizeBootstrapDeriveFailure(error), requestId);
   }
+}
+
+// A staging D1 starts empty by design. The normal legacy bootstrap is not a
+// credential importer, so it cannot migrate an empty authority set. This
+// narrow, one-shot seed creates only a paused synthetic Website lineage after
+// proving all external facts with bounded Graph reads. It is deliberately not
+// available to the operational/config/admin gateway roles; index.js exposes it
+// only to a release-scoped, candidate-only bearer.
+export async function seedStagingSyntheticMetaAdsTracking({ request, env, requestId, encryptToken, writeAudit }) {
+  let input;
+  let operation;
+  let state;
+  let context;
+  let lockOwner = '';
+  try {
+    assertStagingSyntheticSeedEnvironment(env);
+    input = await readStagingSyntheticSeedInput(request);
+    if (typeof encryptToken !== 'function') {
+      throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+    }
+    lockOwner = `staging-seed:${input.operationKey}:${crypto.randomUUID()}`;
+    await acquireConfigWriterLock(env, lockOwner, { ttlMs: STAGING_SYNTHETIC_SEED_LOCK_TTL_MS });
+    context = createStagingSyntheticSeedContext(env, lockOwner, requestId, 'seed_staging_synthetic_meta_ads_tracking', input.operationKey);
+
+    operation = await loadStagingSyntheticSeedOperation(env, input.operationKey);
+    if (operation) {
+      return await replayStagingSyntheticSeed({ operation, input, env, requestId, decryptToken: null });
+    }
+
+    const currentRows = await listMetaAdsPublishConfigRows(env);
+    const configuredCount = currentRows.filter((row) => Object.keys(asObject(parseObject(row?.metadata_json).meta_ads_publish)).length > 0).length;
+    if (configuredCount > 0) {
+      return stagingSyntheticSeedSuccess({ requestId, operationKey: input.operationKey, status: 'not_required', replayed: false });
+    }
+    const outstanding = await loadOutstandingStagingSyntheticSeedOperation(env);
+    if (outstanding && clean(outstanding.operation_key) !== input.operationKey) {
+      throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+    }
+    const facebookCount = await countFacebookCredentials(env);
+    if (facebookCount !== 0) {
+      throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_facebook_credentials_present', 409);
+    }
+
+    state = await createInitialStagingSyntheticSeedState(input);
+    operation = await createStagingSyntheticSeedOperation({ env, input, state, encryptToken });
+
+    const auth = await buildStagingSyntheticSeedGraphAuth(input, env);
+    const facts = await discoverStagingSyntheticSeedFacts({ input, auth, context });
+    state.facts = facts;
+    state.phase = 'graph_validated';
+    await persistStagingSyntheticSeedState({ env, operation, state, status: 'creating', encryptToken, context });
+
+    await createStagingSyntheticSeedResources({ input, auth, facts, operation, state, encryptToken, context });
+    await sealStagingSyntheticSeedCredentials({ input, env, operation, state, encryptToken, requestId, context });
+    // The durable seal is authoritative. An audit delivery outage must not
+    // make a successful one-shot seed appear failed to the deploy workflow.
+    await writeStagingSyntheticSeedAudit(writeAudit, env, requestId, 'ok', { phase: 'sealed' }).catch(() => undefined);
+    return stagingSyntheticSeedSuccess({ requestId, operationKey: input.operationKey, status: 'sealed', replayed: false });
+  } catch (error) {
+    const normalized = normalizeStagingSyntheticSeedError(error);
+    if (operation && state && !state.credentials_sealed && !state.reconciliation_required) {
+      try {
+        // A failed shared ad-set lease means another governed data-plane
+        // operation may own one of the newly created targets. Do not attempt a
+        // best-effort cleanup under only the config lock.
+        if (context?.stagingSyntheticSeedMutationLocksRequired === true && context.stagingSyntheticSeedMutationLocksHeld !== true) {
+          throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+        }
+        const rollbackInput = input || {};
+        const auth = rollbackInput.accessToken ? await buildStagingSyntheticSeedGraphAuth(rollbackInput, env) : null;
+        const rollback = await compensateStagingSyntheticSeed({
+          env,
+          operation,
+          state,
+          auth,
+          encryptToken,
+          context: context || createStagingSyntheticSeedContext(env, lockOwner, requestId, 'rollback_staging_synthetic_meta_ads_tracking', clean(input?.operationKey)),
+          deactivateCredentials: false,
+        });
+        if (!rollback.ok) {
+          normalized.code = 'meta_ads_publish_staging_seed_reconciliation_required';
+          normalized.status = 409;
+        }
+      } catch {
+        normalized.code = 'meta_ads_publish_staging_seed_reconciliation_required';
+        normalized.status = 409;
+      }
+    }
+    try {
+      await writeStagingSyntheticSeedAudit(writeAudit, env, requestId, normalized.code, {
+        phase: clean(state?.phase) || 'not_started',
+      });
+    } catch {
+      // An audit outage must never turn a sanitized error into a raw exception.
+    }
+    return stagingSyntheticSeedFailureResponse(normalized, requestId);
+  } finally {
+    if (context?.stagingSyntheticSeedMutationLocksHeld === true) {
+      await releaseOperationLocks(
+        env,
+        context.stagingSyntheticSeedMutationRunId,
+        context.stagingSyntheticSeedMutationOperationKey,
+      ).catch(() => undefined);
+    }
+    if (lockOwner) await releaseConfigWriterLock(env, lockOwner);
+  }
+}
+
+export async function rollbackStagingSyntheticMetaAdsTracking({ request, env, requestId, decryptToken, encryptToken, writeAudit }) {
+  let input;
+  let operation;
+  let state;
+  let context;
+  let lockOwner = '';
+  try {
+    assertStagingSyntheticSeedEnvironment(env);
+    input = await readStagingSyntheticSeedRollbackInput(request);
+    if (typeof decryptToken !== 'function' || typeof encryptToken !== 'function') {
+      throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+    }
+    lockOwner = `staging-seed-rollback:${input.operationKey}:${crypto.randomUUID()}`;
+    await acquireConfigWriterLock(env, lockOwner, { ttlMs: STAGING_SYNTHETIC_SEED_LOCK_TTL_MS });
+    context = createStagingSyntheticSeedContext(env, lockOwner, requestId, 'rollback_staging_synthetic_meta_ads_tracking', input.operationKey);
+    operation = await loadStagingSyntheticSeedOperation(env, input.operationKey);
+    if (!operation) throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_operation_not_found', 409);
+    state = await decryptStagingSyntheticSeedState(operation, decryptToken, env);
+    assertStagingSyntheticSeedStateMatchesInput(state, input);
+    if (clean(operation.status) === 'rolled_back') {
+      return stagingSyntheticSeedRollbackSuccess({ requestId, operationKey: input.operationKey, replayed: true });
+    }
+    if (state.reconciliation_required === true) {
+      throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+    }
+    if (stagingSyntheticSeedStateHasNoGraphMutation(state)) {
+      state.phase = 'rolled_back';
+      await persistStagingSyntheticSeedState({ env, operation, state, status: 'rolled_back', encryptToken, context });
+      await writeStagingSyntheticSeedAudit(writeAudit, env, requestId, 'rolled_back', { phase: 'rolled_back' }).catch(() => undefined);
+      return stagingSyntheticSeedRollbackSuccess({ requestId, operationKey: input.operationKey, replayed: false });
+    }
+    if (!['creating', 'sealed'].includes(clean(operation.status)) || stagingSyntheticSeedStateHasAmbiguousMutation(state)) {
+      throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+    }
+    if (clean(operation.status) === 'sealed') {
+      await assertStagingSyntheticSeedRollbackAuthority(env, state);
+    }
+    await acquireStagingSyntheticSeedMutationLocks(context, state);
+    const auth = await buildStagingSyntheticSeedGraphAuth(input, env);
+    const rollback = await compensateStagingSyntheticSeed({
+      env,
+      operation,
+      state,
+      auth,
+      encryptToken,
+      decryptToken,
+      context,
+      deactivateCredentials: true,
+    });
+    if (!rollback.ok) throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+    await writeStagingSyntheticSeedAudit(writeAudit, env, requestId, 'rolled_back', { phase: 'rolled_back' }).catch(() => undefined);
+    return stagingSyntheticSeedRollbackSuccess({ requestId, operationKey: input.operationKey, replayed: false });
+  } catch (error) {
+    const normalized = normalizeStagingSyntheticSeedError(error);
+    try {
+      await writeStagingSyntheticSeedAudit(writeAudit, env, requestId, normalized.code, { phase: clean(state?.phase) || 'rollback' });
+    } catch {
+      // Keep the endpoint fail-closed without exposing persistence internals.
+    }
+    return stagingSyntheticSeedFailureResponse(normalized, requestId);
+  } finally {
+    if (context?.stagingSyntheticSeedMutationLocksHeld === true) {
+      await releaseOperationLocks(
+        env,
+        context.stagingSyntheticSeedMutationRunId,
+        context.stagingSyntheticSeedMutationOperationKey,
+      ).catch(() => undefined);
+    }
+    if (lockOwner) await releaseConfigWriterLock(env, lockOwner);
+  }
+}
+
+function assertStagingSyntheticSeedEnvironment(env) {
+  if (clean(env?.ENVIRONMENT).toLowerCase() !== 'staging') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_disabled', 503);
+  }
+  if (!env?.TOKEN_VAULT_DB || typeof env.TOKEN_VAULT_DB.prepare !== 'function' || typeof env.TOKEN_VAULT_DB.batch !== 'function') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+}
+
+async function readStagingSyntheticSeedInput(request) {
+  const body = await readStagingSyntheticSeedBody(request, new Set([
+    'operation_key', 'access_token', 'account_id', 'pixel_id', 'api_version',
+  ]));
+  const operationKey = clean(body.operation_key);
+  if (!STAGING_SYNTHETIC_SEED_OPERATION_KEY_PATTERN.test(operationKey)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_operation_key_invalid', 400);
+  }
+  const accessToken = normalizeStagingSyntheticSeedAccessToken(body.access_token);
+  return {
+    operationKey,
+    accessToken,
+    accountId: normalizeStagingSyntheticSeedNumericId(body.account_id, 'account_id'),
+    pixelId: normalizeStagingSyntheticSeedNumericId(body.pixel_id, 'pixel_id'),
+    apiVersion: normalizeStagingSyntheticSeedApiVersion(body.api_version),
+  };
+}
+
+async function readStagingSyntheticSeedRollbackInput(request) {
+  const body = await readStagingSyntheticSeedBody(request, new Set([
+    'operation_key', 'access_token', 'account_id', 'api_version',
+  ]));
+  const operationKey = clean(body.operation_key);
+  if (!STAGING_SYNTHETIC_SEED_OPERATION_KEY_PATTERN.test(operationKey)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_operation_key_invalid', 400);
+  }
+  return {
+    operationKey,
+    accessToken: normalizeStagingSyntheticSeedAccessToken(body.access_token),
+    accountId: normalizeStagingSyntheticSeedNumericId(body.account_id, 'account_id'),
+    apiVersion: normalizeStagingSyntheticSeedApiVersion(body.api_version),
+  };
+}
+
+async function readStagingSyntheticSeedBody(request, allowed) {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (Number.isInteger(contentLength) && contentLength > STAGING_SYNTHETIC_SEED_MAX_REQUEST_BYTES) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_too_large', 413);
+  }
+  let body;
+  try {
+    const text = request.body
+      ? await readBoundedText(request.body, STAGING_SYNTHETIC_SEED_MAX_REQUEST_BYTES, () => stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_too_large', 413))
+      : await request.text();
+    body = JSON.parse(text);
+  } catch (error) {
+    if (isStagingSyntheticSeedFailure(error)) throw error;
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
+  }
+  if (!isJsonObject(body) || Object.keys(body).some((key) => !allowed.has(key))) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
+  }
+  return body;
+}
+
+function normalizeStagingSyntheticSeedAccessToken(value) {
+  if (typeof value !== 'string') throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
+  const token = value.trim();
+  if (token.length < 20 || token.length > 4096 || /[\s\u0000-\u001f\u007f]/.test(token)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
+  }
+  return token;
+}
+
+function normalizeStagingSyntheticSeedNumericId(value, label) {
+  try {
+    return normalizeNumericId(value, `staging_seed_${label}`);
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
+  }
+}
+
+function normalizeStagingSyntheticSeedApiVersion(value) {
+  try {
+    return normalizeApiVersion(clean(value) || 'v25.0');
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
+  }
+}
+
+function stagingSyntheticSeedFailure(code, httpStatus = 400) {
+  return Object.assign(new Error(code), {
+    staging_synthetic_seed_error: true,
+    http_status: httpStatus,
+  });
+}
+
+function isStagingSyntheticSeedFailure(error) {
+  return Boolean(error && error.staging_synthetic_seed_error === true);
+}
+
+function normalizeStagingSyntheticSeedError(error) {
+  if (isStagingSyntheticSeedFailure(error)) {
+    return { code: clean(error.message), status: Number(error.http_status) || 400 };
+  }
+  const normalized = normalizeFailure(error);
+  return {
+    code: normalized.retryable || normalized.ambiguous
+      ? 'meta_ads_publish_staging_seed_unavailable'
+      : 'meta_ads_publish_staging_seed_failed',
+    status: normalized.retryable || normalized.ambiguous ? 503 : 409,
+  };
+}
+
+function stagingSyntheticSeedFailureResponse(error, requestId) {
+  const code = clean(error?.code);
+  const allowed = new Set([
+    'meta_ads_publish_staging_seed_disabled',
+    'meta_ads_publish_staging_seed_unavailable',
+    'meta_ads_publish_staging_seed_request_too_large',
+    'meta_ads_publish_staging_seed_request_invalid',
+    'meta_ads_publish_staging_seed_operation_key_invalid',
+    'meta_ads_publish_staging_seed_operation_not_found',
+    'meta_ads_publish_staging_seed_operation_conflict',
+    'meta_ads_publish_staging_seed_reconciliation_required',
+    'meta_ads_publish_staging_seed_facebook_credentials_present',
+    'meta_ads_publish_staging_seed_graph_identity_invalid',
+    'meta_ads_publish_staging_seed_graph_page_ambiguous',
+    'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
+    'meta_ads_publish_staging_seed_landing_or_media_unavailable',
+    'meta_ads_publish_staging_seed_graph_contract_invalid',
+    'meta_ads_publish_staging_seed_failed',
+  ]);
+  const safeCode = allowed.has(code) ? code : 'meta_ads_publish_staging_seed_unavailable';
+  const status = Number(error?.status) === 413
+    ? 413
+    : Number(error?.status) === 503
+      ? 503
+      : Number(error?.status) === 409
+        ? 409
+        : 400;
+  return response({ ok: false, error: safeCode, requestId }, status);
+}
+
+function stagingSyntheticSeedSuccess({ requestId, operationKey, status, replayed }) {
+  return response({
+    ok: true,
+    seed: status,
+    operation_status: status,
+    replayed: Boolean(replayed),
+    operation_key: operationKey,
+    contract_version: STAGING_SYNTHETIC_SEED_CONTRACT,
+    requestId,
+  }, status === 'sealed' && !replayed ? 201 : 200);
+}
+
+function stagingSyntheticSeedRollbackSuccess({ requestId, operationKey, replayed }) {
+  return response({
+    ok: true,
+    rolled_back: true,
+    operation_status: 'rolled_back',
+    replayed: Boolean(replayed),
+    operation_key: operationKey,
+    contract_version: STAGING_SYNTHETIC_SEED_CONTRACT,
+    requestId,
+  });
+}
+
+function createStagingSyntheticSeedContext(env, lockOwner, requestId, action, operationKey = '') {
+  const context = {
+    env,
+    requestId,
+    action,
+    operationKey: clean(operationKey),
+    ...stagingSyntheticSeedMutationLockIdentity(operationKey),
+    stagingSyntheticSeedMutationLockKeys: [],
+    stagingSyntheticSeedMutationLocksHeld: false,
+    stagingSyntheticSeedMutationLocksRequired: false,
+    attempts: 0,
+    rateUsage: {},
+    traceId: '',
+    assertBootstrapLease: async () => {
+      try {
+        await renewConfigWriterLock(env, lockOwner, { ttlMs: STAGING_SYNTHETIC_SEED_LOCK_TTL_MS });
+        await renewStagingSyntheticSeedMutationLocks(context);
+      } catch (error) {
+        const locked = isConfigWriterFailure(error) || clean(error?.message).startsWith('resource_locked:');
+        throw stagingSyntheticSeedFailure(
+          locked
+            ? 'meta_ads_publish_staging_seed_reconciliation_required'
+            : 'meta_ads_publish_staging_seed_unavailable',
+          locked ? 409 : 503,
+        );
+      }
+    },
+  };
+  return context;
+}
+
+function stagingSyntheticSeedMutationLockIdentity(operationKey) {
+  const normalized = clean(operationKey);
+  return {
+    stagingSyntheticSeedMutationRunId: `staging-seed:${normalized}`,
+    stagingSyntheticSeedMutationOperationKey: `staging-seed-mutation:${normalized}`,
+  };
+}
+
+function stagingSyntheticSeedMutationLockKeys(state) {
+  const accountId = normalizeStagingSyntheticSeedGraphId(asObject(state?.input).account_id, 'lock_account_id');
+  const resources = asObject(state?.resources);
+  const adsetIds = [
+    clean(asObject(resources.source_adset).id),
+    clean(asObject(resources.target_adset).id),
+  ].filter(Boolean);
+  return [...new Set(adsetIds.map((adsetId) => bootstrapAdsetContractLockKey(accountId, adsetId)))].sort();
+}
+
+async function acquireStagingSyntheticSeedMutationLocks(context, state) {
+  const keys = stagingSyntheticSeedMutationLockKeys(state);
+  if (!keys.length) return;
+  context.stagingSyntheticSeedMutationLocksRequired = true;
+  context.stagingSyntheticSeedMutationLockKeys = keys;
+  await acquireLocks(
+    context.env,
+    context.stagingSyntheticSeedMutationRunId,
+    context.stagingSyntheticSeedMutationOperationKey,
+    keys,
+  );
+  context.stagingSyntheticSeedMutationLocksHeld = true;
+}
+
+async function renewStagingSyntheticSeedMutationLocks(context) {
+  if (context?.stagingSyntheticSeedMutationLocksHeld !== true || !safeArray(context.stagingSyntheticSeedMutationLockKeys).length) return;
+  await acquireLocks(
+    context.env,
+    context.stagingSyntheticSeedMutationRunId,
+    context.stagingSyntheticSeedMutationOperationKey,
+    context.stagingSyntheticSeedMutationLockKeys,
+  );
+}
+
+async function buildStagingSyntheticSeedGraphAuth(input, env) {
+  const appSecretProof = clean(env.META_APP_SECRET)
+    ? await hmacSha256(clean(env.META_APP_SECRET), input.accessToken)
+    : '';
+  return {
+    tokenId: '',
+    accountId: input.accountId,
+    apiVersion: input.apiVersion,
+    accessToken: input.accessToken,
+    appSecretProof,
+    config: {},
+  };
+}
+
+async function createInitialStagingSyntheticSeedState(input) {
+  const marker = await sha256(`meta-ads-staging-synthetic-seed\n${input.operationKey}`);
+  const sourceTokenId = `staging.meta-ads.source.${marker.slice(0, 32)}`;
+  const targetTokenId = `staging.meta-ads.target.${marker.slice(0, 32)}`;
+  return {
+    contract: STAGING_SYNTHETIC_SEED_CONTRACT,
+    phase: 'pending',
+    reconciliation_required: false,
+    input: {
+      operation_key: input.operationKey,
+      account_id: input.accountId,
+      pixel_id: input.pixelId,
+      api_version: input.apiVersion,
+    },
+    marker,
+    url_tags: `skincos_staging_v20=${marker.slice(0, 32)}`,
+    credential_ids: { source: sourceTokenId, target: targetTokenId },
+    credentials_sealed: false,
+    facts: {},
+    resources: {},
+  };
+}
+
+async function countFacebookCredentials(env) {
+  try {
+    const row = await dbFirst(env, 'SELECT COUNT(*) AS count FROM credential_tokens WHERE provider = ? AND active = 1', 'facebook');
+    return Number(row?.count || 0);
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+}
+
+async function loadStagingSyntheticSeedOperation(env, operationKey) {
+  try {
+    return await dbFirst(env, [
+      'SELECT id, operation_key, request_hash, status, state_ciphertext, summary_json',
+      'FROM meta_ads_publish_staging_seed_operations WHERE operation_key = ?',
+    ].join(' '), operationKey);
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+}
+
+async function loadOutstandingStagingSyntheticSeedOperation(env) {
+  try {
+    return await dbFirst(env, [
+      'SELECT id, operation_key, status FROM meta_ads_publish_staging_seed_operations',
+      "WHERE status IN ('pending', 'creating', 'rolling_back', 'reconciliation_required')",
+      'ORDER BY updated_at DESC LIMIT 1',
+    ].join(' '));
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+}
+
+async function createStagingSyntheticSeedOperation({ env, input, state, encryptToken }) {
+  const requestHash = await stagingSyntheticSeedRequestHash(input);
+  const stateCiphertext = await encryptStagingSyntheticSeedState(state, encryptToken, env);
+  const now = nowIso();
+  try {
+    await dbRun(env, [
+      'INSERT INTO meta_ads_publish_staging_seed_operations',
+      '(id, operation_key, request_hash, status, state_ciphertext, summary_json, created_at, updated_at)',
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ].join(' '),
+    crypto.randomUUID(), input.operationKey, requestHash, 'pending', stateCiphertext,
+    JSON.stringify(summarizeStagingSyntheticSeedState(state)), now, now);
+  } catch {
+    const existing = await loadStagingSyntheticSeedOperation(env, input.operationKey);
+    if (existing) return existing;
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+  const operation = await loadStagingSyntheticSeedOperation(env, input.operationKey);
+  if (!operation) throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  return operation;
+}
+
+async function stagingSyntheticSeedRequestHash(input) {
+  return sha256(stableStringify({
+    operation_key: input.operationKey,
+    account_id: input.accountId,
+    pixel_id: input.pixelId || '',
+    api_version: input.apiVersion,
+  }));
+}
+
+async function encryptStagingSyntheticSeedState(state, encryptToken, env) {
+  try {
+    return await encryptToken(JSON.stringify(state), env);
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+}
+
+async function decryptStagingSyntheticSeedState(operation, decryptToken, env) {
+  try {
+    const parsed = JSON.parse(await decryptToken(operation.state_ciphertext, env));
+    if (!isJsonObject(parsed) || clean(parsed.contract) !== STAGING_SYNTHETIC_SEED_CONTRACT) {
+      throw new Error('invalid_seed_state');
+    }
+    return parsed;
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+}
+
+async function persistStagingSyntheticSeedState({ env, operation, state, status, encryptToken, context }) {
+  if (context?.assertBootstrapLease) await context.assertBootstrapLease();
+  if (typeof encryptToken !== 'function') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+  const stateCiphertext = await encryptStagingSyntheticSeedState(state, encryptToken, env);
+  try {
+    const result = await dbRun(env, [
+      'UPDATE meta_ads_publish_staging_seed_operations',
+      'SET status = ?, state_ciphertext = ?, summary_json = ?, updated_at = ?',
+      'WHERE id = ? AND operation_key = ?',
+    ].join(' '),
+    status, stateCiphertext, JSON.stringify(summarizeStagingSyntheticSeedState(state)), nowIso(), operation.id, operation.operation_key);
+    if (statementChanges(result) !== 1) {
+      throw new Error('seed_state_missing');
+    }
+    operation.status = status;
+    operation.state_ciphertext = stateCiphertext;
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+}
+
+function summarizeStagingSyntheticSeedState(state) {
+  const resources = asObject(state?.resources);
+  return {
+    contract: STAGING_SYNTHETIC_SEED_CONTRACT,
+    phase: clean(state?.phase) || 'unknown',
+    reconciliation_required: state?.reconciliation_required === true,
+    graph_facts_verified: Boolean(clean(asObject(state?.facts).page_id) && clean(asObject(state?.facts).dataset_id)),
+    campaign_created: Boolean(clean(asObject(resources.campaign).id)),
+    adset_count: ['source_adset', 'target_adset'].filter((key) => clean(asObject(resources[key]).id)).length,
+    creative_created: Boolean(clean(asObject(resources.source_creative).id)),
+    detached_creative_retained: state?.detached_creative_retained === true,
+    ad_created: Boolean(clean(asObject(resources.source_ad).id)),
+    credentials_sealed: state?.credentials_sealed === true,
+  };
+}
+
+async function replayStagingSyntheticSeed({ operation, input, env, requestId, decryptToken }) {
+  const requestHash = await stagingSyntheticSeedRequestHash(input);
+  if (clean(operation.request_hash) !== requestHash) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_operation_conflict', 409);
+  }
+  const status = clean(operation.status);
+  if (status === 'sealed') {
+    // A sealed operation never needs the inbound source token to prove its
+    // replay. The caller still supplied it because this route intentionally
+    // has one closed request shape.
+    return stagingSyntheticSeedSuccess({ requestId, operationKey: input.operationKey, status: 'sealed', replayed: true });
+  }
+  if (status === 'rolled_back') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_operation_conflict', 409);
+  }
+  // Do not attempt to decrypt or heal a partial operation in the seed path.
+  // A caller must use the explicit rollback surface under a new governed run.
+  void env;
+  void decryptToken;
+  throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+}
+
+function assertStagingSyntheticSeedStateMatchesInput(state, input) {
+  const saved = asObject(state?.input);
+  if (
+    clean(saved.operation_key) !== input.operationKey ||
+    clean(saved.account_id) !== input.accountId ||
+    clean(saved.api_version) !== input.apiVersion
+  ) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_operation_conflict', 409);
+  }
+}
+
+function stagingSyntheticSeedStateHasNoGraphMutation(state) {
+  const resources = asObject(state?.resources);
+  return (
+    state?.credentials_sealed !== true &&
+    state?.credentials_sealing_started !== true &&
+    Object.values(resources).every((resource) => {
+      const value = asObject(resource);
+      return !value.pending && !clean(value.id);
+    })
+  );
+}
+
+function stagingSyntheticSeedStateHasAmbiguousMutation(state) {
+  return state?.credentials_sealing_started === true ||
+    Object.values(asObject(state?.resources)).some((resource) => asObject(resource).pending === true);
+}
+
+async function assertStagingSyntheticSeedRollbackAuthority(env, state) {
+  const expected = asObject(state?.seeded_authority);
+  const expectedRevision = clean(expected.revision);
+  const credentials = asObject(state?.credential_ids);
+  const sourceId = clean(credentials.source);
+  const targetId = clean(credentials.target);
+  const expectedSource = asObject(expected.source_meta_ads_publish);
+  const expectedTarget = asObject(expected.target_meta_ads_publish);
+  if (!expectedRevision || !sourceId || !targetId || sourceId === targetId || !Object.keys(expectedSource).length || !Object.keys(expectedTarget).length) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  const currentRows = await listMetaAdsPublishConfigRows(env);
+  const authority = await configWriterAuthorityState(currentRows);
+  const rowsById = new Map(currentRows.map((row) => [clean(row.id), row]));
+  const source = asObject(parseObject(rowsById.get(sourceId)?.metadata_json).meta_ads_publish);
+  const target = asObject(parseObject(rowsById.get(targetId)?.metadata_json).meta_ads_publish);
+  if (
+    authority.ready ||
+    authority.mode !== 'legacy_bootstrap' ||
+    clean(authority.revision) !== expectedRevision ||
+    stableStringify(source) !== stableStringify(expectedSource) ||
+    stableStringify(target) !== stableStringify(expectedTarget)
+  ) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+}
+
+async function writeStagingSyntheticSeedAudit(writeAudit, env, requestId, status, metadata = {}) {
+  if (typeof writeAudit !== 'function') return;
+  await writeAudit(env, {
+    tokenId: null,
+    event: 'meta_ads_publish.staging_synthetic_seed',
+    provider: 'facebook',
+    unit: STAGING_SYNTHETIC_SEED_UNIT,
+    tokenType: 'staging_synthetic',
+    status: clean(status).slice(0, 120) || 'unknown',
+    requestId,
+    metadata: {
+      contract: STAGING_SYNTHETIC_SEED_CONTRACT,
+      environment: 'staging',
+      ...metadata,
+    },
+  });
+}
+
+async function discoverStagingSyntheticSeedFacts({ input, auth, context }) {
+  const pixel = await seedGraphRead(auth, input.pixelId, 'id,owner_ad_account{id}', context);
+  const pixelOwner = normalizeStagingSyntheticSeedGraphId(asObject(pixel.owner_ad_account).id, 'pixel_owner_account');
+  if (normalizeStagingSyntheticSeedGraphId(pixel.id, 'pixel_id') !== input.pixelId || pixelOwner !== input.accountId) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_identity_invalid', 409);
+  }
+
+  const pages = await seedGraphRead(auth, 'me/accounts', 'id,tasks,instagram_business_account{id}', context, { limit: '100' });
+  if (clean(asObject(pages.paging).next)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_page_ambiguous', 409);
+  }
+  const eligiblePages = safeArray(pages.data).map(asObject).filter((page) => {
+    const tasks = new Set(safeArray(page.tasks).map((task) => clean(task).toUpperCase()));
+    return tasks.has('ADVERTISE') && /^\d{5,30}$/.test(clean(asObject(page.instagram_business_account).id));
+  });
+  if (eligiblePages.length !== 1) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_page_ambiguous', 409);
+  }
+  const selectedPageId = normalizeStagingSyntheticSeedGraphId(eligiblePages[0].id, 'page_id');
+  const page = await seedGraphRead(auth, selectedPageId, 'id,instagram_business_account{id},website,picture{url}', context);
+  const pageId = normalizeStagingSyntheticSeedGraphId(page.id, 'page_id');
+  const instagramUserId = normalizeStagingSyntheticSeedGraphId(asObject(page.instagram_business_account).id, 'instagram_user_id');
+  if (
+    pageId !== selectedPageId ||
+    instagramUserId !== normalizeStagingSyntheticSeedGraphId(asObject(eligiblePages[0].instagram_business_account).id, 'instagram_user_id')
+  ) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_identity_invalid', 409);
+  }
+  const landing = normalizeStagingSyntheticSeedLanding(page.website);
+  const pictureUrl = normalizeStagingSyntheticSeedPicture(page.picture);
+  if (!landing || !pictureUrl) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_landing_or_media_unavailable', 409);
+  }
+
+  const datasets = await seedGraphRead(auth, `act_${input.accountId}/offline_conversion_data_sets`, 'id', context, { limit: '2' });
+  if (clean(asObject(datasets.paging).next) || safeArray(datasets.data).length !== 1) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_dataset_ambiguous', 409);
+  }
+  const datasetId = normalizeStagingSyntheticSeedGraphId(asObject(safeArray(datasets.data)[0]).id, 'offline_dataset_id');
+  return {
+    page_id: pageId,
+    instagram_user_id: instagramUserId,
+    landing_url: landing.url,
+    landing_host: landing.host,
+    page_picture_url: pictureUrl,
+    dataset_id: datasetId,
+  };
+}
+
+async function seedGraphRead(auth, path, fields, context, query = {}) {
+  try {
+    const result = await graphRequest(
+      graphUrl(auth.apiVersion, path, { fields, ...query }),
+      { method: 'GET' },
+      auth,
+      context,
+    );
+    return asObject(result.body);
+  } catch (error) {
+    const normalized = normalizeFailure(error);
+    if (normalized.retryable || normalized.ambiguous || Number(normalized.http_status) >= 500) {
+      throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+    }
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_identity_invalid', 409);
+  }
+}
+
+function normalizeStagingSyntheticSeedGraphId(value, label) {
+  try {
+    return normalizeNumericId(value, `staging_seed_${label}`);
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_identity_invalid', 409);
+  }
+}
+
+function normalizeStagingSyntheticSeedLanding(value) {
+  try {
+    const url = new URL(clean(value));
+    if (
+      url.protocol !== 'https:' ||
+      !url.hostname ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      url.search ||
+      /(?:facebook|instagram|whatsapp)\.com$/i.test(url.hostname)
+    ) {
+      return null;
+    }
+    return { url: url.toString(), host: url.hostname.toLowerCase() };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeStagingSyntheticSeedPicture(value) {
+  const picture = asObject(value);
+  const candidate = clean(picture.url || asObject(picture.data).url);
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+async function createStagingSyntheticSeedResources({ input, auth, facts, operation, state, encryptToken, context }) {
+  state.phase = 'creating_resources';
+  await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
+  const marker = stagingSyntheticSeedMarker(state);
+
+  const campaign = await createStagingSyntheticSeedGraphResource({
+    key: 'campaign',
+    name: `${marker} Campaign`,
+    operation,
+    state,
+    encryptToken,
+    context,
+    create: () => seedGraphCreate(auth, `act_${input.accountId}/campaigns`, {
+      name: `${marker} Campaign`,
+      objective: 'OUTCOME_LEADS',
+      buying_type: 'AUCTION',
+      special_ad_categories: [],
+      is_adset_budget_sharing_enabled: false,
+      status: 'PAUSED',
+    }, context),
+    read: (id) => readStagingSyntheticSeedCampaign(auth, id, `${marker} Campaign`, context),
+  });
+
+  const commonAdset = {
+    campaign_id: campaign.id,
+    billing_event: 'IMPRESSIONS',
+    optimization_goal: 'OFFSITE_CONVERSIONS',
+    destination_type: 'WEBSITE',
+    daily_budget: '1000',
+    attribution_spec: [
+      { event_type: 'CLICK_THROUGH', window_days: 7 },
+      { event_type: 'VIEW_THROUGH', window_days: 1 },
+    ],
+    targeting: { geo_locations: { countries: ['BR'] } },
+    status: 'PAUSED',
+  };
+  const sourceAdset = await createStagingSyntheticSeedGraphResource({
+    key: 'source_adset',
+    name: `${marker} Source Ad Set`,
+    operation,
+    state,
+    encryptToken,
+    context,
+    create: () => seedGraphCreate(auth, `act_${input.accountId}/adsets`, {
+      ...commonAdset,
+      name: `${marker} Source Ad Set`,
+      promoted_object: {
+        pixel_id: input.pixelId,
+        custom_event_type: 'LEAD',
+        offline_conversion_data_set_id: facts.dataset_id,
+      },
+    }, context),
+    read: (id) => readStagingSyntheticSeedAdset(auth, id, campaign.id, `${marker} Source Ad Set`, context),
+  });
+  const targetAdset = await createStagingSyntheticSeedGraphResource({
+    key: 'target_adset',
+    name: `${marker} Target Ad Set`,
+    operation,
+    state,
+    encryptToken,
+    context,
+    create: () => seedGraphCreate(auth, `act_${input.accountId}/adsets`, {
+      ...commonAdset,
+      name: `${marker} Target Ad Set`,
+    }, context),
+    read: (id) => readStagingSyntheticSeedAdset(auth, id, campaign.id, `${marker} Target Ad Set`, context),
+  });
+  // From here on the synthetic ad sets are durable and can be referenced by a
+  // concurrent data-plane request. Hold the same resource locks used by normal
+  // ensure/stage/rollback operations until this seed has either sealed or
+  // compensated them.
+  await acquireStagingSyntheticSeedMutationLocks(context, state);
+  assertStagingSyntheticSeedAdsetContract({ input, source: sourceAdset.value, target: targetAdset.value });
+
+  const creative = await createStagingSyntheticSeedGraphResource({
+    key: 'source_creative',
+    name: `${marker} Source Creative`,
+    operation,
+    state,
+    encryptToken,
+    context,
+    create: () => seedGraphCreate(auth, `act_${input.accountId}/adcreatives`, {
+      name: `${marker} Source Creative`,
+      object_story_spec: {
+        page_id: facts.page_id,
+        instagram_actor_id: facts.instagram_user_id,
+        link_data: {
+          link: facts.landing_url,
+          picture: facts.page_picture_url,
+          message: STAGING_SYNTHETIC_SEED_CREATIVE_MESSAGE,
+          call_to_action: {
+            type: STAGING_SYNTHETIC_SEED_CREATIVE_CTA,
+            value: { link: facts.landing_url },
+          },
+        },
+      },
+      url_tags: state.url_tags,
+    }, context),
+    read: (id) => readStagingSyntheticSeedCreative(auth, id, `${marker} Source Creative`, state.url_tags, context),
+  });
+  const ad = await createStagingSyntheticSeedGraphResource({
+    key: 'source_ad',
+    name: `${marker} Source Ad`,
+    operation,
+    state,
+    encryptToken,
+    context,
+    create: () => seedGraphCreate(auth, `act_${input.accountId}/ads`, {
+      name: `${marker} Source Ad`,
+      adset_id: sourceAdset.id,
+      creative: { creative_id: creative.id },
+      status: 'PAUSED',
+    }, context),
+    read: (id) => readStagingSyntheticSeedAd(auth, id, sourceAdset.id, creative.id, `${marker} Source Ad`, context),
+  });
+
+  state.phase = 'resources_verified';
+  await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
+  return { campaign, sourceAdset, targetAdset, creative, ad };
+}
+
+function stagingSyntheticSeedMarker(state) {
+  return `[SKINCOS-STAGING-V20:${clean(state?.marker).slice(0, 24)}]`;
+}
+
+async function createStagingSyntheticSeedGraphResource({ key, name, operation, state, encryptToken, context, create, read }) {
+  const existing = asObject(asObject(state.resources)[key]);
+  if (clean(existing.id)) {
+    const value = await read(clean(existing.id));
+    return { id: clean(existing.id), value };
+  }
+  state.resources[key] = { name, pending: true, owned_by_operation: false };
+  await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
+  let created;
+  try {
+    created = await create();
+  } catch (error) {
+    const normalized = normalizeFailure(error);
+    if (normalized.ambiguous || normalized.retryable) {
+      state.reconciliation_required = true;
+      state.phase = 'reconciliation_required';
+      await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'reconciliation_required', encryptToken, context }).catch(() => undefined);
+      throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+    }
+    state.resources[key].pending = false;
+    await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
+    throw error;
+  }
+  const id = normalizeStagingSyntheticSeedCreatedId(created, key);
+  state.resources[key] = { id, name, pending: false, owned_by_operation: true };
+  // Persist the durable acknowledgement before the first readback. A process
+  // loss after Meta accepted the POST must become reconciliation, never a
+  // duplicate create or an unowned cleanup.
+  await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
+  const value = await read(id);
+  return { id, value };
+}
+
+async function seedGraphCreate(auth, path, body, context) {
+  try {
+    const result = await graphRequest(
+      graphUrl(auth.apiVersion, path),
+      seedJsonRequest('POST', body),
+      auth,
+      context,
+      { maxAttempts: 1 },
+    );
+    return asObject(result.body);
+  } catch (error) {
+    throw error;
+  }
+}
+
+function seedJsonRequest(method, body) {
+  // jsonRequest intentionally removes empty arrays. Meta requires an explicit
+  // empty special_ad_categories list for a campaign, so this one narrow helper
+  // preserves the closed synthetic payload exactly.
+  return {
+    method,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(sanitizeGraphValue(body)),
+  };
+}
+
+function normalizeStagingSyntheticSeedCreatedId(value, key) {
+  try {
+    return normalizeNumericId(asObject(value).id, `staging_seed_${key}_id`);
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+}
+
+async function readStagingSyntheticSeedCampaign(auth, campaignId, expectedName, context) {
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, campaignId, { fields: CAMPAIGN_READ_FIELDS }),
+    { method: 'GET' }, auth, context,
+  );
+  const campaign = asObject(result.body);
+  if (
+    normalizeStagingSyntheticSeedGraphId(campaign.id, 'campaign_id') !== campaignId ||
+    clean(campaign.name) !== expectedName ||
+    clean(campaign.status).toUpperCase() !== 'PAUSED' ||
+    clean(campaign.objective).toUpperCase() !== 'OUTCOME_LEADS'
+  ) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_contract_invalid', 409);
+  }
+  return campaign;
+}
+
+async function readStagingSyntheticSeedAdset(auth, adsetId, campaignId, expectedName, context) {
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, adsetId, { fields: STAGING_SYNTHETIC_SEED_ADSET_FIELDS }),
+    { method: 'GET' }, auth, context,
+  );
+  const adset = asObject(result.body);
+  if (
+    normalizeStagingSyntheticSeedGraphId(adset.account_id, 'adset_account_id') !== auth.accountId ||
+    normalizeStagingSyntheticSeedGraphId(adset.campaign_id || asObject(adset.campaign).id, 'adset_campaign_id') !== campaignId ||
+    clean(adset.name) !== expectedName ||
+    clean(adset.status).toUpperCase() !== 'PAUSED' ||
+    safeTrackingEnum(adset.destination_type) !== 'WEBSITE'
+  ) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_contract_invalid', 409);
+  }
+  return adset;
+}
+
+function assertStagingSyntheticSeedAdsetContract({ input, source, target }) {
+  try {
+    const sourcePromoted = asObject(source.promoted_object);
+    if (
+      normalizeNumericId(sourcePromoted.pixel_id, 'staging_seed_source_pixel_id') !== input.pixelId ||
+      !safeTrackingEnum(sourcePromoted.custom_event_type) ||
+      !normalizeNumericId(sourcePromoted.offline_conversion_data_set_id, 'staging_seed_source_dataset_id')
+    ) {
+      throw new Error('source_tracking_missing');
+    }
+    assertWebsiteTrackingCompatibility(source, target, {
+      website_event_requirement: 'required',
+      offline_event_dataset_requirement: 'required',
+    });
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_contract_invalid', 409);
+  }
+}
+
+async function readStagingSyntheticSeedCreative(auth, creativeId, expectedName, expectedUrlTags, context) {
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, creativeId, { fields: 'id,name,url_tags' }),
+    { method: 'GET' }, auth, context,
+  );
+  const creative = asObject(result.body);
+  try {
+    if (
+      normalizeNumericId(creative.id, 'staging_seed_creative_id') !== creativeId ||
+      clean(creative.name) !== expectedName ||
+      normalizeUrlTags(creative.url_tags, { required: true }) !== expectedUrlTags
+    ) {
+      throw new Error('creative_mismatch');
+    }
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_contract_invalid', 409);
+  }
+  return creative;
+}
+
+async function readStagingSyntheticSeedAd(auth, adId, expectedAdsetId, expectedCreativeId, expectedName, context) {
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, adId, { fields: AD_STATE_FIELDS }),
+    { method: 'GET' }, auth, context,
+  );
+  const ad = asObject(result.body);
+  try {
+    if (
+      normalizeNumericId(ad.id, 'staging_seed_ad_id') !== adId ||
+      normalizeNumericId(ad.adset_id, 'staging_seed_ad_adset_id') !== expectedAdsetId ||
+      normalizeNumericId(asObject(ad.creative).id, 'staging_seed_ad_creative_id') !== expectedCreativeId ||
+      clean(ad.name) !== expectedName ||
+      clean(ad.status).toUpperCase() !== 'PAUSED' ||
+      !['PAUSED', 'PENDING_REVIEW', 'WITH_ISSUES'].includes(clean(ad.effective_status).toUpperCase())
+    ) {
+      throw new Error('ad_mismatch');
+    }
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_contract_invalid', 409);
+  }
+  return ad;
+}
+
+async function sealStagingSyntheticSeedCredentials({ input, env, operation, state, encryptToken, requestId, context }) {
+  const resources = asObject(state.resources);
+  const facts = asObject(state.facts);
+  const required = [
+    clean(asObject(resources.campaign).id),
+    clean(asObject(resources.source_adset).id),
+    clean(asObject(resources.target_adset).id),
+    clean(asObject(resources.source_creative).id),
+    clean(asObject(resources.source_ad).id),
+    clean(facts.page_id),
+    clean(facts.instagram_user_id),
+    clean(facts.dataset_id),
+  ];
+  if (required.some((value) => !/^\d{5,30}$/.test(value))) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  await context.assertBootstrapLease();
+  let sourceCiphertext;
+  let targetCiphertext;
+  try {
+    sourceCiphertext = await encryptToken(input.accessToken, env);
+    targetCiphertext = await encryptToken(input.accessToken, env);
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+  const metadata = buildStagingSyntheticSeedCredentialMetadata({ input, state });
+  const sourceMetadataJson = JSON.stringify(metadata.source);
+  const targetMetadataJson = JSON.stringify(metadata.target);
+  const seededAuthority = await configWriterAuthorityState([
+    {
+      id: state.credential_ids.source,
+      external_account_id: input.accountId,
+      metadata_json: sourceMetadataJson,
+    },
+    {
+      id: state.credential_ids.target,
+      external_account_id: input.accountId,
+      metadata_json: targetMetadataJson,
+    },
+  ]);
+  if (seededAuthority.ready || seededAuthority.mode !== 'legacy_bootstrap' || !clean(seededAuthority.revision)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  state.credentials_sealing_started = true;
+  state.credentials = {
+    source: { id: state.credential_ids.source, token_type: STAGING_SYNTHETIC_SEED_SOURCE_TOKEN_TYPE },
+    target: { id: state.credential_ids.target, token_type: STAGING_SYNTHETIC_SEED_TARGET_TOKEN_TYPE },
+  };
+  state.seeded_authority = {
+    revision: seededAuthority.revision,
+    source_meta_ads_publish: asObject(metadata.source.meta_ads_publish),
+    target_meta_ads_publish: asObject(metadata.target.meta_ads_publish),
+  };
+  await persistStagingSyntheticSeedState({ env, operation, state, status: 'creating', encryptToken, context });
+  const nextState = {
+    ...state,
+    phase: 'sealed',
+    credentials_sealed: true,
+    credentials_sealing_started: false,
+  };
+  const stateCiphertext = await encryptStagingSyntheticSeedState(nextState, encryptToken, env);
+  const now = nowIso();
+  const statements = [
+    env.TOKEN_VAULT_DB.prepare([
+      'INSERT INTO credential_tokens (id, provider, unit, external_account_id, token_type, token_ciphertext, active, metadata_json, created_at, updated_at)',
+      'SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, ?',
+      "WHERE NOT EXISTS (SELECT 1 FROM credential_tokens WHERE provider = 'facebook' AND active = 1 AND id NOT IN (?, ?))",
+    ].join(' ')).bind(
+      state.credential_ids.source, 'facebook', STAGING_SYNTHETIC_SEED_UNIT, input.accountId,
+      STAGING_SYNTHETIC_SEED_SOURCE_TOKEN_TYPE, sourceCiphertext, sourceMetadataJson, now, now,
+      state.credential_ids.source, state.credential_ids.target,
+    ),
+    env.TOKEN_VAULT_DB.prepare([
+      'INSERT INTO credential_tokens (id, provider, unit, external_account_id, token_type, token_ciphertext, active, metadata_json, created_at, updated_at)',
+      'SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, ?',
+      "WHERE NOT EXISTS (SELECT 1 FROM credential_tokens WHERE provider = 'facebook' AND active = 1 AND id NOT IN (?, ?))",
+    ].join(' ')).bind(
+      state.credential_ids.target, 'facebook', STAGING_SYNTHETIC_SEED_UNIT, input.accountId,
+      STAGING_SYNTHETIC_SEED_TARGET_TOKEN_TYPE, targetCiphertext, targetMetadataJson, now, now,
+      state.credential_ids.source, state.credential_ids.target,
+    ),
+    env.TOKEN_VAULT_DB.prepare([
+      'UPDATE meta_ads_publish_staging_seed_operations',
+      "SET status = 'sealed', state_ciphertext = ?, summary_json = ?, updated_at = ?",
+      "WHERE id = ? AND operation_key = ? AND status = 'creating'",
+      'AND (SELECT COUNT(*) FROM credential_tokens',
+      "WHERE provider = 'facebook' AND active = 1 AND id IN (?, ?)) = 2",
+      'AND NOT EXISTS (SELECT 1 FROM credential_tokens',
+      "WHERE provider = 'facebook' AND active = 1 AND id NOT IN (?, ?))",
+    ].join(' ')).bind(
+      stateCiphertext, JSON.stringify(summarizeStagingSyntheticSeedState(nextState)), now, operation.id, operation.operation_key,
+      state.credential_ids.source, state.credential_ids.target, state.credential_ids.source, state.credential_ids.target,
+    ),
+  ];
+  let results;
+  try {
+    results = await env.TOKEN_VAULT_DB.batch(statements);
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_unavailable', 503);
+  }
+  if (safeArray(results).some((result) => statementChanges(result) !== 1)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  Object.assign(state, nextState);
+  operation.status = 'sealed';
+  void requestId;
+}
+
+function buildStagingSyntheticSeedCredentialMetadata({ input, state }) {
+  const facts = asObject(state.facts);
+  const resources = asObject(state.resources);
+  const common = {
+    destination_group: STAGING_SYNTHETIC_SEED_UNIT,
+    api_version: input.apiVersion,
+    account_id: input.accountId,
+    campaign_id: clean(asObject(resources.campaign).id),
+    page_id: clean(facts.page_id),
+    instagram_user_id: clean(facts.instagram_user_id),
+    allowed_link_hosts: [clean(facts.landing_host)],
+    landing_pages_by_creative_group: { [STAGING_SYNTHETIC_SEED_LANDING_GROUP]: clean(facts.landing_url) },
+    freshness_window_days: 7,
+    destination_type: 'website',
+    fixture_source_ad_id: clean(asObject(resources.source_ad).id),
+    url_tags: normalizeUrlTags(state.url_tags, { required: true }),
+  };
+  return {
+    source: {
+      meta_ads_publish: {
+        ...common,
+        adset_id: clean(asObject(resources.source_adset).id),
+        source_adset_id: clean(asObject(resources.source_adset).id),
+      },
+    },
+    target: {
+      meta_ads_publish: {
+        ...common,
+        adset_id: clean(asObject(resources.target_adset).id),
+        source_config_token_id: clean(state.credential_ids.source),
+      },
+    },
+  };
+}
+
+async function compensateStagingSyntheticSeed({ env, operation, state, auth, encryptToken, context, deactivateCredentials }) {
+  if (state.reconciliation_required === true) return { ok: false };
+  const resources = asObject(state.resources);
+  if (Object.values(resources).some((value) => asObject(value).pending === true)) {
+    state.reconciliation_required = true;
+    state.phase = 'reconciliation_required';
+    if (typeof encryptToken === 'function') {
+      await persistStagingSyntheticSeedState({ env, operation, state, status: 'reconciliation_required', encryptToken, context }).catch(() => undefined);
+    }
+    return { ok: false };
+  }
+  try {
+    if (context?.stagingSyntheticSeedMutationLocksHeld !== true) {
+      await acquireStagingSyntheticSeedMutationLocks(context, state);
+    }
+    if (auth) {
+      await archiveStagingSyntheticSeedAd(auth, asObject(resources.source_ad), asObject(resources.source_adset), context);
+      await archiveStagingSyntheticSeedAdset(auth, asObject(resources.target_adset), asObject(resources.campaign), context);
+      await archiveStagingSyntheticSeedAdset(auth, asObject(resources.source_adset), asObject(resources.campaign), context);
+      await archiveStagingSyntheticSeedCampaign(auth, asObject(resources.campaign), context);
+    }
+    // An AdCreative has no documented archive state, but once every owned ad
+    // has been read back as ARCHIVED it is detached from delivery. Retain that
+    // inert creative under the encrypted operation journal rather than let an
+    // otherwise complete rollback strand the candidate Worker forever.
+    state.detached_creative_retained = Boolean(clean(asObject(resources.source_creative).id));
+    if (deactivateCredentials || state.credentials_sealing_started === true) {
+      await deactivateStagingSyntheticSeedCredentials({ env, operation, state, encryptToken, context });
+    } else {
+      state.phase = 'rolled_back';
+      await persistStagingSyntheticSeedState({ env, operation, state, status: 'rolled_back', encryptToken, context });
+    }
+    return { ok: true };
+  } catch {
+    state.reconciliation_required = true;
+    state.phase = 'reconciliation_required';
+    if (typeof encryptToken === 'function') {
+      await persistStagingSyntheticSeedState({ env, operation, state, status: 'reconciliation_required', encryptToken, context }).catch(() => undefined);
+    }
+    return { ok: false };
+  }
+}
+
+async function archiveStagingSyntheticSeedAd(auth, resource, adset, context) {
+  const id = clean(resource.id);
+  if (!id) return;
+  const currentResult = await graphRequest(
+    graphUrl(auth.apiVersion, id, { fields: AD_STATE_FIELDS }),
+    { method: 'GET' }, auth, context,
+  );
+  const current = asObject(currentResult.body);
+  if (clean(current.status).toUpperCase() === 'ARCHIVED') return;
+  if (clean(current.name) !== clean(resource.name) || clean(current.adset_id) !== clean(adset.id)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  await graphRequest(graphUrl(auth.apiVersion, id), seedJsonRequest('POST', { status: 'ARCHIVED' }), auth, context, { maxAttempts: 1 });
+  const readbackResult = await graphRequest(
+    graphUrl(auth.apiVersion, id, { fields: AD_STATE_FIELDS }),
+    { method: 'GET' }, auth, context,
+  );
+  const readback = asObject(readbackResult.body);
+  if (clean(readback.status).toUpperCase() !== 'ARCHIVED') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+}
+
+async function archiveStagingSyntheticSeedAdset(auth, resource, campaign, context) {
+  const id = clean(resource.id);
+  if (!id) return;
+  const currentResult = await graphRequest(
+    graphUrl(auth.apiVersion, id, { fields: STAGING_SYNTHETIC_SEED_ADSET_FIELDS }),
+    { method: 'GET' }, auth, context,
+  );
+  const current = asObject(currentResult.body);
+  if (clean(current.status).toUpperCase() === 'ARCHIVED') return;
+  if (
+    clean(current.campaign_id || asObject(current.campaign).id) !== clean(campaign.id) ||
+    clean(current.name) !== clean(resource.name)
+  ) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  await graphRequest(graphUrl(auth.apiVersion, id), seedJsonRequest('POST', { status: 'ARCHIVED' }), auth, context, { maxAttempts: 1 });
+  const readbackResult = await graphRequest(
+    graphUrl(auth.apiVersion, id, { fields: STAGING_SYNTHETIC_SEED_ADSET_FIELDS }),
+    { method: 'GET' }, auth, context,
+  );
+  const readback = asObject(readbackResult.body);
+  if (clean(readback.status).toUpperCase() !== 'ARCHIVED') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+}
+
+async function archiveStagingSyntheticSeedCampaign(auth, resource, context) {
+  const id = clean(resource.id);
+  if (!id) return;
+  const current = await graphRequest(graphUrl(auth.apiVersion, id, { fields: CAMPAIGN_READ_FIELDS }), { method: 'GET' }, auth, context);
+  if (clean(asObject(current.body).status).toUpperCase() === 'ARCHIVED') return;
+  if (clean(asObject(current.body).name) !== clean(resource.name)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  await graphRequest(graphUrl(auth.apiVersion, id), seedJsonRequest('POST', { status: 'ARCHIVED' }), auth, context, { maxAttempts: 1 });
+  const readback = await graphRequest(graphUrl(auth.apiVersion, id, { fields: CAMPAIGN_READ_FIELDS }), { method: 'GET' }, auth, context);
+  if (clean(asObject(readback.body).status).toUpperCase() !== 'ARCHIVED') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+}
+
+async function deactivateStagingSyntheticSeedCredentials({ env, operation, state, encryptToken, context }) {
+  const credentials = asObject(state.credentials);
+  const sourceId = clean(asObject(credentials.source).id || asObject(state.credential_ids).source);
+  const targetId = clean(asObject(credentials.target).id || asObject(state.credential_ids).target);
+  if (!sourceId || !targetId || sourceId === targetId) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  const present = await dbFirst(env, [
+    'SELECT COUNT(*) AS count FROM credential_tokens',
+    "WHERE provider = 'facebook' AND unit = ? AND active = 1 AND id IN (?, ?)",
+  ].join(' '), STAGING_SYNTHETIC_SEED_UNIT, sourceId, targetId);
+  const presentCount = Number(present?.count || 0);
+  if (presentCount !== 0 && presentCount !== 2) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  state.phase = 'rolling_back';
+  await persistStagingSyntheticSeedState({ env, operation, state, status: 'rolling_back', encryptToken, context });
+  const nextState = { ...state, phase: 'rolled_back', credentials_sealed: false };
+  const stateCiphertext = await encryptStagingSyntheticSeedState(nextState, encryptToken, env);
+  const now = nowIso();
+  const statements = [
+    ...(presentCount === 2 ? [
+      env.TOKEN_VAULT_DB.prepare([
+        'UPDATE credential_tokens SET active = 0, updated_at = ?',
+        'WHERE id = ? AND provider = ? AND unit = ? AND token_type = ? AND active = 1',
+      ].join(' ')).bind(now, sourceId, 'facebook', STAGING_SYNTHETIC_SEED_UNIT, STAGING_SYNTHETIC_SEED_SOURCE_TOKEN_TYPE),
+      env.TOKEN_VAULT_DB.prepare([
+        'UPDATE credential_tokens SET active = 0, updated_at = ?',
+        'WHERE id = ? AND provider = ? AND unit = ? AND token_type = ? AND active = 1',
+      ].join(' ')).bind(now, targetId, 'facebook', STAGING_SYNTHETIC_SEED_UNIT, STAGING_SYNTHETIC_SEED_TARGET_TOKEN_TYPE),
+    ] : []),
+    env.TOKEN_VAULT_DB.prepare([
+      'UPDATE meta_ads_publish_staging_seed_operations',
+      "SET status = 'rolled_back', state_ciphertext = ?, summary_json = ?, updated_at = ?",
+      "WHERE id = ? AND operation_key = ? AND status = 'rolling_back'",
+    ].join(' ')).bind(
+      stateCiphertext, JSON.stringify(summarizeStagingSyntheticSeedState(nextState)), now, operation.id, operation.operation_key,
+    ),
+  ];
+  const results = await env.TOKEN_VAULT_DB.batch(statements);
+  if (safeArray(results).some((result) => statementChanges(result) !== 1)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  Object.assign(state, nextState);
+  operation.status = 'rolled_back';
 }
 
 function normalizeBootstrapDeriveFailure(error) {
