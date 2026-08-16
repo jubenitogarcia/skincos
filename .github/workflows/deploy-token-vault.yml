@@ -987,6 +987,7 @@ jobs:
           TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
           ENABLE_TOKEN_VAULT_DEPLOY_STAGING: ${{ vars.ENABLE_TOKEN_VAULT_DEPLOY_STAGING }}
           ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY: ${{ vars.ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY }}
+          META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           TARGET: ${{ inputs.target }}
           OPERATION: ${{ inputs.operation }}
           CONFIRM_STAGING_TRACKING_FIXTURE: ${{ inputs.confirm_staging_tracking_fixture }}
@@ -1001,6 +1002,7 @@ jobs:
             [[ "$ENABLE_TOKEN_VAULT_DEPLOY_STAGING" == true ]] || { echo 'ENABLE_TOKEN_VAULT_DEPLOY_STAGING must be true'; exit 1; }
             [[ "$CONFIRM_STAGING_TRACKING_FIXTURE" == true ]] || { echo 'An isolated synthetic tracking fixture must be confirmed for staging'; exit 1; }
             [[ "$TOKEN_VAULT_STAGING_BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'TOKEN_VAULT_STAGING_BASE_URL must be an HTTPS origin'; exit 1; }
+            [[ "$META_ADS_API_VERSION" =~ ^v(2[5-9]|[3-9][0-9])\.0$ ]] || { echo 'META_ADS_API_VERSION must be v25.0 or a newer supported Graph API version for the governed staging seed'; exit 1; }
           else
             [[ "$ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY" == true ]] || { echo 'ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY must be true'; exit 1; }
             [[ "$TOKEN_VAULT_PRODUCTION_BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'TOKEN_VAULT_PRODUCTION_BASE_URL must be an HTTPS origin'; exit 1; }
@@ -1318,12 +1320,11 @@ jobs:
           echo "version_id=$TOKEN_VAULT_VERSION_ID" >> "$GITHUB_OUTPUT"
           echo "incumbent_version_id=$TOKEN_VAULT_INCUMBENT_VERSION_ID" >> "$GITHUB_OUTPUT"
 
-      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate
-        # This is deliberately before candidate config authentication and plan
-        # derivation: an empty legacy authority has no prior target from which
-        # to derive. The generated bearer has no role outside these two seed
-        # endpoints and the Meta source inputs never enter a Worker binding.
-        id: candidate_staging_synthetic_seed
+      - name: Attest the isolated staging Meta Ads synthetic source on the immutable candidate
+        # This candidate-only proof is Graph read-only: it has no D1 journal,
+        # lock, audit, credential sealing, or Graph mutation. The seed repeats
+        # these checks under its mutation lease immediately before it writes.
+        id: candidate_staging_synthetic_seed_attestation
         if: inputs.operation == 'deploy' && inputs.target == 'staging'
         env:
           META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
@@ -1348,7 +1349,76 @@ jobs:
           if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile) {
             throw new Error('immutable staging synthetic-seed candidate endpoint is unavailable');
           }
-          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion)) {
+          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
+            throw new Error('staging synthetic Meta source custody is unavailable or malformed');
+          }
+          if (!/^[a-f0-9]{40}$/.test(releaseSha) || !/^\d+$/.test(runId) || !/^\d+$/.test(runAttempt)) {
+            throw new Error('staging synthetic-seed operation identity is invalid');
+          }
+          const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
+          if (!/^[A-Za-z0-9_-]{64,}$/.test(seedToken)) throw new Error('staging synthetic-seed bearer is unavailable');
+          const operationKey = `meta-ads-staging-seed:${releaseSha.slice(0, 12)}:${runId}:${runAttempt}`;
+          const response = await fetch(`${preview}/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/attest`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${seedToken}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              operation_key: operationKey,
+              access_token: accessToken,
+              account_id: accountId,
+              pixel_id: pixelId,
+              api_version: apiVersion,
+            }),
+            cache: 'no-store',
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+          const allowedKeys = new Set(['ok', 'attestation', 'operation_key', 'contract_version', 'requestId']);
+          const valid = response.ok && payload?.ok === true &&
+            Object.keys(payload).every((key) => allowedKeys.has(key)) &&
+            String(payload?.attestation || '') === 'match' &&
+            String(payload?.operation_key || '') === operationKey &&
+            String(payload?.contract_version || '') === 'meta-ads-tracking-v20/staging-synthetic-seed/v1' &&
+            typeof payload?.requestId === 'string';
+          if (!valid) throw new Error(`staging synthetic-seed source attestation failed: ${response.status} ${error}`);
+          NODE
+
+      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate
+        # This is deliberately before candidate config authentication and plan
+        # derivation: an empty legacy authority has no prior target from which
+        # to derive. The generated bearer has no role outside these two seed
+        # endpoints and the Meta source inputs never enter a Worker binding.
+        id: candidate_staging_synthetic_seed
+        if: inputs.operation == 'deploy' && inputs.target == 'staging' && steps.candidate_staging_synthetic_seed_attestation.outcome == 'success'
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
+          META_PIXEL_ID: ${{ inputs.target == 'staging' && secrets.META_PIXEL_ID || '' }}
+          META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
+          META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const preview = String(process.env.TOKEN_VAULT_CANDIDATE_PREVIEW_URL || '').replace(/\/$/, '');
+          const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
+          const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const pixelId = String(process.env.META_PIXEL_ID || '').trim();
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
+          const releaseSha = String(process.env.RELEASE_SHA || '').toLowerCase();
+          const runId = String(process.env.GITHUB_RUN_ID || '');
+          const runAttempt = String(process.env.GITHUB_RUN_ATTEMPT || '');
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile) {
+            throw new Error('immutable staging synthetic-seed candidate endpoint is unavailable');
+          }
+          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
             throw new Error('staging synthetic Meta source custody is unavailable or malformed');
           }
           if (!/^[a-f0-9]{40}$/.test(releaseSha) || !/^\d+$/.test(runId) || !/^\d+$/.test(runAttempt)) {
@@ -1616,7 +1686,7 @@ jobs:
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const operationKey = String(process.env.SEED_OPERATION_KEY || '');
-          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
             throw new Error('staging synthetic-seed rollback custody or identity is invalid');
           }
           const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
@@ -1680,7 +1750,7 @@ jobs:
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const operationKey = String(process.env.SEED_OPERATION_KEY || '');
-          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
             throw new Error('staging synthetic-seed rollback custody or identity is invalid');
           }
           const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
@@ -2096,7 +2166,7 @@ jobs:
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const operationKey = String(process.env.SEED_OPERATION_KEY || '');
-          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v\d+\.\d+$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion) || !/^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/.test(operationKey)) {
             throw new Error('staging synthetic-seed rollback custody or identity is invalid');
           }
           const seedToken = fs.readFileSync(seedFile, 'utf8').trim();

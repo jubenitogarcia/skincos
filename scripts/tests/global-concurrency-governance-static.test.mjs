@@ -78,14 +78,14 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   const tokenVaultUnit = catalog.units.find((unit) => unit.id === "token-vault");
   assert.ok(tokenVaultUnit);
   assert.ok(!catalog.nonPublishingSurfaces.some((entry) => entry.id === "token-vault"));
-  assert.ok(tokenVaultUnit.resources.includes("Governed Meta Ads staging synthetic seed, bootstrap derivation, rollback journal and paused creative fixture"));
+  assert.ok(tokenVaultUnit.resources.includes("Governed Meta Ads staging synthetic source attestation, seed, bootstrap derivation, rollback journal and paused creative fixture"));
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_CONFIG_TOKEN"));
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST"));
   assert.ok(tokenVaultUnit.secrets.includes("META_ADS_ACCESS_TOKEN"));
   assert.ok(tokenVaultUnit.secrets.includes("META_PIXEL_ID"));
   assert.ok(!tokenVaultUnit.secrets.includes("TOKEN_VAULT_BACKUP_PASSPHRASE"));
   assert.equal(tokenVaultUnit.promotion.trackingFixture, "synthetic authorized ad-set profile required before staging");
-  assert.equal(tokenVaultUnit.promotion.trackingBootstrap, "empty staging authority uses a restricted one-shot synthetic seed; legacy authority uses restricted config bearer plus hash-bound internal derivation or protected entries override");
+  assert.equal(tokenVaultUnit.promotion.trackingBootstrap, "empty staging authority uses a candidate-only Graph-read attestation before a restricted one-shot synthetic seed; legacy authority uses restricted config bearer plus hash-bound internal derivation or protected entries override");
   assert.equal(tokenVaultUnit.promotion.d1Recovery, "Time Travel bookmark; manual restore only under release:token-vault");
 
   const workflow = read(".github/workflows/deploy-token-vault.yml");
