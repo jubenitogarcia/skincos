@@ -82,8 +82,45 @@ export async function observedEgressAddress({ fetchImpl = fetch } = {}) {
 function assertIdentity(row, pilotLogin) {
   const username = normalize(row.username).toLowerCase();
   const login = normalizedLogin(row.identity_login);
+  const identityRole = normalize(row.identity_role).toUpperCase();
   const onboardingId = normalize(row.onboarding_id);
   const workforceEmployeeId = normalize(row.workforce_employee_id);
+  const linkUsername = normalize(row.link_username).toLowerCase();
+  const linkOnboardingId = normalize(row.link_onboarding_id);
+  const linkWorkforceEmployeeId = normalize(row.link_workforce_employee_id);
+  const linkReviewStatus = normalize(row.link_review_status).toUpperCase();
+  const identityUnits = parseUnits(row.identity_units_json);
+  const onboardingUnits = parseUnits(row.onboarding_units_json);
+
+  if (
+    username !== PILOT_USERNAME
+    || !EMAIL.test(login)
+    || login !== normalizedLogin(pilotLogin)
+    || Number(row.identity_active) !== 1
+    || identityRole !== "CONSULTOR"
+    || !UUID.test(onboardingId)
+    || normalize(row.account_status).toUpperCase() !== "ACTIVE"
+    || normalize(row.provisioning_state).toUpperCase() !== "COMPLETED"
+    || normalize(row.last_error_code)
+    || !UUID.test(workforceEmployeeId)
+    || linkUsername !== username
+    || linkOnboardingId !== onboardingId
+    || linkWorkforceEmployeeId !== workforceEmployeeId
+    || linkReviewStatus !== "CONFIRMED"
+  ) throw failure("PILOT_COHORT_IDENTITY_INVALID");
+
+  return {
+    actorId: username,
+    username,
+    login,
+    onboardingId,
+    workforceEmployeeId,
+    identityUnits,
+    onboardingUnits,
+  };
+}
+
+function assertWorkforce(row, identity) {
   const employeeId = normalize(row.employee_id);
   const canonicalEmployeeId = normalize(row.canonical_employee_id);
   const workforceLogin = normalizedLogin(row.workforce_login);
@@ -91,32 +128,68 @@ function assertIdentity(row, pilotLogin) {
   const metadata = (() => {
     try { return JSON.parse(String(row.metadata_json || "{}")); } catch { return null; }
   })();
-  const identityUnits = parseUnits(row.identity_units_json);
-  const onboardingUnits = parseUnits(row.onboarding_units_json);
   const currentAccessState = normalize(row.access_state || row.status).toUpperCase();
 
   if (
-    username !== PILOT_USERNAME
-    || !EMAIL.test(login)
-    || login !== normalizedLogin(pilotLogin)
-    || Number(row.identity_active) !== 1
-    || !UUID.test(onboardingId)
-    || normalize(row.account_status).toUpperCase() !== "ACTIVE"
-    || normalize(row.provisioning_state).toUpperCase() !== "COMPLETED"
-    || normalize(row.last_error_code)
-    || !UUID.test(workforceEmployeeId)
-    || workforceEmployeeId !== employeeId
-    || canonicalEmployeeId !== `identity:${onboardingId}`
-    || workforceLogin !== login
+    !UUID.test(employeeId)
+    || employeeId !== identity.workforceEmployeeId
+    || canonicalEmployeeId !== `identity:${identity.onboardingId}`
+    || workforceLogin !== identity.login
     || normalize(row.status).toUpperCase() !== "ACTIVE"
     || currentAccessState !== "ACTIVE"
-    || metadata?.identityOnboardingId !== onboardingId
+    || metadata?.identityOnboardingId !== identity.onboardingId
     || !unitId
-    || !identityUnits.includes(unitId)
-    || !onboardingUnits.includes(unitId)
+    || !identity.identityUnits.includes(unitId)
+    || !identity.onboardingUnits.includes(unitId)
   ) throw failure("PILOT_COHORT_IDENTITY_INVALID");
 
-  return { username, login, onboardingId, canonicalEmployeeId, unitId };
+  return { ...identity, canonicalEmployeeId, unitId };
+}
+
+function identityQuery() {
+  return `SELECT
+      u.username AS username,
+      lower(trim(u.email)) AS identity_login,
+      u.role AS identity_role,
+      u.ativo AS identity_active,
+      u.allowed_units_json AS identity_units_json,
+      o.id AS onboarding_id,
+      o.account_status AS account_status,
+      o.provisioning_state AS provisioning_state,
+      o.last_error_code AS last_error_code,
+      o.workforce_employee_id AS workforce_employee_id,
+      o.units_json AS onboarding_units_json,
+      l.crm_username AS link_username,
+      l.onboarding_id AS link_onboarding_id,
+      l.workforce_employee_id AS link_workforce_employee_id,
+      l.review_status AS link_review_status
+    FROM crm_users u
+    JOIN crm_employee_onboarding o ON lower(o.requested_username) = lower(u.username)
+    JOIN crm_employee_account_links l ON l.onboarding_id = o.id
+      AND l.workforce_employee_id = o.workforce_employee_id
+      AND lower(l.crm_username) = lower(u.username)
+    WHERE lower(u.username) = '${PILOT_USERNAME}'
+      AND upper(l.review_status) = 'CONFIRMED'
+    ORDER BY o.updated_at DESC, o.id ASC`;
+}
+
+function workforceQuery(workforceEmployeeId) {
+  const employeeId = normalize(workforceEmployeeId).toLowerCase();
+  if (!UUID.test(employeeId)) throw failure("PILOT_COHORT_IDENTITY_INVALID");
+  return `SELECT
+      e.id AS employee_id,
+      e.canonical_employee_id AS canonical_employee_id,
+      lower(trim(e.login_email)) AS workforce_login,
+      e.status AS status,
+      e.access_state AS access_state,
+      e.metadata_json AS metadata_json,
+      tu.unit_id AS unit_id
+    FROM workforce_employees e
+    JOIN timekeeping_employee_units tu ON tu.employee_id = e.id
+      AND tu.effective_from <= date('now')
+      AND (tu.effective_to IS NULL OR tu.effective_to >= date('now'))
+    WHERE e.id = '${employeeId}'
+    ORDER BY tu.effective_from DESC, tu.unit_id ASC`;
 }
 
 export function derivePilotCohort({ releaseSha, idempotencyKey, identity, egressAddress }) {
@@ -130,7 +203,7 @@ export function derivePilotCohort({ releaseSha, idempotencyKey, identity, egress
   const cohort = {
     pilotEmployeeRefs: [opaque(actorKey, `ponto-canary-employee/v1.${source}.${identity.canonicalEmployeeId}`)],
     pilotIdentityLoginRefs: [opaque(actorKey, `ponto-canary-login/v1.${source}.${identity.login}`)],
-    pilotIdentityRefs: [opaque(actorKey, `ponto-canary-identity/v1.${source}.${identity.username}`)],
+    pilotIdentityRefs: [opaque(actorKey, `ponto-canary-identity/v1.${source}.${identity.actorId}`)],
     pilotNetworkContexts: [opaque(networkKey, `ponto-network/v1.${source}.${egressAddress}`)],
     pilotUnits: [identity.unitId],
   };
@@ -150,50 +223,37 @@ export async function materializePilotCohort({ env = process.env, fetchImpl = fe
   const releaseSha = required(env, "PONTO_RELEASE_SHA").toLowerCase();
   const accountId = required(env, "CLOUDFLARE_ACCOUNT_ID").toLowerCase();
   const apiToken = required(env, "CLOUDFLARE_API_TOKEN");
+  const identityDatabaseId = required(env, "PONTO_IDENTITY_D1_PRODUCTION_ID").toLowerCase();
   const databaseId = required(env, "PONTO_TIMEKEEPING_D1_PRODUCTION_ID").toLowerCase();
   const pilotLogin = required(env, "PONTO_PILOT_LOGIN");
   const idempotencyKey = required(env, "PONTO_IDEMPOTENCY_KEY");
   if (!FULL_SHA.test(releaseSha)) throw failure("PILOT_COHORT_RELEASE_INVALID");
   if (!/^[0-9a-f]{32}$/.test(accountId)) throw failure("PILOT_COHORT_ACCOUNT_INVALID");
+  if (!UUID.test(identityDatabaseId)) throw failure("PILOT_COHORT_DATABASE_INVALID");
   if (!UUID.test(databaseId)) throw failure("PILOT_COHORT_DATABASE_INVALID");
+  if (identityDatabaseId === databaseId) throw failure("PILOT_COHORT_DATABASE_INVALID");
   if (!EMAIL.test(pilotLogin)) throw failure("PILOT_COHORT_LOGIN_INVALID");
 
-  const rows = await queryD1({
+  const identityRows = await queryD1({
+    fetchImpl,
+    accountId,
+    apiToken,
+    databaseId: identityDatabaseId,
+    sql: identityQuery(),
+  });
+  if (identityRows.length !== 1) throw failure("PILOT_COHORT_IDENTITY_INVALID");
+  const identity = assertIdentity(identityRows[0], pilotLogin);
+  const workforceRows = await queryD1({
     fetchImpl,
     accountId,
     apiToken,
     databaseId,
-    sql: `SELECT
-      u.username AS username,
-      lower(trim(u.email)) AS identity_login,
-      u.ativo AS identity_active,
-      u.allowed_units_json AS identity_units_json,
-      o.id AS onboarding_id,
-      o.account_status AS account_status,
-      o.provisioning_state AS provisioning_state,
-      o.last_error_code AS last_error_code,
-      o.workforce_employee_id AS workforce_employee_id,
-      o.units_json AS onboarding_units_json,
-      e.id AS employee_id,
-      e.canonical_employee_id AS canonical_employee_id,
-      lower(trim(e.login_email)) AS workforce_login,
-      e.status AS status,
-      e.access_state AS access_state,
-      e.metadata_json AS metadata_json,
-      tu.unit_id AS unit_id
-    FROM insumos_users u
-    JOIN crm_employee_onboarding o ON lower(o.requested_username) = lower(u.username)
-    JOIN workforce_employees e ON e.id = o.workforce_employee_id
-    JOIN timekeeping_employee_units tu ON tu.employee_id = e.id
-      AND tu.effective_from <= date('now')
-      AND (tu.effective_to IS NULL OR tu.effective_to >= date('now'))
-    WHERE lower(u.username) = '${PILOT_USERNAME}'
-    ORDER BY tu.effective_from DESC, tu.unit_id ASC`,
+    sql: workforceQuery(identity.workforceEmployeeId),
   });
-  if (rows.length !== 1) throw failure("PILOT_COHORT_IDENTITY_INVALID");
-  const identity = assertIdentity(rows[0], pilotLogin);
+  if (workforceRows.length !== 1) throw failure("PILOT_COHORT_IDENTITY_INVALID");
+  const candidate = assertWorkforce(workforceRows[0], identity);
   const egressAddress = await observedEgressAddress({ fetchImpl });
-  return derivePilotCohort({ releaseSha, idempotencyKey, identity, egressAddress });
+  return derivePilotCohort({ releaseSha, idempotencyKey, identity: candidate, egressAddress });
 }
 
 const invokedDirectly = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1].replaceAll("\\", "/")}`).href;

@@ -49,6 +49,21 @@ jobs:
           assertPontoSourceClosureUnchanged(process.env.PONTO_RELEASE_SHA, process.env.PONTO_OBSERVED_SHA);
           NODE
 
+      - name: Resolve the fixed production Identity D1 binding from source
+        run: |
+          set -euo pipefail
+          identity_d1_id="$(node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const source = fs.readFileSync("inventory/wrangler.toml", "utf8");
+          const production = source.split(/^\[env\.staging\]/m, 1)[0];
+          const match = production.match(/\[\[d1_databases\]\]\s+binding\s*=\s*"DB"\s+database_name\s*=\s*"skincos-db"\s+database_id\s*=\s*"([0-9a-f-]{36})"/i);
+          if (!match) throw new Error("production Identity D1 binding is unavailable");
+          process.stdout.write(match[1].toLowerCase());
+          NODE
+          )"
+          [[ "$identity_d1_id" =~ ^[0-9a-f-]{36}$ ]] || { echo 'production Identity D1 binding is invalid.' >&2; exit 78; }
+          echo "PONTO_IDENTITY_D1_PRODUCTION_ID=$identity_d1_id" >> "$GITHUB_ENV"
+
       - name: Confirm secret custody metadata before the one-time write
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
