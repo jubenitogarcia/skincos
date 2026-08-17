@@ -20,6 +20,15 @@
         "--local",
         "--dry-run"
       ]
+    },
+    {
+      "workflow": ".github/workflows/materialize-native-pilot-cohort-custody.yml",
+      "reason": "Reads the pinned production identity through the D1 query endpoint to derive a GitHub environment secret; it has no Cloudflare mutation authority.",
+      "requiredMarkers": [
+        "/d1/database/${databaseId}/query",
+        "SELECT",
+        "PILOT_COHORT_IDENTITY_INVALID"
+      ]
     }
   ],
   "coordinationGroups": [
