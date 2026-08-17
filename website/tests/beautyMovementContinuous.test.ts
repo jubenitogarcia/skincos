@@ -196,7 +196,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /"held"/);
     assert.match(experience, /function startInitialDeal\(\)/);
     const initialDeal = experience.slice(
-        experience.indexOf("function startInitialDeal"),
+        experience.indexOf("function startInitialDeal()"),
         experience.indexOf("function handleDeckKeyDown"),
     );
     assert.match(initialDeal, /setCurrentIntroStage\("entering"\);\s*startInitialDealScroll\(\);/);
