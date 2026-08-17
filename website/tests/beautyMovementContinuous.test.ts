@@ -85,7 +85,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /automática em \{AUTO_ADVANCE_SECONDS\} segundos/);
     assert.doesNotMatch(experience, /confirmationTriggerRef/);
     assert.match(experience, /className=\{styles\.progressButton\}/);
-    assert.match(experience, /disabled=\{!isCurrent \|\| Boolean\(progressMotion\)\}/);
+    assert.match(experience, /disabled=\{!isCurrent \|\| Boolean\(progressMotion\) \|\| autoAdvanceActive\}/);
     assert.match(experience, /onClick=\{\(\) => handleProgressClick\(index\)\}/);
     assert.match(experience, /className=\{styles\.progressCopy\}/);
     assert.match(experience, /className=\{styles\.progressTransfer\}/);

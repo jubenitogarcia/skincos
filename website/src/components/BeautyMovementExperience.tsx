@@ -154,36 +154,6 @@ const INITIAL_TABLE_HEIGHT = 112;
 const AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION.autoAdvanceMs / 1_000;
 const INITIAL_EXPERIENCE_TITLE = "3 anos. 3 cartas.";
 const INITIAL_EXPERIENCE_SUBTITLE = "Um novo movimento para celebrar tudo o que ainda vem pela frente.";
-// Keyboard focus changes and application shortcuts must not cancel a pending
-// hand. Only keys whose browser-default action is to move the reading viewport
-// count as an explicit reading interruption.
-const AUTO_ADVANCE_READING_KEYS = new Set([
-    "ArrowDown",
-    "ArrowUp",
-    "PageDown",
-    "PageUp",
-    "Home",
-    "End",
-    " ",
-    "Spacebar",
-]);
-
-function isAutoAdvanceReadingIntent(event: KeyboardEvent): boolean {
-    if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return false;
-
-    const target = event.target;
-    const isEditableTarget =
-        target instanceof HTMLElement &&
-        (target.isContentEditable ||
-            target.tagName === "INPUT" ||
-            target.tagName === "TEXTAREA" ||
-            target.tagName === "SELECT");
-    if (isEditableTarget) {
-        return false;
-    }
-
-    return AUTO_ADVANCE_READING_KEYS.has(event.key);
-}
 
 type InitialExperienceCopy = {
     title: string;
@@ -706,7 +676,6 @@ export default function BeautyMovementExperience({
     }
 
     function scrollToTable() {
-        cancelAutoAdvance();
         const title = document.getElementById("beauty-movement-title");
         const titlePeek =
             title instanceof HTMLElement
@@ -1018,24 +987,6 @@ export default function BeautyMovementExperience({
     }
 
     useEffect(() => {
-        if (!autoAdvanceActive) return;
-
-        const cancelOnReadingIntent = () => cancelAutoAdvance();
-        const cancelOnKeyboardReadingIntent = (event: KeyboardEvent) => {
-            if (isAutoAdvanceReadingIntent(event)) cancelOnReadingIntent();
-        };
-        window.addEventListener("wheel", cancelOnReadingIntent, { passive: true });
-        window.addEventListener("touchmove", cancelOnReadingIntent, { passive: true });
-        window.addEventListener("keydown", cancelOnKeyboardReadingIntent);
-
-        return () => {
-            window.removeEventListener("wheel", cancelOnReadingIntent);
-            window.removeEventListener("touchmove", cancelOnReadingIntent);
-            window.removeEventListener("keydown", cancelOnKeyboardReadingIntent);
-        };
-    }, [autoAdvanceActive, cancelAutoAdvance]);
-
-    useEffect(() => {
         if (!reducedMotion) return;
         cancelAutoAdvance();
         cancelScrollAnimation();
@@ -1089,16 +1040,10 @@ export default function BeautyMovementExperience({
         };
     }, [handStage, introStage]);
 
-    useEffect(() => {
-        const cancelWhenBackgrounded = () => {
-            if (document.visibilityState === "hidden") cancelAutoAdvance();
-        };
-
-        document.addEventListener("visibilitychange", cancelWhenBackgrounded);
-        return () => document.removeEventListener("visibilitychange", cancelWhenBackgrounded);
-    }, [cancelAutoAdvance]);
-
     function handleProgressClick(index: number) {
+        // Once the automatic handoff is armed, progress controls are passive:
+        // user input must never turn a visible countdown into a cancellation.
+        if (autoAdvanceActive) return;
         if (index !== displayedActIndexRef.current || !isActUnlocked(index)) return;
 
         const act = BEAUTY_MOVEMENT_ACTS[index];
@@ -1615,7 +1560,7 @@ export default function BeautyMovementExperience({
                                                     ref={(element) => {
                                                         progressButtonRefs.current[index] = element;
                                                     }}
-                                                    disabled={!isCurrent || Boolean(progressMotion)}
+                                                    disabled={!isCurrent || Boolean(progressMotion) || autoAdvanceActive}
                                                 aria-current={isCurrent ? "step" : undefined}
                                                 aria-label={progressActionLabel}
                                             >
