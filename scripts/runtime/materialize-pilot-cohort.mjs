@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ONBOARDING_ID = /^(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const OPAQUE_REF = /^v1:[A-Za-z0-9_-]{43}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const EGRESS_ADDRESS = /^[0-9A-Fa-f:.]{3,64}$/;
@@ -109,7 +110,7 @@ function assertIdentity(row, pilotLogin) {
   if (!EMAIL.test(login) || login !== normalizedLogin(pilotLogin)) throw identityInvalid("LOGIN");
   if (Number(row.identity_active) !== 1) throw identityInvalid("ACTIVE");
   if (identityRole !== "CONSULTOR") throw identityInvalid("ROLE");
-  if (!UUID.test(onboardingId)) throw identityInvalid("ONBOARDING_ID");
+  if (!ONBOARDING_ID.test(onboardingId)) throw identityInvalid("ONBOARDING_ID");
   if (normalize(row.account_status).toUpperCase() !== "ACTIVE") throw identityInvalid("ACCOUNT_STATUS");
   if (normalize(row.provisioning_state).toUpperCase() !== "COMPLETED") throw identityInvalid("PROVISIONING_STATE");
   if (normalize(row.last_error_code)) throw identityInvalid("LAST_ERROR");
