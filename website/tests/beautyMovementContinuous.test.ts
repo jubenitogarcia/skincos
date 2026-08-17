@@ -201,6 +201,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     );
     assert.match(initialDeal, /setCurrentIntroStage\("entering"\);\s*startInitialDealScroll\(\);/);
     assert.match(initialDeal, /setCurrentHandStage\("ready"\);\s*\/\/ Let the ready-state DOM commit once before[\s\S]*window\.requestAnimationFrame\(stopInitialDealScroll\)/);
+    assert.doesNotMatch(initialDeal, /addEventListener\("(?:wheel|touchstart|pointerdown|keydown)"/);
     assert.match(experience, /function handleDeckKeyDown\(event: ReactKeyboardEvent<HTMLButtonElement>\)/);
     assert.match(experience, /event\.key !== "Enter" && event\.key !== " " && event\.key !== "Spacebar"/);
     assert.equal((experience.match(/onKeyDown=\{handleDeckKeyDown\}/g) ?? []).length, 1);
