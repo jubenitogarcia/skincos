@@ -97,17 +97,20 @@ test("materializes one opaque cohort from the exact active identity across both 
   assert.deepEqual(legacyRoleCohort, cohort);
 });
 
-test("refuses an unauthorized role, unconfirmed link, invalid lifecycle, or workforce mismatch", async () => {
-  for (const fixture of [
-    { identityRows: [identityRow({ identity_role: "SUPERVISOR" })] },
-    { identityRows: [identityRow({ link_review_status: "PENDING_REVIEW" })] },
-    { identityRows: [identityRow({ provisioning_state: "FAILED" })] },
-    { workforceRows: [workforceRow({ access_state: "SUSPENDED" })] },
-    { workforceRows: [workforceRow(), workforceRow()] },
+test("classifies the exact non-sensitive identity or Workforce predicate that rejects a cohort", async () => {
+  for (const [fixture, expectedCode] of [
+    [{ identityRows: [] }, "PILOT_COHORT_IDENTITY_INVALID_IDENTITY_ROWS_MISSING"],
+    [{ identityRows: [identityRow({ identity_role: "SUPERVISOR" })] }, "PILOT_COHORT_IDENTITY_INVALID_ROLE"],
+    [{ identityRows: [identityRow({ link_review_status: "PENDING_REVIEW" })] }, "PILOT_COHORT_IDENTITY_INVALID_LINK_REVIEW_STATUS"],
+    [{ identityRows: [identityRow({ provisioning_state: "FAILED" })] }, "PILOT_COHORT_IDENTITY_INVALID_PROVISIONING_STATE"],
+    [{ workforceRows: [workforceRow({ access_state: "SUSPENDED" })] }, "PILOT_COHORT_IDENTITY_INVALID_WORKFORCE_ACCESS_STATE"],
+    [{ workforceRows: [workforceRow(), workforceRow()] }, "PILOT_COHORT_IDENTITY_INVALID_WORKFORCE_ROWS_AMBIGUOUS"],
   ]) {
     await assert.rejects(
       () => materializePilotCohort({ env: environment, fetchImpl: fetchFor(fixture) }),
-      /PILOT_COHORT_IDENTITY_INVALID/,
+      (error) => error?.code === expectedCode
+        && error?.message === expectedCode
+        && !String(error?.message || "").includes(environment.PONTO_PILOT_LOGIN),
     );
   }
 });
