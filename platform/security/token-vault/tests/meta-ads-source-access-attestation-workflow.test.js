@@ -16,11 +16,24 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /environment: staging/);
   assert.match(workflow, /timeout-minutes: 3/);
-  assert.match(workflow, /META_ADS_ACCESS_TOKEN: \$\{\{ secrets\.META_ADS_ACCESS_TOKEN \}\}/);
-  assert.match(workflow, /META_ADS_ACCOUNT_ID: \$\{\{ vars\.META_ADS_ACCOUNT_ID \}\}/);
-  assert.match(workflow, /META_ADS_API_VERSION: \$\{\{ vars\.META_ADS_API_VERSION \}\}/);
+  assert.match(
+    workflow,
+    /META_ADS_ACCESS_TOKEN: \$\{\{ secrets\.META_ADS_ACCESS_TOKEN \}\}/,
+  );
+  assert.match(
+    workflow,
+    /META_ADS_ACCOUNT_ID: \$\{\{ vars\.META_ADS_ACCOUNT_ID \}\}/,
+  );
+  assert.match(
+    workflow,
+    /META_ADS_API_VERSION: \$\{\{ vars\.META_ADS_API_VERSION \}\}/,
+  );
   assert.match(workflow, /graphGet\('me\/permissions'\)/);
   assert.match(workflow, /graphGet\(`act_\$\{accountId\}\?fields=id`\)/);
+  assert.match(
+    workflow,
+    /payload\?\.id \|\| ''\)\.trim\(\)\.replace\(\/\^act_\//,
+  );
   assert.match(workflow, /method: 'GET'/);
   assert.match(workflow, /Authorization: `Bearer \$\{token\}`/);
   assert.match(workflow, /cache: 'no-store'/);

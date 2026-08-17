@@ -93,7 +93,7 @@ jobs:
 
           const adAccount = await graphGet(`act_${accountId}?fields=id`);
           const adAccountState = adAccount.state === 'ok'
-            ? (String(adAccount.payload?.id || '') === accountId ? 'allowed' : 'malformed')
+            ? (String(adAccount.payload?.id || '').trim().replace(/^act_/, '') === accountId ? 'allowed' : 'malformed')
             : adAccount.state;
 
           process.stdout.write([
