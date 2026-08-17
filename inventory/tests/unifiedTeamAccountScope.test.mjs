@@ -82,6 +82,18 @@ function workforceBindingWithEmployee(employeeId) {
   };
 }
 
+function bytesToBase64Url(bytes) {
+  return Buffer.from(bytes).toString('base64url');
+}
+
+async function encryptPii(value) {
+  const rawKey = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('test-pii-key'));
+  const key = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(value));
+  return `v1.${bytesToBase64Url(iv)}.${bytesToBase64Url(new Uint8Array(encrypted))}`;
+}
+
 function routeEnv({ workforce = workforceBinding(true), unifiedTeamEnabled = 'true', DB = env.DB } = {}) {
   return {
     ...env,
@@ -242,6 +254,21 @@ test('team edit does not infer or create access when no explicit CRM account lin
   assert.equal(state.sessionVersion, 0);
   const link = await env.DB.prepare('SELECT id FROM crm_employee_account_links WHERE onboarding_id=?').bind('unlinked-employee').first();
   assert.equal(link, null);
+});
+
+test('manager contact inspection decrypts only the scoped edit payload', async () => {
+  const personalEmail = await encryptPii('pessoa@example.com');
+  const mobilePhone = await encryptPii('+5551999999999');
+  await env.DB.prepare('UPDATE crm_employee_onboarding SET personal_email_encrypted=?, mobile_phone_encrypted=? WHERE id=?')
+    .bind(personalEmail, mobilePhone, 'hellenmelo-employee').run();
+
+  const result = await callRoute('/admin/team/hellenmelo-employee/contact', { method: 'GET' });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.data, { personalEmail: 'pessoa@example.com', mobilePhone: '+5551999999999' });
+  const listed = await callRoute('/admin/team?status=ALL', { method: 'GET' });
+  assert.equal(listed.response.status, 200);
+  assert.equal('personalEmail' in listed.body.data[0], false);
+  assert.equal('mobilePhone' in listed.body.data[0], false);
 });
 
 test('failed effective-scope write is not reported as success and rolls back the D1 batch', async () => {

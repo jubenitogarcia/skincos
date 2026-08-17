@@ -174,7 +174,6 @@ export function validateOnboardingInput(input = {}, options = {}) {
     (requireCorporateDomain && !isAllowedCorporateEmail(fullName, corporateEmail)) ||
     !personalEmail ||
     !mobilePhone ||
-    !department ||
     !profile ||
     !requestedUsername ||
     !units.length ||

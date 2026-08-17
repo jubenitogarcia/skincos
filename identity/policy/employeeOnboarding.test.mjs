@@ -55,6 +55,20 @@ test('derives closed unit scopes and fail-closes pending profiles', () => {
   assert.equal(validateOnboardingInput({ ...input, units: ['unidade-invalida'] }), null);
 });
 
+test('does not require a department because the job title owns access and module permissions', () => {
+  const input = validateOnboardingInput({
+    fullName: 'Pessoa Sem Departamento',
+    corporateEmail: 'pessoadepartamento@espacofacial.com',
+    personalEmail: 'personal@example.com',
+    mobilePhone: '51999999999',
+    units: ['NH'],
+    jobTitle: 'Consultor',
+  }, { unified: true });
+  assert.ok(input);
+  assert.equal(input.department, '');
+  assert.deepEqual(input.units, ['novo-hamburgo']);
+});
+
 test('builds the corporate address from the first and last name without accents or separators', () => {
   assert.equal(buildCorporateEmail('João da Silva'), 'joaosilva@espacofacial.com');
   assert.equal(buildCorporateEmail('Ana'), 'ana@espacofacial.com');
