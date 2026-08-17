@@ -25,6 +25,11 @@ test("the active category keeps its yellow state and the countdown is armed with
 
     assert.match(experience, /const autoAdvanceScheduledRef = useRef\(false\)/);
     assert.match(experience, /const autoAdvancePendingRef = useRef\(false\)/);
+    assert.doesNotMatch(experience, /window\.addEventListener\("(wheel|touchmove|keydown)", cancelOnReadingIntent/);
+    assert.doesNotMatch(experience, /document\.addEventListener\("visibilitychange", cancelWhenBackgrounded\)/);
+    assert.doesNotMatch(experience, /if \(!reducedMotion\) return;\s*cancelAutoAdvance\(\)/);
+    assert.match(experience, /function handleProgressClick\(index: number\) \{\s*\/\/ Once the automatic handoff is armed[\s\S]*if \(autoAdvanceActive\) return;/);
+    assert.match(experience, /disabled=\{!isCurrent \|\| Boolean\(progressMotion\) \|\| autoAdvanceActive\}/);
     assert.ok(start.indexOf("setAutoAdvanceActive(true)") < start.indexOf("window.requestAnimationFrame"));
     assert.match(start, /handStageRef\.current !== "reveal" && handStageRef\.current !== "held"/);
     assert.match(start, /autoAdvancePendingRef\.current = true/);
@@ -38,5 +43,6 @@ test("the active category keeps its yellow state and the countdown is armed with
         /\.progressItemCurrent \.progressButton \{[\s\S]*background: var\(--bm-yellow\);[\s\S]*color: var\(--bm-ink\);/,
     );
     assert.match(rhythmLayer, /\.progressItemCurrent \.progressButton:hover \{[\s\S]*background: var\(--bm-yellow\);/);
+    assert.match(rhythmLayer, /\.progressItemCurrent \.progressButton:disabled \{[\s\S]*opacity: 1;/);
     assert.match(rhythmLayer, /\.autoAdvance::after \{[\s\S]*background: var\(--bm-ink\);/);
 });
