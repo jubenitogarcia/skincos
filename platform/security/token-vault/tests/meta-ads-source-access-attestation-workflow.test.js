@@ -36,6 +36,16 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /source_access_instagram_basic=/);
   assert.match(workflow, /source_access_ad_account=/);
 
+  assert.match(workflow, /const missingScopes = scopeNames\.filter\(\(name\) => scopeStates\[name\] !== 'granted'\)/);
+  assert.match(workflow, /if \(permissions\.state !== 'ok'\)/);
+  assert.match(workflow, /source_permissions_missing:/);
+  assert.match(workflow, /if \(adAccountState !== 'allowed'\)/);
+  assert.match(workflow, /source_ad_account_\$\{adAccountState\}/);
+  assert.ok(
+    workflow.indexOf('source_permissions_missing:') < workflow.indexOf('source_access_attestation=verified'),
+    'verified output must be unreachable until missing permissions fail closed',
+  );
+
   assert.doesNotMatch(workflow, /access_token=/i);
   assert.doesNotMatch(workflow, /debug_token/i);
   assert.doesNotMatch(workflow, /method: 'POST'/);

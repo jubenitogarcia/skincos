@@ -96,6 +96,17 @@ jobs:
             ? (String(adAccount.payload?.id || '') === accountId ? 'allowed' : 'malformed')
             : adAccount.state;
 
+          const missingScopes = scopeNames.filter((name) => scopeStates[name] !== 'granted');
+          if (permissions.state !== 'ok') {
+            fail(`source_permissions_${permissions.state}`);
+          }
+          if (missingScopes.length > 0) {
+            fail(`source_permissions_missing:${missingScopes.join(',')}`);
+          }
+          if (adAccountState !== 'allowed') {
+            fail(`source_ad_account_${adAccountState}`);
+          }
+
           process.stdout.write([
             'source_access_attestation=verified',
             `source_access_permissions=${permissions.state === 'ok' ? 'available' : permissions.state}`,
