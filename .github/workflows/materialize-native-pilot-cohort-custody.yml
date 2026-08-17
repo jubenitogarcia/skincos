@@ -1,0 +1,188 @@
+name: Materialize native pilot cohort custody
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Immutable Ponto source SHA whose dependency closure remains current
+        required: true
+        type: string
+
+concurrency:
+  group: native-pilot-cohort-custody-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  materialize:
+    name: Materialize one production pilot cohort
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'jubenitogarcia/skincos' }}
+    runs-on: [self-hosted, Linux, X64, skincos-native-custody]
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the exact main source and compatible immutable Ponto closure
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ -n "$GH_TOKEN" ]] || { echo 'GitHub custody authority is unavailable.' >&2; exit 78; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto release SHA is invalid.' >&2; exit 78; }
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')"
+          [[ "$GITHUB_REF" == 'refs/heads/main' && "$main_sha" == "$GITHUB_SHA" ]] || {
+            echo 'Pilot cohort custody requires the exact current main SHA.' >&2
+            exit 78
+          }
+          git cat-file -e "$RELEASE_SHA^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" "$GITHUB_SHA"
+          PONTO_RELEASE_SHA="$RELEASE_SHA" PONTO_OBSERVED_SHA="$GITHUB_SHA" node --input-type=module <<'NODE'
+          import { assertPontoSourceClosureUnchanged } from "./.github/scripts/ponto-source-closure.mjs";
+          assertPontoSourceClosureUnchanged(process.env.PONTO_RELEASE_SHA, process.env.PONTO_OBSERVED_SHA);
+          NODE
+
+      - name: Resolve the fixed production Identity D1 binding from source
+        run: |
+          set -euo pipefail
+          identity_d1_id="$(node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const source = fs.readFileSync("inventory/wrangler.toml", "utf8");
+          const production = source.split(/^\[env\.staging\]/m, 1)[0];
+          const match = production.match(/\[\[d1_databases\]\]\s+binding\s*=\s*"DB"\s+database_name\s*=\s*"skincos-db"\s+database_id\s*=\s*"([0-9a-f-]{36})"/i);
+          if (!match) throw new Error("production Identity D1 binding is unavailable");
+          process.stdout.write(match[1].toLowerCase());
+          NODE
+          )"
+          [[ "$identity_d1_id" =~ ^[0-9a-f-]{36}$ ]] || { echo 'production Identity D1 binding is invalid.' >&2; exit 78; }
+          echo "PONTO_IDENTITY_D1_PRODUCTION_ID=$identity_d1_id" >> "$GITHUB_ENV"
+
+      - name: Confirm secret custody metadata before the one-time write
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          secret_names="$RUNNER_TEMP/pilot-cohort-secret-metadata.txt"
+          trap 'rm -f "$secret_names"' EXIT
+          gh api --paginate --jq '.secrets[].name' "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$secret_names"
+          node - "$secret_names" <<'NODE'
+          const fs = require("fs");
+          const names = new Set(fs.readFileSync(process.argv[2], "utf8")
+            .split(/\r?\n/)
+            .map(name => name.trim())
+            .filter(Boolean));
+          for (const name of ["PONTO_PILOT_LOGIN", "PONTO_PILOT_PASSWORD", "PONTO_IDEMPOTENCY_KEY"]) {
+            if (!names.has(name)) throw new Error("required production secret metadata is absent");
+          }
+          if (names.has("PONTO_PILOT_COHORT_JSON")) throw new Error("pilot cohort secret is already present; refusing a concurrent replacement");
+          NODE
+
+      - name: Acquire the composite Ponto release lease
+        id: acquire
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: true
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/pilot-cohort-custody/global-coordination-release-ponto.json
+
+      - name: Derive and validate the single allowed cohort inside production custody
+        if: ${{ steps.acquire.outcome == 'success' }}
+        env:
+          PONTO_RELEASE_SHA: ${{ inputs.release_sha }}
+          PONTO_PILOT_LOGIN: ${{ secrets.PONTO_PILOT_LOGIN }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PONTO_TIMEKEEPING_D1_PRODUCTION_ID: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          cohort_file="$RUNNER_TEMP/pilot-cohort.json"
+          trap 'rm -f "$cohort_file"' ERR
+          node scripts/runtime/materialize-pilot-cohort.mjs > "$cohort_file"
+          [[ -s "$cohort_file" ]] || { echo 'Pilot cohort materialization did not produce a protected value.' >&2; exit 78; }
+          node - "$cohort_file" <<'NODE'
+          const fs = require("fs");
+          const cohort = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const expected = ["pilotEmployeeRefs", "pilotIdentityLoginRefs", "pilotIdentityRefs", "pilotNetworkContexts", "pilotUnits"];
+          const opaque = /^v1:[A-Za-z0-9_-]{43}$/;
+          if (JSON.stringify(Object.keys(cohort).sort()) !== JSON.stringify([...expected].sort())) {
+            throw new Error("pilot cohort fields differ");
+          }
+          for (const key of expected) {
+            if (!Array.isArray(cohort[key]) || cohort[key].length !== 1) throw new Error("pilot cohort cardinality differs");
+          }
+          for (const key of expected.filter(key => key !== "pilotUnits")) {
+            if (!opaque.test(cohort[key][0])) throw new Error("pilot cohort opaque reference is invalid");
+          }
+          if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(cohort.pilotUnits[0])) {
+            throw new Error("pilot cohort unit is invalid");
+          }
+          NODE
+
+      - name: Revalidate the composite Ponto release lease before custody mutation
+        id: revalidate
+        if: ${{ steps.acquire.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: true
+          proof_file: ${{ runner.temp }}/pilot-cohort-custody/global-coordination-release-ponto.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Write the validated cohort only after revalidated production custody
+        if: ${{ steps.revalidate.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          cohort_file="$RUNNER_TEMP/pilot-cohort.json"
+          secret_names="$RUNNER_TEMP/pilot-cohort-secret-write-metadata.txt"
+          trap 'rm -f "$cohort_file" "$secret_names"' EXIT
+          [[ -s "$cohort_file" ]] || { echo 'Pilot cohort materialization did not produce a protected value.' >&2; exit 78; }
+          gh secret set PONTO_PILOT_COHORT_JSON --repo "$GITHUB_REPOSITORY" --env production < "$cohort_file"
+          gh api --paginate --jq '.secrets[].name' "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$secret_names"
+          node - "$secret_names" <<'NODE'
+          const fs = require("fs");
+          const names = new Set(fs.readFileSync(process.argv[2], "utf8")
+            .split(/\r?\n/)
+            .map(name => name.trim())
+            .filter(Boolean));
+          if (!names.has("PONTO_PILOT_COHORT_JSON")) throw new Error("pilot cohort secret write did not become observable");
+          NODE
+          echo 'pilot_cohort_custody=written identity_count=1 values_emitted=false'
+
+      - name: Remove the protected cohort buffer
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/pilot-cohort.json" "$RUNNER_TEMP/pilot-cohort-secret-write-metadata.txt"
+
+      - name: Release the composite Ponto release lease
+        if: ${{ always() && steps.acquire.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: true
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/pilot-cohort-custody/global-coordination-release-ponto.json
