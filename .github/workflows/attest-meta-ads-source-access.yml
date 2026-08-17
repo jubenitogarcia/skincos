@@ -78,17 +78,45 @@ jobs:
             'pages_manage_ads',
             'instagram_basic',
           ];
-          const permissions = await graphGet('me/permissions');
           const scopeStates = Object.fromEntries(scopeNames.map((name) => [name, 'unknown']));
-          if (permissions.state === 'ok') {
-            const granted = new Set(
-              Array.isArray(permissions.payload?.data)
-                ? permissions.payload.data
-                  .filter((entry) => entry && entry.status === 'granted')
-                  .map((entry) => String(entry.permission || ''))
-                : [],
-            );
+          const granted = new Set();
+          let permissionsState = 'ok';
+          let permissionCoverage = 'bounded';
+          let permissionCursor = '';
+          const maxPermissionPages = 5;
+          for (let page = 0; page < maxPermissionPages; page += 1) {
+            const cursorQuery = permissionCursor
+              ? `&after=${encodeURIComponent(permissionCursor)}`
+              : '';
+            const permissions = await graphGet(`me/permissions?limit=100${cursorQuery}`);
+            if (permissions.state !== 'ok') {
+              permissionsState = permissions.state;
+              break;
+            }
+            if (Array.isArray(permissions.payload?.data)) {
+              for (const entry of permissions.payload.data) {
+                if (entry?.status === 'granted') granted.add(String(entry.permission || ''));
+              }
+            }
+            const unresolved = scopeNames.filter((name) => !granted.has(name));
+            const nextCursor = String(permissions.payload?.paging?.cursors?.after || '').trim();
+            if (unresolved.length === 0 || !nextCursor) {
+              permissionCoverage = 'complete';
+              break;
+            }
+            if (nextCursor.length > 2_048 || nextCursor === permissionCursor) {
+              permissionsState = 'malformed';
+              break;
+            }
+            permissionCursor = nextCursor;
+          }
+          if (permissionsState === 'ok') {
             for (const name of scopeNames) scopeStates[name] = granted.has(name) ? 'granted' : 'missing';
+            if (permissionCoverage !== 'complete') {
+              for (const name of scopeNames) {
+                if (!granted.has(name)) scopeStates[name] = 'unknown';
+              }
+            }
           }
 
           const adAccount = await graphGet(`act_${accountId}?fields=id`);
@@ -98,7 +126,7 @@ jobs:
 
           process.stdout.write([
             'source_access_attestation=verified',
-            `source_access_permissions=${permissions.state === 'ok' ? 'available' : permissions.state}`,
+            `source_access_permissions=${permissionsState === 'ok' ? permissionCoverage : permissionsState}`,
             `source_access_ads_read=${scopeStates.ads_read}`,
             `source_access_ads_management=${scopeStates.ads_management}`,
             `source_access_business_management=${scopeStates.business_management}`,

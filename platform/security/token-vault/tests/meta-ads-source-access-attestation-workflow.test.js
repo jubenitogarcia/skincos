@@ -28,7 +28,14 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
     workflow,
     /META_ADS_API_VERSION: \$\{\{ vars\.META_ADS_API_VERSION \}\}/,
   );
-  assert.match(workflow, /graphGet\('me\/permissions'\)/);
+  assert.match(workflow, /const maxPermissionPages = 5/);
+  assert.match(
+    workflow,
+    /graphGet\(`me\/permissions\?limit=100\$\{cursorQuery\}`\)/,
+  );
+  assert.match(workflow, /paging\?\.cursors\?\.after/);
+  assert.match(workflow, /encodeURIComponent\(permissionCursor\)/);
+  assert.match(workflow, /unresolved\.length === 0 \|\| !nextCursor/);
   assert.match(workflow, /graphGet\(`act_\$\{accountId\}\?fields=id`\)/);
   assert.match(
     workflow,
