@@ -2679,16 +2679,16 @@
 }
 
 .progressItemCurrent .progressButton {
-  border-bottom-color: rgba(197, 181, 143, 0.52);
-  border-radius: 0;
-  background: transparent;
-  color: var(--bm-surface);
-  box-shadow: none;
+  border-bottom-color: var(--bm-yellow);
+  border-radius: 8px;
+  background: var(--bm-yellow);
+  color: var(--bm-ink);
+  box-shadow: 0 8px 18px rgba(229, 189, 49, 0.18);
 }
 
 .progressItemCurrent .progressButton:hover {
-  background: transparent;
-  color: var(--bm-surface);
+  background: var(--bm-yellow);
+  color: var(--bm-ink);
 }
 
 .progressTransfer {
@@ -2698,7 +2698,7 @@
 }
 
 .autoAdvance::after {
-  background: var(--bm-yellow);
+  background: var(--bm-ink);
 }
 
 .tableSurface {
