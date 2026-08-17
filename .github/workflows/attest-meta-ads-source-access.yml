@@ -1,0 +1,161 @@
+name: Attest Meta Ads Staging Source Access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meta-ads-source-access-attestation-staging
+  cancel-in-progress: false
+
+jobs:
+  attest:
+    if: github.ref == 'refs/heads/main'
+    name: Read the staging source capability without deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: staging
+    steps:
+      - name: Attest Meta Ads source scopes and ad-account access without exposing them
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
+          META_ADS_ACCOUNT_ID: ${{ vars.META_ADS_ACCOUNT_ID }}
+          META_ADS_API_VERSION: ${{ vars.META_ADS_API_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '');
+
+          const fail = (code) => {
+            console.error(`Meta Ads source-access attestation failed: ${code}`);
+            process.exit(1);
+          };
+
+          if (!token || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
+            fail('source_contract_invalid');
+          }
+
+          const graphGet = async (path) => {
+            let response;
+            try {
+              response = await fetch(`https://graph.facebook.com/${apiVersion}/${path}`, {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store',
+                redirect: 'error',
+                signal: AbortSignal.timeout(12_000),
+              });
+            } catch {
+              return { state: 'unavailable' };
+            }
+
+            if (!response || response.status === 408 || response.status === 429 || response.status >= 500) {
+              return { state: 'unavailable' };
+            }
+            let payload;
+            try {
+              payload = await response.json();
+            } catch {
+              return { state: 'malformed' };
+            }
+            if (payload?.error?.is_transient === true) return { state: 'unavailable' };
+            if (!response.ok || payload?.error) {
+              const graphErrorCode = Number(payload?.error?.code);
+              const authorizationError =
+                response.status === 401 ||
+                response.status === 403 ||
+                graphErrorCode === 10 ||
+                graphErrorCode === 102 ||
+                graphErrorCode === 190 ||
+                graphErrorCode === 200;
+              return { state: authorizationError ? 'denied' : 'malformed' };
+            }
+            return { state: 'ok', payload };
+          };
+
+          const scopeNames = [
+            'ads_read',
+            'ads_management',
+            'business_management',
+            'pages_show_list',
+            'pages_read_engagement',
+            'pages_manage_ads',
+            'instagram_basic',
+          ];
+          const scopeStates = Object.fromEntries(scopeNames.map((name) => [name, 'unknown']));
+          const granted = new Set();
+          let permissionsState = 'ok';
+          let permissionCoverage = 'bounded';
+          let permissionCursor = '';
+          const maxPermissionPages = 5;
+          for (let page = 0; page < maxPermissionPages; page += 1) {
+            const cursorQuery = permissionCursor
+              ? `&after=${encodeURIComponent(permissionCursor)}`
+              : '';
+            const permissions = await graphGet(`me/permissions?limit=100${cursorQuery}`);
+            if (permissions.state !== 'ok') {
+              permissionsState = permissions.state;
+              break;
+            }
+            if (!Array.isArray(permissions.payload?.data)) {
+              permissionsState = 'malformed';
+              break;
+            }
+            for (const entry of permissions.payload.data) {
+              if (entry?.status === 'granted') granted.add(String(entry.permission || ''));
+            }
+            const unresolved = scopeNames.filter((name) => !granted.has(name));
+            const rawNextPage = permissions.payload?.paging?.next;
+            if (rawNextPage != null && typeof rawNextPage !== 'string') {
+              permissionsState = 'malformed';
+              break;
+            }
+            const hasNextPage = typeof rawNextPage === 'string' && rawNextPage.length > 0;
+            const rawNextCursor = permissions.payload?.paging?.cursors?.after;
+            if (hasNextPage && typeof rawNextCursor !== 'string') {
+              permissionsState = 'malformed';
+              break;
+            }
+            const nextCursor = typeof rawNextCursor === 'string' ? rawNextCursor.trim() : '';
+            if (unresolved.length === 0 || !hasNextPage) {
+              permissionCoverage = 'complete';
+              break;
+            }
+            if (nextCursor.length > 2_048 || nextCursor === permissionCursor) {
+              permissionsState = 'malformed';
+              break;
+            }
+            permissionCursor = nextCursor;
+          }
+          if (permissionsState === 'ok') {
+            for (const name of scopeNames) scopeStates[name] = granted.has(name) ? 'granted' : 'missing';
+            if (permissionCoverage !== 'complete') {
+              for (const name of scopeNames) {
+                if (!granted.has(name)) scopeStates[name] = 'unknown';
+              }
+            }
+          }
+
+          const adAccount = await graphGet(`act_${accountId}?fields=id`);
+          const adAccountState = adAccount.state === 'ok'
+            ? (String(adAccount.payload?.id || '').trim().replace(/^act_/, '') === accountId ? 'allowed' : 'malformed')
+            : adAccount.state;
+
+          process.stdout.write([
+            'source_access_attestation=verified',
+            `source_access_permissions=${permissionsState === 'ok' ? permissionCoverage : permissionsState}`,
+            `source_access_ads_read=${scopeStates.ads_read}`,
+            `source_access_ads_management=${scopeStates.ads_management}`,
+            `source_access_business_management=${scopeStates.business_management}`,
+            `source_access_pages_show_list=${scopeStates.pages_show_list}`,
+            `source_access_pages_read_engagement=${scopeStates.pages_read_engagement}`,
+            `source_access_pages_manage_ads=${scopeStates.pages_manage_ads}`,
+            `source_access_instagram_basic=${scopeStates.instagram_basic}`,
+            `source_access_ad_account=${adAccountState}`,
+          ].join('\n') + '\n');
+          NODE
