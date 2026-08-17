@@ -202,6 +202,7 @@ const STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES = Object.freeze({
   sourceUnavailable: 'meta_ads_publish_staging_seed_graph_source_unavailable',
   sourceAuthRejected: 'meta_ads_publish_staging_seed_graph_source_auth_rejected',
   pixelAccessDenied: 'meta_ads_publish_staging_seed_graph_pixel_access_denied',
+  appSecretProofMismatch: 'meta_ads_publish_staging_seed_graph_appsecret_proof_mismatch',
   pageAccessDenied: 'meta_ads_publish_staging_seed_graph_page_access_denied',
   datasetAccessDenied: 'meta_ads_publish_staging_seed_graph_dataset_access_denied',
   identityMismatch: 'meta_ads_publish_staging_seed_graph_identity_mismatch',
@@ -1272,6 +1273,7 @@ export async function attestStagingSyntheticMetaAdsTracking({ request, env, requ
       context: createStagingSyntheticSeedAttestationContext(env, requestId, input.operationKey),
       failureCodes: STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES,
       maxGraphAttempts: STAGING_SYNTHETIC_SEED_ATTEST_MAX_GRAPH_ATTEMPTS,
+      probeAppSecretProof: true,
     });
     return stagingSyntheticSeedAttestationSuccess({ requestId, operationKey: input.operationKey });
   } catch (error) {
@@ -1584,6 +1586,7 @@ function stagingSyntheticSeedFailureResponse(error, requestId) {
     'meta_ads_publish_staging_seed_graph_source_unavailable',
     'meta_ads_publish_staging_seed_graph_source_auth_rejected',
     'meta_ads_publish_staging_seed_graph_pixel_access_denied',
+    'meta_ads_publish_staging_seed_graph_appsecret_proof_mismatch',
     'meta_ads_publish_staging_seed_graph_page_access_denied',
     'meta_ads_publish_staging_seed_graph_dataset_access_denied',
     'meta_ads_publish_staging_seed_graph_identity_mismatch',
@@ -1984,18 +1987,48 @@ async function discoverStagingSyntheticSeedFacts({
   context,
   failureCodes = STAGING_SYNTHETIC_SEED_DISCOVERY_FAILURES,
   maxGraphAttempts = MAX_GRAPH_ATTEMPTS,
+  probeAppSecretProof = false,
 }) {
   const read = (path, fields, query = {}, failureCode = failureCodes.sourceUnavailable) => seedGraphRead(auth, path, fields, context, query, {
     maxAttempts: maxGraphAttempts,
     failureCode,
     authFailureCode: failureCodes.sourceAuthRejected,
   });
-  const pixel = await read(
+  const readPixel = (candidateAuth) => seedGraphRead(
+    candidateAuth,
     input.pixelId,
     'id,owner_ad_account{id}',
+    context,
     {},
-    failureCodes.pixelAccessDenied,
+    {
+      maxAttempts: maxGraphAttempts,
+      failureCode: failureCodes.pixelAccessDenied,
+      authFailureCode: failureCodes.sourceAuthRejected,
+    },
   );
+  let pixel;
+  try {
+    pixel = await readPixel(auth);
+  } catch (error) {
+    const appSecretProofMismatch = clean(failureCodes.appSecretProofMismatch);
+    if (
+      !probeAppSecretProof ||
+      !clean(auth.appSecretProof) ||
+      !appSecretProofMismatch ||
+      clean(error?.message) === 'meta_ads_publish_staging_seed_unavailable'
+    ) {
+      throw error;
+    }
+    try {
+      await readPixel({ ...auth, appSecretProof: '' });
+    } catch (fallbackError) {
+      if (clean(fallbackError?.message) === 'meta_ads_publish_staging_seed_unavailable') {
+        throw fallbackError;
+      }
+      throw error;
+    }
+    throw stagingSyntheticSeedFailure(appSecretProofMismatch, 409);
+  }
   const pixelOwner = normalizeStagingSyntheticSeedGraphId(
     asObject(pixel.owner_ad_account).id,
     'pixel_owner_account',
