@@ -39,7 +39,13 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /scrollIntoView\(\{ behavior: "auto"/);
     assert.match(experience, /function scrollToElement\(target: HTMLElement \| null, extraOffset = 0\)/);
     assert.match(experience, /const titlePeek =/);
-    assert.match(experience, /scrollToElement\(tableRef\.current, titlePeek\)/);
+    assert.match(experience, /function getTableScrollTarget\(\): number \| null/);
+    assert.match(experience, /const initialDealScrollFrameRef = useRef<number \| null>\(null\)/);
+    assert.match(experience, /const initialDealScrollActiveRef = useRef\(false\)/);
+    assert.match(experience, /function startInitialDealScroll\(\)/);
+    assert.match(experience, /window\.requestAnimationFrame\(follow\)/);
+    assert.match(experience, /function stopInitialDealScroll\(\)/);
+    assert.match(experience, /scrollToElement\(target, titlePeek\)/);
     assert.match(experience, /prefers-reduced-motion/);
     assert.match(experience, /import \{ BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate \}/);
     assert.match(experience, /AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION\.autoAdvanceMs \/ 1_000/);
@@ -189,6 +195,12 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /const targetHeight = Math\.max\(\s*startHeight,/);
     assert.match(experience, /"held"/);
     assert.match(experience, /function startInitialDeal\(\)/);
+    const initialDeal = experience.slice(
+        experience.indexOf("function startInitialDeal"),
+        experience.indexOf("function handleDeckKeyDown"),
+    );
+    assert.match(initialDeal, /setCurrentIntroStage\("entering"\);\s*startInitialDealScroll\(\);/);
+    assert.match(initialDeal, /setCurrentHandStage\("ready"\);\s*\/\/ Let the ready-state DOM commit once before[\s\S]*window\.requestAnimationFrame\(stopInitialDealScroll\)/);
     assert.match(experience, /function handleDeckKeyDown\(event: ReactKeyboardEvent<HTMLButtonElement>\)/);
     assert.match(experience, /event\.key !== "Enter" && event\.key !== " " && event\.key !== "Spacebar"/);
     assert.equal((experience.match(/onKeyDown=\{handleDeckKeyDown\}/g) ?? []).length, 1);

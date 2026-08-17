@@ -300,6 +300,8 @@ export default function BeautyMovementExperience({
     const progressMotionTimerRef = useRef<number | null>(null);
     const scrollAnimationFrameRef = useRef<number | null>(null);
     const scrollInterruptCleanupRef = useRef<(() => void) | null>(null);
+    const initialDealScrollFrameRef = useRef<number | null>(null);
+    const initialDealScrollActiveRef = useRef(false);
     const tableRef = useRef<HTMLElement | null>(null);
     const tableSurfaceRef = useRef<HTMLDivElement | null>(null);
     const progressListRef = useRef<HTMLOListElement | null>(null);
@@ -482,6 +484,10 @@ export default function BeautyMovementExperience({
             if (scrollAnimationFrameRef.current !== null) {
                 window.cancelAnimationFrame(scrollAnimationFrameRef.current);
             }
+            if (initialDealScrollFrameRef.current !== null) {
+                window.cancelAnimationFrame(initialDealScrollFrameRef.current);
+            }
+            initialDealScrollActiveRef.current = false;
             scrollInterruptCleanupRef.current?.();
         };
     }, []);
@@ -625,6 +631,66 @@ export default function BeautyMovementExperience({
         scrollInterruptCleanupRef.current = null;
     }, []);
 
+    function getTableScrollTarget(): number | null {
+        const target = tableRef.current;
+        if (!target) return null;
+
+        const title = document.getElementById("beauty-movement-title");
+        const titlePeek =
+            title instanceof HTMLElement
+                ? Math.min(184, Math.max(0, Math.round(title.getBoundingClientRect().height - 2)))
+                : 0;
+        const stickyHeader = document.querySelector("header");
+        const scrollOffset = (stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32) + titlePeek;
+        return Math.max(0, window.scrollY + target.getBoundingClientRect().top - scrollOffset);
+    }
+
+    function stopInitialDealScroll() {
+        initialDealScrollActiveRef.current = false;
+        if (initialDealScrollFrameRef.current !== null) {
+            window.cancelAnimationFrame(initialDealScrollFrameRef.current);
+            initialDealScrollFrameRef.current = null;
+        }
+    }
+
+    function startInitialDealScroll() {
+        stopInitialDealScroll();
+
+        if (reducedMotion) {
+            scrollToTable();
+            return;
+        }
+
+        // Keep the table's editorial anchor in the viewport while its surface
+        // grows and the deck travels down into the dealt hand. Re-measuring on
+        // every frame avoids a one-time target becoming stale during layout
+        // transitions and lets the scroll itself trigger the header collapse.
+        initialDealScrollActiveRef.current = true;
+        let previousTime = performance.now();
+        const follow = (now: number) => {
+            if (!initialDealScrollActiveRef.current || !mountedRef.current) {
+                initialDealScrollFrameRef.current = null;
+                return;
+            }
+
+            const targetTop = getTableScrollTarget();
+            if (targetTop !== null) {
+                const currentTop = window.scrollY;
+                const elapsed = Math.max(0, now - previousTime);
+                const easing = 1 - Math.exp(-Math.min(48, elapsed) / 180);
+                const nextTop = currentTop + (targetTop - currentTop) * easing;
+                if (Math.abs(targetTop - currentTop) > 0.25) {
+                    window.scrollTo(0, nextTop);
+                }
+            }
+
+            previousTime = now;
+            initialDealScrollFrameRef.current = window.requestAnimationFrame(follow);
+        };
+
+        initialDealScrollFrameRef.current = window.requestAnimationFrame(follow);
+    }
+
     function scrollToElement(target: HTMLElement | null, extraOffset = 0) {
         cancelScrollAnimation();
         if (!target) return;
@@ -676,12 +742,15 @@ export default function BeautyMovementExperience({
     }
 
     function scrollToTable() {
+        const target = tableRef.current;
+        if (!target) return;
+
         const title = document.getElementById("beauty-movement-title");
         const titlePeek =
             title instanceof HTMLElement
                 ? Math.min(184, Math.max(0, Math.round(title.getBoundingClientRect().height - 2)))
                 : 0;
-        scrollToElement(tableRef.current, titlePeek);
+        scrollToElement(target, titlePeek);
     }
 
     function clearHandTransitionTimer() {
@@ -815,6 +884,7 @@ export default function BeautyMovementExperience({
         const introToken = beginIntroTransition();
         setTableIntroHeight(0);
         setCurrentIntroStage("entering");
+        startInitialDealScroll();
         scheduleIntroTransition(introToken, promptEntryDuration(initialExperienceText), () => {
             setCurrentIntroStage("holding");
             scheduleIntroTransition(introToken, BEAUTY_MOVEMENT_MOTION.initialIntroHoldMs, () => {
@@ -828,7 +898,10 @@ export default function BeautyMovementExperience({
                             scheduleDealSequence(handToken, () => {
                                 transitionInFlightRef.current = false;
                                 setCurrentHandStage("ready");
-                                window.requestAnimationFrame(scrollToTable);
+                                // Let the ready-state DOM commit once before
+                                // releasing the follow loop, so the final
+                                // card-grid layout is included in the anchor.
+                                window.requestAnimationFrame(stopInitialDealScroll);
                             });
                         });
                     }, true);
