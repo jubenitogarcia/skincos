@@ -642,7 +642,19 @@ export default function BeautyMovementExperience({
                 : 0;
         const stickyHeader = document.querySelector("header");
         const scrollOffset = (stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32) + titlePeek;
-        return Math.max(0, window.scrollY + target.getBoundingClientRect().top - scrollOffset);
+        const editorialTarget = window.scrollY + target.getBoundingClientRect().top - scrollOffset;
+        const deck = target.querySelector<HTMLElement>(`.${styles.deckStage}`);
+        const deckRect = deck?.getBoundingClientRect();
+        const deckBottomPadding = Math.max(28, Math.round(window.innerHeight * 0.08));
+        const deckTarget = deckRect
+            ? window.scrollY + deckRect.bottom - (window.innerHeight - deckBottomPadding)
+            : editorialTarget;
+
+        // The surface grows downward while the deck travels with it. Keep the
+        // deck fully in the lower half of the viewport instead of leaving its
+        // final card cut off below the fold. The editorial anchor remains the
+        // floor so the first scroll still starts from the hero/table handoff.
+        return Math.max(0, Math.max(editorialTarget, deckTarget));
     }
 
     function stopInitialDealScroll() {

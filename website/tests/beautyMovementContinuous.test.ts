@@ -40,6 +40,10 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /function scrollToElement\(target: HTMLElement \| null, extraOffset = 0\)/);
     assert.match(experience, /const titlePeek =/);
     assert.match(experience, /function getTableScrollTarget\(\): number \| null/);
+    assert.match(experience, /const deck = target\.querySelector<HTMLElement>\(`\.\$\{styles\.deckStage\}`\)/);
+    assert.match(experience, /const deckBottomPadding = Math\.max\(28, Math\.round\(window\.innerHeight \* 0\.08\)\)/);
+    assert.match(experience, /const deckTarget = deckRect/);
+    assert.match(experience, /Math\.max\(editorialTarget, deckTarget\)/);
     assert.match(experience, /const initialDealScrollFrameRef = useRef<number \| null>\(null\)/);
     assert.match(experience, /const initialDealScrollActiveRef = useRef\(false\)/);
     assert.match(experience, /function startInitialDealScroll\(\)/);
