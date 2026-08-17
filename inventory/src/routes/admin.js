@@ -744,6 +744,29 @@ export async function handleAdminRoutes({
     return { state: 'CONFIRMED', link, crmUser };
   };
 
+  // Personal contact data is intentionally excluded from the team list. The
+  // edit surface may request it only for a scoped manager, after the member
+  // has passed the same unit boundary used by team mutations.
+  const teamContactMatch = url.pathname.match(/^\/admin\/team\/([^/]+)\/contact$/);
+  if (teamContactMatch && request.method === 'GET') {
+    if (!teamWriteRoleAllowed(auth)) {
+      return withCORS(JSON.stringify({ success: false, error: 'Apenas gestores podem consultar dados de contato', code: 'TEAM_CONTACT_ROLE_DENIED' }), { status: 403 }, appOrigin);
+    }
+    try {
+      const onboardingId = decodeURIComponent(teamContactMatch[1] || '').trim();
+      const onboarding = await env.DB.prepare('SELECT id, units_json, personal_email_encrypted, mobile_phone_encrypted FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding) return withCORS(JSON.stringify({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' }), { status: 404 }, appOrigin);
+      if (!teamUnitsVisible(auth, onboarding.units_json)) return withCORS(JSON.stringify({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' }), { status: 403 }, appOrigin);
+      const [personalEmail, mobilePhone] = await Promise.all([
+        onboarding.personal_email_encrypted ? decryptOnboardingToken(env, onboarding.personal_email_encrypted) : '',
+        onboarding.mobile_phone_encrypted ? decryptOnboardingToken(env, onboarding.mobile_phone_encrypted) : '',
+      ]);
+      return withCORS(JSON.stringify({ success: true, data: { personalEmail: personalEmail || '', mobilePhone: mobilePhone || '' } }), { status: 200, headers: { 'cache-control': 'no-store' } }, appOrigin);
+    } catch {
+      return withCORS(JSON.stringify({ success: false, error: 'Os dados de contato estão indisponíveis', code: 'TEAM_CONTACT_UNAVAILABLE' }), { status: 503 }, appOrigin);
+    }
+  }
+
   if (isTeamRoute && url.pathname === '/admin/team' && request.method === 'GET' && ['config', 'readiness'].includes(url.searchParams.get('mode'))) {
     const mode = url.searchParams.get('mode');
     if (mode === 'readiness') {
@@ -1882,7 +1905,7 @@ export async function handleAdminRoutes({
       const nextDepartment = String(body.department ?? current.department_name).trim().replace(/\s+/g, ' ').slice(0, 120);
       const nextTitle = String(body.jobTitle ?? current.job_title).trim();
       const nextProfile = body.jobTitle === undefined ? current.profile : resolveEmployeeProfile(nextTitle);
-      if (!nextName || !nextDepartment || !nextProfile) return withCORS(JSON.stringify({ success: false, error: 'Dados de edição inválidos', code: 'TEAM_UPDATE_INVALID' }), { status: 400 }, appOrigin);
+      if (!nextName || !nextProfile) return withCORS(JSON.stringify({ success: false, error: 'Dados de edição inválidos', code: 'TEAM_UPDATE_INVALID' }), { status: 400 }, appOrigin);
       const nextUnits = normalizeAllowedUnits(body.units ?? current.units_json);
       if (!nextUnits.length || unknownUnitScopes(body.units ?? current.units_json).length) return withCORS(JSON.stringify({ success: false, error: 'Unidades inválidas', code: 'TEAM_UNITS_INVALID' }), { status: 400 }, appOrigin);
       const denied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: nextProfile.profile || nextProfile, units: nextUnits });

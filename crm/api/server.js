@@ -1552,7 +1552,7 @@ if (DEV_AUTH_ENABLED) {
         if (localHasUnknownUnits(rawUnits)) return { error: 'TEAM_UNITS_INVALID' }
         const units = localNormalizeUnits(rawUnits)
         const keepsExistingCorporateEmail = Boolean(current?.corporateEmail) && corporateEmail === current.corporateEmail
-        if (!fullName || !generatedCorporateEmail || !corporateEmail || (!localIsAllowedCorporateEmail(fullName, corporateEmail) && !keepsExistingCorporateEmail) || !requestedUsername || !/^[a-z0-9][a-z0-9._-]{2,39}$/.test(requestedUsername) || !personalEmail || !mobilePhone || !department || !profile || !units.length) {
+        if (!fullName || !generatedCorporateEmail || !corporateEmail || (!localIsAllowedCorporateEmail(fullName, corporateEmail) && !keepsExistingCorporateEmail) || !requestedUsername || !/^[a-z0-9][a-z0-9._-]{2,39}$/.test(requestedUsername) || !personalEmail || !mobilePhone || !profile || !units.length) {
             return { error: 'TEAM_INPUT_INVALID' }
         }
         const rawScheduleUnits = body.team && typeof body.team === 'object' && body.team.units !== undefined ? body.team.units : units
@@ -1796,7 +1796,7 @@ if (DEV_AUTH_ENABLED) {
             maxUses: 1,
             usesCount: 0,
             revoked: false,
-            note: `Convite local de ${input.department}`,
+            note: input.department ? `Convite local de ${input.department}` : 'Convite local de equipe',
             createdBy: session.user.username || session.user.email || 'gestor-local',
             createdAt: at,
         })
@@ -1863,6 +1863,24 @@ if (DEV_AUTH_ENABLED) {
             return res.status(503).json({ success: false, error: 'Não foi possível persistir a atualização da equipe', code: 'TEAM_LOCAL_PERSISTENCE_FAILED' })
         }
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(updated) })
+    })
+    app.get(['/api/crm/admin/team/:id/contact', '/admin/team/:id/contact'], async (req, res) => {
+        const session = getDevSession(req) || getLocalProxySession(req)
+        const role = normalizeRole(session?.user?.role)
+        if (!['ADMIN', 'GESTOR', 'GERENTE'].includes(role)) return res.status(403).json({ ok: false, success: false, error: 'Apenas gestores podem consultar dados de contato', code: 'TEAM_CONTACT_ROLE_DENIED' })
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const id = String(req.params.id || '').trim()
+        const member = store.team.find((row) => row.id === id)
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        return res.status(200).set('cache-control', 'no-store').json({
+            success: true,
+            data: {
+                personalEmail: localNormalizePersonalEmail(member.personalEmail),
+                mobilePhone: localNormalizePhone(member.mobilePhone),
+            },
+        })
     })
     app.post(['/api/crm/admin/team/:id/activate', '/admin/team/:id/activate'], async (req, res) => {
         const session = requireDevAdmin(req, res)
