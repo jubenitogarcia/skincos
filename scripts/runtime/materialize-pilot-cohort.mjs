@@ -14,6 +14,15 @@ const failure = (code) => {
   return error;
 };
 
+// These codes intentionally identify only the failed contract predicate. They
+// never serialize rows, identifiers, email addresses, or custody material into
+// the native-custody workflow log.
+const identityInvalid = (predicate) => failure(`PILOT_COHORT_IDENTITY_INVALID_${predicate}`);
+const exactlyOne = (rows, scope) => {
+  if (rows.length === 1) return;
+  throw identityInvalid(`${scope}_${rows.length === 0 ? "MISSING" : "AMBIGUOUS"}`);
+};
+
 const required = (env, name) => {
   const value = String(env?.[name] || "").trim();
   if (!value) throw failure("PILOT_COHORT_CUSTODY_UNAVAILABLE");
@@ -96,22 +105,19 @@ function assertIdentity(row, pilotLogin) {
   const identityUnits = parseUnits(row.identity_units_json);
   const onboardingUnits = parseUnits(row.onboarding_units_json);
 
-  if (
-    username !== PILOT_USERNAME
-    || !EMAIL.test(login)
-    || login !== normalizedLogin(pilotLogin)
-    || Number(row.identity_active) !== 1
-    || identityRole !== "CONSULTOR"
-    || !UUID.test(onboardingId)
-    || normalize(row.account_status).toUpperCase() !== "ACTIVE"
-    || normalize(row.provisioning_state).toUpperCase() !== "COMPLETED"
-    || normalize(row.last_error_code)
-    || !UUID.test(workforceEmployeeId)
-    || linkUsername !== username
-    || linkOnboardingId !== onboardingId
-    || linkWorkforceEmployeeId !== workforceEmployeeId
-    || linkReviewStatus !== "CONFIRMED"
-  ) throw failure("PILOT_COHORT_IDENTITY_INVALID");
+  if (username !== PILOT_USERNAME) throw identityInvalid("USERNAME");
+  if (!EMAIL.test(login) || login !== normalizedLogin(pilotLogin)) throw identityInvalid("LOGIN");
+  if (Number(row.identity_active) !== 1) throw identityInvalid("ACTIVE");
+  if (identityRole !== "CONSULTOR") throw identityInvalid("ROLE");
+  if (!UUID.test(onboardingId)) throw identityInvalid("ONBOARDING_ID");
+  if (normalize(row.account_status).toUpperCase() !== "ACTIVE") throw identityInvalid("ACCOUNT_STATUS");
+  if (normalize(row.provisioning_state).toUpperCase() !== "COMPLETED") throw identityInvalid("PROVISIONING_STATE");
+  if (normalize(row.last_error_code)) throw identityInvalid("LAST_ERROR");
+  if (!UUID.test(workforceEmployeeId)) throw identityInvalid("WORKFORCE_ID");
+  if (linkUsername !== username) throw identityInvalid("LINK_USERNAME");
+  if (linkOnboardingId !== onboardingId) throw identityInvalid("LINK_ONBOARDING_ID");
+  if (linkWorkforceEmployeeId !== workforceEmployeeId) throw identityInvalid("LINK_WORKFORCE_ID");
+  if (linkReviewStatus !== "CONFIRMED") throw identityInvalid("LINK_REVIEW_STATUS");
 
   return {
     actorId: username,
@@ -134,18 +140,15 @@ function assertWorkforce(row, identity) {
   })();
   const currentAccessState = normalize(row.access_state || row.status).toUpperCase();
 
-  if (
-    !UUID.test(employeeId)
-    || employeeId !== identity.workforceEmployeeId
-    || canonicalEmployeeId !== `identity:${identity.onboardingId}`
-    || workforceLogin !== identity.login
-    || normalize(row.status).toUpperCase() !== "ACTIVE"
-    || currentAccessState !== "ACTIVE"
-    || metadata?.identityOnboardingId !== identity.onboardingId
-    || !unitId
-    || !identity.identityUnits.includes(unitId)
-    || !identity.onboardingUnits.includes(unitId)
-  ) throw failure("PILOT_COHORT_IDENTITY_INVALID");
+  if (!UUID.test(employeeId) || employeeId !== identity.workforceEmployeeId) throw identityInvalid("WORKFORCE_EMPLOYEE_ID");
+  if (canonicalEmployeeId !== `identity:${identity.onboardingId}`) throw identityInvalid("WORKFORCE_CANONICAL_ID");
+  if (workforceLogin !== identity.login) throw identityInvalid("WORKFORCE_LOGIN");
+  if (normalize(row.status).toUpperCase() !== "ACTIVE") throw identityInvalid("WORKFORCE_STATUS");
+  if (currentAccessState !== "ACTIVE") throw identityInvalid("WORKFORCE_ACCESS_STATE");
+  if (metadata?.identityOnboardingId !== identity.onboardingId) throw identityInvalid("WORKFORCE_ONBOARDING_METADATA");
+  if (!unitId) throw identityInvalid("WORKFORCE_CURRENT_UNIT");
+  if (!identity.identityUnits.includes(unitId)) throw identityInvalid("WORKFORCE_IDENTITY_UNIT");
+  if (!identity.onboardingUnits.includes(unitId)) throw identityInvalid("WORKFORCE_ONBOARDING_UNIT");
 
   return { ...identity, canonicalEmployeeId, unitId };
 }
@@ -179,7 +182,7 @@ function identityQuery() {
 
 function workforceQuery(workforceEmployeeId) {
   const employeeId = normalize(workforceEmployeeId).toLowerCase();
-  if (!UUID.test(employeeId)) throw failure("PILOT_COHORT_IDENTITY_INVALID");
+  if (!UUID.test(employeeId)) throw identityInvalid("WORKFORCE_ID");
   return `SELECT
       e.id AS employee_id,
       e.canonical_employee_id AS canonical_employee_id,
@@ -245,7 +248,7 @@ export async function materializePilotCohort({ env = process.env, fetchImpl = fe
     databaseId: identityDatabaseId,
     sql: identityQuery(),
   });
-  if (identityRows.length !== 1) throw failure("PILOT_COHORT_IDENTITY_INVALID");
+  exactlyOne(identityRows, "IDENTITY_ROWS");
   const identity = assertIdentity(identityRows[0], pilotLogin);
   const workforceRows = await queryD1({
     fetchImpl,
@@ -254,7 +257,7 @@ export async function materializePilotCohort({ env = process.env, fetchImpl = fe
     databaseId,
     sql: workforceQuery(identity.workforceEmployeeId),
   });
-  if (workforceRows.length !== 1) throw failure("PILOT_COHORT_IDENTITY_INVALID");
+  exactlyOne(workforceRows, "WORKFORCE_ROWS");
   const candidate = assertWorkforce(workforceRows[0], identity);
   const egressAddress = await observedEgressAddress({ fetchImpl });
   return derivePilotCohort({ releaseSha, idempotencyKey, identity: candidate, egressAddress });
