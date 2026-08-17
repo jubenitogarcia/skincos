@@ -43,5 +43,6 @@ test("the active category keeps its yellow state and the countdown is armed with
         /\.progressItemCurrent \.progressButton \{[\s\S]*background: var\(--bm-yellow\);[\s\S]*color: var\(--bm-ink\);/,
     );
     assert.match(rhythmLayer, /\.progressItemCurrent \.progressButton:hover \{[\s\S]*background: var\(--bm-yellow\);/);
+    assert.match(rhythmLayer, /\.progressItemCurrent \.progressButton:disabled \{[\s\S]*opacity: 1;/);
     assert.match(rhythmLayer, /\.autoAdvance::after \{[\s\S]*background: var\(--bm-ink\);/);
 });

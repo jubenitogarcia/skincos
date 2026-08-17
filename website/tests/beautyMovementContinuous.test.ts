@@ -49,6 +49,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /function startInitialDealScroll\(\)/);
     assert.match(experience, /window\.requestAnimationFrame\(follow\)/);
     assert.match(experience, /function stopInitialDealScroll\(\)/);
+    assert.match(experience, /cancelScrollAnimation\(\);\s*stopInitialDealScroll\(\);/);
     assert.match(experience, /scrollToElement\(target, titlePeek\)/);
     assert.match(experience, /prefers-reduced-motion/);
     assert.match(experience, /import \{ BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate \}/);
