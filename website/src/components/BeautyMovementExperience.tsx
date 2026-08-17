@@ -989,7 +989,10 @@ export default function BeautyMovementExperience({
     useEffect(() => {
         if (!reducedMotion) return;
         cancelScrollAnimation();
-    }, [reducedMotion, cancelScrollAnimation]);
+        // Keep the dependency-list shape stable for Fast Refresh. The
+        // auto-advance cancellation was intentionally removed; this
+        // dependency remains only to avoid a dev-time hook signature change.
+    }, [reducedMotion, cancelAutoAdvance, cancelScrollAnimation]);
 
     useEffect(() => {
         if (handStage !== "expand") return;
