@@ -742,6 +742,97 @@ test('staging seed attestation returns a finite resource stage for permanent Gra
   }
 });
 
+test('staging seed attestation identifies a rejected appsecret proof without mutating', async () => {
+  const db = new SeedDb();
+  db.prepare = () => {
+    throw new Error('D1 must remain untouched by source attestation');
+  };
+  const graph = new FakeGraph();
+  const observedReads = [];
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-appsecret-proof-mismatch-001',
+    env: {
+      META_APP_SECRET: 'unit-test-app-secret-not-a-real-secret',
+      META_GRAPH_FETCH: async (url, init) => {
+        const target = new URL(url);
+        observedReads.push({
+          path: target.pathname.replace(/^\/v\d+\.0\//, ''),
+          method: String(init.method || 'GET').toUpperCase(),
+          hasProof: target.searchParams.has('appsecret_proof'),
+        });
+        if (target.searchParams.has('appsecret_proof')) {
+          return graphResponse({ error: { message: 'proof rejected', code: 10 } }, 403);
+        }
+        return graph.fetch(url, init);
+      },
+    },
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_graph_appsecret_proof_mismatch');
+  assert.deepEqual(observedReads, [
+    { path: PIXEL_ID, method: 'GET', hasProof: true },
+    { path: PIXEL_ID, method: 'GET', hasProof: false },
+  ]);
+  assert.equal(graph.calls.length, 1);
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
+test('staging seed attestation keeps pixel access denied when proofless retry also fails', async () => {
+  const db = new SeedDb();
+  db.prepare = () => {
+    throw new Error('D1 must remain untouched by source attestation');
+  };
+  const graph = new FakeGraph();
+  const observedReads = [];
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-proofless-pixel-denied-001',
+    env: {
+      META_APP_SECRET: 'unit-test-app-secret-not-a-real-secret',
+      META_GRAPH_FETCH: async (url, init) => {
+        const target = new URL(url);
+        observedReads.push({
+          path: target.pathname.replace(/^\/v\d+\.0\//, ''),
+          method: String(init.method || 'GET').toUpperCase(),
+          hasProof: target.searchParams.has('appsecret_proof'),
+        });
+        return graphResponse({ error: { message: 'pixel denied', code: 10 } }, 403);
+      },
+    },
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_graph_pixel_access_denied');
+  assert.deepEqual(observedReads, [
+    { path: PIXEL_ID, method: 'GET', hasProof: true },
+    { path: PIXEL_ID, method: 'GET', hasProof: false },
+  ]);
+  assert.equal(graph.calls.length, 0);
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
 test('staging seed attestation preserves finite non-identity source eligibility outcomes', async () => {
   const cases = [
     {
