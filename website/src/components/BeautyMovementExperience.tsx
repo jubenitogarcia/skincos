@@ -154,6 +154,36 @@ const INITIAL_TABLE_HEIGHT = 112;
 const AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION.autoAdvanceMs / 1_000;
 const INITIAL_EXPERIENCE_TITLE = "3 anos. 3 cartas.";
 const INITIAL_EXPERIENCE_SUBTITLE = "Um novo movimento para celebrar tudo o que ainda vem pela frente.";
+// Keyboard focus changes and application shortcuts must not cancel a pending
+// hand. Only keys whose browser-default action is to move the reading viewport
+// count as an explicit reading interruption.
+const AUTO_ADVANCE_READING_KEYS = new Set([
+    "ArrowDown",
+    "ArrowUp",
+    "PageDown",
+    "PageUp",
+    "Home",
+    "End",
+    " ",
+    "Spacebar",
+]);
+
+function isAutoAdvanceReadingIntent(event: KeyboardEvent): boolean {
+    if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return false;
+
+    const target = event.target;
+    const isEditableTarget =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+            target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.tagName === "SELECT");
+    if (isEditableTarget) {
+        return false;
+    }
+
+    return AUTO_ADVANCE_READING_KEYS.has(event.key);
+}
 
 type InitialExperienceCopy = {
     title: string;
@@ -991,14 +1021,17 @@ export default function BeautyMovementExperience({
         if (!autoAdvanceActive) return;
 
         const cancelOnReadingIntent = () => cancelAutoAdvance();
+        const cancelOnKeyboardReadingIntent = (event: KeyboardEvent) => {
+            if (isAutoAdvanceReadingIntent(event)) cancelOnReadingIntent();
+        };
         window.addEventListener("wheel", cancelOnReadingIntent, { passive: true });
         window.addEventListener("touchmove", cancelOnReadingIntent, { passive: true });
-        window.addEventListener("keydown", cancelOnReadingIntent);
+        window.addEventListener("keydown", cancelOnKeyboardReadingIntent);
 
         return () => {
             window.removeEventListener("wheel", cancelOnReadingIntent);
             window.removeEventListener("touchmove", cancelOnReadingIntent);
-            window.removeEventListener("keydown", cancelOnReadingIntent);
+            window.removeEventListener("keydown", cancelOnKeyboardReadingIntent);
         };
     }, [autoAdvanceActive, cancelAutoAdvance]);
 

@@ -25,6 +25,12 @@ test("the active category keeps its yellow state and the countdown is armed with
 
     assert.match(experience, /const autoAdvanceScheduledRef = useRef\(false\)/);
     assert.match(experience, /const autoAdvancePendingRef = useRef\(false\)/);
+    assert.match(experience, /const AUTO_ADVANCE_READING_KEYS = new Set\(/);
+    assert.match(experience, /"ArrowDown"[\s\S]*"ArrowUp"[\s\S]*"PageDown"[\s\S]*"PageUp"[\s\S]*"Home"[\s\S]*"End"/);
+    assert.match(experience, /target\.isContentEditable[\s\S]*target\.tagName === "INPUT"/);
+    assert.match(experience, /event\.defaultPrevented \|\| event\.isComposing \|\| event\.ctrlKey \|\| event\.metaKey \|\| event\.altKey/);
+    assert.match(experience, /if \(isAutoAdvanceReadingIntent\(event\)\) cancelOnReadingIntent\(\)/);
+    assert.doesNotMatch(experience, /window\.addEventListener\("keydown", cancelOnReadingIntent\)/);
     assert.ok(start.indexOf("setAutoAdvanceActive(true)") < start.indexOf("window.requestAnimationFrame"));
     assert.match(start, /handStageRef\.current !== "reveal" && handStageRef\.current !== "held"/);
     assert.match(start, /autoAdvancePendingRef\.current = true/);
