@@ -1,0 +1,111 @@
+name: Attest Meta Ads Staging Source Access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meta-ads-source-access-attestation-staging
+  cancel-in-progress: false
+
+jobs:
+  attest:
+    if: github.ref == 'refs/heads/main'
+    name: Read the staging source capability without deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: staging
+    steps:
+      - name: Attest Meta Ads source scopes and ad-account access without exposing them
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
+          META_ADS_ACCOUNT_ID: ${{ vars.META_ADS_ACCOUNT_ID }}
+          META_ADS_API_VERSION: ${{ vars.META_ADS_API_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '');
+
+          const fail = (code) => {
+            console.error(`Meta Ads source-access attestation failed: ${code}`);
+            process.exit(1);
+          };
+
+          if (!token || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
+            fail('source_contract_invalid');
+          }
+
+          const graphGet = async (path) => {
+            let response;
+            try {
+              response = await fetch(`https://graph.facebook.com/${apiVersion}/${path}`, {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store',
+                redirect: 'error',
+                signal: AbortSignal.timeout(12_000),
+              });
+            } catch {
+              return { state: 'unavailable' };
+            }
+
+            if (!response || response.status === 408 || response.status === 429 || response.status >= 500) {
+              return { state: 'unavailable' };
+            }
+            if (!response.ok) return { state: 'denied' };
+
+            let payload;
+            try {
+              payload = await response.json();
+            } catch {
+              return { state: 'malformed' };
+            }
+            if (payload?.error) return { state: 'denied' };
+            return { state: 'ok', payload };
+          };
+
+          const scopeNames = [
+            'ads_read',
+            'ads_management',
+            'business_management',
+            'pages_show_list',
+            'pages_read_engagement',
+            'pages_manage_ads',
+            'instagram_basic',
+          ];
+          const permissions = await graphGet('me/permissions');
+          const scopeStates = Object.fromEntries(scopeNames.map((name) => [name, 'unknown']));
+          if (permissions.state === 'ok') {
+            const granted = new Set(
+              Array.isArray(permissions.payload?.data)
+                ? permissions.payload.data
+                  .filter((entry) => entry && entry.status === 'granted')
+                  .map((entry) => String(entry.permission || ''))
+                : [],
+            );
+            for (const name of scopeNames) scopeStates[name] = granted.has(name) ? 'granted' : 'missing';
+          }
+
+          const adAccount = await graphGet(`act_${accountId}?fields=id`);
+          const adAccountState = adAccount.state === 'ok'
+            ? (String(adAccount.payload?.id || '') === accountId ? 'allowed' : 'malformed')
+            : adAccount.state;
+
+          process.stdout.write([
+            'source_access_attestation=verified',
+            `source_access_permissions=${permissions.state === 'ok' ? 'available' : permissions.state}`,
+            `source_access_ads_read=${scopeStates.ads_read}`,
+            `source_access_ads_management=${scopeStates.ads_management}`,
+            `source_access_business_management=${scopeStates.business_management}`,
+            `source_access_pages_show_list=${scopeStates.pages_show_list}`,
+            `source_access_pages_read_engagement=${scopeStates.pages_read_engagement}`,
+            `source_access_pages_manage_ads=${scopeStates.pages_manage_ads}`,
+            `source_access_instagram_basic=${scopeStates.instagram_basic}`,
+            `source_access_ad_account=${adAccountState}`,
+          ].join('\n') + '\n');
+          NODE
