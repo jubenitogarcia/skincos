@@ -319,6 +319,8 @@ export default function BeautyMovementExperience({
     const mountedRef = useRef(true);
     const revealTransitionTokenRef = useRef<number | null>(null);
     const autoAdvanceGateRef = useRef(createBeautyMovementMotionGate());
+    const autoAdvanceScheduledRef = useRef(false);
+    const autoAdvancePendingRef = useRef(false);
     const handTransitionGateRef = useRef(createBeautyMovementMotionGate());
     const introTransitionGateRef = useRef(createBeautyMovementMotionGate());
     const progressMotionKeyRef = useRef(0);
@@ -601,6 +603,8 @@ export default function BeautyMovementExperience({
 
     const cancelAutoAdvance = useCallback(() => {
         autoAdvanceGateRef.current.invalidate();
+        autoAdvanceScheduledRef.current = false;
+        autoAdvancePendingRef.current = false;
         if (autoAdvanceTimerRef.current !== null) {
             window.clearTimeout(autoAdvanceTimerRef.current);
             autoAdvanceTimerRef.current = null;
@@ -926,28 +930,51 @@ export default function BeautyMovementExperience({
 
     function startAutoAdvance(index: number, delayMs = BEAUTY_MOVEMENT_MOTION.autoAdvanceMs) {
         const token = autoAdvanceGateRef.current.start();
+        autoAdvanceScheduledRef.current = true;
+        autoAdvancePendingRef.current = false;
+        // The countdown belongs to the choice, not to the end of the flip.
+        // Render it before the RAF/timer so a fast or throttled frame cannot
+        // leave the category without feedback.
+        setAutoAdvanceActive(true);
         autoAdvanceFrameRef.current = window.requestAnimationFrame(() => {
             autoAdvanceFrameRef.current = null;
             if (
                 !mountedRef.current ||
                 reducedMotionRef.current ||
                 !autoAdvanceGateRef.current.isCurrent(token) ||
-                handStageRef.current !== "held" ||
+                (handStageRef.current !== "reveal" && handStageRef.current !== "held") ||
                 displayedActIndexRef.current !== index ||
                 finaleStageRef.current !== "hidden"
-            ) return;
+            ) {
+                autoAdvanceScheduledRef.current = false;
+                setAutoAdvanceActive(false);
+                return;
+            }
 
-            setAutoAdvanceActive(true);
             autoAdvanceTimerRef.current = window.setTimeout(() => {
                 autoAdvanceTimerRef.current = null;
                 if (
                     !mountedRef.current ||
                     !autoAdvanceGateRef.current.isCurrent(token) ||
-                    handStageRef.current !== "held" ||
+                    (handStageRef.current !== "reveal" && handStageRef.current !== "held") ||
                     displayedActIndexRef.current !== index ||
                     finaleStageRef.current !== "hidden"
-                ) return;
+                ) {
+                    autoAdvanceScheduledRef.current = false;
+                    autoAdvancePendingRef.current = false;
+                    setAutoAdvanceActive(false);
+                    return;
+                }
 
+                if (handStageRef.current === "reveal") {
+                    // The fallback reveal timer will settle the card. Keep the
+                    // completed countdown latched so settleReveal can advance
+                    // immediately instead of silently dropping the hand.
+                    autoAdvancePendingRef.current = true;
+                    return;
+                }
+
+                autoAdvanceScheduledRef.current = false;
                 setAutoAdvanceActive(false);
                 moveToNextHand(index);
             }, delayMs);
@@ -1065,7 +1092,12 @@ export default function BeautyMovementExperience({
         clearHandTransitionTimer();
         revealTransitionTokenRef.current = null;
         setCurrentHandStage("held");
-        scheduleNextHand(actIndex);
+        if (autoAdvancePendingRef.current) {
+            autoAdvancePendingRef.current = false;
+            autoAdvanceScheduledRef.current = false;
+            setAutoAdvanceActive(false);
+            moveToNextHand(actIndex);
+        }
     }
 
     function handleSelectedCardAnimationEnd(event: ReactAnimationEvent<HTMLButtonElement>, actIndex: number) {
@@ -1111,6 +1143,7 @@ export default function BeautyMovementExperience({
             const handToken = beginHandTransition();
             revealTransitionTokenRef.current = handToken;
             setCurrentHandStage("reveal");
+            scheduleNextHand(actIndex);
             scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.handRevealFallbackMs, () => {
                 settleReveal(actIndex, handToken);
             });
