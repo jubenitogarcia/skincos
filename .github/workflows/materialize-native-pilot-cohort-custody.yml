@@ -98,10 +98,9 @@ jobs:
           source_sha: ${{ inputs.release_sha }}
           proof_file: ${{ runner.temp }}/pilot-cohort-custody/global-coordination-release-ponto.json
 
-      - name: Derive and write the single allowed cohort directly to production custody
+      - name: Derive and validate the single allowed cohort inside production custody
         if: ${{ steps.acquire.outcome == 'success' }}
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           PONTO_RELEASE_SHA: ${{ inputs.release_sha }}
           PONTO_PILOT_LOGIN: ${{ secrets.PONTO_PILOT_LOGIN }}
           PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
@@ -112,8 +111,7 @@ jobs:
           set -euo pipefail
           umask 077
           cohort_file="$RUNNER_TEMP/pilot-cohort.json"
-          secret_metadata="$RUNNER_TEMP/pilot-cohort-secret-write-metadata.json"
-          trap 'rm -f "$cohort_file" "$secret_metadata"' EXIT
+          trap 'rm -f "$cohort_file"' ERR
           node scripts/runtime/materialize-pilot-cohort.mjs > "$cohort_file"
           [[ -s "$cohort_file" ]] || { echo 'Pilot cohort materialization did not produce a protected value.' >&2; exit 78; }
           node - "$cohort_file" <<'NODE'
@@ -134,8 +132,34 @@ jobs:
             throw new Error("pilot cohort unit is invalid");
           }
           NODE
+
+      - name: Revalidate the composite Ponto release lease before custody mutation
+        id: revalidate
+        if: ${{ steps.acquire.outcome == 'success' }}
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: true
+          proof_file: ${{ runner.temp }}/pilot-cohort-custody/global-coordination-release-ponto.json
+          resource: release:ponto
+          module: ponto
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Write the validated cohort only after revalidated production custody
+        if: ${{ steps.revalidate.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          cohort_file="$RUNNER_TEMP/pilot-cohort.json"
+          secret_metadata="$RUNNER_TEMP/pilot-cohort-secret-write-metadata.json"
+          trap 'rm -f "$cohort_file" "$secret_metadata"' EXIT
+          [[ -s "$cohort_file" ]] || { echo 'Pilot cohort materialization did not produce a protected value.' >&2; exit 78; }
           gh secret set PONTO_PILOT_COHORT_JSON --repo "$GITHUB_REPOSITORY" --env production < "$cohort_file"
-          rm -f "$cohort_file"
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$secret_metadata"
           node - "$secret_metadata" <<'NODE'
           const fs = require("fs");
@@ -146,6 +170,12 @@ jobs:
           if (!names.has("PONTO_PILOT_COHORT_JSON")) throw new Error("pilot cohort secret write did not become observable");
           NODE
           echo 'pilot_cohort_custody=written identity_count=1 values_emitted=false'
+
+      - name: Remove the protected cohort buffer
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/pilot-cohort.json" "$RUNNER_TEMP/pilot-cohort-secret-write-metadata.json"
 
       - name: Release the composite Ponto release lease
         if: ${{ always() && steps.acquire.outcome == 'success' }}

@@ -90,6 +90,11 @@ test("materializes one opaque cohort from the exact active identity across both 
     assert.equal(cohort[key].length, 1);
     assert.match(cohort[key][0], /^v1:[A-Za-z0-9_-]{43}$/);
   }
+  const legacyRoleCohort = await materializePilotCohort({
+    env: environment,
+    fetchImpl: fetchFor({ identityRows: [identityRow({ identity_role: "EMPLOYEE" })] }),
+  });
+  assert.deepEqual(legacyRoleCohort, cohort);
 });
 
 test("refuses an unauthorized role, unconfirmed link, invalid lifecycle, or workforce mismatch", async () => {

@@ -22,6 +22,10 @@ const required = (env, name) => {
 
 const normalize = (value) => String(value || "").trim();
 const normalizedLogin = (value) => normalize(value).toLowerCase();
+const normalizedPilotRole = (value) => {
+  const role = normalize(value).toUpperCase();
+  return role === "EMPLOYEE" ? "CONSULTOR" : role;
+};
 
 const parseUnits = (value) => {
   try {
@@ -82,7 +86,7 @@ export async function observedEgressAddress({ fetchImpl = fetch } = {}) {
 function assertIdentity(row, pilotLogin) {
   const username = normalize(row.username).toLowerCase();
   const login = normalizedLogin(row.identity_login);
-  const identityRole = normalize(row.identity_role).toUpperCase();
+  const identityRole = normalizedPilotRole(row.identity_role);
   const onboardingId = normalize(row.onboarding_id);
   const workforceEmployeeId = normalize(row.workforce_employee_id);
   const linkUsername = normalize(row.link_username).toLowerCase();
