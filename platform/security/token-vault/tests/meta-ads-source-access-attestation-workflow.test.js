@@ -44,6 +44,17 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /unresolved\.length === 0 \|\| !hasNextPage/);
   assert.match(workflow, /!Array\.isArray\(permissions\.payload\?\.data\)/);
   assert.match(workflow, /payload\?\.error\?\.is_transient === true/);
+  assert.match(
+    workflow,
+    /const graphErrorCode = Number\(payload\?\.error\?\.code\)/,
+  );
+  assert.match(workflow, /response\.status === 401/);
+  assert.match(workflow, /response\.status === 403/);
+  assert.match(workflow, /graphErrorCode === 10/);
+  assert.match(workflow, /graphErrorCode === 102/);
+  assert.match(workflow, /graphErrorCode === 190/);
+  assert.match(workflow, /graphErrorCode === 200/);
+  assert.match(workflow, /authorizationError \? 'denied' : 'malformed'/);
   assert.match(workflow, /graphGet\(`act_\$\{accountId\}\?fields=id`\)/);
   assert.match(
     workflow,

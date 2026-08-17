@@ -64,7 +64,17 @@ jobs:
               return { state: 'malformed' };
             }
             if (payload?.error?.is_transient === true) return { state: 'unavailable' };
-            if (!response.ok || payload?.error) return { state: 'denied' };
+            if (!response.ok || payload?.error) {
+              const graphErrorCode = Number(payload?.error?.code);
+              const authorizationError =
+                response.status === 401 ||
+                response.status === 403 ||
+                graphErrorCode === 10 ||
+                graphErrorCode === 102 ||
+                graphErrorCode === 190 ||
+                graphErrorCode === 200;
+              return { state: authorizationError ? 'denied' : 'malformed' };
+            }
             return { state: 'ok', payload };
           };
 
