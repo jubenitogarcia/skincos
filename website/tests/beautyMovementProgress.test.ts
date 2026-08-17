@@ -27,6 +27,7 @@ test("the active category keeps its yellow state and the countdown is armed with
     assert.match(experience, /const autoAdvancePendingRef = useRef\(false\)/);
     assert.doesNotMatch(experience, /window\.addEventListener\("(wheel|touchmove|keydown)", cancelOnReadingIntent/);
     assert.doesNotMatch(experience, /document\.addEventListener\("visibilitychange", cancelWhenBackgrounded\)/);
+    assert.doesNotMatch(experience, /if \(!reducedMotion\) return;\s*cancelAutoAdvance\(\)/);
     assert.match(experience, /function handleProgressClick\(index: number\) \{\s*\/\/ Once the automatic handoff is armed[\s\S]*if \(autoAdvanceActive\) return;/);
     assert.match(experience, /disabled=\{!isCurrent \|\| Boolean\(progressMotion\) \|\| autoAdvanceActive\}/);
     assert.ok(start.indexOf("setAutoAdvanceActive(true)") < start.indexOf("window.requestAnimationFrame"));

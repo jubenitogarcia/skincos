@@ -988,9 +988,8 @@ export default function BeautyMovementExperience({
 
     useEffect(() => {
         if (!reducedMotion) return;
-        cancelAutoAdvance();
         cancelScrollAnimation();
-    }, [reducedMotion, cancelAutoAdvance, cancelScrollAnimation]);
+    }, [reducedMotion, cancelScrollAnimation]);
 
     useEffect(() => {
         if (handStage !== "expand") return;
