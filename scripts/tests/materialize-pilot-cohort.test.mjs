@@ -4,6 +4,8 @@ import test from "node:test";
 import { derivePilotCohort, materializePilotCohort } from "../runtime/materialize-pilot-cohort.mjs";
 
 const releaseSha = "a".repeat(40);
+const canonicalOnboardingId = "2".repeat(64);
+const legacyOnboardingId = "22222222-2222-4222-8222-222222222222";
 const environment = {
   PONTO_RELEASE_SHA: releaseSha,
   CLOUDFLARE_ACCOUNT_ID: "b".repeat(32),
@@ -20,14 +22,14 @@ const identityRow = (overrides = {}) => ({
   identity_role: "CONSULTOR",
   identity_active: 1,
   identity_units_json: JSON.stringify(["novo-hamburgo"]),
-  onboarding_id: "22222222-2222-4222-8222-222222222222",
+  onboarding_id: canonicalOnboardingId,
   account_status: "ACTIVE",
   provisioning_state: "COMPLETED",
   last_error_code: null,
   workforce_employee_id: "33333333-3333-4333-8333-333333333333",
   onboarding_units_json: JSON.stringify(["novo-hamburgo"]),
   link_username: "novohamburgo",
-  link_onboarding_id: "22222222-2222-4222-8222-222222222222",
+  link_onboarding_id: canonicalOnboardingId,
   link_workforce_employee_id: "33333333-3333-4333-8333-333333333333",
   link_review_status: "CONFIRMED",
   ...overrides,
@@ -35,11 +37,11 @@ const identityRow = (overrides = {}) => ({
 
 const workforceRow = (overrides = {}) => ({
   employee_id: "33333333-3333-4333-8333-333333333333",
-  canonical_employee_id: "identity:22222222-2222-4222-8222-222222222222",
+  canonical_employee_id: `identity:${canonicalOnboardingId}`,
   workforce_login: "novohamburgo@example.test",
   status: "ACTIVE",
   access_state: "ACTIVE",
-  metadata_json: JSON.stringify({ identityOnboardingId: "22222222-2222-4222-8222-222222222222" }),
+  metadata_json: JSON.stringify({ identityOnboardingId: canonicalOnboardingId }),
   unit_id: "novo-hamburgo",
   ...overrides,
 });
@@ -97,10 +99,25 @@ test("materializes one opaque cohort from the exact active identity across both 
   assert.deepEqual(legacyRoleCohort, cohort);
 });
 
+test("accepts the legacy UUID onboarding identity only when every linked predicate remains exact", async () => {
+  const cohort = await materializePilotCohort({
+    env: environment,
+    fetchImpl: fetchFor({
+      identityRows: [identityRow({ onboarding_id: legacyOnboardingId, link_onboarding_id: legacyOnboardingId })],
+      workforceRows: [workforceRow({
+        canonical_employee_id: `identity:${legacyOnboardingId}`,
+        metadata_json: JSON.stringify({ identityOnboardingId: legacyOnboardingId }),
+      })],
+    }),
+  });
+  assert.equal(cohort.pilotEmployeeRefs.length, 1);
+});
+
 test("classifies the exact non-sensitive identity or Workforce predicate that rejects a cohort", async () => {
   for (const [fixture, expectedCode] of [
     [{ identityRows: [] }, "PILOT_COHORT_IDENTITY_INVALID_IDENTITY_ROWS_MISSING"],
     [{ identityRows: [identityRow({ identity_role: "SUPERVISOR" })] }, "PILOT_COHORT_IDENTITY_INVALID_ROLE"],
+    [{ identityRows: [identityRow({ onboarding_id: "not-an-onboarding-id", link_onboarding_id: "not-an-onboarding-id" })] }, "PILOT_COHORT_IDENTITY_INVALID_ONBOARDING_ID"],
     [{ identityRows: [identityRow({ link_review_status: "PENDING_REVIEW" })] }, "PILOT_COHORT_IDENTITY_INVALID_LINK_REVIEW_STATUS"],
     [{ identityRows: [identityRow({ provisioning_state: "FAILED" })] }, "PILOT_COHORT_IDENTITY_INVALID_PROVISIONING_STATE"],
     [{ workforceRows: [workforceRow({ access_state: "SUSPENDED" })] }, "PILOT_COHORT_IDENTITY_INVALID_WORKFORCE_ACCESS_STATE"],
@@ -123,7 +140,7 @@ test("derivation matches the Ponto runtime HMAC contract and never serializes cu
       actorId: "novohamburgo",
       username: "novohamburgo",
       login: environment.PONTO_PILOT_LOGIN,
-      canonicalEmployeeId: "identity:22222222-2222-4222-8222-222222222222",
+      canonicalEmployeeId: `identity:${canonicalOnboardingId}`,
       unitId: "novo-hamburgo",
     },
     egressAddress: "198.51.100.10",
@@ -135,7 +152,7 @@ test("derivation matches the Ponto runtime HMAC contract and never serializes cu
     .update("skincos/ponto/network-context/v1")
     .digest("base64url");
   const opaque = (key, message) => `v1:${createHmac("sha256", key).update(message).digest("base64url")}`;
-  assert.equal(cohort.pilotEmployeeRefs[0], opaque(actorKey, `ponto-canary-employee/v1.${releaseSha}.identity:22222222-2222-4222-8222-222222222222`));
+  assert.equal(cohort.pilotEmployeeRefs[0], opaque(actorKey, `ponto-canary-employee/v1.${releaseSha}.identity:${canonicalOnboardingId}`));
   assert.equal(cohort.pilotIdentityRefs[0], opaque(actorKey, `ponto-canary-identity/v1.${releaseSha}.novohamburgo`));
   assert.equal(cohort.pilotIdentityLoginRefs[0], opaque(actorKey, `ponto-canary-login/v1.${releaseSha}.${environment.PONTO_PILOT_LOGIN}`));
   assert.equal(cohort.pilotNetworkContexts[0], opaque(networkKey, `ponto-network/v1.${releaseSha}.198.51.100.10`));
