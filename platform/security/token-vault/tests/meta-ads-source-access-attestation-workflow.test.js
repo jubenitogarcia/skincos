@@ -16,11 +16,50 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /environment: staging/);
   assert.match(workflow, /timeout-minutes: 3/);
-  assert.match(workflow, /META_ADS_ACCESS_TOKEN: \$\{\{ secrets\.META_ADS_ACCESS_TOKEN \}\}/);
-  assert.match(workflow, /META_ADS_ACCOUNT_ID: \$\{\{ vars\.META_ADS_ACCOUNT_ID \}\}/);
-  assert.match(workflow, /META_ADS_API_VERSION: \$\{\{ vars\.META_ADS_API_VERSION \}\}/);
-  assert.match(workflow, /graphGet\('me\/permissions'\)/);
+  assert.match(
+    workflow,
+    /META_ADS_ACCESS_TOKEN: \$\{\{ secrets\.META_ADS_ACCESS_TOKEN \}\}/,
+  );
+  assert.match(
+    workflow,
+    /META_ADS_ACCOUNT_ID: \$\{\{ vars\.META_ADS_ACCOUNT_ID \}\}/,
+  );
+  assert.match(
+    workflow,
+    /META_ADS_API_VERSION: \$\{\{ vars\.META_ADS_API_VERSION \}\}/,
+  );
+  assert.match(workflow, /const maxPermissionPages = 5/);
+  assert.match(
+    workflow,
+    /graphGet\(`me\/permissions\?limit=100\$\{cursorQuery\}`\)/,
+  );
+  assert.match(workflow, /paging\?\.cursors\?\.after/);
+  assert.match(workflow, /paging\?\.next/);
+  assert.match(
+    workflow,
+    /rawNextPage != null && typeof rawNextPage !== 'string'/,
+  );
+  assert.match(workflow, /hasNextPage && typeof rawNextCursor !== 'string'/);
+  assert.match(workflow, /encodeURIComponent\(permissionCursor\)/);
+  assert.match(workflow, /unresolved\.length === 0 \|\| !hasNextPage/);
+  assert.match(workflow, /!Array\.isArray\(permissions\.payload\?\.data\)/);
+  assert.match(workflow, /payload\?\.error\?\.is_transient === true/);
+  assert.match(
+    workflow,
+    /const graphErrorCode = Number\(payload\?\.error\?\.code\)/,
+  );
+  assert.match(workflow, /response\.status === 401/);
+  assert.match(workflow, /response\.status === 403/);
+  assert.match(workflow, /graphErrorCode === 10/);
+  assert.match(workflow, /graphErrorCode === 102/);
+  assert.match(workflow, /graphErrorCode === 190/);
+  assert.match(workflow, /graphErrorCode === 200/);
+  assert.match(workflow, /authorizationError \? 'denied' : 'malformed'/);
   assert.match(workflow, /graphGet\(`act_\$\{accountId\}\?fields=id`\)/);
+  assert.match(
+    workflow,
+    /payload\?\.id \|\| ''\)\.trim\(\)\.replace\(\/\^act_\//,
+  );
   assert.match(workflow, /method: 'GET'/);
   assert.match(workflow, /Authorization: `Bearer \$\{token\}`/);
   assert.match(workflow, /cache: 'no-store'/);
@@ -36,14 +75,18 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /source_access_instagram_basic=/);
   assert.match(workflow, /source_access_ad_account=/);
 
-  assert.match(workflow, /const missingScopes = scopeNames\.filter\(\(name\) => scopeStates\[name\] !== 'granted'\)/);
-  assert.match(workflow, /if \(permissions\.state !== 'ok'\)/);
+  assert.match(
+    workflow,
+    /const missingScopes = scopeNames\.filter\(\(name\) => scopeStates\[name\] !== 'granted'\)/,
+  );
+  assert.match(workflow, /if \(permissionsState !== 'ok'\)/);
   assert.match(workflow, /source_permissions_missing:/);
   assert.match(workflow, /if \(adAccountState !== 'allowed'\)/);
   assert.match(workflow, /source_ad_account_\$\{adAccountState\}/);
   assert.ok(
-    workflow.indexOf('source_permissions_missing:') < workflow.indexOf('source_access_attestation=verified'),
-    'verified output must be unreachable until missing permissions fail closed',
+    workflow.indexOf("source_permissions_missing:") <
+      workflow.indexOf("source_access_attestation=verified"),
+    "verified output must be unreachable until missing permissions fail closed",
   );
 
   assert.doesNotMatch(workflow, /access_token=/i);
