@@ -57,15 +57,14 @@ jobs:
             if (!response || response.status === 408 || response.status === 429 || response.status >= 500) {
               return { state: 'unavailable' };
             }
-            if (!response.ok) return { state: 'denied' };
-
             let payload;
             try {
               payload = await response.json();
             } catch {
               return { state: 'malformed' };
             }
-            if (payload?.error) return { state: 'denied' };
+            if (payload?.error?.is_transient === true) return { state: 'unavailable' };
+            if (!response.ok || payload?.error) return { state: 'denied' };
             return { state: 'ok', payload };
           };
 
@@ -93,14 +92,27 @@ jobs:
               permissionsState = permissions.state;
               break;
             }
-            if (Array.isArray(permissions.payload?.data)) {
-              for (const entry of permissions.payload.data) {
-                if (entry?.status === 'granted') granted.add(String(entry.permission || ''));
-              }
+            if (!Array.isArray(permissions.payload?.data)) {
+              permissionsState = 'malformed';
+              break;
+            }
+            for (const entry of permissions.payload.data) {
+              if (entry?.status === 'granted') granted.add(String(entry.permission || ''));
             }
             const unresolved = scopeNames.filter((name) => !granted.has(name));
-            const nextCursor = String(permissions.payload?.paging?.cursors?.after || '').trim();
-            if (unresolved.length === 0 || !nextCursor) {
+            const rawNextPage = permissions.payload?.paging?.next;
+            if (rawNextPage != null && typeof rawNextPage !== 'string') {
+              permissionsState = 'malformed';
+              break;
+            }
+            const hasNextPage = typeof rawNextPage === 'string' && rawNextPage.length > 0;
+            const rawNextCursor = permissions.payload?.paging?.cursors?.after;
+            if (hasNextPage && typeof rawNextCursor !== 'string') {
+              permissionsState = 'malformed';
+              break;
+            }
+            const nextCursor = typeof rawNextCursor === 'string' ? rawNextCursor.trim() : '';
+            if (unresolved.length === 0 || !hasNextPage) {
               permissionCoverage = 'complete';
               break;
             }
