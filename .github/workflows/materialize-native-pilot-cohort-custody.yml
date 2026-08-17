@@ -69,15 +69,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
-          secret_metadata="$RUNNER_TEMP/pilot-cohort-secret-metadata.json"
-          trap 'rm -f "$secret_metadata"' EXIT
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$secret_metadata"
-          node - "$secret_metadata" <<'NODE'
+          secret_names="$RUNNER_TEMP/pilot-cohort-secret-metadata.txt"
+          trap 'rm -f "$secret_names"' EXIT
+          gh api --paginate --jq '.secrets[].name' "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$secret_names"
+          node - "$secret_names" <<'NODE'
           const fs = require("fs");
-          const pages = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const names = new Set((Array.isArray(pages) ? pages : [pages])
-            .flatMap(page => Array.isArray(page?.secrets) ? page.secrets : [])
-            .map(item => item.name));
+          const names = new Set(fs.readFileSync(process.argv[2], "utf8")
+            .split(/\r?\n/)
+            .map(name => name.trim())
+            .filter(Boolean));
           for (const name of ["PONTO_PILOT_LOGIN", "PONTO_PILOT_PASSWORD", "PONTO_IDEMPOTENCY_KEY"]) {
             if (!names.has(name)) throw new Error("required production secret metadata is absent");
           }
@@ -156,17 +156,17 @@ jobs:
           set -euo pipefail
           umask 077
           cohort_file="$RUNNER_TEMP/pilot-cohort.json"
-          secret_metadata="$RUNNER_TEMP/pilot-cohort-secret-write-metadata.json"
-          trap 'rm -f "$cohort_file" "$secret_metadata"' EXIT
+          secret_names="$RUNNER_TEMP/pilot-cohort-secret-write-metadata.txt"
+          trap 'rm -f "$cohort_file" "$secret_names"' EXIT
           [[ -s "$cohort_file" ]] || { echo 'Pilot cohort materialization did not produce a protected value.' >&2; exit 78; }
           gh secret set PONTO_PILOT_COHORT_JSON --repo "$GITHUB_REPOSITORY" --env production < "$cohort_file"
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$secret_metadata"
-          node - "$secret_metadata" <<'NODE'
+          gh api --paginate --jq '.secrets[].name' "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$secret_names"
+          node - "$secret_names" <<'NODE'
           const fs = require("fs");
-          const pages = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const names = new Set((Array.isArray(pages) ? pages : [pages])
-            .flatMap(page => Array.isArray(page?.secrets) ? page.secrets : [])
-            .map(item => item.name));
+          const names = new Set(fs.readFileSync(process.argv[2], "utf8")
+            .split(/\r?\n/)
+            .map(name => name.trim())
+            .filter(Boolean));
           if (!names.has("PONTO_PILOT_COHORT_JSON")) throw new Error("pilot cohort secret write did not become observable");
           NODE
           echo 'pilot_cohort_custody=written identity_count=1 values_emitted=false'
@@ -175,7 +175,7 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
-          rm -f "$RUNNER_TEMP/pilot-cohort.json" "$RUNNER_TEMP/pilot-cohort-secret-write-metadata.json"
+          rm -f "$RUNNER_TEMP/pilot-cohort.json" "$RUNNER_TEMP/pilot-cohort-secret-write-metadata.txt"
 
       - name: Release the composite Ponto release lease
         if: ${{ always() && steps.acquire.outcome == 'success' }}
