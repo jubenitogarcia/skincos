@@ -11,6 +11,8 @@ export type MockTeamMember = {
   department: string
   units: string[]
   accountStatus: string
+  personalEmail?: string
+  mobilePhone?: string
   crmAccountLinked?: boolean
   crmAccountUsername?: string | null
   crmAccountReviewStatus?: string | null
@@ -23,7 +25,7 @@ export type MockTeamMember = {
 
 export const syntheticTeam: MockTeamMember[] = [
   {
-    id: 'e2e-ana', fullName: 'Ana Ribeiro', username: 'anaribeiro', corporateEmail: 'anaribeiro@espacofacial.com', workforceEmployeeId: 'e2e-wf-ana', profile: 'INJETOR', jobTitle: 'Injetor', department: 'Atendimento Local', units: ['novo-hamburgo'], accountStatus: 'ACTIVE', provisioningState: 'COMPLETED',
+    id: 'e2e-ana', fullName: 'Ana Ribeiro', username: 'anaribeiro', corporateEmail: 'anaribeiro@espacofacial.com', personalEmail: 'ana.pessoal@example.com', mobilePhone: '+5551999999999', workforceEmployeeId: 'e2e-wf-ana', profile: 'INJETOR', jobTitle: 'Injetor', department: 'Atendimento Local', units: ['novo-hamburgo'], accountStatus: 'ACTIVE', provisioningState: 'COMPLETED',
     schedule: { professionalId: 'e2e-escala-ana', status: 'Ativo', role: 'Injetor', shift: 'Integral', nickname: 'Ana', instagram: 'ana.ribeiro', color: '#22c55e', units: ['novo-hamburgo'] }, scheduleSync: { state: 'SYNCED', professionalId: 'e2e-escala-ana', attempt: 1 },
     identityLinks: [{ id: 'e2e-link-ana', source: 'ATENDIMENTO', sourceId: 'e2e-atendimento-ana', reviewStatus: 'CONFIRMED', matchMethod: 'EXPLICIT_WORKFORCE_ID', confidence: 'HIGH' }],
   },
@@ -166,6 +168,12 @@ export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUse
     const historyMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)\/history$/)
     if (historyMatch && request.method() === 'GET') {
       return send({ success: true, data: [{ id: 'e2e-history-ana', timestamp: '2026-08-05T12:00:00.000Z', actor: 'users-e2e', role: 'GESTOR', action: 'EMPLOYEE_TEAM_UPDATED', after: { profile: 'INJETOR', units: ['novo-hamburgo'] } }], summary: { count: 1, limit: 50 } })
+    }
+    const contactMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)\/contact$/)
+    if (contactMatch && request.method() === 'GET') {
+      const row = rows.find((item) => item.id === decodeURIComponent(contactMatch[1]))
+      if (!row) return send({ success: false, error: 'Membro não encontrado' }, 404)
+      return send({ success: true, data: { personalEmail: row.personalEmail || '', mobilePhone: row.mobilePhone || '' } })
     }
     const memberMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)$/)
     if (memberMatch && request.method() === 'PUT') {

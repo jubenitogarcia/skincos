@@ -1,5 +1,5 @@
 import React from 'react'
-import { Ban, CircleAlert, ListChecks, Mail, Pencil, Power, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react'
+import { Ban, CircleAlert, ListChecks, Mail, Pencil, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { addEscalaProfessional, updateEscalaProfessional } from '@/escalaApi'
 import { Badge as BaseBadge } from '@/badge'
@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/switch'
 import { buildCorporateEmail, suggestUsername, type UnifiedTeamConfig, type UnifiedTeamMember, type UnifiedTeamPagination } from '@/teamApi'
 import { TooltipButton } from '@/tooltip'
+import { unitBadgeClass, unitSelectedClass } from '@/unitVisuals'
 
 type Me = { success?: boolean; user?: { username?: string; role?: string; allowedUnits?: string[] }; csrfToken?: string }
 type Onboarding = { id: string; fullName: string; username?: string | null; corporateEmail: string; workforceEmployeeId?: string | null; profile: string; jobTitle: string; department: string; units: string[]; accountStatus: string; createdAt?: string; updatedAt?: string }
@@ -86,7 +87,6 @@ function readinessMessage(readiness?: UnifiedTeamConfig['readiness']) {
 }
 
 const unitLabels: Record<string, string> = { 'novo-hamburgo': 'Novo Hamburgo', 'barra-shopping-sul': 'Barra Shopping Sul' }
-const standardDepartmentOptions = ['Atendimento', 'Recepção', 'Comercial', 'Operações', 'Administrativo', 'Financeiro', 'Marketing', 'Recursos Humanos', 'Tecnologia']
 const scheduleRoleByJobTitle: Record<string, string> = {
   Gestor: 'Gestor',
   Gerente: 'Gerente',
@@ -94,10 +94,6 @@ const scheduleRoleByJobTitle: Record<string, string> = {
   'Responsável Técnico': 'Responsável Técnico',
   Injetor: 'Injetor',
   Consultor: 'Consultor',
-}
-const unitAccentClasses: Record<string, string> = {
-  'novo-hamburgo': 'border-emerald-300/70 bg-emerald-400/20 text-emerald-50 hover:bg-emerald-400/30',
-  'barra-shopping-sul': 'border-violet-300/70 bg-violet-400/20 text-violet-50 hover:bg-violet-400/30',
 }
 const titleOptions = ['Gestor', 'Gerente', 'Coordenador', 'Responsável Técnico', 'Injetor', 'Consultor']
 const creatableTitlesByRole: Record<string, string[]> = {
@@ -153,7 +149,7 @@ function storedMobilePhone(value: string) {
 
 function unitButtonClass(unit: string, selected: boolean) {
   if (!selected) return 'border-white/15 bg-white/[0.03] text-blue-100/75 hover:bg-white/[0.08]'
-  return `${unitAccentClasses[unit] || 'border-sky-300/70 bg-sky-400/20 text-sky-50 hover:bg-sky-400/30'} ring-2 ring-white/25 ring-offset-2 ring-offset-corporate-900`
+  return `${unitSelectedClass(unit)} ring-2 ring-white/25 ring-offset-2 ring-offset-corporate-900`
 }
 
 const TEAM_PAGE_SIZE = 50
@@ -269,9 +265,13 @@ export function UsersModule() {
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
   const [bulkSaving, setBulkSaving] = React.useState(false)
   const [activationRetryingId, setActivationRetryingId] = React.useState<string | null>(null)
+  const [statusChangingId, setStatusChangingId] = React.useState<string | null>(null)
   const [submitBlockedMessage, setSubmitBlockedMessage] = React.useState('')
+  const [contactLoading, setContactLoading] = React.useState(false)
+  const [contactError, setContactError] = React.useState('')
   const usernameWasEdited = React.useRef(false)
   const loadSequence = React.useRef(0)
+  const contactLoadSequence = React.useRef(0)
 
   const role = String(me?.user?.role || '').toUpperCase()
   const actorUnits = Array.isArray(me?.user?.allowedUnits) ? me!.user!.allowedUnits!.filter(Boolean) : []
@@ -289,11 +289,6 @@ export function UsersModule() {
   const canRead = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)
   const formReadOnly = !canManage
   const editTitles = Array.from(new Set([editingRow?.jobTitle, ...selectableTitles].filter((value): value is string => Boolean(value))))
-  const departmentOptions = React.useMemo(() => Array.from(new Set([
-    ...standardDepartmentOptions,
-    ...teamRows.map((row) => row.department),
-    editingRow?.department,
-  ].filter((value): value is string => Boolean(value?.trim())))), [editingRow?.department, teamRows])
 
   const load = React.useCallback(async () => {
     const sequence = ++loadSequence.current
@@ -351,7 +346,34 @@ export function UsersModule() {
   const updateJobTitle = (jobTitle: string) => setForm((current) => ({ ...current, jobTitle, scheduleRole: scheduleRoleForJobTitle(jobTitle, current.scheduleRole) }))
   const toggleUnit = (unit: string) => setForm((current) => ({ ...current, units: current.units.includes(unit) ? current.units.filter((item) => item !== unit) : [...current.units, unit] }))
 
+  const loadTeamContact = async (row: UnifiedTeamMember) => {
+    if (!teamConfig.enabled || !canManage) return
+    const sequence = ++contactLoadSequence.current
+    setContactLoading(true)
+    setContactError('')
+    try {
+      const result = await api<{ data?: { personalEmail?: string; mobilePhone?: string } }>(`/admin/team/${encodeURIComponent(row.id)}/contact`, { csrf: me?.csrfToken })
+      if (sequence !== contactLoadSequence.current) return
+      setForm((current) => {
+        return {
+          ...current,
+          personalEmail: String(result.data?.personalEmail || '').trim(),
+          mobilePhone: String(result.data?.mobilePhone || current.mobilePhone || '').trim(),
+        }
+      })
+    } catch (error: any) {
+      if (sequence !== contactLoadSequence.current) return
+      setContactError('Os dados de contato não puderam ser carregados. Eles continuam protegidos no servidor.')
+      toast.warning(requestErrorMessage(error, 'Não foi possível carregar os dados de contato.'))
+    } finally {
+      if (sequence === contactLoadSequence.current) setContactLoading(false)
+    }
+  }
+
   const openCreate = React.useCallback(() => {
+    contactLoadSequence.current += 1
+    setContactLoading(false)
+    setContactError('')
     const defaultTitle = selectableTitles[selectableTitles.length - 1] || 'Consultor'
     const defaultUnits = [...selectableUnits]
     setEditingId(null)
@@ -369,6 +391,9 @@ export function UsersModule() {
   }, [selectableTitles, selectableUnits])
 
   const openEdit = (row: UnifiedTeamMember) => {
+    contactLoadSequence.current += 1
+    setContactLoading(false)
+    setContactError('')
     setEditingId(row.id)
     setEditingOriginalName(row.fullName)
     setCollisionRequired(false)
@@ -376,6 +401,7 @@ export function UsersModule() {
     usernameWasEdited.current = true
     setForm(emptyTeamForm(row))
     setOpen(true)
+    void loadTeamContact(row)
   }
 
   React.useEffect(() => {
@@ -481,8 +507,8 @@ export function UsersModule() {
     const username = form.username.trim() || suggestUsername(form.fullName, effectiveEmail)
     const normalizedMobilePhone = storedMobilePhone(form.mobilePhone)
     const mobileDigits = nationalMobileDigits(form.mobilePhone)
-    if (!form.fullName.trim() || !username || !effectiveEmail || (!editingId && (!form.personalEmail.trim() || !mobileDigits)) || !form.department.trim() || !form.units.length) {
-      toast.error('Preencha nome, usuário, e-mails, telefone, departamento e ao menos uma unidade.')
+    if (!form.fullName.trim() || !username || !effectiveEmail || (!editingId && (!form.personalEmail.trim() || !mobileDigits)) || !form.units.length) {
+      toast.error('Preencha nome, usuário, e-mails, telefone e ao menos uma unidade.')
       return
     }
     if ((mobileDigits.length > 0 && mobileDigits.length !== 11) || (!editingId && mobileDigits.length !== 11)) {
@@ -547,25 +573,22 @@ export function UsersModule() {
     }
   }
 
-  const changeStatus = async (row: UnifiedTeamMember, nextStatus: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED') => {
+  const changeStatus = async (row: UnifiedTeamMember, nextStatus: 'ACTIVE' | 'SUSPENDED') => {
+    if (statusChangingId) return
     const activating = nextStatus === 'ACTIVE'
-    const actionLabel = nextStatus === 'TERMINATED' ? 'desativar permanentemente' : activating ? 'ativar' : 'suspender'
-    if (!teamConfig.enabled || !window.confirm(`${actionLabel[0].toUpperCase() + actionLabel.slice(1)} ${row.fullName}?${nextStatus === 'TERMINATED' ? ' O acesso será encerrado e o histórico preservado.' : activating ? '' : ' O histórico e a agenda serão preservados.'}`)) return
-    const terminationReason = nextStatus === 'TERMINATED'
-      ? window.prompt('Informe o motivo do desligamento (obrigatório):', '')?.trim() || ''
-      : ''
-    if (nextStatus === 'TERMINATED' && terminationReason.length < 5) {
-      toast.error('Informe um motivo com pelo menos 5 caracteres para desativar o membro.')
-      return
-    }
+    const actionLabel = activating ? 'ativar' : 'suspender'
+    if (!teamConfig.enabled || !window.confirm(`${actionLabel[0].toUpperCase() + actionLabel.slice(1)} ${row.fullName}? O histórico e os vínculos serão preservados.`)) return
+    setStatusChangingId(row.id)
     try {
-      await api(`/admin/team/${encodeURIComponent(row.id)}/status`, { method: 'POST', csrf: me?.csrfToken, body: { accountStatus: nextStatus, ...(terminationReason ? { reason: terminationReason } : {}) } })
-      toast.success(nextStatus === 'TERMINATED' ? 'Membro desativado; histórico preservado.' : activating ? 'Membro ativado.' : 'Membro suspenso; histórico preservado.')
+      await api(`/admin/team/${encodeURIComponent(row.id)}/status`, { method: 'POST', csrf: me?.csrfToken, body: { accountStatus: nextStatus } })
+      toast.success(activating ? 'Membro ativado.' : 'Membro suspenso; histórico preservado.')
       setOpen(false)
       setEditingId(null)
       await load()
     } catch (error: any) {
-      toast.error(requestErrorMessage(error, `Não foi possível ${activating ? 'ativar' : 'desativar'} o membro.`))
+      toast.error(requestErrorMessage(error, `Não foi possível ${activating ? 'ativar' : 'suspender'} o membro.`))
+    } finally {
+      setStatusChangingId(null)
     }
   }
 
@@ -756,7 +779,7 @@ export function UsersModule() {
                       <td className="p-3 align-middle">
                         <div className="flex min-w-0 flex-wrap gap-1">
                           {row.units.length ? row.units.map((unit) => (
-                            <Badge key={unit} variant="outline" className={compactTableBadgeClass}>{unitLabels[unit] || unit}</Badge>
+                            <Badge key={unit} variant="outline" className={`${unitBadgeClass(unit)} ${compactTableBadgeClass}`}>{unitLabels[unit] || unit}</Badge>
                           )) : <Badge variant="outline" className={compactTableBadgeClass}>Sem unidade</Badge>}
                         </div>
                       </td>
@@ -798,7 +821,7 @@ export function UsersModule() {
                   <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-white/[0.07] pt-4 text-xs">
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Cargo</p><Badge variant={titleBadgeVariant(row.jobTitle)} className="px-2 py-1 text-[11px]">{row.jobTitle}</Badge></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Departamento</p><p className="text-blue-100/80">{row.department || '—'}</p></div>
-                    <div className="col-span-2"><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><div className="flex flex-wrap gap-1">{row.units.length ? row.units.map((unit) => <Badge key={unit} variant="outline" className="px-2 py-1 text-[11px]">{unitLabels[unit] || unit}</Badge>) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}</div></div>
+                    <div className="col-span-2"><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><div className="flex flex-wrap gap-1">{row.units.length ? row.units.map((unit) => <Badge key={unit} variant="outline" className={`${unitBadgeClass(unit)} px-2 py-1 text-[11px]`}>{unitLabels[unit] || unit}</Badge>) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}</div></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Status</p><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge></div>
                   </div>
                 </article>
@@ -829,17 +852,17 @@ export function UsersModule() {
               </div>
               {editingId && editingRow && teamConfig.enabled && (
                 <div className="flex w-full shrink-0 flex-wrap items-center justify-start gap-2 rounded-xl border border-white/10 bg-black/20 p-2 sm:w-auto sm:justify-end">
-                  <Badge variant={statusBadgeVariant(editingRow.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(editingRow.accountStatus)}</Badge>
+                  {!['ACTIVE', 'SUSPENDED'].includes(String(editingRow.accountStatus || '').toUpperCase()) && <Badge variant={statusBadgeVariant(editingRow.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(editingRow.accountStatus)}</Badge>}
                   {canManage && (editingRow.accountStatus === 'INVITED' || editingRow.accountStatus === 'PENDING_ACCESS') && <>
                     <TooltipButton label="Reenviar convite"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-amber-100 hover:bg-amber-200/10" aria-label="Reenviar convite" onClick={() => void changeInvite(editingRow, 'resend')}><Mail className="size-4" aria-hidden="true" /></Button></TooltipButton>
                     <TooltipButton label="Revogar convite"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label="Revogar convite" onClick={() => void changeInvite(editingRow, 'revoke')}><Ban className="size-4" aria-hidden="true" /></Button></TooltipButton>
                   </>}
                   {canManage && editingRow.accountStatus === 'INVITED' && String(editingRow.provisioningState || '').toUpperCase() === 'FAILED' && <TooltipButton label="Tentar concluir ativação"><Button type="button" size="sm" variant="outline" disabled={activationRetryingId === editingRow.id} onClick={() => void retryActivation(editingRow)}><RefreshCw className={`mr-2 size-3.5 ${activationRetryingId === editingRow.id ? 'animate-spin' : ''}`} aria-hidden="true" />{activationRetryingId === editingRow.id ? 'Tentando…' : 'Concluir ativação'}</Button></TooltipButton>}
-                  {canManage && editingRow.accountStatus !== 'TERMINATED' && editingRow.accountStatus !== 'PENDING_ACCESS' && <Button type="button" size="sm" variant={editingIsSuspended ? 'default' : 'outline'} aria-label={editingIsSuspended ? 'Ativar membro' : 'Suspender membro'} onClick={() => void changeStatus(editingRow, editingIsSuspended ? 'ACTIVE' : 'SUSPENDED')}>
-                    <Power className="mr-2 size-4" aria-hidden="true" />
-                    {editingIsSuspended ? 'Ativar' : 'Suspender'}
-                  </Button>}
-                  {canManage && editingRow.accountStatus !== 'TERMINATED' && <TooltipButton label="Desativar definitivamente"><Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-full text-rose-100 hover:bg-rose-200/10" aria-label="Desativar definitivamente" onClick={() => void changeStatus(editingRow, 'TERMINATED')}><Power className="size-4" aria-hidden="true" /></Button></TooltipButton>}
+                  {canManage && ['ACTIVE', 'SUSPENDED'].includes(String(editingRow.accountStatus || '').toUpperCase()) && <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5" aria-live="polite">
+                    <span className="text-xs text-blue-100/65">Acesso</span>
+                    <Switch checked={!editingIsSuspended} disabled={saving || statusChangingId === editingRow.id} onCheckedChange={(checked) => void changeStatus(editingRow, checked ? 'ACTIVE' : 'SUSPENDED')} aria-label="Status do acesso" />
+                    <span className={editingIsSuspended ? 'text-xs font-medium text-rose-100' : 'text-xs font-medium text-emerald-100'}>{editingIsSuspended ? 'Inativo' : 'Ativo'}</span>
+                  </div>}
                 </div>
               )}
             </div>
@@ -850,21 +873,14 @@ export function UsersModule() {
                 <label className="space-y-1.5 text-sm">Nome completo<Input value={form.fullName} disabled={formReadOnly} required={!formReadOnly} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value, username: usernameWasEdited.current ? current.username : suggestUsername(event.target.value, buildCorporateEmail(event.target.value)) }))} /></label>
                 <label className="space-y-1.5 text-sm">Nome de usuário<Input value={form.username} onChange={(event) => { usernameWasEdited.current = true; updateField('username', event.target.value) }} placeholder="primeironomeultimosobrenome" disabled={formReadOnly || !!editingId} required={!formReadOnly && !editingId} /></label>
                 <label className="space-y-1.5 text-sm">E-mail corporativo <span className="text-xs text-blue-100/45">{editingId ? 'mantido' : 'calculado'}</span><Input value={effectiveEmail} readOnly aria-readonly="true" /></label>
-                <label className="space-y-1.5 text-sm">E-mail pessoal <span className="text-xs text-blue-100/45">{editingId ? 'opcional' : 'obrigatório'}</span><Input type="email" value={form.personalEmail} disabled={formReadOnly} required={!formReadOnly && !editingId} onChange={(event) => updateField('personalEmail', event.target.value)} /></label>
+                <label className="space-y-1.5 text-sm">E-mail pessoal <span className="text-xs text-blue-100/45">{editingId ? 'opcional' : 'obrigatório'}</span><Input key={`personal-email-${editingId || 'create'}-${contactLoading ? 'loading' : 'ready'}`} type="email" value={form.personalEmail} disabled={formReadOnly || contactLoading} placeholder={contactLoading ? 'Carregando…' : undefined} aria-busy={contactLoading} required={!formReadOnly && !editingId} onChange={(event) => updateField('personalEmail', event.target.value)} /></label>
                 <label className="space-y-1.5 text-sm">
                   Celular <span className="text-xs text-blue-100/45">{editingId ? 'opcional' : 'obrigatório'}</span>
                   <div className="flex items-center overflow-hidden rounded-md border border-white/10 bg-white/[0.03] focus-within:border-sky-300/60 focus-within:ring-2 focus-within:ring-sky-300/20">
                     <span className="border-r border-white/10 px-3 py-2 text-sm font-semibold text-blue-100/65" aria-hidden="true">+55</span>
-                    <Input id="users-mobile-phone" value={formatMobileInput(form.mobilePhone)} disabled={formReadOnly} required={!formReadOnly && !editingId} onChange={(event) => updateField('mobilePhone', storedMobilePhone(event.target.value))} inputMode="numeric" maxLength={15} aria-label="Celular" className="border-0 bg-transparent focus-visible:ring-0" />
+                    <Input key={`mobile-phone-${editingId || 'create'}-${contactLoading ? 'loading' : 'ready'}`} id="users-mobile-phone" value={formatMobileInput(form.mobilePhone)} disabled={formReadOnly || contactLoading} placeholder={contactLoading ? 'Carregando…' : undefined} aria-busy={contactLoading} required={!formReadOnly && !editingId} onChange={(event) => updateField('mobilePhone', storedMobilePhone(event.target.value))} inputMode="numeric" maxLength={15} aria-label="Celular" className="border-0 bg-transparent focus-visible:ring-0" />
                   </div>
                   <span className="block text-xs text-blue-100/45">Somente números: DDD + 9 dígitos. O código +55 é fixo.</span>
-                </label>
-                <label className="space-y-1.5 text-sm">
-                  Departamento <span className="text-xs text-blue-100/45">obrigatório</span>
-                  <Select value={form.department} onValueChange={(department) => updateField('department', department)} disabled={formReadOnly}>
-                    <SelectTrigger className="w-full" disabled={formReadOnly} aria-label="Departamento" aria-required={!formReadOnly}><SelectValue placeholder="Selecionar departamento" /></SelectTrigger>
-                    <SelectContent>{departmentOptions.map((department) => <SelectItem value={department} key={department}>{department}</SelectItem>)}</SelectContent>
-                  </Select>
                 </label>
                 <label className="space-y-1.5 text-sm">
                   Cargo
@@ -880,7 +896,14 @@ export function UsersModule() {
               <div>
                 <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-blue-100/55">Unidades de acesso</p>
                 <div className="flex flex-wrap gap-2" role="group" aria-label="Unidades de acesso" aria-required={!formReadOnly}>{selectableUnits.map((unit) => <Button key={unit} type="button" variant="outline" aria-pressed={form.units.includes(unit)} className={unitButtonClass(unit, form.units.includes(unit))} disabled={formReadOnly} onClick={() => toggleUnit(unit)}>{unitLabels[unit] || unit}</Button>)}</div>
-                <p className="mt-2 text-xs text-blue-100/45">As unidades disponíveis já começam selecionadas; a cor indica a unidade ativa.</p>
+                <p className="mt-2 text-xs text-blue-100/45">As unidades disponíveis já começam selecionadas; a cor indica a unidade.</p>
+                {editingRow && <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${editingRow.crmAccountLinked ? 'border-emerald-300/20 bg-emerald-400/5 text-emerald-100/85' : 'border-amber-300/20 bg-amber-400/5 text-amber-100/85'}`} role="status">
+                  <p className="font-medium">Acesso ao Atendimento</p>
+                  <p className="mt-1">{editingRow.crmAccountLinked
+                    ? 'A conta CRM está vinculada. Ao salvar, o escopo do Atendimento será sincronizado com as unidades selecionadas.'
+                    : 'Selecionar unidades não cria acesso sozinho. É necessário um vínculo confirmado da conta CRM; sem ele, o Atendimento permanece bloqueado.'}</p>
+                </div>}
+                {contactError && <p className="mt-2 text-xs text-amber-100/80" role="alert">{contactError}</p>}
               </div>
             <div className="space-y-4 border-t border-white/10 pt-5">
 

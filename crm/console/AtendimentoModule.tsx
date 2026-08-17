@@ -48,6 +48,7 @@ import {
 } from 'recharts'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
+import { unitBadgeClass } from '@/unitVisuals'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
@@ -242,7 +243,7 @@ function atendimentoUnitVisual(unitSlugOrName: string) {
     return {
       label: 'BarraShoppingSul',
       dotClassName: 'bg-rose-400 shadow-[0_0_18px_rgba(251,113,133,0.45)]',
-      badgeClassName: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
+      badgeClassName: unitBadgeClass('barra-shopping-sul'),
       rowClassName: 'bg-rose-500/[0.055] hover:bg-rose-500/[0.105]',
       cellClassName: 'bg-rose-500/[0.045] group-hover:bg-rose-500/[0.095]',
       stickyClassName: 'bg-[rgb(25,9,22)] group-hover:bg-[rgb(38,13,31)]',
@@ -253,7 +254,7 @@ function atendimentoUnitVisual(unitSlugOrName: string) {
     return {
       label: 'Novo Hamburgo',
       dotClassName: 'bg-sky-400 shadow-[0_0_18px_rgba(56,189,248,0.45)]',
-      badgeClassName: 'border-sky-300/30 bg-sky-400/10 text-sky-100',
+      badgeClassName: unitBadgeClass('novo-hamburgo'),
       rowClassName: 'bg-sky-500/[0.055] hover:bg-sky-500/[0.105]',
       cellClassName: 'bg-sky-500/[0.045] group-hover:bg-sky-500/[0.095]',
       stickyClassName: 'bg-[rgb(7,19,39)] group-hover:bg-[rgb(9,31,59)]',
