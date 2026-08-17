@@ -138,13 +138,24 @@ jobs:
               for (const name of scopeNames) {
                 if (!granted.has(name)) scopeStates[name] = 'unknown';
               }
-            }
+          }
           }
 
           const adAccount = await graphGet(`act_${accountId}?fields=id`);
           const adAccountState = adAccount.state === 'ok'
             ? (String(adAccount.payload?.id || '').trim().replace(/^act_/, '') === accountId ? 'allowed' : 'malformed')
             : adAccount.state;
+
+          const missingScopes = scopeNames.filter((name) => scopeStates[name] !== 'granted');
+          if (permissionsState !== 'ok') {
+            fail(`source_permissions_${permissionsState}`);
+          }
+          if (missingScopes.length > 0) {
+            fail(`source_permissions_missing:${missingScopes.join(',')}`);
+          }
+          if (adAccountState !== 'allowed') {
+            fail(`source_ad_account_${adAccountState}`);
+          }
 
           process.stdout.write([
             'source_access_attestation=verified',
