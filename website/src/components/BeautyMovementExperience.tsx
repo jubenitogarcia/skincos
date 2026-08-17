@@ -300,6 +300,8 @@ export default function BeautyMovementExperience({
     const progressMotionTimerRef = useRef<number | null>(null);
     const scrollAnimationFrameRef = useRef<number | null>(null);
     const scrollInterruptCleanupRef = useRef<(() => void) | null>(null);
+    const initialDealScrollFrameRef = useRef<number | null>(null);
+    const initialDealScrollActiveRef = useRef(false);
     const tableRef = useRef<HTMLElement | null>(null);
     const tableSurfaceRef = useRef<HTMLDivElement | null>(null);
     const progressListRef = useRef<HTMLOListElement | null>(null);
@@ -482,6 +484,10 @@ export default function BeautyMovementExperience({
             if (scrollAnimationFrameRef.current !== null) {
                 window.cancelAnimationFrame(scrollAnimationFrameRef.current);
             }
+            if (initialDealScrollFrameRef.current !== null) {
+                window.cancelAnimationFrame(initialDealScrollFrameRef.current);
+            }
+            initialDealScrollActiveRef.current = false;
             scrollInterruptCleanupRef.current?.();
         };
     }, []);
@@ -625,6 +631,78 @@ export default function BeautyMovementExperience({
         scrollInterruptCleanupRef.current = null;
     }, []);
 
+    function getTableScrollTarget(): number | null {
+        const target = tableRef.current;
+        if (!target) return null;
+
+        const title = document.getElementById("beauty-movement-title");
+        const titlePeek =
+            title instanceof HTMLElement
+                ? Math.min(184, Math.max(0, Math.round(title.getBoundingClientRect().height - 2)))
+                : 0;
+        const stickyHeader = document.querySelector("header");
+        const scrollOffset = (stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32) + titlePeek;
+        const editorialTarget = window.scrollY + target.getBoundingClientRect().top - scrollOffset;
+        const deck = target.querySelector<HTMLElement>(`.${styles.deckStage}`);
+        const deckRect = deck?.getBoundingClientRect();
+        const deckBottomPadding = Math.max(28, Math.round(window.innerHeight * 0.08));
+        const deckTarget = deckRect
+            ? window.scrollY + deckRect.bottom - (window.innerHeight - deckBottomPadding)
+            : editorialTarget;
+
+        // The surface grows downward while the deck travels with it. Keep the
+        // deck fully in the lower half of the viewport instead of leaving its
+        // final card cut off below the fold. The editorial anchor remains the
+        // floor so the first scroll still starts from the hero/table handoff.
+        return Math.max(0, Math.max(editorialTarget, deckTarget));
+    }
+
+    function stopInitialDealScroll() {
+        initialDealScrollActiveRef.current = false;
+        if (initialDealScrollFrameRef.current !== null) {
+            window.cancelAnimationFrame(initialDealScrollFrameRef.current);
+            initialDealScrollFrameRef.current = null;
+        }
+    }
+
+    function startInitialDealScroll() {
+        stopInitialDealScroll();
+
+        if (reducedMotion) {
+            scrollToTable();
+            return;
+        }
+
+        // Keep the table's editorial anchor in the viewport while its surface
+        // grows and the deck travels down into the dealt hand. Re-measuring on
+        // every frame avoids a one-time target becoming stale during layout
+        // transitions and lets the scroll itself trigger the header collapse.
+        initialDealScrollActiveRef.current = true;
+        let previousTime = performance.now();
+        const follow = (now: number) => {
+            if (!initialDealScrollActiveRef.current || !mountedRef.current) {
+                initialDealScrollFrameRef.current = null;
+                return;
+            }
+
+            const targetTop = getTableScrollTarget();
+            if (targetTop !== null) {
+                const currentTop = window.scrollY;
+                const elapsed = Math.max(0, now - previousTime);
+                const easing = 1 - Math.exp(-Math.min(48, elapsed) / 180);
+                const nextTop = currentTop + (targetTop - currentTop) * easing;
+                if (Math.abs(targetTop - currentTop) > 0.25) {
+                    window.scrollTo(0, nextTop);
+                }
+            }
+
+            previousTime = now;
+            initialDealScrollFrameRef.current = window.requestAnimationFrame(follow);
+        };
+
+        initialDealScrollFrameRef.current = window.requestAnimationFrame(follow);
+    }
+
     function scrollToElement(target: HTMLElement | null, extraOffset = 0) {
         cancelScrollAnimation();
         if (!target) return;
@@ -676,13 +754,15 @@ export default function BeautyMovementExperience({
     }
 
     function scrollToTable() {
-        cancelAutoAdvance();
+        const target = tableRef.current;
+        if (!target) return;
+
         const title = document.getElementById("beauty-movement-title");
         const titlePeek =
             title instanceof HTMLElement
                 ? Math.min(184, Math.max(0, Math.round(title.getBoundingClientRect().height - 2)))
                 : 0;
-        scrollToElement(tableRef.current, titlePeek);
+        scrollToElement(target, titlePeek);
     }
 
     function clearHandTransitionTimer() {
@@ -816,6 +896,7 @@ export default function BeautyMovementExperience({
         const introToken = beginIntroTransition();
         setTableIntroHeight(0);
         setCurrentIntroStage("entering");
+        startInitialDealScroll();
         scheduleIntroTransition(introToken, promptEntryDuration(initialExperienceText), () => {
             setCurrentIntroStage("holding");
             scheduleIntroTransition(introToken, BEAUTY_MOVEMENT_MOTION.initialIntroHoldMs, () => {
@@ -829,7 +910,10 @@ export default function BeautyMovementExperience({
                             scheduleDealSequence(handToken, () => {
                                 transitionInFlightRef.current = false;
                                 setCurrentHandStage("ready");
-                                window.requestAnimationFrame(scrollToTable);
+                                // Let the ready-state DOM commit once before
+                                // releasing the follow loop, so the final
+                                // card-grid layout is included in the anchor.
+                                window.requestAnimationFrame(stopInitialDealScroll);
                             });
                         });
                     }, true);
@@ -988,24 +1072,11 @@ export default function BeautyMovementExperience({
     }
 
     useEffect(() => {
-        if (!autoAdvanceActive) return;
-
-        const cancelOnReadingIntent = () => cancelAutoAdvance();
-        window.addEventListener("wheel", cancelOnReadingIntent, { passive: true });
-        window.addEventListener("touchmove", cancelOnReadingIntent, { passive: true });
-        window.addEventListener("keydown", cancelOnReadingIntent);
-
-        return () => {
-            window.removeEventListener("wheel", cancelOnReadingIntent);
-            window.removeEventListener("touchmove", cancelOnReadingIntent);
-            window.removeEventListener("keydown", cancelOnReadingIntent);
-        };
-    }, [autoAdvanceActive, cancelAutoAdvance]);
-
-    useEffect(() => {
         if (!reducedMotion) return;
-        cancelAutoAdvance();
         cancelScrollAnimation();
+        // Keep the dependency-list shape stable for Fast Refresh. The
+        // auto-advance cancellation was intentionally removed; this
+        // dependency remains only to avoid a dev-time hook signature change.
     }, [reducedMotion, cancelAutoAdvance, cancelScrollAnimation]);
 
     useEffect(() => {
@@ -1056,16 +1127,10 @@ export default function BeautyMovementExperience({
         };
     }, [handStage, introStage]);
 
-    useEffect(() => {
-        const cancelWhenBackgrounded = () => {
-            if (document.visibilityState === "hidden") cancelAutoAdvance();
-        };
-
-        document.addEventListener("visibilitychange", cancelWhenBackgrounded);
-        return () => document.removeEventListener("visibilitychange", cancelWhenBackgrounded);
-    }, [cancelAutoAdvance]);
-
     function handleProgressClick(index: number) {
+        // Once the automatic handoff is armed, progress controls are passive:
+        // user input must never turn a visible countdown into a cancellation.
+        if (autoAdvanceActive) return;
         if (index !== displayedActIndexRef.current || !isActUnlocked(index)) return;
 
         const act = BEAUTY_MOVEMENT_ACTS[index];
@@ -1582,7 +1647,7 @@ export default function BeautyMovementExperience({
                                                     ref={(element) => {
                                                         progressButtonRefs.current[index] = element;
                                                     }}
-                                                    disabled={!isCurrent || Boolean(progressMotion)}
+                                                    disabled={!isCurrent || Boolean(progressMotion) || autoAdvanceActive}
                                                 aria-current={isCurrent ? "step" : undefined}
                                                 aria-label={progressActionLabel}
                                             >
