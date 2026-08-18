@@ -43,12 +43,18 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(styles, /\.hero \{[\s\S]*width: 100vw;[\s\S]*margin-left: calc\(50% - 50vw\)/);
     assert.match(styles, /inset: -1px 0 0 0;[\s\S]*background: linear-gradient\(180deg, #ffffff 0%, #ffffff 10%, #fbfaf5 28%, #f4eedf 60%, #f1e2b7 100%\)/);
     const visualHandoffStyles = styles.slice(styles.lastIndexOf("/* Visual handoff refinements"));
-    assert.doesNotMatch(visualHandoffStyles, /\.hero::before[\s\S]*radial-gradient/);
+    assert.doesNotMatch(visualHandoffStyles, /\.hero::before\s*\{[^}]*radial-gradient/);
     assert.doesNotMatch(styles, /linear-gradient\(102deg, #ffffff 0%, #fbfaf5 32%, #f4eedf 68%, #f1e2b7 100%\)/);
     assert.match(styles, /@media \(min-width: 721px\) \{[\s\S]*\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardButton \{[\s\S]*min-height: clamp\(280px, 24\.3vw, 292px\)/);
     assert.match(styles, /\.progressItemCurrent \.autoAdvance \{[\s\S]*transform: translateY\(-3px\)/);
     assert.match(styles, /@keyframes deckStageCollect[\s\S]*translateX\(-50%\) translateY\(0\) scale\(1\.04\)/);
     assert.match(experience, /function finishDealScroll\(\)/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.tableSurface,[\s\S]*\.tableStage\[data-finale-stage="confirmation"\] \.tableSurface,[\s\S]*isolation: isolate[\s\S]*border-color: transparent[\s\S]*background: transparent[\s\S]*box-shadow: none/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.tableSurface::before,[\s\S]*\.tableStage\[data-finale-stage="confirmation"\] \.tableSurface::before[\s\S]*background:[\s\S]*var\(--bm-bg\)[\s\S]*content: ""/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\]\[data-finale-stage="merging"\] \.tableSurface::before[\s\S]*finaleSurfaceChromeDissolve/);
+    assert.match(styles, /@keyframes finaleSurfaceChromeDissolve[\s\S]*opacity: 0[\s\S]*filter: blur\(8px\)/);
+    assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.tableSurface::before,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.tableSurface::before[\s\S]*opacity: 0/);
+    assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*data-finale-stage="merging"\] \.tableSurface::before[\s\S]*opacity: 0/);
 });
 
 test("the finale exposes a non-cancellable five-second merge countdown", async () => {
@@ -76,8 +82,8 @@ test("the finale exposes a non-cancellable five-second merge countdown", async (
     assert.match(styles, /\.finaleSpecialCardTransform \.specialCardRevealContent \{[\s\S]*opacity: 0/);
     assert.match(styles, /\.specialCardStage:not\(\.specialCardStageReopen\) \.specialCardRevealContent[\s\S]*animation-delay: calc\(var\(--bm-special-enter-ms\) \+ 40ms\)/);
     assert.match(experience, /data-special-modal=\{isSpecialCardModalOpen \? "open" : "closed"\}/);
-    assert.match(styles, /\.tableStage\[data-special-modal="open"\] \.tableSurface[\s\S]*specialTableSurfaceDissolve/);
-    assert.match(styles, /@keyframes specialTableSurfaceDissolve/);
+    assert.match(styles, /\.tableStage\[data-special-modal="open"\] \.tableSurface::before[\s\S]*opacity: 0/);
+    assert.match(styles, /@keyframes finaleSurfaceChromeDissolve/);
     assert.match(styles, /\.finaleCountdownBar \{\s*transform: scaleX\(0\.35\);/m);
     assert.match(styles, /data-hand-stage="prompt-out"/);
     assert.match(styles, /data-hand-stage="deal"/);

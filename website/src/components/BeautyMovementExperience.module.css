@@ -3411,12 +3411,59 @@
   }
 }
 
-.tableStage[data-special-modal="open"] .tableSurface {
-  pointer-events: none;
-  animation: specialTableSurfaceDissolve 520ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
+/* The finale keeps the surface's layout box so the centered card does not
+ * jump, but moves the visible frame into a separate layer. That layer can
+ * dissolve while the three selected cards converge; fading .tableSurface
+ * itself would also fade the special card that lives inside it. */
+.tableStage[data-hand-stage="finale"] .tableSurface,
+.tableStage[data-finale-stage="confirmation"] .tableSurface,
+.tableStage[data-finale-stage="result"] .tableSurface {
+  isolation: isolate;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
-@keyframes specialTableSurfaceDissolve {
+.tableStage[data-hand-stage="finale"] .tableSurface::before,
+.tableStage[data-finale-stage="confirmation"] .tableSurface::before,
+.tableStage[data-finale-stage="result"] .tableSurface::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border: 1px solid rgba(197, 181, 143, 0.72);
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 78% 12%, rgba(229, 189, 49, 0.13), transparent 16rem),
+    radial-gradient(circle at 13% 86%, rgba(244, 238, 223, 0.08), transparent 20rem),
+    var(--bm-bg);
+  box-shadow: 0 28px 58px rgba(3, 18, 13, 0.36), inset 0 1px 0 rgba(244, 238, 223, 0.08);
+  content: "";
+  pointer-events: none;
+}
+
+.tableStage[data-hand-stage="finale"] .tableSurface > *,
+.tableStage[data-finale-stage="confirmation"] .tableSurface > *,
+.tableStage[data-finale-stage="result"] .tableSurface > * {
+  position: relative;
+  z-index: 1;
+}
+
+.tableStage[data-hand-stage="finale"][data-finale-stage="merging"] .tableSurface::before {
+  animation: finaleSurfaceChromeDissolve var(--bm-finale-merge-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
+  will-change: opacity, filter, transform;
+}
+
+.tableStage[data-finale-stage="confirmation"] .tableSurface::before,
+.tableStage[data-finale-stage="result"] .tableSurface::before,
+.tableStage[data-special-modal="open"] .tableSurface::before {
+  opacity: 0;
+}
+
+.tableStage[data-special-modal="open"] .tableSurface {
+  pointer-events: none;
+}
+
+@keyframes finaleSurfaceChromeDissolve {
   from {
     opacity: 1;
     filter: blur(0) saturate(1);
@@ -3431,7 +3478,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tableStage[data-special-modal="open"] .tableSurface {
+  .tableStage[data-hand-stage="finale"][data-finale-stage="merging"] .tableSurface::before,
+  .tableStage[data-finale-stage="confirmation"] .tableSurface::before,
+  .tableStage[data-finale-stage="result"] .tableSurface::before,
+  .tableStage[data-special-modal="open"] .tableSurface::before {
     animation: none;
     opacity: 0;
   }
