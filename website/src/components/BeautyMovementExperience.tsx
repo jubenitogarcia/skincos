@@ -718,11 +718,17 @@ export default function BeautyMovementExperience({
             window.removeEventListener("pointerdown", interruptOnUserIntent);
             window.removeEventListener("keydown", interruptOnUserIntent);
         };
-        window.addEventListener("wheel", interruptOnUserIntent, { passive: true, once: true });
-        window.addEventListener("touchstart", interruptOnUserIntent, { passive: true, once: true });
-        window.addEventListener("pointerdown", interruptOnUserIntent, { passive: true, once: true });
-        window.addEventListener("keydown", interruptOnUserIntent, { once: true });
-        initialDealScrollInterruptCleanupRef.current = removeFollowInterrupts;
+        // Register after the activating click/keydown has finished bubbling.
+        // Otherwise Enter/Space on the deck would immediately see this new
+        // listener and cancel the follow loop it just started.
+        window.requestAnimationFrame(() => {
+            if (!initialDealScrollActiveRef.current) return;
+            window.addEventListener("wheel", interruptOnUserIntent, { passive: true, once: true });
+            window.addEventListener("touchstart", interruptOnUserIntent, { passive: true, once: true });
+            window.addEventListener("pointerdown", interruptOnUserIntent, { passive: true, once: true });
+            window.addEventListener("keydown", interruptOnUserIntent, { once: true });
+            initialDealScrollInterruptCleanupRef.current = removeFollowInterrupts;
+        });
         let previousTime = performance.now();
         const follow = (now: number) => {
             if (!initialDealScrollActiveRef.current || !mountedRef.current) {
@@ -834,8 +840,9 @@ export default function BeautyMovementExperience({
         const tableTop = window.scrollY + target.getBoundingClientRect().top;
         const titleTop = titleRect ? window.scrollY + titleRect.top : null;
         const titleTarget = titleTop === null ? null : Math.max(0, titleTop - headerOffset - 12);
+        const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
         const titlePeek =
-            titleTarget === null
+            titleTarget === null || isStackedLayout
                 ? 0
                 : Math.max(
                       Math.min(184, Math.max(0, Math.round((titleRect?.height ?? 0) - 2))),

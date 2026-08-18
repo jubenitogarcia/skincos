@@ -21,8 +21,13 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(experience, /const isStackedLayout = window\.matchMedia\("\(max-width: 720px\)"\)\.matches/);
     assert.match(experience, /if \(titleFits && !isStackedLayout\)/);
     assert.match(experience, /const interruptOnUserIntent = \(\) => stopInitialDealScroll\(\);/);
+    assert.match(
+        experience,
+        /window\.requestAnimationFrame\(\(\) => \{[\s\S]*window\.addEventListener\("keydown", interruptOnUserIntent/,
+    );
     assert.match(experience, /initialDealScrollInterruptCleanupRef\.current = removeFollowInterrupts/);
     assert.match(experience, /const titleTarget = Math\.max\(0, titleTop - headerOffset - 12\)/);
+    assert.match(experience, /const isStackedLayout = window\.matchMedia\("\(max-width: 720px\)"\)\.matches;[\s\S]*titleTarget === null \|\| isStackedLayout/);
     assert.match(styles, /\.hero \{[\s\S]*min-height: clamp\(196px, 16vw, 224px\)/);
     assert.match(styles, /\.tableStage\[data-hand-stage="collect"\] \.deckStage,[\s\S]*\.tableStage\[data-hand-stage="ready"\] \.deckStage \{[\s\S]*bottom: -56px/);
 });
