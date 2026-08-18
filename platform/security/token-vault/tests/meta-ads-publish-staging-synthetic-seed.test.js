@@ -320,7 +320,11 @@ class FakeGraph {
     const target = new URL(url);
     const path = target.pathname.replace(/^\/v\d+\.0\//, '');
     const method = String(init.method || 'GET').toUpperCase();
-    this.calls.push({ path, method });
+    this.calls.push({
+      path,
+      method,
+      query: Object.fromEntries(target.searchParams.entries()),
+    });
     if (init.headers?.get?.('Authorization') !== `Bearer ${SOURCE_ACCESS_TOKEN}`) {
       return graphResponse({ error: { message: 'invalid auth' } }, 401);
     }
@@ -689,6 +693,10 @@ test('staging seed attestation bounds Graph discovery and returns no source fact
   });
   assert.equal(graph.calls.length, 6);
   assert.ok(graph.calls.every((call) => call.method === 'GET'));
+  assert.deepEqual(
+    graph.calls.find((call) => call.path === `${BUSINESS_ID}/ads_dataset`).query,
+    { fields: 'id', limit: '5' },
+  );
   assert.equal(graph.postCalls.length, 0);
   assert.equal(db.operations.size, 0);
   assert.equal(db.tokens.length, 0);
