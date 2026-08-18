@@ -852,8 +852,23 @@ export default function BeautyMovementExperience({
         const titleTop = titleRect ? window.scrollY + titleRect.top : null;
         const titleTarget = titleTop === null ? null : Math.max(0, titleTop - headerOffset - 12);
         const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
+        const cardGrid = target.querySelector<HTMLElement>(`.${styles.cardGrid}`);
+        const deck = target.querySelector<HTMLElement>(`.${styles.deckStage}`);
+        const handBottom = Math.max(
+            cardGrid?.getBoundingClientRect().bottom ?? target.getBoundingClientRect().top + 312,
+            deck?.getBoundingClientRect().bottom ?? 0,
+        );
+        const handFitsAtTitle =
+            titleTarget !== null &&
+            handBottom - (titleTarget - window.scrollY) <= window.innerHeight + 24;
+        const canAnchorTitle =
+            titleTarget !== null &&
+            !isStackedLayout &&
+            Boolean(titleRect) &&
+            (titleRect?.height ?? 0) <= window.innerHeight - headerOffset - 16 &&
+            handFitsAtTitle;
         const titlePeek =
-            titleTarget === null || isStackedLayout
+            !canAnchorTitle
                 ? 0
                 : Math.max(
                       Math.min(184, Math.max(0, Math.round((titleRect?.height ?? 0) - 2))),
