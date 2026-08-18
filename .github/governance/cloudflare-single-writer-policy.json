@@ -100,6 +100,7 @@
         ".github/workflows/cloudflare-pages-sync-ponto.yml",
         ".github/workflows/cloudflare-pages-sync-escala.yml",
         ".github/workflows/cloudflare-pages-sync-meta-ads-report-secret.yml",
+        ".github/workflows/cloudflare-pages-sync-atendimento.yml",
         ".github/workflows/cloudflare-sync-integrations-encryption-secret.yml"
       ],
       "automaticDeploymentsRequired": false

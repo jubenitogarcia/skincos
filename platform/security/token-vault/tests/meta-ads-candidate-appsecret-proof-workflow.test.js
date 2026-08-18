@@ -55,7 +55,10 @@ test("candidate appsecret-proof workflow uploads exactly one non-promoted candid
     workflow.indexOf('SEED_FILE="$seed_file" SECRETS_FILE="$secrets_file"'),
     workflow.indexOf('chmod 600 "$secrets_file"'),
   );
-  assert.doesNotMatch(privateSecretsFileWriter, /META_ADS_PAGE_ID|pageId/);
+  assert.doesNotMatch(
+    privateSecretsFileWriter,
+    /META_ADS_NOVOHAMBURGO_PAGE_ID|META_ADS_BARRASHOPPPINGSUL_PAGE_ID|destinationPageIds|pageId/,
+  );
   assert.match(
     workflow,
     /upload_output="\$\(npx --yes wrangler@4\.120\.0 versions upload/,
@@ -100,9 +103,23 @@ test("candidate appsecret-proof request keeps source inputs and bearer private w
   assert.match(workflow, /access_token: sourceToken/);
   assert.match(workflow, /account_id: accountId/);
   assert.match(workflow, /pixel_id: pixelId/);
-  assert.match(workflow, /META_ADS_PAGE_ID: \$\{\{ secrets\.META_ADS_PAGE_ID \}\}/);
-  assert.match(workflow, /const pageId = String\(process\.env\.META_ADS_PAGE_ID \|\| ''\)\.trim\(\)/);
-  assert.match(workflow, /page_id: pageId/);
+  assert.match(
+    workflow,
+    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ secrets\.NOVOHAMBURGO_PAGE_ID \}\}/,
+  );
+  assert.match(
+    workflow,
+    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets\.BARRASHOPPINGSUL_PAGE_ID \}\}/,
+  );
+  assert.match(
+    workflow,
+    /const destinationPageIds = \{[\s\S]*novo_hamburgo: String\(process\.env\.META_ADS_NOVOHAMBURGO_PAGE_ID \|\| ''\)\.trim\(\),[\s\S]*barra_shopping_sul: String\(process\.env\.META_ADS_BARRASHOPPPINGSUL_PAGE_ID \|\| ''\)\.trim\(\),/,
+  );
+  assert.match(
+    workflow,
+    /destinationPageIds\.novo_hamburgo === destinationPageIds\.barra_shopping_sul/,
+  );
+  assert.match(workflow, /destination_page_ids: destinationPageIds/);
   assert.match(workflow, /api_version: apiVersion/);
   assert.match(
     workflow,
@@ -114,11 +131,16 @@ test("candidate appsecret-proof request keeps source inputs and bearer private w
   );
   assert.match(
     workflow,
+    /payload\?\.contract_version === 'meta-ads-tracking-v20\/staging-synthetic-seed\/v2'/,
+  );
+  assert.match(
+    workflow,
     /candidate appsecret-proof attestation failed: \$\{response\.status\} \$\{error\}/,
   );
   assert.doesNotMatch(
     workflow,
-    /process\.stdout\.write\([^\n]*(?:seedToken|sourceToken|pixelId|pageId|accountId|preview)/,
+    /process\.stdout\.write\([^\n]*(?:seedToken|sourceToken|pixelId|destinationPageIds|pageId|accountId|preview)/,
   );
+  assert.doesNotMatch(workflow, /META_ADS_PAGE_ID|page_id:/);
   assert.doesNotMatch(workflow, /operation_key=.*GITHUB_OUTPUT/);
 });

@@ -7,6 +7,7 @@ import { readLiteralEnvironment } from '../server/atendimento/runtimeEnv.js'
 const ENV_FILE = '/etc/skincos/crm-atendimento-staging.env'
 const BASE_URL = 'http://127.0.0.1:8111'
 const SHA = /^[0-9a-f]{40}$/
+const SURFACES = new Set(['clientes', 'full'])
 const READINESS_FIELDS = [
     'databaseReachable',
     'databaseIdentity',
@@ -22,25 +23,32 @@ const READINESS_FIELDS = [
 // This path is deliberately not a Clientes surface. A signed GET reaches the
 // v2 actor verifier, then terminates without a store call or source-data read.
 const SIGNATURE_PROBE_PATH = '/api/atendimento/__staging-smoke__/signature-replay'
+const FULL_READ_PROBE_PATH = '/api/atendimento/references'
 // The outer read-only guard rejects this before the router, body parser, or
 // any commercial/domain handler can receive a request.
 const WRITE_PROBE_PATH = '/api/atendimento/__staging-smoke__/write-guard'
 
 function parseArgs(args = []) {
     let expectedReleaseSha = ''
+    let surface = 'clientes'
+    let surfaceExplicit = false
     for (let index = 0; index < args.length; index += 1) {
         const argument = String(args[index] || '')
         if (argument === '--expected-release-sha') {
             expectedReleaseSha = String(args[++index] || '').trim().toLowerCase()
+        } else if (argument === '--surface') {
+            surface = String(args[++index] || '').trim().toLowerCase()
+            surfaceExplicit = true
         } else if (argument === '-h' || argument === '--help') {
-            console.log('Usage: atendimento-staging-signed-smoke.mjs --expected-release-sha <full-sha>')
+            console.log('Usage: atendimento-staging-signed-smoke.mjs --expected-release-sha <full-sha> [--surface <clientes|full>]')
             process.exit(0)
         } else {
             throw new Error('ATENDIMENTO_STAGING_SMOKE_ARGUMENT_INVALID')
         }
     }
     if (!SHA.test(expectedReleaseSha)) throw new Error('ATENDIMENTO_STAGING_SMOKE_RELEASE_SHA_INVALID')
-    return { expectedReleaseSha }
+    if (!SURFACES.has(surface)) throw new Error('ATENDIMENTO_STAGING_SMOKE_SURFACE_INVALID')
+    return { expectedReleaseSha, ...(surfaceExplicit ? { surface } : {}) }
 }
 
 function actorSignatureMessage({ timestamp, nonce, method, path: requestPath, actor }) {
@@ -84,13 +92,27 @@ function controlsPassed(result) {
     return Object.values(result).every((value) => typeof value !== 'boolean' || value)
 }
 
+function unitScopeMatches(payload, surface) {
+    if (surface !== 'full') return true
+    const units = Array.isArray(payload?.units) ? payload.units : []
+    return units.length > 0 && units.every((unit) => {
+        const value = typeof unit === 'object' && unit !== null
+            ? (unit.slug || unit.unitSlug || unit.name)
+            : unit
+        return String(value || '').trim().toLowerCase() === 'novo-hamburgo'
+    })
+}
+
 export async function runAtendimentoStagingSignedSmoke({
     expectedReleaseSha,
+    surface = 'clientes',
     fetchImpl = fetch,
     readEnvironment = readLiteralEnvironment,
 } = {}) {
     const releaseSha = String(expectedReleaseSha || '').trim().toLowerCase()
     if (!SHA.test(releaseSha)) throw new Error('ATENDIMENTO_STAGING_SMOKE_RELEASE_SHA_INVALID')
+    const normalizedSurface = String(surface || '').trim().toLowerCase()
+    if (!SURFACES.has(normalizedSurface)) throw new Error('ATENDIMENTO_STAGING_SMOKE_SURFACE_INVALID')
 
     const values = await readEnvironment(ENV_FILE, {
         allowedKeys: ['ATENDIMENTO_ACTOR_HMAC_KEY', 'ATENDIMENTO_READINESS_TOKEN'],
@@ -100,9 +122,10 @@ export async function runAtendimentoStagingSignedSmoke({
     if (!actorHmacKey || !readinessToken) throw new Error('ATENDIMENTO_STAGING_SMOKE_SECRET_MISSING')
 
     const actor = Buffer.from(JSON.stringify({
-        id: 'clientes-staging-readonly-synthetic',
-        role: 'GESTOR',
+        id: normalizedSurface === 'full' ? 'atendimento-staging-consultor-synthetic' : 'clientes-staging-readonly-synthetic',
+        role: normalizedSurface === 'full' ? 'CONSULTOR' : 'GESTOR',
         allowedModules: ['atendimento'],
+        ...(normalizedSurface === 'full' ? { allowedUnits: ['novo-hamburgo'] } : {}),
     })).toString('base64url')
 
     const health = await fetchImpl(new URL('/health', BASE_URL), {
@@ -118,11 +141,12 @@ export async function runAtendimentoStagingSignedSmoke({
 
     const nonce = randomUUID()
     const timestamp = String(Date.now())
+    const signatureProbePath = normalizedSurface === 'full' ? FULL_READ_PROBE_PATH : SIGNATURE_PROBE_PATH
     const signedProbe = await signedRequest({
         secret: actorHmacKey,
         actor,
         method: 'GET',
-        requestPath: SIGNATURE_PROBE_PATH,
+        requestPath: signatureProbePath,
         nonce,
         timestamp,
         fetchImpl,
@@ -131,7 +155,7 @@ export async function runAtendimentoStagingSignedSmoke({
         secret: actorHmacKey,
         actor,
         method: 'GET',
-        requestPath: SIGNATURE_PROBE_PATH,
+        requestPath: signatureProbePath,
         nonce,
         timestamp,
         fetchImpl,
@@ -151,10 +175,16 @@ export async function runAtendimentoStagingSignedSmoke({
         healthStatus: health.status,
         healthPublic: health.status === 200 && healthPayload?.ok === true,
         releaseShaMatches: healthPayload?.control?.releaseSha === releaseSha,
+        surfaceMatches: normalizedSurface === 'clientes'
+            ? (!healthPayload?.control?.surface || healthPayload?.control?.surface === 'clientes')
+            : healthPayload?.control?.surface === 'full',
         readinessStatus: readiness.status,
         readinessReady: readiness.status === 200 && readinessIsReady(readinessPayload),
         signatureProbeStatus: signedProbe.response.status,
-        signatureAccepted: signedProbe.response.status === 404 && signedPayload?.error === 'CLIENTES_SURFACE_ONLY',
+        signatureAccepted: normalizedSurface === 'full'
+            ? signedProbe.response.status === 200 && signedPayload?.ok === true
+            : signedProbe.response.status === 404 && signedPayload?.error === 'CLIENTES_SURFACE_ONLY',
+        unitScopeMatches: unitScopeMatches(signedPayload, normalizedSurface),
         replayProbeStatus: replayProbe.response.status,
         replayRejected: replayProbe.response.status === 401 && replayPayload?.error === 'UNAUTHORIZED',
         writeProbeStatus: writeProbe.response.status,
@@ -164,8 +194,8 @@ export async function runAtendimentoStagingSignedSmoke({
 
 const thisFile = fileURLToPath(import.meta.url)
 if (process.argv[1] && path.resolve(process.argv[1]) === thisFile) {
-    const { expectedReleaseSha } = parseArgs(process.argv.slice(2))
-    const result = await runAtendimentoStagingSignedSmoke({ expectedReleaseSha })
+    const { expectedReleaseSha, surface } = parseArgs(process.argv.slice(2))
+    const result = await runAtendimentoStagingSignedSmoke({ expectedReleaseSha, surface })
     console.log(JSON.stringify(result))
     if (!controlsPassed(result)) process.exitCode = 1
 }
@@ -176,4 +206,5 @@ export const __testables = {
     parseArgs,
     readinessIsReady,
     sign,
+    unitScopeMatches,
 }

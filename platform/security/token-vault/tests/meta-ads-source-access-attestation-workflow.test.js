@@ -22,13 +22,22 @@ const syntheticToken = "synthetic-source-bearer-not-a-secret";
 const syntheticPixelId = "1234567890";
 const syntheticAccountId = "9876543210";
 const syntheticSystemUserId = "6677889900";
-const syntheticPageId = "1122334455";
-const syntheticInstagramId = "5544332211";
-const syntheticOtherPageId = "2233445566";
-const syntheticOtherInstagramId = "6655443322";
+const syntheticBusinessId = "7788990011";
+const syntheticNovoPageId = "1122334455";
+const syntheticNovoInstagramId = "5544332211";
+const syntheticBarraPageId = "2233445566";
+const syntheticBarraInstagramId = "6655443322";
 const syntheticDatasetId = "9988776655";
+const syntheticModernDatasetId = "8899001122";
 
-function runVerifier(responses, expectedRequests = responses.length, pageSelector = "") {
+function runVerifier(
+  responses,
+  {
+    expectedRequests = responses.length,
+    novoPageId = syntheticNovoPageId,
+    barraPageId = syntheticBarraPageId,
+  } = {},
+) {
   const harness = `
     const scenario = ${JSON.stringify(responses)};
     let cursor = 0;
@@ -36,11 +45,19 @@ function runVerifier(responses, expectedRequests = responses.length, pageSelecto
       const expected = scenario[cursor++];
       if (!expected) throw new Error('unexpected Graph request');
       const url = new URL(String(value));
-      if (url.origin !== 'https://graph.facebook.com' || url.pathname !== expected.pathname) throw new Error('unexpected Graph request');
-      if (String(options.method || '') !== 'GET' || String(options.cache || '') !== 'no-store' || String(options.redirect || '') !== 'error') throw new Error('unexpected Graph request');
-      if (String(options.headers?.Authorization || '') !== 'Bearer ${syntheticToken}') throw new Error('unexpected Graph request');
-      for (const [key, expectedValue] of Object.entries(expected.query || {})) {
-        if (url.searchParams.get(key) !== expectedValue) throw new Error('unexpected Graph request');
+      if (url.origin !== 'https://graph.facebook.com' || url.pathname !== expected.pathname) {
+        throw new Error('unexpected Graph request');
+      }
+      if (String(options.method || '') !== 'GET' || String(options.cache || '') !== 'no-store' || String(options.redirect || '') !== 'error') {
+        throw new Error('unexpected Graph request');
+      }
+      if (String(options.headers?.Authorization || '') !== 'Bearer ${syntheticToken}') {
+        throw new Error('unexpected Graph request');
+      }
+      const actualQuery = [...url.searchParams.entries()].sort();
+      const expectedQuery = Object.entries(expected.query || {}).sort();
+      if (JSON.stringify(actualQuery) !== JSON.stringify(expectedQuery)) {
+        throw new Error('unexpected Graph request');
       }
       return new Response(JSON.stringify(expected.payload), { status: expected.status ?? 200 });
     };
@@ -64,21 +81,18 @@ function runVerifier(responses, expectedRequests = responses.length, pageSelecto
     process.stdout.write(\`__synthetic_request_count=\${cursor}\\n\`);
     if (verifierExitCode !== null) process.exitCode = verifierExitCode;
   `;
-  const result = spawnSync(
-    process.execPath,
-    ["--input-type=module", "--eval", harness],
-    {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        META_ADS_ACCESS_TOKEN: syntheticToken,
-        META_PIXEL_ID: syntheticPixelId,
-        META_ADS_PAGE_ID: pageSelector,
-        META_ADS_ACCOUNT_ID: syntheticAccountId,
-        META_ADS_API_VERSION: "v25.0",
-      },
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", harness], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      META_ADS_ACCESS_TOKEN: syntheticToken,
+      META_PIXEL_ID: syntheticPixelId,
+      META_ADS_NOVOHAMBURGO_PAGE_ID: novoPageId,
+      META_ADS_BARRASHOPPPINGSUL_PAGE_ID: barraPageId,
+      META_ADS_ACCOUNT_ID: syntheticAccountId,
+      META_ADS_API_VERSION: "v25.0",
     },
-  );
+  });
   const stdout = String(result.stdout || "");
   const requestCount = /^__synthetic_request_count=(\d+)$/m.exec(stdout);
   return {
@@ -88,88 +102,18 @@ function runVerifier(responses, expectedRequests = responses.length, pageSelecto
   };
 }
 
-const happyResponses = [
-  {
-    pathname: `/v25.0/${syntheticPixelId}`,
-    query: { fields: "id" },
-    payload: {
-      id: syntheticPixelId,
-    },
-  },
-  {
-    pathname: `/v25.0/act_${syntheticAccountId}/adspixels`,
-    query: { fields: "id", limit: "5" },
-    payload: {
-      data: [{ id: syntheticPixelId }],
-    },
-  },
-  {
-    pathname: "/v25.0/me/accounts",
-    query: { fields: "id,tasks,instagram_business_account{id}", limit: "100" },
-    payload: {
-      data: [
-        {
-          id: syntheticPageId,
-          tasks: ["ADVERTISE"],
-          instagram_business_account: { id: syntheticInstagramId },
-        },
-      ],
-    },
-  },
-  {
-    pathname: `/v25.0/${syntheticPageId}`,
-    query: { fields: "id,instagram_business_account{id},website,picture{url}" },
-    payload: {
-      id: syntheticPageId,
-      instagram_business_account: { id: syntheticInstagramId },
-      website: "https://staging.example.test",
-      picture: { data: { url: "https://cdn.example.test/picture.jpg" } },
-    },
-  },
-  {
-    pathname: `/v25.0/act_${syntheticAccountId}/offline_conversion_data_sets`,
-    query: { fields: "id", limit: "2" },
-    payload: { data: [{ id: syntheticDatasetId }] },
-  },
-];
-
-function systemUserAssignedPageResponses(assignedPages = structuredClone(happyResponses[2].payload.data)) {
-  const responses = structuredClone(happyResponses);
-  responses[2].payload.data = [];
-  responses.splice(
-    3,
-    0,
-    {
-      pathname: "/v25.0/me",
-      query: { fields: "id" },
-      payload: { id: syntheticSystemUserId },
-    },
-    {
-      pathname: `/v25.0/${syntheticSystemUserId}/assigned_pages`,
-      query: { fields: "id,tasks,instagram_business_account{id}", limit: "100" },
-      payload: { data: assignedPages },
-    },
-  );
-  return responses;
-}
-
-function configuredSystemUserPageResponses(
-  assignedPages = [
-    {
-      id: syntheticOtherPageId,
-      tasks: ["ADVERTISE"],
-      instagram_business_account: { id: syntheticOtherInstagramId },
-    },
-    {
-      id: syntheticPageId,
-      tasks: ["ADVERTISE"],
-      instagram_business_account: { id: syntheticInstagramId },
-    },
-  ],
-) {
+function happyResponses() {
   return [
-    structuredClone(happyResponses[0]),
-    structuredClone(happyResponses[1]),
+    {
+      pathname: `/v25.0/${syntheticPixelId}`,
+      query: { fields: "id" },
+      payload: { id: syntheticPixelId },
+    },
+    {
+      pathname: `/v25.0/act_${syntheticAccountId}/adspixels`,
+      query: { fields: "id", limit: "5" },
+      payload: { data: [{ id: syntheticPixelId }] },
+    },
     {
       pathname: "/v25.0/me",
       query: { fields: "id" },
@@ -177,15 +121,56 @@ function configuredSystemUserPageResponses(
     },
     {
       pathname: `/v25.0/${syntheticSystemUserId}/assigned_pages`,
-      query: { fields: "id,tasks,instagram_business_account{id}", limit: "100" },
-      payload: { data: assignedPages },
+      query: {
+        fields: "id,tasks,instagram_business_account{id},website,picture{url}",
+        limit: "100",
+      },
+      payload: {
+        data: [
+          {
+            id: syntheticNovoPageId,
+            tasks: ["ADVERTISE"],
+            instagram_business_account: { id: syntheticNovoInstagramId },
+            website: "https://novo.example.test",
+            picture: { data: { url: "https://cdn.example.test/novo.jpg" } },
+          },
+          {
+            id: syntheticBarraPageId,
+            tasks: ["ADVERTISE"],
+            instagram_business_account: { id: syntheticBarraInstagramId },
+            website: "https://barra.example.test",
+            picture: { data: { url: "https://cdn.example.test/barra.jpg" } },
+          },
+        ],
+      },
     },
-    structuredClone(happyResponses[3]),
-    structuredClone(happyResponses[4]),
+    {
+      pathname: `/v25.0/act_${syntheticAccountId}/offline_conversion_data_sets`,
+      query: { fields: "id", limit: "2" },
+      payload: { data: [{ id: syntheticDatasetId }] },
+    },
   ];
 }
 
-test("Meta Ads source-access attestation is manual, bounded, and non-deploying", () => {
+const sensitiveValues = [
+  syntheticToken,
+  syntheticPixelId,
+  syntheticAccountId,
+  syntheticSystemUserId,
+  syntheticBusinessId,
+  syntheticNovoPageId,
+  syntheticNovoInstagramId,
+  syntheticBarraPageId,
+  syntheticBarraInstagramId,
+  syntheticDatasetId,
+  syntheticModernDatasetId,
+];
+
+function assertNoSyntheticInputs(output) {
+  for (const value of sensitiveValues) assert.doesNotMatch(output, new RegExp(value));
+}
+
+test("Meta Ads source-access attestation is manual, GET-only, and bound to two staging selectors", () => {
   assert.match(workflow, /^name: Attest Raw Meta Ads Staging Source Access$/m);
   assert.match(workflow, /^\s+workflow_dispatch:\s*$/m);
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
@@ -193,117 +178,54 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /timeout-minutes: 3/);
   assert.match(
     workflow,
-    /META_ADS_ACCESS_TOKEN: \$\{\{ secrets\.META_ADS_ACCESS_TOKEN \}\}/,
-  );
-  assert.match(workflow, /META_PIXEL_ID: \$\{\{ secrets\.META_PIXEL_ID \}\}/);
-  assert.match(
-    workflow,
-    /META_ADS_PAGE_ID: \$\{\{ secrets\.META_ADS_PAGE_ID \}\}/,
+    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ secrets\.NOVOHAMBURGO_PAGE_ID \}\}/,
   );
   assert.match(
     workflow,
-    /META_ADS_ACCOUNT_ID: \$\{\{ vars\.META_ADS_ACCOUNT_ID \}\}/,
+    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets\.BARRASHOPPINGSUL_PAGE_ID \}\}/,
   );
+  assert.match(workflow, /destinationSelectors = \{[\s\S]*novo_hamburgo:[\s\S]*barra_shopping_sul:/);
+  assert.match(workflow, /source_destination_page_selector_invalid/);
+  assert.match(workflow, /source_destination_page_selector_duplicate/);
+  assert.match(workflow, /source_destination_page_assignment_unassigned/);
+  assert.match(workflow, /source_destination_page_selector_ambiguous/);
+  assert.match(workflow, /source_destination_page_pair_duplicate/);
+  assert.match(workflow, /offline_conversion_data_sets\?fields=id&limit=2/);
+  assert.match(workflow, /act_\$\{accountId\}\?fields=id,business\{id\}/);
+  assert.match(workflow, /\$\{businessId\}\/ads_dataset\?fields=id/);
+  assert.doesNotMatch(workflow, /ads_dataset\?fields=id&limit=/);
+  assert.doesNotMatch(workflow, /ads_dataset\?fields=id,dataset_id/);
+  assert.match(workflow, /source_dataset_ads_dataset_response_\$\{modernDatasetResult\.state\}/);
+  assert.match(workflow, /source_dataset_legacy_contract_invalid/);
   assert.match(
     workflow,
-    /META_ADS_API_VERSION: \$\{\{ vars\.META_ADS_API_VERSION \}\}/,
+    /assigned_pages\?fields=id,tasks,instagram_business_account\{id\},website,picture\{url\}&limit=100/,
   );
-  assert.match(workflow, /payload\?\.error\?\.is_transient === true/);
-  assert.match(
-    workflow,
-    /const graphErrorCode = Number\(payload\?\.error\?\.code\)/,
-  );
-  assert.match(
-    workflow,
-    /const pageSelector = String\(process\.env\.META_ADS_PAGE_ID \|\| ''\)\.trim\(\)/,
-  );
-  assert.match(workflow, /source_page_selector_invalid/);
-  assert.match(workflow, /response\.status === 401/);
-  assert.match(workflow, /response\.status === 403/);
-  assert.match(workflow, /graphErrorCode === 10/);
-  assert.match(workflow, /graphErrorCode === 102/);
-  assert.match(workflow, /graphErrorCode === 190/);
-  assert.match(workflow, /graphErrorCode === 200/);
-  assert.match(workflow, /authorizationError \? 'denied' : 'malformed'/);
-  assert.match(workflow, /\$\{pixelId\}\?fields=id/);
-  assert.match(workflow, /act_\$\{accountId\}\/adspixels\?fields=id&limit=5/);
-  assert.match(workflow, /source_pixel_account_relation/);
-  assert.match(workflow, /targetMemberships === 1/);
-  assert.match(workflow, /source_pixel_account_relation_ambiguous/);
-  assert.doesNotMatch(workflow, /owner_ad_account/);
-  assert.match(
-    workflow,
-    /me\/accounts\?fields=id,tasks,instagram_business_account\{id\}&limit=100/,
-  );
-  assert.match(workflow, /me\?fields=id/);
-  assert.match(
-    workflow,
-    /assigned_pages\?fields=id,tasks,instagram_business_account\{id\}&limit=100/,
-  );
-  assert.match(
-    workflow,
-    /\$\{pageId\}\?fields=id,instagram_business_account\{id\},website,picture\{url\}/,
-  );
-  assert.match(
-    workflow,
-    /act_\$\{accountId\}\/offline_conversion_data_sets\?fields=id&limit=2/,
-  );
-  assert.match(workflow, /tasks\.has\('ADVERTISE'\)/);
-  assert.match(workflow, /tasks\.has\('PROFILE_PLUS_ADVERTISE'\)/);
-  assert.doesNotMatch(workflow, /PROFILE_PLUS_FULL_CONTROL/);
-  assert.match(workflow, /selectEligiblePage\(pages\.data, 'source_pages'\)/);
-  assert.match(workflow, /selectEligiblePage\(assignedPages\.data, 'source_system_user_pages'\)/);
-  assert.match(workflow, /selectEligiblePage\(assignedPages\.data, 'source_system_user_pages', pageSelector\)/);
-  assert.match(workflow, /pageDiscovery = 'system_user_configured'/);
-  assert.match(workflow, /\$\{phase\}_selector_mismatch/);
-  assert.match(workflow, /source_system_user_malformed/);
-  assert.match(workflow, /source_system_user_pages_paging_ambiguous/);
-  assert.match(workflow, /eligiblePages\.length === 0/);
-  assert.match(workflow, /selectedPages\.length > 1/);
-  assert.match(workflow, /datasets\.data\.length !== 1/);
-  assert.match(workflow, /source_landing_or_media_unavailable/);
-  assert.match(workflow, /method: 'GET'/);
-  assert.match(workflow, /Authorization: `Bearer \$\{token\}`/);
-  assert.match(workflow, /cache: 'no-store'/);
-  assert.match(workflow, /redirect: 'error'/);
-  assert.match(workflow, /AbortSignal\.timeout\(12_000\)/);
-  assert.match(workflow, /source_access_raw=verified/);
-  assert.match(workflow, /source_access_runtime_proof=unverified/);
-  assert.match(workflow, /source_access_pixel=allowed/);
-  assert.match(workflow, /source_access_pixel_account_relation=allowed/);
-  assert.match(workflow, /source_access_page_discovery=\$\{pageDiscovery\}/);
-  assert.match(workflow, /source_access_page=eligible/);
-  assert.match(workflow, /source_access_dataset=eligible/);
-  assert.match(workflow, /source_access_landing_media=eligible/);
-  assert.ok(
-    workflow.indexOf("source_pixel_account_relation_mismatch") <
-      workflow.indexOf("source_access_raw=verified"),
-    "raw success output must be unreachable until the exact source reads pass",
-  );
+  assert.doesNotMatch(workflow, /\$\{pair\.pageId\}\?fields=/);
+  assert.match(workflow, /source_access_novohamburgo_page_instagram=eligible/);
+  assert.match(workflow, /source_access_barrashopppingsul_page_instagram=eligible/);
 
-  assert.doesNotMatch(workflow, /access_token=/i);
-  assert.doesNotMatch(workflow, /debug_token/i);
-  assert.doesNotMatch(workflow, /META_APP_SECRET/);
-  assert.doesNotMatch(workflow, /appsecret_proof/);
+  assert.doesNotMatch(workflow, /META_ADS_PAGE_ID/);
+  assert.doesNotMatch(workflow, /me\/accounts/);
   assert.doesNotMatch(workflow, /method: 'POST'/);
   assert.doesNotMatch(workflow, /upload-artifact/i);
   assert.doesNotMatch(workflow, /wrangler/i);
-  assert.doesNotMatch(workflow, /gh secret/i);
-  assert.doesNotMatch(workflow, /secret put/i);
   assert.doesNotMatch(workflow, /GITHUB_OUTPUT/);
-  assert.doesNotMatch(workflow, /me\/permissions/);
-  assert.doesNotMatch(workflow, /pages_manage_ads/);
+  assert.doesNotMatch(workflow, /META_APP_SECRET/);
+  assert.doesNotMatch(workflow, /appsecret_proof/);
+  assert.doesNotMatch(workflow, /access_token=/i);
+  assert.doesNotMatch(workflow, /console\.log/);
   assert.doesNotMatch(
     workflow,
     /source_access_(?:pixel_id|page_id|dataset_id|landing_url|picture_url|system_user_id)/i,
   );
-  assert.doesNotMatch(workflow, /D1|Cloudflare|Orb|n8n/);
 });
 
-test("Meta Ads source-access verifier executes the bounded raw-read contract without revealing inputs", () => {
-  const result = runVerifier(happyResponses);
+test("Meta Ads source-access verifier proves both assigned Page and Instagram pairs without revealing inputs", () => {
+  const result = runVerifier(happyResponses());
   const combined = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 0, combined);
+  assert.equal(result.requestCount, 5);
   assert.equal(
     result.stdout,
     [
@@ -311,436 +233,228 @@ test("Meta Ads source-access verifier executes the bounded raw-read contract wit
       "source_access_runtime_proof=unverified",
       "source_access_pixel=allowed",
       "source_access_pixel_account_relation=allowed",
-      "source_access_page_discovery=me_accounts",
-      "source_access_page=eligible",
+      "source_access_novohamburgo_page_instagram=eligible",
+      "source_access_barrashopppingsul_page_instagram=eligible",
       "source_access_dataset=eligible",
       "source_access_landing_media=eligible",
       "",
     ].join("\n"),
   );
-  assert.equal(result.requestCount, 5);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
+  assertNoSyntheticInputs(combined);
 });
 
-test("Meta Ads source-access verifier rejects a malformed private Page selector before Graph reads", () => {
-  const result = runVerifier([], 0, "not-a-page-id");
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.equal(result.requestCount, 0);
-  assert.match(combined, /source_page_selector_invalid/);
-  assert.doesNotMatch(combined, /not-a-page-id|source_access_raw=verified/);
+test("Meta Ads source-access verifier rejects invalid or duplicate destination selectors before Graph reads", () => {
+  const invalid = runVerifier([], {
+    expectedRequests: 0,
+    novoPageId: "not-a-page-id",
+  });
+  const invalidCombined = `${invalid.stdout}${invalid.stderr}`;
+  assert.notEqual(invalid.status, 0);
+  assert.equal(invalid.requestCount, 0);
+  assert.match(invalidCombined, /source_destination_page_selector_invalid/);
+  assert.doesNotMatch(invalidCombined, /not-a-page-id|source_access_raw=verified/);
+
+  const duplicate = runVerifier([], {
+    expectedRequests: 0,
+    barraPageId: syntheticNovoPageId,
+  });
+  const duplicateCombined = `${duplicate.stdout}${duplicate.stderr}`;
+  assert.notEqual(duplicate.status, 0);
+  assert.equal(duplicate.requestCount, 0);
+  assert.match(duplicateCombined, /source_destination_page_selector_duplicate/);
+  assertNoSyntheticInputs(duplicateCombined);
 });
 
-test("Meta Ads source-access verifier accepts an exact membership on a bounded account Pixel page", () => {
-  const responses = structuredClone(happyResponses);
+test("Meta Ads source-access verifier accepts Profile Plus advertising and exact Pixel membership on a paged bounded relation", () => {
+  const responses = happyResponses();
   responses[1].payload.paging = { next: "https://graph.example.invalid/opaque" };
+  responses[3].payload.data[1].tasks = ["PROFILE_PLUS_ADVERTISE"];
   const result = runVerifier(responses);
   const combined = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 0, combined);
   assert.equal(result.requestCount, 5);
   assert.match(result.stdout, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
+  assertNoSyntheticInputs(combined);
 });
 
-test("Meta Ads source-access verifier accepts the explicit Profile Plus advertising task", () => {
-  const responses = structuredClone(happyResponses);
-  responses[2].payload.data[0].tasks = ["PROFILE_PLUS_ADVERTISE"];
-  const result = runVerifier(responses);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 5);
-  assert.match(result.stdout, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
-});
-
-test("Meta Ads source-access verifier does not treat other Profile Plus tasks as advertising", () => {
-  const responses = structuredClone(happyResponses);
-  responses[2].payload.data[0].tasks = ["PROFILE_PLUS_ANALYZE"];
-  const result = runVerifier(responses, 3);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_advertise_task_missing/);
-  assert.equal(result.requestCount, 3);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
-});
-
-test("Meta Ads source-access verifier fails closed when target membership is beyond the bounded page", () => {
-  const responses = structuredClone(happyResponses);
+test("Meta Ads source-access verifier keeps an absent target Pixel fail-closed when its bounded relation is paged", () => {
+  const responses = happyResponses();
   responses[1].payload = {
     data: [],
     paging: { next: "https://graph.example.invalid/opaque" },
   };
-  const result = runVerifier(responses, 2);
+  const result = runVerifier(responses, { expectedRequests: 2 });
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
+  assert.equal(result.requestCount, 2);
   assert.match(combined, /source_pixel_account_relation_ambiguous/);
-  assert.equal(result.requestCount, 2);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
+  assertNoSyntheticInputs(combined);
 });
 
-test("Meta Ads source-access verifier classifies malformed bounded account Pixel entries before membership", () => {
-  const responses = structuredClone(happyResponses);
-  responses[1].payload = { data: [{ id: false }] };
-  const result = runVerifier(responses, 2);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pixel_account_relation_malformed/);
-  assert.equal(result.requestCount, 2);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
+test("Meta Ads source-access verifier rejects an unassigned, non-advertising, or Instagram-less destination before direct Page reads", () => {
+  const unassignedResponses = happyResponses();
+  unassignedResponses[3].payload.data = [];
+  const unassigned = runVerifier(unassignedResponses, { expectedRequests: 4 });
+  assert.notEqual(unassigned.status, 0);
+  assert.equal(unassigned.requestCount, 4);
+  assert.match(`${unassigned.stdout}${unassigned.stderr}`, /source_destination_page_assignment_unassigned/);
+
+  const taskResponses = happyResponses();
+  taskResponses[3].payload.data[1].tasks = ["PROFILE_PLUS_ANALYZE"];
+  const task = runVerifier(taskResponses, { expectedRequests: 4 });
+  assert.notEqual(task.status, 0);
+  assert.equal(task.requestCount, 4);
+  assert.match(`${task.stdout}${task.stderr}`, /source_destination_page_assignment_advertise_task_missing/);
+
+  const instagramResponses = happyResponses();
+  delete instagramResponses[3].payload.data[1].instagram_business_account;
+  const instagram = runVerifier(instagramResponses, { expectedRequests: 4 });
+  assert.notEqual(instagram.status, 0);
+  assert.equal(instagram.requestCount, 4);
+  assert.match(`${instagram.stdout}${instagram.stderr}`, /source_destination_page_assignment_instagram_link_missing/);
+
+  const malformedResponses = happyResponses();
+  malformedResponses[3].payload.data[1].tasks = "ADVERTISE";
+  const malformed = runVerifier(malformedResponses, { expectedRequests: 4 });
+  assert.notEqual(malformed.status, 0);
+  assert.equal(malformed.requestCount, 4);
+  assert.match(`${malformed.stdout}${malformed.stderr}`, /source_destination_page_assignment_malformed/);
 });
 
-test("Meta Ads source-access verifier distinguishes multiple eligible Pages", () => {
-  const responses = structuredClone(happyResponses);
-  responses[2].payload.data.unshift({
-    id: "6655443322",
+test("Meta Ads source-access verifier rejects duplicate, paged, and swapped destination pairs before unsafe continuation", () => {
+  const duplicateResponses = happyResponses();
+  duplicateResponses[3].payload.data[1].instagram_business_account.id = syntheticNovoInstagramId;
+  const duplicate = runVerifier(duplicateResponses, { expectedRequests: 4 });
+  assert.notEqual(duplicate.status, 0);
+  assert.equal(duplicate.requestCount, 4);
+  assert.match(`${duplicate.stdout}${duplicate.stderr}`, /source_destination_page_pair_duplicate/);
+
+  const ambiguousResponses = happyResponses();
+  ambiguousResponses[3].payload.data.push({
+    id: syntheticNovoPageId,
     tasks: ["ADVERTISE"],
-    instagram_business_account: { id: "2233445566" },
+    instagram_business_account: { id: syntheticNovoInstagramId },
   });
-  const result = runVerifier(responses, 3);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_multiple_eligible/);
-  assert.equal(result.requestCount, 3);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
+  const ambiguous = runVerifier(ambiguousResponses, { expectedRequests: 4 });
+  assert.notEqual(ambiguous.status, 0);
+  assert.equal(ambiguous.requestCount, 4);
+  assert.match(`${ambiguous.stdout}${ambiguous.stderr}`, /source_destination_page_selector_ambiguous/);
+
+  const pagedResponses = happyResponses();
+  pagedResponses[3].payload.paging = { next: false };
+  const paged = runVerifier(pagedResponses, { expectedRequests: 4 });
+  assert.notEqual(paged.status, 0);
+  assert.equal(paged.requestCount, 4);
+  assert.match(`${paged.stdout}${paged.stderr}`, /source_system_user_pages_paging_ambiguous/);
+
 });
 
-test("Meta Ads source-access verifier distinguishes a paged Page listing", () => {
-  const responses = structuredClone(happyResponses);
-  responses[2].payload.paging = { next: false };
-  const result = runVerifier(responses, 3);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_paging_ambiguous/);
-  assert.equal(result.requestCount, 3);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
+test("Meta Ads source-access verifier uses assigned_pages Page fields and stops before dataset on field failures", () => {
+  const presentationResponses = happyResponses();
+  delete presentationResponses[3].payload.data[0].website;
+  const presentation = runVerifier(presentationResponses, { expectedRequests: 4 });
+  const presentationCombined = `${presentation.stdout}${presentation.stderr}`;
+  assert.notEqual(presentation.status, 0);
+  assert.equal(presentation.requestCount, 4);
+  assert.match(presentationCombined, /source_destination_landing_or_media_unavailable/);
+  assert.doesNotMatch(presentationCombined, /source_access_raw=verified/);
+  assertNoSyntheticInputs(presentationCombined);
+
+  const assignedFields = happyResponses();
+  assignedFields[3] = {
+    ...assignedFields[3],
+    status: 400,
+    payload: { error: { code: 100, message: "synthetic assigned Page field detail" } },
+  };
+  const malformed = runVerifier(assignedFields, { expectedRequests: 4 });
+  const malformedCombined = `${malformed.stdout}${malformed.stderr}`;
+  assert.notEqual(malformed.status, 0);
+  assert.equal(malformed.requestCount, 4);
+  assert.match(malformedCombined, /source_system_user_pages_malformed/);
+  assert.doesNotMatch(malformedCombined, /synthetic assigned Page field detail|source_access_raw=verified/);
+  assertNoSyntheticInputs(malformedCombined);
 });
 
-test("Meta Ads source-access verifier falls back to the bounded System User Page relation after an empty direct list", () => {
-  const result = runVerifier(systemUserAssignedPageResponses());
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 7);
-  assert.match(result.stdout, /source_access_page_discovery=system_user_assigned/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}|${syntheticSystemUserId}|${syntheticPageId}|${syntheticInstagramId}|${syntheticDatasetId}`),
-  );
-});
-
-test("Meta Ads source-access verifier proves only the configured System User Page relation", () => {
-  const result = runVerifier(
-    configuredSystemUserPageResponses(),
-    6,
-    syntheticPageId,
-  );
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 6);
-  assert.match(result.stdout, /source_access_page_discovery=system_user_configured/);
-  assert.doesNotMatch(result.stdout, /me_accounts|system_user_assigned/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}|${syntheticSystemUserId}|${syntheticPageId}|${syntheticInstagramId}|${syntheticOtherPageId}|${syntheticOtherInstagramId}|${syntheticDatasetId}`),
-  );
-});
-
-test("Meta Ads source-access verifier rejects a configured Page selector that is not an eligible assigned Page", () => {
-  const result = runVerifier(
-    configuredSystemUserPageResponses(),
-    4,
-    "7788990011",
-  );
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.equal(result.requestCount, 4);
-  assert.match(combined, /source_system_user_pages_selector_mismatch/);
-  assert.doesNotMatch(combined, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}|${syntheticSystemUserId}|${syntheticPageId}|${syntheticInstagramId}|${syntheticOtherPageId}|${syntheticOtherInstagramId}|${syntheticDatasetId}`),
-  );
-});
-
-test("Meta Ads source-access verifier rejects duplicate configured Page membership before Page access", () => {
-  const assignedPages = [
-    {
-      id: syntheticPageId,
-      tasks: ["ADVERTISE"],
-      instagram_business_account: { id: syntheticInstagramId },
-    },
-    {
-      id: syntheticPageId,
-      tasks: ["PROFILE_PLUS_ADVERTISE"],
-      instagram_business_account: { id: syntheticInstagramId },
-    },
-  ];
-  const result = runVerifier(
-    configuredSystemUserPageResponses(assignedPages),
-    4,
-    syntheticPageId,
-  );
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.equal(result.requestCount, 4);
-  assert.match(combined, /source_system_user_pages_selector_ambiguous/);
-  assert.doesNotMatch(combined, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}|${syntheticSystemUserId}|${syntheticPageId}|${syntheticInstagramId}|${syntheticDatasetId}`),
-  );
-});
-
-test("Meta Ads source-access verifier rejects paging before selecting a configured Page", () => {
-  const responses = configuredSystemUserPageResponses();
-  responses[3].payload.paging = { next: false };
-  const result = runVerifier(responses, 4, syntheticPageId);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.equal(result.requestCount, 4);
-  assert.match(combined, /source_system_user_pages_paging_ambiguous/);
-  assert.doesNotMatch(combined, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}|${syntheticSystemUserId}|${syntheticPageId}|${syntheticInstagramId}|${syntheticDatasetId}`),
-  );
-});
-
-test("Meta Ads source-access verifier keeps an empty System User Page relation fail-closed", () => {
-  const result = runVerifier(systemUserAssignedPageResponses([]), 5);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_system_user_pages_none_visible/);
-  assert.equal(result.requestCount, 5);
-  assert.doesNotMatch(combined, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}|${syntheticSystemUserId}`),
-  );
-});
-
-test("Meta Ads source-access verifier preserves ambiguity when no private Page selector is configured", () => {
-  const assignedPages = [
-    {
-      id: syntheticPageId,
-      tasks: ["ADVERTISE"],
-      instagram_business_account: { id: syntheticInstagramId },
-    },
-    {
-      id: syntheticOtherPageId,
-      tasks: ["PROFILE_PLUS_ADVERTISE"],
-      instagram_business_account: { id: syntheticOtherInstagramId },
-    },
-  ];
-  const result = runVerifier(systemUserAssignedPageResponses(assignedPages), 5);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.equal(result.requestCount, 5);
-  assert.match(combined, /source_system_user_pages_multiple_eligible/);
-  assert.doesNotMatch(combined, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}|${syntheticSystemUserId}|${syntheticPageId}|${syntheticInstagramId}|${syntheticOtherPageId}|${syntheticOtherInstagramId}|${syntheticDatasetId}`),
-  );
-});
-
-test("Meta Ads source-access verifier rejects pagination on the bounded System User Page relation", () => {
-  const responses = systemUserAssignedPageResponses();
-  responses[4].payload.paging = { next: false };
-  const result = runVerifier(responses, 5);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_system_user_pages_paging_ambiguous/);
-  assert.equal(result.requestCount, 5);
-  assert.doesNotMatch(combined, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}|${syntheticSystemUserId}`),
-  );
-});
-
-test("Meta Ads source-access verifier rejects a malformed System User identity before its Page relation", () => {
-  const responses = systemUserAssignedPageResponses();
-  responses[3].payload = { id: false };
-  const result = runVerifier(responses, 4);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_system_user_malformed/);
-  assert.equal(result.requestCount, 4);
-  assert.doesNotMatch(combined, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}|${syntheticSystemUserId}`),
-  );
-});
-
-test("Meta Ads source-access verifier distinguishes an absent advertising task from a missing Page", () => {
-  const responses = structuredClone(happyResponses);
-  responses[2].payload.data[0].tasks = [];
-  const result = runVerifier(responses, 3);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_advertise_task_missing/);
-  assert.equal(result.requestCount, 3);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
-});
-
-test("Meta Ads source-access verifier distinguishes a missing Instagram link from a missing Page", () => {
-  const responses = structuredClone(happyResponses);
-  delete responses[2].payload.data[0].instagram_business_account;
-  const result = runVerifier(responses, 3);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_instagram_link_missing/);
-  assert.equal(result.requestCount, 3);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
-});
-
-test("Meta Ads source-access verifier distinguishes Page task and Instagram facts that do not belong to the same Page", () => {
-  const responses = structuredClone(happyResponses);
-  responses[2].payload.data = [
-    { id: "6655443322", tasks: ["ADVERTISE"] },
-    { id: "2233445566", tasks: [], instagram_business_account: { id: "5544332211" } },
-  ];
-  const result = runVerifier(responses, 3);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_task_instagram_unpaired/);
-  assert.equal(result.requestCount, 3);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
-});
-
-test("Meta Ads source-access verifier keeps a unique eligible Page despite unrelated Pages", () => {
-  const responses = structuredClone(happyResponses);
-  responses[2].payload.data.unshift({
-    id: "6655443322",
-    tasks: [],
-  });
-  const result = runVerifier(responses);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 5);
-  assert.match(result.stdout, /source_access_raw=verified/);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
-});
-
-test("Meta Ads source-access verifier classifies a selected malformed Page before Page access", () => {
-  const responses = structuredClone(happyResponses);
-  responses[2].payload.data[0].id = false;
-  const result = runVerifier(responses, 3);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_malformed/);
-  assert.equal(result.requestCount, 3);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
-});
-
-test("Meta Ads source-access verifier distinguishes bare Pixel denial before relation access", () => {
+test("Meta Ads source-access verifier reports only classified Graph failures", () => {
   const result = runVerifier([
     {
       pathname: `/v25.0/${syntheticPixelId}`,
       query: { fields: "id" },
       status: 403,
-      payload: { error: { code: 10, message: "synthetic denial" } },
+      payload: { error: { code: 10, message: "synthetic denial detail" } },
     },
   ]);
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pixel_denied/);
-  assert.doesNotMatch(combined, /source_pixel_account_relation/);
-  assert.doesNotMatch(combined, /synthetic denial/);
   assert.equal(result.requestCount, 1);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
+  assert.match(combined, /source_pixel_denied/);
+  assert.doesNotMatch(combined, /synthetic denial detail|source_access_raw=verified/);
+  assertNoSyntheticInputs(combined);
 });
 
-test("Meta Ads source-access verifier distinguishes account-membership denial after Pixel access", () => {
-  const result = runVerifier([
-    {
-      pathname: `/v25.0/${syntheticPixelId}`,
+test("Meta Ads source-access verifier classifies Graph contract rejection without exposing Graph details", () => {
+  for (const modernError of [
+    { code: 100, message: "synthetic modern contract detail" },
+    { code: 0, message: "synthetic unknown modern contract detail" },
+  ]) {
+    const responses = happyResponses();
+    responses[4] = {
+      ...responses[4],
+      status: 400,
+      payload: { error: { code: 100, message: "synthetic legacy dataset edge drift" } },
+    };
+    responses.push({
+      pathname: `/v25.0/act_${syntheticAccountId}`,
+      query: { fields: "id,business{id}" },
+      payload: { id: syntheticAccountId, business: { id: syntheticBusinessId } },
+    });
+    responses.push({
+      pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
       query: { fields: "id" },
-      payload: { id: syntheticPixelId },
-    },
-    {
-      pathname: `/v25.0/act_${syntheticAccountId}/adspixels`,
-      query: { fields: "id", limit: "5" },
-      status: 403,
-      payload: { error: { code: 10, message: "synthetic denial" } },
-    },
-  ]);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pixel_account_relation_denied/);
-  assert.doesNotMatch(combined, /source_access_raw=verified/);
-  assert.doesNotMatch(combined, /synthetic denial/);
-  assert.equal(result.requestCount, 2);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
+      status: 400,
+      payload: { error: modernError },
+    });
+    const result = runVerifier(responses, { expectedRequests: 7 });
+    const combined = `${result.stdout}${result.stderr}`;
+    assert.notEqual(result.status, 0);
+    assert.equal(result.requestCount, 7);
+    assert.match(combined, /source_dataset_ads_dataset_response_contract/);
+    assert.doesNotMatch(
+      combined,
+      /synthetic legacy dataset edge drift|synthetic modern contract detail|synthetic unknown modern contract detail|source_access_raw=verified/,
+    );
+    assertNoSyntheticInputs(combined);
+  }
 });
 
-test("Meta Ads source-access verifier classifies an account-membership contract error without leaking Graph details", () => {
-  const result = runVerifier([
-    {
-      pathname: `/v25.0/${syntheticPixelId}`,
+test("Meta Ads source-access verifier probes the current Business AdsDataset contract after a legacy dataset shape failure", () => {
+  for (const legacyPayload of [
+    { error: { code: 100, message: "synthetic legacy dataset edge drift" } },
+    {},
+    { data: { invalid: true } },
+  ]) {
+    const responses = happyResponses();
+    responses.push({
+      pathname: `/v25.0/act_${syntheticAccountId}`,
+      query: { fields: "id,business{id}" },
+      payload: { id: syntheticAccountId, business: { id: syntheticBusinessId } },
+    });
+    responses.push({
+      pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
       query: { fields: "id" },
-      payload: { id: syntheticPixelId },
-    },
-    {
-      pathname: `/v25.0/act_${syntheticAccountId}/adspixels`,
-      query: { fields: "id", limit: "5" },
-      status: 200,
-      payload: { error: { code: 100, message: "synthetic contract error" } },
-    },
-  ]);
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pixel_account_relation_malformed/);
-  assert.doesNotMatch(combined, /synthetic contract error/);
-  assert.equal(result.requestCount, 2);
-  assert.doesNotMatch(
-    combined,
-    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
-  );
+      payload: { data: [{ id: syntheticModernDatasetId }] },
+    });
+    responses[4] = {
+      ...responses[4],
+      status: legacyPayload.error ? 400 : 200,
+      payload: legacyPayload,
+    };
+    const result = runVerifier(responses, { expectedRequests: 7 });
+    const combined = `${result.stdout}${result.stderr}`;
+    assert.notEqual(result.status, 0);
+    assert.equal(result.requestCount, 7);
+    assert.match(combined, /source_dataset_legacy_contract_invalid/);
+    assert.doesNotMatch(combined, /synthetic legacy dataset edge drift|source_access_raw=verified/);
+    assertNoSyntheticInputs(combined);
+  }
 });

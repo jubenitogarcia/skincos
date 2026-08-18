@@ -19,6 +19,7 @@ readonly CONTROL_FILE='/etc/skincos/atendimento-staging/module-control.json'
 readonly BACKUP_ROOT='/var/backups/skincos/clientes/staging-control'
 
 STATE=''
+SURFACE='clientes'
 RELEASE_SHA=''
 COORDINATION_SOURCE_SHA="${SKINCOS_GLOBAL_COORDINATION_SOURCE_SHA:-}"
 COORDINATION_CLOSURE="${SKINCOS_GLOBAL_COORDINATION_CLOSURE_FILE:-}"
@@ -27,7 +28,7 @@ APPLY=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/set-atendimento-staging-control.sh --state <disabled|maintenance|active|canary> [--release-sha <full-sha>] [--source-sha <full-sha>] [--coordination-closure <json>] [--reason <text>] [--apply]
+Usage: scripts/set-atendimento-staging-control.sh --state <disabled|maintenance|active|canary> [--surface <clientes|full>] [--release-sha <full-sha>] [--source-sha <full-sha>] [--coordination-closure <json>] [--reason <text>] [--apply]
 
 The default is dry-run. Active or canary requires a full immutable release SHA.
 Every generated control remains synthetic and read-only with commercial writes
@@ -38,6 +39,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --state) shift; STATE="${1:-}" ;;
+    --surface) shift; SURFACE="${1:-}" ;;
     --release-sha) shift; RELEASE_SHA="${1:-}" ;;
     --source-sha) shift; COORDINATION_SOURCE_SHA="${1:-}" ;;
     --coordination-closure) shift; COORDINATION_CLOSURE="${1:-}" ;;
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$STATE" =~ ^(disabled|maintenance|active|canary)$ ]] || { echo '--state must be disabled, maintenance, active or canary.' >&2; exit 64; }
+[[ "$SURFACE" =~ ^(clientes|full)$ ]] || { echo '--surface must be clientes or full.' >&2; exit 64; }
 if [[ "$STATE" == 'active' || "$STATE" == 'canary' ]]; then
   [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--release-sha must be a full lowercase SHA for active or canary state.' >&2; exit 64; }
 elif [[ -n "$RELEASE_SHA" && ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -94,7 +97,7 @@ cleanup_artifacts() {
 }
 trap cleanup_artifacts EXIT
 /usr/bin/cat >"$tmp_control" <<EOF
-{"schemaVersion":1,"module":"atendimento","state":"$STATE","releaseSha":$release_json,"readOnly":true,"commercialContactWritesEnabled":false,"syntheticOnly":true,"reason":"$REASON","updatedAt":"$stamp"}
+{"schemaVersion":1,"module":"atendimento","state":"$STATE","surface":"$SURFACE","releaseSha":$release_json,"readOnly":true,"commercialContactWritesEnabled":false,"syntheticOnly":true,"reason":"$REASON","updatedAt":"$stamp"}
 EOF
 
 if [[ "$APPLY" == '1' ]]; then
@@ -129,7 +132,7 @@ if [[ "$APPLY" == '1' ]]; then
   CONTROL_BACKUP_COMMITTED=1
   native_coordination_check
   run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp_control" "$CONTROL_FILE"
-  printf 'module_control=%s release_sha=%s read_only=true commercial_writes=false control_backup=%s applied=true\n' "$STATE" "${RELEASE_SHA:-none}" "$CONTROL_BACKUP_NAME"
+  printf 'module_control=%s surface=%s release_sha=%s read_only=true commercial_writes=false control_backup=%s applied=true\n' "$STATE" "$SURFACE" "${RELEASE_SHA:-none}" "$CONTROL_BACKUP_NAME"
 else
-  printf 'module_control=%s release_sha=%s read_only=true commercial_writes=false control_backup=none dry_run=true\n' "$STATE" "${RELEASE_SHA:-none}"
+  printf 'module_control=%s surface=%s release_sha=%s read_only=true commercial_writes=false control_backup=none dry_run=true\n' "$STATE" "$SURFACE" "${RELEASE_SHA:-none}"
 fi

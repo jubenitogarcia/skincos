@@ -146,15 +146,19 @@ fonte, acesso ao Pixel, Página ou dataset, e indisponibilidade transitória. S�
 então o workflow chama
 `POST .../config/staging-synthetic-seed`. Os fatos externos entram somente no
 corpo dessas chamadas privadas: o token Meta Ads já custodiado,
-`META_PIXEL_ID`, `META_ADS_ACCOUNT_ID`, `META_ADS_API_VERSION` e o segredo de
-Environment staging `META_ADS_PAGE_ID`. Esse último é um seletor privado de
-identidade factual, nunca um bearer: o Vault o prova pela relação limitada de
-Páginas atribuídas ao System User, exige exatamente uma associação elegível e
-confirma o mesmo par Página+Instagram por leitura direta. Ele não é um binding
-do Worker, não entra no `--secrets-file`, artefato, log ou output do workflow.
-O Vault exige então uma conta/pixel, uma Página+Instagram provada e um dataset
-offline unívocos, cria somente recursos `PAUSED` nomeados para staging e sela
-duas credenciais internas cifradas. Não seleciona campanhas, conjuntos ou
+`META_PIXEL_ID`, `META_ADS_ACCOUNT_ID`, `META_ADS_API_VERSION` e os segredos
+privados do GitHub Environment `staging` `novohamburgo_page_id` e
+`barrashopppingsul_page_id`. Os dois últimos são seletores factuais de
+identidade, nunca bearers, e seus valores não aparecem em logs, outputs,
+artefatos ou PRs. O fluxo associa o primeiro exclusivamente à unidade Novo
+Hamburgo e o segundo exclusivamente à unidade Barra Shopping Sul; para cada
+unidade, prova pela relação limitada de Páginas atribuídas ao System User uma
+única associação elegível e confirma o mesmo par Página+Instagram por leitura
+direta. Os pares devem ser distintos. Os seletores não são bindings do Worker
+e não entram no `--secrets-file`, artefato, log ou output do workflow. O Vault
+exige então uma conta/pixel, os dois pares Página+Instagram provados e um
+dataset offline unívoco, cria somente recursos `PAUSED` nomeados para staging e
+sela duas credenciais internas cifradas. Não seleciona campanhas, conjuntos ou
 anúncios comerciais, nem torna o token Meta um binding do Worker.
 
 O workflow manual separado de prova candidata cria somente uma versão imutável
@@ -327,13 +331,17 @@ ou argv. A atestação é estritamente somente leitura; a seed é estritamente
 `staging`, ocorre antes da autenticação/derivação de configuração e possui
 rollback explícito antes de qualquer ativação quando o planejamento falha.
 `META_ADS_ACCESS_TOKEN` continua uma credencial externa de fonte: não é copiado
-de production nem inventado pelo fluxo. `META_ADS_PAGE_ID` deve ser escolhido
-na fonte Meta autorizada e gravado somente no Environment `staging`. No deploy
-governado de staging, ausência, formato inválido, relação não atribuída ou par
-Página/Instagram divergente interrompem o job antes de migrations, D1, seed ou
-tráfego. A API candidata mantém `page_id` opcional para compatibilidade com
-clientes governados existentes; não a invoque diretamente como substituta desse
-preflight.
+de production nem inventado pelo fluxo. Os seletores privados
+`novohamburgo_page_id` e `barrashopppingsul_page_id` devem ser escolhidos na
+fonte Meta autorizada e gravados somente no GitHub Environment `staging`, cada
+um para sua própria unidade e respectivo par Página+Instagram. No deploy
+governado de staging, os dois seletores são exigidos, devem ser numéricos e
+distintos; ausência, formato inválido, relação não atribuída ou par
+Página/Instagram divergente interrompem o preflight antes de migrations, D1,
+seed ou tráfego. Essa garantia é do preflight governado: uma chamada direta à
+API candidata não é substituta dele e não deve ser usada para inferir que uma
+falha de seletor ocorrerá antes de qualquer journal interno. A API candidata
+aceita somente o mapa completo `destination_page_ids` para as duas unidades.
 
 Antes da primeira promoção, disponibilize em cada GitHub Environment os
 segredos independentes exigidos pelo workflow, em especial

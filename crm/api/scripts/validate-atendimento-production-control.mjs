@@ -18,6 +18,7 @@ function invalid(message, code) {
 // control-file path.
 export function validateAtendimentoProductionControl({
     releaseSha,
+    surface,
     filePath = PRODUCTION_CONTROL_FILE,
     fsImpl,
 } = {}) {
@@ -28,6 +29,7 @@ export function validateAtendimentoProductionControl({
     const control = readIsolatedAtendimentoRuntimeControl({
         filePath,
         releaseSha: normalizedRelease,
+        ...(surface ? { expectedSurface: surface } : {}),
         ...(fsImpl ? { fsImpl } : {}),
     })
     if (control.configured !== true || control.releaseMatched !== true) {
@@ -39,6 +41,7 @@ export function validateAtendimentoProductionControl({
     return Object.freeze({
         state: control.state,
         releaseSha: control.releaseSha,
+        ...(surface ? { surface: control.surface || 'clientes' } : {}),
         readOnly: control.readOnly === true,
         syntheticOnly: control.syntheticOnly === true,
     })
@@ -46,15 +49,17 @@ export function validateAtendimentoProductionControl({
 
 export function parseValidateAtendimentoProductionControlArgs(args = []) {
     const values = Array.isArray(args) ? args.map(String) : []
-    if (values.length !== 2 || values[0] !== '--release-sha' || !SHA.test(values[1])) {
-        throw invalid('Usage: validate-atendimento-production-control.mjs --release-sha <full-lowercase-sha>', 'ATENDIMENTO_PRODUCTION_CONTROL_ARGUMENTS_INVALID')
+    if (values.length === 2 && values[0] === '--release-sha' && SHA.test(values[1])) return values[1]
+    if (values.length === 4 && values[0] === '--release-sha' && SHA.test(values[1]) && values[2] === '--surface' && /^(clientes|full)$/.test(values[3])) {
+        return { releaseSha: values[1], surface: values[3] }
     }
-    return values[1]
+    throw invalid('Usage: validate-atendimento-production-control.mjs --release-sha <full-lowercase-sha> [--surface <clientes|full>]', 'ATENDIMENTO_PRODUCTION_CONTROL_ARGUMENTS_INVALID')
 }
 
 const thisFile = fileURLToPath(import.meta.url)
 if (process.argv[1] && path.resolve(process.argv[1]) === thisFile) {
-    const releaseSha = parseValidateAtendimentoProductionControlArgs(process.argv.slice(2))
-    const report = validateAtendimentoProductionControl({ releaseSha })
+    const parsed = parseValidateAtendimentoProductionControlArgs(process.argv.slice(2))
+    const releaseSha = typeof parsed === 'string' ? parsed : parsed.releaseSha
+    const report = validateAtendimentoProductionControl({ releaseSha, ...(typeof parsed === 'string' ? {} : { surface: parsed.surface }) })
     console.log(JSON.stringify({ ok: true, ...report }))
 }

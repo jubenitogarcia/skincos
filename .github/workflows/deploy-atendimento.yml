@@ -1,5 +1,5 @@
 name: Prepare isolated Atendimento release
-run-name: Atendimento ${{ inputs.operation }} ${{ inputs.target }} ${{ inputs.release_sha }}
+run-name: Atendimento ${{ inputs.operation }} ${{ inputs.target }} ${{ inputs.surface }} ${{ inputs.release_sha }}
 
 # This remains dispatch-only and main-custodied. The native release scripts run
 # on the approved operator runtime; this workflow records the immutable source,
@@ -19,6 +19,12 @@ on:
         description: Full immutable main SHA to validate or restore
         required: true
         type: string
+      surface:
+        description: Explicit isolated runtime surface profile
+        required: true
+        default: clientes
+        type: choice
+        options: [clientes, full]
       operation:
         description: Native operation already performed by the approved runtime; workflow attests resulting state
         required: true
@@ -133,6 +139,7 @@ jobs:
           CONTRACT_TARGET: ${{ inputs.target }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
           ATENDIMENTO_OPERATION: ${{ inputs.operation }}
+          ATENDIMENTO_SURFACE: ${{ inputs.surface }}
           ENABLE_ATENDIMENTO_DEPLOY: ${{ vars.ENABLE_ATENDIMENTO_DEPLOY }}
           CRM_MODULE_CONTROL_FILE: ${{ vars.CRM_MODULE_CONTROL_FILE }}
           CRM_ATENDIMENTO_DEPLOY_COMMAND: ${{ vars.CRM_ATENDIMENTO_DEPLOY_COMMAND }}
@@ -151,6 +158,29 @@ jobs:
           path: ${{ runner.temp }}/atendimento-deployment-contract/preflight.json
           retention-days: 30
           if-no-files-found: warn
+      - name: Write immutable Atendimento staging promotion evidence
+        if: ${{ inputs.target == 'staging' }}
+        env:
+          PROMOTION_UNIT: atendimento
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          PROMOTION_RELEASE_INPUT_DIGEST: ${{ needs.promotion.outputs.release_input_digest }}
+          PROMOTION_DEPENDENCY_CLOSURE_DIGEST: ${{ needs.promotion.outputs.dependency_closure_digest }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/atendimento-staging-evidence
+        run: |
+          set -euo pipefail
+          git -C control fetch --no-tags origin "$PROMOTION_SOURCE_SHA"
+          PROMOTION_SOURCE_TREE="$(git -C control rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" \
+            node control/.github/scripts/promotion-evidence.mjs write \
+            "$EVIDENCE_ROOT/promotion-evidence.json"
+      - name: Upload immutable Atendimento staging promotion evidence
+        if: ${{ inputs.target == 'staging' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-atendimento
+          path: ${{ runner.temp }}/atendimento-staging-evidence/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error
       # Staging is deliberately loopback-only until a separately reviewed
       # dedicated tunnel exists. A hosted runner cannot attest that private
       # listener, so it must not probe or imply a public staging route.
