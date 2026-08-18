@@ -3443,3 +3443,12 @@
     margin-left: -12px;
   }
 }
+
+/* Desktop cards keep the same editorial width while giving the table a
+ * little more air above the deck. Mobile retains its established 312px
+ * geometry and the finale card contract remains unchanged. */
+@media (min-width: 721px) {
+  .tableStage:not([data-hand-stage="finale"]) .cardButton {
+    min-height: clamp(280px, 24.3vw, 292px);
+  }
+}

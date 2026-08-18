@@ -44,6 +44,7 @@ test("the table handoff follows the deck and keeps the title in the compact view
     const visualHandoffStyles = styles.slice(styles.lastIndexOf("/* Visual handoff refinements"));
     assert.doesNotMatch(visualHandoffStyles, /\.hero::before[\s\S]*radial-gradient/);
     assert.doesNotMatch(styles, /linear-gradient\(102deg, #ffffff 0%, #fbfaf5 32%, #f4eedf 68%, #f1e2b7 100%\)/);
+    assert.match(styles, /@media \(min-width: 721px\) \{[\s\S]*\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardButton \{[\s\S]*min-height: clamp\(280px, 24\.3vw, 292px\)/);
     assert.match(styles, /@keyframes deckStageCollect[\s\S]*translateX\(-50%\) translateY\(0\) scale\(1\.04\)/);
     assert.match(experience, /function finishDealScroll\(\)/);
 });
