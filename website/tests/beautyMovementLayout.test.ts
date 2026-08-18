@@ -55,6 +55,11 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(styles, /@keyframes finaleSurfaceChromeDissolve[\s\S]*opacity: 0[\s\S]*filter: blur\(8px\)/);
     assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.tableSurface::before,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.tableSurface::before[\s\S]*opacity: 0/);
     assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*data-finale-stage="merging"\] \.tableSurface::before[\s\S]*opacity: 0/);
+    assert.match(styles, /\.specialCardBackWithAction \{[\s\S]*justify-content: flex-start[\s\S]*gap: 0[\s\S]*padding: 34px 24px 24px/);
+    assert.match(styles, /\.specialCardBackWithAction \.specialCardRevealContent \{[\s\S]*margin-top: clamp\(24px, 3vw, 34px\)[\s\S]*gap: 0/);
+    assert.match(styles, /\.specialCardBackWithAction \.specialCardRevealAction \{[\s\S]*margin-top: clamp\(24px, 3\.6vw, 38px\)[\s\S]*gap: 8px/);
+    assert.match(styles, /\.specialCardBackWithAction \.specialCardSeal \{[\s\S]*margin-top: auto/);
+    assert.match(styles, /@media \(max-width: 720px\)[\s\S]*\.specialCardBackWithAction \{[\s\S]*padding: 28px 20px 20px/);
 });
 
 test("the finale exposes a non-cancellable five-second merge countdown", async () => {

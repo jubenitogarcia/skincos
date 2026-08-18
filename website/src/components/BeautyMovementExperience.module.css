@@ -3505,6 +3505,53 @@
   }
 }
 
+/* Give the special-card reveal a quieter editorial rhythm: the mark and
+ * label stay grouped, the message gets a clear breath, and the CTA settles
+ * lower instead of crowding the headline. The seal anchors to the bottom
+ * without changing the established 430/410px card contract. */
+.specialCardBackWithAction {
+  justify-content: flex-start;
+  gap: 0;
+  padding: 34px 24px 24px;
+}
+
+.specialCardBackWithAction .specialCardBrand {
+  flex: 0 0 auto;
+  margin-bottom: 14px;
+}
+
+.specialCardBackWithAction .specialCardRevealContent {
+  margin-top: clamp(24px, 3vw, 34px);
+  gap: 0;
+}
+
+.specialCardBackWithAction .specialCardRevealContent strong {
+  margin: 0;
+}
+
+.specialCardBackWithAction .specialCardRevealAction {
+  margin-top: clamp(24px, 3.6vw, 38px);
+  gap: 8px;
+}
+
+.specialCardBackWithAction .specialCardSeal {
+  margin-top: auto;
+}
+
+@media (max-width: 720px) {
+  .specialCardBackWithAction {
+    padding: 28px 20px 20px;
+  }
+
+  .specialCardBackWithAction .specialCardRevealContent {
+    margin-top: 22px;
+  }
+
+  .specialCardBackWithAction .specialCardRevealAction {
+    margin-top: 22px;
+  }
+}
+
 /* Desktop cards keep the same editorial width while giving the table a
  * little more air above the deck. Mobile retains its established 312px
  * geometry and the finale card contract remains unchanged. */
