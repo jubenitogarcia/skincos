@@ -33,17 +33,21 @@ readonly PROTECTED_SERVICES=(
 )
 
 RELEASE_SHA=''
-usage() { echo "Usage: $0 --expected-release-sha <full-sha>"; }
+SURFACE=''
+usage() { echo "Usage: $0 --expected-release-sha <full-sha> [--surface <clientes|full>]"; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --expected-release-sha) shift; RELEASE_SHA="${1:-}" ;;
+    --surface) shift; SURFACE="${1:-}" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 64 ;;
   esac
   shift
 done
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--expected-release-sha must be a full lowercase SHA.' >&2; exit 64; }
+[[ -z "$SURFACE" || "$SURFACE" =~ ^(clientes|full)$ ]] || { echo '--surface must be clientes or full.' >&2; exit 64; }
 readonly RELEASE_ROOT="$RELEASE_BASE/$RELEASE_SHA/source"
+readonly RELEASE_MANIFEST="/var/lib/skincos-runtime/crm-atendimento-production/release-manifests/$RELEASE_SHA.json"
 readonly SMOKE="$RELEASE_ROOT/crm/api/scripts/atendimento-production-signed-smoke.mjs"
 readonly CONTROL_VALIDATOR="$RELEASE_ROOT/crm/api/scripts/validate-atendimento-production-control.mjs"
 readonly RUNTIME_GRANT_LOCKDOWN="$RELEASE_ROOT/scripts/lockdown-atendimento-production-runtime.sh"
@@ -57,7 +61,11 @@ run_sudo_clean /usr/bin/test -r "$CONTROL_FILE" || { echo 'Module control is una
 run_sudo_clean /usr/bin/test -f "$SMOKE" || { echo 'Fixed signed smoke is unavailable.' >&2; exit 78; }
 run_sudo_clean /usr/bin/test -f "$CONTROL_VALIDATOR" || { echo 'Strict production control validator is unavailable.' >&2; exit 78; }
 run_sudo_clean /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Production runtime grant lockdown is unavailable.' >&2; exit 78; }
-run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/test -f "$RELEASE_MANIFEST" || { echo 'Production release surface manifest is unavailable.' >&2; exit 78; }
+release_surface="$(run_sudo_clean /usr/bin/node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const surface=Object.prototype.hasOwnProperty.call(value,"surface") ? String(value.surface||"") : "clientes"; if (!/^(clientes|full)$/.test(surface)) process.exit(78); process.stdout.write(surface);' "$RELEASE_MANIFEST")"
+[[ -z "$SURFACE" || "$SURFACE" == "$release_surface" ]] || { echo 'Requested production surface does not match the immutable release manifest.' >&2; exit 1; }
+SURFACE="$release_surface"
+run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" --surface "$SURFACE" >/dev/null
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 run_sudo_clean /usr/bin/systemctl is-active --quiet "$SERVICE" || { echo "Service is not active: $SERVICE" >&2; exit 1; }
 
@@ -82,6 +90,13 @@ protected_before="$(snapshot_protected_services)"
 installed_unit="$(run_sudo_clean /usr/bin/systemctl show --property=FragmentPath --value "$SERVICE")"
 [[ "$installed_unit" == "/etc/systemd/system/$SERVICE" ]] || { echo 'Installed unit is not the dedicated immutable override.' >&2; exit 1; }
 run_sudo_clean /usr/bin/grep -Fq "WorkingDirectory=$RELEASE_ROOT" "$installed_unit" || { echo 'Installed unit working directory does not match the expected release.' >&2; exit 1; }
+if [[ "$SURFACE" == 'clientes' ]]; then
+  run_sudo_clean /usr/bin/grep -Fq "Environment=CRM_ATENDIMENTO_SURFACE=clientes" "$installed_unit" || \
+    run_sudo_clean /usr/bin/grep -Fq 'Environment=CRM_ATENDIMENTO_CLIENTES_ONLY=true' "$installed_unit" || \
+    { echo 'Installed unit surface does not match the expected release.' >&2; exit 1; }
+else
+  run_sudo_clean /usr/bin/grep -Fq "Environment=CRM_ATENDIMENTO_SURFACE=$SURFACE" "$installed_unit" || { echo 'Installed unit surface does not match the expected release.' >&2; exit 1; }
+fi
 run_sudo_clean /usr/bin/grep -Fq "ExecStart=/usr/bin/node $RELEASE_ROOT/crm/api/server/atendimentoRuntime.js" "$installed_unit" || { echo 'Installed unit entrypoint does not match the isolated release.' >&2; exit 1; }
 unit_exec="$(run_sudo_clean /usr/bin/systemctl show --property=ExecStart --value "$SERVICE")"
 [[ "$unit_exec" == *"$RELEASE_ROOT/crm/api/server/atendimentoRuntime.js"* ]] || { echo 'Running unit command does not match the expected release.' >&2; exit 1; }
@@ -123,7 +138,7 @@ SQL
   }
 done
 
-run_sudo_clean /usr/bin/node "$SMOKE" --expected-release-sha "$RELEASE_SHA"
+run_sudo_clean /usr/bin/node "$SMOKE" --expected-release-sha "$RELEASE_SHA" --surface "$SURFACE"
 protected_after="$(snapshot_protected_services)"
 [[ "$protected_before" == "$protected_after" ]] || { echo 'A protected shared service changed during isolated validation.' >&2; exit 1; }
-printf 'validation_passed=true service=%s release_sha=%s shared_restart=false commercial_reads_disabled=true\n' "$SERVICE" "$RELEASE_SHA"
+printf 'validation_passed=true service=%s release_sha=%s surface=%s shared_restart=false commercial_reads_disabled=true\n' "$SERVICE" "$RELEASE_SHA" "$SURFACE"

@@ -209,16 +209,19 @@ jobs:
             );
             const businessId = numericId(account?.business?.id);
             if (!businessId) fail('source_dataset_business_malformed');
-            const modernDatasets = await directRead(
-              `${businessId}/ads_dataset?fields=id,dataset_id&limit=5`,
-              'source_dataset_ads_dataset',
+            const modernDatasetResult = await graphGet(
+              `${businessId}/ads_dataset?fields=id`,
             );
+            if (modernDatasetResult.state !== 'ok') {
+              fail(`source_dataset_ads_dataset_response_${modernDatasetResult.state}`);
+            }
+            const modernDatasets = modernDatasetResult.payload;
             if (!Array.isArray(modernDatasets?.data)) fail('source_dataset_ads_dataset_malformed');
             if (hasNextPage(modernDatasets)) fail('source_dataset_ads_dataset_paging_ambiguous');
             if (modernDatasets.data.length === 0) fail('source_dataset_ads_dataset_empty');
             if (modernDatasets.data.length > 1) fail('source_dataset_ads_dataset_ambiguous');
             const modernDataset = modernDatasets.data[0];
-            if (!numericId(modernDataset?.id) && !numericId(modernDataset?.dataset_id)) {
+            if (!numericId(modernDataset?.id)) {
               fail('source_dataset_ads_dataset_malformed');
             }
             // The Worker still seals offline_conversion_data_set_id today;

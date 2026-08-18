@@ -7,6 +7,7 @@ import { rateLimit } from 'express-rate-limit'
 import { createAtendimentoStore } from './atendimento/store.js'
 import { createAtendimentoRouter } from './atendimento/routes.js'
 import { readIsolatedAtendimentoRuntimeControl } from './atendimento/isolatedRuntimeControl.js'
+import { normalizeAtendimentoSurface } from './atendimento/surfaceProfile.js'
 import { createPersistentReplayGuard } from './atendimento/replayProtection.js'
 import { createReplayProtectedActorVerifier } from './atendimento/isolatedActorAuth.js'
 import { installGracefulShutdown } from './gracefulShutdown.js'
@@ -38,6 +39,7 @@ function publicControl(control) {
         ...(control?.releaseMatched === true && /^[0-9a-f]{40}$/.test(String(control?.releaseSha || ''))
             ? { releaseSha: String(control.releaseSha) }
             : {}),
+        ...(normalizeAtendimentoSurface(control?.surface) ? { surface: normalizeAtendimentoSurface(control.surface) } : {}),
         readOnly: control?.readOnly === true,
         syntheticOnly: control?.syntheticOnly === true,
     }
@@ -100,6 +102,10 @@ export function createIsolatedAtendimentoRuntime({
     const env = environment || {}
     const runtimeReleaseSha = String(env.ATENDIMENTO_RUNTIME_RELEASE_SHA || '').trim().toLowerCase()
     const controlFile = String(env.CRM_MODULE_CONTROL_FILE || '').trim()
+    const configuredSurface = String(env.CRM_ATENDIMENTO_SURFACE || '').trim()
+    const legacyClientesOnly = String(env.CRM_ATENDIMENTO_CLIENTES_ONLY || '').trim().toLowerCase() === 'true'
+    const runtimeSurface = normalizeAtendimentoSurface(configuredSurface)
+        || (!configuredSurface && legacyClientesOnly ? 'clientes' : null)
     const readinessToken = String(env.ATENDIMENTO_READINESS_TOKEN || '').trim()
     const actorHmacKey = String(env.ATENDIMENTO_ACTOR_HMAC_KEY || '').trim()
     const appStore = store || createAtendimentoStore({
@@ -122,10 +128,20 @@ export function createIsolatedAtendimentoRuntime({
         readinessChecks: 0,
         readinessFailures: 0,
     }
-    const readControl = controlReader || (() => readIsolatedAtendimentoRuntimeControl({
-        filePath: controlFile,
-        releaseSha: runtimeReleaseSha,
-    }))
+    const readControl = controlReader || (() => runtimeSurface
+        ? readIsolatedAtendimentoRuntimeControl({
+            filePath: controlFile,
+            releaseSha: runtimeReleaseSha,
+            expectedSurface: runtimeSurface,
+        })
+        : {
+            configured: false,
+            ready: false,
+            state: 'disabled',
+            releaseMatched: false,
+            surface: null,
+            reason: 'RUNTIME_SURFACE_INVALID',
+        })
     const actorVerifier = actorHmacKey
         ? createReplayProtectedActorVerifier({
             actorHmacKey,
@@ -262,6 +278,7 @@ export function createIsolatedAtendimentoRuntime({
         store: appStore,
         actorHmacKey,
         verifySignedActor: actorVerifier || (() => null),
+        surface: runtimeSurface,
     }))
 
     // No SPA fallback, generic health surface, or cross-module endpoint is

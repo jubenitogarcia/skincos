@@ -2257,6 +2257,8 @@ async function discoverStagingSyntheticSeedFacts({
   // The legacy ad-account Offline Conversions edge is no longer the current
   // AdsDataset contract. Resolve the account's owning Business, then use the
   // bounded Business `ads_dataset` edge exposed by Meta's current SDK schema.
+  // Ask only for the stable node id: some Graph versions reject the optional
+  // dataset_id projection even though the SDK exposes it as a model field.
   const account = await read(
     `act_${input.accountId}`,
     'id,business{id}',
@@ -2279,8 +2281,8 @@ async function discoverStagingSyntheticSeedFacts({
   );
   const datasets = await read(
     `${businessId}/ads_dataset`,
-    'id,dataset_id',
-    { limit: String(STAGING_SYNTHETIC_SEED_MAX_GRAPH_OBJECTS) },
+    'id',
+    {},
     failureCodes.datasetAccessDenied,
     failureCodes.identityMalformed,
   );
@@ -2288,11 +2290,8 @@ async function discoverStagingSyntheticSeedFacts({
     throw stagingSyntheticSeedFailure(failureCodes.datasetAmbiguous, 409);
   }
   const datasetEntry = asObject(safeArray(datasets.data)[0]);
-  const datasetIdentifier = /^\d{5,30}$/.test(clean(datasetEntry.id))
-    ? datasetEntry.id
-    : datasetEntry.dataset_id;
   const datasetId = normalizeStagingSyntheticSeedGraphId(
-    datasetIdentifier,
+    datasetEntry.id,
     'offline_dataset_id',
     failureCodes.identityMalformed,
   );

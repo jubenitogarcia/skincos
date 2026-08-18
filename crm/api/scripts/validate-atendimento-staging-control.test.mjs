@@ -51,6 +51,7 @@ test('staging installer accepts only a strict matching read-only control', (t) =
 
 test('staging control CLI accepts only a literal full release SHA', () => {
     assert.equal(parseValidateAtendimentoStagingControlArgs(['--release-sha', RELEASE_SHA]), RELEASE_SHA)
+    assert.deepEqual(parseValidateAtendimentoStagingControlArgs(['--release-sha', RELEASE_SHA, '--surface', 'full']), { releaseSha: RELEASE_SHA, surface: 'full' })
     assert.throws(
         () => parseValidateAtendimentoStagingControlArgs(['--release-sha', '../not-a-sha']),
         (error) => error?.code === 'ATENDIMENTO_STAGING_CONTROL_ARGUMENTS_INVALID',

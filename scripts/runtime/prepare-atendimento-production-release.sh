@@ -20,12 +20,14 @@ readonly SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -
 
 RELEASE_SHA=''
 PREDECESSOR_SHA=''
+SURFACE='clientes'
 APPLY=0
-usage() { echo "Usage: $0 --release-sha <full-sha> --predecessor-sha <full-sha> [--apply]"; }
+usage() { echo "Usage: $0 --release-sha <full-sha> --predecessor-sha <full-sha> [--surface <clientes|full>] [--apply]"; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --release-sha) shift; RELEASE_SHA="${1:-}" ;;
     --predecessor-sha) shift; PREDECESSOR_SHA="${1:-}" ;;
+    --surface) shift; SURFACE="${1:-}" ;;
     --apply) APPLY=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 64 ;;
@@ -33,6 +35,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && "$PREDECESSOR_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Release and predecessor must be full lowercase SHAs.' >&2; exit 64; }
+[[ "$SURFACE" =~ ^(clientes|full)$ ]] || { echo '--surface must be clientes or full.' >&2; exit 64; }
 [[ "$RELEASE_SHA" != "$PREDECESSOR_SHA" ]] || { echo 'Release and predecessor must differ.' >&2; exit 64; }
 readonly SOURCE_ROOT="$RELEASE_BASE/$RELEASE_SHA/source"
 readonly VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-release.mjs"
@@ -45,10 +48,10 @@ done
 /usr/bin/sudo -n true
 run_sudo_clean /usr/bin/test -f "$VALIDATOR" || { echo 'Immutable release validator is unavailable.' >&2; exit 78; }
 run_sudo_clean /usr/bin/test -f "$COORDINATION_CLOSURE" || { echo 'Immutable Atendimento coordination closure is unavailable.' >&2; exit 78; }
-run_sudo_clean /usr/bin/node "$VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" --predecessor-sha "$PREDECESSOR_SHA" >/dev/null
+run_sudo_clean /usr/bin/node "$VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" --predecessor-sha "$PREDECESSOR_SHA" --surface "$SURFACE" >/dev/null
 
 if [[ "$APPLY" != '1' ]]; then
-  printf 'dry_run=true release_sha=%s predecessor_sha=%s isolated_service=crm-atendimento-production.service shared_restart=false\n' "$RELEASE_SHA" "$PREDECESSOR_SHA"
+  printf 'dry_run=true release_sha=%s predecessor_sha=%s surface=%s isolated_service=crm-atendimento-production.service shared_restart=false\n' "$RELEASE_SHA" "$PREDECESSOR_SHA" "$SURFACE"
   exit 0
 fi
 
@@ -84,7 +87,7 @@ run_sudo_clean /usr/bin/install -d -m 0750 -o root -g postgres "$BACKUP_ROOT"
 umask 0077
 tmp="$(/usr/bin/mktemp /tmp/atendimento-production-manifest.XXXXXX)"
 /usr/bin/test -f "$tmp" -a -O "$tmp"
-/usr/bin/printf '%s\n' "{\"schemaVersion\":1,\"releaseSha\":\"$RELEASE_SHA\",\"predecessorSha\":\"$PREDECESSOR_SHA\",\"preparedAt\":\"$stamp\",\"readOnly\":true,\"syntheticOnly\":true}" >"$tmp"
+/usr/bin/printf '%s\n' "{\"schemaVersion\":1,\"releaseSha\":\"$RELEASE_SHA\",\"predecessorSha\":\"$PREDECESSOR_SHA\",\"preparedAt\":\"$stamp\",\"surface\":\"$SURFACE\",\"readOnly\":true,\"syntheticOnly\":true}" >"$tmp"
 native_coordination_check
 run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$tmp" "$MANIFEST"
-printf 'prepared=true release_sha=%s predecessor_sha=%s manifest_registered=true shared_restart=false\n' "$RELEASE_SHA" "$PREDECESSOR_SHA"
+printf 'prepared=true release_sha=%s predecessor_sha=%s surface=%s manifest_registered=true shared_restart=false\n' "$RELEASE_SHA" "$PREDECESSOR_SHA" "$SURFACE"

@@ -192,7 +192,10 @@ test("Meta Ads source-access attestation is manual, GET-only, and bound to two s
   assert.match(workflow, /source_destination_page_pair_duplicate/);
   assert.match(workflow, /offline_conversion_data_sets\?fields=id&limit=2/);
   assert.match(workflow, /act_\$\{accountId\}\?fields=id,business\{id\}/);
-  assert.match(workflow, /\$\{businessId\}\/ads_dataset\?fields=id,dataset_id&limit=5/);
+  assert.match(workflow, /\$\{businessId\}\/ads_dataset\?fields=id/);
+  assert.doesNotMatch(workflow, /ads_dataset\?fields=id&limit=/);
+  assert.doesNotMatch(workflow, /ads_dataset\?fields=id,dataset_id/);
+  assert.match(workflow, /source_dataset_ads_dataset_response_\$\{modernDatasetResult\.state\}/);
   assert.match(workflow, /source_dataset_legacy_contract_invalid/);
   assert.match(
     workflow,
@@ -403,8 +406,8 @@ test("Meta Ads source-access verifier probes the current Business AdsDataset con
     });
     responses.push({
       pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
-      query: { fields: "id,dataset_id", limit: "5" },
-      payload: { data: [{ id: syntheticModernDatasetId, dataset_id: syntheticModernDatasetId }] },
+      query: { fields: "id" },
+      payload: { data: [{ id: syntheticModernDatasetId }] },
     });
     responses[4] = {
       ...responses[4],

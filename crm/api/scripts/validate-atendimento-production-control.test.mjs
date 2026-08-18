@@ -51,6 +51,7 @@ test('production installer accepts only a strict matching read-only control', (t
 
 test('production control CLI accepts only a literal full release SHA', () => {
     assert.equal(parseValidateAtendimentoProductionControlArgs(['--release-sha', RELEASE_SHA]), RELEASE_SHA)
+    assert.deepEqual(parseValidateAtendimentoProductionControlArgs(['--release-sha', RELEASE_SHA, '--surface', 'full']), { releaseSha: RELEASE_SHA, surface: 'full' })
     assert.throws(
         () => parseValidateAtendimentoProductionControlArgs(['--release-sha', '../not-a-sha']),
         (error) => error?.code === 'ATENDIMENTO_PRODUCTION_CONTROL_ARGUMENTS_INVALID',
