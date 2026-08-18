@@ -3371,8 +3371,8 @@
   border-bottom: 1px solid rgba(158, 134, 94, 0.38);
   border-radius: 0 0 clamp(54px, 9vw, 130px) 0;
   background:
-    radial-gradient(circle at 82% 34%, rgba(229, 189, 49, 0.14), transparent 20rem),
-    linear-gradient(102deg, #ffffff 0%, #fbfaf5 32%, #f4eedf 68%, #f1e2b7 100%);
+    radial-gradient(circle at 82% 34%, rgba(229, 189, 49, 0.1), transparent 20rem),
+    linear-gradient(180deg, #ffffff 0%, #fbfaf5 24%, #f4eedf 58%, #f1e2b7 100%);
 }
 
 .progressRowFinale {
