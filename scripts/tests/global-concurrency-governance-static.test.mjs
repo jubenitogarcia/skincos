@@ -84,7 +84,9 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST"));
   assert.ok(tokenVaultUnit.secrets.includes("META_ADS_ACCESS_TOKEN"));
   assert.ok(tokenVaultUnit.secrets.includes("META_PIXEL_ID"));
-  assert.ok(tokenVaultUnit.secrets.includes("META_ADS_PAGE_ID"));
+  assert.ok(tokenVaultUnit.secrets.includes("novohamburgo_page_id"));
+  assert.ok(tokenVaultUnit.secrets.includes("barrashopppingsul_page_id"));
+  assert.ok(!tokenVaultUnit.secrets.includes("META_ADS_PAGE_ID"));
   assert.ok(!tokenVaultUnit.secrets.includes("TOKEN_VAULT_BACKUP_PASSPHRASE"));
   assert.equal(tokenVaultUnit.promotion.trackingFixture, "synthetic authorized ad-set profile required before staging");
   assert.equal(tokenVaultUnit.promotion.trackingBootstrap, "empty staging authority uses a candidate-only Graph-read attestation before a restricted one-shot synthetic seed; legacy authority uses restricted config bearer plus hash-bound internal derivation or protected entries override");

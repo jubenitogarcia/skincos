@@ -18,11 +18,12 @@ jobs:
     timeout-minutes: 3
     environment: staging
     steps:
-      - name: Attest raw staging seed source reads without the Worker app proof
+      - name: Attest both raw staging destination pairs without the Worker app proof
         env:
           META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
           META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
-          META_ADS_PAGE_ID: ${{ secrets.META_ADS_PAGE_ID }}
+          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ secrets.novohamburgo_page_id }}
+          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ secrets.barrashopppingsul_page_id }}
           META_ADS_ACCOUNT_ID: ${{ vars.META_ADS_ACCOUNT_ID }}
           META_ADS_API_VERSION: ${{ vars.META_ADS_API_VERSION }}
         shell: bash
@@ -31,18 +32,22 @@ jobs:
           node --input-type=module <<'NODE'
           const token = String(process.env.META_ADS_ACCESS_TOKEN || '');
           const pixelId = String(process.env.META_PIXEL_ID || '').trim();
-          const pageSelector = String(process.env.META_ADS_PAGE_ID || '').trim();
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '');
+          const destinationSelectors = {
+            novo_hamburgo: String(process.env.META_ADS_NOVOHAMBURGO_PAGE_ID || '').trim(),
+            barra_shopping_sul: String(process.env.META_ADS_BARRASHOPPPINGSUL_PAGE_ID || '').trim(),
+          };
 
           const fail = (code) => {
             console.error(`Meta Ads source-access attestation failed: ${code}`);
             process.exit(1);
           };
+          const numericId = (value) => {
+            const normalized = String(value || '').trim().replace(/^act_/, '');
+            return /^\d{5,30}$/.test(normalized) ? normalized : '';
+          };
 
-          if (pageSelector && !/^\d{5,30}$/.test(pageSelector)) {
-            fail('source_page_selector_invalid');
-          }
           if (
             !token ||
             !/^\d{5,30}$/.test(pixelId) ||
@@ -50,6 +55,15 @@ jobs:
             !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)
           ) {
             fail('source_contract_invalid');
+          }
+          if (
+            !/^\d{5,30}$/.test(destinationSelectors.novo_hamburgo) ||
+            !/^\d{5,30}$/.test(destinationSelectors.barra_shopping_sul)
+          ) {
+            fail('source_destination_page_selector_invalid');
+          }
+          if (destinationSelectors.novo_hamburgo === destinationSelectors.barra_shopping_sul) {
+            fail('source_destination_page_selector_duplicate');
           }
 
           const graphGet = async (path) => {
@@ -89,16 +103,12 @@ jobs:
             }
             return { state: 'ok', payload };
           };
-
-          const numericId = (value) => {
-            const normalized = String(value || '').trim().replace(/^act_/, '');
-            return /^\d{5,30}$/.test(normalized) ? normalized : '';
-          };
           const directRead = async (path, phase) => {
             const result = await graphGet(path);
             if (result.state !== 'ok') fail(`${phase}_${result.state}`);
             return result.payload;
           };
+          const hasNextPage = (payload) => String(payload?.paging?.next ?? '').trim() !== '';
           const validLanding = (value) => {
             try {
               const url = new URL(String(value || '').trim());
@@ -124,43 +134,24 @@ jobs:
               return false;
             }
           };
-          const selectEligiblePage = (data, phase, selector = '') => {
-            const pageFacts = data.map((page) => {
-              const tasks = new Set(Array.isArray(page?.tasks) ? page.tasks.map((task) => String(task || '').trim().toUpperCase()) : []);
-              const hasAdvertiseTask = tasks.has('ADVERTISE') || tasks.has('PROFILE_PLUS_ADVERTISE');
-              const hasInstagramLink = Boolean(numericId(page?.instagram_business_account?.id));
-              return {
-                page,
-                hasAdvertiseTask,
-                hasInstagramLink,
-                eligible: hasAdvertiseTask && hasInstagramLink,
-              };
-            });
-            const eligiblePages = pageFacts.filter((fact) => fact.eligible).map((fact) => fact.page);
-            const selectedPages = selector
-              ? eligiblePages.filter((page) => numericId(page?.id) === selector)
-              : eligiblePages;
-            if (selector && selectedPages.length === 0) fail(`${phase}_selector_mismatch`);
-            if (eligiblePages.length === 0) {
-              if (pageFacts.length === 0) fail(`${phase}_none_visible`);
-              const hasAdvertiseTask = pageFacts.some((fact) => fact.hasAdvertiseTask);
-              const hasInstagramLink = pageFacts.some((fact) => fact.hasInstagramLink);
-              if (!hasAdvertiseTask && !hasInstagramLink) fail(`${phase}_advertise_and_instagram_missing`);
-              if (!hasAdvertiseTask) fail(`${phase}_advertise_task_missing`);
-              if (!hasInstagramLink) fail(`${phase}_instagram_link_missing`);
-              fail(`${phase}_task_instagram_unpaired`);
+          const selectDestinationPair = (assignedPages, destinationKey, selector) => {
+            const selected = assignedPages.filter((page) => numericId(page?.id) === selector);
+            if (selected.length === 0) fail('source_destination_page_assignment_unassigned');
+            if (selected.length > 1) fail('source_destination_page_selector_ambiguous');
+            const page = selected[0];
+            if (!Array.isArray(page?.tasks)) fail('source_destination_page_assignment_malformed');
+            const tasks = new Set(page.tasks.map((task) => String(task || '').trim().toUpperCase()));
+            if (!tasks.has('ADVERTISE') && !tasks.has('PROFILE_PLUS_ADVERTISE')) {
+              fail('source_destination_page_assignment_advertise_task_missing');
             }
-            if (selectedPages.length > 1) fail(selector ? `${phase}_selector_ambiguous` : `${phase}_multiple_eligible`);
-            const pageId = numericId(selectedPages[0].id);
-            const instagramId = numericId(selectedPages[0].instagram_business_account.id);
-            if (!pageId || !instagramId) fail(`${phase}_malformed`);
-            return { pageId, instagramId };
+            const pageId = numericId(page?.id);
+            const instagramId = numericId(page?.instagram_business_account?.id);
+            if (!pageId || !instagramId) fail('source_destination_page_assignment_instagram_link_missing');
+            return { destinationKey, pageId, instagramId };
           };
 
-          // Keep the bare asset read separate from the account membership
-          // relation. A Pixel may be shared with the configured account without
-          // that account owning it, so membership is the contract needed by the
-          // later promoted_object.
+          // Keep the bare Pixel read separate from account membership: a Pixel
+          // can be shared with an account without being owned by it.
           const pixel = await directRead(`${pixelId}?fields=id`, 'source_pixel');
           if (numericId(pixel?.id) !== pixelId) fail('source_pixel_mismatch');
 
@@ -173,75 +164,48 @@ jobs:
           if (associatedPixels.some((id) => !id)) fail('source_pixel_account_relation_malformed');
           const targetMemberships = associatedPixels.filter((id) => id === pixelId).length;
           if (targetMemberships === 1 && new Set(associatedPixels).size === associatedPixels.length) {
-            // The bounded page proves the exact association. Do not follow the
-            // opaque Graph pagination URL or reject an account just because it
-            // has more associated Pixels than this diagnostic page limit.
-          } else if (String(accountPixels?.paging?.next ?? '').trim()) {
+            // The target membership is proven by this bounded page. Other
+            // associated Pixels do not make the configured relation ambiguous.
+          } else if (hasNextPage(accountPixels)) {
             fail('source_pixel_account_relation_ambiguous');
           } else {
             fail('source_pixel_account_relation_mismatch');
           }
 
-          let pageSelection;
-          let pageDiscovery;
-          if (pageSelector) {
-            // A configured selector must be proved through the authenticated
-            // System User's own bounded assignment relation. Never pick a
-            // Page by order or by a user-centric discovery edge.
-            const sourcePrincipal = await directRead('me?fields=id', 'source_system_user');
-            const sourcePrincipalId = numericId(sourcePrincipal?.id);
-            if (!sourcePrincipalId) fail('source_system_user_malformed');
-            const assignedPages = await directRead(
-              `${sourcePrincipalId}/assigned_pages?fields=id,tasks,instagram_business_account{id}&limit=100`,
-              'source_system_user_pages',
-            );
-            if (!Array.isArray(assignedPages?.data)) fail('source_system_user_pages_malformed');
-            if (String(assignedPages?.paging?.next ?? '').trim()) {
-              fail('source_system_user_pages_paging_ambiguous');
-            }
-            pageSelection = selectEligiblePage(assignedPages.data, 'source_system_user_pages', pageSelector);
-            pageDiscovery = 'system_user_configured';
-          } else {
-            const pages = await directRead(
-              'me/accounts?fields=id,tasks,instagram_business_account{id}&limit=100',
-              'source_pages',
-            );
-            if (!Array.isArray(pages?.data)) fail('source_pages_malformed');
-            if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_paging_ambiguous');
-            pageDiscovery = 'me_accounts';
-            if (pages.data.length === 0) {
-              // `/me/accounts` is a user-token-centric Page listing. Keep its
-              // empty result distinct from a System User's explicit Page
-              // assignment, and inspect only the authenticated principal's
-              // own bounded relation before any direct Page read.
-              const sourcePrincipal = await directRead('me?fields=id', 'source_system_user');
-              const sourcePrincipalId = numericId(sourcePrincipal?.id);
-              if (!sourcePrincipalId) fail('source_system_user_malformed');
-              const assignedPages = await directRead(
-                `${sourcePrincipalId}/assigned_pages?fields=id,tasks,instagram_business_account{id}&limit=100`,
-                'source_system_user_pages',
-              );
-              if (!Array.isArray(assignedPages?.data)) fail('source_system_user_pages_malformed');
-              if (String(assignedPages?.paging?.next ?? '').trim()) {
-                fail('source_system_user_pages_paging_ambiguous');
-              }
-              pageSelection = selectEligiblePage(assignedPages.data, 'source_system_user_pages');
-              pageDiscovery = 'system_user_assigned';
-            } else {
-              pageSelection = selectEligiblePage(pages.data, 'source_pages');
-            }
-          }
-          const { pageId, instagramId } = pageSelection;
-
-          const page = await directRead(
-            `${pageId}?fields=id,instagram_business_account{id},website,picture{url}`,
-            'source_page',
+          const sourcePrincipal = await directRead('me?fields=id', 'source_system_user');
+          const sourcePrincipalId = numericId(sourcePrincipal?.id);
+          if (!sourcePrincipalId) fail('source_system_user_malformed');
+          const assignedPages = await directRead(
+            `${sourcePrincipalId}/assigned_pages?fields=id,tasks,instagram_business_account{id}&limit=100`,
+            'source_system_user_pages',
           );
-          if (numericId(page?.id) !== pageId || numericId(page?.instagram_business_account?.id) !== instagramId) {
-            fail('source_page_mismatch');
+          if (!Array.isArray(assignedPages?.data)) fail('source_system_user_pages_malformed');
+          if (hasNextPage(assignedPages)) fail('source_system_user_pages_paging_ambiguous');
+
+          const destinationPairs = Object.entries(destinationSelectors).map(([destinationKey, selector]) =>
+            selectDestinationPair(assignedPages.data, destinationKey, selector),
+          );
+          if (
+            new Set(destinationPairs.map((pair) => pair.pageId)).size !== destinationPairs.length ||
+            new Set(destinationPairs.map((pair) => pair.instagramId)).size !== destinationPairs.length
+          ) {
+            fail('source_destination_page_pair_duplicate');
           }
-          if (!validLanding(page?.website) || !validPicture(page?.picture)) {
-            fail('source_landing_or_media_unavailable');
+
+          for (const pair of destinationPairs) {
+            const page = await directRead(
+              `${pair.pageId}?fields=id,instagram_business_account{id},website,picture{url}`,
+              `source_destination_page_${pair.destinationKey}`,
+            );
+            if (
+              numericId(page?.id) !== pair.pageId ||
+              numericId(page?.instagram_business_account?.id) !== pair.instagramId
+            ) {
+              fail('source_destination_page_pair_mismatch');
+            }
+            if (!validLanding(page?.website) || !validPicture(page?.picture)) {
+              fail('source_destination_landing_or_media_unavailable');
+            }
           }
 
           const datasets = await directRead(
@@ -249,9 +213,7 @@ jobs:
             'source_dataset',
           );
           if (!Array.isArray(datasets?.data)) fail('source_dataset_malformed');
-          if (String(datasets?.paging?.next ?? '').trim() || datasets.data.length !== 1) {
-            fail('source_dataset_ambiguous');
-          }
+          if (hasNextPage(datasets) || datasets.data.length !== 1) fail('source_dataset_ambiguous');
           if (!numericId(datasets.data[0]?.id)) fail('source_dataset_malformed');
 
           process.stdout.write([
@@ -259,8 +221,8 @@ jobs:
             'source_access_runtime_proof=unverified',
             'source_access_pixel=allowed',
             'source_access_pixel_account_relation=allowed',
-            `source_access_page_discovery=${pageDiscovery}`,
-            'source_access_page=eligible',
+            'source_access_novohamburgo_page_instagram=eligible',
+            'source_access_barrashopppingsul_page_instagram=eligible',
             'source_access_dataset=eligible',
             'source_access_landing_media=eligible',
           ].join('\n') + '\n');

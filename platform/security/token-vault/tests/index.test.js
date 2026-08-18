@@ -336,6 +336,10 @@ test('Meta Ads staging seed bearer dispatches the candidate proof route without 
         access_token: 'unit-test-source-access-token-not-a-real-secret',
         account_id: '17841400000000001',
         pixel_id: '99444000000000001',
+        destination_page_ids: {
+          novo_hamburgo: '12000000000000001',
+          barra_shopping_sul: '12000000000000003',
+        },
         api_version: 'v25.0',
       }),
     }),
@@ -345,6 +349,8 @@ test('Meta Ads staging seed bearer dispatches the candidate proof route without 
   assert.equal(response.status, 409);
   assert.equal(body.error, 'meta_ads_publish_staging_seed_graph_appsecret_proof_unavailable');
   assert.equal(JSON.stringify(body).includes('unit-test-source-access-token-not-a-real-secret'), false);
+  assert.equal(JSON.stringify(body).includes('12000000000000001'), false);
+  assert.equal(JSON.stringify(body).includes('12000000000000003'), false);
   assert.equal(db.tokens.length, 0);
 });
 
