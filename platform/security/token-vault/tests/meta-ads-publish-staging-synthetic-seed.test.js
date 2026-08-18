@@ -1176,6 +1176,16 @@ test('staging seed attestation returns a finite resource stage for permanent Gra
       status: 200,
       code: 100,
     },
+    {
+      label: 'dataset-contract-envelope',
+      path: `${BUSINESS_ID}/ads_dataset`,
+      expectedError: 'meta_ads_publish_staging_seed_graph_contract_invalid',
+      expectedReads: 6,
+      // A non-auth 4xx envelope without a usable Graph code is still a
+      // contract/response failure, not an asset-permission verdict.
+      status: 400,
+      code: 0,
+    },
   ];
 
   for (const entry of cases) {

@@ -2354,13 +2354,13 @@ async function seedGraphRead(auth, path, fields, context, query = {}, {
     if (isStagingSyntheticSeedSourceAuthFailure(normalized)) {
       throw stagingSyntheticSeedFailure(authFailureCode, 409);
     }
-    // Graph code 100 is a bounded contract/parameter rejection. Keep it
-    // separate from identity/asset failures so a caller does not grant Meta
-    // permissions for an unsupported edge or field projection.
+    // Non-auth permanent/unknown failures on an explicitly classified edge
+    // are bounded contract/response rejections. Keep them separate from
+    // identity/asset failures so a caller does not grant Meta permissions for
+    // an unsupported edge, field projection, or malformed error envelope.
     if (
       clean(contractFailureCode) &&
-      clean(normalized.classification) === 'permanent' &&
-      Number(normalized.code) === 100
+      ['permanent', 'unknown'].includes(clean(normalized.classification))
     ) {
       throw stagingSyntheticSeedFailure(contractFailureCode, 409);
     }
