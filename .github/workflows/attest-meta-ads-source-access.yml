@@ -193,17 +193,21 @@ jobs:
           }
 
           for (const pair of destinationPairs) {
-            const page = await directRead(
-              `${pair.pageId}?fields=id,instagram_business_account{id},website,picture{url}`,
-              `source_destination_page_${pair.destinationKey}`,
+            const pageIdentity = await directRead(
+              `${pair.pageId}?fields=id,instagram_business_account{id}`,
+              `source_destination_page_${pair.destinationKey}_identity`,
             );
             if (
-              numericId(page?.id) !== pair.pageId ||
-              numericId(page?.instagram_business_account?.id) !== pair.instagramId
+              numericId(pageIdentity?.id) !== pair.pageId ||
+              numericId(pageIdentity?.instagram_business_account?.id) !== pair.instagramId
             ) {
               fail('source_destination_page_pair_mismatch');
             }
-            if (!validLanding(page?.website) || !validPicture(page?.picture)) {
+            const pagePresentation = await directRead(
+              `${pair.pageId}?fields=website,picture{url}`,
+              `source_destination_page_${pair.destinationKey}_presentation`,
+            );
+            if (!validLanding(pagePresentation?.website) || !validPicture(pagePresentation?.picture)) {
               fail('source_destination_landing_or_media_unavailable');
             }
           }
