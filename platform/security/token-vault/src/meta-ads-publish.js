@@ -237,6 +237,7 @@ const STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES = Object.freeze({
   appSecretProofUnavailable: 'meta_ads_publish_staging_seed_graph_appsecret_proof_unavailable',
   pageAccessDenied: 'meta_ads_publish_staging_seed_graph_page_access_denied',
   datasetAccessDenied: 'meta_ads_publish_staging_seed_graph_dataset_access_denied',
+  datasetContractInvalid: 'meta_ads_publish_staging_seed_graph_contract_invalid',
   identityMismatch: 'meta_ads_publish_staging_seed_graph_identity_mismatch',
   identityMalformed: 'meta_ads_publish_staging_seed_graph_identity_malformed',
   pageAmbiguous: 'meta_ads_publish_staging_seed_graph_page_ambiguous',
@@ -2101,11 +2102,19 @@ async function discoverStagingSyntheticSeedFacts({
   maxGraphAttempts = MAX_GRAPH_ATTEMPTS,
   probeAppSecretProof = false,
 }) {
-  const read = (path, fields, query = {}, failureCode = failureCodes.sourceUnavailable, malformedFailureCode = '') => seedGraphRead(auth, path, fields, context, query, {
+  const read = (
+    path,
+    fields,
+    query = {},
+    failureCode = failureCodes.sourceUnavailable,
+    malformedFailureCode = '',
+    contractFailureCode = '',
+  ) => seedGraphRead(auth, path, fields, context, query, {
     maxAttempts: maxGraphAttempts,
     failureCode,
     authFailureCode: failureCodes.sourceAuthRejected,
     malformedFailureCode,
+    contractFailureCode,
   });
   const readPixel = (candidateAuth) => seedGraphRead(
     candidateAuth,
@@ -2285,6 +2294,7 @@ async function discoverStagingSyntheticSeedFacts({
     {},
     failureCodes.datasetAccessDenied,
     failureCodes.identityMalformed,
+    failureCodes.datasetContractInvalid,
   );
   if (clean(asObject(datasets.paging).next) || safeArray(datasets.data).length !== 1) {
     throw stagingSyntheticSeedFailure(failureCodes.datasetAmbiguous, 409);
@@ -2325,6 +2335,7 @@ async function seedGraphRead(auth, path, fields, context, query = {}, {
   failureCode = 'meta_ads_publish_staging_seed_graph_identity_invalid',
   authFailureCode = failureCode,
   malformedFailureCode = '',
+  contractFailureCode = '',
 } = {}) {
   try {
     const result = await graphRequest(
@@ -2342,6 +2353,16 @@ async function seedGraphRead(auth, path, fields, context, query = {}, {
     }
     if (isStagingSyntheticSeedSourceAuthFailure(normalized)) {
       throw stagingSyntheticSeedFailure(authFailureCode, 409);
+    }
+    // Graph code 100 is a bounded contract/parameter rejection. Keep it
+    // separate from identity/asset failures so a caller does not grant Meta
+    // permissions for an unsupported edge or field projection.
+    if (
+      clean(contractFailureCode) &&
+      clean(normalized.classification) === 'permanent' &&
+      Number(normalized.code) === 100
+    ) {
+      throw stagingSyntheticSeedFailure(contractFailureCode, 409);
     }
     if (clean(malformedFailureCode) && clean(normalized.classification) === 'permanent') {
       throw stagingSyntheticSeedFailure(malformedFailureCode, 409);
