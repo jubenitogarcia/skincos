@@ -716,6 +716,11 @@
   will-change: transform;
 }
 
+.tableStage[data-hand-stage="finale"][data-finale-stage="merging"] .deckStage {
+  animation: deckStageFinaleVanish var(--bm-finale-merge-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
+  will-change: opacity, filter, transform;
+}
+
 .tableStage[data-hand-stage="finale"][data-finale-stage="assembling"] .finaleCardGridHolding .finaleCard {
   animation: finaleCardsHold var(--bm-finale-enter-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
   will-change: transform, opacity;
@@ -2117,6 +2122,32 @@
 
   100% {
     transform: translateX(-50%) translateY(0) scale(1) rotate(0deg);
+  }
+}
+
+@keyframes deckStageFinaleVanish {
+  0% {
+    opacity: 1;
+    filter: blur(0) saturate(1);
+    transform: translateX(-50%) translateY(0) scale(1) rotate(0deg);
+  }
+
+  42% {
+    opacity: 0.82;
+    filter: blur(1px) saturate(0.9);
+    transform: translateX(-50%) translateY(-3px) scale(1.04) rotate(-1deg);
+  }
+
+  76% {
+    opacity: 0.28;
+    filter: blur(5px) saturate(0.78);
+    transform: translateX(-50%) translateY(-2px) scale(0.68) rotate(2deg);
+  }
+
+  100% {
+    opacity: 0;
+    filter: blur(10px) saturate(0.6);
+    transform: translateX(-50%) translateY(0) scale(0.24) rotate(-4deg);
   }
 }
 
@@ -3550,6 +3581,47 @@
   .specialCardBackWithAction .specialCardRevealAction {
     margin-top: 22px;
   }
+}
+
+/* The regular cards were shortened on desktop; rebalance their inner stack
+ * instead of leaving the old illustration and type scale to fight for height.
+ * Finale cards keep their separate geometry and editorial treatment. */
+@media (min-width: 721px) {
+  .tableStage:not([data-hand-stage="finale"]) .cardBack {
+    justify-content: center;
+    gap: clamp(6px, 0.7vw, 9px);
+    padding: clamp(14px, 1.4vw, 18px);
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack .cardIllustration {
+    width: clamp(88px, 7.2vw, 96px);
+    height: clamp(88px, 7.2vw, 96px);
+    margin: 0 auto;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack strong {
+    max-width: 100%;
+    font-size: clamp(1.35rem, 2.35vw, 2rem);
+    line-height: 0.92;
+  }
+
+  .tableStage:not([data-hand-stage="finale"]) .cardBack > span:last-child {
+    max-width: 100%;
+    font-size: clamp(0.82rem, 1.08vw, 0.92rem);
+    line-height: 1.35;
+  }
+}
+
+/* Once the reading has become a single special card, reduce the dead air
+ * around the stage and lift the card toward the category rail. */
+.tableStage[data-finale-stage="confirmation"] .tableSurface,
+.tableStage[data-finale-stage="result"] .tableSurface {
+  padding-bottom: clamp(10px, 1.4vw, 16px);
+}
+
+.tableStage[data-finale-stage="confirmation"] .specialCardStage,
+.tableStage[data-finale-stage="result"] .specialCardStage {
+  transform: translateY(clamp(-48px, -3.6vw, -22px));
 }
 
 /* Desktop cards keep the same editorial width while giving the table a

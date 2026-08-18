@@ -279,6 +279,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /@keyframes deckStageExpand/);
     assert.match(styles, /@keyframes deckStageCollect/);
     assert.match(styles, /@keyframes deckStageReceive/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\]\[data-finale-stage="merging"\] \.deckStage[\s\S]*animation: deckStageFinaleVanish var\(--bm-finale-merge-ms\)/);
+    assert.match(styles, /@keyframes deckStageFinaleVanish[\s\S]*opacity: 0[\s\S]*filter: blur\(10px\)/);
     assert.match(styles, /@keyframes cardReturnToDeck/);
     assert.match(styles, /@keyframes cardSelectedReturnToDeck/);
     assert.match(styles, /@keyframes cardFlipToDeck/);

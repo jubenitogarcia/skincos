@@ -60,6 +60,11 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(styles, /\.specialCardBackWithAction \.specialCardRevealAction \{[\s\S]*margin-top: clamp\(24px, 3\.6vw, 38px\)[\s\S]*gap: 8px/);
     assert.match(styles, /\.specialCardBackWithAction \.specialCardSeal \{[\s\S]*margin-top: auto/);
     assert.match(styles, /@media \(max-width: 720px\)[\s\S]*\.specialCardBackWithAction \{[\s\S]*padding: 28px 20px 20px/);
+    assert.match(styles, /@media \(min-width: 721px\)[\s\S]*\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack \{[\s\S]*justify-content: center[\s\S]*gap: clamp\(6px, 0\.7vw, 9px\)[\s\S]*padding: clamp\(14px, 1\.4vw, 18px\)/);
+    assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack \.cardIllustration \{[\s\S]*width: clamp\(88px, 7\.2vw, 96px\)[\s\S]*height: clamp\(88px, 7\.2vw, 96px\)/);
+    assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack strong \{[\s\S]*font-size: clamp\(1\.35rem, 2\.35vw, 2rem\)[\s\S]*line-height: 0\.92/);
+    assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.tableSurface,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.tableSurface \{[\s\S]*padding-bottom: clamp\(10px, 1\.4vw, 16px\)/);
+    assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.specialCardStage,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.specialCardStage \{[\s\S]*transform: translateY\(clamp\(-48px, -3\.6vw, -22px\)\)/);
 });
 
 test("the finale exposes a non-cancellable five-second merge countdown", async () => {
