@@ -1515,7 +1515,7 @@ function assertStagingSyntheticSeedAttestationEnvironment(env) {
 
 async function readStagingSyntheticSeedInput(request) {
   const body = await readStagingSyntheticSeedBody(request, new Set([
-    'operation_key', 'access_token', 'account_id', 'pixel_id', 'api_version',
+    'operation_key', 'access_token', 'account_id', 'pixel_id', 'page_id', 'api_version',
   ]));
   const operationKey = clean(body.operation_key);
   if (!STAGING_SYNTHETIC_SEED_OPERATION_KEY_PATTERN.test(operationKey)) {
@@ -1527,6 +1527,9 @@ async function readStagingSyntheticSeedInput(request) {
     accessToken,
     accountId: normalizeStagingSyntheticSeedNumericId(body.account_id, 'account_id'),
     pixelId: normalizeStagingSyntheticSeedNumericId(body.pixel_id, 'pixel_id'),
+    pageId: Object.hasOwn(body, 'page_id')
+      ? normalizeStagingSyntheticSeedNumericId(body.page_id, 'page_id')
+      : '',
     apiVersion: normalizeStagingSyntheticSeedApiVersion(body.api_version),
   };
 }
@@ -1812,6 +1815,7 @@ async function createInitialStagingSyntheticSeedState(input) {
       operation_key: input.operationKey,
       account_id: input.accountId,
       pixel_id: input.pixelId,
+      page_id: input.pageId || '',
       api_version: input.apiVersion,
     },
     marker,
@@ -1882,6 +1886,7 @@ async function stagingSyntheticSeedRequestHash(input) {
     operation_key: input.operationKey,
     account_id: input.accountId,
     pixel_id: input.pixelId || '',
+    page_id: input.pageId || '',
     api_version: input.apiVersion,
   }));
 }
@@ -2123,22 +2128,11 @@ async function discoverStagingSyntheticSeedFacts({
   }
 
   const pageDiscoveryFields = 'id,tasks,instagram_business_account{id}';
-  const pages = await read(
-    'me/accounts',
-    pageDiscoveryFields,
-    { limit: '100' },
-    failureCodes.pageAccessDenied,
-  );
-  if (clean(asObject(pages.paging).next)) {
-    throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
-  }
-  let eligiblePages = stagingSyntheticSeedEligiblePages(pages.data);
-  // `/me/accounts` is a user-token-centric Page discovery edge. A System User
-  // can have an explicitly assigned Page while this list is empty. Only use
-  // the System User's own bounded relation for that exact empty-list case;
-  // never mask a nonempty direct result that lacks the required task or IG
-  // relationship.
-  if (Array.isArray(pages.data) && pages.data.length === 0) {
+  let selectedPage;
+  if (input.pageId) {
+    // An explicit staging selector must be proved through the authenticated
+    // System User's own relation. Do not use a user-centric Page listing or
+    // choose by ordering when a selector is available.
     const sourcePrincipal = await read(
       'me',
       'id',
@@ -2164,12 +2158,58 @@ async function discoverStagingSyntheticSeedFacts({
     if (clean(asObject(assignedPages.paging).next)) {
       throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
     }
-    eligiblePages = stagingSyntheticSeedEligiblePages(assignedPages.data);
+    selectedPage = selectStagingSyntheticSeedPage(
+      assignedPages.data,
+      input.pageId,
+      failureCodes,
+    );
+  } else {
+    const pages = await read(
+      'me/accounts',
+      pageDiscoveryFields,
+      { limit: '100' },
+      failureCodes.pageAccessDenied,
+    );
+    if (clean(asObject(pages.paging).next)) {
+      throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
+    }
+    let pageCandidates = pages.data;
+    // `/me/accounts` is a user-token-centric Page discovery edge. A System
+    // User can have an explicitly assigned Page while this list is empty. Use
+    // the System User's own bounded relation only for that exact empty-list
+    // case; never mask a nonempty direct result that lacks the required task
+    // or IG relationship.
+    if (Array.isArray(pages.data) && pages.data.length === 0) {
+      const sourcePrincipal = await read(
+        'me',
+        'id',
+        {},
+        failureCodes.pageAccessDenied,
+        failureCodes.identityMalformed,
+      );
+      const sourcePrincipalId = normalizeStagingSyntheticSeedGraphId(
+        sourcePrincipal.id,
+        'source_principal_id',
+        failureCodes.identityMalformed,
+      );
+      const assignedPages = await read(
+        `${sourcePrincipalId}/assigned_pages`,
+        pageDiscoveryFields,
+        { limit: '100' },
+        failureCodes.pageAccessDenied,
+        failureCodes.identityMalformed,
+      );
+      if (!Array.isArray(assignedPages.data)) {
+        throw stagingSyntheticSeedFailure(failureCodes.identityMalformed, 409);
+      }
+      if (clean(asObject(assignedPages.paging).next)) {
+        throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
+      }
+      pageCandidates = assignedPages.data;
+    }
+    selectedPage = selectStagingSyntheticSeedPage(pageCandidates, '', failureCodes);
   }
-  if (eligiblePages.length !== 1) {
-    throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
-  }
-  const selectedPageId = normalizeStagingSyntheticSeedGraphId(eligiblePages[0].id, 'page_id', failureCodes.identityMalformed);
+  const selectedPageId = normalizeStagingSyntheticSeedGraphId(selectedPage.id, 'page_id', failureCodes.identityMalformed);
   const page = await read(
     selectedPageId,
     'id,instagram_business_account{id},website,picture{url}',
@@ -2185,7 +2225,7 @@ async function discoverStagingSyntheticSeedFacts({
   if (
     pageId !== selectedPageId ||
     instagramUserId !== normalizeStagingSyntheticSeedGraphId(
-      asObject(eligiblePages[0].instagram_business_account).id,
+      asObject(selectedPage.instagram_business_account).id,
       'instagram_user_id',
       failureCodes.identityMalformed,
     )
@@ -2228,6 +2268,17 @@ function stagingSyntheticSeedEligiblePages(value) {
     return [...STAGING_SYNTHETIC_SEED_PAGE_ADVERTISE_TASKS].some((task) => tasks.has(task)) &&
       /^\d{5,30}$/.test(clean(asObject(page.instagram_business_account).id));
   });
+}
+
+function selectStagingSyntheticSeedPage(value, selectedPageId, failureCodes) {
+  const eligiblePages = stagingSyntheticSeedEligiblePages(value);
+  const candidates = selectedPageId
+    ? eligiblePages.filter((page) => clean(page.id) === selectedPageId)
+    : eligiblePages;
+  if (candidates.length !== 1) {
+    throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
+  }
+  return candidates[0];
 }
 
 async function seedGraphRead(auth, path, fields, context, query = {}, {
