@@ -146,11 +146,16 @@ fonte, acesso ao Pixel, Página ou dataset, e indisponibilidade transitória. S�
 então o workflow chama
 `POST .../config/staging-synthetic-seed`. Os fatos externos entram somente no
 corpo dessas chamadas privadas: o token Meta Ads já custodiado,
-`META_PIXEL_ID`, `META_ADS_ACCOUNT_ID` e `META_ADS_API_VERSION`. O Vault exige
-uma conta/pixel, uma Página+Instagram elegível e um dataset offline unívocos,
-cria somente recursos `PAUSED` nomeados para staging e sela duas credenciais
-internas cifradas. Não seleciona campanhas, conjuntos ou anúncios comerciais,
-nem torna o token Meta um binding do Worker.
+`META_PIXEL_ID`, `META_ADS_ACCOUNT_ID`, `META_ADS_API_VERSION` e o segredo de
+Environment staging `META_ADS_PAGE_ID`. Esse último é um seletor privado de
+identidade factual, nunca um bearer: o Vault o prova pela relação limitada de
+Páginas atribuídas ao System User, exige exatamente uma associação elegível e
+confirma o mesmo par Página+Instagram por leitura direta. Ele não é um binding
+do Worker, não entra no `--secrets-file`, artefato, log ou output do workflow.
+O Vault exige então uma conta/pixel, uma Página+Instagram provada e um dataset
+offline unívocos, cria somente recursos `PAUSED` nomeados para staging e sela
+duas credenciais internas cifradas. Não seleciona campanhas, conjuntos ou
+anúncios comerciais, nem torna o token Meta um binding do Worker.
 
 O workflow manual separado de prova candidata cria somente uma versão imutável
 não promovida e chama `POST .../staging-synthetic-seed/attest-appsecret-proof`.
@@ -322,7 +327,13 @@ ou argv. A atestação é estritamente somente leitura; a seed é estritamente
 `staging`, ocorre antes da autenticação/derivação de configuração e possui
 rollback explícito antes de qualquer ativação quando o planejamento falha.
 `META_ADS_ACCESS_TOKEN` continua uma credencial externa de fonte: não é copiado
-de production nem inventado pelo fluxo.
+de production nem inventado pelo fluxo. `META_ADS_PAGE_ID` deve ser escolhido
+na fonte Meta autorizada e gravado somente no Environment `staging`. No deploy
+governado de staging, ausência, formato inválido, relação não atribuída ou par
+Página/Instagram divergente interrompem o job antes de migrations, D1, seed ou
+tráfego. A API candidata mantém `page_id` opcional para compatibilidade com
+clientes governados existentes; não a invoque diretamente como substituta desse
+preflight.
 
 Antes da primeira promoção, disponibilize em cada GitHub Environment os
 segredos independentes exigidos pelo workflow, em especial

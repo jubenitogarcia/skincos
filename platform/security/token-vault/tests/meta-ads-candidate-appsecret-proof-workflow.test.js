@@ -51,6 +51,11 @@ test("candidate appsecret-proof workflow uploads exactly one non-promoted candid
   assert.match(workflow, /chmod 600 "\$seed_file"/);
   assert.match(workflow, /chmod 600 "\$secrets_file"/);
   assert.match(workflow, /TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN: seedToken/);
+  const privateSecretsFileWriter = workflow.slice(
+    workflow.indexOf('SEED_FILE="$seed_file" SECRETS_FILE="$secrets_file"'),
+    workflow.indexOf('chmod 600 "$secrets_file"'),
+  );
+  assert.doesNotMatch(privateSecretsFileWriter, /META_ADS_PAGE_ID|pageId/);
   assert.match(
     workflow,
     /upload_output="\$\(npx --yes wrangler@4\.120\.0 versions upload/,
@@ -95,6 +100,9 @@ test("candidate appsecret-proof request keeps source inputs and bearer private w
   assert.match(workflow, /access_token: sourceToken/);
   assert.match(workflow, /account_id: accountId/);
   assert.match(workflow, /pixel_id: pixelId/);
+  assert.match(workflow, /META_ADS_PAGE_ID: \$\{\{ secrets\.META_ADS_PAGE_ID \}\}/);
+  assert.match(workflow, /const pageId = String\(process\.env\.META_ADS_PAGE_ID \|\| ''\)\.trim\(\)/);
+  assert.match(workflow, /page_id: pageId/);
   assert.match(workflow, /api_version: apiVersion/);
   assert.match(
     workflow,
@@ -110,7 +118,7 @@ test("candidate appsecret-proof request keeps source inputs and bearer private w
   );
   assert.doesNotMatch(
     workflow,
-    /process\.stdout\.write\([^\n]*(?:seedToken|sourceToken|pixelId|accountId|preview)/,
+    /process\.stdout\.write\([^\n]*(?:seedToken|sourceToken|pixelId|pageId|accountId|preview)/,
   );
   assert.doesNotMatch(workflow, /operation_key=.*GITHUB_OUTPUT/);
 });
