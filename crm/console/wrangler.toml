@@ -20,7 +20,10 @@ binding = "MODULE_CONTROL"
 id = "__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__"
 
 [env.production.vars]
-ATENDIMENTO_API_TARGET = "https://cs-api.skincos.com.br"
+# Keep the isolated Atendimento proxy on its dedicated runtime. The shared
+# cs-api gateway uses a different authentication contract and is not a valid
+# target for the v2 actor signature emitted by this Pages bundle.
+ATENDIMENTO_API_TARGET = "https://crm-atendimento.skincos.com.br"
 INSUMOS_API_TARGET = "https://api.skincos.com.br"
 ESCALA_API_TARGET = "https://escala-api.skincos.com.br"
 PONTO_API_TARGET = "https://api.skincos.com.br"
