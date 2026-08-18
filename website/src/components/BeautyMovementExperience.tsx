@@ -679,10 +679,10 @@ export default function BeautyMovementExperience({
             const titleFits = titleRect.height <= window.innerHeight - headerOffset - 16;
             const tableRect = target.getBoundingClientRect();
             const cardGrid = target.querySelector<HTMLElement>(`.${styles.cardGrid}`);
-            const handBottom = Math.max(
-                cardGrid?.getBoundingClientRect().bottom ?? tableRect.top + 312,
-                deckRect?.bottom ?? 0,
-            );
+            // The card row is the readable hand that must share the frame
+            // with the thesis. The deck remains a separate lower anchor in
+            // fittedTarget and may intentionally overhang the viewport edge.
+            const handBottom = cardGrid?.getBoundingClientRect().bottom ?? Math.max(tableRect.top + 312, deckRect?.bottom ?? 0);
             const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
             if (titleFits && !isStackedLayout) {
                 const titleTarget = Math.max(0, titleTop - headerOffset - 12);
@@ -854,8 +854,8 @@ export default function BeautyMovementExperience({
         const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
         const cardGrid = target.querySelector<HTMLElement>(`.${styles.cardGrid}`);
         const deck = target.querySelector<HTMLElement>(`.${styles.deckStage}`);
-        const handBottom = Math.max(
-            cardGrid?.getBoundingClientRect().bottom ?? target.getBoundingClientRect().top + 312,
+        const handBottom = cardGrid?.getBoundingClientRect().bottom ?? Math.max(
+            target.getBoundingClientRect().top + 312,
             deck?.getBoundingClientRect().bottom ?? 0,
         );
         const handFitsAtTitle =
