@@ -69,9 +69,13 @@ done
 /usr/bin/sudo -n /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Production runtime grant lockdown is unavailable in immutable release.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$RELEASE_MANIFEST" || { echo 'Release must be registered before the production unit can be installed.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$CONTROL_FILE" || { echo 'Strict production control file is unavailable.' >&2; exit 78; }
-run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" >/dev/null
-run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
+readonly RELEASE_SURFACE="$(run_sudo_clean /usr/bin/node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const surface=Object.prototype.hasOwnProperty.call(value,"surface") ? String(value.surface||"") : "clientes"; if (!/^(clientes|full)$/.test(surface)) process.exit(78); process.stdout.write(surface);' "$RELEASE_MANIFEST")"
+run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" --surface "$RELEASE_SURFACE" >/dev/null
+run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" --surface "$RELEASE_SURFACE" >/dev/null
 run_sudo_clean /usr/bin/grep -Fq "\"releaseSha\":\"$RELEASE_SHA\"" "$RELEASE_MANIFEST" || { echo 'Registered release manifest SHA mismatch.' >&2; exit 78; }
+if [[ "$RELEASE_SURFACE" != 'clientes' ]] || run_sudo_clean /usr/bin/grep -Fq '"surface"' "$RELEASE_MANIFEST"; then
+  run_sudo_clean /usr/bin/grep -Fq "\"surface\":\"$RELEASE_SURFACE\"" "$RELEASE_MANIFEST" || { echo 'Registered release manifest surface mismatch.' >&2; exit 78; }
+fi
 run_sudo_clean /usr/bin/grep -Fq '"readOnly":true' "$RELEASE_MANIFEST" || { echo 'Registered release manifest is not read-only.' >&2; exit 78; }
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 
@@ -85,13 +89,14 @@ trap '/usr/bin/rm -f "$rendered"; /usr/bin/rmdir "$render_dir" 2>/dev/null || tr
   -e "s|__STATE_ROOT__|$STATE_ROOT|g" \
   -e "s|__CONFIG_ROOT__|$CONFIG_ROOT|g" \
   -e "s|__LOG_ROOT__|$LOG_ROOT|g" \
+  -e "s|__ATENDIMENTO_SURFACE__|$RELEASE_SURFACE|g" \
   -e "s|__RELEASE_SHA__|$RELEASE_SHA|g" \
   "$UNIT_SRC" >"$rendered"
 /usr/bin/chmod 0644 "$rendered"
 /usr/bin/systemd-analyze verify "$rendered"
 
 if [[ "$APPLY" != '1' ]]; then
-  printf 'dry_run=true service=%s release_sha=%s source=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$SOURCE_ROOT"
+  printf 'dry_run=true service=%s release_sha=%s surface=%s source=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$RELEASE_SURFACE" "$SOURCE_ROOT"
   exit 0
 fi
 
@@ -165,4 +170,4 @@ coordination_run check \
   --closure-file "$COORDINATION_CLOSURE" >/dev/null
 run_sudo_clean /usr/bin/systemctl restart "$SERVICE"
 run_sudo_clean /usr/bin/systemctl is-active --quiet "$SERVICE"
-printf 'installed=true service=%s release_sha=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"
+printf 'installed=true service=%s release_sha=%s surface=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$RELEASE_SURFACE"

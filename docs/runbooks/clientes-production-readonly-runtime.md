@@ -16,7 +16,7 @@ desligadas e sem canário.
 | Readiness | `GET /internal/readiness` requer loopback e `x-atendimento-readiness-token`; produção pode responder `200` com o journal de deferências íntegro quando apenas fontes comerciais ainda não foram espelhadas. Controle, replay, banco, role, schema-base, política e aprovação clínica continuam obrigatórios; `/commercial/*` permanece `503`. |
 | Dados | Produção usa `skincos_clientes_production`, `skincos_clientes_ro` (somente leitura) e `skincos_clientes_migrator_login` (migration separada). O app não recebe grant de contatos brutos Harmonia/Caixa. |
 | Escritas | O gateway e o processo aceitam somente `GET`, `HEAD` e `OPTIONS`; qualquer outro método retorna `405 READ_ONLY_RUNTIME`. |
-| Controle | O JSON local exige `readOnly:true`, `commercialContactWritesEnabled:false`, `syntheticOnly:true` e SHA exato antes de ficar `active` ou `canary`. |
+| Controle | O JSON local exige `readOnly:true`, `commercialContactWritesEnabled:false`, `syntheticOnly:true`, superfície explícita (ou fallback legado `clientes`) e SHA exato antes de ficar `active` ou `canary`. |
 | Ator | Atores usam HMAC v2 ligado a método, caminho, query, nonce e timestamp; nonce é persistido em ledger local com lock, expiração e replay fail-closed. |
 
 As unidades removem `NODE_OPTIONS`, carregadores Node, `LD_PRELOAD` e outras
@@ -29,7 +29,7 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
 | --- | --- |
 | `ENABLE_ATENDIMENTO_DEPLOY` | `false` |
 | `CRM_ATENDIMENTO_READ_ONLY` | `true` (fixado na unidade) |
-| `CRM_ATENDIMENTO_CLIENTES_ONLY` | `true` (fixado na unidade) |
+| `CRM_ATENDIMENTO_SURFACE` | `clientes` (fixado na unidade; `full` só após qualificação explícita) |
 | `CRM_ATENDIMENTO_COMMERCIAL_WRITES_ENABLED` | `false` (fixado na unidade) |
 | `CRM_ATENDIMENTO_COMMERCIAL_SOURCE_DEFERRED` | `true` somente na unidade de produção enquanto as fontes Caixa/Harmonia não forem provisionadas; não libera nenhuma rota Comercial |
 | `HARMONIA_WORKER_ENABLED` | `false` (fixado na unidade) |
@@ -38,6 +38,13 @@ literais `CHAVE=valor` pelo Node, nunca com `source`, `eval` ou `bash -c`.
 | `syntheticOnly` | `true` (arquivo de controle) |
 | estado inicial | `maintenance` |
 | canário | vazio; nenhuma identidade real é incluída |
+
+O perfil `full` é uma qualificação separada e não uma simples troca de flag.
+Ele exige `surface:"full"` no manifesto imutável, no arquivo de controle e na
+unit renderizada, além do smoke assinado com ator `CONSULTOR` limitado a
+`novo-hamburgo`. Mesmo nesse perfil o processo permanece read-only e
+`/api/atendimento/commercial/*` segue bloqueado em `503`; o retorno seguro é o
+release anterior com `surface:"clientes"`.
 
 ## Sequência autorizável (não executada por este runbook)
 
@@ -154,10 +161,10 @@ provisionamento separado e auditado do espelho, o runtime continua em
      --source-sha <sha-main> \
      --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
    scripts/runtime/prepare-atendimento-staging-release.sh \
-     --release-sha <sha-main> --predecessor-sha <sha-staging-anterior> \
+     --release-sha <sha-main> --predecessor-sha <sha-staging-anterior> --surface full \
      --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json
    scripts/set-atendimento-staging-control.sh \
-     --state maintenance --release-sha <sha-main> \
+     --state maintenance --surface full --release-sha <sha-main> \
      --source-sha <sha-main> \
      --coordination-closure /home/admin/skincos-native-release/<sha-main>/atendimento-closure.json \
      --reason release-preflight --apply
@@ -190,7 +197,7 @@ provisionamento separado e auditado do espelho, o runtime continua em
 
    ```bash
    scripts/validate-atendimento-staging-readonly.sh \
-     --expected-release-sha <sha-main>
+     --expected-release-sha <sha-main> --surface full
    ```
 
 4. Após evidência de staging, registre a release imutável e instale somente a

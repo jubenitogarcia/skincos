@@ -2,6 +2,7 @@
 import { lstat, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { normalizeAtendimentoSurface } from '../server/atendimento/surfaceProfile.js'
 
 const SHA = /^[0-9a-f]{40}$/
 
@@ -9,7 +10,7 @@ function parseArgs(args = []) {
     const values = {}
     for (let index = 0; index < args.length; index += 1) {
         const key = String(args[index] || '')
-        if (!['--source-root', '--release-sha', '--predecessor-sha', '--target'].includes(key)) {
+        if (!['--source-root', '--release-sha', '--predecessor-sha', '--target', '--surface'].includes(key)) {
             throw new Error('ATENDIMENTO_RELEASE_ARGUMENT_INVALID')
         }
         const value = String(args[++index] || '').trim()
@@ -20,12 +21,14 @@ function parseArgs(args = []) {
     const predecessorSha = String(values['--predecessor-sha'] || '').toLowerCase()
     const sourceRoot = String(values['--source-root'] || '')
     const target = String(values['--target'] || '').trim().toLowerCase()
+    const surfaceValue = String(values['--surface'] || '').trim().toLowerCase()
     if (!SHA.test(releaseSha) || (predecessorSha && !SHA.test(predecessorSha))
         || (target && !['staging', 'production'].includes(target))
+        || (surfaceValue && !normalizeAtendimentoSurface(surfaceValue))
         || sourceRoot !== `/opt/skincos/releases/${releaseSha}/source`) {
         throw new Error('ATENDIMENTO_RELEASE_IDENTITY_INVALID')
     }
-    return { sourceRoot, releaseSha, predecessorSha, target: target || null }
+    return { sourceRoot, releaseSha, predecessorSha, target: target || null, surface: surfaceValue || null }
 }
 
 export async function validateAtendimentoRelease(
@@ -62,13 +65,25 @@ export async function validateAtendimentoRelease(
         } catch {
             throw new Error('ATENDIMENTO_STAGING_RELEASE_MANIFEST_UNREADABLE')
         }
+        const manifestSurface = Object.prototype.hasOwnProperty.call(stagingManifest || {}, 'surface')
+            ? normalizeAtendimentoSurface(stagingManifest.surface)
+            : 'clientes'
+        const lineageSurface = Object.prototype.hasOwnProperty.call(lineage || {}, 'surface')
+            ? normalizeAtendimentoSurface(lineage.surface)
+            : 'clientes'
         if (stagingManifest?.releaseSha !== input.releaseSha
             || stagingManifest?.target !== 'staging'
             || stagingManifest?.domain !== 'atendimento'
             || stagingManifest?.syntheticOnly !== true
+            || !manifestSurface
+            || !lineageSurface
+            || lineageSurface !== manifestSurface
+            || (input.surface && manifestSurface !== input.surface)
+            || (input.surface === 'full' && !Object.prototype.hasOwnProperty.call(stagingManifest, 'surface'))
             || String(stagingManifest?.sourceTree || '').toLowerCase() !== lineageTree) {
             throw new Error('ATENDIMENTO_STAGING_RELEASE_MANIFEST_INVALID')
         }
+        input.surface = manifestSurface
     }
     for (const required of [
         'crm/api/server/atendimentoRuntime.js',
@@ -82,6 +97,7 @@ export async function validateAtendimentoRelease(
         releaseSha: input.releaseSha,
         predecessorSha: lineageParent,
         target: input.target,
+        surface: input.surface || 'clientes',
         readOnly: true,
         syntheticOnly: true,
     }
