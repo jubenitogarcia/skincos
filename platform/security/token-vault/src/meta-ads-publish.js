@@ -221,6 +221,10 @@ const STAGING_SYNTHETIC_SEED_DISCOVERY_FAILURES = Object.freeze({
   pixelAccountRelationAmbiguous: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   pageAccessDenied: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   datasetAccessDenied: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  // Keep the mutation-capable seed's historical generic response, while
+  // allowing the read-only attestation to classify a successful but
+  // schema-incompatible AdsDataset envelope separately.
+  datasetContractInvalid: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   identityMismatch: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   identityMalformed: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   pageAmbiguous: 'meta_ads_publish_staging_seed_graph_page_ambiguous',
@@ -2296,14 +2300,21 @@ async function discoverStagingSyntheticSeedFacts({
     failureCodes.identityMalformed,
     failureCodes.datasetContractInvalid,
   );
-  if (clean(asObject(datasets.paging).next) || safeArray(datasets.data).length !== 1) {
+  const datasetContractFailure = failureCodes.datasetContractInvalid || failureCodes.identityMalformed;
+  if (!Array.isArray(datasets.data)) {
+    throw stagingSyntheticSeedFailure(datasetContractFailure, 409);
+  }
+  if (clean(asObject(datasets.paging).next) || datasets.data.length !== 1) {
     throw stagingSyntheticSeedFailure(failureCodes.datasetAmbiguous, 409);
   }
-  const datasetEntry = asObject(safeArray(datasets.data)[0]);
+  const datasetEntry = asObject(datasets.data[0]);
+  if (!clean(datasetEntry.id)) {
+    throw stagingSyntheticSeedFailure(datasetContractFailure, 409);
+  }
   const datasetId = normalizeStagingSyntheticSeedGraphId(
     datasetEntry.id,
     'offline_dataset_id',
-    failureCodes.identityMalformed,
+    datasetContractFailure,
   );
   return {
     destinations,
