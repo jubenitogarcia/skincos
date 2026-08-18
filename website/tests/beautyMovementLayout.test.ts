@@ -22,6 +22,8 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(experience, /const handBottomAtTitle = handBottom - \(titleTarget - window\.scrollY\)/);
     assert.match(experience, /const handFitsAtTitle = handBottomAtTitle <= window\.innerHeight \+ 24/);
     assert.match(experience, /if \(handFitsAtTitle\) return Math\.min\(fittedTarget, titleTarget\)/);
+    assert.match(experience, /const canAnchorTitle =/);
+    assert.match(experience, /const handFitsAtTitle =\s*titleTarget !== null/);
     assert.match(experience, /const interruptOnUserIntent = \(\) => stopInitialDealScroll\(\);/);
     assert.match(
         experience,
@@ -29,7 +31,7 @@ test("the table handoff follows the deck and keeps the title in the compact view
     );
     assert.match(experience, /initialDealScrollInterruptCleanupRef\.current = removeFollowInterrupts/);
     assert.match(experience, /const titleTarget = Math\.max\(0, titleTop - headerOffset - 12\)/);
-    assert.match(experience, /const isStackedLayout = window\.matchMedia\("\(max-width: 720px\)"\)\.matches;[\s\S]*titleTarget === null \|\| isStackedLayout/);
+    assert.match(experience, /const canAnchorTitle =[\s\S]*!isStackedLayout/);
     assert.match(styles, /\.hero \{[\s\S]*min-height: clamp\(196px, 16vw, 224px\)/);
     assert.match(styles, /\.tableStage\[data-hand-stage="collect"\] \.deckStage,[\s\S]*\.tableStage\[data-hand-stage="ready"\] \.deckStage \{[\s\S]*bottom: -56px/);
 });
