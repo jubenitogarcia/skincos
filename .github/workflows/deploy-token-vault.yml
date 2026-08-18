@@ -987,6 +987,10 @@ jobs:
           TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
           ENABLE_TOKEN_VAULT_DEPLOY_STAGING: ${{ vars.ENABLE_TOKEN_VAULT_DEPLOY_STAGING }}
           ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY: ${{ vars.ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY }}
+          # This private staging-only selector is an exact Page identity, never
+          # a Worker binding. It must be proved against the System User before
+          # the synthetic seed may create any Meta or D1 resources.
+          META_ADS_PAGE_ID: ${{ inputs.target == 'staging' && secrets.META_ADS_PAGE_ID || '' }}
           META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           TARGET: ${{ inputs.target }}
           OPERATION: ${{ inputs.operation }}
@@ -1002,6 +1006,7 @@ jobs:
             [[ "$ENABLE_TOKEN_VAULT_DEPLOY_STAGING" == true ]] || { echo 'ENABLE_TOKEN_VAULT_DEPLOY_STAGING must be true'; exit 1; }
             [[ "$CONFIRM_STAGING_TRACKING_FIXTURE" == true ]] || { echo 'An isolated synthetic tracking fixture must be confirmed for staging'; exit 1; }
             [[ "$TOKEN_VAULT_STAGING_BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'TOKEN_VAULT_STAGING_BASE_URL must be an HTTPS origin'; exit 1; }
+            [[ "$META_ADS_PAGE_ID" =~ ^[0-9]{5,30}$ ]] || { echo 'META_ADS_PAGE_ID must be a numeric staging Environment secret for the governed staging seed'; exit 1; }
             [[ "$META_ADS_API_VERSION" =~ ^v(2[5-9]|[3-9][0-9])\.0$ ]] || { echo 'META_ADS_API_VERSION must be v25.0 or a newer supported Graph API version for the governed staging seed'; exit 1; }
           else
             [[ "$ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY" == true ]] || { echo 'ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY must be true'; exit 1; }
@@ -1329,6 +1334,7 @@ jobs:
         env:
           META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
           META_PIXEL_ID: ${{ inputs.target == 'staging' && secrets.META_PIXEL_ID || '' }}
+          META_ADS_PAGE_ID: ${{ inputs.target == 'staging' && secrets.META_ADS_PAGE_ID || '' }}
           META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
           META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -1341,6 +1347,7 @@ jobs:
           const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
           const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
           const pixelId = String(process.env.META_PIXEL_ID || '').trim();
+          const pageId = String(process.env.META_ADS_PAGE_ID || '').trim();
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const releaseSha = String(process.env.RELEASE_SHA || '').toLowerCase();
@@ -1349,7 +1356,7 @@ jobs:
           if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile) {
             throw new Error('immutable staging synthetic-seed candidate endpoint is unavailable');
           }
-          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
+          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(pageId) || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
             throw new Error('staging synthetic Meta source custody is unavailable or malformed');
           }
           if (!/^[a-f0-9]{40}$/.test(releaseSha) || !/^\d+$/.test(runId) || !/^\d+$/.test(runAttempt)) {
@@ -1369,6 +1376,7 @@ jobs:
               access_token: accessToken,
               account_id: accountId,
               pixel_id: pixelId,
+              page_id: pageId,
               api_version: apiVersion,
             }),
             cache: 'no-store',
@@ -1398,6 +1406,7 @@ jobs:
         env:
           META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
           META_PIXEL_ID: ${{ inputs.target == 'staging' && secrets.META_PIXEL_ID || '' }}
+          META_ADS_PAGE_ID: ${{ inputs.target == 'staging' && secrets.META_ADS_PAGE_ID || '' }}
           META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
           META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -1410,6 +1419,7 @@ jobs:
           const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
           const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
           const pixelId = String(process.env.META_PIXEL_ID || '').trim();
+          const pageId = String(process.env.META_ADS_PAGE_ID || '').trim();
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const releaseSha = String(process.env.RELEASE_SHA || '').toLowerCase();
@@ -1418,7 +1428,7 @@ jobs:
           if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile) {
             throw new Error('immutable staging synthetic-seed candidate endpoint is unavailable');
           }
-          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
+          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(pageId) || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
             throw new Error('staging synthetic Meta source custody is unavailable or malformed');
           }
           if (!/^[a-f0-9]{40}$/.test(releaseSha) || !/^\d+$/.test(runId) || !/^\d+$/.test(runAttempt)) {
@@ -1442,6 +1452,7 @@ jobs:
               access_token: accessToken,
               account_id: accountId,
               pixel_id: pixelId,
+              page_id: pageId,
               api_version: apiVersion,
             }),
             cache: 'no-store',
