@@ -679,6 +679,80 @@ test('staging seed attestation accepts an exact account Pixel membership on a bo
   assert.equal(db.adsetLocks.size, 0);
 });
 
+test('staging seed attestation accepts the explicit Profile Plus advertising task', async () => {
+  const db = new SeedDb();
+  const graph = new FakeGraph({
+    readResponses: {
+      'me/accounts': {
+        body: {
+          data: [{
+            id: PAGE_ID,
+            tasks: ['PROFILE_PLUS_ADVERTISE'],
+            instagram_business_account: { id: INSTAGRAM_ID },
+          }],
+        },
+      },
+    },
+  });
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-profile-plus-advertise-001',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.attestation, 'match');
+  assert.equal(graph.calls.length, 5);
+  assert.ok(graph.calls.every((call) => call.method === 'GET'));
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
+test('staging seed attestation does not broaden unrelated Profile Plus tasks into advertising', async () => {
+  const db = new SeedDb();
+  const graph = new FakeGraph({
+    readResponses: {
+      'me/accounts': {
+        body: {
+          data: [{
+            id: PAGE_ID,
+            tasks: ['PROFILE_PLUS_ANALYZE'],
+            instagram_business_account: { id: INSTAGRAM_ID },
+          }],
+        },
+      },
+    },
+  });
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-profile-plus-non-advertise-001',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_graph_page_ambiguous');
+  assert.equal(graph.calls.length, 3);
+  assert.ok(graph.calls.every((call) => call.method === 'GET'));
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
 test('staging seed attestation exposes only finite mismatch, malformed, and source-auth outcomes', async () => {
   const mismatchDb = new SeedDb();
   const mismatchGraph = new FakeGraph({

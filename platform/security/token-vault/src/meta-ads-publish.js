@@ -186,6 +186,14 @@ const STAGING_SYNTHETIC_SEED_MAX_GRAPH_OBJECTS = 5;
 const STAGING_SYNTHETIC_SEED_LANDING_GROUP = 'staging_tracking_fixture';
 const STAGING_SYNTHETIC_SEED_CREATIVE_MESSAGE = 'SKINCOS staging tracking verification';
 const STAGING_SYNTHETIC_SEED_CREATIVE_CTA = 'LEARN_MORE';
+// Meta's current Page API can return either the legacy ADVERTISE task or its
+// Profile Plus equivalent for the same narrow creative/advertising capability.
+// Do not broaden this to other PROFILE_PLUS_* tasks: the seed needs an
+// explicit advertising grant and must remain fail-closed for every other task.
+const STAGING_SYNTHETIC_SEED_PAGE_ADVERTISE_TASKS = new Set([
+  'ADVERTISE',
+  'PROFILE_PLUS_ADVERTISE',
+]);
 const STAGING_SYNTHETIC_SEED_DISCOVERY_FAILURES = Object.freeze({
   sourceUnavailable: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   sourceAuthRejected: 'meta_ads_publish_staging_seed_graph_identity_invalid',
@@ -2125,7 +2133,8 @@ async function discoverStagingSyntheticSeedFacts({
   }
   const eligiblePages = safeArray(pages.data).map(asObject).filter((page) => {
     const tasks = new Set(safeArray(page.tasks).map((task) => clean(task).toUpperCase()));
-    return tasks.has('ADVERTISE') && /^\d{5,30}$/.test(clean(asObject(page.instagram_business_account).id));
+    return [...STAGING_SYNTHETIC_SEED_PAGE_ADVERTISE_TASKS].some((task) => tasks.has(task)) &&
+      /^\d{5,30}$/.test(clean(asObject(page.instagram_business_account).id));
   });
   if (eligiblePages.length !== 1) {
     throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
