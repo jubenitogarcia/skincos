@@ -103,6 +103,29 @@ function routeEnv({ workforce = workforceBinding(true), unifiedTeamEnabled = 'tr
   };
 }
 
+function dbWithMissingTable(tableName) {
+  const database = env.DB;
+  return new Proxy(database, {
+    get(target, property) {
+      if (property !== 'prepare') {
+        const value = target[property];
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return (sql) => {
+        const statement = target.prepare(sql);
+        const normalizedSql = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+        if (normalizedSql !== "select name from sqlite_master where type='table' and name=? limit 1") return statement;
+        return {
+          bind(...params) {
+            if (String(params[0] || '') === tableName) return { first: async () => null };
+            return statement.bind(...params);
+          },
+        };
+      };
+    },
+  });
+}
+
 async function callRoute(path, { body = {}, envOverride = {}, method = 'PUT' } = {}) {
   const url = new URL(path, appOrigin);
   const request = new Request(url, {
@@ -269,6 +292,36 @@ test('manager contact inspection decrypts only the scoped edit payload', async (
   assert.equal(listed.response.status, 200);
   assert.equal('personalEmail' in listed.body.data[0], false);
   assert.equal('mobilePhone' in listed.body.data[0], false);
+});
+
+test('manager contact inspection is blocked before decryption when unified team is disabled', async () => {
+  const personalEmail = await encryptPii('blocked@example.com');
+  const mobilePhone = await encryptPii('+5551888888888');
+  await env.DB.prepare('UPDATE crm_employee_onboarding SET personal_email_encrypted=?, mobile_phone_encrypted=? WHERE id=?')
+    .bind(personalEmail, mobilePhone, 'hellenmelo-employee').run();
+
+  const result = await callRoute('/admin/team/hellenmelo-employee/contact', {
+    method: 'GET',
+    envOverride: { unifiedTeamEnabled: 'false' },
+  });
+  assert.equal(result.response.status, 404);
+  assert.equal(result.body.code, 'TEAM_UNIFIED_DISABLED');
+  assert.equal('data' in result.body, false);
+});
+
+test('manager contact inspection is blocked before decryption when the team migration is incomplete', async () => {
+  const personalEmail = await encryptPii('migration-blocked@example.com');
+  const mobilePhone = await encryptPii('+5551777777777');
+  await env.DB.prepare('UPDATE crm_employee_onboarding SET personal_email_encrypted=?, mobile_phone_encrypted=? WHERE id=?')
+    .bind(personalEmail, mobilePhone, 'hellenmelo-employee').run();
+
+  const result = await callRoute('/admin/team/hellenmelo-employee/contact', {
+    method: 'GET',
+    envOverride: { DB: dbWithMissingTable('crm_employee_team') },
+  });
+  assert.equal(result.response.status, 503);
+  assert.equal(result.body.code, 'TEAM_MIGRATION_REQUIRED');
+  assert.equal('data' in result.body, false);
 });
 
 test('failed effective-scope write is not reported as success and rolls back the D1 batch', async () => {
