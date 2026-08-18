@@ -2122,20 +2122,50 @@ async function discoverStagingSyntheticSeedFacts({
     throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
   }
 
+  const pageDiscoveryFields = 'id,tasks,instagram_business_account{id}';
   const pages = await read(
     'me/accounts',
-    'id,tasks,instagram_business_account{id}',
+    pageDiscoveryFields,
     { limit: '100' },
     failureCodes.pageAccessDenied,
   );
   if (clean(asObject(pages.paging).next)) {
     throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
   }
-  const eligiblePages = safeArray(pages.data).map(asObject).filter((page) => {
-    const tasks = new Set(safeArray(page.tasks).map((task) => clean(task).toUpperCase()));
-    return [...STAGING_SYNTHETIC_SEED_PAGE_ADVERTISE_TASKS].some((task) => tasks.has(task)) &&
-      /^\d{5,30}$/.test(clean(asObject(page.instagram_business_account).id));
-  });
+  let eligiblePages = stagingSyntheticSeedEligiblePages(pages.data);
+  // `/me/accounts` is a user-token-centric Page discovery edge. A System User
+  // can have an explicitly assigned Page while this list is empty. Only use
+  // the System User's own bounded relation for that exact empty-list case;
+  // never mask a nonempty direct result that lacks the required task or IG
+  // relationship.
+  if (Array.isArray(pages.data) && pages.data.length === 0) {
+    const sourcePrincipal = await read(
+      'me',
+      'id',
+      {},
+      failureCodes.pageAccessDenied,
+      failureCodes.identityMalformed,
+    );
+    const sourcePrincipalId = normalizeStagingSyntheticSeedGraphId(
+      sourcePrincipal.id,
+      'source_principal_id',
+      failureCodes.identityMalformed,
+    );
+    const assignedPages = await read(
+      `${sourcePrincipalId}/assigned_pages`,
+      pageDiscoveryFields,
+      { limit: '100' },
+      failureCodes.pageAccessDenied,
+      failureCodes.identityMalformed,
+    );
+    if (!Array.isArray(assignedPages.data)) {
+      throw stagingSyntheticSeedFailure(failureCodes.identityMalformed, 409);
+    }
+    if (clean(asObject(assignedPages.paging).next)) {
+      throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
+    }
+    eligiblePages = stagingSyntheticSeedEligiblePages(assignedPages.data);
+  }
   if (eligiblePages.length !== 1) {
     throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
   }
@@ -2190,6 +2220,14 @@ async function discoverStagingSyntheticSeedFacts({
     page_picture_url: pictureUrl,
     dataset_id: datasetId,
   };
+}
+
+function stagingSyntheticSeedEligiblePages(value) {
+  return safeArray(value).map(asObject).filter((page) => {
+    const tasks = new Set(safeArray(page.tasks).map((task) => clean(task).toUpperCase()));
+    return [...STAGING_SYNTHETIC_SEED_PAGE_ADVERTISE_TASKS].some((task) => tasks.has(task)) &&
+      /^\d{5,30}$/.test(clean(asObject(page.instagram_business_account).id));
+  });
 }
 
 async function seedGraphRead(auth, path, fields, context, query = {}, {
