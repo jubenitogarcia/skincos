@@ -987,10 +987,12 @@ jobs:
           TOKEN_VAULT_PRODUCTION_BASE_URL: ${{ vars.TOKEN_VAULT_PRODUCTION_BASE_URL }}
           ENABLE_TOKEN_VAULT_DEPLOY_STAGING: ${{ vars.ENABLE_TOKEN_VAULT_DEPLOY_STAGING }}
           ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY: ${{ vars.ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY }}
-          # This private staging-only selector is an exact Page identity, never
-          # a Worker binding. It must be proved against the System User before
-          # the synthetic seed may create any Meta or D1 resources.
-          META_ADS_PAGE_ID: ${{ inputs.target == 'staging' && secrets.META_ADS_PAGE_ID || '' }}
+          # These private staging-only selectors are exact Page identities,
+          # never Worker bindings. Each must be proved with its own Instagram
+          # pair against the System User before the synthetic seed may create
+          # any Meta or D1 resources.
+          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ inputs.target == 'staging' && secrets.novohamburgo_page_id || '' }}
+          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ inputs.target == 'staging' && secrets.barrashopppingsul_page_id || '' }}
           META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           TARGET: ${{ inputs.target }}
           OPERATION: ${{ inputs.operation }}
@@ -1006,7 +1008,9 @@ jobs:
             [[ "$ENABLE_TOKEN_VAULT_DEPLOY_STAGING" == true ]] || { echo 'ENABLE_TOKEN_VAULT_DEPLOY_STAGING must be true'; exit 1; }
             [[ "$CONFIRM_STAGING_TRACKING_FIXTURE" == true ]] || { echo 'An isolated synthetic tracking fixture must be confirmed for staging'; exit 1; }
             [[ "$TOKEN_VAULT_STAGING_BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'TOKEN_VAULT_STAGING_BASE_URL must be an HTTPS origin'; exit 1; }
-            [[ "$META_ADS_PAGE_ID" =~ ^[0-9]{5,30}$ ]] || { echo 'META_ADS_PAGE_ID must be a numeric staging Environment secret for the governed staging seed'; exit 1; }
+            [[ "$META_ADS_NOVOHAMBURGO_PAGE_ID" =~ ^[0-9]{5,30}$ ]] || { echo 'Novo Hamburgo Page selector must be a numeric staging Environment secret for the governed staging seed'; exit 1; }
+            [[ "$META_ADS_BARRASHOPPPINGSUL_PAGE_ID" =~ ^[0-9]{5,30}$ ]] || { echo 'Barra Shopping Sul Page selector must be a numeric staging Environment secret for the governed staging seed'; exit 1; }
+            [[ "$META_ADS_NOVOHAMBURGO_PAGE_ID" != "$META_ADS_BARRASHOPPPINGSUL_PAGE_ID" ]] || { echo 'Staging Page selectors must be distinct for the governed staging seed'; exit 1; }
             [[ "$META_ADS_API_VERSION" =~ ^v(2[5-9]|[3-9][0-9])\.0$ ]] || { echo 'META_ADS_API_VERSION must be v25.0 or a newer supported Graph API version for the governed staging seed'; exit 1; }
           else
             [[ "$ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY" == true ]] || { echo 'ENABLE_TOKEN_VAULT_PRODUCTION_DEPLOY must be true'; exit 1; }
@@ -1334,7 +1338,8 @@ jobs:
         env:
           META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
           META_PIXEL_ID: ${{ inputs.target == 'staging' && secrets.META_PIXEL_ID || '' }}
-          META_ADS_PAGE_ID: ${{ inputs.target == 'staging' && secrets.META_ADS_PAGE_ID || '' }}
+          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ inputs.target == 'staging' && secrets.novohamburgo_page_id || '' }}
+          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ inputs.target == 'staging' && secrets.barrashopppingsul_page_id || '' }}
           META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
           META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -1347,7 +1352,10 @@ jobs:
           const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
           const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
           const pixelId = String(process.env.META_PIXEL_ID || '').trim();
-          const pageId = String(process.env.META_ADS_PAGE_ID || '').trim();
+          const destinationPageIds = {
+            novo_hamburgo: String(process.env.META_ADS_NOVOHAMBURGO_PAGE_ID || '').trim(),
+            barra_shopping_sul: String(process.env.META_ADS_BARRASHOPPPINGSUL_PAGE_ID || '').trim(),
+          };
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const releaseSha = String(process.env.RELEASE_SHA || '').toLowerCase();
@@ -1356,7 +1364,7 @@ jobs:
           if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile) {
             throw new Error('immutable staging synthetic-seed candidate endpoint is unavailable');
           }
-          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(pageId) || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
+          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !Object.values(destinationPageIds).every((pageId) => /^\d{5,30}$/.test(pageId)) || destinationPageIds.novo_hamburgo === destinationPageIds.barra_shopping_sul || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
             throw new Error('staging synthetic Meta source custody is unavailable or malformed');
           }
           if (!/^[a-f0-9]{40}$/.test(releaseSha) || !/^\d+$/.test(runId) || !/^\d+$/.test(runAttempt)) {
@@ -1376,7 +1384,7 @@ jobs:
               access_token: accessToken,
               account_id: accountId,
               pixel_id: pixelId,
-              page_id: pageId,
+              destination_page_ids: destinationPageIds,
               api_version: apiVersion,
             }),
             cache: 'no-store',
@@ -1391,7 +1399,7 @@ jobs:
             Object.keys(payload).every((key) => allowedKeys.has(key)) &&
             String(payload?.attestation || '') === 'match' &&
             String(payload?.operation_key || '') === operationKey &&
-            String(payload?.contract_version || '') === 'meta-ads-tracking-v20/staging-synthetic-seed/v1' &&
+            String(payload?.contract_version || '') === 'meta-ads-tracking-v20/staging-synthetic-seed/v2' &&
             typeof payload?.requestId === 'string';
           if (!valid) throw new Error(`staging synthetic-seed source attestation failed: ${response.status} ${error}`);
           NODE
@@ -1406,7 +1414,8 @@ jobs:
         env:
           META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
           META_PIXEL_ID: ${{ inputs.target == 'staging' && secrets.META_PIXEL_ID || '' }}
-          META_ADS_PAGE_ID: ${{ inputs.target == 'staging' && secrets.META_ADS_PAGE_ID || '' }}
+          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ inputs.target == 'staging' && secrets.novohamburgo_page_id || '' }}
+          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ inputs.target == 'staging' && secrets.barrashopppingsul_page_id || '' }}
           META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
           META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -1419,7 +1428,10 @@ jobs:
           const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
           const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
           const pixelId = String(process.env.META_PIXEL_ID || '').trim();
-          const pageId = String(process.env.META_ADS_PAGE_ID || '').trim();
+          const destinationPageIds = {
+            novo_hamburgo: String(process.env.META_ADS_NOVOHAMBURGO_PAGE_ID || '').trim(),
+            barra_shopping_sul: String(process.env.META_ADS_BARRASHOPPPINGSUL_PAGE_ID || '').trim(),
+          };
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
           const releaseSha = String(process.env.RELEASE_SHA || '').toLowerCase();
@@ -1428,7 +1440,7 @@ jobs:
           if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile) {
             throw new Error('immutable staging synthetic-seed candidate endpoint is unavailable');
           }
-          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !/^\d{5,30}$/.test(pageId) || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
+          if (!accessToken || !/^\d{5,30}$/.test(pixelId) || !Object.values(destinationPageIds).every((pageId) => /^\d{5,30}$/.test(pageId)) || destinationPageIds.novo_hamburgo === destinationPageIds.barra_shopping_sul || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
             throw new Error('staging synthetic Meta source custody is unavailable or malformed');
           }
           if (!/^[a-f0-9]{40}$/.test(releaseSha) || !/^\d+$/.test(runId) || !/^\d+$/.test(runAttempt)) {
@@ -1452,7 +1464,7 @@ jobs:
               access_token: accessToken,
               account_id: accountId,
               pixel_id: pixelId,
-              page_id: pageId,
+              destination_page_ids: destinationPageIds,
               api_version: apiVersion,
             }),
             cache: 'no-store',
@@ -1468,7 +1480,7 @@ jobs:
             String(payload?.operation_status || '') === seed &&
             typeof payload?.replayed === 'boolean' &&
             String(payload?.operation_key || '') === operationKey &&
-            String(payload?.contract_version || '') === 'meta-ads-tracking-v20/staging-synthetic-seed/v1';
+            String(payload?.contract_version || '') === 'meta-ads-tracking-v20/staging-synthetic-seed/v2';
           if (!valid) throw new Error(`staging synthetic-seed failed: ${response.status} ${error}`);
           fs.appendFileSync(process.env.GITHUB_OUTPUT, seed === 'sealed'
             ? `did_seed=true\nseed_status=${seed}\n`
@@ -1722,7 +1734,7 @@ jobs:
           try { payload = await response.json(); } catch {}
           const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
           const absent = response.status === 409 && payload?.ok === false && payload?.error === 'meta_ads_publish_staging_seed_operation_not_found';
-          if (!absent && (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || String(payload?.operation_status || '') !== 'rolled_back' || typeof payload?.replayed !== 'boolean' || String(payload?.operation_key || '') !== operationKey || String(payload?.contract_version || '') !== 'meta-ads-tracking-v20/staging-synthetic-seed/v1')) {
+          if (!absent && (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || String(payload?.operation_status || '') !== 'rolled_back' || typeof payload?.replayed !== 'boolean' || String(payload?.operation_key || '') !== operationKey || String(payload?.contract_version || '') !== 'meta-ads-tracking-v20/staging-synthetic-seed/v2')) {
             throw new Error(`staging synthetic-seed pre-traffic rollback failed: ${response.status} ${error}`);
           }
           NODE
@@ -1786,7 +1798,7 @@ jobs:
           try { payload = await response.json(); } catch {}
           const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
           const absent = response.status === 409 && payload?.ok === false && payload?.error === 'meta_ads_publish_staging_seed_operation_not_found';
-          if (!absent && (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || String(payload?.operation_status || '') !== 'rolled_back' || typeof payload?.replayed !== 'boolean' || String(payload?.operation_key || '') !== operationKey || String(payload?.contract_version || '') !== 'meta-ads-tracking-v20/staging-synthetic-seed/v1')) {
+          if (!absent && (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || String(payload?.operation_status || '') !== 'rolled_back' || typeof payload?.replayed !== 'boolean' || String(payload?.operation_key || '') !== operationKey || String(payload?.contract_version || '') !== 'meta-ads-tracking-v20/staging-synthetic-seed/v2')) {
             throw new Error(`staging synthetic-seed activation-lease rollback failed: ${response.status} ${error}`);
           }
           NODE
@@ -2201,7 +2213,7 @@ jobs:
           let payload = null;
           try { payload = await response.json(); } catch {}
           const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
-          if (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || String(payload?.operation_status || '') !== 'rolled_back' || typeof payload?.replayed !== 'boolean' || String(payload?.operation_key || '') !== operationKey || String(payload?.contract_version || '') !== 'meta-ads-tracking-v20/staging-synthetic-seed/v1') {
+          if (!response.ok || payload?.ok !== true || payload?.rolled_back !== true || String(payload?.operation_status || '') !== 'rolled_back' || typeof payload?.replayed !== 'boolean' || String(payload?.operation_key || '') !== operationKey || String(payload?.contract_version || '') !== 'meta-ads-tracking-v20/staging-synthetic-seed/v2') {
             throw new Error(`staging synthetic-seed rollback failed: ${response.status} ${error}`);
           }
           NODE
