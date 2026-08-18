@@ -176,7 +176,9 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
     /act_\$\{accountId\}\/offline_conversion_data_sets\?fields=id&limit=2/,
   );
   assert.match(workflow, /tasks\.has\('ADVERTISE'\)/);
-  assert.match(workflow, /eligiblePages\.length !== 1/);
+  assert.match(workflow, /source_pages_paging_ambiguous/);
+  assert.match(workflow, /eligiblePages\.length === 0/);
+  assert.match(workflow, /eligiblePages\.length > 1/);
   assert.match(workflow, /datasets\.data\.length !== 1/);
   assert.match(workflow, /source_landing_or_media_unavailable/);
   assert.match(workflow, /method: 'GET'/);
@@ -285,17 +287,17 @@ test("Meta Ads source-access verifier classifies malformed bounded account Pixel
   );
 });
 
-test("Meta Ads source-access verifier fails closed for an additional malformed eligible Page", () => {
+test("Meta Ads source-access verifier distinguishes multiple eligible Pages", () => {
   const responses = structuredClone(happyResponses);
   responses[2].payload.data.unshift({
-    id: false,
+    id: "6655443322",
     tasks: ["ADVERTISE"],
-    instagram_business_account: { id: "6655443322" },
+    instagram_business_account: { id: "2233445566" },
   });
   const result = runVerifier(responses, 3);
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_ambiguous/);
+  assert.match(combined, /source_pages_multiple_eligible/);
   assert.equal(result.requestCount, 3);
   assert.doesNotMatch(
     combined,
@@ -303,13 +305,58 @@ test("Meta Ads source-access verifier fails closed for an additional malformed e
   );
 });
 
-test("Meta Ads source-access verifier fails closed for falsy paging metadata", () => {
+test("Meta Ads source-access verifier distinguishes a paged Page listing", () => {
   const responses = structuredClone(happyResponses);
   responses[2].payload.paging = { next: false };
   const result = runVerifier(responses, 3);
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_ambiguous/);
+  assert.match(combined, /source_pages_paging_ambiguous/);
+  assert.equal(result.requestCount, 3);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier distinguishes no eligible Page", () => {
+  const responses = structuredClone(happyResponses);
+  responses[2].payload.data = [];
+  const result = runVerifier(responses, 3);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pages_none_eligible/);
+  assert.equal(result.requestCount, 3);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier keeps a unique eligible Page despite unrelated Pages", () => {
+  const responses = structuredClone(happyResponses);
+  responses[2].payload.data.unshift({
+    id: "6655443322",
+    tasks: [],
+  });
+  const result = runVerifier(responses);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, combined);
+  assert.equal(result.requestCount, 5);
+  assert.match(result.stdout, /source_access_raw=verified/);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier classifies a selected malformed Page before Page access", () => {
+  const responses = structuredClone(happyResponses);
+  responses[2].payload.data[0].id = false;
+  const result = runVerifier(responses, 3);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pages_malformed/);
   assert.equal(result.requestCount, 3);
   assert.doesNotMatch(
     combined,
