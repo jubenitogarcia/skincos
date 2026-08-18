@@ -22,6 +22,7 @@ jobs:
         env:
           META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
           META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
+          META_ADS_PAGE_ID: ${{ secrets.META_ADS_PAGE_ID }}
           META_ADS_ACCOUNT_ID: ${{ vars.META_ADS_ACCOUNT_ID }}
           META_ADS_API_VERSION: ${{ vars.META_ADS_API_VERSION }}
         shell: bash
@@ -30,6 +31,7 @@ jobs:
           node --input-type=module <<'NODE'
           const token = String(process.env.META_ADS_ACCESS_TOKEN || '');
           const pixelId = String(process.env.META_PIXEL_ID || '').trim();
+          const pageSelector = String(process.env.META_ADS_PAGE_ID || '').trim();
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '');
 
@@ -38,6 +40,9 @@ jobs:
             process.exit(1);
           };
 
+          if (pageSelector && !/^\d{5,30}$/.test(pageSelector)) {
+            fail('source_page_selector_invalid');
+          }
           if (
             !token ||
             !/^\d{5,30}$/.test(pixelId) ||
@@ -119,7 +124,7 @@ jobs:
               return false;
             }
           };
-          const selectEligiblePage = (data, phase) => {
+          const selectEligiblePage = (data, phase, selector = '') => {
             const pageFacts = data.map((page) => {
               const tasks = new Set(Array.isArray(page?.tasks) ? page.tasks.map((task) => String(task || '').trim().toUpperCase()) : []);
               const hasAdvertiseTask = tasks.has('ADVERTISE') || tasks.has('PROFILE_PLUS_ADVERTISE');
@@ -132,6 +137,10 @@ jobs:
               };
             });
             const eligiblePages = pageFacts.filter((fact) => fact.eligible).map((fact) => fact.page);
+            const selectedPages = selector
+              ? eligiblePages.filter((page) => numericId(page?.id) === selector)
+              : eligiblePages;
+            if (selector && selectedPages.length === 0) fail(`${phase}_selector_mismatch`);
             if (eligiblePages.length === 0) {
               if (pageFacts.length === 0) fail(`${phase}_none_visible`);
               const hasAdvertiseTask = pageFacts.some((fact) => fact.hasAdvertiseTask);
@@ -141,9 +150,9 @@ jobs:
               if (!hasInstagramLink) fail(`${phase}_instagram_link_missing`);
               fail(`${phase}_task_instagram_unpaired`);
             }
-            if (eligiblePages.length > 1) fail(`${phase}_multiple_eligible`);
-            const pageId = numericId(eligiblePages[0].id);
-            const instagramId = numericId(eligiblePages[0].instagram_business_account.id);
+            if (selectedPages.length > 1) fail(selector ? `${phase}_selector_ambiguous` : `${phase}_multiple_eligible`);
+            const pageId = numericId(selectedPages[0].id);
+            const instagramId = numericId(selectedPages[0].instagram_business_account.id);
             if (!pageId || !instagramId) fail(`${phase}_malformed`);
             return { pageId, instagramId };
           };
@@ -173,19 +182,12 @@ jobs:
             fail('source_pixel_account_relation_mismatch');
           }
 
-          const pages = await directRead(
-            'me/accounts?fields=id,tasks,instagram_business_account{id}&limit=100',
-            'source_pages',
-          );
-          if (!Array.isArray(pages?.data)) fail('source_pages_malformed');
-          if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_paging_ambiguous');
           let pageSelection;
-          let pageDiscovery = 'me_accounts';
-          if (pages.data.length === 0) {
-            // `/me/accounts` is a user-token-centric Page listing. Keep its
-            // empty result distinct from a System User's explicit Page
-            // assignment, and inspect only the authenticated principal's own
-            // bounded relation before any direct Page read.
+          let pageDiscovery;
+          if (pageSelector) {
+            // A configured selector must be proved through the authenticated
+            // System User's own bounded assignment relation. Never pick a
+            // Page by order or by a user-centric discovery edge.
             const sourcePrincipal = await directRead('me?fields=id', 'source_system_user');
             const sourcePrincipalId = numericId(sourcePrincipal?.id);
             if (!sourcePrincipalId) fail('source_system_user_malformed');
@@ -197,10 +199,37 @@ jobs:
             if (String(assignedPages?.paging?.next ?? '').trim()) {
               fail('source_system_user_pages_paging_ambiguous');
             }
-            pageSelection = selectEligiblePage(assignedPages.data, 'source_system_user_pages');
-            pageDiscovery = 'system_user_assigned';
+            pageSelection = selectEligiblePage(assignedPages.data, 'source_system_user_pages', pageSelector);
+            pageDiscovery = 'system_user_configured';
           } else {
-            pageSelection = selectEligiblePage(pages.data, 'source_pages');
+            const pages = await directRead(
+              'me/accounts?fields=id,tasks,instagram_business_account{id}&limit=100',
+              'source_pages',
+            );
+            if (!Array.isArray(pages?.data)) fail('source_pages_malformed');
+            if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_paging_ambiguous');
+            pageDiscovery = 'me_accounts';
+            if (pages.data.length === 0) {
+              // `/me/accounts` is a user-token-centric Page listing. Keep its
+              // empty result distinct from a System User's explicit Page
+              // assignment, and inspect only the authenticated principal's
+              // own bounded relation before any direct Page read.
+              const sourcePrincipal = await directRead('me?fields=id', 'source_system_user');
+              const sourcePrincipalId = numericId(sourcePrincipal?.id);
+              if (!sourcePrincipalId) fail('source_system_user_malformed');
+              const assignedPages = await directRead(
+                `${sourcePrincipalId}/assigned_pages?fields=id,tasks,instagram_business_account{id}&limit=100`,
+                'source_system_user_pages',
+              );
+              if (!Array.isArray(assignedPages?.data)) fail('source_system_user_pages_malformed');
+              if (String(assignedPages?.paging?.next ?? '').trim()) {
+                fail('source_system_user_pages_paging_ambiguous');
+              }
+              pageSelection = selectEligiblePage(assignedPages.data, 'source_system_user_pages');
+              pageDiscovery = 'system_user_assigned';
+            } else {
+              pageSelection = selectEligiblePage(pages.data, 'source_pages');
+            }
           }
           const { pageId, instagramId } = pageSelection;
 
