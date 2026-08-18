@@ -11,6 +11,7 @@ const STAGING_MANIFEST = Object.freeze({
   sourceTree: TREE,
   target: 'staging',
   domain: 'atendimento',
+  surface: 'clientes',
   syntheticOnly: true,
 })
 
@@ -22,6 +23,7 @@ function stagedReleaseDependencies(manifest = STAGING_MANIFEST) {
       verifiedAncestor: true,
       sourceTree: TREE,
       target: 'staging',
+      surface: 'clientes',
     })],
     [`${SOURCE_ROOT}/crm/api/server/atendimentoRuntime.js`, ''],
     [`${SOURCE_ROOT}/crm/api/server/atendimento/isolatedRuntimeControl.js`, ''],
@@ -47,6 +49,7 @@ test('immutable release validator accepts only a canonical full-SHA source root'
     releaseSha: SHA,
     predecessorSha: PREDECESSOR,
     target: null,
+    surface: null,
   })
 })
 
@@ -83,6 +86,7 @@ test('explicit staging validation binds the release, lineage and isolated manife
     releaseSha: SHA,
     predecessorSha: PREDECESSOR,
     target: 'staging',
+    surface: 'clientes',
     readOnly: true,
     syntheticOnly: true,
   })
@@ -99,6 +103,31 @@ test('explicit staging validation binds the release, lineage and isolated manife
   await assert.rejects(
     () => validateAtendimentoRelease(args, stagedReleaseDependencies(null)),
     /ATENDIMENTO_STAGING_RELEASE_MANIFEST_UNREADABLE/,
+  )
+  assert.equal(__testables.parseArgs([
+    '--source-root', SOURCE_ROOT,
+    '--release-sha', SHA,
+    '--surface', 'full',
+  ]).surface, 'full')
+  await assert.rejects(
+    () => validateAtendimentoRelease([
+      '--source-root', SOURCE_ROOT,
+      '--release-sha', SHA,
+      '--predecessor-sha', PREDECESSOR,
+      '--target', 'staging',
+      '--surface', 'full',
+    ], stagedReleaseDependencies()),
+    /ATENDIMENTO_STAGING_RELEASE_MANIFEST_INVALID/,
+  )
+  await assert.rejects(
+    () => validateAtendimentoRelease([
+      '--source-root', SOURCE_ROOT,
+      '--release-sha', SHA,
+      '--predecessor-sha', PREDECESSOR,
+      '--target', 'staging',
+      '--surface', 'full',
+    ], stagedReleaseDependencies({ ...STAGING_MANIFEST, surface: 'full' })),
+    /ATENDIMENTO_STAGING_RELEASE_MANIFEST_INVALID/,
   )
 })
 

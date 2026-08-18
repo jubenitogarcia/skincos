@@ -10,6 +10,7 @@ import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGe
 import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
 import { createClinicalApprovalStore } from '../clinical/clinicalApprovalStore.js'
 import { actorSubject } from './actorSubject.js'
+import { isClientesSurface, resolveAtendimentoSurface } from './surfaceProfile.js'
 
 const json = (res, status, body, headers = {}) => {
     res.status(status)
@@ -230,6 +231,13 @@ function atendimentoClientesOnlyRuntime() {
     return String(process.env.CRM_ATENDIMENTO_CLIENTES_ONLY || '').trim().toLowerCase() === 'true'
 }
 
+function atendimentoSurfaceRuntime(surface) {
+    return resolveAtendimentoSurface({
+        surface,
+        clientesOnly: atendimentoClientesOnlyRuntime(),
+    })
+}
+
 function isClientesCommercialPath(requestPath) {
     const path = String(requestPath || '')
     return path === '/commercial' || path.startsWith('/commercial/')
@@ -279,6 +287,7 @@ function errorResponse(res, error) {
 }
 
 export function createAtendimentoRouter(options = {}) {
+    const surface = atendimentoSurfaceRuntime(options.surface)
     const clinicalApprovalStore = options.clinicalApprovalStore || createClinicalApprovalStore({
         pool: options.clinicalApprovalPool,
         databaseUrl: options.databaseUrl,
@@ -401,8 +410,9 @@ export function createAtendimentoRouter(options = {}) {
                 : await verifySignedActor(req, actorKey)
             if (!actor) actor = devSessionActor(req, getDevSession)
             if (!actor) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
+            if (!surface) return json(res, 503, { ok: false, error: 'SURFACE_NOT_CONFIGURED' })
             if (!canAccessAtendimento(actor, req.path, req.method)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
-            if (atendimentoClientesOnlyRuntime() && !isClientesCommercialPath(req.path)) {
+            if (isClientesSurface(surface) && !isClientesCommercialPath(req.path)) {
                 return json(res, 404, { ok: false, error: 'CLIENTES_SURFACE_ONLY' })
             }
             if (atendimentoReadOnlyRuntime() && !['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || '').toUpperCase())) {
@@ -1421,6 +1431,7 @@ export const __testables = {
     isLocalRequest,
     atendimentoReadOnlyRuntime,
     atendimentoClientesOnlyRuntime,
+    atendimentoSurfaceRuntime,
     isClientesCommercialPath,
     redactLocalDiagnostic,
     safeEqual,

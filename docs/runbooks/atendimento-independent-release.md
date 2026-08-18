@@ -23,6 +23,7 @@ HTTP monolítico ou código de worker. O processo HTTP isolado é somente leitur
 | Readiness | loopback + token; verifica arquivo de controle, ledger de replay, banco, database/role esperados, schema, fontes, domínio clínico e ausência efetiva de privilégios persistentes de escrita. |
 | Ator | HMAC `atendimento-actor/v2`, timestamp de cinco minutos e nonce persistido; replay ou falha de ledger negam a requisição. |
 | Escrita | Edge e runtime limitam a `GET`, `HEAD`, `OPTIONS`; controle exige `readOnly:true`, `syntheticOnly:true` e escrita comercial `false`. |
+| Superfície | O manifesto, controle e unit devem declarar o mesmo perfil: `clientes` (compatibilidade segura) ou `full` (leituras base de Atendimento). Perfil ausente em controles antigos significa `clientes`; `full` nunca é inferido. |
 | Staging | O app usa `skincos_staging_crm_app` com `default_transaction_read_only=on`, apenas `SELECT`/`USAGE`; migration fica no login separado `skincos_staging_migrator_login`. Após cada fluxo de migration, um selador fixo operado como `postgres` remove DML, DDL, sequence, grants por coluna, memberships `SET ROLE`, atributos privilegiados e `EXECUTE` efetivo em funções `SECURITY DEFINER` de schemas de aplicação; também bloqueia leitura direta de `harmonia.contacts`. |
 
 ## Workflows e GitHub Environments
@@ -75,6 +76,24 @@ Uma deferral não altera a superfície do produto: `maintenance`, escrita
 comercial desabilitada, canário vazio e a rota Comercial `503` permanecem o
 contrato até uma promoção separada e autorizada. Nenhum bypass cria
 `commercial_offers`, concede leitura de Caixa/Harmonia ou inicia o serviço.
+
+### Perfil completo de Atendimento
+
+O perfil `full` libera somente as leituras base autenticadas do Atendimento
+(`references`, `overview`, `attendances` e `clients`) para a unidade declarada
+no ator. Ele continua sintético/read-only durante a qualificação: métodos de
+escrita retornam `405 READ_ONLY_RUNTIME` e `/api/atendimento/commercial/*`
+continua `503 COMMERCIAL_READS_DISABLED`. Não se deve desligar a guarda
+`CRM_ATENDIMENTO_READ_ONLY`, conceder grants de Caixa/Harmonia ou ampliar
+`allowedUnits` para fazer uma leitura passar.
+
+Para qualificar esse perfil, `--surface full` deve aparecer em todos os pontos
+da mesma release: manifesto de staging, controle `maintenance`/`active`, unit
+renderizada e smoke assinado. O smoke usa um ator sintético `CONSULTOR` com
+somente `novo-hamburgo`, prova replay, readiness, escrita bloqueada e pelo
+menos uma leitura base. Qualquer ausência ou divergência de superfície deixa o
+runtime `503`/inelegível; o rollback é o release anterior com perfil
+`clientes`.
 
 ## Gaps que bloqueiam ativação
 

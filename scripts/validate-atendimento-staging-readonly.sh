@@ -29,22 +29,26 @@ readonly PROTECTED_SERVICES=(
 )
 
 RELEASE_SHA=''
-usage() { echo "Usage: $0 --expected-release-sha <full-sha>"; }
+SURFACE=''
+usage() { echo "Usage: $0 --expected-release-sha <full-sha> [--surface <clientes|full>]"; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --expected-release-sha) shift; RELEASE_SHA="${1:-}" ;;
+    --surface) shift; SURFACE="${1:-}" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 64 ;;
   esac
   shift
 done
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo '--expected-release-sha must be a full lowercase SHA.' >&2; exit 64; }
+[[ -z "$SURFACE" || "$SURFACE" =~ ^(clientes|full)$ ]] || { echo '--surface must be clientes or full.' >&2; exit 64; }
 readonly RELEASE_ROOT="$RELEASE_BASE/$RELEASE_SHA/source"
 readonly CONTROL_VALIDATOR="$RELEASE_ROOT/crm/api/scripts/validate-atendimento-staging-control.mjs"
 readonly RELEASE_VALIDATOR="$RELEASE_ROOT/crm/api/scripts/validate-atendimento-release.mjs"
 readonly RUNTIME_GRANT_LOCKDOWN="$RELEASE_ROOT/scripts/lockdown-atendimento-staging-runtime.sh"
 readonly SMOKE="$RELEASE_ROOT/crm/api/scripts/atendimento-staging-signed-smoke.mjs"
 readonly UNIT_TEMPLATE="$RELEASE_ROOT/ops/runtime/units/crm-atendimento-staging.service"
+readonly RELEASE_MANIFEST="$RELEASE_ROOT/.skincos-atendimento-release.json"
 [[ "$RELEASE_ROOT" =~ ^/opt/skincos/releases/[0-9a-f]{40}/source$ ]] || { echo 'Immutable release root is invalid.' >&2; exit 64; }
 
 for command_path in /usr/bin/curl /usr/bin/ss /usr/bin/systemctl /usr/bin/sudo /usr/bin/node /usr/bin/sed /usr/bin/mktemp /usr/bin/cmp /usr/bin/readlink /usr/bin/cat /usr/bin/tr /usr/bin/awk /usr/bin/rm /usr/bin/rmdir /usr/bin/test; do
@@ -57,9 +61,13 @@ done
 /usr/bin/sudo -n /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Staging runtime grant lockdown is unavailable.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$SMOKE" || { echo 'Fixed staging signed smoke is unavailable.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$UNIT_TEMPLATE" || { echo 'Isolated unit template is unavailable in immutable release.' >&2; exit 78; }
+/usr/bin/sudo -n /usr/bin/test -f "$RELEASE_MANIFEST" || { echo 'Staging release surface manifest is unavailable.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$UNIT_FILE" || { echo 'Installed isolated unit is unavailable.' >&2; exit 1; }
 /usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE" || { echo "Service is not active: $SERVICE" >&2; exit 1; }
-run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$RELEASE_ROOT" --release-sha "$RELEASE_SHA" --target staging >/dev/null
+release_surface="$(run_sudo_clean /usr/bin/node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const surface=Object.prototype.hasOwnProperty.call(value,"surface") ? String(value.surface||"") : "clientes"; if (!/^(clientes|full)$/.test(surface)) process.exit(78); process.stdout.write(surface);' "$RELEASE_MANIFEST")"
+[[ -z "$SURFACE" || "$SURFACE" == "$release_surface" ]] || { echo 'Requested staging surface does not match the immutable release manifest.' >&2; exit 1; }
+SURFACE="$release_surface"
+run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$RELEASE_ROOT" --release-sha "$RELEASE_SHA" --target staging --surface "$SURFACE" >/dev/null
 
 snapshot_protected_services() {
   local service main_pid started_at
@@ -79,6 +87,7 @@ run_sudo_clean /usr/bin/sed \
   -e "s|__STATE_ROOT__|/var/lib/skincos-runtime|g" \
   -e "s|__CONFIG_ROOT__|/etc/skincos|g" \
   -e "s|__LOG_ROOT__|/var/log/skincos|g" \
+  -e "s|__ATENDIMENTO_SURFACE__|$SURFACE|g" \
   -e "s|__RELEASE_SHA__|$RELEASE_SHA|g" \
   "$UNIT_TEMPLATE" >"$rendered"
 /usr/bin/sudo -n /usr/bin/cmp -s "$rendered" "$UNIT_FILE" || { echo 'Installed staging unit does not match the immutable release.' >&2; exit 1; }
@@ -102,9 +111,9 @@ health_status="$(/usr/bin/curl --noproxy '*' --proto '=http' -sS --connect-timeo
 # The smoke reads only the fixed private staging env through a literal parser.
 # Its probes are loopback-only synthetic auth/replay and a bodyless blocked
 # write guard; it never reaches a Clientes or commercial data handler.
-run_sudo_clean /usr/bin/node "$SMOKE" --expected-release-sha "$RELEASE_SHA"
-run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
+run_sudo_clean /usr/bin/node "$SMOKE" --expected-release-sha "$RELEASE_SHA" --surface "$SURFACE"
+run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" --surface "$SURFACE" >/dev/null
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 protected_after="$(snapshot_protected_services)"
 [[ "$protected_before" == "$protected_after" ]] || { echo 'A protected shared service changed during isolated staging validation.' >&2; exit 1; }
-printf 'validation_passed=true service=%s release_sha=%s loopback_health=true signed_smoke=true unit_attested=true process_attested=true shared_restart=false\n' "$SERVICE" "$RELEASE_SHA"
+printf 'validation_passed=true service=%s release_sha=%s surface=%s loopback_health=true signed_smoke=true unit_attested=true process_attested=true shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$SURFACE"

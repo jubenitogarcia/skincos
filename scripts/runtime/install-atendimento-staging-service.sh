@@ -45,6 +45,7 @@ readonly RELEASE_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-re
 readonly CONTROL_VALIDATOR="$SOURCE_ROOT/crm/api/scripts/validate-atendimento-staging-control.mjs"
 readonly RUNTIME_GRANT_LOCKDOWN="$SOURCE_ROOT/scripts/lockdown-atendimento-staging-runtime.sh"
 readonly COORDINATION_CLOSURE="$SOURCE_ROOT/.skincos-global-coordination-atendimento.json"
+readonly RELEASE_MANIFEST="$SOURCE_ROOT/.skincos-atendimento-release.json"
 coordination_proof="${SKINCOS_GLOBAL_COORDINATION_PROOF_FILE:-/var/lib/skincos-runtime/global-coordination/atendimento-staging-$RELEASE_SHA-$$.json}"
 coordination_acquired=0
 
@@ -58,8 +59,10 @@ done
 /usr/bin/sudo -n /usr/bin/test -f "$CONTROL_VALIDATOR" || { echo 'Strict staging control validator is unavailable in immutable release.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -x "$RUNTIME_GRANT_LOCKDOWN" || { echo 'Staging runtime grant lockdown is unavailable in immutable release.' >&2; exit 78; }
 /usr/bin/sudo -n /usr/bin/test -f "$CONTROL_FILE" || { echo 'Strict staging control file is unavailable.' >&2; exit 78; }
-run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" --target staging >/dev/null
-run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" >/dev/null
+/usr/bin/sudo -n /usr/bin/test -f "$RELEASE_MANIFEST" || { echo 'Staging release surface manifest is unavailable.' >&2; exit 78; }
+readonly RELEASE_SURFACE="$(run_sudo_clean /usr/bin/node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const surface=Object.prototype.hasOwnProperty.call(value,"surface") ? String(value.surface||"") : "clientes"; if (!/^(clientes|full)$/.test(surface)) process.exit(78); process.stdout.write(surface);' "$RELEASE_MANIFEST")"
+run_sudo_clean /usr/bin/node "$RELEASE_VALIDATOR" --source-root "$SOURCE_ROOT" --release-sha "$RELEASE_SHA" --target staging --surface "$RELEASE_SURFACE" >/dev/null
+run_sudo_clean /usr/bin/node "$CONTROL_VALIDATOR" --release-sha "$RELEASE_SHA" --surface "$RELEASE_SURFACE" >/dev/null
 run_sudo_clean /usr/bin/bash -p "$RUNTIME_GRANT_LOCKDOWN" --dry-run >/dev/null
 
 umask 0077
@@ -81,13 +84,14 @@ run_sudo_clean /usr/bin/sed \
   -e "s|__STATE_ROOT__|$STATE_ROOT|g" \
   -e "s|__CONFIG_ROOT__|$CONFIG_ROOT|g" \
   -e "s|__LOG_ROOT__|$LOG_ROOT|g" \
+  -e "s|__ATENDIMENTO_SURFACE__|$RELEASE_SURFACE|g" \
   -e "s|__RELEASE_SHA__|$RELEASE_SHA|g" \
   "$UNIT_SRC" >"$rendered"
 /usr/bin/chmod 0644 "$rendered"
 /usr/bin/systemd-analyze verify "$rendered"
 
 if [[ "$APPLY" != '1' ]]; then
-  printf 'dry_run=true service=crm-atendimento-staging.service release_sha=%s source=%s shared_restart=false\n' "$RELEASE_SHA" "$SOURCE_ROOT"
+  printf 'dry_run=true service=crm-atendimento-staging.service release_sha=%s surface=%s source=%s shared_restart=false\n' "$RELEASE_SHA" "$RELEASE_SURFACE" "$SOURCE_ROOT"
   exit 0
 fi
 
@@ -169,4 +173,4 @@ coordination_run check \
   --closure-file "$COORDINATION_CLOSURE" >/dev/null
 /usr/bin/sudo -n /usr/bin/systemctl restart "$SERVICE"
 /usr/bin/sudo -n /usr/bin/systemctl is-active --quiet "$SERVICE"
-printf 'installed=true service=%s release_sha=%s unit_backup=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$unit_backup"
+printf 'installed=true service=%s release_sha=%s surface=%s unit_backup=%s shared_restart=false\n' "$SERVICE" "$RELEASE_SHA" "$RELEASE_SURFACE" "$unit_backup"
