@@ -65,6 +65,10 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(styles, /\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardBack strong \{[\s\S]*font-size: clamp\(1\.35rem, 2\.35vw, 2rem\)[\s\S]*line-height: 0\.92/);
     assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.tableSurface,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.tableSurface \{[\s\S]*padding-bottom: clamp\(10px, 1\.4vw, 16px\)/);
     assert.match(styles, /\.tableStage\[data-finale-stage="confirmation"\] \.specialCardStage,[\s\S]*\.tableStage\[data-finale-stage="result"\] \.specialCardStage \{[\s\S]*transform: translateY\(clamp\(-48px, -3\.6vw, -22px\)\)/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.tableSurface > \.deckStage,[\s\S]*position: absolute[\s\S]*z-index: 2/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\] \.deckStage \{[\s\S]*animation: deckStageFinaleVanish var\(--bm-finale-merge-ms\)/);
+    assert.match(styles, /@keyframes deckStageFinaleVanish[\s\S]*100% \{[\s\S]*opacity: 0[\s\S]*visibility: hidden/);
+    assert.match(styles, /\.cardButton \{[\s\S]*cursor: pointer/);
 });
 
 test("the finale exposes a non-cancellable five-second merge countdown", async () => {

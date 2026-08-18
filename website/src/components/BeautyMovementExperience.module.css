@@ -2128,24 +2128,28 @@
 @keyframes deckStageFinaleVanish {
   0% {
     opacity: 1;
+    visibility: visible;
     filter: blur(0) saturate(1);
     transform: translateX(-50%) translateY(0) scale(1) rotate(0deg);
   }
 
   42% {
     opacity: 0.82;
+    visibility: visible;
     filter: blur(1px) saturate(0.9);
     transform: translateX(-50%) translateY(-3px) scale(1.04) rotate(-1deg);
   }
 
   76% {
     opacity: 0.28;
+    visibility: visible;
     filter: blur(5px) saturate(0.78);
     transform: translateX(-50%) translateY(-2px) scale(0.68) rotate(2deg);
   }
 
   100% {
     opacity: 0;
+    visibility: hidden;
     filter: blur(10px) saturate(0.6);
     transform: translateX(-50%) translateY(0) scale(0.24) rotate(-4deg);
   }
@@ -3477,6 +3481,26 @@
 .tableStage[data-finale-stage="result"] .tableSurface > * {
   position: relative;
   z-index: 1;
+}
+
+/* The deck is an overlay anchor, never part of the finale's intrinsic flow.
+ * The broad child rule above must not turn it into a relative grid item: that
+ * was the source of the deck jumping behind the centre card and inflating the
+ * surface before the special card appeared. */
+.tableStage[data-hand-stage="finale"] .tableSurface > .deckStage,
+.tableStage[data-finale-stage="confirmation"] .tableSurface > .deckStage,
+.tableStage[data-finale-stage="result"] .tableSurface > .deckStage {
+  position: absolute;
+  z-index: 2;
+}
+
+/* Dissolve the deck as the three selected cards begin to converge. It remains
+ * out of the pointer and layout flow for the whole finale, then stays hidden
+ * through confirmation/result. */
+.tableStage[data-hand-stage="finale"] .deckStage {
+  pointer-events: none;
+  animation: deckStageFinaleVanish var(--bm-finale-merge-ms) cubic-bezier(0.18, 0.86, 0.24, 1) both;
+  will-change: opacity, filter, transform;
 }
 
 .tableStage[data-hand-stage="finale"][data-finale-stage="merging"] .tableSurface::before {
