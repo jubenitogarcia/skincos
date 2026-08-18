@@ -465,6 +465,24 @@ test("the staging RBAC journey recovers synthetic teardown under a fresh lease",
   );
 });
 
+test("production Users smoke identity uses production custody and the active coordination key", () => {
+  const workflow = read(".github/workflows/insumos-production-smoke-identity.yml");
+  assert.equal(
+    (workflow.match(/coordinator_url: \$\{\{ vars\.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL \}\}/g) || []).length,
+    4,
+  );
+  assert.equal(
+    (workflow.match(/key_id: \$\{\{ vars\.SKINCOS_GLOBAL_COORDINATION_KEY_ID \}\}/g) || []).length,
+    4,
+  );
+  assert.equal(
+    (workflow.match(/shared_secret: \$\{\{ secrets\.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY \}\}/g) || []).length,
+    4,
+  );
+  assert.doesNotMatch(workflow, /SKINCOS_GLOBAL_COORDINATOR_URL \}\}/);
+  assert.doesNotMatch(workflow, /SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET/);
+});
+
 test("the Ponto composite lease protects only non-preview stages while preview keeps separate writer custody", () => {
   const workflow = read(".github/workflows/ponto-progressive-release.yml");
   const acquire = workflow.indexOf("Acquire the composite Ponto release lease before gate settlement");
