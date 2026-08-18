@@ -393,33 +393,38 @@ test("Meta Ads source-access verifier reports only classified Graph failures", (
 });
 
 test("Meta Ads source-access verifier classifies Graph contract rejection without exposing Graph details", () => {
-  const responses = happyResponses();
-  responses[4] = {
-    ...responses[4],
-    status: 400,
-    payload: { error: { code: 100, message: "synthetic legacy dataset edge drift" } },
-  };
-  responses.push({
-    pathname: `/v25.0/act_${syntheticAccountId}`,
-    query: { fields: "id,business{id}" },
-    payload: { id: syntheticAccountId, business: { id: syntheticBusinessId } },
-  });
-  responses.push({
-    pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
-    query: { fields: "id" },
-    status: 400,
-    payload: { error: { code: 100, message: "synthetic modern contract detail" } },
-  });
-  const result = runVerifier(responses, { expectedRequests: 7 });
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.equal(result.requestCount, 7);
-  assert.match(combined, /source_dataset_ads_dataset_response_contract/);
-  assert.doesNotMatch(
-    combined,
-    /synthetic legacy dataset edge drift|synthetic modern contract detail|source_access_raw=verified/,
-  );
-  assertNoSyntheticInputs(combined);
+  for (const modernError of [
+    { code: 100, message: "synthetic modern contract detail" },
+    { code: 0, message: "synthetic unknown modern contract detail" },
+  ]) {
+    const responses = happyResponses();
+    responses[4] = {
+      ...responses[4],
+      status: 400,
+      payload: { error: { code: 100, message: "synthetic legacy dataset edge drift" } },
+    };
+    responses.push({
+      pathname: `/v25.0/act_${syntheticAccountId}`,
+      query: { fields: "id,business{id}" },
+      payload: { id: syntheticAccountId, business: { id: syntheticBusinessId } },
+    });
+    responses.push({
+      pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
+      query: { fields: "id" },
+      status: 400,
+      payload: { error: modernError },
+    });
+    const result = runVerifier(responses, { expectedRequests: 7 });
+    const combined = `${result.stdout}${result.stderr}`;
+    assert.notEqual(result.status, 0);
+    assert.equal(result.requestCount, 7);
+    assert.match(combined, /source_dataset_ads_dataset_response_contract/);
+    assert.doesNotMatch(
+      combined,
+      /synthetic legacy dataset edge drift|synthetic modern contract detail|synthetic unknown modern contract detail|source_access_raw=verified/,
+    );
+    assertNoSyntheticInputs(combined);
+  }
 });
 
 test("Meta Ads source-access verifier probes the current Business AdsDataset contract after a legacy dataset shape failure", () => {

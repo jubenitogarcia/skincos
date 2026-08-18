@@ -1557,6 +1557,50 @@ test('staging seed attestation preserves finite non-identity source eligibility 
   }
 });
 
+test('staging seed attestation classifies successful AdsDataset shape drift as a contract failure', async () => {
+  const cases = [
+    {
+      label: 'missing-data-array',
+      body: { id: DATASET_ID },
+    },
+    {
+      label: 'missing-stable-id',
+      body: { data: [{ dataset_id: DATASET_ID }] },
+    },
+  ];
+
+  for (const entry of cases) {
+    const db = new SeedDb();
+    db.prepare = () => {
+      throw new Error('D1 must remain untouched by contract diagnostics');
+    };
+    const graph = new FakeGraph({
+      readResponses: {
+        [`${BUSINESS_ID}/ads_dataset`]: { body: entry.body },
+      },
+    });
+    const response = await attest({
+      db,
+      graph,
+      operationKey: `meta-ads-staging-seed:attestation-${entry.label}-001`,
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 409, entry.label);
+    assert.equal(body.error, 'meta_ads_publish_staging_seed_graph_contract_invalid', entry.label);
+    assert.equal(graph.calls.length, 6, entry.label);
+    assert.ok(graph.calls.every((call) => call.method === 'GET'), entry.label);
+    assert.equal(graph.postCalls.length, 0, entry.label);
+    assert.equal(db.operations.size, 0, entry.label);
+    assert.equal(db.tokens.length, 0, entry.label);
+    assert.equal(db.locks.size, 0, entry.label);
+    const serialized = JSON.stringify(body);
+    for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, DATASET_ID]) {
+      assert.equal(serialized.includes(value), false, entry.label);
+    }
+  }
+});
+
 test('staging seed attestation keeps transient source failures retryable and bounded', async () => {
   const db = new SeedDb();
   const graph = new FakeGraph({
