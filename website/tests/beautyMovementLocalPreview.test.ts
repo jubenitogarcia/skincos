@@ -14,8 +14,11 @@ test("local preview is synthetic, blocks production, and cannot open the real Wh
     assert.match(page, /NODE_ENV === "production" && process\.env\.SKINCOS_LOCAL_PREVIEW !== "true"/);
     assert.match(page, /notFound\(\)/);
     assert.match(preview, /isLocalPreview/);
+    assert.doesNotMatch(preview, /Lavieen/);
     assert.doesNotMatch(preview, /\/api\/beleza-em-movimento/);
     assert.doesNotMatch(preview, /trackEvent|trackSiteBehaviorEvent/);
+    assert.match(preview, /enumerateBeautyMovementCombinations/);
+    assert.match(preview, /NODE_ENV === "production"/);
     assert.match(experience, /if \(isLocalPreview\) \{/);
     assert.match(experience, /<button className=\{className\} type="button" onClick=\{handleWhatsappClick\}>/);
     assert.match(experience, /Prévia local: a abertura do WhatsApp foi simulada\./);

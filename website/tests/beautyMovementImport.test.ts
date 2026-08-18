@@ -117,6 +117,33 @@ test("beauty movement import validates only the sanitised private-list schema", 
     if (!duplicate.ok) assert.equal(duplicate.issues.some((entry) => entry.code === "duplicate_whatsapp"), true);
 });
 
+test("modern imports may omit reward_id and defer the commercial outcome to the card resolver", async () => {
+    const csv = [
+        "invite_ref,name,whatsapp,email,palette,velocity_benefit,expires_at",
+        `nh-modern,Ana Silva,51999991234,,radiancia,none,${EXPIRES}`,
+    ].join("\n");
+    const validation = validateBeautyMovementImport({ csv, nowMs: NOW });
+    assert.equal(validation.ok, true);
+    if (!validation.ok) return;
+    assert.equal(validation.rows[0]?.rewardId, null);
+
+    const plan = await prepareBeautyMovementImport({
+        csv,
+        campaignId: "nh-modern",
+        campaignConfig: validCampaignConfig(),
+        campaignEndsAtMs: Date.parse("2026-09-01T00:00:00Z"),
+        tokenHmacKey: TOKEN_KEY,
+        piiKey: PII_KEY,
+        nowMs: NOW,
+    });
+    assert.equal(plan.rewards.length, 0);
+    assert.equal(plan.invites[0]?.rewardId, null);
+    const sql = buildBeautyMovementImportSql(plan);
+    assert.match(sql, /palette\, reward_id, velocity_benefit/);
+    assert.match(sql, /'radiancia', NULL, 'none'/);
+    assert.doesNotMatch(sql, /Lavieen/);
+});
+
 test("beauty movement import writes encrypted D1 rows and reserves raw delivery data for the private CSV", async () => {
     const plan = await prepareBeautyMovementImport({
         csv: validCsv(),
@@ -215,4 +242,8 @@ test("D1 migrations preserve the structured reward-to-palette invariant", async 
     assert.match(migration, /reward\.campaign_id = NEW\.campaign_id/);
     assert.match(migration, /reward\.family = NEW\.palette/);
     assert.match(migration, /bm_rewards_prevent_referenced_delete/);
+    const outcomeMigration = await readFile(new URL("../migrations/beauty-movement/0004_card_outcomes.sql", import.meta.url), "utf8");
+    assert.match(outcomeMigration, /outcome_key/);
+    assert.match(outcomeMigration, /outcome_snapshot_json/);
+    assert.match(outcomeMigration, /outcome_protocol_version/);
 });

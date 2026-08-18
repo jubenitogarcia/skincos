@@ -13,6 +13,8 @@ import {
     encryptBeautyMovementPersonalData,
     hashBeautyMovementInviteToken,
 } from "../src/lib/beautyMovementSecurity";
+import { getBeautyMovementCardsForAct, BEAUTY_MOVEMENT_ACTS, type BeautyMovementPalette } from "../src/lib/beautyMovementCards";
+import { getBeautyMovementOffer } from "../src/lib/beautyMovementOutcomes";
 
 const TOKEN_KEY = `test-token-hmac-${"0".repeat(16)}`;
 const PII_KEY = "0".repeat(64);
@@ -133,6 +135,14 @@ class FakeBeautyMovementD1 implements BeautyMovementD1 {
             this.reveals.push({ invite_id: String(values[0]), act_index: Number(values[1]), card_id: String(values[2]), created_at_ms: Number(values[3]) });
             return 1;
         }
+        if (query.includes("UPDATE bm_invites") && query.includes("outcome_key = COALESCE")) {
+            if (this.invite.outcome_key) return 0;
+            this.invite.outcome_key = values[0];
+            this.invite.outcome_snapshot_json = values[1];
+            this.invite.outcome_protocol_version = values[2];
+            this.invite.outcome_resolved_at_ms = values[3];
+            return 1;
+        }
         if (query.includes("UPDATE bm_invites") && query.includes("personal_data_ciphertext")) {
             if (query.includes("confirmed_at_ms IS NULL") && this.claimConfirmationElsewhereOnNextWrite) {
                 this.claimConfirmationElsewhereOnNextWrite = false;
@@ -180,6 +190,10 @@ async function makeFixture(): Promise<{ db: FakeBeautyMovementD1; token: string 
             contact_mask: "WhatsApp •••• 1234",
             palette: "radiancia",
             reward_id: "rad-lavieen-free",
+            outcome_key: null,
+            outcome_snapshot_json: null,
+            outcome_protocol_version: null,
+            outcome_resolved_at_ms: null,
             velocity_benefit: "aula_cortesia_evento",
             benefit_status: "evento_condicao_comercial",
             benefit_text: "Um cuidado de renovação para celebrar seu momento.",
@@ -226,7 +240,10 @@ function options(db: FakeBeautyMovementD1) {
         piiKey: PII_KEY,
         allowedOrigins: [ORIGIN],
         nowMs: NOW,
-        cardValidator: ({ actIndex, cardId }: { actIndex: number; cardId: string }) => ["presenca", "potencia", "renovacao"][actIndex - 1] === cardId,
+        cardValidator: ({ palette, actIndex, cardId }: { palette: BeautyMovementPalette; actIndex: number; cardId: string }) => {
+            const act = BEAUTY_MOVEMENT_ACTS[actIndex - 1];
+            return Boolean(act && getBeautyMovementCardsForAct(palette, act).some((card) => card.id === cardId));
+        },
     };
 }
 
@@ -308,7 +325,7 @@ test("beauty movement leaves seven session mutations below their distinct limit"
 
     for (let attempt = 0; attempt < 7; attempt += 1) {
         const reveal = await revealBeautyMovementCard(
-            { sessionToken: exchange.sessionToken, actIndex: 1, cardId: "presenca", origin: ORIGIN, ip },
+            { sessionToken: exchange.sessionToken, actIndex: 1, cardId: "beleza-presenca", origin: ORIGIN, ip },
             options(fixture.db),
         );
         assert.equal(reveal.ok, true);
@@ -374,7 +391,7 @@ test("beauty movement enforces ordered immutable cards and confirms the configur
     const sessionToken = exchange.sessionToken;
     const outOfOrder = await revealBeautyMovementCard({ sessionToken, actIndex: 2, cardId: "potencia", origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
     assert.deepEqual(outOfOrder, { ok: false, error: "invalid_act" });
-    for (const [actIndex, cardId] of [[1, "presenca"], [2, "potencia"], [3, "renovacao"]] as const) {
+    for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
         const reveal = await revealBeautyMovementCard({ sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.11" }, options(fixture.db));
         assert.equal(reveal.ok, true);
     }
@@ -387,9 +404,11 @@ test("beauty movement enforces ordered immutable cards and confirms the configur
     assert.equal(confirmed.ok, true);
     if (!confirmed.ok) return;
     assert.equal(confirmed.state.confirmed, true);
-    assert.equal(confirmed.state.benefit?.type, "free_procedure");
-    assert.equal(confirmed.state.benefit?.procedureName, "Lavieen");
-    assert.equal(confirmed.state.benefit?.discount, null);
+    assert.deepEqual(confirmed.state.offer, getBeautyMovementOffer("elleva_upgrade"));
+    assert.equal(confirmed.state.benefit, null);
+    assert.equal(fixture.db.invite.outcome_key, "elleva_upgrade");
+    assert.equal(fixture.db.invite.outcome_protocol_version, "beauty-movement-outcomes-v1");
+    assert.equal(fixture.db.invite.outcome_snapshot_json, JSON.stringify(getBeautyMovementOffer("elleva_upgrade")));
     assert.deepEqual(confirmed.state.velocity, {
         enabled: true,
         label: "Aula-cortesia Velocity",
@@ -435,7 +454,7 @@ test("beauty movement reveals a configured discount only after confirmation and 
     assert.equal(exchange.state.benefit, null);
     assert.equal(exchange.state.velocity, null);
 
-    for (const [actIndex, cardId] of [[1, "presenca"], [2, "potencia"], [3, "renovacao"]] as const) {
+    for (const [actIndex, cardId] of [[1, "beleza-autocuidado"], [2, "movimento-potencia"], [3, "celebracao-confianca"]] as const) {
         const reveal = await revealBeautyMovementCard(
             { sessionToken: exchange.sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.17" },
             options(fixture.db),
@@ -448,15 +467,8 @@ test("beauty movement reveals a configured discount only after confirmation and 
     );
     assert.equal(confirmed.ok, true);
     if (!confirmed.ok) return;
-    assert.deepEqual(confirmed.state.benefit, {
-        type: "discount",
-        procedureName: "Lavieen",
-        discount: { kind: "percent", value: 15, currency: "BRL" },
-        displayText: "Um cuidado de renovação para celebrar seu momento.",
-        validity: "Válida até 31/08/2026.",
-        rules: "Uso pessoal e intransferível; agendamento sujeito à disponibilidade.",
-        termsVersion: "v1",
-    });
+    assert.deepEqual(confirmed.state.offer, getBeautyMovementOffer("sculptra_classic_unlock"));
+    assert.equal(confirmed.state.benefit, null);
     assert.equal(confirmed.state.velocity, null);
 });
 
@@ -508,7 +520,7 @@ test("beauty movement does not allow the invitation form to replace a pre-regist
     if (!exchange.ok) return;
     assert.equal(exchange.state.invite.emailRegistered, true);
 
-    for (const [actIndex, cardId] of [[1, "presenca"], [2, "potencia"], [3, "renovacao"]] as const) {
+    for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
         const reveal = await revealBeautyMovementCard(
             { sessionToken: exchange.sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.31" },
             options(fixture.db),
@@ -534,7 +546,7 @@ test("beauty movement treats a concurrent confirmation claim as a replay without
     assert.equal(exchange.ok, true);
     if (!exchange.ok) return;
 
-    for (const [actIndex, cardId] of [[1, "presenca"], [2, "potencia"], [3, "renovacao"]] as const) {
+    for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
         const reveal = await revealBeautyMovementCard(
             { sessionToken: exchange.sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.41" },
             options(fixture.db),

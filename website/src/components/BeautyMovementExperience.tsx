@@ -30,6 +30,7 @@ import type {
     BeautyMovementRewardType,
 } from "@/lib/beautyMovementRewards";
 import { BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate } from "@/lib/beautyMovementMotion";
+import type { BeautyMovementOffer } from "@/lib/beautyMovementOutcomes";
 import styles from "./BeautyMovementExperience.module.css";
 
 export type BeautyMovementBenefit = {
@@ -77,7 +78,10 @@ export type BeautyMovementExperienceInitialState = {
         emailRegistered?: boolean;
     };
     palette: BeautyMovementPalette;
-    benefit: BeautyMovementBenefit | null;
+    /** Server-resolved offer, available only after confirmation. */
+    offer?: BeautyMovementOffer | null;
+    /** @deprecated Legacy reward shape retained for old campaign rows. */
+    benefit?: BeautyMovementBenefit | null;
     velocity: BeautyMovementVelocity | null;
     reveals: readonly BeautyMovementReveal[];
     confirmed: boolean;
@@ -132,7 +136,7 @@ type HandStage =
     | "finale";
 type IntroStage = "hidden" | "entering" | "holding" | "exiting";
 type FinaleStage = "hidden" | "assembling" | "collecting" | "merging" | "confirmation" | "result";
-type SpecialCardKind = "velocity" | "discount" | "free_procedure" | "reserved";
+type SpecialCardKind = "velocity" | "offer" | "discount" | "free_procedure" | "reserved";
 type SpecialCardAction = "none" | "confirm" | "reopen";
 type ProgressRect = {
     left: number;
@@ -696,13 +700,13 @@ export default function BeautyMovementExperience({
         return fittedTarget;
     }
 
-    function stopInitialDealScroll() {
+    const stopInitialDealScroll = useCallback(() => {
         initialDealScrollActiveRef.current = false;
         if (initialDealScrollFrameRef.current !== null) {
             window.cancelAnimationFrame(initialDealScrollFrameRef.current);
             initialDealScrollFrameRef.current = null;
         }
-    }
+    }, []);
 
     function finishDealScroll() {
         stopInitialDealScroll();
@@ -1474,9 +1478,12 @@ export default function BeautyMovementExperience({
         deferRevealContent = false,
     ) {
         const showRevealAction = action !== "none";
+        const offer = initialState.offer ?? null;
         const kind: SpecialCardKind = revealed
-            ? hasCourtesyClass
-                ? "velocity"
+            ? offer
+                ? "offer"
+                : hasCourtesyClass
+                  ? "velocity"
                 : initialState.benefit?.type === "discount"
                   ? "discount"
                   : initialState.benefit?.type === "free_procedure"
@@ -1488,6 +1495,8 @@ export default function BeautyMovementExperience({
         const iconId =
             kind === "velocity"
                 ? "reward-velocity"
+                : kind === "offer"
+                  ? "reward-reserved"
                 : kind === "discount"
                   ? "reward-discount"
                   : kind === "free_procedure"
@@ -1496,6 +1505,8 @@ export default function BeautyMovementExperience({
         const kindLabel =
             kind === "velocity"
                 ? "AULA-CORTESIA"
+                : kind === "offer"
+                  ? offer?.shortLabel || "CONDIÇÃO DESBLOQUEADA"
                 : kind === "discount"
                   ? "CONDIÇÃO ESPECIAL"
                   : kind === "free_procedure"
@@ -1504,12 +1515,16 @@ export default function BeautyMovementExperience({
         const title =
             kind === "velocity"
                 ? velocity?.label?.trim() || "Aula-cortesia Velocity"
+                : kind === "offer"
+                  ? offer?.title || "Sua combinação desbloqueou"
                 : kind === "discount" || kind === "free_procedure"
                   ? benefit?.procedureName || "Cuidado reservado"
                   : "Seu presente está reservado";
         const description =
             kind === "velocity"
                 ? "Seu movimento também faz parte da celebração."
+                : kind === "offer"
+                  ? offer?.commercialText || "Sua combinação desbloqueou uma condição especial."
                 : kind === "discount" || kind === "free_procedure"
                   ? benefit?.displayText || "Um cuidado especial para celebrar o seu momento."
                   : "Um presente preparado para acompanhar o seu momento.";

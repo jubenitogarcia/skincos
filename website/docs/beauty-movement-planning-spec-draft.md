@@ -373,9 +373,9 @@ configuração D1/segredos, validação de staging e operação reversível.
 ### MVP recomendado
 
 Manter três atos, três escolhas em mesa única, paleta manual na lista
-sanitizada, benefício pré-configurado, confirmação operacional e resultado
-inline, Story e WhatsApp, sem CRM, sem histórico clínico e sem conversões
-externas.
+sanitizada, resolver determinístico das cartas, confirmação operacional e
+resultado inline, Story e WhatsApp, sem CRM, sem histórico clínico e sem
+conversões externas.
 
 ### Evoluções posteriores
 
