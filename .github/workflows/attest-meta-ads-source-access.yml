@@ -150,12 +150,13 @@ jobs:
             'source_pages',
           );
           if (!Array.isArray(pages?.data)) fail('source_pages_malformed');
-          if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_ambiguous');
+          if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_paging_ambiguous');
           const eligiblePages = pages.data.filter((page) => {
             const tasks = new Set(Array.isArray(page?.tasks) ? page.tasks.map((task) => String(task || '').trim().toUpperCase()) : []);
             return tasks.has('ADVERTISE') && Boolean(numericId(page?.instagram_business_account?.id));
           });
-          if (eligiblePages.length !== 1) fail('source_pages_ambiguous');
+          if (eligiblePages.length === 0) fail('source_pages_none_eligible');
+          if (eligiblePages.length > 1) fail('source_pages_multiple_eligible');
           const pageId = numericId(eligiblePages[0].id);
           const instagramId = numericId(eligiblePages[0].instagram_business_account.id);
           if (!pageId || !instagramId) fail('source_pages_malformed');
