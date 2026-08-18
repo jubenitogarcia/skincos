@@ -179,6 +179,11 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /tasks\.has\('PROFILE_PLUS_ADVERTISE'\)/);
   assert.doesNotMatch(workflow, /PROFILE_PLUS_FULL_CONTROL/);
   assert.match(workflow, /source_pages_paging_ambiguous/);
+  assert.match(workflow, /source_pages_none_visible/);
+  assert.match(workflow, /source_pages_advertise_and_instagram_missing/);
+  assert.match(workflow, /source_pages_advertise_task_missing/);
+  assert.match(workflow, /source_pages_instagram_link_missing/);
+  assert.match(workflow, /source_pages_task_instagram_unpaired/);
   assert.match(workflow, /eligiblePages\.length === 0/);
   assert.match(workflow, /eligiblePages\.length > 1/);
   assert.match(workflow, /datasets\.data\.length !== 1/);
@@ -278,7 +283,7 @@ test("Meta Ads source-access verifier does not treat other Profile Plus tasks as
   const result = runVerifier(responses, 3);
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_none_eligible/);
+  assert.match(combined, /source_pages_advertise_task_missing/);
   assert.equal(result.requestCount, 3);
   assert.doesNotMatch(
     combined,
@@ -349,13 +354,58 @@ test("Meta Ads source-access verifier distinguishes a paged Page listing", () =>
   );
 });
 
-test("Meta Ads source-access verifier distinguishes no eligible Page", () => {
+test("Meta Ads source-access verifier distinguishes no visible Page", () => {
   const responses = structuredClone(happyResponses);
   responses[2].payload.data = [];
   const result = runVerifier(responses, 3);
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pages_none_eligible/);
+  assert.match(combined, /source_pages_none_visible/);
+  assert.equal(result.requestCount, 3);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier distinguishes an absent advertising task from a missing Page", () => {
+  const responses = structuredClone(happyResponses);
+  responses[2].payload.data[0].tasks = [];
+  const result = runVerifier(responses, 3);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pages_advertise_task_missing/);
+  assert.equal(result.requestCount, 3);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier distinguishes a missing Instagram link from a missing Page", () => {
+  const responses = structuredClone(happyResponses);
+  delete responses[2].payload.data[0].instagram_business_account;
+  const result = runVerifier(responses, 3);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pages_instagram_link_missing/);
+  assert.equal(result.requestCount, 3);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier distinguishes Page task and Instagram facts that do not belong to the same Page", () => {
+  const responses = structuredClone(happyResponses);
+  responses[2].payload.data = [
+    { id: "6655443322", tasks: ["ADVERTISE"] },
+    { id: "2233445566", tasks: [], instagram_business_account: { id: "5544332211" } },
+  ];
+  const result = runVerifier(responses, 3);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pages_task_instagram_unpaired/);
   assert.equal(result.requestCount, 3);
   assert.doesNotMatch(
     combined,
