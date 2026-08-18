@@ -390,27 +390,33 @@ test("Meta Ads source-access verifier reports only classified Graph failures", (
 });
 
 test("Meta Ads source-access verifier probes the current Business AdsDataset contract after a legacy dataset shape failure", () => {
-  const responses = happyResponses();
-  responses.push({
-    pathname: `/v25.0/act_${syntheticAccountId}`,
-    query: { fields: "id,business{id}" },
-    payload: { id: syntheticAccountId, business: { id: syntheticBusinessId } },
-  });
-  responses.push({
-    pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
-    query: { fields: "id,dataset_id", limit: "5" },
-    payload: { data: [{ id: syntheticModernDatasetId, dataset_id: syntheticModernDatasetId }] },
-  });
-  responses[4] = {
-    ...responses[4],
-    status: 400,
-    payload: { error: { code: 100, message: "synthetic legacy dataset edge drift" } },
-  };
-  const result = runVerifier(responses, { expectedRequests: 7 });
-  const combined = `${result.stdout}${result.stderr}`;
-  assert.notEqual(result.status, 0);
-  assert.equal(result.requestCount, 7);
-  assert.match(combined, /source_dataset_legacy_contract_invalid/);
-  assert.doesNotMatch(combined, /synthetic legacy dataset edge drift|source_access_raw=verified/);
-  assertNoSyntheticInputs(combined);
+  for (const legacyPayload of [
+    { error: { code: 100, message: "synthetic legacy dataset edge drift" } },
+    {},
+    { data: { invalid: true } },
+  ]) {
+    const responses = happyResponses();
+    responses.push({
+      pathname: `/v25.0/act_${syntheticAccountId}`,
+      query: { fields: "id,business{id}" },
+      payload: { id: syntheticAccountId, business: { id: syntheticBusinessId } },
+    });
+    responses.push({
+      pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
+      query: { fields: "id,dataset_id", limit: "5" },
+      payload: { data: [{ id: syntheticModernDatasetId, dataset_id: syntheticModernDatasetId }] },
+    });
+    responses[4] = {
+      ...responses[4],
+      status: legacyPayload.error ? 400 : 200,
+      payload: legacyPayload,
+    };
+    const result = runVerifier(responses, { expectedRequests: 7 });
+    const combined = `${result.stdout}${result.stderr}`;
+    assert.notEqual(result.status, 0);
+    assert.equal(result.requestCount, 7);
+    assert.match(combined, /source_dataset_legacy_contract_invalid/);
+    assert.doesNotMatch(combined, /synthetic legacy dataset edge drift|source_access_raw=verified/);
+    assertNoSyntheticInputs(combined);
+  }
 });
