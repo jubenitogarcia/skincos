@@ -2175,11 +2175,13 @@ async function discoverStagingSyntheticSeedFacts({
     throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
   }
 
-  // Both destination selectors are explicit staging facts. Prove each through
-  // the authenticated System User's own bounded assignment relation before a
-  // direct Page read. Never select by list order or fall back to user-centric
-  // `/me/accounts` discovery when the deployment has declared two units.
-  const pageDiscoveryFields = 'id,tasks,instagram_business_account{id}';
+  // Both destination selectors are explicit staging facts. The authenticated
+  // System User's bounded `assigned_pages` edge returns Page objects, so keep
+  // the landing/media fields on that read and do not issue an additional
+  // Page-node GET with a Business/Marketing-scoped bearer. Never select by
+  // list order or fall back to user-centric `/me/accounts` discovery when the
+  // deployment has declared two units.
+  const pageDiscoveryFields = 'id,tasks,instagram_business_account{id},website,picture{url}';
   const sourcePrincipal = await read(
     'me',
     'id',
@@ -2233,37 +2235,19 @@ async function discoverStagingSyntheticSeedFacts({
       destination,
       selectedPageId,
       selectedInstagramUserId,
+      page: selectedPage,
     });
   }
   const destinations = {};
-  for (const { destination, selectedPageId, selectedInstagramUserId } of selectedDestinations) {
-    const page = await read(
-      selectedPageId,
-      'id,instagram_business_account{id},website,picture{url}',
-      {},
-      failureCodes.pageAccessDenied,
-    );
-    const pageId = normalizeStagingSyntheticSeedGraphId(
-      page.id,
-      `${destination.key}_page_id`,
-      failureCodes.identityMalformed,
-    );
-    const instagramUserId = normalizeStagingSyntheticSeedGraphId(
-      asObject(page.instagram_business_account).id,
-      `${destination.key}_instagram_user_id`,
-      failureCodes.identityMalformed,
-    );
-    if (pageId !== selectedPageId || instagramUserId !== selectedInstagramUserId) {
-      throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
-    }
+  for (const { destination, selectedPageId, selectedInstagramUserId, page } of selectedDestinations) {
     const landing = normalizeStagingSyntheticSeedLanding(page.website);
     const pictureUrl = normalizeStagingSyntheticSeedPicture(page.picture);
     if (!landing || !pictureUrl) {
       throw stagingSyntheticSeedFailure(failureCodes.landingOrMediaUnavailable, 409);
     }
     destinations[destination.key] = {
-      page_id: pageId,
-      instagram_user_id: instagramUserId,
+      page_id: selectedPageId,
+      instagram_user_id: selectedInstagramUserId,
       landing_url: landing.url,
       landing_host: landing.host,
       page_picture_url: pictureUrl,
