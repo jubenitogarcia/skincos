@@ -65,6 +65,25 @@ describe('CRM auth adapter', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('https://auth.internal.test/custom/auth/me')
   })
 
+  it('ignores an auth target that points back at the current CRM request origin', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      user: { id: 'gestor-1', role: 'GESTOR' },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const user = await getCrmUser(context({
+      AUTH_API_TARGET: 'https://crm.skincos.com.br',
+      INSUMOS_API_TARGET: 'https://api.skincos.com.br',
+    }))
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.skincos.com.br/insumos/auth/me')
+    expect(user).toMatchObject({ id: 'gestor-1', role: 'GESTOR' })
+  })
+
   it('falls back to legacy auth mounts only when the canonical mount is absent', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(null, { status: 404 }))

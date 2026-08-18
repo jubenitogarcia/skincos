@@ -22,7 +22,7 @@ const syntheticToken = "synthetic-source-bearer-not-a-secret";
 const syntheticPixelId = "1234567890";
 const syntheticAccountId = "9876543210";
 
-function runVerifier(responses) {
+function runVerifier(responses, expectedRequests = responses.length) {
   const harness = `
     const scenario = ${JSON.stringify(responses)};
     let cursor = 0;
@@ -38,10 +38,27 @@ function runVerifier(responses) {
       }
       return new Response(JSON.stringify(expected.payload), { status: expected.status ?? 200 });
     };
-    ${embeddedProgram}
-    if (cursor !== scenario.length) throw new Error('missing Graph request');
+    const verifierExit = Symbol('verifier-exit');
+    let verifierExitCode = null;
+    const originalExit = process.exit;
+    process.exit = (code = 0) => {
+      verifierExitCode = Number(code);
+      throw verifierExit;
+    };
+    try {
+      await (async () => {
+        ${embeddedProgram}
+      })();
+    } catch (error) {
+      if (error !== verifierExit) throw error;
+    } finally {
+      process.exit = originalExit;
+    }
+    if (cursor !== ${expectedRequests}) throw new Error('unexpected Graph request count');
+    process.stdout.write(\`__synthetic_request_count=\${cursor}\\n\`);
+    if (verifierExitCode !== null) process.exitCode = verifierExitCode;
   `;
-  return spawnSync(
+  const result = spawnSync(
     process.execPath,
     ["--input-type=module", "--eval", harness],
     {
@@ -55,14 +72,27 @@ function runVerifier(responses) {
       },
     },
   );
+  const stdout = String(result.stdout || "");
+  const requestCount = /^__synthetic_request_count=(\d+)$/m.exec(stdout);
+  return {
+    ...result,
+    stdout: stdout.replace(/^__synthetic_request_count=\d+\r?\n?/m, ""),
+    requestCount: requestCount ? Number(requestCount[1]) : null,
+  };
 }
 
 const happyResponses = [
   {
     pathname: `/v25.0/${syntheticPixelId}`,
-    query: { fields: "id,owner_ad_account{id}" },
+    query: { fields: "id" },
     payload: {
       id: syntheticPixelId,
+    },
+  },
+  {
+    pathname: `/v25.0/${syntheticPixelId}`,
+    query: { fields: "owner_ad_account{id}" },
+    payload: {
       owner_ad_account: { id: syntheticAccountId },
     },
   },
@@ -127,7 +157,9 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /graphErrorCode === 190/);
   assert.match(workflow, /graphErrorCode === 200/);
   assert.match(workflow, /authorizationError \? 'denied' : 'malformed'/);
-  assert.match(workflow, /\$\{pixelId\}\?fields=id,owner_ad_account\{id\}/);
+  assert.match(workflow, /\$\{pixelId\}\?fields=id/);
+  assert.match(workflow, /\$\{pixelId\}\?fields=owner_ad_account\{id\}/);
+  assert.match(workflow, /source_pixel_owner_relation/);
   assert.match(
     workflow,
     /me\/accounts\?fields=id,tasks,instagram_business_account\{id\}&limit=100/,
@@ -157,7 +189,7 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /source_access_dataset=eligible/);
   assert.match(workflow, /source_access_landing_media=eligible/);
   assert.ok(
-    workflow.indexOf("source_pixel_mismatch") <
+    workflow.indexOf("source_pixel_owner_relation_mismatch") <
       workflow.indexOf("source_access_raw=verified"),
     "raw success output must be unreachable until the exact source reads pass",
   );
@@ -198,6 +230,7 @@ test("Meta Ads source-access verifier executes the bounded raw-read contract wit
       "",
     ].join("\n"),
   );
+  assert.equal(result.requestCount, 5);
   assert.doesNotMatch(
     combined,
     new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
@@ -206,15 +239,16 @@ test("Meta Ads source-access verifier executes the bounded raw-read contract wit
 
 test("Meta Ads source-access verifier fails closed for an additional malformed eligible Page", () => {
   const responses = structuredClone(happyResponses);
-  responses[1].payload.data.unshift({
+  responses[2].payload.data.unshift({
     id: false,
     tasks: ["ADVERTISE"],
     instagram_business_account: { id: "6655443322" },
   });
-  const result = runVerifier(responses);
+  const result = runVerifier(responses, 3);
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
   assert.match(combined, /source_pages_ambiguous/);
+  assert.equal(result.requestCount, 3);
   assert.doesNotMatch(
     combined,
     new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
@@ -223,11 +257,59 @@ test("Meta Ads source-access verifier fails closed for an additional malformed e
 
 test("Meta Ads source-access verifier fails closed for falsy paging metadata", () => {
   const responses = structuredClone(happyResponses);
-  responses[1].payload.paging = { next: false };
-  const result = runVerifier(responses);
+  responses[2].payload.paging = { next: false };
+  const result = runVerifier(responses, 3);
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
   assert.match(combined, /source_pages_ambiguous/);
+  assert.equal(result.requestCount, 3);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier distinguishes bare Pixel denial before relation access", () => {
+  const result = runVerifier([
+    {
+      pathname: `/v25.0/${syntheticPixelId}`,
+      query: { fields: "id" },
+      status: 403,
+      payload: { error: { code: 10, message: "synthetic denial" } },
+    },
+  ]);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pixel_denied/);
+  assert.doesNotMatch(combined, /source_pixel_owner_relation/);
+  assert.doesNotMatch(combined, /synthetic denial/);
+  assert.equal(result.requestCount, 1);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier distinguishes owner-relation denial after Pixel access", () => {
+  const result = runVerifier([
+    {
+      pathname: `/v25.0/${syntheticPixelId}`,
+      query: { fields: "id" },
+      payload: { id: syntheticPixelId },
+    },
+    {
+      pathname: `/v25.0/${syntheticPixelId}`,
+      query: { fields: "owner_ad_account{id}" },
+      status: 403,
+      payload: { error: { code: 10, message: "synthetic denial" } },
+    },
+  ]);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pixel_owner_relation_denied/);
+  assert.doesNotMatch(combined, /source_access_raw=verified/);
+  assert.doesNotMatch(combined, /synthetic denial/);
+  assert.equal(result.requestCount, 2);
   assert.doesNotMatch(
     combined,
     new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
