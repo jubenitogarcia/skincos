@@ -443,7 +443,7 @@ test('production database contract has a separate read-only app role without raw
   assert.match(validation, /"\$RUNTIME_GRANT_LOCKDOWN" --dry-run/)
   assert.match(validation, /WorkingDirectory=\$RELEASE_ROOT/)
   assert.match(validation, /--noproxy '\*'/)
-  assert.match(smoke, /commercialReadsDisabled: firstRead\.response\.status === 503/)
+  assert.match(smoke, /commercialReadsDisabled: commercialRead\.response\.status === 503/)
   assert.match(smoke, /COMMERCIAL_READS_DISABLED/)
   assert.doesNotMatch(smoke, /replayRejected/)
   assert.match(productionMigration, /run-atendimento-production-migration\.mjs/)

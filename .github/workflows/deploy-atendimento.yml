@@ -1,5 +1,5 @@
 name: Prepare isolated Atendimento release
-run-name: Atendimento ${{ inputs.operation }} ${{ inputs.target }} ${{ inputs.release_sha }}
+run-name: Atendimento ${{ inputs.operation }} ${{ inputs.target }} ${{ inputs.surface }} ${{ inputs.release_sha }}
 
 # This remains dispatch-only and main-custodied. The native release scripts run
 # on the approved operator runtime; this workflow records the immutable source,
@@ -19,6 +19,12 @@ on:
         description: Full immutable main SHA to validate or restore
         required: true
         type: string
+      surface:
+        description: Explicit isolated runtime surface profile
+        required: true
+        default: clientes
+        type: choice
+        options: [clientes, full]
       operation:
         description: Native operation already performed by the approved runtime; workflow attests resulting state
         required: true
@@ -133,6 +139,7 @@ jobs:
           CONTRACT_TARGET: ${{ inputs.target }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
           ATENDIMENTO_OPERATION: ${{ inputs.operation }}
+          ATENDIMENTO_SURFACE: ${{ inputs.surface }}
           ENABLE_ATENDIMENTO_DEPLOY: ${{ vars.ENABLE_ATENDIMENTO_DEPLOY }}
           CRM_MODULE_CONTROL_FILE: ${{ vars.CRM_MODULE_CONTROL_FILE }}
           CRM_ATENDIMENTO_DEPLOY_COMMAND: ${{ vars.CRM_ATENDIMENTO_DEPLOY_COMMAND }}
