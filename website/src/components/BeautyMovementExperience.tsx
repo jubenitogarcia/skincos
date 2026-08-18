@@ -1787,15 +1787,12 @@ export default function BeautyMovementExperience({
                             {finaleStage === "collecting" ? (
                                 <div
                                     className={styles.finaleCountdown}
-                                    role="status"
-                                    aria-live="polite"
-                                    aria-label="Sua leitura está se reunindo. A carta especial aparece em cinco segundos."
+                                    aria-hidden="true"
                                 >
                                     <span className={styles.finaleCountdownLabel}>Sua leitura está se reunindo · 5 segundos</span>
                                     <span className={styles.finaleCountdownTrack} aria-hidden="true">
                                         <span className={styles.finaleCountdownBar} />
                                     </span>
-                                    <span className={styles.srOnly}>A carta especial aparece em cinco segundos.</span>
                                 </div>
                             ) : null}
                         </div>
@@ -1889,6 +1886,12 @@ export default function BeautyMovementExperience({
                     </div>
 
                 </section>
+
+                {finaleStage === "collecting" ? (
+                    <p className={styles.srOnly} role="status" aria-live="polite">
+                        Sua leitura está se reunindo. A carta especial aparece em cinco segundos.
+                    </p>
+                ) : null}
 
                 {actionError && finaleStage === "hidden" ? (
                     <p className={styles.inlineError} role="alert">

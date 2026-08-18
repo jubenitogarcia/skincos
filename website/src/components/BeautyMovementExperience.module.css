@@ -3164,7 +3164,10 @@
   width: 100%;
 }
 
-.finaleSpecialCardTransform .specialCardRevealContent,
+.finaleSpecialCardTransform .specialCardRevealContent {
+  opacity: 0;
+}
+
 .specialCardStage:not(.specialCardStageReopen) .specialCardRevealContent {
   opacity: 0;
   animation: specialCardRevealContentIn 360ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
@@ -3337,8 +3340,12 @@
     padding-bottom: 24px;
   }
 
-  .tableStage[data-hand-stage="collect"] .deckStage,
-  .tableStage[data-hand-stage="ready"] .deckStage {
-    bottom: -56px;
-  }
+.tableStage[data-hand-stage="collect"] .deckStage,
+.tableStage[data-hand-stage="prompt"] .deckStage,
+.tableStage[data-hand-stage="prompt-out"] .deckStage,
+.tableStage[data-hand-stage="expand"] .deckStage,
+.tableStage[data-hand-stage="deal"] .deckStage,
+.tableStage[data-hand-stage="ready"] .deckStage {
+  bottom: -56px;
+}
 }

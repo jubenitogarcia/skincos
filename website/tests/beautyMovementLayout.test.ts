@@ -42,12 +42,17 @@ test("the finale exposes a non-cancellable five-second merge countdown", async (
     assert.match(experience, /finaleStage === "collecting"/);
     assert.match(experience, /styles\.finaleCountdownSlot/);
     assert.match(experience, /className=\{styles\.finaleCountdown\}/);
+    assert.match(experience, /className=\{styles\.finaleCountdown\}[\s\S]*aria-hidden="true"/);
+    assert.match(experience, /className=\{styles\.srOnly\} role="status" aria-live="polite"[\s\S]*Sua leitura está se reunindo/);
     assert.match(experience, /Sua leitura está se reunindo · 5 segundos/);
     assert.match(experience, /deferRevealContent \? styles\.specialCardRevealContent : undefined/);
     assert.match(styles, /\.finaleCountdownBar \{[\s\S]*animation: finaleCountdownFill var\(--bm-finale-hold-ms\) linear both/);
     assert.match(styles, /\.finaleCountdownSlot \{[\s\S]*min-height: 43px/);
     assert.match(styles, /@keyframes finaleCountdownFill/);
-    assert.match(styles, /\.finaleSpecialCardTransform \.specialCardRevealContent,[\s\S]*\.specialCardStage:not\(\.specialCardStageReopen\) \.specialCardRevealContent[\s\S]*animation-delay: calc\(var\(--bm-special-enter-ms\) \+ 40ms\)/);
+    assert.match(styles, /\.finaleSpecialCardTransform \.specialCardRevealContent \{[\s\S]*opacity: 0/);
+    assert.match(styles, /\.specialCardStage:not\(\.specialCardStageReopen\) \.specialCardRevealContent[\s\S]*animation-delay: calc\(var\(--bm-special-enter-ms\) \+ 40ms\)/);
     assert.match(styles, /\.finaleCountdownBar \{\s*transform: scaleX\(0\.35\);/m);
+    assert.match(styles, /data-hand-stage="prompt-out"/);
+    assert.match(styles, /data-hand-stage="deal"/);
     assert.doesNotMatch(experience, /cancelOnReadingIntent|cancelWhenBackgrounded/);
 });
