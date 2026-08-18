@@ -1,0 +1,129 @@
+name: Sync Atendimento actor secret (Pages)
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Governed reason for reconciling the Pages actor secret with the isolated runtime
+        required: true
+        type: string
+
+concurrency:
+  group: global:crm-cloudflare-writer
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Guard Cloudflare credentials, production gate and Atendimento secret
+        id: guard
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ vars.CRM_GENERAL_PAGES_PROJECT }}
+          ENABLE_PRODUCTION: ${{ vars.ENABLE_CRM_GENERAL_PAGES_DEPLOY }}
+          ATENDIMENTO_ACTOR_HMAC_KEY: ${{ secrets.ATENDIMENTO_ACTOR_HMAC_KEY }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          [[ -n "${TOKEN:-}" && -n "${ACCOUNT_ID:-}" ]] || { echo 'Cloudflare credentials are required.'; exit 1; }
+          [[ "${ENABLE_PRODUCTION:-}" == true ]] || { echo 'ENABLE_CRM_GENERAL_PAGES_DEPLOY must be true for this production secret reconciliation.'; exit 1; }
+          [[ "${PROJECT:-}" == skincos ]] || { echo 'Atendimento production secret reconciliation requires the canonical skincos Pages project.'; exit 1; }
+          [[ "${REASON:-}" =~ ^[^[:space:]][^[:cntrl:]]{7,239}$ ]] || { echo 'A bounded non-secret reason is required.'; exit 1; }
+          [[ -n "${ATENDIMENTO_ACTOR_HMAC_KEY:-}" ]] || { echo 'Missing GitHub secret ATENDIMENTO_ACTOR_HMAC_KEY.'; exit 1; }
+          [[ "${#ATENDIMENTO_ACTOR_HMAC_KEY}" -ge 32 ]] || { echo 'ATENDIMENTO_ACTOR_HMAC_KEY must contain at least 32 characters.'; exit 1; }
+          [[ "${ATENDIMENTO_ACTOR_HMAC_KEY}" != __*__ ]] || { echo 'ATENDIMENTO_ACTOR_HMAC_KEY is a placeholder.'; exit 1; }
+          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout reviewed workflow source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+
+      - name: Acquire CRM Cloudflare writer lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: global:crm-cloudflare-writer
+          module: crm-pages
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-atendimento-pages-secret.json
+
+      - name: Check CRM Cloudflare writer lease before secret mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          resource: global:crm-cloudflare-writer
+          module: crm-pages
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-atendimento-pages-secret.json
+
+      - name: Sync Atendimento actor secret to Pages environments
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.guard.outputs.project }}
+          ATENDIMENTO_ACTOR_HMAC_KEY: ${{ secrets.ATENDIMENTO_ACTOR_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          for env_name in production preview; do
+            printf '%s' "$ATENDIMENTO_ACTOR_HMAC_KEY" | npx --yes wrangler@4.112.0 pages secret put ATENDIMENTO_ACTOR_HMAC_KEY --project-name "$PROJECT" --env "$env_name" >/dev/null
+            echo "Synced ATENDIMENTO_ACTOR_HMAC_KEY for env=$env_name"
+          done
+
+      - name: Verify remote Pages secret metadata
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.guard.outputs.project }}
+        run: |
+          set -euo pipefail
+          project_json="$RUNNER_TEMP/atendimento-pages-project.json"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H 'Content-Type: application/json' \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
+            > "$project_json"
+          PROJECT_JSON="$project_json" python - <<'PY'
+          import json
+          import os
+          with open(os.environ['PROJECT_JSON'], 'r', encoding='utf-8') as handle:
+              payload = json.load(handle)
+          if payload.get('success') is not True:
+              raise SystemExit('Cloudflare API returned success=false')
+          configs = (payload.get('result') or {}).get('deployment_configs') or {}
+          missing = []
+          for environment in ('production', 'preview'):
+              binding = ((configs.get(environment) or {}).get('env_vars') or {}).get('ATENDIMENTO_ACTOR_HMAC_KEY')
+              if not isinstance(binding, dict) or binding.get('type') != 'secret_text':
+                  missing.append(environment)
+          if missing:
+              raise SystemExit('ATENDIMENTO_ACTOR_HMAC_KEY is not a secret binding in: ' + ', '.join(missing))
+          print('ATENDIMENTO_ACTOR_HMAC_KEY secret binding present in production/preview.')
+          PY
+
+      - name: Release CRM Cloudflare writer lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY || secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID || 'legacy-v1' }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-atendimento-pages-secret.json
