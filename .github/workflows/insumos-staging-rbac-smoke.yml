@@ -95,7 +95,7 @@ jobs:
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           resource: global:staging-d1
           module: core
           source_sha: ${{ inputs.release_sha }}
@@ -112,7 +112,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
 
       - name: Generate private synthetic staging identities
         id: fixture
@@ -146,7 +146,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
 
       - name: Execute authenticated unit-scope journey
         env:
@@ -169,7 +169,7 @@ jobs:
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
 
       - name: Tear down only this run's synthetic staging identities
         id: teardown
@@ -195,7 +195,7 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-staging-d1-insumos.json
 
       - name: Reacquire cleanup lease for an orphaned synthetic teardown
@@ -207,7 +207,7 @@ jobs:
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           resource: global:staging-d1
           module: core
           source_sha: ${{ inputs.release_sha }}
@@ -226,7 +226,7 @@ jobs:
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
 
       - name: Tear down orphaned synthetic staging identities under recovery lease
         id: recovery_teardown
@@ -251,7 +251,7 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
-          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           proof_file: ${{ runner.temp }}/skincos-global-coordination-staging-d1-insumos-cleanup.json
 
       - name: Upload sanitised journey evidence
