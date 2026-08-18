@@ -157,6 +157,7 @@
                     "ops/runtime/github-actions-runner/skincos-native-custody.sudoers",
                     "ops/runtime/units/skincos-native-custody-runner.service",
         ".github/workflows/deploy-token-vault.yml",
+        ".github/workflows/attest-meta-ads-candidate-appsecret.yml",
         ".github/workflows/influencer-intelligence-staging-shadow.yml",
         ".github/governance/cloudflare-single-writer-policy.json",
         ".github/scripts/promotion-evidence.mjs",

@@ -203,6 +203,7 @@ const STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES = Object.freeze({
   sourceAuthRejected: 'meta_ads_publish_staging_seed_graph_source_auth_rejected',
   pixelAccessDenied: 'meta_ads_publish_staging_seed_graph_pixel_access_denied',
   appSecretProofMismatch: 'meta_ads_publish_staging_seed_graph_appsecret_proof_mismatch',
+  appSecretProofUnavailable: 'meta_ads_publish_staging_seed_graph_appsecret_proof_unavailable',
   pageAccessDenied: 'meta_ads_publish_staging_seed_graph_page_access_denied',
   datasetAccessDenied: 'meta_ads_publish_staging_seed_graph_dataset_access_denied',
   identityMismatch: 'meta_ads_publish_staging_seed_graph_identity_mismatch',
@@ -379,6 +380,10 @@ export async function handleMetaAdsPublishRequest(input) {
 
   if (request.method === 'POST' && pathname === `${PREFIX}/config/staging-synthetic-seed/attest`) {
     return attestStagingSyntheticMetaAdsTracking({ request, env, requestId });
+  }
+
+  if (request.method === 'POST' && pathname === `${PREFIX}/config/staging-synthetic-seed/attest-appsecret-proof`) {
+    return attestStagingSyntheticMetaAdsTrackingAppSecretProof({ request, env, requestId });
   }
 
   if (request.method === 'POST' && pathname === `${PREFIX}/config/staging-synthetic-seed`) {
@@ -1263,10 +1268,38 @@ export async function bootstrapMetaAdsPublishConfigFromDerivedPlan({
 // available to the operational/config/admin gateway roles; index.js exposes it
 // only to a release-scoped, candidate-only bearer.
 export async function attestStagingSyntheticMetaAdsTracking({ request, env, requestId }) {
+  return runStagingSyntheticMetaAdsTrackingAttestation({ request, env, requestId });
+}
+
+// This separate candidate-only diagnostic is intentionally stricter than the
+// regular source attestation: success proves the inherited Worker binding did
+// generate an appsecret_proof for the same bounded Graph reads. It remains
+// read-only and never becomes a generic secret-presence oracle.
+export async function attestStagingSyntheticMetaAdsTrackingAppSecretProof({ request, env, requestId }) {
+  return runStagingSyntheticMetaAdsTrackingAttestation({
+    request,
+    env,
+    requestId,
+    requireAppSecretProof: true,
+  });
+}
+
+async function runStagingSyntheticMetaAdsTrackingAttestation({
+  request,
+  env,
+  requestId,
+  requireAppSecretProof = false,
+}) {
   try {
     assertStagingSyntheticSeedAttestationEnvironment(env);
     const input = await readStagingSyntheticSeedInput(request);
     const auth = await buildStagingSyntheticSeedGraphAuth(input, env);
+    if (requireAppSecretProof && !clean(auth.appSecretProof)) {
+      throw stagingSyntheticSeedFailure(
+        STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES.appSecretProofUnavailable,
+        409,
+      );
+    }
     await discoverStagingSyntheticSeedFacts({
       input,
       auth,
@@ -1275,7 +1308,9 @@ export async function attestStagingSyntheticMetaAdsTracking({ request, env, requ
       maxGraphAttempts: STAGING_SYNTHETIC_SEED_ATTEST_MAX_GRAPH_ATTEMPTS,
       probeAppSecretProof: true,
     });
-    return stagingSyntheticSeedAttestationSuccess({ requestId, operationKey: input.operationKey });
+    return requireAppSecretProof
+      ? stagingSyntheticSeedAppSecretProofAttestationSuccess({ requestId })
+      : stagingSyntheticSeedAttestationSuccess({ requestId, operationKey: input.operationKey });
   } catch (error) {
     return stagingSyntheticSeedFailureResponse(normalizeStagingSyntheticSeedError(error), requestId);
   }
@@ -1587,6 +1622,7 @@ function stagingSyntheticSeedFailureResponse(error, requestId) {
     'meta_ads_publish_staging_seed_graph_source_auth_rejected',
     'meta_ads_publish_staging_seed_graph_pixel_access_denied',
     'meta_ads_publish_staging_seed_graph_appsecret_proof_mismatch',
+    'meta_ads_publish_staging_seed_graph_appsecret_proof_unavailable',
     'meta_ads_publish_staging_seed_graph_page_access_denied',
     'meta_ads_publish_staging_seed_graph_dataset_access_denied',
     'meta_ads_publish_staging_seed_graph_identity_mismatch',
@@ -1637,6 +1673,15 @@ function stagingSyntheticSeedAttestationSuccess({ requestId, operationKey }) {
     ok: true,
     attestation: 'match',
     operation_key: operationKey,
+    contract_version: STAGING_SYNTHETIC_SEED_CONTRACT,
+    requestId,
+  });
+}
+
+function stagingSyntheticSeedAppSecretProofAttestationSuccess({ requestId }) {
+  return response({
+    ok: true,
+    attestation: 'appsecret_proof_verified',
     contract_version: STAGING_SYNTHETIC_SEED_CONTRACT,
     requestId,
   });

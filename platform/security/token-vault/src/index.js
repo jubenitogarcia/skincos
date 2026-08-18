@@ -17,6 +17,7 @@ const META_ADS_PUBLISH_CONFIG_BOOTSTRAP_DERIVE_PATH = `${META_ADS_PUBLISH_CONFIG
 const META_ADS_PUBLISH_CONFIG_STAGING_EXERCISE_PATH = `${META_ADS_PUBLISH_CONFIG_PATH}/staging-exercise`;
 const META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH = `${META_ADS_PUBLISH_CONFIG_PATH}/staging-synthetic-seed`;
 const META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ATTEST_PATH = `${META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH}/attest`;
+const META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ATTEST_APPSECRET_PROOF_PATH = `${META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH}/attest-appsecret-proof`;
 const META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ROLLBACK_PATH = `${META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH}/rollback`;
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -67,6 +68,7 @@ export async function handleRequest(request, env) {
       if (
         request.method !== 'POST' || ![
           META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ATTEST_PATH,
+          META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ATTEST_APPSECRET_PROOF_PATH,
           META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH,
           META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ROLLBACK_PATH,
         ].includes(pathname)
@@ -89,6 +91,7 @@ export async function handleRequest(request, env) {
     // can call these routes, and only with POST.
     if ([
       META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ATTEST_PATH,
+      META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ATTEST_APPSECRET_PROOF_PATH,
       META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_PATH,
       META_ADS_PUBLISH_CONFIG_STAGING_SYNTHETIC_SEED_ROLLBACK_PATH,
     ].includes(pathname)) {
@@ -651,7 +654,7 @@ function contract(requestId) {
       meta_ads_config_secret: 'TOKEN_VAULT_META_ADS_CONFIG_TOKEN',
       meta_ads_config_scope: 'health|contract|meta-ads-config-read|meta-ads-config-bootstrap|meta-ads-config-bootstrap-rollback|meta-ads-config-bootstrap-derive-plan|meta-ads-config-bootstrap-derive|meta-ads-config-staging-exercise',
       meta_ads_staging_seed_secret: 'TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN',
-      meta_ads_staging_seed_scope: 'meta-ads-config-staging-synthetic-seed-attest|meta-ads-config-staging-synthetic-seed|meta-ads-config-staging-synthetic-seed-rollback',
+      meta_ads_staging_seed_scope: 'meta-ads-config-staging-synthetic-seed-attest|meta-ads-config-staging-synthetic-seed-attest-appsecret-proof|meta-ads-config-staging-synthetic-seed|meta-ads-config-staging-synthetic-seed-rollback',
     },
     storage: {
       d1_binding: 'TOKEN_VAULT_DB',

@@ -71,6 +71,7 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.equal(surface?.coordinationGroup, "token-vault-writer");
   assert.deepEqual(surface?.mutationWorkflows, [
     ".github/workflows/deploy-token-vault.yml",
+    ".github/workflows/attest-meta-ads-candidate-appsecret.yml",
     ".github/workflows/influencer-intelligence-staging-shadow.yml",
   ]);
 
@@ -78,7 +79,7 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   const tokenVaultUnit = catalog.units.find((unit) => unit.id === "token-vault");
   assert.ok(tokenVaultUnit);
   assert.ok(!catalog.nonPublishingSurfaces.some((entry) => entry.id === "token-vault"));
-  assert.ok(tokenVaultUnit.resources.includes("Governed Meta Ads staging synthetic source attestation, seed, bootstrap derivation, rollback journal and paused creative fixture"));
+  assert.ok(tokenVaultUnit.resources.includes("Governed Meta Ads staging synthetic source and appsecret-proof attestations, seed, bootstrap derivation, rollback journal and paused creative fixture"));
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_CONFIG_TOKEN"));
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST"));
   assert.ok(tokenVaultUnit.secrets.includes("META_ADS_ACCESS_TOKEN"));
@@ -274,6 +275,7 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/test-native-custody-contract.sh"));
   assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/promote-native-source-release.sh"));
   assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes("scripts/runtime/test-promote-native-source-release.sh"));
+  assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes(".github/workflows/attest-meta-ads-candidate-appsecret.yml"));
   assert.ok(globalPolicy.releaseClosures["token-vault"].patterns.includes(".github/workflows/influencer-intelligence-staging-shadow.yml"));
   const shadow = read(".github/workflows/influencer-intelligence-staging-shadow.yml");
   assert.match(shadow, /group: deploy-token-vault-staging/);
