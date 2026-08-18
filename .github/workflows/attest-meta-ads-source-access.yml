@@ -194,13 +194,23 @@ jobs:
 
           for (const pair of destinationPairs) {
             const pageIdentity = await directRead(
-              `${pair.pageId}?fields=id,instagram_business_account{id}`,
+              `${pair.pageId}?fields=id`,
               `source_destination_page_${pair.destinationKey}_identity`,
             );
-            if (
-              numericId(pageIdentity?.id) !== pair.pageId ||
-              numericId(pageIdentity?.instagram_business_account?.id) !== pair.instagramId
-            ) {
+            if (!numericId(pageIdentity?.id)) {
+              fail(`source_destination_page_${pair.destinationKey}_identity_malformed`);
+            }
+            if (numericId(pageIdentity.id) !== pair.pageId) {
+              fail('source_destination_page_pair_mismatch');
+            }
+            const pageInstagram = await directRead(
+              `${pair.pageId}?fields=instagram_business_account{id}`,
+              `source_destination_page_${pair.destinationKey}_instagram`,
+            );
+            if (!numericId(pageInstagram?.instagram_business_account?.id)) {
+              fail(`source_destination_page_${pair.destinationKey}_instagram_malformed`);
+            }
+            if (numericId(pageInstagram.instagram_business_account.id) !== pair.instagramId) {
               fail('source_destination_page_pair_mismatch');
             }
             const pagePresentation = await directRead(

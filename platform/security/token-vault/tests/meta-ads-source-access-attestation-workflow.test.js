@@ -137,11 +137,13 @@ function happyResponses() {
     },
     {
       pathname: `/v25.0/${syntheticNovoPageId}`,
-      query: { fields: "id,instagram_business_account{id}" },
-      payload: {
-        id: syntheticNovoPageId,
-        instagram_business_account: { id: syntheticNovoInstagramId },
-      },
+      query: { fields: "id" },
+      payload: { id: syntheticNovoPageId },
+    },
+    {
+      pathname: `/v25.0/${syntheticNovoPageId}`,
+      query: { fields: "instagram_business_account{id}" },
+      payload: { instagram_business_account: { id: syntheticNovoInstagramId } },
     },
     {
       pathname: `/v25.0/${syntheticNovoPageId}`,
@@ -153,11 +155,13 @@ function happyResponses() {
     },
     {
       pathname: `/v25.0/${syntheticBarraPageId}`,
-      query: { fields: "id,instagram_business_account{id}" },
-      payload: {
-        id: syntheticBarraPageId,
-        instagram_business_account: { id: syntheticBarraInstagramId },
-      },
+      query: { fields: "id" },
+      payload: { id: syntheticBarraPageId },
+    },
+    {
+      pathname: `/v25.0/${syntheticBarraPageId}`,
+      query: { fields: "instagram_business_account{id}" },
+      payload: { instagram_business_account: { id: syntheticBarraInstagramId } },
     },
     {
       pathname: `/v25.0/${syntheticBarraPageId}`,
@@ -213,6 +217,7 @@ test("Meta Ads source-access attestation is manual, GET-only, and bound to two s
   assert.match(workflow, /source_destination_page_pair_duplicate/);
   assert.match(workflow, /source_destination_page_pair_mismatch/);
   assert.match(workflow, /source_destination_page_\$\{pair\.destinationKey\}_identity/);
+  assert.match(workflow, /source_destination_page_\$\{pair\.destinationKey\}_instagram/);
   assert.match(workflow, /source_destination_page_\$\{pair\.destinationKey\}_presentation/);
   assert.match(workflow, /source_access_novohamburgo_page_instagram=eligible/);
   assert.match(workflow, /source_access_barrashopppingsul_page_instagram=eligible/);
@@ -237,7 +242,7 @@ test("Meta Ads source-access verifier proves both assigned Page and Instagram pa
   const result = runVerifier(happyResponses());
   const combined = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 9);
+  assert.equal(result.requestCount, 11);
   assert.equal(
     result.stdout,
     [
@@ -284,7 +289,7 @@ test("Meta Ads source-access verifier accepts Profile Plus advertising and exact
   const result = runVerifier(responses);
   const combined = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 9);
+  assert.equal(result.requestCount, 11);
   assert.match(result.stdout, /source_access_raw=verified/);
   assertNoSyntheticInputs(combined);
 });
@@ -360,14 +365,14 @@ test("Meta Ads source-access verifier rejects duplicate, paged, and swapped dest
   assert.match(`${paged.stdout}${paged.stderr}`, /source_system_user_pages_paging_ambiguous/);
 
   const swappedResponses = happyResponses();
-  swappedResponses[6].payload.instagram_business_account.id = syntheticNovoInstagramId;
-  const swapped = runVerifier(swappedResponses, { expectedRequests: 7 });
+  swappedResponses[8].payload.instagram_business_account.id = syntheticNovoInstagramId;
+  const swapped = runVerifier(swappedResponses, { expectedRequests: 9 });
   assert.notEqual(swapped.status, 0);
-  assert.equal(swapped.requestCount, 7);
+  assert.equal(swapped.requestCount, 9);
   assert.match(`${swapped.stdout}${swapped.stderr}`, /source_destination_page_pair_mismatch/);
 });
 
-test("Meta Ads source-access verifier separates Page identity and presentation failures", () => {
+test("Meta Ads source-access verifier separates Page identity, Instagram relation, and presentation failures", () => {
   const identityResponses = happyResponses();
   identityResponses[4] = {
     ...identityResponses[4],
@@ -382,16 +387,30 @@ test("Meta Ads source-access verifier separates Page identity and presentation f
   assert.doesNotMatch(identityCombined, /synthetic identity field detail|source_access_raw=verified/);
   assertNoSyntheticInputs(identityCombined);
 
+  const instagramResponses = happyResponses();
+  instagramResponses[5] = {
+    ...instagramResponses[5],
+    status: 400,
+    payload: { error: { code: 100, message: "synthetic Instagram field detail" } },
+  };
+  const instagram = runVerifier(instagramResponses, { expectedRequests: 6 });
+  const instagramCombined = `${instagram.stdout}${instagram.stderr}`;
+  assert.notEqual(instagram.status, 0);
+  assert.equal(instagram.requestCount, 6);
+  assert.match(instagramCombined, /source_destination_page_novo_hamburgo_instagram_malformed/);
+  assert.doesNotMatch(instagramCombined, /synthetic Instagram field detail|source_access_raw=verified/);
+  assertNoSyntheticInputs(instagramCombined);
+
   const presentationResponses = happyResponses();
-  presentationResponses[5] = {
-    ...presentationResponses[5],
+  presentationResponses[6] = {
+    ...presentationResponses[6],
     status: 400,
     payload: { error: { code: 100, message: "synthetic presentation field detail" } },
   };
-  const presentation = runVerifier(presentationResponses, { expectedRequests: 6 });
+  const presentation = runVerifier(presentationResponses, { expectedRequests: 7 });
   const presentationCombined = `${presentation.stdout}${presentation.stderr}`;
   assert.notEqual(presentation.status, 0);
-  assert.equal(presentation.requestCount, 6);
+  assert.equal(presentation.requestCount, 7);
   assert.match(presentationCombined, /source_destination_page_novo_hamburgo_presentation_malformed/);
   assert.doesNotMatch(presentationCombined, /synthetic presentation field detail|source_access_raw=verified/);
   assertNoSyntheticInputs(presentationCombined);
