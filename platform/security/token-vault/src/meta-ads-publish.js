@@ -2254,17 +2254,45 @@ async function discoverStagingSyntheticSeedFacts({
     };
   }
 
-  const datasets = await read(
-    `act_${input.accountId}/offline_conversion_data_sets`,
-    'id',
-    { limit: '2' },
+  // The legacy ad-account Offline Conversions edge is no longer the current
+  // AdsDataset contract. Resolve the account's owning Business, then use the
+  // bounded Business `ads_dataset` edge exposed by Meta's current SDK schema.
+  const account = await read(
+    `act_${input.accountId}`,
+    'id,business{id}',
+    {},
     failureCodes.datasetAccessDenied,
+    failureCodes.identityMalformed,
+  );
+  const accountId = normalizeStagingSyntheticSeedGraphId(
+    account.id,
+    'dataset_account_id',
+    failureCodes.identityMalformed,
+  );
+  if (accountId !== input.accountId) {
+    throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
+  }
+  const businessId = normalizeStagingSyntheticSeedGraphId(
+    asObject(account.business).id,
+    'dataset_business_id',
+    failureCodes.identityMalformed,
+  );
+  const datasets = await read(
+    `${businessId}/ads_dataset`,
+    'id,dataset_id',
+    { limit: String(STAGING_SYNTHETIC_SEED_MAX_GRAPH_OBJECTS) },
+    failureCodes.datasetAccessDenied,
+    failureCodes.identityMalformed,
   );
   if (clean(asObject(datasets.paging).next) || safeArray(datasets.data).length !== 1) {
     throw stagingSyntheticSeedFailure(failureCodes.datasetAmbiguous, 409);
   }
+  const datasetEntry = asObject(safeArray(datasets.data)[0]);
+  const datasetIdentifier = /^\d{5,30}$/.test(clean(datasetEntry.id))
+    ? datasetEntry.id
+    : datasetEntry.dataset_id;
   const datasetId = normalizeStagingSyntheticSeedGraphId(
-    asObject(safeArray(datasets.data)[0]).id,
+    datasetIdentifier,
     'offline_dataset_id',
     failureCodes.identityMalformed,
   );
