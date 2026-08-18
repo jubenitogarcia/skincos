@@ -120,9 +120,18 @@ jobs:
             }
           };
 
-          const pixel = await directRead(`${pixelId}?fields=id,owner_ad_account{id}`, 'source_pixel');
-          if (numericId(pixel?.id) !== pixelId || numericId(pixel?.owner_ad_account?.id) !== accountId) {
-            fail('source_pixel_mismatch');
+          // Keep the bare asset read separate from the owner relation. A denial
+          // now identifies whether the source cannot read the Pixel at all or
+          // cannot read the relation required by the staging seed contract.
+          const pixel = await directRead(`${pixelId}?fields=id`, 'source_pixel');
+          if (numericId(pixel?.id) !== pixelId) fail('source_pixel_mismatch');
+
+          const pixelOwner = await directRead(
+            `${pixelId}?fields=owner_ad_account{id}`,
+            'source_pixel_owner_relation',
+          );
+          if (numericId(pixelOwner?.owner_ad_account?.id) !== accountId) {
+            fail('source_pixel_owner_relation_mismatch');
           }
 
           const pages = await directRead(

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   attestStagingSyntheticMetaAdsTracking,
+  attestStagingSyntheticMetaAdsTrackingAppSecretProof,
   rollbackStagingSyntheticMetaAdsTracking,
   seedStagingSyntheticMetaAdsTracking,
 } from '../src/meta-ads-publish.js';
@@ -498,6 +499,29 @@ async function attest({ db, graph, operationKey, env = {}, requestOverrides = {}
   });
 }
 
+function appSecretProofAttestRequest(operationKey, overrides = {}) {
+  return new Request('https://token-vault.invalid/v1/meta-ads-publish/config/staging-synthetic-seed/attest-appsecret-proof', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      operation_key: operationKey,
+      access_token: SOURCE_ACCESS_TOKEN,
+      account_id: ACCOUNT_ID,
+      pixel_id: PIXEL_ID,
+      api_version: 'v25.0',
+      ...overrides,
+    }),
+  });
+}
+
+async function attestAppSecretProof({ db, graph, operationKey, env = {}, requestOverrides = {} }) {
+  return attestStagingSyntheticMetaAdsTrackingAppSecretProof({
+    request: appSecretProofAttestRequest(operationKey, requestOverrides),
+    env: environment(db, graph, env),
+    requestId: 'seed-appsecret-proof-attestation-test-request-id',
+  });
+}
+
 function rollbackRequest(operationKey, overrides = {}) {
   return new Request('https://token-vault.invalid/v1/meta-ads-publish/config/staging-synthetic-seed/rollback', {
     method: 'POST',
@@ -783,6 +807,143 @@ test('staging seed attestation identifies a rejected appsecret proof without mut
   assert.equal(db.tokens.length, 0);
   assert.equal(db.locks.size, 0);
   assert.equal(db.adsetLocks.size, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
+test('candidate appsecret-proof attestation fails closed before Graph or D1 when the inherited proof binding is unavailable', async () => {
+  const db = new SeedDb();
+  db.prepare = () => {
+    throw new Error('D1 must remain untouched by candidate proof attestation');
+  };
+  const graph = new FakeGraph();
+  const response = await attestAppSecretProof({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:candidate-proof-unavailable-001',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_graph_appsecret_proof_unavailable');
+  assert.equal(graph.calls.length, 0);
+  assert.equal(graph.postCalls.length, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
+test('candidate appsecret-proof attestation remains staging-only before it reads Graph or D1', async () => {
+  const db = new SeedDb();
+  const graph = new FakeGraph();
+  const response = await attestAppSecretProof({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:candidate-proof-production-denied-001',
+    env: {
+      ENVIRONMENT: 'production',
+      META_APP_SECRET: 'unit-test-app-secret-not-a-real-secret',
+    },
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_disabled');
+  assert.equal(graph.calls.length, 0);
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+});
+
+test('candidate appsecret-proof attestation verifies only bounded proof-bearing Graph reads without D1', async () => {
+  const db = new SeedDb();
+  db.prepare = () => {
+    throw new Error('D1 must remain untouched by candidate proof attestation');
+  };
+  const graph = new FakeGraph();
+  const observedReads = [];
+  const response = await attestAppSecretProof({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:candidate-proof-verified-001',
+    env: {
+      META_APP_SECRET: 'unit-test-app-secret-not-a-real-secret',
+      META_GRAPH_FETCH: async (url, init) => {
+        const target = new URL(url);
+        observedReads.push({
+          path: target.pathname.replace(/^\/v\d+\.0\//, ''),
+          method: String(init.method || 'GET').toUpperCase(),
+          hasProof: target.searchParams.has('appsecret_proof'),
+        });
+        return graph.fetch(url, init);
+      },
+    },
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(body, {
+    ok: true,
+    attestation: 'appsecret_proof_verified',
+    contract_version: 'meta-ads-tracking-v20/staging-synthetic-seed/v1',
+    requestId: 'seed-appsecret-proof-attestation-test-request-id',
+  });
+  assert.deepEqual(observedReads.map((read) => read.path), [
+    PIXEL_ID,
+    'me/accounts',
+    PAGE_ID,
+    `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+  ]);
+  assert.ok(observedReads.every((read) => read.method === 'GET' && read.hasProof));
+  assert.equal(graph.calls.length, 4);
+  assert.equal(graph.postCalls.length, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
+test('candidate appsecret-proof attestation preserves the sanitized proof mismatch without D1 or Graph mutation', async () => {
+  const db = new SeedDb();
+  db.prepare = () => {
+    throw new Error('D1 must remain untouched by candidate proof attestation');
+  };
+  const graph = new FakeGraph();
+  const observedReads = [];
+  const response = await attestAppSecretProof({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:candidate-proof-mismatch-001',
+    env: {
+      META_APP_SECRET: 'unit-test-app-secret-not-a-real-secret',
+      META_GRAPH_FETCH: async (url, init) => {
+        const target = new URL(url);
+        observedReads.push({
+          path: target.pathname.replace(/^\/v\d+\.0\//, ''),
+          method: String(init.method || 'GET').toUpperCase(),
+          hasProof: target.searchParams.has('appsecret_proof'),
+        });
+        if (target.searchParams.has('appsecret_proof')) {
+          return graphResponse({ error: { message: 'proof rejected', code: 10 } }, 403);
+        }
+        return graph.fetch(url, init);
+      },
+    },
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_graph_appsecret_proof_mismatch');
+  assert.deepEqual(observedReads, [
+    { path: PIXEL_ID, method: 'GET', hasProof: true },
+    { path: PIXEL_ID, method: 'GET', hasProof: false },
+  ]);
+  assert.equal(graph.postCalls.length, 0);
   const serialized = JSON.stringify(body);
   for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID]) {
     assert.equal(serialized.includes(value), false);

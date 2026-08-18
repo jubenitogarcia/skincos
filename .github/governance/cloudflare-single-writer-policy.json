@@ -186,6 +186,7 @@
       "coordinationGroup": "token-vault-writer",
       "mutationWorkflows": [
         ".github/workflows/deploy-token-vault.yml",
+        ".github/workflows/attest-meta-ads-candidate-appsecret.yml",
         ".github/workflows/influencer-intelligence-staging-shadow.yml"
       ]
     },
