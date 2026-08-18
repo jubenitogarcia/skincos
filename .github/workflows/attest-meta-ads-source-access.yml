@@ -151,11 +151,27 @@ jobs:
           );
           if (!Array.isArray(pages?.data)) fail('source_pages_malformed');
           if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_paging_ambiguous');
-          const eligiblePages = pages.data.filter((page) => {
+          const pageFacts = pages.data.map((page) => {
             const tasks = new Set(Array.isArray(page?.tasks) ? page.tasks.map((task) => String(task || '').trim().toUpperCase()) : []);
-            return tasks.has('ADVERTISE') && Boolean(numericId(page?.instagram_business_account?.id));
+            const hasAdvertiseTask = tasks.has('ADVERTISE') || tasks.has('PROFILE_PLUS_ADVERTISE');
+            const hasInstagramLink = Boolean(numericId(page?.instagram_business_account?.id));
+            return {
+              page,
+              hasAdvertiseTask,
+              hasInstagramLink,
+              eligible: hasAdvertiseTask && hasInstagramLink,
+            };
           });
-          if (eligiblePages.length === 0) fail('source_pages_none_eligible');
+          const eligiblePages = pageFacts.filter((fact) => fact.eligible).map((fact) => fact.page);
+          if (eligiblePages.length === 0) {
+            if (pageFacts.length === 0) fail('source_pages_none_visible');
+            const hasAdvertiseTask = pageFacts.some((fact) => fact.hasAdvertiseTask);
+            const hasInstagramLink = pageFacts.some((fact) => fact.hasInstagramLink);
+            if (!hasAdvertiseTask && !hasInstagramLink) fail('source_pages_advertise_and_instagram_missing');
+            if (!hasAdvertiseTask) fail('source_pages_advertise_task_missing');
+            if (!hasInstagramLink) fail('source_pages_instagram_link_missing');
+            fail('source_pages_task_instagram_unpaired');
+          }
           if (eligiblePages.length > 1) fail('source_pages_multiple_eligible');
           const pageId = numericId(eligiblePages[0].id);
           const instagramId = numericId(eligiblePages[0].instagram_business_account.id);
