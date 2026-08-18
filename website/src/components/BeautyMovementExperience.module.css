@@ -3111,12 +3111,17 @@
   bottom: -56px;
 }
 
+.finaleCountdownSlot {
+  width: min(100%, 620px);
+  min-height: 43px;
+  margin: -2px auto clamp(10px, 1.6vw, 16px);
+  padding: 0 10px;
+}
+
 .finaleCountdown {
   display: grid;
   gap: 8px;
-  width: min(100%, 620px);
-  margin: -2px auto clamp(10px, 1.6vw, 16px);
-  padding: 0 10px;
+  width: 100%;
   color: rgba(244, 238, 223, 0.82);
   font-family: var(--font-brand-ui), sans-serif;
   text-align: center;
@@ -3159,6 +3164,7 @@
   width: 100%;
 }
 
+.finaleSpecialCardTransform .specialCardRevealContent,
 .specialCardStage:not(.specialCardStageReopen) .specialCardRevealContent {
   opacity: 0;
   animation: specialCardRevealContentIn 360ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
@@ -3204,6 +3210,7 @@
 @media (prefers-reduced-motion: reduce) {
   .finaleCountdown,
   .finaleCountdownBar,
+  .finaleSpecialCardTransform .specialCardRevealContent,
   .specialCardStage:not(.specialCardStageReopen) .specialCardRevealContent {
     animation: none !important;
     opacity: 1;
@@ -3212,7 +3219,7 @@
   }
 
   .finaleCountdownBar {
-    transform: scaleX(1);
+    transform: scaleX(0.35);
   }
 }
 

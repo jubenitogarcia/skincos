@@ -302,8 +302,10 @@ export default function BeautyMovementExperience({
     const scrollInterruptCleanupRef = useRef<(() => void) | null>(null);
     const initialDealScrollFrameRef = useRef<number | null>(null);
     const initialDealScrollActiveRef = useRef(false);
+    const initialDealScrollInterruptCleanupRef = useRef<(() => void) | null>(null);
     const tableRef = useRef<HTMLElement | null>(null);
     const tableSurfaceRef = useRef<HTMLDivElement | null>(null);
+    const finaleCountdownRef = useRef<HTMLDivElement | null>(null);
     const progressListRef = useRef<HTMLOListElement | null>(null);
     const progressButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const confirmationActionRef = useRef<HTMLElement | null>(null);
@@ -490,6 +492,8 @@ export default function BeautyMovementExperience({
                 window.cancelAnimationFrame(initialDealScrollFrameRef.current);
             }
             initialDealScrollActiveRef.current = false;
+            initialDealScrollInterruptCleanupRef.current?.();
+            initialDealScrollInterruptCleanupRef.current = null;
             scrollInterruptCleanupRef.current?.();
         };
     }, []);
@@ -673,7 +677,8 @@ export default function BeautyMovementExperience({
             const titleRect = title.getBoundingClientRect();
             const titleTop = window.scrollY + titleRect.top;
             const titleFits = titleRect.height <= window.innerHeight - headerOffset - 16;
-            if (titleFits) {
+            const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
+            if (titleFits && !isStackedLayout) {
                 const titleTarget = Math.max(0, titleTop - headerOffset - 12);
                 return Math.min(fittedTarget, titleTarget);
             }
@@ -688,6 +693,8 @@ export default function BeautyMovementExperience({
             window.cancelAnimationFrame(initialDealScrollFrameRef.current);
             initialDealScrollFrameRef.current = null;
         }
+        initialDealScrollInterruptCleanupRef.current?.();
+        initialDealScrollInterruptCleanupRef.current = null;
     }
 
     function startInitialDealScroll() {
@@ -704,6 +711,18 @@ export default function BeautyMovementExperience({
         // every frame avoids a one-time target becoming stale during layout
         // transitions and lets the scroll itself trigger the header collapse.
         initialDealScrollActiveRef.current = true;
+        const interruptOnUserIntent = () => stopInitialDealScroll();
+        const removeFollowInterrupts = () => {
+            window.removeEventListener("wheel", interruptOnUserIntent);
+            window.removeEventListener("touchstart", interruptOnUserIntent);
+            window.removeEventListener("pointerdown", interruptOnUserIntent);
+            window.removeEventListener("keydown", interruptOnUserIntent);
+        };
+        window.addEventListener("wheel", interruptOnUserIntent, { passive: true, once: true });
+        window.addEventListener("touchstart", interruptOnUserIntent, { passive: true, once: true });
+        window.addEventListener("pointerdown", interruptOnUserIntent, { passive: true, once: true });
+        window.addEventListener("keydown", interruptOnUserIntent, { once: true });
+        initialDealScrollInterruptCleanupRef.current = removeFollowInterrupts;
         let previousTime = performance.now();
         const follow = (now: number) => {
             if (!initialDealScrollActiveRef.current || !mountedRef.current) {
@@ -778,6 +797,28 @@ export default function BeautyMovementExperience({
 
         scrollAnimationFrameRef.current = window.requestAnimationFrame(animate);
     }
+
+    useEffect(() => {
+        if (finaleStage !== "collecting") return;
+
+        const frame = window.requestAnimationFrame(() => {
+            const countdown = finaleCountdownRef.current;
+            if (!countdown) return;
+
+            const stickyHeader = document.querySelector("header");
+            const headerRect = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect() : null;
+            const headerOffset = headerRect
+                ? Math.max(0, Math.min(headerRect.height, headerRect.bottom)) + 12
+                : 24;
+            const countdownTop = window.scrollY + countdown.getBoundingClientRect().top;
+            const targetTop = Math.max(0, countdownTop - headerOffset);
+            if (Math.abs(targetTop - window.scrollY) > 8) {
+                window.scrollTo({ top: targetTop, behavior: reducedMotion ? "auto" : "smooth" });
+            }
+        });
+
+        return () => window.cancelAnimationFrame(frame);
+    }, [finaleStage, reducedMotion]);
 
     function scrollToTable() {
         const target = tableRef.current;
@@ -1447,7 +1488,12 @@ export default function BeautyMovementExperience({
         );
     }
 
-    function renderSpecialCard(revealed: boolean, action: SpecialCardAction = "none", settled = false) {
+    function renderSpecialCard(
+        revealed: boolean,
+        action: SpecialCardAction = "none",
+        settled = false,
+        deferRevealContent = false,
+    ) {
         const showRevealAction = action !== "none";
         const kind: SpecialCardKind = revealed
             ? hasCourtesyClass
@@ -1509,7 +1555,7 @@ export default function BeautyMovementExperience({
                     >
                         <BrandMark className={styles.specialCardBrand} loading="eager" tone="light" title="" />
                         <span className={styles.specialCardBackLabel}>CARTA ESPECIAL</span>
-                        <div className={showRevealAction ? styles.specialCardRevealContent : undefined}>
+                        <div className={deferRevealContent ? styles.specialCardRevealContent : undefined}>
                             <strong>A soma da sua leitura está pronta.</strong>
                             {showRevealAction ? (
                                 <div
@@ -1729,18 +1775,22 @@ export default function BeautyMovementExperience({
 
                     </div>
 
-                    {finaleStage === "collecting" ? (
-                        <div
-                            className={styles.finaleCountdown}
-                            role="status"
-                            aria-live="polite"
-                            aria-label="Sua leitura está se reunindo. A carta especial aparece em cinco segundos."
-                        >
-                            <span className={styles.finaleCountdownLabel}>Sua leitura está se reunindo</span>
-                            <span className={styles.finaleCountdownTrack} aria-hidden="true">
-                                <span className={styles.finaleCountdownBar} />
-                            </span>
-                            <span className={styles.srOnly}>A carta especial aparece em cinco segundos.</span>
+                    {finaleStage === "assembling" || finaleStage === "collecting" || finaleStage === "merging" ? (
+                        <div className={styles.finaleCountdownSlot} ref={finaleCountdownRef}>
+                            {finaleStage === "collecting" ? (
+                                <div
+                                    className={styles.finaleCountdown}
+                                    role="status"
+                                    aria-live="polite"
+                                    aria-label="Sua leitura está se reunindo. A carta especial aparece em cinco segundos."
+                                >
+                                    <span className={styles.finaleCountdownLabel}>Sua leitura está se reunindo · 5 segundos</span>
+                                    <span className={styles.finaleCountdownTrack} aria-hidden="true">
+                                        <span className={styles.finaleCountdownBar} />
+                                    </span>
+                                    <span className={styles.srOnly}>A carta especial aparece em cinco segundos.</span>
+                                </div>
+                            ) : null}
                         </div>
                     ) : null}
 
@@ -1803,7 +1853,7 @@ export default function BeautyMovementExperience({
                                 {reading.map(renderFinaleCard)}
                                 {finaleStage === "merging" ? (
                                     <div className={styles.finaleSpecialCardTransform}>
-                                        {renderSpecialCard(false)}
+                                        {renderSpecialCard(false, "none", false, true)}
                                     </div>
                                 ) : null}
                             </div>
@@ -1814,7 +1864,7 @@ export default function BeautyMovementExperience({
                                 aria-label="Carta especial da celebração"
                             >
                                 {!isLocalPreview ? renderConfirmationAction() : null}
-                                {renderSpecialCard(false, isLocalPreview ? "confirm" : "none", true)}
+                                {renderSpecialCard(false, isLocalPreview ? "confirm" : "none", true, true)}
                             </div>
                         ) : finaleStage === "result" ? (
                             <div
