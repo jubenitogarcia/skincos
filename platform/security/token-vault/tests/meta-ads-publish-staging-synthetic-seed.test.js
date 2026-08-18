@@ -12,6 +12,7 @@ const PIXEL_ID = '99444000000000001';
 const PAGE_ID = '12000000000000001';
 const INSTAGRAM_ID = '17841400000000002';
 const DATASET_ID = '19944000000000001';
+const SYSTEM_USER_ID = '15500000000000001';
 const SOURCE_ACCESS_TOKEN = 'unit-test-source-access-token-not-a-real-secret';
 const MISMATCH_ACCOUNT_ID = '17841400000000009';
 
@@ -652,6 +653,190 @@ test('staging seed attestation bounds Graph discovery and returns no source fact
   }
 });
 
+test('staging seed attestation falls back to one explicit System User Page only after an empty direct Page list', async () => {
+  const db = new SeedDb();
+  db.prepare = () => {
+    throw new Error('D1 must remain untouched by System User Page discovery');
+  };
+  const graph = new FakeGraph({
+    readResponses: {
+      'me/accounts': { body: { data: [] } },
+      me: { body: { id: SYSTEM_USER_ID } },
+      [`${SYSTEM_USER_ID}/assigned_pages`]: {
+        body: {
+          data: [{
+            id: PAGE_ID,
+            tasks: ['ADVERTISE'],
+            instagram_business_account: { id: INSTAGRAM_ID },
+          }],
+        },
+      },
+    },
+  });
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-system-user-page-001',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.attestation, 'match');
+  assert.deepEqual(graph.calls.map((call) => call.path), [
+    PIXEL_ID,
+    `act_${ACCOUNT_ID}/adspixels`,
+    'me/accounts',
+    'me',
+    `${SYSTEM_USER_ID}/assigned_pages`,
+    PAGE_ID,
+    `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+  ]);
+  assert.ok(graph.calls.every((call) => call.method === 'GET'));
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID, SYSTEM_USER_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
+test('staging seed attestation rejects malformed or nonunique System User Page assignments before Page or dataset reads', async () => {
+  const cases = [
+    {
+      label: 'malformed',
+      payload: { data: false },
+      expectedError: 'meta_ads_publish_staging_seed_graph_identity_malformed',
+    },
+    {
+      label: 'multiple',
+      payload: {
+        data: [
+          { id: PAGE_ID, tasks: ['ADVERTISE'], instagram_business_account: { id: INSTAGRAM_ID } },
+          { id: MISMATCH_ACCOUNT_ID, tasks: ['ADVERTISE'], instagram_business_account: { id: INSTAGRAM_ID } },
+        ],
+      },
+      expectedError: 'meta_ads_publish_staging_seed_graph_page_ambiguous',
+    },
+  ];
+
+  for (const entry of cases) {
+    const db = new SeedDb();
+    db.prepare = () => {
+      throw new Error('D1 must remain untouched by System User Page discovery');
+    };
+    const graph = new FakeGraph({
+      readResponses: {
+        'me/accounts': { body: { data: [] } },
+        me: { body: { id: SYSTEM_USER_ID } },
+        [`${SYSTEM_USER_ID}/assigned_pages`]: { body: entry.payload },
+      },
+    });
+    const response = await attest({
+      db,
+      graph,
+      operationKey: `meta-ads-staging-seed:attestation-system-user-page-${entry.label}-001`,
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 409, entry.label);
+    assert.equal(body.error, entry.expectedError, entry.label);
+    assert.deepEqual(graph.calls.map((call) => call.path), [
+      PIXEL_ID,
+      `act_${ACCOUNT_ID}/adspixels`,
+      'me/accounts',
+      'me',
+      `${SYSTEM_USER_ID}/assigned_pages`,
+    ], entry.label);
+    assert.equal(graph.postCalls.length, 0, entry.label);
+    assert.equal(db.operations.size, 0, entry.label);
+    assert.equal(db.tokens.length, 0, entry.label);
+    assert.equal(db.locks.size, 0, entry.label);
+    assert.equal(db.adsetLocks.size, 0, entry.label);
+    const serialized = JSON.stringify(body);
+    for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID, SYSTEM_USER_ID]) {
+      assert.equal(serialized.includes(value), false, entry.label);
+    }
+  }
+});
+
+test('staging seed attestation rejects a malformed System User identity before it reads assigned Pages', async () => {
+  const db = new SeedDb();
+  const graph = new FakeGraph({
+    readResponses: {
+      'me/accounts': { body: { data: [] } },
+      me: { body: { id: false } },
+    },
+  });
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-system-user-malformed-001',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_graph_identity_malformed');
+  assert.deepEqual(graph.calls.map((call) => call.path), [
+    PIXEL_ID,
+    `act_${ACCOUNT_ID}/adspixels`,
+    'me/accounts',
+    'me',
+  ]);
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, SYSTEM_USER_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
+test('staging seed attestation rejects a paged System User Page relation before it reads a Page or dataset', async () => {
+  const db = new SeedDb();
+  const graph = new FakeGraph({
+    readResponses: {
+      'me/accounts': { body: { data: [] } },
+      me: { body: { id: SYSTEM_USER_ID } },
+      [`${SYSTEM_USER_ID}/assigned_pages`]: {
+        body: {
+          data: [],
+          paging: { next: false },
+        },
+      },
+    },
+  });
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-system-user-page-paged-001',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.error, 'meta_ads_publish_staging_seed_graph_page_ambiguous');
+  assert.deepEqual(graph.calls.map((call) => call.path), [
+    PIXEL_ID,
+    `act_${ACCOUNT_ID}/adspixels`,
+    'me/accounts',
+    'me',
+    `${SYSTEM_USER_ID}/assigned_pages`,
+  ]);
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+  const serialized = JSON.stringify(body);
+  for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID, SYSTEM_USER_ID]) {
+    assert.equal(serialized.includes(value), false);
+  }
+});
+
 test('staging seed attestation accepts an exact account Pixel membership on a bounded page with more results', async () => {
   const db = new SeedDb();
   const graph = new FakeGraph({
@@ -1135,7 +1320,14 @@ test('staging seed attestation preserves finite non-identity source eligibility 
     {
       label: 'page-ambiguous',
       path: 'me/accounts',
-      response: { body: { data: [] } },
+      response: {
+        body: {
+          data: [
+            { id: PAGE_ID, tasks: ['ADVERTISE'], instagram_business_account: { id: INSTAGRAM_ID } },
+            { id: MISMATCH_ACCOUNT_ID, tasks: ['ADVERTISE'], instagram_business_account: { id: INSTAGRAM_ID } },
+          ],
+        },
+      },
       expectedError: 'meta_ads_publish_staging_seed_graph_page_ambiguous',
       expectedReads: 3,
     },
