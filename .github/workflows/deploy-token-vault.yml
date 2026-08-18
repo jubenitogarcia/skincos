@@ -991,8 +991,8 @@ jobs:
           # never Worker bindings. Each must be proved with its own Instagram
           # pair against the System User before the synthetic seed may create
           # any Meta or D1 resources.
-          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ inputs.target == 'staging' && secrets.novohamburgo_page_id || '' }}
-          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ inputs.target == 'staging' && secrets.barrashopppingsul_page_id || '' }}
+          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ inputs.target == 'staging' && secrets.NOVOHAMBURGO_PAGE_ID || '' }}
+          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ inputs.target == 'staging' && secrets.BARRASHOPPPINGSUL_PAGE_ID || '' }}
           META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           TARGET: ${{ inputs.target }}
           OPERATION: ${{ inputs.operation }}
@@ -1338,8 +1338,8 @@ jobs:
         env:
           META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
           META_PIXEL_ID: ${{ inputs.target == 'staging' && secrets.META_PIXEL_ID || '' }}
-          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ inputs.target == 'staging' && secrets.novohamburgo_page_id || '' }}
-          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ inputs.target == 'staging' && secrets.barrashopppingsul_page_id || '' }}
+          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ inputs.target == 'staging' && secrets.NOVOHAMBURGO_PAGE_ID || '' }}
+          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ inputs.target == 'staging' && secrets.BARRASHOPPPINGSUL_PAGE_ID || '' }}
           META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
           META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -1414,8 +1414,8 @@ jobs:
         env:
           META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
           META_PIXEL_ID: ${{ inputs.target == 'staging' && secrets.META_PIXEL_ID || '' }}
-          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ inputs.target == 'staging' && secrets.novohamburgo_page_id || '' }}
-          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ inputs.target == 'staging' && secrets.barrashopppingsul_page_id || '' }}
+          META_ADS_NOVOHAMBURGO_PAGE_ID: ${{ inputs.target == 'staging' && secrets.NOVOHAMBURGO_PAGE_ID || '' }}
+          META_ADS_BARRASHOPPPINGSUL_PAGE_ID: ${{ inputs.target == 'staging' && secrets.BARRASHOPPPINGSUL_PAGE_ID || '' }}
           META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
           META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}

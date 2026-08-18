@@ -105,11 +105,11 @@ test("candidate appsecret-proof request keeps source inputs and bearer private w
   assert.match(workflow, /pixel_id: pixelId/);
   assert.match(
     workflow,
-    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ secrets\.novohamburgo_page_id \}\}/,
+    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ secrets\.NOVOHAMBURGO_PAGE_ID \}\}/,
   );
   assert.match(
     workflow,
-    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets\.barrashopppingsul_page_id \}\}/,
+    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets\.BARRASHOPPPINGSUL_PAGE_ID \}\}/,
   );
   assert.match(
     workflow,
