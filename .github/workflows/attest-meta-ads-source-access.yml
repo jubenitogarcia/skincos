@@ -103,7 +103,14 @@ jobs:
               // class. Keep it distinct from an unknown malformed envelope so
               // the diagnostic can distinguish an unsupported edge/field from
               // an access denial without exposing the Graph code or body.
-              const contractError = classifyContract && graphErrorCode === 100;
+              // On the explicitly probed modern AdsDataset edge, a
+              // non-auth 4xx envelope (including an unknown/zero Graph code)
+              // is evidence that the edge/response contract is incompatible,
+              // not evidence that the configured asset is missing. Keep
+              // malformed JSON/shape failures on their own path below.
+              const contractError = classifyContract &&
+                !authorizationError &&
+                (graphErrorCode === 100 || (response.status >= 400 && response.status < 500) || response.ok);
               return {
                 state: authorizationError
                   ? 'denied'
