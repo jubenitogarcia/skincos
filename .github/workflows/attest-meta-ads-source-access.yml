@@ -120,18 +120,29 @@ jobs:
             }
           };
 
-          // Keep the bare asset read separate from the owner relation. A denial
-          // now identifies whether the source cannot read the Pixel at all or
-          // cannot read the relation required by the staging seed contract.
+          // Keep the bare asset read separate from the account membership
+          // relation. A Pixel may be shared with the configured account without
+          // that account owning it, so membership is the contract needed by the
+          // later promoted_object.
           const pixel = await directRead(`${pixelId}?fields=id`, 'source_pixel');
           if (numericId(pixel?.id) !== pixelId) fail('source_pixel_mismatch');
 
-          const pixelOwner = await directRead(
-            `${pixelId}?fields=owner_ad_account{id}`,
-            'source_pixel_owner_relation',
+          const accountPixels = await directRead(
+            `act_${accountId}/adspixels?fields=id&limit=5`,
+            'source_pixel_account_relation',
           );
-          if (numericId(pixelOwner?.owner_ad_account?.id) !== accountId) {
-            fail('source_pixel_owner_relation_mismatch');
+          if (!Array.isArray(accountPixels?.data)) fail('source_pixel_account_relation_malformed');
+          const associatedPixels = accountPixels.data.map((entry) => numericId(entry?.id));
+          if (associatedPixels.some((id) => !id)) fail('source_pixel_account_relation_malformed');
+          const targetMemberships = associatedPixels.filter((id) => id === pixelId).length;
+          if (targetMemberships === 1 && new Set(associatedPixels).size === associatedPixels.length) {
+            // The bounded page proves the exact association. Do not follow the
+            // opaque Graph pagination URL or reject an account just because it
+            // has more associated Pixels than this diagnostic page limit.
+          } else if (String(accountPixels?.paging?.next ?? '').trim()) {
+            fail('source_pixel_account_relation_ambiguous');
+          } else {
+            fail('source_pixel_account_relation_mismatch');
           }
 
           const pages = await directRead(
@@ -139,12 +150,13 @@ jobs:
             'source_pages',
           );
           if (!Array.isArray(pages?.data)) fail('source_pages_malformed');
-          if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_ambiguous');
+          if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_paging_ambiguous');
           const eligiblePages = pages.data.filter((page) => {
             const tasks = new Set(Array.isArray(page?.tasks) ? page.tasks.map((task) => String(task || '').trim().toUpperCase()) : []);
             return tasks.has('ADVERTISE') && Boolean(numericId(page?.instagram_business_account?.id));
           });
-          if (eligiblePages.length !== 1) fail('source_pages_ambiguous');
+          if (eligiblePages.length === 0) fail('source_pages_none_eligible');
+          if (eligiblePages.length > 1) fail('source_pages_multiple_eligible');
           const pageId = numericId(eligiblePages[0].id);
           const instagramId = numericId(eligiblePages[0].instagram_business_account.id);
           if (!pageId || !instagramId) fail('source_pages_malformed');
@@ -174,7 +186,7 @@ jobs:
             'source_access_raw=verified',
             'source_access_runtime_proof=unverified',
             'source_access_pixel=allowed',
-            'source_access_ad_account=allowed',
+            'source_access_pixel_account_relation=allowed',
             'source_access_page=eligible',
             'source_access_dataset=eligible',
             'source_access_landing_media=eligible',
