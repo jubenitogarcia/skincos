@@ -119,56 +119,27 @@ function happyResponses() {
     },
     {
       pathname: `/v25.0/${syntheticSystemUserId}/assigned_pages`,
-      query: { fields: "id,tasks,instagram_business_account{id}", limit: "100" },
+      query: {
+        fields: "id,tasks,instagram_business_account{id},website,picture{url}",
+        limit: "100",
+      },
       payload: {
         data: [
           {
             id: syntheticNovoPageId,
             tasks: ["ADVERTISE"],
             instagram_business_account: { id: syntheticNovoInstagramId },
+            website: "https://novo.example.test",
+            picture: { data: { url: "https://cdn.example.test/novo.jpg" } },
           },
           {
             id: syntheticBarraPageId,
             tasks: ["ADVERTISE"],
             instagram_business_account: { id: syntheticBarraInstagramId },
+            website: "https://barra.example.test",
+            picture: { data: { url: "https://cdn.example.test/barra.jpg" } },
           },
         ],
-      },
-    },
-    {
-      pathname: `/v25.0/${syntheticNovoPageId}`,
-      query: { fields: "id" },
-      payload: { id: syntheticNovoPageId },
-    },
-    {
-      pathname: `/v25.0/${syntheticNovoPageId}`,
-      query: { fields: "instagram_business_account{id}" },
-      payload: { instagram_business_account: { id: syntheticNovoInstagramId } },
-    },
-    {
-      pathname: `/v25.0/${syntheticNovoPageId}`,
-      query: { fields: "website,picture{url}" },
-      payload: {
-        website: "https://novo.example.test",
-        picture: { data: { url: "https://cdn.example.test/novo.jpg" } },
-      },
-    },
-    {
-      pathname: `/v25.0/${syntheticBarraPageId}`,
-      query: { fields: "id" },
-      payload: { id: syntheticBarraPageId },
-    },
-    {
-      pathname: `/v25.0/${syntheticBarraPageId}`,
-      query: { fields: "instagram_business_account{id}" },
-      payload: { instagram_business_account: { id: syntheticBarraInstagramId } },
-    },
-    {
-      pathname: `/v25.0/${syntheticBarraPageId}`,
-      query: { fields: "website,picture{url}" },
-      payload: {
-        website: "https://barra.example.test",
-        picture: { data: { url: "https://cdn.example.test/barra.jpg" } },
       },
     },
     {
@@ -215,10 +186,11 @@ test("Meta Ads source-access attestation is manual, GET-only, and bound to two s
   assert.match(workflow, /source_destination_page_assignment_unassigned/);
   assert.match(workflow, /source_destination_page_selector_ambiguous/);
   assert.match(workflow, /source_destination_page_pair_duplicate/);
-  assert.match(workflow, /source_destination_page_pair_mismatch/);
-  assert.match(workflow, /source_destination_page_\$\{pair\.destinationKey\}_identity/);
-  assert.match(workflow, /source_destination_page_\$\{pair\.destinationKey\}_instagram/);
-  assert.match(workflow, /source_destination_page_\$\{pair\.destinationKey\}_presentation/);
+  assert.match(
+    workflow,
+    /assigned_pages\?fields=id,tasks,instagram_business_account\{id\},website,picture\{url\}&limit=100/,
+  );
+  assert.doesNotMatch(workflow, /\$\{pair\.pageId\}\?fields=/);
   assert.match(workflow, /source_access_novohamburgo_page_instagram=eligible/);
   assert.match(workflow, /source_access_barrashopppingsul_page_instagram=eligible/);
 
@@ -242,7 +214,7 @@ test("Meta Ads source-access verifier proves both assigned Page and Instagram pa
   const result = runVerifier(happyResponses());
   const combined = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 11);
+  assert.equal(result.requestCount, 5);
   assert.equal(
     result.stdout,
     [
@@ -289,7 +261,7 @@ test("Meta Ads source-access verifier accepts Profile Plus advertising and exact
   const result = runVerifier(responses);
   const combined = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 11);
+  assert.equal(result.requestCount, 5);
   assert.match(result.stdout, /source_access_raw=verified/);
   assertNoSyntheticInputs(combined);
 });
@@ -364,56 +336,32 @@ test("Meta Ads source-access verifier rejects duplicate, paged, and swapped dest
   assert.equal(paged.requestCount, 4);
   assert.match(`${paged.stdout}${paged.stderr}`, /source_system_user_pages_paging_ambiguous/);
 
-  const swappedResponses = happyResponses();
-  swappedResponses[8].payload.instagram_business_account.id = syntheticNovoInstagramId;
-  const swapped = runVerifier(swappedResponses, { expectedRequests: 9 });
-  assert.notEqual(swapped.status, 0);
-  assert.equal(swapped.requestCount, 9);
-  assert.match(`${swapped.stdout}${swapped.stderr}`, /source_destination_page_pair_mismatch/);
 });
 
-test("Meta Ads source-access verifier separates Page identity, Instagram relation, and presentation failures", () => {
-  const identityResponses = happyResponses();
-  identityResponses[4] = {
-    ...identityResponses[4],
-    status: 400,
-    payload: { error: { code: 100, message: "synthetic identity field detail" } },
-  };
-  const identity = runVerifier(identityResponses, { expectedRequests: 5 });
-  const identityCombined = `${identity.stdout}${identity.stderr}`;
-  assert.notEqual(identity.status, 0);
-  assert.equal(identity.requestCount, 5);
-  assert.match(identityCombined, /source_destination_page_novo_hamburgo_identity_malformed/);
-  assert.doesNotMatch(identityCombined, /synthetic identity field detail|source_access_raw=verified/);
-  assertNoSyntheticInputs(identityCombined);
-
-  const instagramResponses = happyResponses();
-  instagramResponses[5] = {
-    ...instagramResponses[5],
-    status: 400,
-    payload: { error: { code: 100, message: "synthetic Instagram field detail" } },
-  };
-  const instagram = runVerifier(instagramResponses, { expectedRequests: 6 });
-  const instagramCombined = `${instagram.stdout}${instagram.stderr}`;
-  assert.notEqual(instagram.status, 0);
-  assert.equal(instagram.requestCount, 6);
-  assert.match(instagramCombined, /source_destination_page_novo_hamburgo_instagram_malformed/);
-  assert.doesNotMatch(instagramCombined, /synthetic Instagram field detail|source_access_raw=verified/);
-  assertNoSyntheticInputs(instagramCombined);
-
+test("Meta Ads source-access verifier uses assigned_pages Page fields and stops before dataset on field failures", () => {
   const presentationResponses = happyResponses();
-  presentationResponses[6] = {
-    ...presentationResponses[6],
-    status: 400,
-    payload: { error: { code: 100, message: "synthetic presentation field detail" } },
-  };
-  const presentation = runVerifier(presentationResponses, { expectedRequests: 7 });
+  delete presentationResponses[3].payload.data[0].website;
+  const presentation = runVerifier(presentationResponses, { expectedRequests: 4 });
   const presentationCombined = `${presentation.stdout}${presentation.stderr}`;
   assert.notEqual(presentation.status, 0);
-  assert.equal(presentation.requestCount, 7);
-  assert.match(presentationCombined, /source_destination_page_novo_hamburgo_presentation_malformed/);
-  assert.doesNotMatch(presentationCombined, /synthetic presentation field detail|source_access_raw=verified/);
+  assert.equal(presentation.requestCount, 4);
+  assert.match(presentationCombined, /source_destination_landing_or_media_unavailable/);
+  assert.doesNotMatch(presentationCombined, /source_access_raw=verified/);
   assertNoSyntheticInputs(presentationCombined);
+
+  const assignedFields = happyResponses();
+  assignedFields[3] = {
+    ...assignedFields[3],
+    status: 400,
+    payload: { error: { code: 100, message: "synthetic assigned Page field detail" } },
+  };
+  const malformed = runVerifier(assignedFields, { expectedRequests: 4 });
+  const malformedCombined = `${malformed.stdout}${malformed.stderr}`;
+  assert.notEqual(malformed.status, 0);
+  assert.equal(malformed.requestCount, 4);
+  assert.match(malformedCombined, /source_system_user_pages_malformed/);
+  assert.doesNotMatch(malformedCombined, /synthetic assigned Page field detail|source_access_raw=verified/);
+  assertNoSyntheticInputs(malformedCombined);
 });
 
 test("Meta Ads source-access verifier reports only classified Graph failures", () => {
