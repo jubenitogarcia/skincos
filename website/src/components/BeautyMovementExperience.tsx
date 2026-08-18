@@ -683,14 +683,15 @@ export default function BeautyMovementExperience({
                 cardGrid?.getBoundingClientRect().bottom ?? tableRect.top + 312,
                 deckRect?.bottom ?? 0,
             );
-            // Keep the title anchor only when the active hand and deck can
-            // share this viewport. A short landscape viewport may fit the
-            // title alone while leaving the actual reading below the fold.
-            const handFits = handBottom <= window.innerHeight + 24;
             const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
-            if (titleFits && handFits && !isStackedLayout) {
+            if (titleFits && !isStackedLayout) {
                 const titleTarget = Math.max(0, titleTop - headerOffset - 12);
-                return Math.min(fittedTarget, titleTarget);
+                // Evaluate the hand at the proposed title target, rather than
+                // at the current scroll position. This prevents the RAF follow
+                // loop from alternating between the title and deck targets.
+                const handBottomAtTitle = handBottom - (titleTarget - window.scrollY);
+                const handFitsAtTitle = handBottomAtTitle <= window.innerHeight + 24;
+                if (handFitsAtTitle) return Math.min(fittedTarget, titleTarget);
             }
         }
 
