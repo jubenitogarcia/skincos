@@ -187,11 +187,11 @@ test("Meta Ads source-access attestation is manual, GET-only, and bound to two s
   assert.match(workflow, /timeout-minutes: 3/);
   assert.match(
     workflow,
-    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ secrets\.novohamburgo_page_id \}\}/,
+    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ secrets\.NOVOHAMBURGO_PAGE_ID \}\}/,
   );
   assert.match(
     workflow,
-    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets\.barrashopppingsul_page_id \}\}/,
+    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets\.BARRASHOPPPINGSUL_PAGE_ID \}\}/,
   );
   assert.match(workflow, /destinationSelectors = \{[\s\S]*novo_hamburgo:[\s\S]*barra_shopping_sul:/);
   assert.match(workflow, /source_destination_page_selector_invalid/);
