@@ -129,24 +129,14 @@ export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
   }
 
   const env = context?.env || {}
-  const requestOrigin = (() => {
-    try {
-      const url = context?.request?.url
-      if (!url) return ''
-      return new URL(url).origin
-    } catch {
-      return ''
-    }
-  })()
   const targetOrigin =
     (env.AUTH_API_TARGET as string | undefined) ||
-    requestOrigin ||
     (env.INSUMOS_API_TARGET as string | undefined) ||
     'https://api.skincos.com.br'
 
   const normalizeAuthPrefix = (value: unknown) => {
     let prefix = String(value ?? '').trim()
-    if (!prefix) return '/api/auth'
+    if (!prefix) return '/insumos/auth'
     if (!prefix.startsWith('/')) prefix = `/${prefix}`
     return prefix.replace(/\/$/, '')
   }
