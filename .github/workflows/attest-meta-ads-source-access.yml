@@ -66,7 +66,7 @@ jobs:
             fail('source_destination_page_selector_duplicate');
           }
 
-          const graphGet = async (path) => {
+          const graphGet = async (path, { classifyContract = false } = {}) => {
             let response;
             try {
               response = await fetch(`https://graph.facebook.com/${apiVersion}/${path}`, {
@@ -99,7 +99,18 @@ jobs:
                 graphErrorCode === 102 ||
                 graphErrorCode === 190 ||
                 graphErrorCode === 200;
-              return { state: authorizationError ? 'denied' : 'malformed' };
+              // Meta's code 100 is the bounded contract/parameter failure
+              // class. Keep it distinct from an unknown malformed envelope so
+              // the diagnostic can distinguish an unsupported edge/field from
+              // an access denial without exposing the Graph code or body.
+              const contractError = classifyContract && graphErrorCode === 100;
+              return {
+                state: authorizationError
+                  ? 'denied'
+                  : contractError
+                    ? 'contract'
+                    : 'malformed',
+              };
             }
             return { state: 'ok', payload };
           };
@@ -211,6 +222,7 @@ jobs:
             if (!businessId) fail('source_dataset_business_malformed');
             const modernDatasetResult = await graphGet(
               `${businessId}/ads_dataset?fields=id`,
+              { classifyContract: true },
             );
             if (modernDatasetResult.state !== 'ok') {
               fail(`source_dataset_ads_dataset_response_${modernDatasetResult.state}`);
