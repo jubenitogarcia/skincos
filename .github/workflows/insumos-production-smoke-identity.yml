@@ -42,6 +42,11 @@ jobs:
           set -euo pipefail
           [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "$(git rev-parse HEAD)" == "${RELEASE_SHA}" ]]
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${RELEASE_SHA}" origin/main || {
+            echo "The production smoke workflow must run only from a SHA already integrated into origin/main."
+            exit 1
+          }
           [[ "${ACTION}" == "provision" || "${ACTION}" == "cleanup" ]]
 
       - name: Acquire production Identity/D1 coordination lease

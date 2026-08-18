@@ -481,6 +481,7 @@ test("production Users smoke identity uses production custody and the active coo
   );
   assert.doesNotMatch(workflow, /SKINCOS_GLOBAL_COORDINATOR_URL \}\}/);
   assert.doesNotMatch(workflow, /SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET/);
+  assert.match(workflow, /git merge-base --is-ancestor "\$\{RELEASE_SHA\}" origin\/main/);
 });
 
 test("the Ponto composite lease protects only non-preview stages while preview keeps separate writer custody", () => {
