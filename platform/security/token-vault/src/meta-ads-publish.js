@@ -2282,7 +2282,7 @@ async function discoverStagingSyntheticSeedFacts({
   const datasets = await read(
     `${businessId}/ads_dataset`,
     'id',
-    { limit: String(STAGING_SYNTHETIC_SEED_MAX_GRAPH_OBJECTS) },
+    {},
     failureCodes.datasetAccessDenied,
     failureCodes.identityMalformed,
   );

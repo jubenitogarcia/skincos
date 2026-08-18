@@ -210,7 +210,7 @@ jobs:
             const businessId = numericId(account?.business?.id);
             if (!businessId) fail('source_dataset_business_malformed');
             const modernDatasetResult = await graphGet(
-              `${businessId}/ads_dataset?fields=id&limit=5`,
+              `${businessId}/ads_dataset?fields=id`,
             );
             if (modernDatasetResult.state !== 'ok') {
               fail(`source_dataset_ads_dataset_response_${modernDatasetResult.state}`);
