@@ -36,7 +36,8 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.doesNotMatch(experience, /removeScrollInterrupts/);
     assert.match(experience, /const titleTarget = Math\.max\(0, titleTop - headerOffset - 12\)/);
     assert.match(styles, /\.hero \{[\s\S]*min-height: clamp\(196px, 16vw, 224px\)/);
-    assert.match(styles, /\.tableStage\[data-hand-stage="collect"\] \.deckStage,[\s\S]*\.tableStage\[data-hand-stage="ready"\] \.deckStage \{[\s\S]*bottom: -56px/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="collect"\] \.deckStage,[\s\S]*\.tableStage\[data-hand-stage="ready"\] \.deckStage \{[\s\S]*bottom: -79px/);
+    assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.tableStage\[data-hand-stage="collect"\] \.deckStage,[\s\S]*\.tableStage\[data-hand-stage="ready"\] \.deckStage \{[\s\S]*bottom: -56px/);
     assert.match(styles, /\.page \{[\s\S]*padding-top: 0;[\s\S]*overflow-x: clip;[\s\S]*overflow-y: visible;/);
     assert.match(globalStyles, /body:has\(\.beautyMovementPage\) \.header[\s\S]*border-bottom-color: transparent/);
     assert.match(styles, /\.hero \{[\s\S]*width: 100vw;[\s\S]*margin-left: calc\(50% - 50vw\)/);
@@ -45,6 +46,7 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.doesNotMatch(visualHandoffStyles, /\.hero::before[\s\S]*radial-gradient/);
     assert.doesNotMatch(styles, /linear-gradient\(102deg, #ffffff 0%, #fbfaf5 32%, #f4eedf 68%, #f1e2b7 100%\)/);
     assert.match(styles, /@media \(min-width: 721px\) \{[\s\S]*\.tableStage:not\(\[data-hand-stage="finale"\]\) \.cardButton \{[\s\S]*min-height: clamp\(280px, 24\.3vw, 292px\)/);
+    assert.match(styles, /\.progressItemCurrent \.autoAdvance \{[\s\S]*transform: translateY\(-3px\)/);
     assert.match(styles, /@keyframes deckStageCollect[\s\S]*translateX\(-50%\) translateY\(0\) scale\(1\.04\)/);
     assert.match(experience, /function finishDealScroll\(\)/);
 });

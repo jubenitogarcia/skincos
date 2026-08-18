@@ -3393,11 +3393,22 @@
   gap: 7px;
 }
 
-/* The return-to-deck animation keeps its pulse in scale/rotation only. A
- * negative Y keyframe made the stack lift into the middle card at handoff. */
-.tableStage[data-hand-stage="collect"] .deckStage,
-.tableStage[data-hand-stage="ready"] .deckStage {
-  transform-origin: center bottom;
+/* Keep the progress fill slightly above the yellow pill's lower edge so the
+ * pill remains visibly present below it without changing its dimensions. */
+.progressItemCurrent .autoAdvance {
+  transform: translateY(-3px);
+  will-change: transform;
+}
+
+/* The return-to-deck animation keeps its pulse in scale/rotation only. Keep
+ * the desktop receive point at the same lower anchor used while a hand is
+ * held, avoiding the former 23px upward jump at collect/ready handoff. */
+@media (min-width: 721px) {
+  .tableStage[data-hand-stage="collect"] .deckStage,
+  .tableStage[data-hand-stage="ready"] .deckStage {
+    bottom: -79px;
+    transform-origin: center bottom;
+  }
 }
 
 .tableStage[data-special-modal="open"] .tableSurface {
