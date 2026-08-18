@@ -90,10 +90,10 @@ const happyResponses = [
     },
   },
   {
-    pathname: `/v25.0/${syntheticPixelId}`,
-    query: { fields: "owner_ad_account{id}" },
+    pathname: `/v25.0/act_${syntheticAccountId}/adspixels`,
+    query: { fields: "id", limit: "5" },
     payload: {
-      owner_ad_account: { id: syntheticAccountId },
+      data: [{ id: syntheticPixelId }],
     },
   },
   {
@@ -158,8 +158,11 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /graphErrorCode === 200/);
   assert.match(workflow, /authorizationError \? 'denied' : 'malformed'/);
   assert.match(workflow, /\$\{pixelId\}\?fields=id/);
-  assert.match(workflow, /\$\{pixelId\}\?fields=owner_ad_account\{id\}/);
-  assert.match(workflow, /source_pixel_owner_relation/);
+  assert.match(workflow, /act_\$\{accountId\}\/adspixels\?fields=id&limit=5/);
+  assert.match(workflow, /source_pixel_account_relation/);
+  assert.match(workflow, /targetMemberships === 1/);
+  assert.match(workflow, /source_pixel_account_relation_ambiguous/);
+  assert.doesNotMatch(workflow, /owner_ad_account/);
   assert.match(
     workflow,
     /me\/accounts\?fields=id,tasks,instagram_business_account\{id\}&limit=100/,
@@ -184,12 +187,12 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
   assert.match(workflow, /source_access_raw=verified/);
   assert.match(workflow, /source_access_runtime_proof=unverified/);
   assert.match(workflow, /source_access_pixel=allowed/);
-  assert.match(workflow, /source_access_ad_account=allowed/);
+  assert.match(workflow, /source_access_pixel_account_relation=allowed/);
   assert.match(workflow, /source_access_page=eligible/);
   assert.match(workflow, /source_access_dataset=eligible/);
   assert.match(workflow, /source_access_landing_media=eligible/);
   assert.ok(
-    workflow.indexOf("source_pixel_owner_relation_mismatch") <
+    workflow.indexOf("source_pixel_account_relation_mismatch") <
       workflow.indexOf("source_access_raw=verified"),
     "raw success output must be unreachable until the exact source reads pass",
   );
@@ -223,7 +226,7 @@ test("Meta Ads source-access verifier executes the bounded raw-read contract wit
       "source_access_raw=verified",
       "source_access_runtime_proof=unverified",
       "source_access_pixel=allowed",
-      "source_access_ad_account=allowed",
+      "source_access_pixel_account_relation=allowed",
       "source_access_page=eligible",
       "source_access_dataset=eligible",
       "source_access_landing_media=eligible",
@@ -231,6 +234,51 @@ test("Meta Ads source-access verifier executes the bounded raw-read contract wit
     ].join("\n"),
   );
   assert.equal(result.requestCount, 5);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier accepts an exact membership on a bounded account Pixel page", () => {
+  const responses = structuredClone(happyResponses);
+  responses[1].payload.paging = { next: "https://graph.example.invalid/opaque" };
+  const result = runVerifier(responses);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, combined);
+  assert.equal(result.requestCount, 5);
+  assert.match(result.stdout, /source_access_raw=verified/);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier fails closed when target membership is beyond the bounded page", () => {
+  const responses = structuredClone(happyResponses);
+  responses[1].payload = {
+    data: [],
+    paging: { next: "https://graph.example.invalid/opaque" },
+  };
+  const result = runVerifier(responses, 2);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pixel_account_relation_ambiguous/);
+  assert.equal(result.requestCount, 2);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier classifies malformed bounded account Pixel entries before membership", () => {
+  const responses = structuredClone(happyResponses);
+  responses[1].payload = { data: [{ id: false }] };
+  const result = runVerifier(responses, 2);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pixel_account_relation_malformed/);
+  assert.equal(result.requestCount, 2);
   assert.doesNotMatch(
     combined,
     new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
@@ -281,7 +329,7 @@ test("Meta Ads source-access verifier distinguishes bare Pixel denial before rel
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
   assert.match(combined, /source_pixel_denied/);
-  assert.doesNotMatch(combined, /source_pixel_owner_relation/);
+  assert.doesNotMatch(combined, /source_pixel_account_relation/);
   assert.doesNotMatch(combined, /synthetic denial/);
   assert.equal(result.requestCount, 1);
   assert.doesNotMatch(
@@ -290,7 +338,7 @@ test("Meta Ads source-access verifier distinguishes bare Pixel denial before rel
   );
 });
 
-test("Meta Ads source-access verifier distinguishes owner-relation denial after Pixel access", () => {
+test("Meta Ads source-access verifier distinguishes account-membership denial after Pixel access", () => {
   const result = runVerifier([
     {
       pathname: `/v25.0/${syntheticPixelId}`,
@@ -298,17 +346,42 @@ test("Meta Ads source-access verifier distinguishes owner-relation denial after 
       payload: { id: syntheticPixelId },
     },
     {
-      pathname: `/v25.0/${syntheticPixelId}`,
-      query: { fields: "owner_ad_account{id}" },
+      pathname: `/v25.0/act_${syntheticAccountId}/adspixels`,
+      query: { fields: "id", limit: "5" },
       status: 403,
       payload: { error: { code: 10, message: "synthetic denial" } },
     },
   ]);
   const combined = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 0);
-  assert.match(combined, /source_pixel_owner_relation_denied/);
+  assert.match(combined, /source_pixel_account_relation_denied/);
   assert.doesNotMatch(combined, /source_access_raw=verified/);
   assert.doesNotMatch(combined, /synthetic denial/);
+  assert.equal(result.requestCount, 2);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier classifies an account-membership contract error without leaking Graph details", () => {
+  const result = runVerifier([
+    {
+      pathname: `/v25.0/${syntheticPixelId}`,
+      query: { fields: "id" },
+      payload: { id: syntheticPixelId },
+    },
+    {
+      pathname: `/v25.0/act_${syntheticAccountId}/adspixels`,
+      query: { fields: "id", limit: "5" },
+      status: 200,
+      payload: { error: { code: 100, message: "synthetic contract error" } },
+    },
+  ]);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pixel_account_relation_malformed/);
+  assert.doesNotMatch(combined, /synthetic contract error/);
   assert.equal(result.requestCount, 2);
   assert.doesNotMatch(
     combined,

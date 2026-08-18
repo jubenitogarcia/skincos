@@ -342,7 +342,10 @@ class FakeGraph {
 
   read(path) {
     if (path === PIXEL_ID) {
-      return graphResponse({ id: PIXEL_ID, owner_ad_account: { id: ACCOUNT_ID } });
+      return graphResponse({ id: PIXEL_ID });
+    }
+    if (path === `act_${ACCOUNT_ID}/adspixels`) {
+      return graphResponse({ data: [{ id: PIXEL_ID }] });
     }
     if (path === 'me/accounts') {
       return graphResponse({ data: [{ id: PAGE_ID, tasks: ['ADVERTISE'], instagram_business_account: { id: INSTAGRAM_ID } }] });
@@ -636,7 +639,7 @@ test('staging seed attestation bounds Graph discovery and returns no source fact
     contract_version: 'meta-ads-tracking-v20/staging-synthetic-seed/v1',
     requestId: 'seed-attestation-test-request-id',
   });
-  assert.equal(graph.calls.length, 4);
+  assert.equal(graph.calls.length, 5);
   assert.ok(graph.calls.every((call) => call.method === 'GET'));
   assert.equal(graph.postCalls.length, 0);
   assert.equal(db.operations.size, 0);
@@ -649,35 +652,69 @@ test('staging seed attestation bounds Graph discovery and returns no source fact
   }
 });
 
+test('staging seed attestation accepts an exact account Pixel membership on a bounded page with more results', async () => {
+  const db = new SeedDb();
+  const graph = new FakeGraph({
+    readResponses: {
+      [`act_${ACCOUNT_ID}/adspixels`]: {
+        body: { data: [{ id: PIXEL_ID }], paging: { next: 'https://graph.example.invalid/opaque' } },
+      },
+    },
+  });
+  const response = await attest({
+    db,
+    graph,
+    operationKey: 'meta-ads-staging-seed:attestation-membership-first-page-001',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.attestation, 'match');
+  assert.equal(graph.calls.length, 5);
+  assert.ok(graph.calls.every((call) => call.method === 'GET'));
+  assert.equal(graph.postCalls.length, 0);
+  assert.equal(db.operations.size, 0);
+  assert.equal(db.tokens.length, 0);
+  assert.equal(db.locks.size, 0);
+  assert.equal(db.adsetLocks.size, 0);
+});
+
 test('staging seed attestation exposes only finite mismatch, malformed, and source-auth outcomes', async () => {
   const mismatchDb = new SeedDb();
-  const mismatchGraph = new FakeGraph();
+  const mismatchGraph = new FakeGraph({
+    readResponses: {
+      [`act_${ACCOUNT_ID}/adspixels`]: { body: { data: [{ id: MISMATCH_ACCOUNT_ID }] } },
+    },
+  });
   const mismatch = await attest({
     db: mismatchDb,
     graph: mismatchGraph,
     operationKey: 'meta-ads-staging-seed:attestation-mismatch-001',
-    requestOverrides: { account_id: MISMATCH_ACCOUNT_ID },
   });
   const mismatchBody = await mismatch.json();
   assert.equal(mismatch.status, 409);
   assert.equal(mismatchBody.error, 'meta_ads_publish_staging_seed_graph_identity_mismatch');
-  assert.equal(mismatchGraph.calls.length, 1);
+  assert.equal(mismatchGraph.calls.length, 2);
   assert.equal(mismatchGraph.postCalls.length, 0);
   assert.equal(mismatchDb.operations.size, 0);
   assert.equal(mismatchDb.tokens.length, 0);
 
   const malformedDb = new SeedDb();
+  const malformedGraph = new FakeGraph({
+    readResponses: {
+      [`act_${ACCOUNT_ID}/adspixels`]: { body: { data: [{ id: 'not-a-graph-id' }] } },
+    },
+  });
   const malformed = await attest({
     db: malformedDb,
-    graph: new FakeGraph(),
+    graph: malformedGraph,
     operationKey: 'meta-ads-staging-seed:attestation-malformed-001',
-    env: {
-      META_GRAPH_FETCH: async () => graphResponse({ id: PIXEL_ID, owner_ad_account: { id: 'not-a-graph-id' } }),
-    },
   });
   const malformedBody = await malformed.json();
   assert.equal(malformed.status, 409);
   assert.equal(malformedBody.error, 'meta_ads_publish_staging_seed_graph_identity_malformed');
+  assert.equal(malformedGraph.calls.length, 2);
+  assert.equal(malformedGraph.postCalls.length, 0);
   assert.equal(malformedDb.operations.size, 0);
   assert.equal(malformedDb.tokens.length, 0);
 
@@ -715,24 +752,41 @@ test('staging seed attestation returns a finite resource stage for permanent Gra
       status: 403,
     },
     {
+      label: 'pixel-account-relation',
+      path: `act_${ACCOUNT_ID}/adspixels`,
+      expectedError: 'meta_ads_publish_staging_seed_graph_pixel_account_relation_denied',
+      expectedReads: 2,
+      status: 403,
+    },
+    {
+      label: 'pixel-account-relation-contract',
+      path: `act_${ACCOUNT_ID}/adspixels`,
+      expectedError: 'meta_ads_publish_staging_seed_graph_identity_malformed',
+      expectedReads: 2,
+      // Graph can return a 2xx envelope carrying a permanent code-100 error.
+      // It is a contract incompatibility, never evidence for an asset grant.
+      status: 200,
+      code: 100,
+    },
+    {
       label: 'page-list',
       path: 'me/accounts',
       expectedError: 'meta_ads_publish_staging_seed_graph_page_access_denied',
-      expectedReads: 2,
+      expectedReads: 3,
       status: 403,
     },
     {
       label: 'page-read',
       path: PAGE_ID,
       expectedError: 'meta_ads_publish_staging_seed_graph_page_access_denied',
-      expectedReads: 3,
+      expectedReads: 4,
       status: 403,
     },
     {
       label: 'dataset',
       path: `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
       expectedError: 'meta_ads_publish_staging_seed_graph_dataset_access_denied',
-      expectedReads: 4,
+      expectedReads: 5,
       // Graph can return a 2xx envelope containing an error. It remains a
       // permanent source capability failure and must not become a success.
       status: 200,
@@ -742,7 +796,7 @@ test('staging seed attestation returns a finite resource stage for permanent Gra
   for (const entry of cases) {
     const db = new SeedDb();
     const graph = new FakeGraph({
-      readFailures: { [entry.path]: { status: entry.status, code: 10 } },
+      readFailures: { [entry.path]: { status: entry.status, code: entry.code ?? 10 } },
     });
     const response = await attest({
       db,
@@ -895,12 +949,13 @@ test('candidate appsecret-proof attestation verifies only bounded proof-bearing 
   });
   assert.deepEqual(observedReads.map((read) => read.path), [
     PIXEL_ID,
+    `act_${ACCOUNT_ID}/adspixels`,
     'me/accounts',
     PAGE_ID,
     `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
   ]);
   assert.ok(observedReads.every((read) => read.method === 'GET' && read.hasProof));
-  assert.equal(graph.calls.length, 4);
+  assert.equal(graph.calls.length, 5);
   assert.equal(graph.postCalls.length, 0);
   const serialized = JSON.stringify(body);
   for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID]) {
@@ -997,18 +1052,25 @@ test('staging seed attestation keeps pixel access denied when proofless retry al
 test('staging seed attestation preserves finite non-identity source eligibility outcomes', async () => {
   const cases = [
     {
+      label: 'pixel-account-relation-ambiguous',
+      path: `act_${ACCOUNT_ID}/adspixels`,
+      response: { body: { data: [], paging: { next: 'https://graph.example.invalid/opaque' } } },
+      expectedError: 'meta_ads_publish_staging_seed_graph_pixel_account_relation_ambiguous',
+      expectedReads: 2,
+    },
+    {
       label: 'page-ambiguous',
       path: 'me/accounts',
       response: { body: { data: [] } },
       expectedError: 'meta_ads_publish_staging_seed_graph_page_ambiguous',
-      expectedReads: 2,
+      expectedReads: 3,
     },
     {
       label: 'dataset-ambiguous',
       path: `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
       response: { body: { data: [] } },
       expectedError: 'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
-      expectedReads: 4,
+      expectedReads: 5,
     },
     {
       label: 'landing-unavailable',
@@ -1022,7 +1084,7 @@ test('staging seed attestation preserves finite non-identity source eligibility 
         },
       },
       expectedError: 'meta_ads_publish_staging_seed_landing_or_media_unavailable',
-      expectedReads: 3,
+      expectedReads: 4,
     },
   ];
 
