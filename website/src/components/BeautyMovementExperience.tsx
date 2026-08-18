@@ -1617,7 +1617,7 @@ export default function BeautyMovementExperience({
 
     return (
         <>
-        <main className={styles.page} aria-hidden={isSpecialCardModalOpen || undefined}>
+        <main className={`${styles.page} beautyMovementPage`} aria-hidden={isSpecialCardModalOpen || undefined}>
             <div className={styles.backgroundOrbOne} aria-hidden="true" />
             <div className={styles.backgroundOrbTwo} aria-hidden="true" />
             <div className={styles.rhythmThread} aria-hidden="true">

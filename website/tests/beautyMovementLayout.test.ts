@@ -5,9 +5,10 @@ import test from "node:test";
 const sourceUrl = (relativePath: string) => new URL(`../${relativePath}`, import.meta.url);
 
 test("the table handoff follows the deck and keeps the title in the compact viewport", async () => {
-    const [experience, styles] = await Promise.all([
+    const [experience, styles, globalStyles] = await Promise.all([
         readFile(sourceUrl("src/components/BeautyMovementExperience.tsx"), "utf8"),
         readFile(sourceUrl("src/components/BeautyMovementExperience.module.css"), "utf8"),
+        readFile(sourceUrl("src/styles/globals.css"), "utf8"),
     ]);
 
     const nextHand = experience.slice(
@@ -37,6 +38,7 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(styles, /\.hero \{[\s\S]*min-height: clamp\(196px, 16vw, 224px\)/);
     assert.match(styles, /\.tableStage\[data-hand-stage="collect"\] \.deckStage,[\s\S]*\.tableStage\[data-hand-stage="ready"\] \.deckStage \{[\s\S]*bottom: -56px/);
     assert.match(styles, /\.page \{[\s\S]*padding-top: 0;[\s\S]*overflow-x: clip;[\s\S]*overflow-y: visible;/);
+    assert.match(globalStyles, /body:has\(\.beautyMovementPage\) \.header[\s\S]*border-bottom-color: transparent/);
     assert.match(styles, /\.hero \{[\s\S]*width: 100vw;[\s\S]*margin-left: calc\(50% - 50vw\)/);
     assert.match(styles, /inset: -1px 0 0 0;[\s\S]*linear-gradient\(180deg, #ffffff 0%, #ffffff 10%, #fbfaf5 28%, #f4eedf 60%, #f1e2b7 100%\)/);
     assert.doesNotMatch(styles, /linear-gradient\(102deg, #ffffff 0%, #fbfaf5 32%, #f4eedf 68%, #f1e2b7 100%\)/);
