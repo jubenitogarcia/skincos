@@ -1,4 +1,4 @@
-name: Attest Meta Ads Staging Source Access
+name: Attest Raw Meta Ads Staging Source Access
 
 on:
   workflow_dispatch:
@@ -13,14 +13,15 @@ concurrency:
 jobs:
   attest:
     if: github.ref == 'refs/heads/main'
-    name: Read the staging source capability without deployment
+    name: Read raw staging source capability without deployment
     runs-on: ubuntu-latest
     timeout-minutes: 3
     environment: staging
     steps:
-      - name: Attest Meta Ads source scopes and ad-account access without exposing them
+      - name: Attest raw staging seed source reads without the Worker app proof
         env:
           META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
+          META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
           META_ADS_ACCOUNT_ID: ${{ vars.META_ADS_ACCOUNT_ID }}
           META_ADS_API_VERSION: ${{ vars.META_ADS_API_VERSION }}
         shell: bash
@@ -28,6 +29,7 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           const token = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const pixelId = String(process.env.META_PIXEL_ID || '').trim();
           const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
           const apiVersion = String(process.env.META_ADS_API_VERSION || '');
 
@@ -36,7 +38,12 @@ jobs:
             process.exit(1);
           };
 
-          if (!token || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
+          if (
+            !token ||
+            !/^\d{5,30}$/.test(pixelId) ||
+            !/^\d{5,30}$/.test(accountId) ||
+            !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)
+          ) {
             fail('source_contract_invalid');
           }
 
@@ -78,95 +85,89 @@ jobs:
             return { state: 'ok', payload };
           };
 
-          const scopeNames = [
-            'ads_read',
-            'ads_management',
-            'business_management',
-            'pages_show_list',
-            'pages_read_engagement',
-            'pages_manage_ads',
-            'instagram_basic',
-          ];
-          const scopeStates = Object.fromEntries(scopeNames.map((name) => [name, 'unknown']));
-          const granted = new Set();
-          let permissionsState = 'ok';
-          let permissionCoverage = 'bounded';
-          let permissionCursor = '';
-          const maxPermissionPages = 5;
-          for (let page = 0; page < maxPermissionPages; page += 1) {
-            const cursorQuery = permissionCursor
-              ? `&after=${encodeURIComponent(permissionCursor)}`
-              : '';
-            const permissions = await graphGet(`me/permissions?limit=100${cursorQuery}`);
-            if (permissions.state !== 'ok') {
-              permissionsState = permissions.state;
-              break;
+          const numericId = (value) => {
+            const normalized = String(value || '').trim().replace(/^act_/, '');
+            return /^\d{5,30}$/.test(normalized) ? normalized : '';
+          };
+          const directRead = async (path, phase) => {
+            const result = await graphGet(path);
+            if (result.state !== 'ok') fail(`${phase}_${result.state}`);
+            return result.payload;
+          };
+          const validLanding = (value) => {
+            try {
+              const url = new URL(String(value || '').trim());
+              return (
+                url.protocol === 'https:' &&
+                Boolean(url.hostname) &&
+                !url.username &&
+                !url.password &&
+                !url.hash &&
+                !url.search &&
+                !/(?:facebook|instagram|whatsapp)\.com$/i.test(url.hostname)
+              );
+            } catch {
+              return false;
             }
-            if (!Array.isArray(permissions.payload?.data)) {
-              permissionsState = 'malformed';
-              break;
+          };
+          const validPicture = (value) => {
+            const candidate = String(value?.url || value?.data?.url || '').trim();
+            try {
+              const url = new URL(candidate);
+              return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password;
+            } catch {
+              return false;
             }
-            for (const entry of permissions.payload.data) {
-              if (entry?.status === 'granted') granted.add(String(entry.permission || ''));
-            }
-            const unresolved = scopeNames.filter((name) => !granted.has(name));
-            const rawNextPage = permissions.payload?.paging?.next;
-            if (rawNextPage != null && typeof rawNextPage !== 'string') {
-              permissionsState = 'malformed';
-              break;
-            }
-            const hasNextPage = typeof rawNextPage === 'string' && rawNextPage.length > 0;
-            const rawNextCursor = permissions.payload?.paging?.cursors?.after;
-            if (hasNextPage && typeof rawNextCursor !== 'string') {
-              permissionsState = 'malformed';
-              break;
-            }
-            const nextCursor = typeof rawNextCursor === 'string' ? rawNextCursor.trim() : '';
-            if (unresolved.length === 0 || !hasNextPage) {
-              permissionCoverage = 'complete';
-              break;
-            }
-            if (nextCursor.length > 2_048 || nextCursor === permissionCursor) {
-              permissionsState = 'malformed';
-              break;
-            }
-            permissionCursor = nextCursor;
-          }
-          if (permissionsState === 'ok') {
-            for (const name of scopeNames) scopeStates[name] = granted.has(name) ? 'granted' : 'missing';
-            if (permissionCoverage !== 'complete') {
-              for (const name of scopeNames) {
-                if (!granted.has(name)) scopeStates[name] = 'unknown';
-              }
-          }
+          };
+
+          const pixel = await directRead(`${pixelId}?fields=id,owner_ad_account{id}`, 'source_pixel');
+          if (numericId(pixel?.id) !== pixelId || numericId(pixel?.owner_ad_account?.id) !== accountId) {
+            fail('source_pixel_mismatch');
           }
 
-          const adAccount = await graphGet(`act_${accountId}?fields=id`);
-          const adAccountState = adAccount.state === 'ok'
-            ? (String(adAccount.payload?.id || '').trim().replace(/^act_/, '') === accountId ? 'allowed' : 'malformed')
-            : adAccount.state;
+          const pages = await directRead(
+            'me/accounts?fields=id,tasks,instagram_business_account{id}&limit=100',
+            'source_pages',
+          );
+          if (!Array.isArray(pages?.data)) fail('source_pages_malformed');
+          if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_ambiguous');
+          const eligiblePages = pages.data.filter((page) => {
+            const tasks = new Set(Array.isArray(page?.tasks) ? page.tasks.map((task) => String(task || '').trim().toUpperCase()) : []);
+            return tasks.has('ADVERTISE') && Boolean(numericId(page?.instagram_business_account?.id));
+          });
+          if (eligiblePages.length !== 1) fail('source_pages_ambiguous');
+          const pageId = numericId(eligiblePages[0].id);
+          const instagramId = numericId(eligiblePages[0].instagram_business_account.id);
+          if (!pageId || !instagramId) fail('source_pages_malformed');
 
-          const missingScopes = scopeNames.filter((name) => scopeStates[name] !== 'granted');
-          if (permissionsState !== 'ok') {
-            fail(`source_permissions_${permissionsState}`);
+          const page = await directRead(
+            `${pageId}?fields=id,instagram_business_account{id},website,picture{url}`,
+            'source_page',
+          );
+          if (numericId(page?.id) !== pageId || numericId(page?.instagram_business_account?.id) !== instagramId) {
+            fail('source_page_mismatch');
           }
-          if (missingScopes.length > 0) {
-            fail(`source_permissions_missing:${missingScopes.join(',')}`);
+          if (!validLanding(page?.website) || !validPicture(page?.picture)) {
+            fail('source_landing_or_media_unavailable');
           }
-          if (adAccountState !== 'allowed') {
-            fail(`source_ad_account_${adAccountState}`);
+
+          const datasets = await directRead(
+            `act_${accountId}/offline_conversion_data_sets?fields=id&limit=2`,
+            'source_dataset',
+          );
+          if (!Array.isArray(datasets?.data)) fail('source_dataset_malformed');
+          if (String(datasets?.paging?.next ?? '').trim() || datasets.data.length !== 1) {
+            fail('source_dataset_ambiguous');
           }
+          if (!numericId(datasets.data[0]?.id)) fail('source_dataset_malformed');
 
           process.stdout.write([
-            'source_access_attestation=verified',
-            `source_access_permissions=${permissionsState === 'ok' ? permissionCoverage : permissionsState}`,
-            `source_access_ads_read=${scopeStates.ads_read}`,
-            `source_access_ads_management=${scopeStates.ads_management}`,
-            `source_access_business_management=${scopeStates.business_management}`,
-            `source_access_pages_show_list=${scopeStates.pages_show_list}`,
-            `source_access_pages_read_engagement=${scopeStates.pages_read_engagement}`,
-            `source_access_pages_manage_ads=${scopeStates.pages_manage_ads}`,
-            `source_access_instagram_basic=${scopeStates.instagram_basic}`,
-            `source_access_ad_account=${adAccountState}`,
+            'source_access_raw=verified',
+            'source_access_runtime_proof=unverified',
+            'source_access_pixel=allowed',
+            'source_access_ad_account=allowed',
+            'source_access_page=eligible',
+            'source_access_dataset=eligible',
+            'source_access_landing_media=eligible',
           ].join('\n') + '\n');
           NODE

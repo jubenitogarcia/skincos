@@ -448,6 +448,21 @@ test("the staging RBAC journey recovers synthetic teardown under a fresh lease",
   assert.match(workflow, /steps\.recovery_check\.outcome == 'success'/);
   assert.match(workflow, /skincos-global-coordination-staging-d1-insumos-cleanup\.json/);
   assert.match(workflow, /refusing a non-staging D1 target/);
+  assert.equal(
+    (workflow.match(/key_id: \$\{\{ vars\.SKINCOS_GLOBAL_COORDINATION_KEY_ID \}\}/g) || []).length,
+    8,
+    "every staging RBAC lease action must pin the active coordination key id",
+  );
+  assert.equal(
+    (workflow.match(/shared_secret: \$\{\{ secrets\.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY \}\}/g) || []).length,
+    8,
+    "every staging RBAC lease action must sign with the active coordination key",
+  );
+  assert.equal(
+    (workflow.match(/shared_secret: \$\{\{ secrets\.SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET \}\}/g) || []).length,
+    0,
+    "staging RBAC must not pair the rotated key id with the legacy shared secret",
+  );
 });
 
 test("the Ponto composite lease protects only non-preview stages while preview keeps separate writer custody", () => {
