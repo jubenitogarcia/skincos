@@ -63,10 +63,12 @@ test('staging signed smoke stays fixed to loopback and proves v2 replay plus the
         healthStatus: 200,
         healthPublic: true,
         releaseShaMatches: true,
+        surfaceMatches: true,
         readinessStatus: 200,
         readinessReady: true,
         signatureProbeStatus: 404,
         signatureAccepted: true,
+        unitScopeMatches: true,
         replayProbeStatus: 401,
         replayRejected: true,
         writeProbeStatus: 405,
@@ -128,8 +130,48 @@ test('staging signed smoke fails closed when authenticated readiness omits a rea
     assert.equal(__testables.controlsPassed(result), false)
 })
 
+test('staging signed smoke qualifies the explicit full surface with a consultant limited to Novo Hamburgo', async () => {
+    let readCount = 0
+    const result = await runAtendimentoStagingSignedSmoke({
+        expectedReleaseSha: RELEASE_SHA,
+        surface: 'full',
+        readEnvironment: async () => ({ ATENDIMENTO_ACTOR_HMAC_KEY: ACTOR_KEY, ATENDIMENTO_READINESS_TOKEN: READINESS_TOKEN }),
+        fetchImpl: async (input) => {
+            const url = new URL(String(input))
+            if (url.pathname === '/health') return response(200, { ok: true, control: { releaseSha: RELEASE_SHA, surface: 'full' } })
+            if (url.pathname === '/internal/readiness') return response(200, readyPayload())
+            if (url.pathname === '/api/atendimento/references') {
+                readCount += 1
+                return readCount === 1
+                    ? response(200, { ok: true, units: ['novo-hamburgo'], members: [] })
+                    : response(401, { ok: false, error: 'UNAUTHORIZED' })
+            }
+            if (url.pathname === '/api/atendimento/__staging-smoke__/write-guard') return response(405, { ok: false, error: 'READ_ONLY_RUNTIME' })
+            throw new Error(`UNEXPECTED_FULL_SMOKE_PATH_${url.pathname}`)
+        },
+    })
+
+    assert.deepEqual(result, {
+        healthStatus: 200,
+        healthPublic: true,
+        releaseShaMatches: true,
+        surfaceMatches: true,
+        readinessStatus: 200,
+        readinessReady: true,
+        signatureProbeStatus: 200,
+        signatureAccepted: true,
+        unitScopeMatches: true,
+        replayProbeStatus: 401,
+        replayRejected: true,
+        writeProbeStatus: 405,
+        writeRejected: true,
+    })
+    assert.equal(__testables.controlsPassed(result), true)
+})
+
 test('staging signed smoke accepts only one literal full release SHA argument', () => {
     assert.deepEqual(__testables.parseArgs(['--expected-release-sha', RELEASE_SHA]), { expectedReleaseSha: RELEASE_SHA })
+    assert.deepEqual(__testables.parseArgs(['--expected-release-sha', RELEASE_SHA, '--surface', 'full']), { expectedReleaseSha: RELEASE_SHA, surface: 'full' })
     assert.throws(
         () => __testables.parseArgs(['--expected-release-sha', '../not-a-sha']),
         (error) => error?.message === 'ATENDIMENTO_STAGING_SMOKE_RELEASE_SHA_INVALID',

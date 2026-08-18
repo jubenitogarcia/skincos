@@ -24,15 +24,17 @@ run_skincos_npm() {
 
 RELEASE_SHA=""
 PREDECESSOR_SHA=""
+SURFACE='clientes'
 COORDINATION_CLOSURE=""
 APPLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --release-sha) shift; RELEASE_SHA="${1:-}" ;;
     --predecessor-sha) shift; PREDECESSOR_SHA="${1:-}" ;;
+    --surface) shift; SURFACE="${1:-}" ;;
     --coordination-closure) shift; COORDINATION_CLOSURE="${1:-}" ;;
     --apply) APPLY=1 ;;
-    -h|--help) echo "Usage: $0 --release-sha <full-main-sha> --predecessor-sha <full-previous-sha> [--coordination-closure <json>] [--apply]"; exit 0 ;;
+    -h|--help) echo "Usage: $0 --release-sha <full-main-sha> --predecessor-sha <full-previous-sha> [--surface <clientes|full>] [--coordination-closure <json>] [--apply]"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
   shift
@@ -40,6 +42,7 @@ done
 
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "--release-sha must be a full lowercase SHA." >&2; exit 1; }
 [[ "$PREDECESSOR_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "--predecessor-sha must be a full lowercase SHA." >&2; exit 1; }
+[[ "$SURFACE" =~ ^(clientes|full)$ ]] || { echo "--surface must be clientes or full." >&2; exit 1; }
 if [[ "$APPLY" = "1" ]]; then
   [[ -n "$COORDINATION_CLOSURE" && -f "$COORDINATION_CLOSURE" ]] || {
     echo '--coordination-closure is required for an applied Atendimento release.' >&2
@@ -134,6 +137,7 @@ if [[ "$APPLY" != "1" ]]; then
   echo "release_sha=$RELEASE_SHA"
   echo "predecessor_sha=$PREDECESSOR_SHA"
   echo "source_tree=$tree_sha"
+  echo "surface=$SURFACE"
   echo "destination=$DESTINATION"
   echo "dry_run=true"
   exit 0
@@ -145,8 +149,8 @@ native_coordination_init release:atendimento atendimento "$RELEASE_SHA" "$COORDI
 coordination_acquired=0
 umask 0077
 lineage_file="$(/usr/bin/mktemp /tmp/atendimento-staging-lineage.XXXXXX)"
-printf '{"releaseId":"%s","parentReleaseId":"%s","verifiedAncestor":true,"sourceTree":"%s","target":"staging"}\n' \
-  "$RELEASE_SHA" "$PREDECESSOR_SHA" "$tree_sha" >"$lineage_file"
+printf '{"releaseId":"%s","parentReleaseId":"%s","verifiedAncestor":true,"sourceTree":"%s","target":"staging","surface":"%s"}\n' \
+  "$RELEASE_SHA" "$PREDECESSOR_SHA" "$tree_sha" "$SURFACE" >"$lineage_file"
 cleanup() {
   /usr/bin/rm -f -- "$lineage_file"
   # Do not let a future refactor turn cleanup into a broad or caller-directed
@@ -196,7 +200,7 @@ native_coordination_check
 run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos "$COORDINATION_CLOSURE" "$STAGING/.skincos-global-coordination-atendimento.json"
 native_coordination_check
 run_sudo_clean /usr/bin/install -m 0640 -o root -g skincos /dev/stdin "$STAGING/.skincos-atendimento-release.json" <<EOF
-{"releaseSha":"$RELEASE_SHA","sourceTree":"$tree_sha","target":"staging","domain":"atendimento","syntheticOnly":true}
+{"releaseSha":"$RELEASE_SHA","sourceTree":"$tree_sha","target":"staging","domain":"atendimento","surface":"$SURFACE","syntheticOnly":true}
 EOF
 native_coordination_check
 run_sudo_clean /usr/bin/mv -- "$STAGING" "$DESTINATION"

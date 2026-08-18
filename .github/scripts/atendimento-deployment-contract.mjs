@@ -40,6 +40,7 @@ const TARGETS = new Set(["preview", "staging", "production"]);
 const KINDS = new Set(["deploy", "availability"]);
 const OPERATIONS = new Set(["deploy", "rollback"]);
 const AVAILABILITY_STATES = new Set(["disabled", "maintenance", "active"]);
+const SURFACES = new Set(["clientes", "full"]);
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 
 function string(value) {
@@ -64,11 +65,13 @@ export function validateAtendimentoDeploymentContract(environment = process.env)
   const releaseSha = string(environment.RELEASE_SHA).toLowerCase();
   const operation = string(environment.ATENDIMENTO_OPERATION);
   const availabilityState = string(environment.ATENDIMENTO_AVAILABILITY_STATE);
+  const surface = string(environment.ATENDIMENTO_SURFACE || "clientes").toLowerCase();
   const report = {
     schemaVersion: 1,
     kind,
     target,
     releaseSha: SHA_PATTERN.test(releaseSha) ? releaseSha : null,
+    surface: SURFACES.has(surface) ? surface : null,
     mutation: {
       attempted: false,
       performed: false,
@@ -83,6 +86,7 @@ export function validateAtendimentoDeploymentContract(environment = process.env)
   if (!KINDS.has(kind)) errors.push("CONTRACT_KIND must be deploy or availability.");
   if (!TARGETS.has(target)) errors.push("CONTRACT_TARGET must be preview, staging, or production.");
   if (!SHA_PATTERN.test(releaseSha)) errors.push("RELEASE_SHA must be a full 40-character lowercase hexadecimal commit SHA.");
+  if (!SURFACES.has(surface)) errors.push("ATENDIMENTO_SURFACE must be clientes or full.");
 
   if (kind === "deploy" && !OPERATIONS.has(operation)) {
     errors.push("ATENDIMENTO_OPERATION must be deploy or rollback.");

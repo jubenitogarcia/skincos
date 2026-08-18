@@ -31,7 +31,7 @@ function signature({ timestamp, nonce, method = 'GET', requestPath, actor }) {
         .digest('base64url')
 }
 
-async function createFixture({ state = 'active' } = {}) {
+async function createFixture({ state = 'active', surface = 'clientes' } = {}) {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'atendimento-isolated-runtime-'))
     const control = path.join(dir, 'module-control.json')
     const replay = path.join(dir, 'replay.json')
@@ -40,6 +40,7 @@ async function createFixture({ state = 'active' } = {}) {
         module: 'atendimento',
         state,
         releaseSha: RELEASE_SHA,
+        surface,
         readOnly: true,
         commercialContactWritesEnabled: false,
         syntheticOnly: true,
@@ -53,7 +54,8 @@ async function createFixture({ state = 'active' } = {}) {
             CRM_API_HOST: '127.0.0.1',
             CRM_API_PORT: '0',
             CRM_ATENDIMENTO_READ_ONLY: 'true',
-            CRM_ATENDIMENTO_CLIENTES_ONLY: 'true',
+            CRM_ATENDIMENTO_SURFACE: surface,
+            CRM_ATENDIMENTO_CLIENTES_ONLY: surface === 'clientes' ? 'true' : 'false',
             CRM_ATENDIMENTO_COMMERCIAL_WRITES_ENABLED: 'false',
             CRM_MODULE_CONTROL_FILE: control,
             ATENDIMENTO_RUNTIME_RELEASE_SHA: RELEASE_SHA,
@@ -70,9 +72,10 @@ async function createFixture({ state = 'active' } = {}) {
     }
 }
 
-async function startRuntime(fixture, readiness) {
+async function startRuntime(fixture, readiness, storeOverrides = {}) {
     const store = {
         readiness,
+        ...storeOverrides,
         async close() {},
     }
     const runtime = createIsolatedAtendimentoRuntime({
@@ -133,6 +136,7 @@ test('liveness remains public while database readiness fails and internal interf
                 state: 'active',
                 releaseMatched: true,
                 releaseSha: RELEASE_SHA,
+                surface: 'clientes',
                 readOnly: true,
                 syntheticOnly: true,
             },
@@ -150,6 +154,64 @@ test('liveness remains public while database readiness fails and internal interf
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: '{not-valid-json',
+        })
+        assert.equal(write.status, 405)
+        assert.deepEqual(await write.json(), { ok: false, error: 'READ_ONLY_RUNTIME' })
+    } finally {
+        await running.close()
+        await fixture.cleanup()
+    }
+})
+
+test('explicit full surface reaches the base Atendimento reads while retaining read-only and unit-scoped guards', async () => {
+    const fixture = await createFixture({ surface: 'full' })
+    const calls = []
+    const running = await startRuntime(fixture, async () => ({
+        ok: true,
+        databaseReachable: true,
+        databaseIdentity: true,
+        schemaReady: true,
+        commercialSourceDeferred: false,
+        sourceOperationsReady: true,
+        clinicalApprovalReady: true,
+        transactionReadOnly: true,
+        migrationRegistryReadable: true,
+        persistentWritePrivilegesBlocked: true,
+        persistentPiiReadPrivilegesBlocked: true,
+    }), {
+        async references(actor) {
+            calls.push(actor)
+            return { units: ['novo-hamburgo'], members: [] }
+        },
+    })
+    try {
+        const actor = encode({ id: 'consultor-1', role: 'CONSULTOR', allowedModules: ['atendimento'], allowedUnits: ['novo-hamburgo'] })
+        const timestamp = String(Date.now())
+        const nonce = 'F'.repeat(32)
+        const requestPath = '/api/atendimento/references'
+        const response = await fetch(`${running.baseUrl}${requestPath}`, {
+            headers: {
+                'x-crm-user': actor,
+                'x-crm-ts': timestamp,
+                'x-crm-nonce': nonce,
+                'x-crm-signature-version': '2',
+                'x-crm-signature': signature({ timestamp, nonce, requestPath, actor }),
+            },
+        })
+        assert.equal(response.status, 200)
+        assert.deepEqual(await response.json(), { ok: true, units: ['novo-hamburgo'], members: [] })
+        assert.equal(calls[0].id, 'consultor-1')
+        const writePath = '/api/atendimento/attendances'
+        const writeNonce = 'G'.repeat(32)
+        const write = await fetch(`${running.baseUrl}${writePath}`, {
+            method: 'POST',
+            headers: {
+                'x-crm-user': actor,
+                'x-crm-ts': timestamp,
+                'x-crm-nonce': writeNonce,
+                'x-crm-signature-version': '2',
+                'x-crm-signature': signature({ timestamp, nonce: writeNonce, method: 'POST', requestPath: writePath, actor }),
+            },
         })
         assert.equal(write.status, 405)
         assert.deepEqual(await write.json(), { ok: false, error: 'READ_ONLY_RUNTIME' })
