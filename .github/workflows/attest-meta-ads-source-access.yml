@@ -153,7 +153,8 @@ jobs:
           if (String(pages?.paging?.next ?? '').trim()) fail('source_pages_paging_ambiguous');
           const eligiblePages = pages.data.filter((page) => {
             const tasks = new Set(Array.isArray(page?.tasks) ? page.tasks.map((task) => String(task || '').trim().toUpperCase()) : []);
-            return tasks.has('ADVERTISE') && Boolean(numericId(page?.instagram_business_account?.id));
+            return (tasks.has('ADVERTISE') || tasks.has('PROFILE_PLUS_ADVERTISE')) &&
+              Boolean(numericId(page?.instagram_business_account?.id));
           });
           if (eligiblePages.length === 0) fail('source_pages_none_eligible');
           if (eligiblePages.length > 1) fail('source_pages_multiple_eligible');

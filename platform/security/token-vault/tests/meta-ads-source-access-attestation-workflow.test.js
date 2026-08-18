@@ -176,6 +176,8 @@ test("Meta Ads source-access attestation is manual, bounded, and non-deploying",
     /act_\$\{accountId\}\/offline_conversion_data_sets\?fields=id&limit=2/,
   );
   assert.match(workflow, /tasks\.has\('ADVERTISE'\)/);
+  assert.match(workflow, /tasks\.has\('PROFILE_PLUS_ADVERTISE'\)/);
+  assert.doesNotMatch(workflow, /PROFILE_PLUS_FULL_CONTROL/);
   assert.match(workflow, /source_pages_paging_ambiguous/);
   assert.match(workflow, /eligiblePages\.length === 0/);
   assert.match(workflow, /eligiblePages\.length > 1/);
@@ -250,6 +252,34 @@ test("Meta Ads source-access verifier accepts an exact membership on a bounded a
   assert.equal(result.status, 0, combined);
   assert.equal(result.requestCount, 5);
   assert.match(result.stdout, /source_access_raw=verified/);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier accepts the explicit Profile Plus advertising task", () => {
+  const responses = structuredClone(happyResponses);
+  responses[2].payload.data[0].tasks = ["PROFILE_PLUS_ADVERTISE"];
+  const result = runVerifier(responses);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, combined);
+  assert.equal(result.requestCount, 5);
+  assert.match(result.stdout, /source_access_raw=verified/);
+  assert.doesNotMatch(
+    combined,
+    new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
+  );
+});
+
+test("Meta Ads source-access verifier does not treat other Profile Plus tasks as advertising", () => {
+  const responses = structuredClone(happyResponses);
+  responses[2].payload.data[0].tasks = ["PROFILE_PLUS_ANALYZE"];
+  const result = runVerifier(responses, 3);
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /source_pages_none_eligible/);
+  assert.equal(result.requestCount, 3);
   assert.doesNotMatch(
     combined,
     new RegExp(`${syntheticToken}|${syntheticPixelId}|${syntheticAccountId}`),
