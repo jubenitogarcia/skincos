@@ -129,8 +129,19 @@ export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
   }
 
   const env = context?.env || {}
+  const configuredAuthTarget = String(env.AUTH_API_TARGET ?? '').trim()
+  const requestUrl = String(context?.request?.url ?? '').trim()
+  let authTargetIsRequestOrigin = false
+  if (configuredAuthTarget && requestUrl) {
+    try {
+      authTargetIsRequestOrigin = new URL(configuredAuthTarget).origin === new URL(requestUrl).origin
+    } catch {
+      // Preserve the existing invalid-target behavior below; this guard only
+      // rejects a configured target that points back at the current request.
+    }
+  }
   const targetOrigin =
-    (env.AUTH_API_TARGET as string | undefined) ||
+    (!authTargetIsRequestOrigin ? configuredAuthTarget : '') ||
     (env.INSUMOS_API_TARGET as string | undefined) ||
     'https://api.skincos.com.br'
 

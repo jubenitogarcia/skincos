@@ -302,8 +302,10 @@ export default function BeautyMovementExperience({
     const scrollInterruptCleanupRef = useRef<(() => void) | null>(null);
     const initialDealScrollFrameRef = useRef<number | null>(null);
     const initialDealScrollActiveRef = useRef(false);
+    const initialDealScrollInterruptCleanupRef = useRef<(() => void) | null>(null);
     const tableRef = useRef<HTMLElement | null>(null);
     const tableSurfaceRef = useRef<HTMLDivElement | null>(null);
+    const finaleCountdownRef = useRef<HTMLDivElement | null>(null);
     const progressListRef = useRef<HTMLOListElement | null>(null);
     const progressButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const confirmationActionRef = useRef<HTMLElement | null>(null);
@@ -354,8 +356,10 @@ export default function BeautyMovementExperience({
                 "--bm-progress-expand-ms": `${BEAUTY_MOVEMENT_MOTION.progressExpandMs}ms`,
                 "--bm-progress-total-ms": `${BEAUTY_MOVEMENT_MOTION.progressTransitionMs}ms`,
                 "--bm-finale-enter-ms": `${BEAUTY_MOVEMENT_MOTION.finaleCardsEnterMs}ms`,
+                "--bm-finale-hold-ms": `${BEAUTY_MOVEMENT_MOTION.finaleHoldMs}ms`,
                 "--bm-finale-merge-ms": `${BEAUTY_MOVEMENT_MOTION.finaleMergeMs}ms`,
                 "--bm-finale-card-merge-ms": `${BEAUTY_MOVEMENT_MOTION.finaleCardMergeMs}ms`,
+                "--bm-special-enter-ms": "820ms",
                 "--bm-prompt-word-delay-ms": `${BEAUTY_MOVEMENT_MOTION.promptWordDelayMs}ms`,
                 "--bm-prompt-word-animation-ms": `${BEAUTY_MOVEMENT_MOTION.promptWordAnimationMs}ms`,
                 "--bm-prompt-exit-ms": `${BEAUTY_MOVEMENT_MOTION.promptExitBaseMs}ms`,
@@ -488,6 +492,8 @@ export default function BeautyMovementExperience({
                 window.cancelAnimationFrame(initialDealScrollFrameRef.current);
             }
             initialDealScrollActiveRef.current = false;
+            initialDealScrollInterruptCleanupRef.current?.();
+            initialDealScrollInterruptCleanupRef.current = null;
             scrollInterruptCleanupRef.current?.();
         };
     }, []);
@@ -641,7 +647,14 @@ export default function BeautyMovementExperience({
                 ? Math.min(184, Math.max(0, Math.round(title.getBoundingClientRect().height - 2)))
                 : 0;
         const stickyHeader = document.querySelector("header");
-        const scrollOffset = (stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32) + titlePeek;
+        const stickyHeaderRect = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect() : null;
+        // HeaderScrollBehavior translates the header out of view but keeps its
+        // layout box. Only the visible portion should reserve scroll space;
+        // otherwise the follow loop pushes the hero title above the viewport.
+        const headerOffset = stickyHeaderRect
+            ? Math.max(0, Math.min(stickyHeaderRect.height, stickyHeaderRect.bottom)) + 4
+            : 32;
+        const scrollOffset = headerOffset + titlePeek;
         const editorialTarget = window.scrollY + target.getBoundingClientRect().top - scrollOffset;
         const deck = target.querySelector<HTMLElement>(`.${styles.deckStage}`);
         const deckRect = deck?.getBoundingClientRect();
@@ -654,7 +667,35 @@ export default function BeautyMovementExperience({
         // deck fully in the lower half of the viewport instead of leaving its
         // final card cut off below the fold. The editorial anchor remains the
         // floor so the first scroll still starts from the hero/table handoff.
-        return Math.max(0, Math.max(editorialTarget, deckTarget));
+        const fittedTarget = Math.max(0, Math.max(editorialTarget, deckTarget));
+
+        // Keep the campaign thesis readable while the table settles. The
+        // compact layout is deliberately designed so the title can fit above
+        // the cards; capping the automatic follow target prevents the old
+        // behavior where the title was completely scrolled away.
+        if (title instanceof HTMLElement) {
+            const titleRect = title.getBoundingClientRect();
+            const titleTop = window.scrollY + titleRect.top;
+            const titleFits = titleRect.height <= window.innerHeight - headerOffset - 16;
+            const tableRect = target.getBoundingClientRect();
+            const cardGrid = target.querySelector<HTMLElement>(`.${styles.cardGrid}`);
+            // The card row is the readable hand that must share the frame
+            // with the thesis. The deck remains a separate lower anchor in
+            // fittedTarget and may intentionally overhang the viewport edge.
+            const handBottom = cardGrid?.getBoundingClientRect().bottom ?? Math.max(tableRect.top + 312, deckRect?.bottom ?? 0);
+            const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
+            if (titleFits && !isStackedLayout) {
+                const titleTarget = Math.max(0, titleTop - headerOffset - 12);
+                // Evaluate the hand at the proposed title target, rather than
+                // at the current scroll position. This prevents the RAF follow
+                // loop from alternating between the title and deck targets.
+                const handBottomAtTitle = handBottom - (titleTarget - window.scrollY);
+                const handFitsAtTitle = handBottomAtTitle <= window.innerHeight + 24;
+                if (handFitsAtTitle) return Math.min(fittedTarget, titleTarget);
+            }
+        }
+
+        return fittedTarget;
     }
 
     function stopInitialDealScroll() {
@@ -663,10 +704,13 @@ export default function BeautyMovementExperience({
             window.cancelAnimationFrame(initialDealScrollFrameRef.current);
             initialDealScrollFrameRef.current = null;
         }
+        initialDealScrollInterruptCleanupRef.current?.();
+        initialDealScrollInterruptCleanupRef.current = null;
     }
 
     function startInitialDealScroll() {
         stopInitialDealScroll();
+        cancelScrollAnimation();
 
         if (reducedMotion) {
             scrollToTable();
@@ -678,6 +722,24 @@ export default function BeautyMovementExperience({
         // every frame avoids a one-time target becoming stale during layout
         // transitions and lets the scroll itself trigger the header collapse.
         initialDealScrollActiveRef.current = true;
+        const interruptOnUserIntent = () => stopInitialDealScroll();
+        const removeFollowInterrupts = () => {
+            window.removeEventListener("wheel", interruptOnUserIntent);
+            window.removeEventListener("touchstart", interruptOnUserIntent);
+            window.removeEventListener("pointerdown", interruptOnUserIntent);
+            window.removeEventListener("keydown", interruptOnUserIntent);
+        };
+        // Register after the activating click/keydown has finished bubbling.
+        // Otherwise Enter/Space on the deck would immediately see this new
+        // listener and cancel the follow loop it just started.
+        window.requestAnimationFrame(() => {
+            if (!initialDealScrollActiveRef.current) return;
+            window.addEventListener("wheel", interruptOnUserIntent, { passive: true, once: true });
+            window.addEventListener("touchstart", interruptOnUserIntent, { passive: true, once: true });
+            window.addEventListener("pointerdown", interruptOnUserIntent, { passive: true, once: true });
+            window.addEventListener("keydown", interruptOnUserIntent, { once: true });
+            initialDealScrollInterruptCleanupRef.current = removeFollowInterrupts;
+        });
         let previousTime = performance.now();
         const follow = (now: number) => {
             if (!initialDealScrollActiveRef.current || !mountedRef.current) {
@@ -703,22 +765,34 @@ export default function BeautyMovementExperience({
         initialDealScrollFrameRef.current = window.requestAnimationFrame(follow);
     }
 
-    function scrollToElement(target: HTMLElement | null, extraOffset = 0) {
+    function scrollToElement(target: HTMLElement | null, extraOffset = 0, visibleHeaderOffset?: number) {
         cancelScrollAnimation();
         if (!target) return;
 
+        const startTop = window.scrollY;
+        const stickyHeader = document.querySelector("header");
+        const readVisibleHeaderOffset = () => {
+            if (!(stickyHeader instanceof HTMLElement)) return visibleHeaderOffset ?? 32;
+            const headerRect = stickyHeader.getBoundingClientRect();
+            return Math.max(0, Math.min(headerRect.height, headerRect.bottom)) + 4;
+        };
+        const headerOffset =
+            visibleHeaderOffset ??
+            readVisibleHeaderOffset();
+        const scrollOffset = headerOffset + extraOffset;
+        const targetTop = Math.max(0, startTop + target.getBoundingClientRect().top - scrollOffset);
+
         if (reducedMotion) {
+            // Keep the semantic anchor for assistive/browser tooling, then use
+            // the measured visible-header offset as the actual destination.
+            // scrollIntoView alone aligns the table to y=0, where a visible
+            // sticky header would cover the progress row on compact screens.
             target.scrollIntoView({ behavior: "auto", block: "start" });
-            if (extraOffset > 0) window.scrollBy({ top: -extraOffset, behavior: "auto" });
+            window.scrollTo({ top: targetTop, behavior: "auto" });
             return;
         }
 
-        const startTop = window.scrollY;
-        const stickyHeader = document.querySelector("header");
-        const scrollOffset = (stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32) + extraOffset;
-        const targetTop = Math.max(0, startTop + target.getBoundingClientRect().top - scrollOffset);
-        const distance = targetTop - startTop;
-        const duration = Math.min(1040, Math.max(680, Math.abs(distance) * 0.55));
+        const duration = Math.min(1040, Math.max(680, Math.abs(targetTop - startTop) * 0.55));
         const startedAt = performance.now();
         const easeInOut = (progress: number) =>
             progress < 0.5
@@ -740,7 +814,9 @@ export default function BeautyMovementExperience({
 
         const animate = (now: number) => {
             const progress = Math.min(1, (now - startedAt) / duration);
-            window.scrollTo(0, startTop + distance * easeInOut(progress));
+            const documentTargetTop = window.scrollY + target.getBoundingClientRect().top;
+            const frameTargetTop = Math.max(0, documentTargetTop - readVisibleHeaderOffset() - extraOffset);
+            window.scrollTo(0, startTop + (frameTargetTop - startTop) * easeInOut(progress));
             if (progress < 1) {
                 scrollAnimationFrameRef.current = window.requestAnimationFrame(animate);
             } else {
@@ -753,16 +829,66 @@ export default function BeautyMovementExperience({
         scrollAnimationFrameRef.current = window.requestAnimationFrame(animate);
     }
 
+    useEffect(() => {
+        if (finaleStage !== "collecting") return;
+
+        const frame = window.requestAnimationFrame(() => {
+            const countdown = finaleCountdownRef.current;
+            if (!countdown) return;
+
+            const stickyHeader = document.querySelector("header");
+            const headerRect = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect() : null;
+            const headerOffset = headerRect
+                ? Math.max(0, Math.min(headerRect.height, headerRect.bottom)) + 12
+                : 24;
+            const countdownTop = window.scrollY + countdown.getBoundingClientRect().top;
+            const targetTop = Math.max(0, countdownTop - headerOffset);
+            if (Math.abs(targetTop - window.scrollY) > 8) {
+                window.scrollTo({ top: targetTop, behavior: reducedMotion ? "auto" : "smooth" });
+            }
+        });
+
+        return () => window.cancelAnimationFrame(frame);
+    }, [finaleStage, reducedMotion]);
+
     function scrollToTable() {
         const target = tableRef.current;
         if (!target) return;
 
         const title = document.getElementById("beauty-movement-title");
+        const stickyHeader = document.querySelector("header");
+        const stickyHeaderRect = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect() : null;
+        const headerOffset = stickyHeaderRect
+            ? Math.max(0, Math.min(stickyHeaderRect.height, stickyHeaderRect.bottom)) + 4
+            : 32;
+        const titleRect = title instanceof HTMLElement ? title.getBoundingClientRect() : null;
+        const tableTop = window.scrollY + target.getBoundingClientRect().top;
+        const titleTop = titleRect ? window.scrollY + titleRect.top : null;
+        const titleTarget = titleTop === null ? null : Math.max(0, titleTop - headerOffset - 12);
+        const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
+        const cardGrid = target.querySelector<HTMLElement>(`.${styles.cardGrid}`);
+        const deck = target.querySelector<HTMLElement>(`.${styles.deckStage}`);
+        const handBottom = cardGrid?.getBoundingClientRect().bottom ?? Math.max(
+            target.getBoundingClientRect().top + 312,
+            deck?.getBoundingClientRect().bottom ?? 0,
+        );
+        const handFitsAtTitle =
+            titleTarget !== null &&
+            handBottom - (titleTarget - window.scrollY) <= window.innerHeight + 24;
+        const canAnchorTitle =
+            titleTarget !== null &&
+            !isStackedLayout &&
+            Boolean(titleRect) &&
+            (titleRect?.height ?? 0) <= window.innerHeight - headerOffset - 16 &&
+            handFitsAtTitle;
         const titlePeek =
-            title instanceof HTMLElement
-                ? Math.min(184, Math.max(0, Math.round(title.getBoundingClientRect().height - 2)))
-                : 0;
-        scrollToElement(target, titlePeek);
+            !canAnchorTitle
+                ? 0
+                : Math.max(
+                      Math.min(184, Math.max(0, Math.round((titleRect?.height ?? 0) - 2))),
+                      tableTop - headerOffset - titleTarget,
+                  );
+        scrollToElement(target, titlePeek, headerOffset);
     }
 
     function clearHandTransitionTimer() {
@@ -981,6 +1107,10 @@ export default function BeautyMovementExperience({
         transitionInFlightRef.current = true;
         const handToken = beginHandTransition();
         setCurrentHandStage("collect");
+        // The deck is the visual anchor for a category handoff. Follow its
+        // moving position from collection through the next deal so the page
+        // does not jump after the cards return to the stack.
+        startInitialDealScroll();
         scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.handCollectMs, () => {
             setCurrentHandStage("prompt");
             const progressMotionStarted = setCurrentActIndex(nextIndex);
@@ -1000,7 +1130,12 @@ export default function BeautyMovementExperience({
                                     scheduleDealSequence(handToken, () => {
                                         transitionInFlightRef.current = false;
                                         setCurrentHandStage("ready");
-                                        window.requestAnimationFrame(scrollToTable);
+                                        window.requestAnimationFrame(() => {
+                                            // Let the ready-state DOM commit once
+                                            // so the follow loop includes the
+                                            // final card/deck geometry.
+                                            window.requestAnimationFrame(stopInitialDealScroll);
+                                        });
                                     });
                                 },
                             );
@@ -1400,7 +1535,12 @@ export default function BeautyMovementExperience({
         );
     }
 
-    function renderSpecialCard(revealed: boolean, action: SpecialCardAction = "none", settled = false) {
+    function renderSpecialCard(
+        revealed: boolean,
+        action: SpecialCardAction = "none",
+        settled = false,
+        deferRevealContent = false,
+    ) {
         const showRevealAction = action !== "none";
         const kind: SpecialCardKind = revealed
             ? hasCourtesyClass
@@ -1444,6 +1584,7 @@ export default function BeautyMovementExperience({
         const specialCardWhatsappLabel = /whatsapp/i.test(primaryWhatsappLabel)
             ? primaryWhatsappLabel
             : `${primaryWhatsappLabel} no WhatsApp`;
+        const revealContentClass = deferRevealContent || showRevealAction ? styles.specialCardRevealContent : undefined;
 
         return (
             <article
@@ -1462,26 +1603,28 @@ export default function BeautyMovementExperience({
                     >
                         <BrandMark className={styles.specialCardBrand} loading="eager" tone="light" title="" />
                         <span className={styles.specialCardBackLabel}>CARTA ESPECIAL</span>
-                        <strong>A soma da sua leitura está pronta.</strong>
-                        {showRevealAction ? (
-                            <div
-                                className={styles.specialCardRevealAction}
-                                ref={(node) => {
-                                    if (action === "confirm") confirmationActionRef.current = node;
-                                }}
-                            >
-                                {action === "confirm" && actionError ? <p className={styles.specialCardRevealError} role="alert">{actionError}</p> : null}
-                                <button
-                                    ref={action === "reopen" ? specialCardReopenActionRef : undefined}
-                                    className={styles.primaryButton}
-                                    type="button"
-                                    onClick={action === "confirm" ? () => void handleConfirm() : openSpecialCardModal}
-                                    disabled={action === "confirm" ? isConfirming : undefined}
+                        <div className={revealContentClass}>
+                            <strong>A soma da sua leitura está pronta.</strong>
+                            {showRevealAction ? (
+                                <div
+                                    className={styles.specialCardRevealAction}
+                                    ref={(node) => {
+                                        if (action === "confirm") confirmationActionRef.current = node;
+                                    }}
                                 >
-                                    {action === "confirm" && isConfirming ? "Revelando…" : "Clique aqui para revelar sua carta especial"}
-                                </button>
-                            </div>
-                        ) : null}
+                                    {action === "confirm" && actionError ? <p className={styles.specialCardRevealError} role="alert">{actionError}</p> : null}
+                                    <button
+                                        ref={action === "reopen" ? specialCardReopenActionRef : undefined}
+                                        className={styles.primaryButton}
+                                        type="button"
+                                        onClick={action === "confirm" ? () => void handleConfirm() : openSpecialCardModal}
+                                        disabled={action === "confirm" ? isConfirming : undefined}
+                                    >
+                                        {action === "confirm" && isConfirming ? "Revelando…" : "Clique aqui para revelar sua carta especial"}
+                                    </button>
+                                </div>
+                            ) : null}
+                        </div>
                         <span className={styles.specialCardSeal} aria-hidden="true">
                             <i />
                             <i />
@@ -1680,6 +1823,22 @@ export default function BeautyMovementExperience({
 
                     </div>
 
+                    {finaleStage === "assembling" || finaleStage === "collecting" || finaleStage === "merging" ? (
+                        <div className={styles.finaleCountdownSlot} ref={finaleCountdownRef}>
+                            {finaleStage === "collecting" ? (
+                                <div
+                                    className={styles.finaleCountdown}
+                                    aria-hidden="true"
+                                >
+                                    <span className={styles.finaleCountdownLabel}>Sua leitura está se reunindo · 5 segundos</span>
+                                    <span className={styles.finaleCountdownTrack} aria-hidden="true">
+                                        <span className={styles.finaleCountdownBar} />
+                                    </span>
+                                </div>
+                            ) : null}
+                        </div>
+                    ) : null}
+
                     <div
                         ref={tableSurfaceRef}
                         className={styles.tableSurface}
@@ -1739,7 +1898,7 @@ export default function BeautyMovementExperience({
                                 {reading.map(renderFinaleCard)}
                                 {finaleStage === "merging" ? (
                                     <div className={styles.finaleSpecialCardTransform}>
-                                        {renderSpecialCard(false)}
+                                        {renderSpecialCard(false, "none", false, true)}
                                     </div>
                                 ) : null}
                             </div>
@@ -1750,7 +1909,7 @@ export default function BeautyMovementExperience({
                                 aria-label="Carta especial da celebração"
                             >
                                 {!isLocalPreview ? renderConfirmationAction() : null}
-                                {renderSpecialCard(false, isLocalPreview ? "confirm" : "none", true)}
+                                {renderSpecialCard(false, isLocalPreview ? "confirm" : "none", true, true)}
                             </div>
                         ) : finaleStage === "result" ? (
                             <div
@@ -1768,6 +1927,12 @@ export default function BeautyMovementExperience({
                     </div>
 
                 </section>
+
+                {finaleStage === "collecting" ? (
+                    <p className={styles.srOnly} role="status" aria-live="polite">
+                        Sua leitura está se reunindo. A carta especial aparece em cinco segundos.
+                    </p>
+                ) : null}
 
                 {actionError && finaleStage === "hidden" ? (
                     <p className={styles.inlineError} role="alert">

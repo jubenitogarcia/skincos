@@ -16,6 +16,7 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/derive`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/attest`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/attest-appsecret-proof`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/rollback`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-exercise`
@@ -27,7 +28,7 @@ O bearer restrito `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` só pode consultar
 bootstrap governados, o rollback desse bootstrap e o exercício de staging. Ele
 não lista/altera tokens, não cria runs e não publica anúncios.
 O bearer efêmero distinto `TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN` só alcança
-os três endpoints de atestação, seed e rollback sintéticos, exclusivamente no
+os quatro endpoints de atestação, prova de `appsecret_proof`, seed e rollback sintéticos, exclusivamente no
 Worker staging; ele não ganha as permissões do bearer de configuração,
 operacional ou administrativo.
 O endpoint de analytics exige o secret separado
@@ -150,6 +151,14 @@ uma conta/pixel, uma Página+Instagram elegível e um dataset offline unívocos,
 cria somente recursos `PAUSED` nomeados para staging e sela duas credenciais
 internas cifradas. Não seleciona campanhas, conjuntos ou anúncios comerciais,
 nem torna o token Meta um binding do Worker.
+
+O workflow manual separado de prova candidata cria somente uma versão imutável
+não promovida e chama `POST .../staging-synthetic-seed/attest-appsecret-proof`.
+Esse endpoint exige que a própria versão candidata tenha gerado
+`appsecret_proof` a partir do binding herdado; ele repete as leituras Graph
+delimitadas, não toca D1 nem tráfego, e devolve apenas
+`appsecret_proof_verified` ou um código sanitizado. Ele não cria, copia nem
+revela `META_APP_SECRET`.
 
 O endpoint responde apenas `sealed` ou `not_required` e uma identidade opaca
 de operação. Se qualquer passo subsequente falhar antes do tráfego, ou se a

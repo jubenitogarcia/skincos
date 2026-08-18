@@ -33,6 +33,7 @@ test('launcher v2 fails closed unless manifest, WSL process, and served headers 
   assert.match(launcher, /X-Skincos-Preview-Fingerprint/)
   assert.match(launcher, /X-Skincos-Preview-Instance/)
   assert.match(launcher, /WEBSITE_ALLOW_PORT_FALLBACK=1/)
+  assert.match(launcher, /WEBSITE_START_TIMEOUT=300/)
   assert.match(launcher, /Write-AtomicJson/)
   assert.doesNotMatch(launcher, /beauty-movement-canonical/)
   assert.doesNotMatch(launcher, /C:\\CodexRuntime/)

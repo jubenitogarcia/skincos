@@ -37,7 +37,12 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /beauty_movement_act_view/);
     assert.match(experience, /requestAnimationFrame\(animate\)/);
     assert.match(experience, /scrollIntoView\(\{ behavior: "auto"/);
-    assert.match(experience, /function scrollToElement\(target: HTMLElement \| null, extraOffset = 0\)/);
+    assert.match(experience, /function scrollToElement\(target: HTMLElement \| null, extraOffset = 0, visibleHeaderOffset\?: number\)/);
+    assert.match(experience, /const readVisibleHeaderOffset = \(\) =>/);
+    assert.match(experience, /const headerOffset =\s*visibleHeaderOffset \?\?/);
+    assert.match(experience, /target\.scrollIntoView\(\{ behavior: "auto", block: "start" \}\);\s*window\.scrollTo\(\{ top: targetTop, behavior: "auto" \}\)/);
+    assert.match(experience, /const frameTargetTop = Math\.max\(0, documentTargetTop - readVisibleHeaderOffset\(\) - extraOffset\)/);
+    assert.match(experience, /scrollToElement\(target, titlePeek, headerOffset\)/);
     assert.match(experience, /const titlePeek =/);
     assert.match(experience, /function getTableScrollTarget\(\): number \| null/);
     assert.match(experience, /const deck = target\.querySelector<HTMLElement>\(`\.\$\{styles\.deckStage\}`\)/);
@@ -50,7 +55,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /window\.requestAnimationFrame\(follow\)/);
     assert.match(experience, /function stopInitialDealScroll\(\)/);
     assert.match(experience, /cancelScrollAnimation\(\);\s*stopInitialDealScroll\(\);/);
-    assert.match(experience, /scrollToElement\(target, titlePeek\)/);
+    assert.match(experience, /scrollToElement\(target, titlePeek, headerOffset\)/);
     assert.match(experience, /prefers-reduced-motion/);
     assert.match(experience, /import \{ BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate \}/);
     assert.match(experience, /AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION\.autoAdvanceMs \/ 1_000/);
@@ -442,7 +447,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /BeautyMovementCardIllustration/);
     assert.match(experience, /function renderSpecialCard/);
     assert.match(experience, /type SpecialCardAction = "none" \| "confirm" \| "reopen"/);
-    assert.match(experience, /function renderSpecialCard\(revealed: boolean, action: SpecialCardAction = "none", settled = false\)/);
+    assert.match(experience, /function renderSpecialCard\(\s*revealed: boolean,\s*action: SpecialCardAction = "none",\s*settled = false,\s*deferRevealContent = false,/);
     assert.match(experience, /className=\{styles\.specialCardRevealAction\}/);
     assert.match(experience, /Garantir presente e confirmar presença/);
     assert.match(experience, /if \(!operationalConsent && !isLocalPreview\) return;/);
@@ -452,7 +457,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /styles\.specialCardWhatsappAction/);
     assert.match(experience, /finaleStage === "confirmation" \?/);
     assert.match(experience, /!isLocalPreview \? renderConfirmationAction\(\) : null/);
-    assert.match(experience, /renderSpecialCard\(false, isLocalPreview \? "confirm" : "none", true\)/);
+    assert.match(experience, /renderSpecialCard\(false, isLocalPreview \? "confirm" : "none", true, true\)/);
     assert.match(experience, /renderSpecialCard\(false, "reopen"\)/);
     assert.doesNotMatch(experience, /specialCardPrompt|Sua carta especial está pronta\./);
     assert.match(experience, /Clique aqui para revelar sua carta especial/);
