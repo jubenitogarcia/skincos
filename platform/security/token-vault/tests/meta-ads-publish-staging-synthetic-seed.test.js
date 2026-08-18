@@ -8,6 +8,7 @@ import {
 } from '../src/meta-ads-publish.js';
 
 const ACCOUNT_ID = '17841400000000001';
+const BUSINESS_ID = '18841400000000001';
 const PIXEL_ID = '99444000000000001';
 const PAGE_ID = '12000000000000001';
 const INSTAGRAM_ID = '17841400000000002';
@@ -396,6 +397,12 @@ class FakeGraph {
         picture: { data: { url: 'https://cdn.example.invalid/staging-barra-fixture.jpg' } },
       });
     }
+    if (path === `act_${ACCOUNT_ID}`) {
+      return graphResponse({ id: ACCOUNT_ID, business: { id: BUSINESS_ID } });
+    }
+    if (path === `${BUSINESS_ID}/ads_dataset`) {
+      return graphResponse({ data: [{ id: DATASET_ID, dataset_id: DATASET_ID }] });
+    }
     if (path === `act_${ACCOUNT_ID}/offline_conversion_data_sets`) {
       return graphResponse({ data: [{ id: DATASET_ID }] });
     }
@@ -680,7 +687,7 @@ test('staging seed attestation bounds Graph discovery and returns no source fact
     contract_version: 'meta-ads-tracking-v20/staging-synthetic-seed/v2',
     requestId: 'seed-attestation-test-request-id',
   });
-  assert.equal(graph.calls.length, 5);
+  assert.equal(graph.calls.length, 6);
   assert.ok(graph.calls.every((call) => call.method === 'GET'));
   assert.equal(graph.postCalls.length, 0);
   assert.equal(db.operations.size, 0);
@@ -748,7 +755,8 @@ test('staging seed attestation proves two explicitly selected System User Page a
     `act_${ACCOUNT_ID}/adspixels`,
     'me',
     `${SYSTEM_USER_ID}/assigned_pages`,
-    `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+    `act_${ACCOUNT_ID}`,
+    `${BUSINESS_ID}/ads_dataset`,
   ]);
   assert.ok(graph.calls.every((call) => call.method === 'GET'));
   assert.equal(graph.postCalls.length, 0);
@@ -915,7 +923,8 @@ test('staging seed attestation uses the assigned Page pair without an incompatib
     `act_${ACCOUNT_ID}/adspixels`,
     'me',
     `${SYSTEM_USER_ID}/assigned_pages`,
-    `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+    `act_${ACCOUNT_ID}`,
+    `${BUSINESS_ID}/ads_dataset`,
   ]);
   assert.equal(graph.postCalls.length, 0);
   assert.equal(db.operations.size, 0);
@@ -940,7 +949,7 @@ test('staging seed attestation accepts an exact account Pixel membership on a bo
 
   assert.equal(response.status, 200);
   assert.equal(body.attestation, 'match');
-  assert.equal(graph.calls.length, 5);
+  assert.equal(graph.calls.length, 6);
   assert.ok(graph.calls.every((call) => call.method === 'GET'));
   assert.equal(graph.postCalls.length, 0);
   assert.equal(db.operations.size, 0);
@@ -984,7 +993,7 @@ test('staging seed attestation accepts the explicit Profile Plus advertising tas
 
   assert.equal(response.status, 200);
   assert.equal(body.attestation, 'match');
-  assert.equal(graph.calls.length, 5);
+  assert.equal(graph.calls.length, 6);
   assert.ok(graph.calls.every((call) => call.method === 'GET'));
   assert.equal(graph.postCalls.length, 0);
   assert.equal(db.operations.size, 0);
@@ -1142,9 +1151,9 @@ test('staging seed attestation returns a finite resource stage for permanent Gra
     },
     {
       label: 'dataset',
-      path: `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+      path: `${BUSINESS_ID}/ads_dataset`,
       expectedError: 'meta_ads_publish_staging_seed_graph_dataset_access_denied',
-      expectedReads: 5,
+      expectedReads: 6,
       // Graph can return a 2xx envelope containing an error. It remains a
       // permanent source capability failure and must not become a success.
       status: 200,
@@ -1334,10 +1343,11 @@ test('candidate appsecret-proof attestation verifies only bounded proof-bearing 
     `act_${ACCOUNT_ID}/adspixels`,
     'me',
     `${SYSTEM_USER_ID}/assigned_pages`,
-    `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+    `act_${ACCOUNT_ID}`,
+    `${BUSINESS_ID}/ads_dataset`,
   ]);
   assert.ok(observedReads.every((read) => read.method === 'GET' && read.hasProof));
-  assert.equal(graph.calls.length, 5);
+  assert.equal(graph.calls.length, 6);
   assert.equal(graph.postCalls.length, 0);
   const serialized = JSON.stringify(body);
   for (const value of [SOURCE_ACCESS_TOKEN, ACCOUNT_ID, PIXEL_ID, PAGE_ID, INSTAGRAM_ID, DATASET_ID]) {
@@ -1461,10 +1471,10 @@ test('staging seed attestation preserves finite non-identity source eligibility 
     },
     {
       label: 'dataset-ambiguous',
-      path: `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+      path: `${BUSINESS_ID}/ads_dataset`,
       response: { body: { data: [] } },
       expectedError: 'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
-      expectedReads: 5,
+      expectedReads: 6,
     },
     {
       label: 'landing-unavailable',
@@ -1639,12 +1649,13 @@ test('staging seed seals a configured Page only after the System User assignment
 
   assert.equal(response.status, 201);
   assert.equal(body.seed, 'sealed');
-  assert.deepEqual(graph.calls.slice(0, 5).map((call) => call.path), [
+  assert.deepEqual(graph.calls.slice(0, 6).map((call) => call.path), [
     PIXEL_ID,
     `act_${ACCOUNT_ID}/adspixels`,
     'me',
     `${SYSTEM_USER_ID}/assigned_pages`,
-    `act_${ACCOUNT_ID}/offline_conversion_data_sets`,
+    `act_${ACCOUNT_ID}`,
+    `${BUSINESS_ID}/ads_dataset`,
   ]);
   assert.ok(graph.calls.every((call) => call.path !== 'me/accounts'));
   assert.equal(db.tokens.length, 2);
