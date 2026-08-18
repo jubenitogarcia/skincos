@@ -19,7 +19,8 @@ test("the table handoff follows the deck and keeps the title in the compact view
     assert.match(nextHand, /window\.requestAnimationFrame\(\(\) => \{[\s\S]*stopInitialDealScroll\)/);
     assert.match(experience, /const titleFits = titleRect\.height <= window\.innerHeight - headerOffset - 16/);
     assert.match(experience, /const isStackedLayout = window\.matchMedia\("\(max-width: 720px\)"\)\.matches/);
-    assert.match(experience, /if \(titleFits && !isStackedLayout\)/);
+    assert.match(experience, /const handFits = handBottom <= window\.innerHeight \+ 24/);
+    assert.match(experience, /if \(titleFits && handFits && !isStackedLayout\)/);
     assert.match(experience, /const interruptOnUserIntent = \(\) => stopInitialDealScroll\(\);/);
     assert.match(
         experience,

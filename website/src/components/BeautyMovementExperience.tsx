@@ -677,8 +677,18 @@ export default function BeautyMovementExperience({
             const titleRect = title.getBoundingClientRect();
             const titleTop = window.scrollY + titleRect.top;
             const titleFits = titleRect.height <= window.innerHeight - headerOffset - 16;
+            const tableRect = target.getBoundingClientRect();
+            const cardGrid = target.querySelector<HTMLElement>(`.${styles.cardGrid}`);
+            const handBottom = Math.max(
+                cardGrid?.getBoundingClientRect().bottom ?? tableRect.top + 312,
+                deckRect?.bottom ?? 0,
+            );
+            // Keep the title anchor only when the active hand and deck can
+            // share this viewport. A short landscape viewport may fit the
+            // title alone while leaving the actual reading below the fold.
+            const handFits = handBottom <= window.innerHeight + 24;
             const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
-            if (titleFits && !isStackedLayout) {
+            if (titleFits && handFits && !isStackedLayout) {
                 const titleTarget = Math.max(0, titleTop - headerOffset - 12);
                 return Math.min(fittedTarget, titleTarget);
             }
