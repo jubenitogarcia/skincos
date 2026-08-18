@@ -190,6 +190,8 @@ const STAGING_SYNTHETIC_SEED_DISCOVERY_FAILURES = Object.freeze({
   sourceUnavailable: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   sourceAuthRejected: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   pixelAccessDenied: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  pixelAccountRelationAccessDenied: 'meta_ads_publish_staging_seed_graph_identity_invalid',
+  pixelAccountRelationAmbiguous: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   pageAccessDenied: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   datasetAccessDenied: 'meta_ads_publish_staging_seed_graph_identity_invalid',
   identityMismatch: 'meta_ads_publish_staging_seed_graph_identity_invalid',
@@ -202,6 +204,8 @@ const STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES = Object.freeze({
   sourceUnavailable: 'meta_ads_publish_staging_seed_graph_source_unavailable',
   sourceAuthRejected: 'meta_ads_publish_staging_seed_graph_source_auth_rejected',
   pixelAccessDenied: 'meta_ads_publish_staging_seed_graph_pixel_access_denied',
+  pixelAccountRelationAccessDenied: 'meta_ads_publish_staging_seed_graph_pixel_account_relation_denied',
+  pixelAccountRelationAmbiguous: 'meta_ads_publish_staging_seed_graph_pixel_account_relation_ambiguous',
   appSecretProofMismatch: 'meta_ads_publish_staging_seed_graph_appsecret_proof_mismatch',
   appSecretProofUnavailable: 'meta_ads_publish_staging_seed_graph_appsecret_proof_unavailable',
   pageAccessDenied: 'meta_ads_publish_staging_seed_graph_page_access_denied',
@@ -1621,6 +1625,8 @@ function stagingSyntheticSeedFailureResponse(error, requestId) {
     'meta_ads_publish_staging_seed_graph_source_unavailable',
     'meta_ads_publish_staging_seed_graph_source_auth_rejected',
     'meta_ads_publish_staging_seed_graph_pixel_access_denied',
+    'meta_ads_publish_staging_seed_graph_pixel_account_relation_denied',
+    'meta_ads_publish_staging_seed_graph_pixel_account_relation_ambiguous',
     'meta_ads_publish_staging_seed_graph_appsecret_proof_mismatch',
     'meta_ads_publish_staging_seed_graph_appsecret_proof_unavailable',
     'meta_ads_publish_staging_seed_graph_page_access_denied',
@@ -2034,15 +2040,16 @@ async function discoverStagingSyntheticSeedFacts({
   maxGraphAttempts = MAX_GRAPH_ATTEMPTS,
   probeAppSecretProof = false,
 }) {
-  const read = (path, fields, query = {}, failureCode = failureCodes.sourceUnavailable) => seedGraphRead(auth, path, fields, context, query, {
+  const read = (path, fields, query = {}, failureCode = failureCodes.sourceUnavailable, malformedFailureCode = '') => seedGraphRead(auth, path, fields, context, query, {
     maxAttempts: maxGraphAttempts,
     failureCode,
     authFailureCode: failureCodes.sourceAuthRejected,
+    malformedFailureCode,
   });
   const readPixel = (candidateAuth) => seedGraphRead(
     candidateAuth,
     input.pixelId,
-    'id,owner_ad_account{id}',
+    'id',
     context,
     {},
     {
@@ -2074,15 +2081,36 @@ async function discoverStagingSyntheticSeedFacts({
     }
     throw stagingSyntheticSeedFailure(appSecretProofMismatch, 409);
   }
-  const pixelOwner = normalizeStagingSyntheticSeedGraphId(
-    asObject(pixel.owner_ad_account).id,
-    'pixel_owner_account',
+  if (normalizeStagingSyntheticSeedGraphId(pixel.id, 'pixel_id', failureCodes.identityMalformed) !== input.pixelId) {
+    throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
+  }
+
+  // A Pixel may be shared with an ad account without that account owning it.
+  // Validate the association required by the later promoted_object instead of
+  // requiring ownership, while bounding the account's visible Pixel list.
+  const accountPixels = await read(
+    `act_${input.accountId}/adspixels`,
+    'id',
+    { limit: String(STAGING_SYNTHETIC_SEED_MAX_GRAPH_OBJECTS) },
+    failureCodes.pixelAccountRelationAccessDenied,
     failureCodes.identityMalformed,
   );
-  if (
-    normalizeStagingSyntheticSeedGraphId(pixel.id, 'pixel_id', failureCodes.identityMalformed) !== input.pixelId ||
-    pixelOwner !== input.accountId
-  ) {
+  if (!Array.isArray(accountPixels.data)) {
+    throw stagingSyntheticSeedFailure(failureCodes.identityMalformed, 409);
+  }
+  const associatedPixelIds = accountPixels.data.map((entry) => normalizeStagingSyntheticSeedGraphId(
+    asObject(entry).id,
+    'account_pixel_id',
+    failureCodes.identityMalformed,
+  ));
+  const matchingPixelCount = associatedPixelIds.filter((pixelId) => pixelId === input.pixelId).length;
+  if (matchingPixelCount === 1 && new Set(associatedPixelIds).size === associatedPixelIds.length) {
+    // Membership is proven by an exact target on this bounded page. Do not
+    // follow opaque pagination URLs or reject an otherwise valid account just
+    // because it has more associated Pixels than the diagnostic page limit.
+  } else if (clean(asObject(accountPixels.paging).next)) {
+    throw stagingSyntheticSeedFailure(failureCodes.pixelAccountRelationAmbiguous, 409);
+  } else {
     throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
   }
 
@@ -2159,6 +2187,7 @@ async function seedGraphRead(auth, path, fields, context, query = {}, {
   maxAttempts = MAX_GRAPH_ATTEMPTS,
   failureCode = 'meta_ads_publish_staging_seed_graph_identity_invalid',
   authFailureCode = failureCode,
+  malformedFailureCode = '',
 } = {}) {
   try {
     const result = await graphRequest(
@@ -2176,6 +2205,9 @@ async function seedGraphRead(auth, path, fields, context, query = {}, {
     }
     if (isStagingSyntheticSeedSourceAuthFailure(normalized)) {
       throw stagingSyntheticSeedFailure(authFailureCode, 409);
+    }
+    if (clean(malformedFailureCode) && clean(normalized.classification) === 'permanent') {
+      throw stagingSyntheticSeedFailure(malformedFailureCode, 409);
     }
     throw stagingSyntheticSeedFailure(failureCode, 409);
   }
