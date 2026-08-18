@@ -109,7 +109,7 @@ test("candidate appsecret-proof request keeps source inputs and bearer private w
   );
   assert.match(
     workflow,
-    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets\.BARRASHOPPPINGSUL_PAGE_ID \}\}/,
+    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets\.BARRASHOPPINGSUL_PAGE_ID \}\}/,
   );
   assert.match(
     workflow,
