@@ -176,7 +176,7 @@ const BOOTSTRAP_OPERATION_KEY_PATTERN = /^[A-Za-z0-9_.:-]{8,160}$/;
 const STAGING_EXERCISE_OPERATION_KEY_PATTERN = /^staging-tracking-fixture:[A-Za-z0-9_.:-]{8,120}$/;
 const STAGING_SYNTHETIC_SEED_OPERATION_KEY_PATTERN = /^meta-ads-staging-seed:[A-Za-z0-9_.:-]{8,140}$/;
 const STAGING_SYNTHETIC_SEED_MAX_REQUEST_BYTES = 16 * 1024;
-const STAGING_SYNTHETIC_SEED_CONTRACT = 'meta-ads-tracking-v20/staging-synthetic-seed/v1';
+const STAGING_SYNTHETIC_SEED_CONTRACT = 'meta-ads-tracking-v20/staging-synthetic-seed/v2';
 const STAGING_SYNTHETIC_SEED_ATTEST_MAX_GRAPH_ATTEMPTS = 1;
 const STAGING_SYNTHETIC_SEED_UNIT = 'meta-ads-tracking-staging-synthetic';
 const STAGING_SYNTHETIC_SEED_SOURCE_TOKEN_TYPE = 'staging_synthetic_source';
@@ -186,6 +186,25 @@ const STAGING_SYNTHETIC_SEED_MAX_GRAPH_OBJECTS = 5;
 const STAGING_SYNTHETIC_SEED_LANDING_GROUP = 'staging_tracking_fixture';
 const STAGING_SYNTHETIC_SEED_CREATIVE_MESSAGE = 'SKINCOS staging tracking verification';
 const STAGING_SYNTHETIC_SEED_CREATIVE_CTA = 'LEARN_MORE';
+// The staging seed has two independently governed Website destinations. Their
+// selectors are supplied only in the candidate request body, never as Worker
+// bindings. Keep the source/target seed lineage stable while assigning its
+// resulting configuration rows deterministically to the two destinations.
+const STAGING_SYNTHETIC_SEED_DESTINATIONS = Object.freeze([
+  Object.freeze({
+    key: 'novo_hamburgo',
+    credentialKey: 'source',
+    destinationGroup: 'meta-ads-tracking-staging-novo-hamburgo',
+  }),
+  Object.freeze({
+    key: 'barra_shopping_sul',
+    credentialKey: 'target',
+    destinationGroup: 'meta-ads-tracking-staging-barra-shopping-sul',
+  }),
+]);
+const STAGING_SYNTHETIC_SEED_DESTINATION_KEYS = new Set(
+  STAGING_SYNTHETIC_SEED_DESTINATIONS.map((destination) => destination.key),
+);
 // Meta's current Page API can return either the legacy ADVERTISE task or its
 // Profile Plus equivalent for the same narrow creative/advertising capability.
 // Do not broaden this to other PROFILE_PLUS_* tasks: the seed needs an
@@ -1515,7 +1534,7 @@ function assertStagingSyntheticSeedAttestationEnvironment(env) {
 
 async function readStagingSyntheticSeedInput(request) {
   const body = await readStagingSyntheticSeedBody(request, new Set([
-    'operation_key', 'access_token', 'account_id', 'pixel_id', 'page_id', 'api_version',
+    'operation_key', 'access_token', 'account_id', 'pixel_id', 'destination_page_ids', 'api_version',
   ]));
   const operationKey = clean(body.operation_key);
   if (!STAGING_SYNTHETIC_SEED_OPERATION_KEY_PATTERN.test(operationKey)) {
@@ -1527,9 +1546,7 @@ async function readStagingSyntheticSeedInput(request) {
     accessToken,
     accountId: normalizeStagingSyntheticSeedNumericId(body.account_id, 'account_id'),
     pixelId: normalizeStagingSyntheticSeedNumericId(body.pixel_id, 'pixel_id'),
-    pageId: Object.hasOwn(body, 'page_id')
-      ? normalizeStagingSyntheticSeedNumericId(body.page_id, 'page_id')
-      : '',
+    destinationPages: normalizeStagingSyntheticSeedDestinationPages(body.destination_page_ids),
     apiVersion: normalizeStagingSyntheticSeedApiVersion(body.api_version),
   };
 }
@@ -1578,6 +1595,30 @@ function normalizeStagingSyntheticSeedAccessToken(value) {
     throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
   }
   return token;
+}
+
+function normalizeStagingSyntheticSeedDestinationPages(value) {
+  if (!isJsonObject(value)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
+  }
+  const keys = Object.keys(value);
+  if (
+    keys.length !== STAGING_SYNTHETIC_SEED_DESTINATIONS.length ||
+    keys.some((key) => !STAGING_SYNTHETIC_SEED_DESTINATION_KEYS.has(key))
+  ) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
+  }
+  const destinationPages = {};
+  for (const destination of STAGING_SYNTHETIC_SEED_DESTINATIONS) {
+    destinationPages[destination.key] = normalizeStagingSyntheticSeedNumericId(
+      value[destination.key],
+      `${destination.key}_page_id`,
+    );
+  }
+  if (new Set(Object.values(destinationPages)).size !== STAGING_SYNTHETIC_SEED_DESTINATIONS.length) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_request_invalid', 400);
+  }
+  return destinationPages;
 }
 
 function normalizeStagingSyntheticSeedNumericId(value, label) {
@@ -1815,7 +1856,7 @@ async function createInitialStagingSyntheticSeedState(input) {
       operation_key: input.operationKey,
       account_id: input.accountId,
       pixel_id: input.pixelId,
-      page_id: input.pageId || '',
+      destination_pages: { ...input.destinationPages },
       api_version: input.apiVersion,
     },
     marker,
@@ -1886,7 +1927,7 @@ async function stagingSyntheticSeedRequestHash(input) {
     operation_key: input.operationKey,
     account_id: input.accountId,
     pixel_id: input.pixelId || '',
-    page_id: input.pageId || '',
+    destination_pages: input.destinationPages,
     api_version: input.apiVersion,
   }));
 }
@@ -1936,11 +1977,18 @@ async function persistStagingSyntheticSeedState({ env, operation, state, status,
 
 function summarizeStagingSyntheticSeedState(state) {
   const resources = asObject(state?.resources);
+  const destinationFacts = asObject(asObject(state?.facts).destinations);
   return {
     contract: STAGING_SYNTHETIC_SEED_CONTRACT,
     phase: clean(state?.phase) || 'unknown',
     reconciliation_required: state?.reconciliation_required === true,
-    graph_facts_verified: Boolean(clean(asObject(state?.facts).page_id) && clean(asObject(state?.facts).dataset_id)),
+    graph_facts_verified:
+      clean(asObject(state?.facts).dataset_id) !== '' &&
+      STAGING_SYNTHETIC_SEED_DESTINATIONS.every((destination) => {
+        const facts = asObject(destinationFacts[destination.key]);
+        return Boolean(clean(facts.page_id) && clean(facts.instagram_user_id));
+      }),
+    destination_count: STAGING_SYNTHETIC_SEED_DESTINATIONS.length,
     campaign_created: Boolean(clean(asObject(resources.campaign).id)),
     adset_count: ['source_adset', 'target_adset'].filter((key) => clean(asObject(resources[key]).id)).length,
     creative_created: Boolean(clean(asObject(resources.source_creative).id)),
@@ -2127,115 +2175,99 @@ async function discoverStagingSyntheticSeedFacts({
     throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
   }
 
+  // Both destination selectors are explicit staging facts. Prove each through
+  // the authenticated System User's own bounded assignment relation before a
+  // direct Page read. Never select by list order or fall back to user-centric
+  // `/me/accounts` discovery when the deployment has declared two units.
   const pageDiscoveryFields = 'id,tasks,instagram_business_account{id}';
-  let selectedPage;
-  if (input.pageId) {
-    // An explicit staging selector must be proved through the authenticated
-    // System User's own relation. Do not use a user-centric Page listing or
-    // choose by ordering when a selector is available.
-    const sourcePrincipal = await read(
-      'me',
-      'id',
-      {},
-      failureCodes.pageAccessDenied,
-      failureCodes.identityMalformed,
-    );
-    const sourcePrincipalId = normalizeStagingSyntheticSeedGraphId(
-      sourcePrincipal.id,
-      'source_principal_id',
-      failureCodes.identityMalformed,
-    );
-    const assignedPages = await read(
-      `${sourcePrincipalId}/assigned_pages`,
-      pageDiscoveryFields,
-      { limit: '100' },
-      failureCodes.pageAccessDenied,
-      failureCodes.identityMalformed,
-    );
-    if (!Array.isArray(assignedPages.data)) {
-      throw stagingSyntheticSeedFailure(failureCodes.identityMalformed, 409);
-    }
-    if (clean(asObject(assignedPages.paging).next)) {
-      throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
-    }
-    selectedPage = selectStagingSyntheticSeedPage(
-      assignedPages.data,
-      input.pageId,
-      failureCodes,
-    );
-  } else {
-    const pages = await read(
-      'me/accounts',
-      pageDiscoveryFields,
-      { limit: '100' },
-      failureCodes.pageAccessDenied,
-    );
-    if (clean(asObject(pages.paging).next)) {
-      throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
-    }
-    let pageCandidates = pages.data;
-    // `/me/accounts` is a user-token-centric Page discovery edge. A System
-    // User can have an explicitly assigned Page while this list is empty. Use
-    // the System User's own bounded relation only for that exact empty-list
-    // case; never mask a nonempty direct result that lacks the required task
-    // or IG relationship.
-    if (Array.isArray(pages.data) && pages.data.length === 0) {
-      const sourcePrincipal = await read(
-        'me',
-        'id',
-        {},
-        failureCodes.pageAccessDenied,
-        failureCodes.identityMalformed,
-      );
-      const sourcePrincipalId = normalizeStagingSyntheticSeedGraphId(
-        sourcePrincipal.id,
-        'source_principal_id',
-        failureCodes.identityMalformed,
-      );
-      const assignedPages = await read(
-        `${sourcePrincipalId}/assigned_pages`,
-        pageDiscoveryFields,
-        { limit: '100' },
-        failureCodes.pageAccessDenied,
-        failureCodes.identityMalformed,
-      );
-      if (!Array.isArray(assignedPages.data)) {
-        throw stagingSyntheticSeedFailure(failureCodes.identityMalformed, 409);
-      }
-      if (clean(asObject(assignedPages.paging).next)) {
-        throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
-      }
-      pageCandidates = assignedPages.data;
-    }
-    selectedPage = selectStagingSyntheticSeedPage(pageCandidates, '', failureCodes);
-  }
-  const selectedPageId = normalizeStagingSyntheticSeedGraphId(selectedPage.id, 'page_id', failureCodes.identityMalformed);
-  const page = await read(
-    selectedPageId,
-    'id,instagram_business_account{id},website,picture{url}',
+  const sourcePrincipal = await read(
+    'me',
+    'id',
     {},
     failureCodes.pageAccessDenied,
-  );
-  const pageId = normalizeStagingSyntheticSeedGraphId(page.id, 'page_id', failureCodes.identityMalformed);
-  const instagramUserId = normalizeStagingSyntheticSeedGraphId(
-    asObject(page.instagram_business_account).id,
-    'instagram_user_id',
     failureCodes.identityMalformed,
   );
-  if (
-    pageId !== selectedPageId ||
-    instagramUserId !== normalizeStagingSyntheticSeedGraphId(
-      asObject(selectedPage.instagram_business_account).id,
-      'instagram_user_id',
-      failureCodes.identityMalformed,
-    )
-  ) {
-    throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
+  const sourcePrincipalId = normalizeStagingSyntheticSeedGraphId(
+    sourcePrincipal.id,
+    'source_principal_id',
+    failureCodes.identityMalformed,
+  );
+  const assignedPages = await read(
+    `${sourcePrincipalId}/assigned_pages`,
+    pageDiscoveryFields,
+    { limit: '100' },
+    failureCodes.pageAccessDenied,
+    failureCodes.identityMalformed,
+  );
+  if (!Array.isArray(assignedPages.data)) {
+    throw stagingSyntheticSeedFailure(failureCodes.identityMalformed, 409);
   }
-  const landing = normalizeStagingSyntheticSeedLanding(page.website);
-  const pictureUrl = normalizeStagingSyntheticSeedPicture(page.picture);
-  if (!landing || !pictureUrl) {
-    throw stagingSyntheticSeedFailure(failureCodes.landingOrMediaUnavailable, 409);
+  if (clean(asObject(assignedPages.paging).next)) {
+    throw stagingSyntheticSeedFailure(failureCodes.pageAmbiguous, 409);
+  }
+  const selectedDestinations = [];
+  const seenPageIds = new Set();
+  const seenInstagramUserIds = new Set();
+  for (const destination of STAGING_SYNTHETIC_SEED_DESTINATIONS) {
+    const selectedPage = selectStagingSyntheticSeedPage(
+      assignedPages.data,
+      input.destinationPages[destination.key],
+      failureCodes,
+    );
+    const selectedPageId = normalizeStagingSyntheticSeedGraphId(
+      selectedPage.id,
+      `${destination.key}_page_id`,
+      failureCodes.identityMalformed,
+    );
+    const selectedInstagramUserId = normalizeStagingSyntheticSeedGraphId(
+      asObject(selectedPage.instagram_business_account).id,
+      `${destination.key}_instagram_user_id`,
+      failureCodes.identityMalformed,
+    );
+    if (seenPageIds.has(selectedPageId) || seenInstagramUserIds.has(selectedInstagramUserId)) {
+      throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
+    }
+    seenPageIds.add(selectedPageId);
+    seenInstagramUserIds.add(selectedInstagramUserId);
+    selectedDestinations.push({
+      destination,
+      selectedPageId,
+      selectedInstagramUserId,
+    });
+  }
+  const destinations = {};
+  for (const { destination, selectedPageId, selectedInstagramUserId } of selectedDestinations) {
+    const page = await read(
+      selectedPageId,
+      'id,instagram_business_account{id},website,picture{url}',
+      {},
+      failureCodes.pageAccessDenied,
+    );
+    const pageId = normalizeStagingSyntheticSeedGraphId(
+      page.id,
+      `${destination.key}_page_id`,
+      failureCodes.identityMalformed,
+    );
+    const instagramUserId = normalizeStagingSyntheticSeedGraphId(
+      asObject(page.instagram_business_account).id,
+      `${destination.key}_instagram_user_id`,
+      failureCodes.identityMalformed,
+    );
+    if (pageId !== selectedPageId || instagramUserId !== selectedInstagramUserId) {
+      throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
+    }
+    const landing = normalizeStagingSyntheticSeedLanding(page.website);
+    const pictureUrl = normalizeStagingSyntheticSeedPicture(page.picture);
+    if (!landing || !pictureUrl) {
+      throw stagingSyntheticSeedFailure(failureCodes.landingOrMediaUnavailable, 409);
+    }
+    destinations[destination.key] = {
+      page_id: pageId,
+      instagram_user_id: instagramUserId,
+      landing_url: landing.url,
+      landing_host: landing.host,
+      page_picture_url: pictureUrl,
+    };
   }
 
   const datasets = await read(
@@ -2253,11 +2285,7 @@ async function discoverStagingSyntheticSeedFacts({
     failureCodes.identityMalformed,
   );
   return {
-    page_id: pageId,
-    instagram_user_id: instagramUserId,
-    landing_url: landing.url,
-    landing_host: landing.host,
-    page_picture_url: pictureUrl,
+    destinations,
     dataset_id: datasetId,
   };
 }
@@ -2359,6 +2387,7 @@ async function createStagingSyntheticSeedResources({ input, auth, facts, operati
   state.phase = 'creating_resources';
   await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
   const marker = stagingSyntheticSeedMarker(state);
+  const sourceDestinationFacts = stagingSyntheticSeedDestinationFacts(facts, 'source');
 
   const campaign = await createStagingSyntheticSeedGraphResource({
     key: 'campaign',
@@ -2439,15 +2468,15 @@ async function createStagingSyntheticSeedResources({ input, auth, facts, operati
     create: () => seedGraphCreate(auth, `act_${input.accountId}/adcreatives`, {
       name: `${marker} Source Creative`,
       object_story_spec: {
-        page_id: facts.page_id,
-        instagram_actor_id: facts.instagram_user_id,
+        page_id: sourceDestinationFacts.page_id,
+        instagram_actor_id: sourceDestinationFacts.instagram_user_id,
         link_data: {
-          link: facts.landing_url,
-          picture: facts.page_picture_url,
+          link: sourceDestinationFacts.landing_url,
+          picture: sourceDestinationFacts.page_picture_url,
           message: STAGING_SYNTHETIC_SEED_CREATIVE_MESSAGE,
           call_to_action: {
             type: STAGING_SYNTHETIC_SEED_CREATIVE_CTA,
-            value: { link: facts.landing_url },
+            value: { link: sourceDestinationFacts.landing_url },
           },
         },
       },
@@ -2478,6 +2507,31 @@ async function createStagingSyntheticSeedResources({ input, auth, facts, operati
 
 function stagingSyntheticSeedMarker(state) {
   return `[SKINCOS-STAGING-V20:${clean(state?.marker).slice(0, 24)}]`;
+}
+
+function stagingSyntheticSeedDestinationForCredential(credentialKey) {
+  const destination = STAGING_SYNTHETIC_SEED_DESTINATIONS.find((candidate) => candidate.credentialKey === credentialKey);
+  if (!destination) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  return destination;
+}
+
+function stagingSyntheticSeedDestinationFacts(value, credentialKey) {
+  const destination = stagingSyntheticSeedDestinationForCredential(credentialKey);
+  const facts = asObject(asObject(value).destinations)[destination.key];
+  const normalized = asObject(facts);
+  const required = [
+    clean(normalized.page_id),
+    clean(normalized.instagram_user_id),
+    clean(normalized.landing_url),
+    clean(normalized.landing_host),
+    clean(normalized.page_picture_url),
+  ];
+  if (required.some((entry) => !entry)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  return normalized;
 }
 
 async function createStagingSyntheticSeedGraphResource({ key, name, operation, state, encryptToken, context, create, read }) {
@@ -2647,14 +2701,18 @@ async function readStagingSyntheticSeedAd(auth, adId, expectedAdsetId, expectedC
 async function sealStagingSyntheticSeedCredentials({ input, env, operation, state, encryptToken, requestId, context }) {
   const resources = asObject(state.resources);
   const facts = asObject(state.facts);
+  const sourceDestinationFacts = stagingSyntheticSeedDestinationFacts(facts, 'source');
+  const targetDestinationFacts = stagingSyntheticSeedDestinationFacts(facts, 'target');
   const required = [
     clean(asObject(resources.campaign).id),
     clean(asObject(resources.source_adset).id),
     clean(asObject(resources.target_adset).id),
     clean(asObject(resources.source_creative).id),
     clean(asObject(resources.source_ad).id),
-    clean(facts.page_id),
-    clean(facts.instagram_user_id),
+    clean(sourceDestinationFacts.page_id),
+    clean(sourceDestinationFacts.instagram_user_id),
+    clean(targetDestinationFacts.page_id),
+    clean(targetDestinationFacts.instagram_user_id),
     clean(facts.dataset_id),
   ];
   if (required.some((value) => !/^\d{5,30}$/.test(value))) {
@@ -2755,31 +2813,35 @@ async function sealStagingSyntheticSeedCredentials({ input, env, operation, stat
 function buildStagingSyntheticSeedCredentialMetadata({ input, state }) {
   const facts = asObject(state.facts);
   const resources = asObject(state.resources);
-  const common = {
-    destination_group: STAGING_SYNTHETIC_SEED_UNIT,
-    api_version: input.apiVersion,
-    account_id: input.accountId,
-    campaign_id: clean(asObject(resources.campaign).id),
-    page_id: clean(facts.page_id),
-    instagram_user_id: clean(facts.instagram_user_id),
-    allowed_link_hosts: [clean(facts.landing_host)],
-    landing_pages_by_creative_group: { [STAGING_SYNTHETIC_SEED_LANDING_GROUP]: clean(facts.landing_url) },
-    freshness_window_days: 7,
-    destination_type: 'website',
-    fixture_source_ad_id: clean(asObject(resources.source_ad).id),
-    url_tags: normalizeUrlTags(state.url_tags, { required: true }),
+  const common = (credentialKey) => {
+    const destination = stagingSyntheticSeedDestinationForCredential(credentialKey);
+    const destinationFacts = stagingSyntheticSeedDestinationFacts(facts, credentialKey);
+    return {
+      destination_group: destination.destinationGroup,
+      api_version: input.apiVersion,
+      account_id: input.accountId,
+      campaign_id: clean(asObject(resources.campaign).id),
+      page_id: clean(destinationFacts.page_id),
+      instagram_user_id: clean(destinationFacts.instagram_user_id),
+      allowed_link_hosts: [clean(destinationFacts.landing_host)],
+      landing_pages_by_creative_group: { [STAGING_SYNTHETIC_SEED_LANDING_GROUP]: clean(destinationFacts.landing_url) },
+      freshness_window_days: 7,
+      destination_type: 'website',
+      fixture_source_ad_id: clean(asObject(resources.source_ad).id),
+      url_tags: normalizeUrlTags(state.url_tags, { required: true }),
+    };
   };
   return {
     source: {
       meta_ads_publish: {
-        ...common,
+        ...common('source'),
         adset_id: clean(asObject(resources.source_adset).id),
         source_adset_id: clean(asObject(resources.source_adset).id),
       },
     },
     target: {
       meta_ads_publish: {
-        ...common,
+        ...common('target'),
         adset_id: clean(asObject(resources.target_adset).id),
         source_config_token_id: clean(state.credential_ids.source),
       },

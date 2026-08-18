@@ -73,17 +73,29 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   assert.match(upload, /TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN = seedToken/);
   assert.doesNotMatch(
     upload,
-    /META_ADS_ACCESS_TOKEN|META_PIXEL_ID|META_ADS_PAGE_ID|META_ADS_ACCOUNT_ID|META_ADS_API_VERSION/,
+    /META_ADS_ACCESS_TOKEN|META_PIXEL_ID|META_ADS_NOVOHAMBURGO_PAGE_ID|META_ADS_BARRASHOPPPINGSUL_PAGE_ID|META_ADS_ACCOUNT_ID|META_ADS_API_VERSION/,
   );
   assert.doesNotMatch(workflow, /\bwrangler\s+secret\s+put\b/i);
 
   assert.match(
     authorization,
-    /META_ADS_PAGE_ID: \$\{\{ inputs\.target == 'staging' && secrets\.META_ADS_PAGE_ID \|\| '' \}\}/,
+    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ inputs\.target == 'staging' && secrets\.NOVOHAMBURGO_PAGE_ID \|\| '' \}\}/,
   );
   assert.match(
     authorization,
-    /META_ADS_PAGE_ID must be a numeric staging Environment secret for the governed staging seed/,
+    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ inputs\.target == 'staging' && secrets\.BARRASHOPPINGSUL_PAGE_ID \|\| '' \}\}/,
+  );
+  assert.match(
+    authorization,
+    /Novo Hamburgo Page selector must be a numeric staging Environment secret for the governed staging seed/,
+  );
+  assert.match(
+    authorization,
+    /Barra Shopping Sul Page selector must be a numeric staging Environment secret for the governed staging seed/,
+  );
+  assert.match(
+    authorization,
+    /META_ADS_NOVOHAMBURGO_PAGE_ID" != "\$META_ADS_BARRASHOPPPINGSUL_PAGE_ID/,
   );
   assert.match(
     authorization,
@@ -106,7 +118,8 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   for (const sourceName of [
     "META_ADS_ACCESS_TOKEN",
     "META_PIXEL_ID",
-    "META_ADS_PAGE_ID",
+    "META_ADS_NOVOHAMBURGO_PAGE_ID",
+    "META_ADS_BARRASHOPPPINGSUL_PAGE_ID",
     "META_ADS_ACCOUNT_ID",
     "META_ADS_API_VERSION",
   ]) {
@@ -123,10 +136,14 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   );
   assert.match(
     attestation,
-    /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*pixel_id: pixelId,[\s\S]*page_id: pageId,[\s\S]*api_version: apiVersion/,
+    /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*pixel_id: pixelId,[\s\S]*destination_page_ids: destinationPageIds,[\s\S]*api_version: apiVersion/,
+  );
+  assert.match(
+    attestation,
+    /destinationPageIds\.novo_hamburgo === destinationPageIds\.barra_shopping_sul/,
   );
   assert.match(attestation, /attestation \|\| ''\) === 'match'/);
-  assert.match(attestation, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+  assert.match(attestation, /meta-ads-tracking-v20\/staging-synthetic-seed\/v2/);
   assert.match(attestation, /AbortSignal\.timeout\(30_000\)/);
   assert.doesNotMatch(attestation, /GITHUB_OUTPUT|console\.log|process\.stdout\.write/);
 
@@ -139,7 +156,8 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     /META_ADS_ACCESS_TOKEN: \$\{\{ inputs\.target == 'staging'/,
   );
   assert.match(seed, /META_PIXEL_ID: \$\{\{ inputs\.target == 'staging'/);
-  assert.match(seed, /META_ADS_PAGE_ID: \$\{\{ inputs\.target == 'staging'/);
+  assert.match(seed, /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ inputs\.target == 'staging'/);
+  assert.match(seed, /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ inputs\.target == 'staging'/);
   assert.match(seed, /META_ADS_ACCOUNT_ID: \$\{\{ inputs\.target == 'staging'/);
   assert.match(
     seed,
@@ -153,9 +171,13 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   assert.doesNotMatch(seed, /TOKEN_VAULT_STAGING_BASE_URL/);
   assert.match(
     seed,
-    /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*pixel_id: pixelId,[\s\S]*page_id: pageId,[\s\S]*api_version: apiVersion/,
+    /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*pixel_id: pixelId,[\s\S]*destination_page_ids: destinationPageIds,[\s\S]*api_version: apiVersion/,
   );
-  assert.match(seed, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+  assert.match(
+    seed,
+    /destinationPageIds\.novo_hamburgo === destinationPageIds\.barra_shopping_sul/,
+  );
+  assert.match(seed, /meta-ads-tracking-v20\/staging-synthetic-seed\/v2/);
   assert.match(seed, /\^v\(\?:2\[5-9\]\|\[3-9\]\[0-9\]\)\\\.0\$/);
   assert.match(
     seed,
@@ -240,14 +262,17 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
       /fetch\(`\$\{preview\}\/internal\/token-vault\/v1\/meta-ads-publish\/config\/staging-synthetic-seed\/rollback`/,
     );
     assert.doesNotMatch(rollback, /TOKEN_VAULT_STAGING_BASE_URL/);
-    assert.doesNotMatch(rollback, /META_ADS_PAGE_ID|page_id/);
+    assert.doesNotMatch(
+      rollback,
+      /META_ADS_NOVOHAMBURGO_PAGE_ID|META_ADS_BARRASHOPPPINGSUL_PAGE_ID|destination_page_ids|page_id/,
+    );
     assert.match(rollback, /staging-synthetic-seed\/rollback/);
     assert.match(
       rollback,
       /operation_key: operationKey,[\s\S]*access_token: accessToken,[\s\S]*account_id: accountId,[\s\S]*api_version: apiVersion/,
     );
     assert.match(rollback, /payload\?\.rolled_back !== true/);
-    assert.match(rollback, /meta-ads-tracking-v20\/staging-synthetic-seed\/v1/);
+    assert.match(rollback, /meta-ads-tracking-v20\/staging-synthetic-seed\/v2/);
     assert.match(rollback, /\^v\(\?:2\[5-9\]\|\[3-9\]\[0-9\]\)\\\.0\$/);
   }
   for (const rollback of [pretrafficRollback, activationLeaseRollback]) {
@@ -265,13 +290,16 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   for (const sourceName of [
     "META_ADS_ACCESS_TOKEN",
     "META_PIXEL_ID",
-    "META_ADS_PAGE_ID",
+    "META_ADS_NOVOHAMBURGO_PAGE_ID",
+    "META_ADS_BARRASHOPPPINGSUL_PAGE_ID",
     "META_ADS_ACCOUNT_ID",
     "META_ADS_API_VERSION",
   ]) {
     const total = [...workflow.matchAll(new RegExp(sourceName, "g"))].length;
     const allowedScopes =
-      sourceName === "META_ADS_API_VERSION" || sourceName === "META_ADS_PAGE_ID"
+      sourceName === "META_ADS_API_VERSION" ||
+      sourceName === "META_ADS_NOVOHAMBURGO_PAGE_ID" ||
+      sourceName === "META_ADS_BARRASHOPPPINGSUL_PAGE_ID"
         ? [...sourceScopes, authorization]
         : sourceScopes;
     const scoped = allowedScopes.reduce(
@@ -290,4 +318,5 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
     /\$RUNNER_TEMP"\/token-vault-staging-synthetic-seed-\*/,
   );
   assert.match(cleanup, /rm -f -- "\$seed_file"/);
+  assert.doesNotMatch(workflow, /META_ADS_PAGE_ID|page_id: pageId/);
 });
