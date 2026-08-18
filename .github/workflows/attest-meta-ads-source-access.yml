@@ -147,6 +147,9 @@ jobs:
             const pageId = numericId(page?.id);
             const instagramId = numericId(page?.instagram_business_account?.id);
             if (!pageId || !instagramId) fail('source_destination_page_assignment_instagram_link_missing');
+            if (!validLanding(page?.website) || !validPicture(page?.picture)) {
+              fail('source_destination_landing_or_media_unavailable');
+            }
             return { destinationKey, pageId, instagramId };
           };
 
@@ -176,7 +179,7 @@ jobs:
           const sourcePrincipalId = numericId(sourcePrincipal?.id);
           if (!sourcePrincipalId) fail('source_system_user_malformed');
           const assignedPages = await directRead(
-            `${sourcePrincipalId}/assigned_pages?fields=id,tasks,instagram_business_account{id}&limit=100`,
+            `${sourcePrincipalId}/assigned_pages?fields=id,tasks,instagram_business_account{id},website,picture{url}&limit=100`,
             'source_system_user_pages',
           );
           if (!Array.isArray(assignedPages?.data)) fail('source_system_user_pages_malformed');
@@ -192,35 +195,9 @@ jobs:
             fail('source_destination_page_pair_duplicate');
           }
 
-          for (const pair of destinationPairs) {
-            const pageIdentity = await directRead(
-              `${pair.pageId}?fields=id`,
-              `source_destination_page_${pair.destinationKey}_identity`,
-            );
-            if (!numericId(pageIdentity?.id)) {
-              fail(`source_destination_page_${pair.destinationKey}_identity_malformed`);
-            }
-            if (numericId(pageIdentity.id) !== pair.pageId) {
-              fail('source_destination_page_pair_mismatch');
-            }
-            const pageInstagram = await directRead(
-              `${pair.pageId}?fields=instagram_business_account{id}`,
-              `source_destination_page_${pair.destinationKey}_instagram`,
-            );
-            if (!numericId(pageInstagram?.instagram_business_account?.id)) {
-              fail(`source_destination_page_${pair.destinationKey}_instagram_malformed`);
-            }
-            if (numericId(pageInstagram.instagram_business_account.id) !== pair.instagramId) {
-              fail('source_destination_page_pair_mismatch');
-            }
-            const pagePresentation = await directRead(
-              `${pair.pageId}?fields=website,picture{url}`,
-              `source_destination_page_${pair.destinationKey}_presentation`,
-            );
-            if (!validLanding(pagePresentation?.website) || !validPicture(pagePresentation?.picture)) {
-              fail('source_destination_landing_or_media_unavailable');
-            }
-          }
+          // The System User's assigned_pages edge returns Page objects. Keep
+          // this read on that edge instead of issuing a Page-node GET with a
+          // bearer whose contract is Business/Marketing scoped.
 
           const datasets = await directRead(
             `act_${accountId}/offline_conversion_data_sets?fields=id&limit=2`,
