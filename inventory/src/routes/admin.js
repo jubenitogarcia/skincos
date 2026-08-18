@@ -728,6 +728,20 @@ export async function handleAdminRoutes({
     inviteMailer: Boolean(hasAuthMailerConfig(env)),
   });
 
+  // Every unified-team route that can read or mutate team data must pass the
+  // rollout and schema gates before it can touch a member row. In particular,
+  // the scoped contact endpoint must not decrypt private data while the
+  // feature is disabled or its identity migration is incomplete.
+  const teamRouteGateResponse = () => {
+    if (!unifiedTeamEnabled(env)) {
+      return withCORS(JSON.stringify({ success: false, error: 'Gestão centralizada da equipe ainda não está liberada', code: 'TEAM_UNIFIED_DISABLED' }), { status: 404 }, appOrigin);
+    }
+    if (!onboardingHasUsername || !onboardingHasRequestFingerprint || !invitesHasUsername || !invitesHasCorporateEmail || !onboardingHasSaga || !teamTablesReady) {
+      return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+    }
+    return null;
+  };
+
   // Account scope follows only an already confirmed, explicit relationship.
   // A team username alone must never create or infer a CRM account link.
   const loadExplicitCrmAccountScope = async (onboardingId) => {
@@ -752,6 +766,8 @@ export async function handleAdminRoutes({
     if (!teamWriteRoleAllowed(auth)) {
       return withCORS(JSON.stringify({ success: false, error: 'Apenas gestores podem consultar dados de contato', code: 'TEAM_CONTACT_ROLE_DENIED' }), { status: 403 }, appOrigin);
     }
+    const gateResponse = teamRouteGateResponse();
+    if (gateResponse) return gateResponse;
     try {
       const onboardingId = decodeURIComponent(teamContactMatch[1] || '').trim();
       const onboarding = await env.DB.prepare('SELECT id, units_json, personal_email_encrypted, mobile_phone_encrypted FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
@@ -782,12 +798,9 @@ export async function handleAdminRoutes({
     }), { status: 200 }, appOrigin);
   }
 
-  if (isTeamRoute && !unifiedTeamEnabled(env)) {
-    return withCORS(JSON.stringify({ success: false, error: 'Gestão centralizada da equipe ainda não está liberada', code: 'TEAM_UNIFIED_DISABLED' }), { status: 404 }, appOrigin);
-  }
-
-  if (isTeamRoute && (!onboardingHasUsername || !onboardingHasRequestFingerprint || !invitesHasUsername || !invitesHasCorporateEmail || !onboardingHasSaga || !teamTablesReady)) {
-    return withCORS(JSON.stringify({ success: false, error: 'Migração da equipe unificada pendente', code: 'TEAM_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+  if (isTeamRoute) {
+    const gateResponse = teamRouteGateResponse();
+    if (gateResponse) return gateResponse;
   }
 
   // POST /admin/onboarding
