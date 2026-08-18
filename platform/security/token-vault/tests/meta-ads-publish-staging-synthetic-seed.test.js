@@ -695,7 +695,7 @@ test('staging seed attestation bounds Graph discovery and returns no source fact
   assert.ok(graph.calls.every((call) => call.method === 'GET'));
   assert.deepEqual(
     graph.calls.find((call) => call.path === `${BUSINESS_ID}/ads_dataset`).query,
-    { fields: 'id', limit: '5' },
+    { fields: 'id' },
   );
   assert.equal(graph.postCalls.length, 0);
   assert.equal(db.operations.size, 0);
