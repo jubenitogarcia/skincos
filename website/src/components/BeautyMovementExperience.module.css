@@ -2090,11 +2090,11 @@
   }
 
   30% {
-    transform: translateX(-50%) translateY(-8px) scale(1.04) rotate(-1deg);
+    transform: translateX(-50%) translateY(0) scale(1.04) rotate(-1deg);
   }
 
   62% {
-    transform: translateX(-50%) translateY(-4px) scale(1.015) rotate(0.5deg);
+    transform: translateX(-50%) translateY(0) scale(1.015) rotate(0.5deg);
   }
 
   100% {
@@ -2108,11 +2108,11 @@
   }
 
   32% {
-    transform: translateX(-50%) translateY(-6px) scale(1.035) rotate(-0.8deg);
+    transform: translateX(-50%) translateY(0) scale(1.035) rotate(-0.8deg);
   }
 
   68% {
-    transform: translateX(-50%) translateY(2px) scale(0.99) rotate(0.35deg);
+    transform: translateX(-50%) translateY(0) scale(0.99) rotate(0.35deg);
   }
 
   100% {
@@ -3348,4 +3348,98 @@
 .tableStage[data-hand-stage="ready"] .deckStage {
   bottom: -56px;
 }
+}
+
+/* Visual handoff refinements: the campaign surface now touches the global
+ * header, while the content remains aligned to the shell's editorial grid. */
+.page {
+  padding-top: 0;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+
+.hero {
+  width: calc(100% + 40px);
+  max-width: none;
+  margin-left: -20px;
+  margin-right: 0;
+}
+
+.hero::before {
+  inset: 0;
+  border: 0;
+  border-bottom: 1px solid rgba(158, 134, 94, 0.38);
+  border-radius: 0 0 clamp(54px, 9vw, 130px) 0;
+  background:
+    radial-gradient(circle at 82% 34%, rgba(229, 189, 49, 0.14), transparent 20rem),
+    linear-gradient(102deg, #ffffff 0%, #fbfaf5 32%, #f4eedf 68%, #f1e2b7 100%);
+}
+
+.progressRowFinale {
+  min-height: 52px;
+  align-items: center;
+}
+
+.progressRowFinale .finaleCountdownSlot {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  width: min(100%, 620px);
+  margin: 0 auto;
+  padding: 0 10px;
+}
+
+.progressRowFinale .finaleCountdown {
+  gap: 7px;
+}
+
+/* The return-to-deck animation keeps its pulse in scale/rotation only. A
+ * negative Y keyframe made the stack lift into the middle card at handoff. */
+.tableStage[data-hand-stage="collect"] .deckStage,
+.tableStage[data-hand-stage="ready"] .deckStage {
+  transform-origin: center bottom;
+}
+
+.tableStage[data-special-modal="open"] .tableSurface {
+  pointer-events: none;
+  animation: specialTableSurfaceDissolve 520ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
+}
+
+@keyframes specialTableSurfaceDissolve {
+  from {
+    opacity: 1;
+    filter: blur(0) saturate(1);
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    filter: blur(8px) saturate(0.72);
+    transform: scale(0.96) translateY(12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tableStage[data-special-modal="open"] .tableSurface {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+@media (min-width: 1220px) {
+  .hero {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: calc(100% - 24px);
+  }
+
+  .hero {
+    width: calc(100% + 24px);
+    margin-left: -12px;
+  }
 }

@@ -299,10 +299,8 @@ export default function BeautyMovementExperience({
     const handExpansionFrameRef = useRef<number | null>(null);
     const progressMotionTimerRef = useRef<number | null>(null);
     const scrollAnimationFrameRef = useRef<number | null>(null);
-    const scrollInterruptCleanupRef = useRef<(() => void) | null>(null);
     const initialDealScrollFrameRef = useRef<number | null>(null);
     const initialDealScrollActiveRef = useRef(false);
-    const initialDealScrollInterruptCleanupRef = useRef<(() => void) | null>(null);
     const tableRef = useRef<HTMLElement | null>(null);
     const tableSurfaceRef = useRef<HTMLDivElement | null>(null);
     const finaleCountdownRef = useRef<HTMLDivElement | null>(null);
@@ -492,9 +490,6 @@ export default function BeautyMovementExperience({
                 window.cancelAnimationFrame(initialDealScrollFrameRef.current);
             }
             initialDealScrollActiveRef.current = false;
-            initialDealScrollInterruptCleanupRef.current?.();
-            initialDealScrollInterruptCleanupRef.current = null;
-            scrollInterruptCleanupRef.current?.();
         };
     }, []);
 
@@ -633,8 +628,6 @@ export default function BeautyMovementExperience({
             window.cancelAnimationFrame(scrollAnimationFrameRef.current);
             scrollAnimationFrameRef.current = null;
         }
-        scrollInterruptCleanupRef.current?.();
-        scrollInterruptCleanupRef.current = null;
     }, []);
 
     function getTableScrollTarget(): number | null {
@@ -686,12 +679,17 @@ export default function BeautyMovementExperience({
             const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
             if (titleFits && !isStackedLayout) {
                 const titleTarget = Math.max(0, titleTop - headerOffset - 12);
+                const headerCollapseTarget =
+                    stickyHeaderRect && stickyHeaderRect.bottom > 12
+                        ? Math.min(Math.max(16, Math.ceil(stickyHeaderRect.height)), Math.max(0, titleTop - 16))
+                        : 0;
+                const anchorTarget = Math.max(Math.min(fittedTarget, titleTarget), headerCollapseTarget);
                 // Evaluate the hand at the proposed title target, rather than
                 // at the current scroll position. This prevents the RAF follow
                 // loop from alternating between the title and deck targets.
-                const handBottomAtTitle = handBottom - (titleTarget - window.scrollY);
-                const handFitsAtTitle = handBottomAtTitle <= window.innerHeight + 24;
-                if (handFitsAtTitle) return Math.min(fittedTarget, titleTarget);
+                const handBottomAtAnchor = handBottom - (anchorTarget - window.scrollY);
+                const handFitsAtAnchor = handBottomAtAnchor <= window.innerHeight + 24;
+                if (handFitsAtAnchor) return anchorTarget;
             }
         }
 
@@ -704,8 +702,20 @@ export default function BeautyMovementExperience({
             window.cancelAnimationFrame(initialDealScrollFrameRef.current);
             initialDealScrollFrameRef.current = null;
         }
-        initialDealScrollInterruptCleanupRef.current?.();
-        initialDealScrollInterruptCleanupRef.current = null;
+    }
+
+    function finishDealScroll() {
+        stopInitialDealScroll();
+
+        // The final card/deck geometry is committed one frame after the hand
+        // becomes ready. Re-anchor only after that commit so the deck does not
+        // take a short reverse step when the follow loop is released.
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => {
+                if (!mountedRef.current || handStageRef.current !== "ready") return;
+                scrollToTable();
+            });
+        });
     }
 
     function startInitialDealScroll() {
@@ -722,24 +732,10 @@ export default function BeautyMovementExperience({
         // every frame avoids a one-time target becoming stale during layout
         // transitions and lets the scroll itself trigger the header collapse.
         initialDealScrollActiveRef.current = true;
-        const interruptOnUserIntent = () => stopInitialDealScroll();
-        const removeFollowInterrupts = () => {
-            window.removeEventListener("wheel", interruptOnUserIntent);
-            window.removeEventListener("touchstart", interruptOnUserIntent);
-            window.removeEventListener("pointerdown", interruptOnUserIntent);
-            window.removeEventListener("keydown", interruptOnUserIntent);
-        };
-        // Register after the activating click/keydown has finished bubbling.
-        // Otherwise Enter/Space on the deck would immediately see this new
-        // listener and cancel the follow loop it just started.
-        window.requestAnimationFrame(() => {
-            if (!initialDealScrollActiveRef.current) return;
-            window.addEventListener("wheel", interruptOnUserIntent, { passive: true, once: true });
-            window.addEventListener("touchstart", interruptOnUserIntent, { passive: true, once: true });
-            window.addEventListener("pointerdown", interruptOnUserIntent, { passive: true, once: true });
-            window.addEventListener("keydown", interruptOnUserIntent, { once: true });
-            initialDealScrollInterruptCleanupRef.current = removeFollowInterrupts;
-        });
+        // The follow loop is part of the reading transition, not a user-scroll
+        // affordance. Keyboard, pointer, touch and wheel input must not cancel
+        // it: cancelling here leaves the next category at the old page anchor
+        // while the deck continues moving below the cards.
         let previousTime = performance.now();
         const follow = (now: number) => {
             if (!initialDealScrollActiveRef.current || !mountedRef.current) {
@@ -765,64 +761,39 @@ export default function BeautyMovementExperience({
         initialDealScrollFrameRef.current = window.requestAnimationFrame(follow);
     }
 
-    function scrollToElement(target: HTMLElement | null, extraOffset = 0, visibleHeaderOffset?: number) {
+    function animateTableScroll(targetTop: number | null) {
+        if (targetTop === null) return;
+
         cancelScrollAnimation();
-        if (!target) return;
-
         const startTop = window.scrollY;
-        const stickyHeader = document.querySelector("header");
-        const readVisibleHeaderOffset = () => {
-            if (!(stickyHeader instanceof HTMLElement)) return visibleHeaderOffset ?? 32;
-            const headerRect = stickyHeader.getBoundingClientRect();
-            return Math.max(0, Math.min(headerRect.height, headerRect.bottom)) + 4;
+        const resolvedTargetTop = Math.max(0, targetTop);
+        const collapseReadingHeader = () => {
+            if (resolvedTargetTop > 12) {
+                document.querySelector<HTMLElement>('[data-scroll-aware-header="true"]')?.classList.add("header--hidden");
+            }
         };
-        const headerOffset =
-            visibleHeaderOffset ??
-            readVisibleHeaderOffset();
-        const scrollOffset = headerOffset + extraOffset;
-        const targetTop = Math.max(0, startTop + target.getBoundingClientRect().top - scrollOffset);
-
+        collapseReadingHeader();
         if (reducedMotion) {
-            // Keep the semantic anchor for assistive/browser tooling, then use
-            // the measured visible-header offset as the actual destination.
-            // scrollIntoView alone aligns the table to y=0, where a visible
-            // sticky header would cover the progress row on compact screens.
-            target.scrollIntoView({ behavior: "auto", block: "start" });
-            window.scrollTo({ top: targetTop, behavior: "auto" });
+            window.scrollTo({ top: resolvedTargetTop, behavior: "auto" });
+            collapseReadingHeader();
             return;
         }
 
-        const duration = Math.min(1040, Math.max(680, Math.abs(targetTop - startTop) * 0.55));
+        const duration = Math.min(1040, Math.max(680, Math.abs(resolvedTargetTop - startTop) * 0.55));
         const startedAt = performance.now();
         const easeInOut = (progress: number) =>
             progress < 0.5
                 ? 4 * progress * progress * progress
                 : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
-        const interruptOnUserIntent = () => cancelScrollAnimation();
-        const removeScrollInterrupts = () => {
-            window.removeEventListener("wheel", interruptOnUserIntent);
-            window.removeEventListener("touchstart", interruptOnUserIntent);
-            window.removeEventListener("pointerdown", interruptOnUserIntent);
-            window.removeEventListener("keydown", interruptOnUserIntent);
-        };
-        window.addEventListener("wheel", interruptOnUserIntent, { passive: true, once: true });
-        window.addEventListener("touchstart", interruptOnUserIntent, { passive: true, once: true });
-        window.addEventListener("pointerdown", interruptOnUserIntent, { passive: true, once: true });
-        window.addEventListener("keydown", interruptOnUserIntent, { once: true });
-        scrollInterruptCleanupRef.current = removeScrollInterrupts;
-
         const animate = (now: number) => {
             const progress = Math.min(1, (now - startedAt) / duration);
-            const documentTargetTop = window.scrollY + target.getBoundingClientRect().top;
-            const frameTargetTop = Math.max(0, documentTargetTop - readVisibleHeaderOffset() - extraOffset);
-            window.scrollTo(0, startTop + (frameTargetTop - startTop) * easeInOut(progress));
+            collapseReadingHeader();
+            window.scrollTo(0, startTop + (resolvedTargetTop - startTop) * easeInOut(progress));
             if (progress < 1) {
                 scrollAnimationFrameRef.current = window.requestAnimationFrame(animate);
             } else {
                 scrollAnimationFrameRef.current = null;
-                removeScrollInterrupts();
-                scrollInterruptCleanupRef.current = null;
             }
         };
 
@@ -852,43 +823,7 @@ export default function BeautyMovementExperience({
     }, [finaleStage, reducedMotion]);
 
     function scrollToTable() {
-        const target = tableRef.current;
-        if (!target) return;
-
-        const title = document.getElementById("beauty-movement-title");
-        const stickyHeader = document.querySelector("header");
-        const stickyHeaderRect = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect() : null;
-        const headerOffset = stickyHeaderRect
-            ? Math.max(0, Math.min(stickyHeaderRect.height, stickyHeaderRect.bottom)) + 4
-            : 32;
-        const titleRect = title instanceof HTMLElement ? title.getBoundingClientRect() : null;
-        const tableTop = window.scrollY + target.getBoundingClientRect().top;
-        const titleTop = titleRect ? window.scrollY + titleRect.top : null;
-        const titleTarget = titleTop === null ? null : Math.max(0, titleTop - headerOffset - 12);
-        const isStackedLayout = window.matchMedia("(max-width: 720px)").matches;
-        const cardGrid = target.querySelector<HTMLElement>(`.${styles.cardGrid}`);
-        const deck = target.querySelector<HTMLElement>(`.${styles.deckStage}`);
-        const handBottom = cardGrid?.getBoundingClientRect().bottom ?? Math.max(
-            target.getBoundingClientRect().top + 312,
-            deck?.getBoundingClientRect().bottom ?? 0,
-        );
-        const handFitsAtTitle =
-            titleTarget !== null &&
-            handBottom - (titleTarget - window.scrollY) <= window.innerHeight + 24;
-        const canAnchorTitle =
-            titleTarget !== null &&
-            !isStackedLayout &&
-            Boolean(titleRect) &&
-            (titleRect?.height ?? 0) <= window.innerHeight - headerOffset - 16 &&
-            handFitsAtTitle;
-        const titlePeek =
-            !canAnchorTitle
-                ? 0
-                : Math.max(
-                      Math.min(184, Math.max(0, Math.round((titleRect?.height ?? 0) - 2))),
-                      tableTop - headerOffset - titleTarget,
-                  );
-        scrollToElement(target, titlePeek, headerOffset);
+        animateTableScroll(getTableScrollTarget());
     }
 
     function clearHandTransitionTimer() {
@@ -1039,7 +974,7 @@ export default function BeautyMovementExperience({
                                 // Let the ready-state DOM commit once before
                                 // releasing the follow loop, so the final
                                 // card-grid layout is included in the anchor.
-                                window.requestAnimationFrame(stopInitialDealScroll);
+                                window.requestAnimationFrame(finishDealScroll);
                             });
                         });
                     }, true);
@@ -1130,12 +1065,7 @@ export default function BeautyMovementExperience({
                                     scheduleDealSequence(handToken, () => {
                                         transitionInFlightRef.current = false;
                                         setCurrentHandStage("ready");
-                                        window.requestAnimationFrame(() => {
-                                            // Let the ready-state DOM commit once
-                                            // so the follow loop includes the
-                                            // final card/deck geometry.
-                                            window.requestAnimationFrame(stopInitialDealScroll);
-                                        });
+                                        window.requestAnimationFrame(finishDealScroll);
                                     });
                                 },
                             );
@@ -1434,6 +1364,8 @@ export default function BeautyMovementExperience({
     const nextDefinition = BEAUTY_MOVEMENT_ACT_DEFINITIONS[displayedActIndex + 1];
     const tableIsUnlocked = isActUnlocked(displayedActIndex);
     const waitingForInitialDeal = handStage === "waiting" && introStage === "hidden" && finaleStage === "hidden";
+    const finaleFlowActive =
+        finaleStage === "assembling" || finaleStage === "collecting" || finaleStage === "merging";
     const tablePromptCopy =
         introStage !== "hidden"
             ? initialExperienceCopy
@@ -1719,12 +1651,25 @@ export default function BeautyMovementExperience({
                     data-hand-stage={handStage}
                     data-act-index={displayedActIndex}
                     data-finale-stage={finaleStage}
+                    data-special-modal={isSpecialCardModalOpen ? "open" : "closed"}
                     aria-busy={tableIsBusy || undefined}
                     style={motionCssVariables}
                 >
                     <div
-                        className={`${styles.progressRow} ${waitingForInitialDeal ? styles.progressRowWaiting : ""}`.trim()}
+                        className={`${styles.progressRow} ${waitingForInitialDeal ? styles.progressRowWaiting : ""} ${finaleFlowActive ? styles.progressRowFinale : ""}`.trim()}
                     >
+                        {finaleFlowActive ? (
+                            <div className={styles.finaleCountdownSlot} ref={finaleCountdownRef}>
+                                {finaleStage === "collecting" ? (
+                                    <div className={styles.finaleCountdown} aria-hidden="true">
+                                        <span className={styles.finaleCountdownLabel}>Sua leitura está se reunindo · 5 segundos</span>
+                                        <span className={styles.finaleCountdownTrack} aria-hidden="true">
+                                            <span className={styles.finaleCountdownBar} />
+                                        </span>
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : (
                         <div className={styles.progressGroup} aria-hidden={waitingForInitialDeal || undefined}>
                             <ol
                                 ref={progressListRef}
@@ -1820,24 +1765,9 @@ export default function BeautyMovementExperience({
                                 })}
                             </ol>
                         </div>
+                        )}
 
                     </div>
-
-                    {finaleStage === "assembling" || finaleStage === "collecting" || finaleStage === "merging" ? (
-                        <div className={styles.finaleCountdownSlot} ref={finaleCountdownRef}>
-                            {finaleStage === "collecting" ? (
-                                <div
-                                    className={styles.finaleCountdown}
-                                    aria-hidden="true"
-                                >
-                                    <span className={styles.finaleCountdownLabel}>Sua leitura está se reunindo · 5 segundos</span>
-                                    <span className={styles.finaleCountdownTrack} aria-hidden="true">
-                                        <span className={styles.finaleCountdownBar} />
-                                    </span>
-                                </div>
-                            ) : null}
-                        </div>
-                    ) : null}
 
                     <div
                         ref={tableSurfaceRef}
