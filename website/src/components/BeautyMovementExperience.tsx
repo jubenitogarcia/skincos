@@ -354,8 +354,10 @@ export default function BeautyMovementExperience({
                 "--bm-progress-expand-ms": `${BEAUTY_MOVEMENT_MOTION.progressExpandMs}ms`,
                 "--bm-progress-total-ms": `${BEAUTY_MOVEMENT_MOTION.progressTransitionMs}ms`,
                 "--bm-finale-enter-ms": `${BEAUTY_MOVEMENT_MOTION.finaleCardsEnterMs}ms`,
+                "--bm-finale-hold-ms": `${BEAUTY_MOVEMENT_MOTION.finaleHoldMs}ms`,
                 "--bm-finale-merge-ms": `${BEAUTY_MOVEMENT_MOTION.finaleMergeMs}ms`,
                 "--bm-finale-card-merge-ms": `${BEAUTY_MOVEMENT_MOTION.finaleCardMergeMs}ms`,
+                "--bm-special-enter-ms": "820ms",
                 "--bm-prompt-word-delay-ms": `${BEAUTY_MOVEMENT_MOTION.promptWordDelayMs}ms`,
                 "--bm-prompt-word-animation-ms": `${BEAUTY_MOVEMENT_MOTION.promptWordAnimationMs}ms`,
                 "--bm-prompt-exit-ms": `${BEAUTY_MOVEMENT_MOTION.promptExitBaseMs}ms`,
@@ -641,7 +643,14 @@ export default function BeautyMovementExperience({
                 ? Math.min(184, Math.max(0, Math.round(title.getBoundingClientRect().height - 2)))
                 : 0;
         const stickyHeader = document.querySelector("header");
-        const scrollOffset = (stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32) + titlePeek;
+        const stickyHeaderRect = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect() : null;
+        // HeaderScrollBehavior translates the header out of view but keeps its
+        // layout box. Only the visible portion should reserve scroll space;
+        // otherwise the follow loop pushes the hero title above the viewport.
+        const headerOffset = stickyHeaderRect
+            ? Math.max(0, Math.min(stickyHeaderRect.height, stickyHeaderRect.bottom)) + 4
+            : 32;
+        const scrollOffset = headerOffset + titlePeek;
         const editorialTarget = window.scrollY + target.getBoundingClientRect().top - scrollOffset;
         const deck = target.querySelector<HTMLElement>(`.${styles.deckStage}`);
         const deckRect = deck?.getBoundingClientRect();
@@ -654,7 +663,23 @@ export default function BeautyMovementExperience({
         // deck fully in the lower half of the viewport instead of leaving its
         // final card cut off below the fold. The editorial anchor remains the
         // floor so the first scroll still starts from the hero/table handoff.
-        return Math.max(0, Math.max(editorialTarget, deckTarget));
+        const fittedTarget = Math.max(0, Math.max(editorialTarget, deckTarget));
+
+        // Keep the campaign thesis readable while the table settles. The
+        // compact layout is deliberately designed so the title can fit above
+        // the cards; capping the automatic follow target prevents the old
+        // behavior where the title was completely scrolled away.
+        if (title instanceof HTMLElement) {
+            const titleRect = title.getBoundingClientRect();
+            const titleTop = window.scrollY + titleRect.top;
+            const titleFits = titleRect.height <= window.innerHeight - headerOffset - 16;
+            if (titleFits) {
+                const titleTarget = Math.max(0, titleTop - headerOffset - 12);
+                return Math.min(fittedTarget, titleTarget);
+            }
+        }
+
+        return fittedTarget;
     }
 
     function stopInitialDealScroll() {
@@ -667,6 +692,7 @@ export default function BeautyMovementExperience({
 
     function startInitialDealScroll() {
         stopInitialDealScroll();
+        cancelScrollAnimation();
 
         if (reducedMotion) {
             scrollToTable();
@@ -758,10 +784,22 @@ export default function BeautyMovementExperience({
         if (!target) return;
 
         const title = document.getElementById("beauty-movement-title");
+        const stickyHeader = document.querySelector("header");
+        const stickyHeaderRect = stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect() : null;
+        const headerOffset = stickyHeaderRect
+            ? Math.max(0, Math.min(stickyHeaderRect.height, stickyHeaderRect.bottom)) + 4
+            : 32;
+        const titleRect = title instanceof HTMLElement ? title.getBoundingClientRect() : null;
+        const tableTop = window.scrollY + target.getBoundingClientRect().top;
+        const titleTop = titleRect ? window.scrollY + titleRect.top : null;
+        const titleTarget = titleTop === null ? null : Math.max(0, titleTop - headerOffset - 12);
         const titlePeek =
-            title instanceof HTMLElement
-                ? Math.min(184, Math.max(0, Math.round(title.getBoundingClientRect().height - 2)))
-                : 0;
+            titleTarget === null
+                ? 0
+                : Math.max(
+                      Math.min(184, Math.max(0, Math.round((titleRect?.height ?? 0) - 2))),
+                      tableTop - headerOffset - titleTarget,
+                  );
         scrollToElement(target, titlePeek);
     }
 
@@ -981,6 +1019,10 @@ export default function BeautyMovementExperience({
         transitionInFlightRef.current = true;
         const handToken = beginHandTransition();
         setCurrentHandStage("collect");
+        // The deck is the visual anchor for a category handoff. Follow its
+        // moving position from collection through the next deal so the page
+        // does not jump after the cards return to the stack.
+        startInitialDealScroll();
         scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.handCollectMs, () => {
             setCurrentHandStage("prompt");
             const progressMotionStarted = setCurrentActIndex(nextIndex);
@@ -1000,7 +1042,12 @@ export default function BeautyMovementExperience({
                                     scheduleDealSequence(handToken, () => {
                                         transitionInFlightRef.current = false;
                                         setCurrentHandStage("ready");
-                                        window.requestAnimationFrame(scrollToTable);
+                                        window.requestAnimationFrame(() => {
+                                            // Let the ready-state DOM commit once
+                                            // so the follow loop includes the
+                                            // final card/deck geometry.
+                                            window.requestAnimationFrame(stopInitialDealScroll);
+                                        });
                                     });
                                 },
                             );
@@ -1462,26 +1509,28 @@ export default function BeautyMovementExperience({
                     >
                         <BrandMark className={styles.specialCardBrand} loading="eager" tone="light" title="" />
                         <span className={styles.specialCardBackLabel}>CARTA ESPECIAL</span>
-                        <strong>A soma da sua leitura está pronta.</strong>
-                        {showRevealAction ? (
-                            <div
-                                className={styles.specialCardRevealAction}
-                                ref={(node) => {
-                                    if (action === "confirm") confirmationActionRef.current = node;
-                                }}
-                            >
-                                {action === "confirm" && actionError ? <p className={styles.specialCardRevealError} role="alert">{actionError}</p> : null}
-                                <button
-                                    ref={action === "reopen" ? specialCardReopenActionRef : undefined}
-                                    className={styles.primaryButton}
-                                    type="button"
-                                    onClick={action === "confirm" ? () => void handleConfirm() : openSpecialCardModal}
-                                    disabled={action === "confirm" ? isConfirming : undefined}
+                        <div className={showRevealAction ? styles.specialCardRevealContent : undefined}>
+                            <strong>A soma da sua leitura está pronta.</strong>
+                            {showRevealAction ? (
+                                <div
+                                    className={styles.specialCardRevealAction}
+                                    ref={(node) => {
+                                        if (action === "confirm") confirmationActionRef.current = node;
+                                    }}
                                 >
-                                    {action === "confirm" && isConfirming ? "Revelando…" : "Clique aqui para revelar sua carta especial"}
-                                </button>
-                            </div>
-                        ) : null}
+                                    {action === "confirm" && actionError ? <p className={styles.specialCardRevealError} role="alert">{actionError}</p> : null}
+                                    <button
+                                        ref={action === "reopen" ? specialCardReopenActionRef : undefined}
+                                        className={styles.primaryButton}
+                                        type="button"
+                                        onClick={action === "confirm" ? () => void handleConfirm() : openSpecialCardModal}
+                                        disabled={action === "confirm" ? isConfirming : undefined}
+                                    >
+                                        {action === "confirm" && isConfirming ? "Revelando…" : "Clique aqui para revelar sua carta especial"}
+                                    </button>
+                                </div>
+                            ) : null}
+                        </div>
                         <span className={styles.specialCardSeal} aria-hidden="true">
                             <i />
                             <i />
@@ -1679,6 +1728,21 @@ export default function BeautyMovementExperience({
                         </div>
 
                     </div>
+
+                    {finaleStage === "collecting" ? (
+                        <div
+                            className={styles.finaleCountdown}
+                            role="status"
+                            aria-live="polite"
+                            aria-label="Sua leitura está se reunindo. A carta especial aparece em cinco segundos."
+                        >
+                            <span className={styles.finaleCountdownLabel}>Sua leitura está se reunindo</span>
+                            <span className={styles.finaleCountdownTrack} aria-hidden="true">
+                                <span className={styles.finaleCountdownBar} />
+                            </span>
+                            <span className={styles.srOnly}>A carta especial aparece em cinco segundos.</span>
+                        </div>
+                    ) : null}
 
                     <div
                         ref={tableSurfaceRef}

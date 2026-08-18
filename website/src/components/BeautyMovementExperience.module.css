@@ -3078,6 +3078,144 @@
   }
 }
 
+/* Compact viewport contract: keep the thesis and the active table in one
+ * readable frame while the header collapses naturally on the first deal. */
+.hero {
+  min-height: clamp(196px, 16vw, 224px);
+  padding: 20px clamp(24px, 7vw, 104px) 6px;
+  gap: clamp(10px, 1.4vw, 16px);
+}
+
+.hero h1 {
+  font-size: clamp(3.1rem, 5.9vw, 5.7rem);
+  line-height: 0.86;
+}
+
+.tableStage {
+  margin-top: clamp(6px, 0.6vw, 8px);
+  padding-top: 0;
+}
+
+.tableStage[data-finale-stage="hidden"] .progressRow {
+  min-height: clamp(36px, 3.2vw, 40px);
+}
+
+.tableStage[data-finale-stage="hidden"] .tableSurface[data-deck-state="ready"],
+.tableStage[data-hand-stage="collect"] .tableSurface[data-deck-state="ready"] {
+  padding-top: clamp(6px, 0.6vw, 8px);
+  padding-bottom: clamp(20px, 2.2vw, 28px);
+}
+
+.tableStage[data-hand-stage="collect"] .deckStage,
+.tableStage[data-hand-stage="ready"] .deckStage {
+  bottom: -56px;
+}
+
+.finaleCountdown {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 620px);
+  margin: -2px auto clamp(10px, 1.6vw, 16px);
+  padding: 0 10px;
+  color: rgba(244, 238, 223, 0.82);
+  font-family: var(--font-brand-ui), sans-serif;
+  text-align: center;
+  animation: finaleCountdownEnter 360ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
+}
+
+.finaleCountdownLabel {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.finaleCountdownTrack {
+  display: block;
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border: 1px solid rgba(197, 181, 143, 0.48);
+  border-radius: 999px;
+  background: rgba(244, 238, 223, 0.1);
+}
+
+.finaleCountdownBar {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--bm-yellow);
+  box-shadow: 0 0 12px rgba(229, 189, 49, 0.56);
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: finaleCountdownFill var(--bm-finale-hold-ms) linear both;
+}
+
+.specialCardRevealContent {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.specialCardStage:not(.specialCardStageReopen) .specialCardRevealContent {
+  opacity: 0;
+  animation: specialCardRevealContentIn 360ms cubic-bezier(0.18, 0.86, 0.24, 1) both;
+  animation-delay: calc(var(--bm-special-enter-ms) + 40ms);
+}
+
+@keyframes finaleCountdownEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes finaleCountdownFill {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes specialCardRevealContentIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .finaleCountdown,
+  .finaleCountdownBar,
+  .specialCardStage:not(.specialCardStageReopen) .specialCardRevealContent {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+
+  .finaleCountdownBar {
+    transform: scaleX(1);
+  }
+}
+
 @media (max-width: 720px) {
   .backgroundOrbOne {
     top: 190px;
@@ -3167,5 +3305,33 @@
   .backgroundOrbOne,
   .backgroundOrbTwo {
     opacity: 0.45;
+  }
+}
+
+/* Keep the compact mobile values last so the campaign layer cannot be
+ * expanded again by the legacy responsive block above. */
+@media (max-width: 720px) {
+  .hero {
+    min-height: 0;
+    padding: 22px 20px;
+    gap: 10px;
+  }
+
+  .tableStage {
+    margin-top: 8px;
+  }
+
+  .tableStage[data-finale-stage="hidden"] .progressRow {
+    min-height: 42px;
+  }
+
+  .tableStage[data-finale-stage="hidden"] .tableSurface[data-deck-state="ready"],
+  .tableStage[data-hand-stage="collect"] .tableSurface[data-deck-state="ready"] {
+    padding-bottom: 24px;
+  }
+
+  .tableStage[data-hand-stage="collect"] .deckStage,
+  .tableStage[data-hand-stage="ready"] .deckStage {
+    bottom: -56px;
   }
 }
