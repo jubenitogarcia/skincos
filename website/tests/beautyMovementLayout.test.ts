@@ -49,7 +49,8 @@ test("the finale exposes a non-cancellable five-second merge countdown", async (
     assert.match(experience, /className=\{styles\.finaleCountdown\}[\s\S]*aria-hidden="true"/);
     assert.match(experience, /className=\{styles\.srOnly\} role="status" aria-live="polite"[\s\S]*Sua leitura está se reunindo/);
     assert.match(experience, /Sua leitura está se reunindo · 5 segundos/);
-    assert.match(experience, /deferRevealContent \? styles\.specialCardRevealContent : undefined/);
+    assert.match(experience, /const revealContentClass = deferRevealContent \|\| showRevealAction \? styles\.specialCardRevealContent : undefined/);
+    assert.match(experience, /<div className=\{revealContentClass\}>/);
     assert.match(styles, /\.finaleCountdownBar \{[\s\S]*animation: finaleCountdownFill var\(--bm-finale-hold-ms\) linear both/);
     assert.match(styles, /\.finaleCountdownSlot \{[\s\S]*min-height: 43px/);
     assert.match(styles, /@keyframes finaleCountdownFill/);

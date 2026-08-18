@@ -771,9 +771,14 @@ export default function BeautyMovementExperience({
 
         const startTop = window.scrollY;
         const stickyHeader = document.querySelector("header");
+        const readVisibleHeaderOffset = () => {
+            if (!(stickyHeader instanceof HTMLElement)) return visibleHeaderOffset ?? 32;
+            const headerRect = stickyHeader.getBoundingClientRect();
+            return Math.max(0, Math.min(headerRect.height, headerRect.bottom)) + 4;
+        };
         const headerOffset =
             visibleHeaderOffset ??
-            (stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height + 4 : 32);
+            readVisibleHeaderOffset();
         const scrollOffset = headerOffset + extraOffset;
         const targetTop = Math.max(0, startTop + target.getBoundingClientRect().top - scrollOffset);
 
@@ -787,8 +792,7 @@ export default function BeautyMovementExperience({
             return;
         }
 
-        const distance = targetTop - startTop;
-        const duration = Math.min(1040, Math.max(680, Math.abs(distance) * 0.55));
+        const duration = Math.min(1040, Math.max(680, Math.abs(targetTop - startTop) * 0.55));
         const startedAt = performance.now();
         const easeInOut = (progress: number) =>
             progress < 0.5
@@ -810,7 +814,9 @@ export default function BeautyMovementExperience({
 
         const animate = (now: number) => {
             const progress = Math.min(1, (now - startedAt) / duration);
-            window.scrollTo(0, startTop + distance * easeInOut(progress));
+            const documentTargetTop = window.scrollY + target.getBoundingClientRect().top;
+            const frameTargetTop = Math.max(0, documentTargetTop - readVisibleHeaderOffset() - extraOffset);
+            window.scrollTo(0, startTop + (frameTargetTop - startTop) * easeInOut(progress));
             if (progress < 1) {
                 scrollAnimationFrameRef.current = window.requestAnimationFrame(animate);
             } else {
@@ -1578,6 +1584,7 @@ export default function BeautyMovementExperience({
         const specialCardWhatsappLabel = /whatsapp/i.test(primaryWhatsappLabel)
             ? primaryWhatsappLabel
             : `${primaryWhatsappLabel} no WhatsApp`;
+        const revealContentClass = deferRevealContent || showRevealAction ? styles.specialCardRevealContent : undefined;
 
         return (
             <article
@@ -1596,7 +1603,7 @@ export default function BeautyMovementExperience({
                     >
                         <BrandMark className={styles.specialCardBrand} loading="eager" tone="light" title="" />
                         <span className={styles.specialCardBackLabel}>CARTA ESPECIAL</span>
-                        <div className={deferRevealContent ? styles.specialCardRevealContent : undefined}>
+                        <div className={revealContentClass}>
                             <strong>A soma da sua leitura está pronta.</strong>
                             {showRevealAction ? (
                                 <div

@@ -38,8 +38,10 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /requestAnimationFrame\(animate\)/);
     assert.match(experience, /scrollIntoView\(\{ behavior: "auto"/);
     assert.match(experience, /function scrollToElement\(target: HTMLElement \| null, extraOffset = 0, visibleHeaderOffset\?: number\)/);
+    assert.match(experience, /const readVisibleHeaderOffset = \(\) =>/);
     assert.match(experience, /const headerOffset =\s*visibleHeaderOffset \?\?/);
     assert.match(experience, /target\.scrollIntoView\(\{ behavior: "auto", block: "start" \}\);\s*window\.scrollTo\(\{ top: targetTop, behavior: "auto" \}\)/);
+    assert.match(experience, /const frameTargetTop = Math\.max\(0, documentTargetTop - readVisibleHeaderOffset\(\) - extraOffset\)/);
     assert.match(experience, /scrollToElement\(target, titlePeek, headerOffset\)/);
     assert.match(experience, /const titlePeek =/);
     assert.match(experience, /function getTableScrollTarget\(\): number \| null/);
