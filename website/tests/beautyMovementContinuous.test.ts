@@ -37,7 +37,10 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /beauty_movement_act_view/);
     assert.match(experience, /requestAnimationFrame\(animate\)/);
     assert.match(experience, /scrollIntoView\(\{ behavior: "auto"/);
-    assert.match(experience, /function scrollToElement\(target: HTMLElement \| null, extraOffset = 0\)/);
+    assert.match(experience, /function scrollToElement\(target: HTMLElement \| null, extraOffset = 0, visibleHeaderOffset\?: number\)/);
+    assert.match(experience, /const headerOffset =\s*visibleHeaderOffset \?\?/);
+    assert.match(experience, /target\.scrollIntoView\(\{ behavior: "auto", block: "start" \}\);\s*window\.scrollTo\(\{ top: targetTop, behavior: "auto" \}\)/);
+    assert.match(experience, /scrollToElement\(target, titlePeek, headerOffset\)/);
     assert.match(experience, /const titlePeek =/);
     assert.match(experience, /function getTableScrollTarget\(\): number \| null/);
     assert.match(experience, /const deck = target\.querySelector<HTMLElement>\(`\.\$\{styles\.deckStage\}`\)/);
@@ -50,7 +53,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /window\.requestAnimationFrame\(follow\)/);
     assert.match(experience, /function stopInitialDealScroll\(\)/);
     assert.match(experience, /cancelScrollAnimation\(\);\s*stopInitialDealScroll\(\);/);
-    assert.match(experience, /scrollToElement\(target, titlePeek\)/);
+    assert.match(experience, /scrollToElement\(target, titlePeek, headerOffset\)/);
     assert.match(experience, /prefers-reduced-motion/);
     assert.match(experience, /import \{ BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate \}/);
     assert.match(experience, /AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION\.autoAdvanceMs \/ 1_000/);
