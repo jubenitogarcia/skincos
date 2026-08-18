@@ -22,11 +22,13 @@ const syntheticToken = "synthetic-source-bearer-not-a-secret";
 const syntheticPixelId = "1234567890";
 const syntheticAccountId = "9876543210";
 const syntheticSystemUserId = "6677889900";
+const syntheticBusinessId = "7788990011";
 const syntheticNovoPageId = "1122334455";
 const syntheticNovoInstagramId = "5544332211";
 const syntheticBarraPageId = "2233445566";
 const syntheticBarraInstagramId = "6655443322";
 const syntheticDatasetId = "9988776655";
+const syntheticModernDatasetId = "8899001122";
 
 function runVerifier(
   responses,
@@ -155,11 +157,13 @@ const sensitiveValues = [
   syntheticPixelId,
   syntheticAccountId,
   syntheticSystemUserId,
+  syntheticBusinessId,
   syntheticNovoPageId,
   syntheticNovoInstagramId,
   syntheticBarraPageId,
   syntheticBarraInstagramId,
   syntheticDatasetId,
+  syntheticModernDatasetId,
 ];
 
 function assertNoSyntheticInputs(output) {
@@ -186,6 +190,10 @@ test("Meta Ads source-access attestation is manual, GET-only, and bound to two s
   assert.match(workflow, /source_destination_page_assignment_unassigned/);
   assert.match(workflow, /source_destination_page_selector_ambiguous/);
   assert.match(workflow, /source_destination_page_pair_duplicate/);
+  assert.match(workflow, /offline_conversion_data_sets\?fields=id&limit=2/);
+  assert.match(workflow, /act_\$\{accountId\}\?fields=id,business\{id\}/);
+  assert.match(workflow, /\$\{businessId\}\/ads_dataset\?fields=id,dataset_id&limit=5/);
+  assert.match(workflow, /source_dataset_legacy_contract_invalid/);
   assert.match(
     workflow,
     /assigned_pages\?fields=id,tasks,instagram_business_account\{id\},website,picture\{url\}&limit=100/,
@@ -378,5 +386,31 @@ test("Meta Ads source-access verifier reports only classified Graph failures", (
   assert.equal(result.requestCount, 1);
   assert.match(combined, /source_pixel_denied/);
   assert.doesNotMatch(combined, /synthetic denial detail|source_access_raw=verified/);
+  assertNoSyntheticInputs(combined);
+});
+
+test("Meta Ads source-access verifier probes the current Business AdsDataset contract after a legacy dataset shape failure", () => {
+  const responses = happyResponses();
+  responses.push({
+    pathname: `/v25.0/act_${syntheticAccountId}`,
+    query: { fields: "id,business{id}" },
+    payload: { id: syntheticAccountId, business: { id: syntheticBusinessId } },
+  });
+  responses.push({
+    pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
+    query: { fields: "id,dataset_id", limit: "5" },
+    payload: { data: [{ id: syntheticModernDatasetId, dataset_id: syntheticModernDatasetId }] },
+  });
+  responses[4] = {
+    ...responses[4],
+    status: 400,
+    payload: { error: { code: 100, message: "synthetic legacy dataset edge drift" } },
+  };
+  const result = runVerifier(responses, { expectedRequests: 7 });
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.status, 0);
+  assert.equal(result.requestCount, 7);
+  assert.match(combined, /source_dataset_legacy_contract_invalid/);
+  assert.doesNotMatch(combined, /synthetic legacy dataset edge drift|source_access_raw=verified/);
   assertNoSyntheticInputs(combined);
 });

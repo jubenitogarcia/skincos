@@ -199,13 +199,42 @@ jobs:
           // this read on that edge instead of issuing a Page-node GET with a
           // bearer whose contract is Business/Marketing scoped.
 
-          const datasets = await directRead(
-            `act_${accountId}/offline_conversion_data_sets?fields=id&limit=2`,
-            'source_dataset',
-          );
-          if (!Array.isArray(datasets?.data)) fail('source_dataset_malformed');
-          if (hasNextPage(datasets) || datasets.data.length !== 1) fail('source_dataset_ambiguous');
-          if (!numericId(datasets.data[0]?.id)) fail('source_dataset_malformed');
+          const legacyDatasetPath = `act_${accountId}/offline_conversion_data_sets?fields=id&limit=2`;
+          const legacyDatasetResult = await graphGet(legacyDatasetPath);
+          if (legacyDatasetResult.state === 'ok') {
+            const datasets = legacyDatasetResult.payload;
+            if (!Array.isArray(datasets?.data)) fail('source_dataset_malformed');
+            if (hasNextPage(datasets) || datasets.data.length !== 1) fail('source_dataset_ambiguous');
+            if (!numericId(datasets.data[0]?.id)) fail('source_dataset_malformed');
+          } else if (legacyDatasetResult.state === 'malformed') {
+            // The legacy Offline Conversions edge is still present in older
+            // Meta examples, but current SDKs expose AdsDataset from the
+            // Business /ads_dataset edge. Probe that read-only contract only
+            // after the legacy response is structurally invalid; never mark
+            // the raw source eligible from the modern shape because the
+            // Worker still seals offline_conversion_data_set_id today.
+            const account = await directRead(
+              `act_${accountId}?fields=id,business{id}`,
+              'source_dataset_account',
+            );
+            const businessId = numericId(account?.business?.id);
+            if (!businessId) fail('source_dataset_business_malformed');
+            const modernDatasets = await directRead(
+              `${businessId}/ads_dataset?fields=id,dataset_id&limit=5`,
+              'source_dataset_ads_dataset',
+            );
+            if (!Array.isArray(modernDatasets?.data)) fail('source_dataset_ads_dataset_malformed');
+            if (hasNextPage(modernDatasets)) fail('source_dataset_ads_dataset_paging_ambiguous');
+            if (modernDatasets.data.length === 0) fail('source_dataset_ads_dataset_empty');
+            if (modernDatasets.data.length > 1) fail('source_dataset_ads_dataset_ambiguous');
+            const modernDataset = modernDatasets.data[0];
+            if (!numericId(modernDataset?.id) && !numericId(modernDataset?.dataset_id)) {
+              fail('source_dataset_ads_dataset_malformed');
+            }
+            fail('source_dataset_legacy_contract_invalid');
+          } else {
+            fail(`source_dataset_${legacyDatasetResult.state}`);
+          }
 
           process.stdout.write([
             'source_access_raw=verified',
