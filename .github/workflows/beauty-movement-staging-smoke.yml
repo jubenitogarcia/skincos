@@ -331,17 +331,16 @@ jobs:
           candidate_version=''
           for attempt in $(seq 1 12); do
             npx --yes wrangler@4.112.0 deployments list --config wrangler.toml --env staging --json >"${deployments}"
-            candidate_version="$(node - "${deployments}" "${candidate_message}" <<'NODE'
-          const fs = require('node:fs');
-          const [deploymentsPath, expectedMessage] = process.argv.slice(2);
-          const deployments = JSON.parse(fs.readFileSync(deploymentsPath, 'utf8'));
+            candidate_version="$(node -e '
+          const fs = require("node:fs");
+          const [deploymentsPath, expectedMessage] = process.argv.slice(1);
+          const deployments = JSON.parse(fs.readFileSync(deploymentsPath, "utf8"));
           const found = deployments
-            .filter((deployment) => deployment.annotations?.['workers/message'] === expectedMessage)
+            .filter((deployment) => deployment.annotations?.["workers/message"] === expectedMessage)
             .flatMap((deployment) => deployment.versions ?? [])
             .find((version) => Number(version.percentage) === 100 && /^[0-9a-f-]{36}$/i.test(version.version_id));
-          process.stdout.write(found?.version_id ?? '');
-          NODE
-            )"
+          process.stdout.write(found?.version_id ?? "");
+          ' "${deployments}" "${candidate_message}")"
             if [[ "${candidate_version}" =~ ^[0-9a-f-]{36}$ ]]; then break; fi
             sleep 5
           done
@@ -356,24 +355,23 @@ jobs:
           fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
           NODE
           for attempt in $(seq 1 12); do
-            code="$(curl -sS -o /dev/null -w '%{http_code}' "${SMOKE_URL}/beleza-em-movimento || true)"
+            code="$(curl -sS -o /dev/null -w '%{http_code}' "${SMOKE_URL}/beleza-em-movimento" || true)"
             [[ "${code}" == "200" ]] && break
             sleep 5
           done
           [[ "${code}" == "200" ]] || { echo "temporary staging candidate is not serving the campaign (HTTP ${code})"; exit 1; }
-          invite_url="$(node - "${OUTPUT_DIR}" <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const directory = process.argv[2];
-          const file = fs.readdirSync(directory).find((name) => name.endsWith('-delivery.csv'));
-          if (!file) throw new Error('beauty_movement_delivery_missing');
-          const row = fs.readFileSync(path.join(directory, file), 'utf8').trim().split(/\r?\n/)[1];
-          const cells = row.match(/("(?:[^"]|"")*"|[^,]*)/g)?.filter((cell) => cell !== '') ?? [];
-          const value = cells.at(-1)?.replace(/^"|"$/g, '').replace(/""/g, '"');
-          if (!value) throw new Error('beauty_movement_delivery_invalid');
+          invite_url="$(node -e '
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const directory = process.argv[1];
+          const file = fs.readdirSync(directory).find((name) => name.endsWith("-delivery.csv"));
+          if (!file) throw new Error("beauty_movement_delivery_missing");
+          const row = fs.readFileSync(path.join(directory, file), "utf8").trim().split(/\r?\n/)[1];
+          const cells = row.match(/("(?:[^"]|"")*"|[^,]*)/g)?.filter((cell) => cell !== "") ?? [];
+          const value = cells.at(-1)?.replace(/^"|"$/g, "").replace(/""/g, "\"");
+          if (!value) throw new Error("beauty_movement_delivery_invalid");
           process.stdout.write(value);
-          NODE
-          )"
+          ' "${OUTPUT_DIR}")"
           token="${invite_url##*#c=}"
           [[ "${token}" =~ ^[A-Za-z0-9_-]{40,180}$ ]] || { echo 'synthetic invite token shape invalid'; exit 1; }
           SMOKE_INVITE_TOKEN="${token}" node --input-type=module <<'NODE'
