@@ -144,11 +144,6 @@ function happyResponses() {
         ],
       },
     },
-    {
-      pathname: `/v25.0/act_${syntheticAccountId}/offline_conversion_data_sets`,
-      query: { fields: "id", limit: "2" },
-      payload: { data: [{ id: syntheticDatasetId }] },
-    },
   ];
 }
 
@@ -178,11 +173,11 @@ test("Meta Ads source-access attestation is manual, GET-only, and bound to two s
   assert.match(workflow, /timeout-minutes: 3/);
   assert.match(
     workflow,
-    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ secrets\.NOVOHAMBURGO_PAGE_ID \}\}/,
+    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ secrets.novohamburgo_page_id \}\}/,
   );
   assert.match(
     workflow,
-    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets\.BARRASHOPPINGSUL_PAGE_ID \}\}/,
+    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ secrets.barrashopppingsul_page_id \}\}/,
   );
   assert.match(workflow, /destinationSelectors = \{[\s\S]*novo_hamburgo:[\s\S]*barra_shopping_sul:/);
   assert.match(workflow, /source_destination_page_selector_invalid/);
@@ -190,13 +185,10 @@ test("Meta Ads source-access attestation is manual, GET-only, and bound to two s
   assert.match(workflow, /source_destination_page_assignment_unassigned/);
   assert.match(workflow, /source_destination_page_selector_ambiguous/);
   assert.match(workflow, /source_destination_page_pair_duplicate/);
-  assert.match(workflow, /offline_conversion_data_sets\?fields=id&limit=2/);
-  assert.match(workflow, /act_\$\{accountId\}\?fields=id,business\{id\}/);
-  assert.match(workflow, /\$\{businessId\}\/ads_dataset\?fields=id/);
-  assert.doesNotMatch(workflow, /ads_dataset\?fields=id&limit=/);
-  assert.doesNotMatch(workflow, /ads_dataset\?fields=id,dataset_id/);
-  assert.match(workflow, /source_dataset_ads_dataset_response_\$\{modernDatasetResult\.state\}/);
-  assert.match(workflow, /source_dataset_legacy_contract_invalid/);
+  assert.doesNotMatch(workflow, /offline_conversion_data_sets/);
+  assert.doesNotMatch(workflow, /ads_dataset/);
+  assert.doesNotMatch(workflow, /source_dataset_ads_dataset_response_/);
+  assert.doesNotMatch(workflow, /source_dataset_legacy_contract_invalid/);
   assert.match(
     workflow,
     /assigned_pages\?fields=id,tasks,instagram_business_account\{id\},website,picture\{url\}&limit=100/,
@@ -225,7 +217,7 @@ test("Meta Ads source-access verifier proves both assigned Page and Instagram pa
   const result = runVerifier(happyResponses());
   const combined = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 5);
+  assert.equal(result.requestCount, 4);
   assert.equal(
     result.stdout,
     [
@@ -272,7 +264,7 @@ test("Meta Ads source-access verifier accepts Profile Plus advertising and exact
   const result = runVerifier(responses);
   const combined = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 0, combined);
-  assert.equal(result.requestCount, 5);
+  assert.equal(result.requestCount, 4);
   assert.match(result.stdout, /source_access_raw=verified/);
   assertNoSyntheticInputs(combined);
 });
@@ -392,69 +384,11 @@ test("Meta Ads source-access verifier reports only classified Graph failures", (
   assertNoSyntheticInputs(combined);
 });
 
-test("Meta Ads source-access verifier classifies Graph contract rejection without exposing Graph details", () => {
-  for (const modernError of [
-    { code: 100, message: "synthetic modern contract detail" },
-    { code: 0, message: "synthetic unknown modern contract detail" },
-  ]) {
-    const responses = happyResponses();
-    responses[4] = {
-      ...responses[4],
-      status: 400,
-      payload: { error: { code: 100, message: "synthetic legacy dataset edge drift" } },
-    };
-    responses.push({
-      pathname: `/v25.0/act_${syntheticAccountId}`,
-      query: { fields: "id,business{id}" },
-      payload: { id: syntheticAccountId, business: { id: syntheticBusinessId } },
-    });
-    responses.push({
-      pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
-      query: { fields: "id" },
-      status: 400,
-      payload: { error: modernError },
-    });
-    const result = runVerifier(responses, { expectedRequests: 7 });
-    const combined = `${result.stdout}${result.stderr}`;
-    assert.notEqual(result.status, 0);
-    assert.equal(result.requestCount, 7);
-    assert.match(combined, /source_dataset_ads_dataset_response_contract/);
-    assert.doesNotMatch(
-      combined,
-      /synthetic legacy dataset edge drift|synthetic modern contract detail|synthetic unknown modern contract detail|source_access_raw=verified/,
-    );
-    assertNoSyntheticInputs(combined);
-  }
-});
-
-test("Meta Ads source-access verifier probes the current Business AdsDataset contract after a legacy dataset shape failure", () => {
-  for (const legacyPayload of [
-    { error: { code: 100, message: "synthetic legacy dataset edge drift" } },
-    {},
-    { data: { invalid: true } },
-  ]) {
-    const responses = happyResponses();
-    responses.push({
-      pathname: `/v25.0/act_${syntheticAccountId}`,
-      query: { fields: "id,business{id}" },
-      payload: { id: syntheticAccountId, business: { id: syntheticBusinessId } },
-    });
-    responses.push({
-      pathname: `/v25.0/${syntheticBusinessId}/ads_dataset`,
-      query: { fields: "id" },
-      payload: { data: [{ id: syntheticModernDatasetId }] },
-    });
-    responses[4] = {
-      ...responses[4],
-      status: legacyPayload.error ? 400 : 200,
-      payload: legacyPayload,
-    };
-    const result = runVerifier(responses, { expectedRequests: 7 });
-    const combined = `${result.stdout}${result.stderr}`;
-    assert.notEqual(result.status, 0);
-    assert.equal(result.requestCount, 7);
-    assert.match(combined, /source_dataset_legacy_contract_invalid/);
-    assert.doesNotMatch(combined, /synthetic legacy dataset edge drift|source_access_raw=verified/);
-    assertNoSyntheticInputs(combined);
-  }
+test("Meta Ads source-access verifier uses the already-proven converged Pixel identity as Dataset", () => {
+  const result = runVerifier(happyResponses());
+  const combined = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, combined);
+  assert.equal(result.requestCount, 4);
+  assert.doesNotMatch(combined, /offline_conversion_data_sets|ads_dataset|source_dataset_/);
+  assertNoSyntheticInputs(combined);
 });

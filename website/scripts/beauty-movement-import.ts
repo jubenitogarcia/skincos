@@ -20,6 +20,27 @@ const WEBSITE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const REPOSITORY_ROOT = path.resolve(WEBSITE_ROOT, "..");
 const PRIVATE_RUNTIME_ROOT = path.resolve("/mnt/c/CodexRuntime/operator/admin/skincos/beauty-movement");
 
+function privateRuntimeRoots(): readonly string[] {
+    const configuredRoot = process.env.BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT?.trim();
+    if (!configuredRoot) return [PRIVATE_RUNTIME_ROOT];
+
+    // GitHub Actions receives the staging keys from the protected environment
+    // and keeps all generated fixture/SQL/delivery files in its private temp
+    // directory. The opt-in is deliberately unavailable to ordinary local
+    // invocations so a caller cannot widen the accepted path by accident.
+    const runnerTemp = process.env.RUNNER_TEMP?.trim();
+    if (
+        process.env.GITHUB_ACTIONS !== "true" ||
+        !path.isAbsolute(configuredRoot) ||
+        !runnerTemp ||
+        !path.isAbsolute(runnerTemp) ||
+        !isWithin(path.resolve(runnerTemp), path.resolve(configuredRoot))
+    ) {
+        throw new Error("beauty_movement_private_runtime_root_invalid");
+    }
+    return [PRIVATE_RUNTIME_ROOT, path.resolve(configuredRoot)];
+}
+
 type ParsedArguments = {
     apply: boolean;
     dryRun: boolean;
@@ -110,7 +131,7 @@ function privateAbsolutePath(value: string, purpose: "input" | "output"): string
         : value;
     if (!path.isAbsolute(wslVisiblePath)) throw new Error(`beauty_movement_${purpose}_must_be_absolute`);
     const resolved = path.resolve(wslVisiblePath);
-    if (isWithin(REPOSITORY_ROOT, resolved) || !isWithin(PRIVATE_RUNTIME_ROOT, resolved)) {
+    if (isWithin(REPOSITORY_ROOT, resolved) || !privateRuntimeRoots().some((root) => isWithin(root, resolved))) {
         throw new Error(`beauty_movement_${purpose}_must_be_private`);
     }
     return resolved;
