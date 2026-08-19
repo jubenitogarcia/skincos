@@ -59,7 +59,7 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: 'release:website'
-          module: beauty-movement
+          module: website
           source_sha: ${{ inputs.release_sha }}
           proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/website-lease.json
 
@@ -72,7 +72,7 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           resource: 'global:staging-d1'
-          module: beauty-movement
+          module: core
           source_sha: ${{ inputs.release_sha }}
           proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
 
@@ -104,7 +104,7 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/website-lease.json
           resource: 'release:website'
-          module: beauty-movement
+          module: website
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
@@ -117,7 +117,7 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
           resource: 'global:staging-d1'
-          module: beauty-movement
+          module: core
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
@@ -241,7 +241,7 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/website-lease.json
           resource: 'release:website'
-          module: beauty-movement
+          module: website
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
@@ -254,7 +254,7 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
           resource: 'global:staging-d1'
-          module: beauty-movement
+          module: core
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
@@ -298,7 +298,7 @@ jobs:
           required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/website-lease.json
           resource: 'release:website'
-          module: beauty-movement
+          module: website
           source_sha: ${{ inputs.release_sha }}
           enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
