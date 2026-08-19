@@ -97,6 +97,9 @@ jobs:
           # The target is fixed by this workflow: there is no environment or
           # database input that could redirect the run to production.
           grep -q 'database_name = "espacofacial-beauty-movement-staging"' website/wrangler.toml || { echo 'staging D1 binding is missing'; exit 1; }
+        env:
+          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
+          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
 
       - name: Check coordination leases before staging D1 inspection
         uses: ./.github/actions/global-coordination-check
@@ -123,9 +126,6 @@ jobs:
           coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
-        env:
-          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
-          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
 
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
