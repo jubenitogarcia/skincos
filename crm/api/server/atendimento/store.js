@@ -8322,6 +8322,9 @@ export function createAtendimentoStore(options = {}) {
                                 skipped,
                                 tabs,
                                 snapshotComplete: source?.snapshotComplete === true,
+                                ...(typeof source?.sourceFingerprint === 'string' && /^sha256:[a-f0-9]{64}$/.test(source.sourceFingerprint)
+                                    ? { sourceFingerprint: source.sourceFingerprint }
+                                    : {}),
                             }),
                         ],
                     )

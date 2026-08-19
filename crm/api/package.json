@@ -12,6 +12,7 @@
     "test": "node --test --test-concurrency=1 server/__tests__/*.test.js server/harmonia/__tests__/*.test.js server/atendimento/__tests__/*.test.js server/clinical/__tests__/*.test.js server/caixa/__tests__/*.test.js server/clientes/__tests__/*.test.js services/__tests__/*.test.js scripts/*.test.mjs",
     "import-atendimento-sheet": "node scripts/import-atendimento-sheet.mjs",
     "refresh-atendimento-source": "node scripts/refresh-atendimento-source.mjs",
+    "sync-atendimento-source": "node scripts/run-atendimento-source-sync.mjs",
     "clientes-source-operations": "node scripts/run-clientes-source-operations.mjs",
     "migrate-clientes-source-operations": "node scripts/migrate-clientes-source-operations.mjs",
     "import-gerencia-sheet": "node scripts/import-gerencia-sheet.mjs",

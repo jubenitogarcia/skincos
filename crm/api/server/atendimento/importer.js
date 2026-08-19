@@ -391,6 +391,13 @@ async function readTab(sheets, spreadsheetId, tabName) {
     return readPublicGvizTab(spreadsheetId, tabName)
 }
 
+function attachSourceSheetId(records, spreadsheetId) {
+    return (records || []).map((record) => ({
+        ...record,
+        sourceSheetId: spreadsheetId,
+    }))
+}
+
 export async function readAtendimentoSheet(config = {}) {
     const spreadsheetId = String(config.spreadsheetId || process.env.ATENDIMENTO_GOOGLE_SHEET_ID || SOURCE_SHEET_ID).trim()
     const workbookFile = String(config.workbookFile || process.env.ATENDIMENTO_GOOGLE_XLSX_FILE || '').trim()
@@ -400,7 +407,7 @@ export async function readAtendimentoSheet(config = {}) {
         for (const tab of [...OPERATIONAL_TABS, '_CACHE_GERENCIA']) {
             tabs[tab] = workbook[tab]?.values || []
         }
-        const records = buildImportRecords(tabs, config.now || new Date())
+        const records = attachSourceSheetId(buildImportRecords(tabs, config.now || new Date()), spreadsheetId)
         const cache = parseCacheRows(tabs._CACHE_GERENCIA)
         return {
             spreadsheetId,
@@ -418,7 +425,7 @@ export async function readAtendimentoSheet(config = {}) {
         return {
             spreadsheetId,
             tabs: OPERATIONAL_TABS,
-            records: buildImportRecords(tabs, config.now || new Date()),
+            records: attachSourceSheetId(buildImportRecords(tabs, config.now || new Date()), spreadsheetId),
             cache: parseCacheRows(tabs._CACHE_GERENCIA),
         }
     }
@@ -427,7 +434,7 @@ export async function readAtendimentoSheet(config = {}) {
     for (const tab of [...OPERATIONAL_TABS, '_CACHE_GERENCIA']) {
         tabs[tab] = await readTab(sheets, spreadsheetId, tab)
     }
-    const records = buildImportRecords(tabs, config.now || new Date())
+    const records = attachSourceSheetId(buildImportRecords(tabs, config.now || new Date()), spreadsheetId)
     const cache = parseCacheRows(tabs._CACHE_GERENCIA)
     return {
         spreadsheetId,

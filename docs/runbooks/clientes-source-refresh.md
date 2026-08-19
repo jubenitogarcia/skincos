@@ -1,4 +1,10 @@
-# Clientes: refresh seguro da fonte de Atendimento
+# Clientes: refresh seguro das fontes
+
+> O entrypoint legado `crm/api/scripts/refresh-atendimento-source.mjs` e seu
+> launcher nativo permanecem apenas como compatibilidade fail-closed e não
+> devem ser reativados. Para sincronizar a fonte de Atendimento, use o
+> [runbook dedicado](atendimento-source-sync.md), que executa em unidade
+> isolada, com credencial Google privada, backup, lock e fingerprint.
 
 O importador de Atendimento lê a planilha Google em modo somente leitura e
 materializa as linhas idempotentes no schema `crm_atendimento`. Cada aplicação
@@ -6,60 +12,25 @@ concluída grava um checkpoint agregado em `crm_atendimento.import_batches`;
 esse checkpoint é suficiente para a fila de qualidade reconhecer a fonte viva
 mesmo quando o espelho local não existe.
 
-## Runner
+## Runner legado (aposentado)
 
-O entrypoint é `crm/api/scripts/refresh-atendimento-source.mjs` e aceita apenas
-`--dry-run` ou `--apply`. O destino é obrigatório em
-`CRM_CLIENTES_SOURCE_REFRESH_TARGET=staging|production`.
+O entrypoint `crm/api/scripts/refresh-atendimento-source.mjs` recusa a execução
+com `CLIENTES_SOURCE_LEGACY_REFRESH_DISABLED`. O destino histórico
+`CRM_CLIENTES_SOURCE_REFRESH_TARGET=staging|production` não é uma autorização
+para importar dados.
 
-- `--dry-run` é a operação padrão: lê a fonte Google, valida o formato do
-  banco-alvo e não abre nenhuma transação de escrita.
-- `--apply` exige também
-  `CRM_CLIENTES_SOURCE_REFRESH_APPLY_CONFIRMED=1`, a identidade correta do
-  banco e o lock advisory `skincos:clientes:source-refresh`.
-- A saída contém somente alvo, identidade agregada, contagens, abas, planilha e
-  `importBatchId`; não inclui nomes, telefones, e-mails, payloads ou segredos.
+O serviço/timer histórico também não deve ser instalado. O caminho v2 de
+Clientes continua reservado às operações explicitamente suportadas em
+`crm-jobs.service`, com alvo e modo próprios; ele não é ponte para o banco
+dedicado de Atendimento.
 
 O launcher nativo
-`scripts/runtime/run-clientes-source-refresh-native.sh` carrega o ambiente
-privado do alvo e o overlay de leitura Google separadamente. A variável
-`DATABASE_URL` do alvo vence qualquer valor acidental no overlay da fonte. Em
-`--apply`, um dump PostgreSQL privado é criado antes da importação em:
+`scripts/runtime/run-clientes-source-refresh-native.sh` permanece como stub
+fail-closed. Em particular, não deve ser usado para escrever no banco de
+produção de Atendimento.
 
-- produção: `/var/backups/skincos/clientes`;
-- staging: `/var/backups/skincos/clientes/staging`.
-
-O dump e seu SHA-256 ficam fora do repositório. A transação do importador é
-atômica; em caso de falha, o checkpoint permanece para investigação e os dados
-da importação são revertidos pelo banco.
-
-## Operação controlada
-
-Antes de qualquer escrita, execute o mesmo release em dry-run:
-
-```bash
-CRM_CLIENTES_SOURCE_REFRESH_TARGET=staging \
-CRM_CLIENTES_SOURCE_REFRESH_ACTION=--dry-run \
-scripts/runtime/run-clientes-source-refresh-native.sh
-```
-
-Depois de revisar apenas as contagens e a identidade do alvo, a aplicação
-controlada usa:
-
-```bash
-CRM_CLIENTES_SOURCE_REFRESH_TARGET=staging \
-CRM_CLIENTES_SOURCE_REFRESH_ACTION=--apply \
-CRM_CLIENTES_SOURCE_REFRESH_APPLY_CONFIRMED=1 \
-scripts/runtime/run-clientes-source-refresh-native.sh
-```
-
-O serviço e o timer em
-`ops/runtime/units/crm-clientes-source-refresh.{service,timer}` são instalados
-por `scripts/runtime/install-clientes-source-refresh-service.sh`. A unidade
-fica em `--dry-run` e desabilitada por padrão; habilitar o timer não inicia
-uma execução imediatamente. Para um ambiente de produção, o arquivo privado
-`crm-clientes-source-refresh.env` deve declarar explicitamente o alvo, a ação e
-a confirmação de escrita. Sem essa declaração o processo falha fechado.
+Não copie as variáveis ou o backup desse contrato para o sincronizador
+dedicado. Os dois caminhos têm schemas, papéis e rollback diferentes.
 
 ## Qualidade e rollback
 
