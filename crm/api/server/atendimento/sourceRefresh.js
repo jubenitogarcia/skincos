@@ -29,10 +29,13 @@ export function assertClientesSourceRefreshDatabaseUrl(databaseUrl, targetValue)
     if (!raw) throw refreshError('DATABASE_URL_NOT_CONFIGURED')
 
     if (target === CLIENTES_SOURCE_REFRESH_TARGETS.PRODUCTION) {
-        if (!/^postgres(?:ql)?:\/\/skincos@\/skincos_crm_local\?(?:[^#]*&)?host=\/var\/run\/postgresql(?:&|$)/i.test(raw)) {
+        if (!isDedicatedSourceRefreshUrl(raw, {
+            database: 'skincos_clientes_production',
+            user: 'skincos_clientes_migrator_login',
+        })) {
             throw refreshError('CLIENTES_SOURCE_REFRESH_PRODUCTION_DATABASE_UNSAFE')
         }
-        return { target, database: 'skincos_crm_local' }
+        return { target, database: 'skincos_clientes_production' }
     }
 
     let parsed
@@ -42,10 +45,10 @@ export function assertClientesSourceRefreshDatabaseUrl(databaseUrl, targetValue)
         throw refreshError('CLIENTES_SOURCE_REFRESH_DATABASE_URL_INVALID')
     }
     const database = decodeURIComponent(String(parsed.pathname || '').replace(/^\//, ''))
-    if (database !== 'skincos_staging' || parsed.hostname !== '127.0.0.1' ||
-        parsed.port && parsed.port !== '5432' ||
-        !new URLSearchParams(parsed.search).has('sslmode') ||
-        new URLSearchParams(parsed.search).get('sslmode') !== 'require') {
+    if (!isDedicatedSourceRefreshUrl(raw, {
+        database: 'skincos_staging',
+        user: 'skincos_staging_migrator_login',
+    })) {
         throw refreshError('CLIENTES_SOURCE_REFRESH_STAGING_DATABASE_UNSAFE')
     }
     return { target, database }
@@ -56,10 +59,10 @@ export function assertClientesSourceRefreshDatabaseIdentity(identity = {}, targe
     const database = String(identity.database_name || identity.databaseName || '').trim()
     const user = String(identity.current_user || identity.currentUser || '').trim()
     if (target === CLIENTES_SOURCE_REFRESH_TARGETS.PRODUCTION) {
-        if (database !== 'skincos_crm_local' || user !== 'skincos') {
+        if (database !== 'skincos_clientes_production' || user !== 'skincos_clientes_migrator_login') {
             throw refreshError('CLIENTES_SOURCE_REFRESH_PRODUCTION_IDENTITY_UNSAFE')
         }
-    } else if (database !== 'skincos_staging' || !user || user === 'postgres') {
+    } else if (database !== 'skincos_staging' || user !== 'skincos_staging_migrator_login') {
         throw refreshError('CLIENTES_SOURCE_REFRESH_STAGING_IDENTITY_UNSAFE')
     }
     return { target, database, user }
@@ -94,3 +97,23 @@ export function summarizeClientesSourceRefresh({ target, action, identity, resul
 }
 
 export { refreshError }
+
+function isDedicatedSourceRefreshUrl(raw, { database, user }) {
+    let parsed
+    try {
+        parsed = new URL(String(raw || '').replace(/^postgresql:/i, 'postgres:'))
+    } catch {
+        return false
+    }
+    const query = new URLSearchParams(parsed.search)
+    const allowedQueryKeys = new Set(['sslmode', 'uselibpqcompat', 'application_name'])
+    for (const key of query.keys()) if (!allowedQueryKeys.has(key)) return false
+    return parsed.protocol === 'postgres:' &&
+        ['127.0.0.1', 'localhost', '::1'].includes(String(parsed.hostname || '').toLowerCase()) &&
+        (parsed.port || '5432') === '5432' &&
+        decodeURIComponent(parsed.username || '') === user &&
+        Boolean(parsed.password) &&
+        decodeURIComponent(parsed.pathname || '').replace(/^\//, '') === database &&
+        query.get('sslmode') === 'require' &&
+        (!query.has('uselibpqcompat') || query.get('uselibpqcompat') === 'true')
+}
