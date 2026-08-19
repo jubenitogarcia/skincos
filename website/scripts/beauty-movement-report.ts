@@ -29,6 +29,9 @@ type ReportRow = {
     invite_status: string;
     benefit_status: string;
     reward_id: string | null;
+    outcome_key: string | null;
+    outcome_protocol_version: string | null;
+    outcome_snapshot_json: string | null;
     reward_type: string | null;
     procedure_name: string | null;
     discount_kind: string | null;
@@ -113,7 +116,7 @@ function csvCell(value: string | number | null | undefined): string {
 async function queryRows(args: Args): Promise<ReportRow[]> {
     const sql = [
         "SELECT i.contact_mask, i.personal_data_version, i.personal_data_ciphertext, i.personal_data_iv,",
-        "i.invite_status, i.benefit_status, i.reward_id, i.velocity_benefit, i.confirmed_at_ms, i.expires_at_ms,",
+        "i.invite_status, i.benefit_status, i.reward_id, i.outcome_key, i.outcome_protocol_version, i.outcome_snapshot_json, i.velocity_benefit, i.confirmed_at_ms, i.expires_at_ms,",
         "r.reward_type, r.procedure_name, r.discount_kind, r.discount_value, r.discount_currency,",
         "r.display_text, r.validity, r.rules, r.terms_version,",
         "c.status AS campaign_status, c.ends_at_ms AS campaign_ends_at_ms",
@@ -148,7 +151,7 @@ async function main() {
     const rows = await queryRows(args);
 
     const output = [
-        "name,whatsapp,email,contact_mask,confirmed_at_ms,invite_status,reward_id,reward_type,procedure_name,discount_kind,discount_value,discount_currency,display_text,validity,rules,terms_version,velocity_benefit,expires_at_ms,campaign_status,campaign_ends_at_ms",
+        "name,whatsapp,email,contact_mask,confirmed_at_ms,invite_status,outcome_key,outcome_protocol_version,outcome_snapshot_json,reward_id,reward_type,procedure_name,discount_kind,discount_value,discount_currency,display_text,validity,rules,terms_version,velocity_benefit,expires_at_ms,campaign_status,campaign_ends_at_ms",
     ];
     for (const row of rows) {
         const personal = await decryptBeautyMovementPersonalData<PersonalData>({
@@ -163,6 +166,9 @@ async function main() {
             row.contact_mask,
             row.confirmed_at_ms,
             row.invite_status,
+            row.outcome_key,
+            row.outcome_protocol_version,
+            row.outcome_snapshot_json,
             row.reward_id,
             row.reward_type,
             row.procedure_name,

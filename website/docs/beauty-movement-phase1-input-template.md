@@ -58,18 +58,22 @@ evidência da unidade no site; não fecham os valores específicos da ação.
 
 ## 5. Benefícios e condições
 
-As cartas não definem benefício (**consolidado no plano**). Cada benefício
-abaixo precisa de texto exato, validade, regras e versão de condições antes de
-entrar na lista privada.
+As três cartas definem uma oferta por meio do resolver determinístico
+`beautyMovementOutcomes.ts` (**decisão vigente**). A matriz completa e o
+desempate estão em `docs/beauty-movement-combination-map.md`; o catálogo abaixo
+documenta apenas as quatro ofertas comerciais aprovadas.
 
-| `reward_id` / tipo | Procedimento canônico | Texto exato | Validade | Regras | Termos | Estado |
+| Resultado | Oferta estruturada | Texto comercial | Preços fornecidos | Regras externas | Estado |
 | --- | --- | --- | --- | --- | --- | --- |
-| `[PENDENTE]` | `[PENDENTE]` | `[PENDENTE]` | `[PENDENTE]` | `[PENDENTE]` | `[PENDENTE]` | pendente |
+| `elleva_upgrade` | Elleva 210 mg pelo valor de Elleva 150 mg | `[APROVADO NA ESPECIFICAÇÃO]` | sem preço inventado | avaliação profissional | aprovado |
+| `filler_double` | Adquira 2 mL e receba 4 mL | `[APROVADO NA ESPECIFICAÇÃO]` | não fornecido | avaliação profissional | aprovado |
+| `sculptra_classic_unlock` | 1 mL Restylane Classic; Sculptra R$ 2.899 → R$ 1.699 | `[APROVADO NA ESPECIFICAÇÃO]` | BRL | avaliação profissional | aprovado |
+| `skinbooster_diamond_unlock` | 1 mL Restylane Skinbooster; Diamond R$ 2.099 → R$ 899 | `[APROVADO NA ESPECIFICAÇÃO]` | BRL | avaliação profissional | aprovado |
 
-Confirmar também se haverá apenas leitura lúdica, benefício garantido,
-condição comercial, brinde presencial, sorteio separado ou nenhum incentivo.
-Não classificar a leitura como prêmio aleatório, concurso ou sorteio sem revisão
-jurídica e operacional específica.
+As quatro ofertas acima são o conjunto canônico desbloqueável; ainda faltam a
+aprovação final de copy, validade, disponibilidade e redação jurídica da ação.
+Não classificar a leitura como diagnóstico, indicação individual, prêmio
+aleatório, concurso ou sorteio.
 
 ## 6. Contato e mensagens
 
@@ -89,9 +93,9 @@ jurídica e operacional específica.
 - CPF e histórico de procedimentos: fora do D1, frontend, URL, relatório e
   analytics; nenhum dado bruto deve ser carregado (**consolidado no plano**).
 - Campos do convite: `invite_ref`, nome, WhatsApp, e-mail já vinculado na lista,
-  paleta, `reward_id`, `velocity_benefit`, expiração e status do convite. O
-  procedimento,
-  desconto e condições ficam no catálogo privado de recompensas.
+  paleta, `velocity_benefit`, expiração e status do convite. `reward_id` é
+  opcional e legado; o procedimento, desconto e condições vêm da oferta
+  resolvida pelas cartas.
 - Consentimento: aceite operacional separado de qualquer marketing futuro;
   redação jurídica final: `[PENDENTE]`.
 - Retenção após encerramento + 90 dias: `[PENDENTE — eliminação / anonimização]`.
@@ -103,7 +107,7 @@ seguintes cabeçalhos permitidos (**contrato técnico consolidado; arquivo real
 continua pendente**):
 
 ```text
-invite_ref,name,whatsapp,email,palette,reward_id,velocity_benefit,expires_at,invite_status
+invite_ref,name,whatsapp,email,palette,velocity_benefit,expires_at,invite_status
 ```
 
 `velocity_benefit` aceita somente `none` ou `aula_cortesia_evento`. O catálogo

@@ -208,7 +208,7 @@ async function runD1Import(params: { database: string; config: string; sqlFile: 
 function printHelp(): void {
     console.log([
         "Uso: npm run beauty-movement:import -- --input <arquivo-privado> [--dry-run]",
-        "Dry-run também exige: --reward-catalog <json-privado> --procedure-catalog <json-privado>",
+        "--reward-catalog/--procedure-catalog são opcionais; use ambos apenas para compatibilidade com reward_id legado.",
         "Aplicação exige: --apply (--local | --remote) --campaign <id> --confirm-campaign <id>",
         "  --campaign-ends-at <ISO-8601> --campaign-config <json-privado> --database <d1> --out-dir <diretorio-privado>",
         "CSV, catálogos, JSON da campanha e saídas devem ficar em C:\\CodexRuntime\\operator\\admin\\skincos\\beauty-movement.",
@@ -230,20 +230,25 @@ async function main(): Promise<void> {
         throw new Error("beauty_movement_input_unavailable");
     }
 
-    if (!options.rewardCatalog) throw new Error("beauty_movement_reward_catalog_required");
-    if (!options.procedureCatalog) throw new Error("beauty_movement_procedure_catalog_required");
-    const rewardCatalogPath = privateAbsolutePath(options.rewardCatalog, "input");
-    const procedureCatalogPath = privateAbsolutePath(options.procedureCatalog, "input");
-    const rewardCatalog = await readPrivateJson(rewardCatalogPath, "beauty_movement_reward_catalog_unavailable");
-    const procedureCatalog = await readPrivateJson(procedureCatalogPath, "beauty_movement_procedure_catalog_unavailable");
-    let validatedRewards;
-    try {
-        validatedRewards = validateBeautyMovementRewardCatalog({
-            catalog: rewardCatalog,
-            procedureCatalog: Array.isArray(procedureCatalog) ? procedureCatalog as BeautyMovementCanonicalProcedure[] : [],
-        });
-    } catch {
-        throw new Error("beauty_movement_reward_catalog_invalid");
+    if (Boolean(options.rewardCatalog) !== Boolean(options.procedureCatalog)) {
+        throw new Error("beauty_movement_reward_catalog_pair_required");
+    }
+    const rewardCatalog = options.rewardCatalog
+        ? await readPrivateJson(privateAbsolutePath(options.rewardCatalog, "input"), "beauty_movement_reward_catalog_unavailable")
+        : [];
+    const procedureCatalog = options.procedureCatalog
+        ? await readPrivateJson(privateAbsolutePath(options.procedureCatalog, "input"), "beauty_movement_procedure_catalog_unavailable")
+        : [];
+    let validatedRewards: BeautyMovementRewardCatalogEntry[] = [];
+    if (options.rewardCatalog) {
+        try {
+            validatedRewards = validateBeautyMovementRewardCatalog({
+                catalog: rewardCatalog,
+                procedureCatalog: Array.isArray(procedureCatalog) ? procedureCatalog as BeautyMovementCanonicalProcedure[] : [],
+            });
+        } catch {
+            throw new Error("beauty_movement_reward_catalog_invalid");
+        }
     }
 
     const validation = validateBeautyMovementImport({ csv, rewardCatalog: validatedRewards });

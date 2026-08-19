@@ -347,6 +347,10 @@ button:focus-visible {
   transform: translateY(-100%);
 }
 
+body:has(.beautyMovementPage) .header {
+  border-bottom-color: transparent;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .header[data-scroll-aware-header="true"] {
     transition-duration: 0.01ms;
