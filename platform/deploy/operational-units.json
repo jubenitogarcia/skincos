@@ -203,6 +203,23 @@
       "promotion": {"stagingSupported": false, "blocker": "Dedicated Website, booking D1, legal hub and redirect routes are not provisioned for staging."}
     },
     {
+      "id": "beauty-movement-authenticated-staging-smoke",
+      "workflow": ".github/workflows/beauty-movement-staging-smoke.yml",
+      "concurrencyPrefix": "beauty-movement-staging-smoke",
+      "publishes": ["Worker:espacofacial-site-staging"],
+      "resources": ["Beauty Movement staging Worker", "espacofacial-beauty-movement-staging D1", "synthetic staging smoke fixture"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "BEAUTY_MOVEMENT_TOKEN_HMAC_KEY", "BEAUTY_MOVEMENT_PII_KEY"],
+      "migrationPaths": ["website/migrations"],
+      "environments": ["staging"],
+      "promotion": {
+        "stagingSupported": true,
+        "publisherType": "authenticated-staging-smoke",
+        "smokeOnly": true,
+        "featureFlagDefault": "disabled",
+        "incumbentRestoreRequired": true
+      }
+    },
+    {
       "id": "global-coordination-plane",
       "workflow": ".github/workflows/deploy-global-coordinator.yml",
       "concurrencyPrefix": "global-coordinator-writer-",
