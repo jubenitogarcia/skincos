@@ -9,6 +9,7 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByRole('heading', { name: 'Equipe' })).toBeVisible()
     await expect(page.getByRole('table').getByText('Ana Ribeiro', { exact: true })).toBeVisible()
     await expect(page.getByRole('table').getByText('Convite enviado', { exact: true })).toBeVisible()
+    await expect(page.getByRole('columnheader', { name: 'Departamento' })).toHaveCount(0)
 
     await page.getByLabel('Buscar equipe').fill('barra-shopping-sul')
     await expect(page.getByRole('table').getByText('Lucas Mendes', { exact: true })).toBeVisible()
@@ -149,6 +150,17 @@ test.describe('Usuários e Equipe', () => {
     await page.getByRole('button', { name: 'Salvar alterações' }).click()
     await expect(page.getByRole('dialog')).toBeHidden()
     await expect(page.getByRole('row').filter({ hasText: 'Lucas Mendes' })).toBeVisible()
+  })
+
+  test('keeps the edited member current when the follow-up list is stale', async ({ page }) => {
+    await mockUsersApi(page, 'GESTOR', { staleGetAfterPut: true })
+    await page.goto('/?module=users')
+    await page.getByRole('button', { name: 'Editar Lucas Mendes' }).click()
+    await page.getByLabel('Nome completo').fill('Lucas Mendes Atualizado')
+    await page.getByRole('button', { name: 'Salvar alterações' }).click()
+    await expect(page.getByRole('dialog')).toBeHidden()
+    await expect(page.getByRole('row').filter({ hasText: 'Lucas Mendes Atualizado' })).toBeVisible()
+    await expect(page.getByText('Lucas Mendes', { exact: true })).toHaveCount(0)
   })
 
   test('blocks unified edits while the server feature flag is off without using legacy PUT', async ({ page }) => {

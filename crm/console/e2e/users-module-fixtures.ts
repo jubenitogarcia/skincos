@@ -8,7 +8,6 @@ export type MockTeamMember = {
   workforceEmployeeId: string
   profile: string
   jobTitle: string
-  department: string
   units: string[]
   accountStatus: string
   personalEmail?: string
@@ -25,17 +24,17 @@ export type MockTeamMember = {
 
 export const syntheticTeam: MockTeamMember[] = [
   {
-    id: 'e2e-ana', fullName: 'Ana Ribeiro', username: 'anaribeiro', corporateEmail: 'anaribeiro@espacofacial.com', personalEmail: 'ana.pessoal@example.com', mobilePhone: '+5551999999999', workforceEmployeeId: 'e2e-wf-ana', profile: 'INJETOR', jobTitle: 'Injetor', department: 'Atendimento Local', units: ['novo-hamburgo'], accountStatus: 'ACTIVE', provisioningState: 'COMPLETED',
+    id: 'e2e-ana', fullName: 'Ana Ribeiro', username: 'anaribeiro', corporateEmail: 'anaribeiro@espacofacial.com', personalEmail: 'ana.pessoal@example.com', mobilePhone: '+5551999999999', workforceEmployeeId: 'e2e-wf-ana', profile: 'INJETOR', jobTitle: 'Injetor', units: ['novo-hamburgo'], accountStatus: 'ACTIVE', provisioningState: 'COMPLETED',
     schedule: { professionalId: 'e2e-escala-ana', status: 'Ativo', role: 'Injetor', shift: 'Integral', nickname: 'Ana', instagram: 'ana.ribeiro', color: '#22c55e', units: ['novo-hamburgo'] }, scheduleSync: { state: 'SYNCED', professionalId: 'e2e-escala-ana', attempt: 1 },
     identityLinks: [{ id: 'e2e-link-ana', source: 'ATENDIMENTO', sourceId: 'e2e-atendimento-ana', reviewStatus: 'CONFIRMED', matchMethod: 'EXPLICIT_WORKFORCE_ID', confidence: 'HIGH' }],
   },
   {
-    id: 'e2e-lucas', fullName: 'Lucas Mendes', username: 'lucasmendes', corporateEmail: 'lucasmendes@espacofacial.com', workforceEmployeeId: 'e2e-wf-lucas', profile: 'CONSULTOR', jobTitle: 'Consultor', department: 'Comercial', units: ['novo-hamburgo', 'barra-shopping-sul'], accountStatus: 'INVITED', provisioningState: 'COMPLETED',
+    id: 'e2e-lucas', fullName: 'Lucas Mendes', username: 'lucasmendes', corporateEmail: 'lucasmendes@espacofacial.com', workforceEmployeeId: 'e2e-wf-lucas', profile: 'CONSULTOR', jobTitle: 'Consultor', units: ['novo-hamburgo', 'barra-shopping-sul'], accountStatus: 'INVITED', provisioningState: 'COMPLETED',
     schedule: { professionalId: null, status: 'Ativo', role: 'Consultor', shift: 'Comercial', nickname: 'Lucas', instagram: 'lucas.mendes', color: '#6d9eeb', units: ['novo-hamburgo', 'barra-shopping-sul'] }, scheduleSync: { state: 'PENDING', attempt: 1 },
     identityLinks: [],
   },
   {
-    id: 'e2e-carla', fullName: 'Carla Souza', username: 'carlasouza', corporateEmail: 'carlasouza@espacofacial.com', workforceEmployeeId: 'e2e-wf-carla', profile: 'SUPERVISOR', jobTitle: 'Coordenador', department: 'Operações', units: ['barra-shopping-sul'], accountStatus: 'SUSPENDED', crmAccountLinked: false, crmAccountUsername: 'legacycarla', crmAccountReviewStatus: 'PENDING_REVIEW', crmAccountLinkId: 'e2e-account-link-carla', provisioningState: 'COMPLETED',
+    id: 'e2e-carla', fullName: 'Carla Souza', username: 'carlasouza', corporateEmail: 'carlasouza@espacofacial.com', workforceEmployeeId: 'e2e-wf-carla', profile: 'SUPERVISOR', jobTitle: 'Coordenador', units: ['barra-shopping-sul'], accountStatus: 'SUSPENDED', crmAccountLinked: false, crmAccountUsername: 'legacycarla', crmAccountReviewStatus: 'PENDING_REVIEW', crmAccountLinkId: 'e2e-account-link-carla', provisioningState: 'COMPLETED',
     schedule: { professionalId: null, status: 'Ativo', role: 'Coordenador', shift: 'Tarde', nickname: 'Carla', instagram: 'carla.souza', color: '#f97316', units: ['barra-shopping-sul'] }, scheduleSync: { state: 'FAILED', errorCode: 'ESCALA_API_ERROR', attempt: 2 },
     identityLinks: [{ id: 'e2e-link-carla', source: 'ESCALA', sourceId: 'e2e-escala-carla', reviewStatus: 'PENDING_REVIEW', matchMethod: 'EXPLICIT_WORKFORCE_ID', confidence: 'LOW' }],
   },
@@ -45,7 +44,7 @@ function cloneRows() {
   return syntheticTeam.map((row) => ({ ...row, units: [...row.units], schedule: { ...row.schedule, units: [...row.schedule.units] }, scheduleSync: row.scheduleSync ? { ...row.scheduleSync } : undefined, identityLinks: row.identityLinks.map((link) => ({ ...link })) }))
 }
 
-type MockUsersOptions = { degraded?: boolean; failedActivationFor?: string; failedScheduleFor?: string; paginated?: boolean; unifiedEnabled?: boolean }
+type MockUsersOptions = { degraded?: boolean; failedActivationFor?: string; failedScheduleFor?: string; paginated?: boolean; staleGetAfterPut?: boolean; unifiedEnabled?: boolean }
 
 export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUsersOptions = {}) {
   const rows = cloneRows()
@@ -90,7 +89,7 @@ export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUse
     if (path.endsWith('/api/crm/admin/team') && request.method() === 'GET') {
       const status = (url.searchParams.get('status') || 'ACTIVE').toUpperCase()
       const query = (url.searchParams.get('q') || '').toLowerCase()
-      const filtered = rows.filter((row) => status === 'ALL' ? true : status === 'ACTIVE' ? ['ACTIVE', 'INVITED'].includes(row.accountStatus) : row.accountStatus === status).filter((row) => !query || [row.fullName, row.username, row.corporateEmail, row.department, row.jobTitle, ...row.units].some((value) => value.toLowerCase().includes(query)))
+      const filtered = rows.filter((row) => status === 'ALL' ? true : status === 'ACTIVE' ? ['ACTIVE', 'INVITED'].includes(row.accountStatus) : row.accountStatus === status).filter((row) => !query || [row.fullName, row.username, row.corporateEmail, row.jobTitle, ...row.units].some((value) => value.toLowerCase().includes(query)))
       const page = Number(url.searchParams.get('page') || '1')
       const limit = Number(url.searchParams.get('limit') || '50')
       const data = options.paginated ? filtered.slice((page - 1) * limit, page * limit) : filtered
@@ -178,8 +177,9 @@ export async function mockUsersApi(page: Page, role = 'GESTOR', options: MockUse
     const memberMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)$/)
     if (memberMatch && request.method() === 'PUT') {
       const body = await json(); const row = rows.find((item) => item.id === decodeURIComponent(memberMatch[1]))
-      if (row) Object.assign(row, { fullName: body.fullName || row.fullName, department: body.department || row.department, units: body.units || row.units, jobTitle: body.jobTitle || row.jobTitle })
-      return send({ success: true, data: row })
+      const updated = row ? { ...row, fullName: body.fullName ?? row.fullName, units: body.units ?? row.units, jobTitle: body.jobTitle ?? row.jobTitle } : row
+      if (row && !options.staleGetAfterPut) Object.assign(row, updated)
+      return send({ success: true, data: updated })
     }
     return send({ ok: true, success: true, data: [], total: 0, summary: {} })
   })

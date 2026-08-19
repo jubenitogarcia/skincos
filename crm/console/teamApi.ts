@@ -25,7 +25,6 @@ export type UnifiedTeamMember = {
   workforceEmployeeId?: string | null
   profile: string
   jobTitle: string
-  department: string
   units: string[]
   accountStatus: string
   crmAccountLinked?: boolean
