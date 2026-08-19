@@ -66,7 +66,7 @@ jobs:
             fail('source_destination_page_selector_duplicate');
           }
 
-          const graphGet = async (path, { classifyContract = false } = {}) => {
+          const graphGet = async (path) => {
             let response;
             try {
               response = await fetch(`https://graph.facebook.com/${apiVersion}/${path}`, {
@@ -99,24 +99,10 @@ jobs:
                 graphErrorCode === 102 ||
                 graphErrorCode === 190 ||
                 graphErrorCode === 200;
-              // Meta's code 100 is the bounded contract/parameter failure
-              // class. Keep it distinct from an unknown malformed envelope so
-              // the diagnostic can distinguish an unsupported edge/field from
-              // an access denial without exposing the Graph code or body.
-              // On the explicitly probed modern AdsDataset edge, a
-              // non-auth 4xx envelope (including an unknown/zero Graph code)
-              // is evidence that the edge/response contract is incompatible,
-              // not evidence that the configured asset is missing. Keep
-              // malformed JSON/shape failures on their own path below.
-              const contractError = classifyContract &&
-                !authorizationError &&
-                (graphErrorCode === 100 || (response.status >= 400 && response.status < 500) || response.ok);
               return {
                 state: authorizationError
                   ? 'denied'
-                  : contractError
-                    ? 'contract'
-                    : 'malformed',
+                  : 'malformed',
               };
             }
             return { state: 'ok', payload };
@@ -217,61 +203,13 @@ jobs:
           // this read on that edge instead of issuing a Page-node GET with a
           // bearer whose contract is Business/Marketing scoped.
 
-          const probeModernDatasetContract = async () => {
-            // A successful HTTP response can still violate the legacy edge's
-            // shape contract. Treat that the same as a malformed Graph error
-            // and continue the bounded modern-edge probe below.
-            const account = await directRead(
-              `act_${accountId}?fields=id,business{id}`,
-              'source_dataset_account',
-            );
-            const businessId = numericId(account?.business?.id);
-            if (!businessId) fail('source_dataset_business_malformed');
-            const modernDatasetResult = await graphGet(
-              `${businessId}/ads_dataset?fields=id`,
-              { classifyContract: true },
-            );
-            if (modernDatasetResult.state !== 'ok') {
-              fail(`source_dataset_ads_dataset_response_${modernDatasetResult.state}`);
-            }
-            const modernDatasets = modernDatasetResult.payload;
-            if (!Array.isArray(modernDatasets?.data)) fail('source_dataset_ads_dataset_malformed');
-            if (hasNextPage(modernDatasets)) fail('source_dataset_ads_dataset_paging_ambiguous');
-            if (modernDatasets.data.length === 0) fail('source_dataset_ads_dataset_empty');
-            if (modernDatasets.data.length > 1) fail('source_dataset_ads_dataset_ambiguous');
-            const modernDataset = modernDatasets.data[0];
-            if (!numericId(modernDataset?.id)) {
-              fail('source_dataset_ads_dataset_malformed');
-            }
-            // The Worker still seals offline_conversion_data_set_id today;
-            // the modern shape is diagnostic evidence, not eligibility.
-            fail('source_dataset_legacy_contract_invalid');
-          };
-
-          const legacyDatasetPath = `act_${accountId}/offline_conversion_data_sets?fields=id&limit=2`;
-          const legacyDatasetResult = await graphGet(legacyDatasetPath);
-          if (legacyDatasetResult.state === 'ok') {
-            const datasets = legacyDatasetResult.payload;
-            const malformedShape =
-              !Array.isArray(datasets?.data) ||
-              (datasets.data.length === 1 && !numericId(datasets.data[0]?.id));
-            if (malformedShape) {
-              await probeModernDatasetContract();
-            } else {
-              if (hasNextPage(datasets) || datasets.data.length !== 1) fail('source_dataset_ambiguous');
-              if (!numericId(datasets.data[0]?.id)) fail('source_dataset_malformed');
-            }
-          } else if (legacyDatasetResult.state === 'malformed') {
-            // The legacy Offline Conversions edge is still present in older
-            // Meta examples, but current SDKs expose AdsDataset from the
-            // Business /ads_dataset edge. Probe that read-only contract only
-            // after the legacy response is structurally invalid; never mark
-            // the raw source eligible from the modern shape because the
-            // Worker still seals offline_conversion_data_set_id today.
-            await probeModernDatasetContract();
-          } else {
-            fail(`source_dataset_${legacyDatasetResult.state}`);
-          }
+          // The authenticated Pixel and its exact ad-account membership are
+          // already proven above. Meta's converged website/offline Dataset
+          // uses that same Pixel identity, so the seed can seal
+          // offline_conversion_data_set_id without enumerating either the
+          // legacy Offline Conversions edge or the drifted Business Dataset
+          // edge. Keep the proof GET-only and fail closed on the earlier Pixel
+          // and account-membership checks.
 
           process.stdout.write([
             'source_access_raw=verified',

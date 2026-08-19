@@ -156,8 +156,11 @@ unidade, prova pela relação limitada de Páginas atribuídas ao System User um
 única associação elegível e confirma o mesmo par Página+Instagram por leitura
 direta. Os pares devem ser distintos. Os seletores não são bindings do Worker
 e não entram no `--secrets-file`, artefato, log ou output do workflow. O Vault
-exige então uma conta/pixel, os dois pares Página+Instagram provados e um
-dataset offline unívoco, cria somente recursos `PAUSED` nomeados para staging e
+exige então uma conta/pixel, os dois pares Página+Instagram provados e, no
+contrato de convergência atual, usa a identidade do Pixel já provado como
+`offline_conversion_data_set_id`; não enumera edges legados ou o edge Business
+de AdsDataset para inferir outro identificador. Cria somente recursos `PAUSED`
+nomeados para staging e
 sela duas credenciais internas cifradas. Não seleciona campanhas, conjuntos ou
 anúncios comerciais, nem torna o token Meta um binding do Worker.
 

@@ -2267,54 +2267,15 @@ async function discoverStagingSyntheticSeedFacts({
     };
   }
 
-  // The legacy ad-account Offline Conversions edge is no longer the current
-  // AdsDataset contract. Resolve the account's owning Business, then use the
-  // bounded Business `ads_dataset` edge exposed by Meta's current SDK schema.
-  // Ask only for the stable node id: some Graph versions reject the optional
-  // dataset_id projection even though the SDK exposes it as a model field.
-  const account = await read(
-    `act_${input.accountId}`,
-    'id,business{id}',
-    {},
-    failureCodes.datasetAccessDenied,
-    failureCodes.identityMalformed,
-  );
-  const accountId = normalizeStagingSyntheticSeedGraphId(
-    account.id,
-    'dataset_account_id',
-    failureCodes.identityMalformed,
-  );
-  if (accountId !== input.accountId) {
-    throw stagingSyntheticSeedFailure(failureCodes.identityMismatch, 409);
-  }
-  const businessId = normalizeStagingSyntheticSeedGraphId(
-    asObject(account.business).id,
-    'dataset_business_id',
-    failureCodes.identityMalformed,
-  );
-  const datasets = await read(
-    `${businessId}/ads_dataset`,
-    'id',
-    {},
-    failureCodes.datasetAccessDenied,
-    failureCodes.identityMalformed,
-    failureCodes.datasetContractInvalid,
-  );
-  const datasetContractFailure = failureCodes.datasetContractInvalid || failureCodes.identityMalformed;
-  if (!Array.isArray(datasets.data)) {
-    throw stagingSyntheticSeedFailure(datasetContractFailure, 409);
-  }
-  if (clean(asObject(datasets.paging).next) || datasets.data.length !== 1) {
-    throw stagingSyntheticSeedFailure(failureCodes.datasetAmbiguous, 409);
-  }
-  const datasetEntry = asObject(datasets.data[0]);
-  if (!clean(datasetEntry.id)) {
-    throw stagingSyntheticSeedFailure(datasetContractFailure, 409);
-  }
+  // Meta's converged website/offline Dataset uses the Pixel identity as its
+  // Dataset ID. The Pixel node and its exact ad-account membership were
+  // already proven above, so do not enumerate the Business Dataset edge here:
+  // that edge is contract-drifted for this token and is not needed to construct the
+  // later offline_conversion_data_set_id.
   const datasetId = normalizeStagingSyntheticSeedGraphId(
-    datasetEntry.id,
+    input.pixelId,
     'offline_dataset_id',
-    datasetContractFailure,
+    failureCodes.identityMalformed,
   );
   return {
     destinations,
