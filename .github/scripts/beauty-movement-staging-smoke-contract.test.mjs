@@ -31,6 +31,9 @@ test("smoke consumes secrets in-process and closes the staging gate", () => {
     assert.match(workflow, /invite_status = 'revoked'/);
     assert.match(workflow, /status = 'disabled'/);
     assert.match(workflow, /rollback/);
+    const validationStep = workflow.match(/      - name: Validate staging-only source and credentials[\s\S]*?(?=\n      - name:)/)?.[0] ?? "";
+    assert.match(validationStep, /BEAUTY_MOVEMENT_TOKEN_HMAC_KEY:\s*\$\{\{ secrets\.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY \}\}/);
+    assert.match(validationStep, /BEAUTY_MOVEMENT_PII_KEY:\s*\$\{\{ secrets\.BEAUTY_MOVEMENT_PII_KEY \}\}/);
 });
 
 test("importer only widens private runtime custody inside GitHub Actions", () => {

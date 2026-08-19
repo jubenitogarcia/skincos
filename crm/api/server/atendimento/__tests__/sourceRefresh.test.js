@@ -20,34 +20,35 @@ test('normalizes only the explicit Clientes source refresh targets and actions',
 test('accepts only the target-bound production and staging database URL shapes', () => {
     assert.deepEqual(
         assertClientesSourceRefreshDatabaseUrl(
-            'postgresql://skincos@/skincos_crm_local?host=/var/run/postgresql',
+            'postgresql://skincos_clientes_migrator_login:synthetic@127.0.0.1:5432/skincos_clientes_production?sslmode=require&uselibpqcompat=true',
             'production',
         ),
-        { target: 'production', database: 'skincos_crm_local' },
+        { target: 'production', database: 'skincos_clientes_production' },
     )
     assert.deepEqual(
         assertClientesSourceRefreshDatabaseUrl(
-            'postgresql://skincos_staging_app:secret@127.0.0.1:5432/skincos_staging?sslmode=require',
+            'postgresql://skincos_staging_migrator_login:secret@127.0.0.1:5432/skincos_staging?sslmode=require&uselibpqcompat=true',
             'staging',
         ),
         { target: 'staging', database: 'skincos_staging' },
     )
     assert.throws(() => assertClientesSourceRefreshDatabaseUrl(
-        'postgresql://admin@127.0.0.1:5432/skincos_crm_local?sslmode=require',
+        'postgresql://admin:secret@127.0.0.1:5432/skincos_clientes_production?sslmode=require',
         'production',
     ), { code: 'CLIENTES_SOURCE_REFRESH_PRODUCTION_DATABASE_UNSAFE' })
 })
 
 test('requires the expected database identity before source refresh', () => {
     assert.deepEqual(
-        assertClientesSourceRefreshDatabaseIdentity({ database_name: 'skincos_crm_local', current_user: 'skincos' }, 'production'),
-        { target: 'production', database: 'skincos_crm_local', user: 'skincos' },
+        assertClientesSourceRefreshDatabaseIdentity({ database_name: 'skincos_clientes_production', current_user: 'skincos_clientes_migrator_login' }, 'production'),
+        { target: 'production', database: 'skincos_clientes_production', user: 'skincos_clientes_migrator_login' },
     )
     assert.deepEqual(
-        assertClientesSourceRefreshDatabaseIdentity({ database_name: 'skincos_staging', current_user: 'skincos_staging_app' }, 'staging'),
-        { target: 'staging', database: 'skincos_staging', user: 'skincos_staging_app' },
+        assertClientesSourceRefreshDatabaseIdentity({ database_name: 'skincos_staging', current_user: 'skincos_staging_migrator_login' }, 'staging'),
+        { target: 'staging', database: 'skincos_staging', user: 'skincos_staging_migrator_login' },
     )
     assert.throws(() => assertClientesSourceRefreshDatabaseIdentity({ database_name: 'skincos_staging', current_user: 'postgres' }, 'staging'), { code: 'CLIENTES_SOURCE_REFRESH_STAGING_IDENTITY_UNSAFE' })
+    assert.throws(() => assertClientesSourceRefreshDatabaseIdentity({ database_name: 'skincos_staging', current_user: 'skincos_staging_app' }, 'staging'), { code: 'CLIENTES_SOURCE_REFRESH_STAGING_IDENTITY_UNSAFE' })
 })
 
 test('uses a non-person actor and emits only aggregate refresh evidence', () => {

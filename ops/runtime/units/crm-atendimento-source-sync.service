@@ -1,0 +1,27 @@
+[Unit]
+Description=Skincos Atendimento private source synchronization
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=skincos
+Group=skincos
+WorkingDirectory=__REPO_ROOT__
+# The runner reads this fixed private file literally. It is deliberately not
+# an EnvironmentFile here, so the database password is not copied into the
+# systemd manager environment or exposed by `systemctl show`.
+UnsetEnvironment=NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_V8_COVERAGE NODE_REDIRECT_WARNINGS LD_PRELOAD LD_LIBRARY_PATH BASH_ENV ENV CDPATH HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy DATABASE_URL
+Environment=CRM_ATENDIMENTO_SOURCE_SYNC_TARGET=production
+ExecStart=/usr/bin/node __REPO_ROOT__/crm/api/scripts/run-atendimento-source-sync.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__BACKUP_ROOT__ __LOG_ROOT__
+UMask=0027
+TimeoutStartSec=900
+SyslogIdentifier=crm-atendimento-source-sync
+
+[Install]
+WantedBy=multi-user.target
