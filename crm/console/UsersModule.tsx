@@ -15,7 +15,7 @@ import { TooltipButton } from '@/tooltip'
 import { unitBadgeClass, unitSelectedClass } from '@/unitVisuals'
 
 type Me = { success?: boolean; user?: { username?: string; role?: string; allowedUnits?: string[] }; csrfToken?: string }
-type Onboarding = { id: string; fullName: string; username?: string | null; corporateEmail: string; workforceEmployeeId?: string | null; profile: string; jobTitle: string; department: string; units: string[]; accountStatus: string; createdAt?: string; updatedAt?: string }
+type Onboarding = { id: string; fullName: string; username?: string | null; corporateEmail: string; workforceEmployeeId?: string | null; profile: string; jobTitle: string; units: string[]; accountStatus: string; createdAt?: string; updatedAt?: string }
 type ApiError = { error?: string; message?: string; code?: string }
 type RequestOptions = { method?: string; body?: unknown; csrf?: string | null; headers?: Record<string, string> }
 type TeamSummary = { members?: number; pendingInvites?: number }
@@ -108,7 +108,6 @@ const initialForm = {
   corporateEmailOverride: '',
   personalEmail: '',
   mobilePhone: '',
-  department: '',
   jobTitle: 'Consultor',
   units: [] as string[],
   scheduleProfessionalId: '',
@@ -165,6 +164,7 @@ async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     headers,
     credentials: 'include',
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    cache: 'no-store',
   })
   const payload = await res.json().catch(() => ({})) as T & ApiError
   if (!res.ok) throw new RequestError(payload.error || payload.message || `HTTP ${res.status}`, payload.code)
@@ -182,7 +182,6 @@ function emptyTeamForm(row?: UnifiedTeamMember) {
     corporateEmailOverride: row?.corporateEmail || '',
     personalEmail: '',
     mobilePhone: row?.schedule?.phone || '',
-    department: row?.department || '',
     jobTitle: row?.jobTitle || 'Consultor',
     units: row?.units || [],
     scheduleProfessionalId: row?.schedule?.professionalId || '',
@@ -523,7 +522,6 @@ export function UsersModule() {
         corporateEmail: effectiveEmail,
         ...(form.personalEmail.trim() ? { personalEmail: form.personalEmail } : {}),
         ...(normalizedMobilePhone ? { mobilePhone: normalizedMobilePhone } : {}),
-        department: form.department,
         jobTitle: form.jobTitle,
         units: form.units,
         ...(form.jobTitle === 'Injetor' ? {
@@ -546,9 +544,16 @@ export function UsersModule() {
         headers: editingId ? {} : { 'idempotency-key': `crm-team-${Date.now()}-${Math.random().toString(16).slice(2)}` },
         body,
       })
+      const savedMember = result.data as UnifiedTeamMember | undefined
       let escalaSynced = true
       if (result.data && teamConfig.enabled && form.jobTitle === 'Injetor' && !result.replayed) {
         escalaSynced = (await syncEscala(result.data as UnifiedTeamMember, !editingId)) !== false
+      }
+      if (editingId && savedMember?.id) {
+        // Reflect the authoritative PUT response immediately. The follow-up
+        // GET reconciles the page, but the row must not remain stale while a
+        // projection or cache is catching up.
+        setTeamRows((current) => current.map((row) => row.id === savedMember.id ? { ...row, ...savedMember } : row))
       }
       setCollisionRequired(false)
       setSubmitBlockedMessage('')
@@ -559,6 +564,11 @@ export function UsersModule() {
         ? (editingId ? 'Membro atualizado.' : 'Cadastro criado; convite enviado para o e-mail pessoal.')
         : (editingId ? 'Membro atualizado; vínculo com a Escala pendente.' : 'Cadastro criado; vínculo com a Escala pendente.'))
       await load()
+      if (editingId && savedMember?.id) {
+        // A projection may lag the successful write. Keep the table aligned
+        // with the response that authorized the save after reconciliation too.
+        setTeamRows((current) => current.map((row) => row.id === savedMember.id ? { ...row, ...savedMember } : row))
+      }
     } catch (error: any) {
       if (error instanceof RequestError && (error.code === 'EMAIL_TAKEN' || error.code === 'CORPORATE_EMAIL_OVERRIDE_REQUIRES_COLLISION')) {
         setCollisionRequired(true)
@@ -738,13 +748,12 @@ export function UsersModule() {
                 <table className="w-full table-fixed text-sm">
                   <colgroup>
                   <col className="w-[6%]" />
-                  <col className="w-[17%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[10%]" />
-                  <col className="w-[11%]" />
-                  <col className="w-[13%]" />
+                  <col className="w-[20%]" />
                   <col className="w-[14%]" />
-                  <col className="w-[9%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[12%]" />
                 </colgroup>
                 <thead className="bg-black/25 text-[11px] uppercase tracking-[0.12em] text-blue-100/60">
                   <tr>
@@ -752,7 +761,6 @@ export function UsersModule() {
                     <th className="p-3 text-left" scope="col">Nome</th>
                     <th className="p-3 text-left" scope="col">Usuário</th>
                     <th className="p-3 text-left" scope="col">Cargo</th>
-                    <th className="p-3 text-left" scope="col">Departamento</th>
                     <th className="p-3 text-left" scope="col">Unidades</th>
                     <th className="p-3 text-left" scope="col">Status</th>
                     <th className="p-3 text-right" scope="col">Ações</th>
@@ -775,7 +783,6 @@ export function UsersModule() {
                       </td>
                       <td className="min-w-0 p-3 align-middle font-mono text-xs break-words text-blue-100/80">{row.username || '—'}</td>
                       <td className="min-w-0 p-3 align-middle"><Badge variant={titleBadgeVariant(row.jobTitle)} className={compactTableBadgeClass}>{row.jobTitle}</Badge></td>
-                      <td className="min-w-0 p-3 align-middle break-words text-blue-100/80">{row.department || '—'}</td>
                       <td className="p-3 align-middle">
                         <div className="flex min-w-0 flex-wrap gap-1">
                           {row.units.length ? row.units.map((unit) => (
@@ -794,7 +801,7 @@ export function UsersModule() {
                     </tr>
                   ))}
                   {!teamRows.length && (
-                    <tr><td className="p-5 text-blue-100/70" colSpan={8}>{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
+                    <tr><td className="p-5 text-blue-100/70" colSpan={7}>{loading ? 'Carregando…' : teamConfig.enabled ? (searchQuery || statusFilter !== 'ACTIVE' ? 'Nenhum membro corresponde aos filtros.' : 'Nenhum integrante ativo.') : 'A lista aparecerá após a liberação da centralização.'}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -820,7 +827,6 @@ export function UsersModule() {
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-white/[0.07] pt-4 text-xs">
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Cargo</p><Badge variant={titleBadgeVariant(row.jobTitle)} className="px-2 py-1 text-[11px]">{row.jobTitle}</Badge></div>
-                    <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Departamento</p><p className="text-blue-100/80">{row.department || '—'}</p></div>
                     <div className="col-span-2"><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Unidades</p><div className="flex flex-wrap gap-1">{row.units.length ? row.units.map((unit) => <Badge key={unit} variant="outline" className={`${unitBadgeClass(unit)} px-2 py-1 text-[11px]`}>{unitLabels[unit] || unit}</Badge>) : <Badge variant="outline" className="px-2 py-1 text-[11px]">Sem unidade</Badge>}</div></div>
                     <div><p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-blue-100/45">Status</p><Badge variant={statusBadgeVariant(row.accountStatus)} className="px-2 py-1 text-[11px]">{statusLabel(row.accountStatus)}</Badge></div>
                   </div>
