@@ -214,7 +214,7 @@ function publicTeamMember(row, links = [], scheduleSync = null) {
     : fallback;
   const crmAccountReviewStatus = String(row.crm_account_review_status || '').trim().toUpperCase() || null;
   return {
-    ...publicOnboarding(row),
+    ...publicTeamOnboarding(row),
     workforceEmployeeId: row.workforce_employee_id || null,
     crmAccountLinked: crmAccountReviewStatus === 'CONFIRMED'
       && Boolean(String(row.crm_account_link_id || '').trim())
@@ -241,6 +241,17 @@ function publicTeamMember(row, links = [], scheduleSync = null) {
     },
     identityLinks: links,
   };
+}
+
+// Unified Team no longer treats department as an access or permission
+// attribute. Keep the legacy onboarding field private until its shared ledger
+// can be retired through a separate expand/contract migration with rollback.
+function publicTeamOnboarding(row) {
+  const data = publicOnboarding(row);
+  if (!data) return data;
+  const teamData = { ...data };
+  delete teamData.department;
+  return teamData;
 }
 
 function publicIdentityLink(row) {
@@ -347,12 +358,11 @@ function teamListSqlFilters(auth, requestedStatus, query) {
       lower(COALESCE(o.full_name, '')) LIKE ?
       OR lower(COALESCE(o.requested_username, '')) LIKE ?
       OR lower(COALESCE(o.corporate_email, '')) LIKE ?
-      OR lower(COALESCE(o.department_name, '')) LIKE ?
       OR lower(COALESCE(o.job_title, '')) LIKE ?
       OR lower(COALESCE(t.schedule_role, '')) LIKE ?
       OR lower(COALESCE(o.units_json, '')) LIKE ?
     )`);
-    params.push(like, like, like, like, like, like, like);
+    params.push(like, like, like, like, like, like);
   }
   return { clauses, params };
 }
@@ -813,7 +823,7 @@ export async function handleAdminRoutes({
     let localPersistenceStage = 'PREPARATION';
     try {
       const body = await request.json().catch(() => ({}));
-      const input = validateOnboardingInput(body, {
+      const input = validateOnboardingInput(url.pathname === '/admin/team' ? { ...body, department: '' } : body, {
         unified: url.pathname === '/admin/team',
         requireCorporateDomain: url.pathname === '/admin/team',
       });
@@ -854,7 +864,7 @@ export async function handleAdminRoutes({
         if (existing && url.pathname === '/admin/team' && (!existing.request_fingerprint || existing.request_fingerprint !== requestFingerprint)) {
           throw new Error(existing.request_fingerprint ? 'ONBOARDING_IDEMPOTENCY_CONFLICT' : 'ONBOARDING_IDEMPOTENCY_FINGERPRINT_REQUIRED');
         }
-        if (existing?.provisioning_state === 'COMPLETED') return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
+        if (existing?.provisioning_state === 'COMPLETED') return withCORS(JSON.stringify({ success: true, data: url.pathname === '/admin/team' ? publicTeamOnboarding(existing) : publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
       }
       const id = await sha256Hex(`employee-onboarding:v1:${input.corporateEmail}`);
       onboardingId = id;
@@ -906,7 +916,7 @@ export async function handleAdminRoutes({
         }
         const existingTeam = await env.DB.prepare('SELECT onboarding_id FROM crm_employee_team WHERE onboarding_id=? LIMIT 1').bind(existingOnboarding.id).first();
         if (existingTeam?.onboarding_id) {
-          return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
+          return withCORS(JSON.stringify({ success: true, data: publicTeamOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
         }
         // A prior request may have completed Identity and the invite while
         // failing before the canonical team projection was persisted. Keep the
@@ -1061,7 +1071,7 @@ export async function handleAdminRoutes({
       const created = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(id).first();
       await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId, workforceEmployeeId: workforce?.employeeId || null, provisioningState: 'COMPLETED', scheduleSyncState: scheduleSync?.scheduleSync?.state || (url.pathname === '/admin/team' ? 'PENDING' : null) } });
       await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_CREATED', actorRole: auth.user.role, itemCount: 1, unitCount: input.units.length });
-      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created), team: url.pathname === '/admin/team' ? { ...normalizeTeamData(teamData, input.units), scheduleSync: publicScheduleSync(scheduleSync?.scheduleSync || { state: hasScheduleIntent(teamData) ? 'PENDING' : 'NOT_CONFIGURED' }, '') } : undefined }), { status: existingOnboarding ? 200 : 201 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: url.pathname === '/admin/team' ? publicTeamOnboarding(created) : publicOnboarding(created), team: url.pathname === '/admin/team' ? { ...normalizeTeamData(teamData, input.units), scheduleSync: publicScheduleSync(scheduleSync?.scheduleSync || { state: hasScheduleIntent(teamData) ? 'PENDING' : 'NOT_CONFIGURED' }, '') } : undefined }), { status: existingOnboarding ? 200 : 201 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_FAILED');
       if (url.pathname === '/admin/team' && workforceSynchronized && onboardingId && ['ONBOARDING_COMPLETE', 'TEAM_CREATE'].includes(localPersistenceStage)) {
@@ -1113,7 +1123,7 @@ export async function handleAdminRoutes({
         return withCORS(JSON.stringify({ success: false, error: 'Hierarquia não permite ativar este membro', code: hierarchyDenied }), { status: 403 }, appOrigin);
       }
       if (String(onboarding.account_status).toUpperCase() === 'ACTIVE') {
-        return withCORS(JSON.stringify({ success: true, data: publicOnboarding(onboarding), replayed: true }), { status: 200 }, appOrigin);
+        return withCORS(JSON.stringify({ success: true, data: activationMatch[1] === 'team' ? publicTeamOnboarding(onboarding) : publicOnboarding(onboarding), replayed: true }), { status: 200 }, appOrigin);
       }
       if (activationMatch[1] === 'team') {
         const accountScope = await loadExplicitCrmAccountScope(onboardingId);
@@ -1141,7 +1151,7 @@ export async function handleAdminRoutes({
       ]);
       const activated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(onboardingId).first();
       await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_ACTIVATION_RETRY', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: onboarding.account_status }, after: { accountStatus: 'ACTIVE', requestId } });
-      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(activated) }), { status: 200 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: activationMatch[1] === 'team' ? publicTeamOnboarding(activated) : publicOnboarding(activated) }), { status: 200 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_ACTIVATION_FAILED');
       return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_ACTIVATION_PENDING', code: message }), { status: 503 }, appOrigin);
@@ -1252,7 +1262,7 @@ export async function handleAdminRoutes({
       const updated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
       await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_CHANGED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { accountStatus: nextStatus, inviteRevoked: Boolean(revokeInvite && onboarding.invite_id), sessionVersionIncremented: currentStatus !== nextStatus, terminationReasonProvided: nextStatus === 'TERMINATED', terminationReason: nextStatus === 'TERMINATED' ? terminationReason : null, requestId } });
       await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_STATUS_CHANGED', actorRole: auth.user.role, itemCount: 1, unitCount: normalizeAllowedUnits(onboarding.units_json).length });
-      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated), replayed: currentStatus === nextStatus }), { status: 200 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: statusMatch[1] === 'team' ? publicTeamOnboarding(updated) : publicOnboarding(updated), replayed: currentStatus === nextStatus }), { status: 200 }, appOrigin);
     } catch (error) {
       return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: String(error?.message || 'ONBOARDING_STATUS_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
     }
@@ -1420,7 +1430,7 @@ export async function handleAdminRoutes({
       });
       await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_WORKFORCE_RECONCILED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: units.join(','), before: { workforceEmployeeId: existingEmployeeId || null, accountStatus }, after: { workforceEmployeeId, accountStatus, provisioningState, workforceReconciled, inviteDeliveryChanged: false, requestId } });
       await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_WORKFORCE_RECONCILED', actorRole: auth.user.role, itemCount: 1, unitCount: units.length });
-      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated), replayed: !workforceReconciled }), { status: 200 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: publicTeamOnboarding(updated), replayed: !workforceReconciled }), { status: 200 }, appOrigin);
     } catch (error) {
       const code = String(error?.message || 'TEAM_WORKFORCE_RECONCILE_FAILED').slice(0, 120);
       const dependencyFailure = isOnboardingDependencyError(code) || /^(WORKFORCE_|IDENTITY_WORKFORCE_|TIMEKEEPING_|RELEASE_AFFINITY_|RUNTIME_BINDINGS_)/.test(code);
@@ -1491,7 +1501,7 @@ export async function handleAdminRoutes({
       const updated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
       await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_INVITE_RESENT', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: units.join(','), before: { accountStatus: onboarding.account_status }, after: { inviteIssued: true, inviteId, accountStatus: 'INVITED', requestId } });
       await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_INVITE_RESENT', actorRole: auth.user.role, itemCount: 1, unitCount: units.length });
-      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated) }), { status: 200 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: publicTeamOnboarding(updated) }), { status: 200 }, appOrigin);
     } catch (error) {
       return withCORS(JSON.stringify({ success: false, error: 'Não foi possível reenviar o convite', code: String(error?.message || 'TEAM_INVITE_RESEND_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
     }
@@ -1524,7 +1534,7 @@ export async function handleAdminRoutes({
       const updated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
       await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_TEAM_INVITE_REVOKED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: onboarding.account_status }, after: { inviteRevoked: true, accountStatus: 'PENDING_ACCESS', requestId } });
       await recordTeamTelemetry({ env, eventName: 'EMPLOYEE_TEAM_INVITE_REVOKED', actorRole: auth.user.role, itemCount: 1, unitCount: normalizeAllowedUnits(onboarding.units_json).length });
-      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated) }), { status: 200 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: publicTeamOnboarding(updated) }), { status: 200 }, appOrigin);
     } catch (error) {
       return withCORS(JSON.stringify({ success: false, error: 'Não foi possível revogar o convite', code: String(error?.message || 'TEAM_INVITE_REVOKE_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
     }
@@ -1915,7 +1925,10 @@ export async function handleAdminRoutes({
       }
 
       const nextName = String(body.fullName ?? current.full_name).trim().replace(/\s+/g, ' ');
-      const nextDepartment = String(body.department ?? current.department_name).trim().replace(/\s+/g, ' ').slice(0, 120);
+      // `department_name` is retained only as a legacy storage field until a
+      // separately gated expand/contract migration can remove it safely. The
+      // unified-team API no longer accepts or changes it.
+      const nextDepartment = String(current.department_name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
       const nextTitle = String(body.jobTitle ?? current.job_title).trim();
       const nextProfile = body.jobTitle === undefined ? current.profile : resolveEmployeeProfile(nextTitle);
       if (!nextName || !nextProfile) return withCORS(JSON.stringify({ success: false, error: 'Dados de edição inválidos', code: 'TEAM_UPDATE_INVALID' }), { status: 400 }, appOrigin);
@@ -2095,7 +2108,7 @@ export async function handleAdminRoutes({
         ${fromSql} ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?`).bind(...filters.params, limit, offset).all();
       const visible = (rows?.results || [])
         .filter((row) => teamUnitsVisible(auth, row.units_json))
-        .filter((row) => !query || [row.full_name, row.requested_username, row.corporate_email, row.department_name, row.job_title, ...normalizeAllowedUnits(row.units_json)]
+        .filter((row) => !query || [row.full_name, row.requested_username, row.corporate_email, row.job_title, ...normalizeAllowedUnits(row.units_json)]
           .some((value) => String(value || '').toLowerCase().includes(query)));
       const employeeIds = visible.map((row) => String(row.workforce_employee_id || '').trim()).filter(Boolean);
       const linkRows = employeeIds.length

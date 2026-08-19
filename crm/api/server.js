@@ -1388,7 +1388,6 @@ if (DEV_AUTH_ENABLED) {
         workforceEmployeeId: member.workforceEmployeeId || null,
         profile: member.profile,
         jobTitle: member.jobTitle,
-        department: member.department,
         units: member.units,
         accountStatus: member.accountStatus,
         crmAccountLinked: Boolean(member.crmAccountLinked),
@@ -1545,7 +1544,10 @@ if (DEV_AUTH_ENABLED) {
         const mobilePhone = body.mobilePhone === undefined && body.phone === undefined
             ? localNormalizePhone(current?.mobilePhone)
             : localNormalizePhone(body.mobilePhone ?? body.phone)
-        const department = String(body.department ?? current?.department ?? '').trim().replace(/\s+/g, ' ').slice(0, 120)
+        // Unified Team no longer accepts department as an access or identity
+        // attribute. Preserve a legacy value on edits for backward
+        // compatibility, but do not create or mutate it from the new contract.
+        const department = String(current?.department ?? '').trim().replace(/\s+/g, ' ').slice(0, 120)
         const jobTitle = String(body.jobTitle ?? current?.jobTitle ?? '').trim()
         const profile = localProfileForTitle(jobTitle) || String(current?.profile || '').toUpperCase()
         const rawUnits = body.units ?? current?.units
@@ -1684,7 +1686,7 @@ if (DEV_AUTH_ENABLED) {
               : requestedStatus === 'ACTIVE'
                   ? ['INVITED', 'ACTIVE'].includes(String(member.accountStatus || '').toUpperCase())
                   : String(member.accountStatus || '').toUpperCase() === requestedStatus)
-          .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle, ...member.units]
+          .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.jobTitle, ...member.units]
               .some((value) => String(value || '').toLowerCase().includes(query)))
           .filter((member) => role === 'ADMIN' || localTeamUnitsVisible(session, member))
         const total = filtered.length
@@ -2325,7 +2327,7 @@ if (DEV_AUTH_ENABLED) {
         const query = String(req.query?.q || '').trim().toLowerCase()
         const data = store.team
             .filter((member) => requestedStatus === 'ALL' || String(member.accountStatus || '').toUpperCase() === requestedStatus)
-            .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle, ...member.units].some((value) => String(value || '').toLowerCase().includes(query)))
+            .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.jobTitle, ...member.units].some((value) => String(value || '').toLowerCase().includes(query)))
             .filter((member) => role === 'ADMIN' || localTeamUnitsVisible(session, member))
             .map(localPublicTeamMember)
         res.status(200).set('cache-control', 'no-store').json({ success: true, data, activeOnly: false, status: requestedStatus, summary: { members: data.length, pendingInvites: data.filter((member) => member.accountStatus === 'INVITED').length, pendingAccountLinks: data.filter((member) => !member.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(String(member.accountStatus || '').toUpperCase())).length } })

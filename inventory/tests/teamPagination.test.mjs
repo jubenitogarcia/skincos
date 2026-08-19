@@ -22,10 +22,17 @@ test('unified team listing is paginated and scoped before the database limit', a
   assert.match(admin, /\.bind\(\.\.\.onboardingIds, Math\.min\(onboardingIds\.length \* 10, 1000\)\)/);
   assert.match(admin, /const effectivePage = Math\.min\(page, pages\)/);
   assert.doesNotMatch(admin, /ORDER BY o\.created_at DESC LIMIT 500/);
+  assert.match(admin, /function publicTeamOnboarding\(row\)/);
+  assert.match(admin, /delete teamData\.department/);
+  assert.match(admin, /url\.pathname === '\/admin\/team' \? \{ \.\.\.body, department: '' \} : body/);
+  assert.match(admin, /const nextDepartment = String\(current\.department_name \|\| ''\)/);
 
   assert.match(localApi, /const filtered = store\.team/);
   assert.match(localApi, /const data = filtered\.slice\([^\n]+\.map\(localPublicTeamMember\)/);
   assert.match(localApi, /pagination: \{ page, limit, total, pages, hasMore: page < pages \}/);
+  const localPublicTeamBlock = localApi.slice(localApi.indexOf('const localPublicTeamMember'), localApi.indexOf('const localPendingItems'));
+  assert.doesNotMatch(localPublicTeamBlock, /department:/);
+  assert.match(localApi, /const department = String\(current\?\.department \?\? ''\)/);
 
   assert.match(migration, /CREATE INDEX IF NOT EXISTS idx_crm_employee_onboarding_status_created/);
   assert.match(migration, /CREATE INDEX IF NOT EXISTS idx_crm_employee_onboarding_created/);
@@ -40,4 +47,5 @@ test('users UI carries the page boundary and exposes accessible navigation', asy
   assert.match(users, /aria-label="Página anterior"/);
   assert.match(users, /aria-label="Próxima página"/);
   assert.match(users, /setPage\(1\)/);
+  assert.doesNotMatch(users, /Departamento/);
 });
