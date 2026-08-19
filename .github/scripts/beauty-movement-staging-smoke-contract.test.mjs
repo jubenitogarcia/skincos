@@ -25,6 +25,7 @@ test("smoke consumes secrets in-process and closes the staging gate", () => {
     assert.match(workflow, /smoke_root="\$\{RUNNER_TEMP\}\/beauty-movement-staging-smoke"/);
     assert.match(workflow, /set -euo pipefail/);
     assert.match(workflow, /node --input-type=commonjs -e/);
+    assert.doesNotMatch(workflow, /node -e\s/);
     assert.doesNotMatch(workflow, /set -x/);
     assert.doesNotMatch(workflow, /upload-artifact/);
     assert.match(workflow, /staging-smoke-disabled-probe/);
