@@ -116,6 +116,7 @@ test("ID projection diagnostic is manual, staging-read-only, and separate from t
   assert.match(workflow, /fields: 'id'/);
   assert.match(workflow, /id_filter: pixelId/);
   assert.match(workflow, /pixel_dataset_parameter_contract/);
+  assert.match(workflow, /pixel_dataset_edge_contract/);
   assert.match(workflow, /pixel_dataset_response_contract/);
   assert.match(workflow, /pixel_dataset_response_shape/);
   assert.match(workflow, /pixel_dataset_match/);
@@ -194,6 +195,18 @@ test("ID-only projection separates parameter/shape failures from permission fail
   assert.equal(parameter.requestCount, 2);
   assert.match(`${parameter.stdout}${parameter.stderr}`, /pixel_dataset_parameter_contract/);
   assertNoSensitiveValues(`${parameter.stdout}${parameter.stderr}`);
+
+  const edgeResponses = baseResponses();
+  edgeResponses[1] = {
+    ...edgeResponses[1],
+    status: 404,
+    payload: { error: { code: 33, message: syntheticGraphMessage } },
+  };
+  const edge = runVerifier(edgeResponses);
+  assert.notEqual(edge.status, 0);
+  assert.equal(edge.requestCount, 2);
+  assert.match(`${edge.stdout}${edge.stderr}`, /pixel_dataset_edge_contract/);
+  assertNoSensitiveValues(`${edge.stdout}${edge.stderr}`);
 
   const shapeResponses = baseResponses();
   shapeResponses[1].payload = { data: [{ id: "not-an-id" }] };

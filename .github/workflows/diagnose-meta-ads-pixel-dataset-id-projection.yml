@@ -55,6 +55,7 @@ jobs:
             'pixel_dataset_denied',
             'pixel_dataset_unavailable',
             'pixel_dataset_parameter_contract',
+            'pixel_dataset_edge_contract',
             'pixel_dataset_response_contract',
             'pixel_dataset_response_shape',
             'pixel_dataset_account_contract',
@@ -97,7 +98,12 @@ jobs:
                 graphErrorCode === 190 ||
                 graphErrorCode === 200;
               if (denied) return { state: 'denied' };
-              if (graphErrorCode === 100) return { state: 'parameter_contract' };
+              // With fields=id only, a non-auth 400 is the remaining
+              // parameter/edge contract boundary (most importantly id_filter);
+              // keep 404/405 separate from a valid HTTP response carrying an
+              // incompatible Graph envelope.
+              if (response.status === 400 || graphErrorCode === 100) return { state: 'parameter_contract' };
+              if (response.status === 404 || response.status === 405) return { state: 'edge_contract' };
               return { state: 'response_contract' };
             }
             return { state: 'ok', payload };
@@ -131,6 +137,7 @@ jobs:
             if (datasetResult.state === 'denied') fail('pixel_dataset_denied');
             if (datasetResult.state === 'unavailable') fail('pixel_dataset_unavailable');
             if (datasetResult.state === 'parameter_contract') fail('pixel_dataset_parameter_contract');
+            if (datasetResult.state === 'edge_contract') fail('pixel_dataset_edge_contract');
             if (datasetResult.state === 'response_contract') fail('pixel_dataset_response_contract');
             if (datasetResult.state !== 'ok') fail('pixel_dataset_response_shape');
 
