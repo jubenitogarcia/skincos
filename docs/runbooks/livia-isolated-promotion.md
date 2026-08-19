@@ -46,7 +46,14 @@ sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/eng
   --release-root /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine
 sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/validate-livia-workflow.js \
   /var/tmp/livia-candidate.json
+sudo node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/livia/qa-runner.js \
+  validate
 ```
+
+O `qa-runner` precisa ser executado a partir do bundle candidato, não do
+checkout compartilhado nem de uma release anterior. Ele é somente leitura e
+deve reprovar contratos editoriais, de acessibilidade ou de preflight que não
+correspondam à versão que será promovida.
 
 Antes da escrita versionada, faça o smoke autenticado read-only do CRM com o
 token protegido já carregado no runtime. O endpoint deve aceitar apenas Bearer,
@@ -80,7 +87,8 @@ sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/eng
 
 Depois, rode `workflow-runtime-manifest.js audit-live`, confira os hashes dos
 entrypoints e os healthchecks local (`http://127.0.0.1:5678/healthz`) e público
-(`https://orb.skincos.com.br/healthz`). Uma nova versão histórica de Livia não
+(`https://orb.skincos.com.br/healthz`), e execute novamente o `qa-runner`
+diretamente do bundle promovido. Uma nova versão histórica de Livia não
 requer restart. Se uma promoção de ponteiro global for excepcionalmente
 necessária, use somente `scripts/runtime/promote-native-source-release.sh`;
 ele cria a janela de manutenção, aguarda execuções ativas e verifica o CWD do
