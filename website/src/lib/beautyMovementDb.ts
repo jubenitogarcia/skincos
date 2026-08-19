@@ -19,6 +19,16 @@ import type {
     BeautyMovementRewardType,
     BeautyMovementVelocityBenefit,
 } from "@/lib/beautyMovementRewards";
+import {
+    BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION,
+    BEAUTY_MOVEMENT_OUTCOME_KEYS,
+    BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION,
+    BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS,
+    getBeautyMovementOffer,
+    resolveBeautyMovementOutcome,
+    type BeautyMovementOffer,
+    type BeautyMovementOutcomeKey,
+} from "@/lib/beautyMovementOutcomes";
 
 export { BEAUTY_MOVEMENT_SESSION_COOKIE } from "@/lib/beautyMovementSecurity";
 
@@ -84,6 +94,10 @@ type InviteRow = CampaignRow & {
     contact_mask: string;
     palette: BeautyMovementPalette;
     reward_id: string | null;
+    outcome_key: BeautyMovementOutcomeKey | null;
+    outcome_snapshot_json: string | null;
+    outcome_protocol_version: string | null;
+    outcome_resolved_at_ms: number | null;
     velocity_benefit: BeautyMovementVelocityBenefit;
     benefit_status: BeautyMovementBenefitStatus;
     benefit_text: string;
@@ -136,6 +150,9 @@ export type BeautyMovementPublicState = {
         emailRegistered: boolean;
     };
     palette: BeautyMovementPalette;
+    /** Structured offer resolved from the persisted three-card reading. */
+    offer: BeautyMovementOffer | null;
+    /** @deprecated Compatibility field for old clients; new outcomes use offer. */
     benefit: BeautyMovementPublicReward | null;
     velocity: BeautyMovementPublicVelocity | null;
     reveals: Array<{ actIndex: number; cardId: string }>;
@@ -430,7 +447,7 @@ async function findInviteByTokenHash(db: BeautyMovementD1, tokenHash: string): P
             `SELECT
                 i.id AS invite_id, i.invite_status, i.expires_at_ms AS invite_expires_at_ms,
                 i.personal_data_version, i.personal_data_ciphertext, i.personal_data_iv, i.contact_mask,
-                i.palette, i.reward_id, i.velocity_benefit,
+                i.palette, i.reward_id, i.outcome_key, i.outcome_snapshot_json, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.velocity_benefit,
                 i.benefit_status, i.benefit_text, i.benefit_validity, i.benefit_rules, i.terms_version,
                 r.reward_type, r.procedure_name AS reward_procedure_name,
                 r.discount_kind AS reward_discount_kind, r.discount_value AS reward_discount_value,
@@ -464,7 +481,7 @@ async function findSessionByTokenHash(db: BeautyMovementD1, tokenHash: string): 
                 s.id AS session_id, s.expires_at_ms AS session_expires_at_ms, s.revoked_at_ms AS session_revoked_at_ms,
                 i.id AS invite_id, i.invite_status, i.expires_at_ms AS invite_expires_at_ms,
                 i.personal_data_version, i.personal_data_ciphertext, i.personal_data_iv, i.contact_mask,
-                i.palette, i.reward_id, i.velocity_benefit,
+                i.palette, i.reward_id, i.outcome_key, i.outcome_snapshot_json, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.velocity_benefit,
                 i.benefit_status, i.benefit_text, i.benefit_validity, i.benefit_rules, i.terms_version,
                 r.reward_type, r.procedure_name AS reward_procedure_name,
                 r.discount_kind AS reward_discount_kind, r.discount_value AS reward_discount_value,
@@ -541,6 +558,106 @@ function renderReward(row: InviteRow): BeautyMovementPublicReward | null {
     };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+    return typeof value === "string" && value.trim().length > 0;
+}
+
+function isStoredOfferProduct(value: unknown): boolean {
+    if (!isRecord(value)) return false;
+    return isNonEmptyString(value.productId)
+        && isNonEmptyString(value.productName)
+        && typeof value.quantity === "number"
+        && Number.isFinite(value.quantity)
+        && value.quantity > 0
+        && (value.unit === "mg" || value.unit === "mL" || value.unit === "condition");
+}
+
+function isStoredOfferPrice(value: unknown): boolean {
+    if (value === null) return true;
+    if (!isRecord(value)) return false;
+    return typeof value.amount === "number"
+        && Number.isFinite(value.amount)
+        && value.amount >= 0
+        && value.currency === "BRL";
+}
+
+function isStoredOfferSnapshot(value: unknown, outcomeKey: BeautyMovementOutcomeKey): value is BeautyMovementOffer {
+    if (!isRecord(value) || value.outcomeKey !== outcomeKey) return false;
+    return isNonEmptyString(value.title)
+        && isNonEmptyString(value.shortLabel)
+        && isStoredOfferProduct(value.trigger)
+        && isStoredOfferProduct(value.benefit)
+        && isStoredOfferPrice(value.referencePrice)
+        && isStoredOfferPrice(value.unlockedPrice)
+        && isNonEmptyString(value.commercialText)
+        && Array.isArray(value.externalRules)
+        && value.externalRules.every((rule) => typeof rule === "string");
+}
+
+function renderStoredOffer(row: InviteRow): BeautyMovementOffer | null {
+    if (!row.outcome_key || !BEAUTY_MOVEMENT_OUTCOME_KEYS.includes(row.outcome_key)) return null;
+    if (!BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS.includes(row.outcome_protocol_version as (typeof BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS)[number])) return null;
+    if (!row.outcome_snapshot_json) {
+        return row.outcome_protocol_version === BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION
+            ? getBeautyMovementOffer(row.outcome_key)
+            : null;
+    }
+    try {
+        const snapshot = JSON.parse(row.outcome_snapshot_json) as unknown;
+        return isStoredOfferSnapshot(snapshot, row.outcome_key) ? snapshot : null;
+    } catch {
+        return null;
+    }
+}
+
+async function resolveAndPersistOutcome(params: {
+    db: BeautyMovementD1;
+    row: InviteRow;
+    reveals: readonly RevealRow[];
+    nowMs: number;
+}): Promise<BeautyMovementOffer | null> {
+    if (params.reveals.length !== 3) return null;
+    const selections = {
+        beleza: params.reveals.find((reveal) => reveal.act_index === 1)?.card_id,
+        movimento: params.reveals.find((reveal) => reveal.act_index === 2)?.card_id,
+        celebracao: params.reveals.find((reveal) => reveal.act_index === 3)?.card_id,
+    } as const;
+    const resolved = resolveBeautyMovementOutcome({ palette: params.row.palette, selections });
+    const snapshot = JSON.stringify(resolved.offer);
+    if (params.row.outcome_key) {
+        const stored = renderStoredOffer(params.row);
+        if (!stored) throw new Error("beauty_movement_outcome_mismatch");
+        // A prior protocol is immutable evidence. Do not reinterpret an old
+        // reading with the new affinity table during replay or confirmation.
+        if (params.row.outcome_protocol_version !== BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION) return stored;
+        if (
+            params.row.outcome_key !== resolved.outcomeKey ||
+            params.row.outcome_protocol_version !== resolved.protocolVersion ||
+            (params.row.outcome_snapshot_json && params.row.outcome_snapshot_json !== snapshot)
+        ) {
+            throw new Error("beauty_movement_outcome_mismatch");
+        }
+        return resolved.offer;
+    }
+    await params.db
+        .prepare(
+            `UPDATE bm_invites
+             SET outcome_key = COALESCE(outcome_key, ?),
+                 outcome_snapshot_json = COALESCE(outcome_snapshot_json, ?),
+                 outcome_protocol_version = COALESCE(outcome_protocol_version, ?),
+                 outcome_resolved_at_ms = COALESCE(outcome_resolved_at_ms, ?),
+                 updated_at_ms = ?
+             WHERE id = ? AND outcome_key IS NULL`,
+        )
+        .bind(resolved.outcomeKey, snapshot, resolved.protocolVersion, params.nowMs, params.nowMs, params.row.invite_id)
+        .run();
+    return resolved.offer;
+}
+
 async function publicState(params: {
     db: BeautyMovementD1;
     row: InviteRow;
@@ -557,13 +674,21 @@ async function publicState(params: {
     const confirmed = params.row.confirmed_at_ms !== null;
     const { whatsappMessageCourtesy, whatsappMessageCommercial, velocityBenefitLabel, velocityBenefitText, ...campaignView } = campaign;
     const configuredReward = renderReward(params.row);
-    const reward = confirmed ? configuredReward : null;
+    const offer = confirmed ? renderStoredOffer(params.row) : null;
+    if (confirmed && params.row.outcome_key && !offer) return null;
+    const reward = confirmed && !offer && !params.row.outcome_key ? configuredReward : null;
     const conditionsParts = confirmed
-        ? [
-            cleanText(params.row.campaign_conditions_text, 1600),
-            reward?.validity ?? cleanText(params.row.benefit_validity, 300),
-            reward?.rules ?? cleanText(params.row.benefit_rules, 1200),
-        ].filter(Boolean)
+        ? offer
+            ? [
+                cleanText(params.row.campaign_conditions_text, 1600),
+                offer.commercialText,
+                ...offer.externalRules,
+            ].filter(Boolean)
+            : [
+                cleanText(params.row.campaign_conditions_text, 1600),
+                reward?.validity ?? cleanText(params.row.benefit_validity, 300),
+                reward?.rules ?? cleanText(params.row.benefit_rules, 1200),
+            ].filter(Boolean)
         : [];
     return {
         invite: {
@@ -572,6 +697,7 @@ async function publicState(params: {
             emailRegistered: Boolean(personal.email),
         },
         palette: params.row.palette,
+        offer,
         benefit: reward,
         velocity: confirmed && params.row.velocity_benefit === "aula_cortesia_evento" && velocityBenefitLabel && velocityBenefitText
             ? { enabled: true, label: velocityBenefitLabel, text: velocityBenefitText }
@@ -580,7 +706,7 @@ async function publicState(params: {
         confirmed,
         campaign: {
             ...campaignView,
-            whatsappMessage: params.row.benefit_status === "aula_cortesia_evento" && !params.row.reward_id
+            whatsappMessage: confirmed && params.row.velocity_benefit === "aula_cortesia_evento"
                 ? whatsappMessageCourtesy
                 : whatsappMessageCommercial,
             conditionsText: conditionsParts.length ? conditionsParts.join("\n\n") : null,
@@ -723,7 +849,13 @@ export async function revealBeautyMovementCard(params: {
         const current = reveals.find((reveal) => reveal.act_index === params.actIndex);
         if (current) {
             if (current.card_id !== cardId) return fail("card_already_revealed");
-            const state = await publicState({ db: loaded.db, row: loaded.row, piiKey: loaded.piiKey });
+            await resolveAndPersistOutcome({ db: loaded.db, row: loaded.row, reveals, nowMs: loaded.nowMs });
+            const refreshed = reveals.length === 3
+                ? await findSessionByTokenHash(loaded.db, loaded.sessionTokenHash)
+                : loaded.row;
+            const state = refreshed
+                ? await publicState({ db: loaded.db, row: refreshed, piiKey: loaded.piiKey })
+                : null;
             return state ? { ok: true, state, replay: true } : fail("campaign_unavailable");
         }
         if (params.actIndex !== reveals.length + 1) return fail("invalid_act");
@@ -742,7 +874,14 @@ export async function revealBeautyMovementCard(params: {
             const persisted = (await listReveals(loaded.db, loaded.row.invite_id)).find((reveal) => reveal.act_index === params.actIndex);
             if (!persisted || persisted.card_id !== cardId) return fail("card_already_revealed");
         }
-        const state = await publicState({ db: loaded.db, row: loaded.row, piiKey: loaded.piiKey });
+        const revealsAfterWrite = await listReveals(loaded.db, loaded.row.invite_id);
+        await resolveAndPersistOutcome({ db: loaded.db, row: loaded.row, reveals: revealsAfterWrite, nowMs: loaded.nowMs });
+        const refreshed = revealsAfterWrite.length === 3
+            ? await findSessionByTokenHash(loaded.db, loaded.sessionTokenHash)
+            : loaded.row;
+        const state = refreshed
+            ? await publicState({ db: loaded.db, row: refreshed, piiKey: loaded.piiKey })
+            : null;
         return state ? { ok: true, state } : fail("campaign_unavailable");
     } catch {
         return fail("campaign_unavailable");
@@ -782,6 +921,7 @@ export async function confirmBeautyMovementInvite(params: {
         const reveals = await listReveals(loaded.db, loaded.row.invite_id);
         if (reveals.length !== 3) return fail("confirmation_requires_three_cards");
         if (!params.operationalConsent) return fail("operational_consent_required");
+        await resolveAndPersistOutcome({ db: loaded.db, row: loaded.row, reveals, nowMs: loaded.nowMs });
 
         let encrypted: BeautyMovementEncryptedPersonalData | null = null;
         if (email) {
