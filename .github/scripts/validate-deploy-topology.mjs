@@ -74,6 +74,23 @@ for (const unit of catalog.units ?? []) {
       if (!source.includes(required)) fail(`${unit.id} bootstrap publisher is missing: ${required}`);
     }
     if (source.includes('promotion-gate.yml')) fail(`${unit.id} bootstrap must not masquerade as a release promotion`);
+  } else if (unit.promotion.publisherType === 'authenticated-staging-smoke' && unit.promotion.smokeOnly === true) {
+    if (unit.environments.length !== 1 || unit.environments[0] !== 'staging') fail(`${unit.id} must be staging-only`);
+    for (const required of [
+      'environment: staging',
+      'BEAUTY_MOVEMENT_ENABLED:true',
+      'if: ${{ always() }}',
+      'd1 execute',
+      'rollback',
+      'CLOUDFLARE_API_TOKEN',
+      'BEAUTY_MOVEMENT_TOKEN_HMAC_KEY',
+      'BEAUTY_MOVEMENT_PII_KEY',
+    ]) {
+      if (!source.includes(required)) fail(`${unit.id} authenticated smoke is missing: ${required}`);
+    }
+    if (/environment:\s*production|--env\s+production|BEAUTY_MOVEMENT_ENABLED:false/i.test(source)) {
+      fail(`${unit.id} must not target production or enable a production path`);
+    }
   } else if (!source.includes("promotion-gate.yml") || !source.includes("release_sha") || !source.includes("staging_run_id")) {
     fail(`${unit.id} must use the immutable promotion gate`);
   }

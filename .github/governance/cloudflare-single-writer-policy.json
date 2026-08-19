@@ -165,7 +165,8 @@
       "mutationWorkflows": [
         ".github/workflows/deploy-website-cloudflare.yml",
         ".github/workflows/sync-website-cloudflare-security.yml",
-        ".github/workflows/website-instagram-sync.yml"
+        ".github/workflows/website-instagram-sync.yml",
+        ".github/workflows/beauty-movement-staging-smoke.yml"
       ],
       "automaticDeploymentsRequired": false
     },
@@ -233,7 +234,8 @@
       "coordinationGroup": "staging-d1-writer",
       "mutationWorkflows": [
         ".github/workflows/insumos-staging-rbac-smoke.yml",
-        ".github/workflows/timekeeping-staging-journey.yml"
+        ".github/workflows/timekeeping-staging-journey.yml",
+        ".github/workflows/beauty-movement-staging-smoke.yml"
       ]
     },
     {
