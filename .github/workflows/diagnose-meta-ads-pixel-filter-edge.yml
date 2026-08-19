@@ -1,0 +1,157 @@
+name: Diagnose Meta Ads Pixel Filter Edge
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meta-ads-pixel-filter-edge-diagnostic-staging
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main'
+    name: Read the account Pixel filter edge without deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: staging
+    steps:
+      - name: Classify the account Pixel filter response
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
+          META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
+          META_ADS_ACCOUNT_ID: ${{ vars.META_ADS_ACCOUNT_ID }}
+          META_ADS_API_VERSION: ${{ vars.META_ADS_API_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const pixelId = String(process.env.META_PIXEL_ID || '').trim();
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
+
+          class DiagnosticFailure extends Error {
+            constructor(code) {
+              super(code);
+              this.code = code;
+            }
+          }
+
+          const fail = (code) => {
+            throw new DiagnosticFailure(code);
+          };
+          const numericId = (value) => {
+            const normalized = String(value || '').trim().replace(/^act_/, '');
+            return /^\d{5,30}$/.test(normalized) ? normalized : '';
+          };
+          const safeCodes = new Set([
+            'pixel_filter_edge_match',
+            'pixel_filter_edge_absent',
+            'pixel_filter_edge_ambiguous',
+            'pixel_filter_edge_mismatch',
+            'pixel_filter_edge_denied',
+            'pixel_filter_edge_unavailable',
+            'pixel_filter_edge_parameter_contract',
+            'pixel_filter_edge_edge_contract',
+            'pixel_filter_edge_response_contract',
+            'pixel_filter_edge_response_shape',
+            'pixel_filter_edge_account_contract',
+            'pixel_filter_edge_account_denied',
+            'pixel_filter_edge_account_unavailable',
+          ]);
+
+          const graphGet = async (path, query) => {
+            const url = new URL(`https://graph.facebook.com/${apiVersion}/${path}`);
+            for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
+            let response;
+            try {
+              response = await fetch(url, {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store',
+                redirect: 'error',
+                signal: AbortSignal.timeout(12_000),
+              });
+            } catch {
+              return { state: 'unavailable' };
+            }
+            if (!response || response.status === 408 || response.status === 429 || response.status >= 500) {
+              return { state: 'unavailable' };
+            }
+            let payload;
+            try {
+              payload = await response.json();
+            } catch {
+              return { state: 'response_shape' };
+            }
+            if (payload?.error?.is_transient === true) return { state: 'unavailable' };
+            if (!response.ok || payload?.error) {
+              const graphErrorCode = Number(payload?.error?.code);
+              const denied =
+                response.status === 401 ||
+                response.status === 403 ||
+                graphErrorCode === 10 ||
+                graphErrorCode === 102 ||
+                graphErrorCode === 190 ||
+                graphErrorCode === 200;
+              if (denied) return { state: 'denied' };
+              if (response.status === 400 || graphErrorCode === 100) return { state: 'parameter_contract' };
+              if (response.status === 404 || response.status === 405) return { state: 'edge_contract' };
+              return { state: 'response_contract' };
+            }
+            return { state: 'ok', payload };
+          };
+
+          const main = async () => {
+            if (
+              !token ||
+              !/^\d{5,30}$/.test(pixelId) ||
+              !/^\d{5,30}$/.test(accountId) ||
+              !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)
+            ) {
+              fail('pixel_filter_edge_response_contract');
+            }
+
+            const accountResult = await graphGet(`act_${accountId}`, { fields: 'id,business{id}' });
+            if (accountResult.state === 'denied') fail('pixel_filter_edge_account_denied');
+            if (accountResult.state === 'unavailable') fail('pixel_filter_edge_account_unavailable');
+            if (accountResult.state !== 'ok') fail('pixel_filter_edge_account_contract');
+            if (numericId(accountResult.payload?.id) !== accountId) fail('pixel_filter_edge_account_contract');
+            const businessId = numericId(accountResult.payload?.business?.id);
+            if (!businessId) fail('pixel_filter_edge_account_contract');
+
+            const pixelResult = await graphGet(`${businessId}/adspixels`, {
+              fields: 'id',
+              id_filter: pixelId,
+            });
+            if (pixelResult.state === 'denied') fail('pixel_filter_edge_denied');
+            if (pixelResult.state === 'unavailable') fail('pixel_filter_edge_unavailable');
+            if (pixelResult.state === 'parameter_contract') fail('pixel_filter_edge_parameter_contract');
+            if (pixelResult.state === 'edge_contract') fail('pixel_filter_edge_edge_contract');
+            if (pixelResult.state === 'response_contract') fail('pixel_filter_edge_response_contract');
+            if (pixelResult.state !== 'ok') fail('pixel_filter_edge_response_shape');
+
+            const pixels = pixelResult.payload;
+            if (!Array.isArray(pixels?.data)) fail('pixel_filter_edge_response_shape');
+            if (String(pixels?.paging?.next ?? '').trim() !== '') fail('pixel_filter_edge_ambiguous');
+            if (pixels.data.length === 0) fail('pixel_filter_edge_absent');
+            if (pixels.data.length > 1) fail('pixel_filter_edge_ambiguous');
+            const returnedPixelId = numericId(pixels.data[0]?.id);
+            if (!returnedPixelId) fail('pixel_filter_edge_response_shape');
+            if (returnedPixelId !== pixelId) fail('pixel_filter_edge_mismatch');
+            process.stdout.write('pixel_filter_edge_match\n');
+          };
+
+          try {
+            await main();
+          } catch (error) {
+            const code = error instanceof DiagnosticFailure && safeCodes.has(error.code)
+              ? error.code
+              : 'pixel_filter_edge_response_contract';
+            console.error(`Meta Ads Pixel filter edge diagnostic: ${code}`);
+            process.exitCode = 1;
+          }
+          NODE
