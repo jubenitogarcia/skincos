@@ -331,7 +331,7 @@ jobs:
           candidate_version=''
           for attempt in $(seq 1 12); do
             npx --yes wrangler@4.112.0 deployments list --config wrangler.toml --env staging --json >"${deployments}"
-            candidate_version="$(node -e '
+            candidate_version="$(node --input-type=commonjs -e '
           const fs = require("node:fs");
           const [deploymentsPath, expectedMessage] = process.argv.slice(1);
           const deployments = JSON.parse(fs.readFileSync(deploymentsPath, "utf8"));
@@ -360,7 +360,7 @@ jobs:
             sleep 5
           done
           [[ "${code}" == "200" ]] || { echo "temporary staging candidate is not serving the campaign (HTTP ${code})"; exit 1; }
-          invite_url="$(node -e '
+          invite_url="$(node --input-type=commonjs -e '
           const fs = require("node:fs");
           const path = require("node:path");
           const directory = process.argv[1];
