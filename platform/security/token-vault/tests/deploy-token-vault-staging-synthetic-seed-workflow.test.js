@@ -79,11 +79,11 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
 
   assert.match(
     authorization,
-    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ inputs\.target == 'staging' && secrets\.NOVOHAMBURGO_PAGE_ID \|\| '' \}\}/,
+    /META_ADS_NOVOHAMBURGO_PAGE_ID: \$\{\{ inputs\.target == 'staging' && secrets.novohamburgo_page_id \|\| '' \}\}/,
   );
   assert.match(
     authorization,
-    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ inputs\.target == 'staging' && secrets\.BARRASHOPPINGSUL_PAGE_ID \|\| '' \}\}/,
+    /META_ADS_BARRASHOPPPINGSUL_PAGE_ID: \$\{\{ inputs\.target == 'staging' && secrets.barrashopppingsul_page_id \|\| '' \}\}/,
   );
   assert.match(
     authorization,
