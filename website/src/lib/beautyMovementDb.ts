@@ -22,6 +22,7 @@ import type {
 import {
     BEAUTY_MOVEMENT_OUTCOME_KEYS,
     BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION,
+    BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS,
     getBeautyMovementOffer,
     resolveBeautyMovementOutcome,
     type BeautyMovementOffer,
@@ -558,7 +559,7 @@ function renderReward(row: InviteRow): BeautyMovementPublicReward | null {
 
 function renderStoredOffer(row: InviteRow): BeautyMovementOffer | null {
     if (!row.outcome_key || !BEAUTY_MOVEMENT_OUTCOME_KEYS.includes(row.outcome_key)) return null;
-    if (row.outcome_protocol_version !== BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION) return null;
+    if (!BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS.includes(row.outcome_protocol_version as (typeof BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS)[number])) return null;
     const offer = getBeautyMovementOffer(row.outcome_key);
     if (!row.outcome_snapshot_json) return offer;
     try {
@@ -584,6 +585,11 @@ async function resolveAndPersistOutcome(params: {
     const resolved = resolveBeautyMovementOutcome({ palette: params.row.palette, selections });
     const snapshot = JSON.stringify(resolved.offer);
     if (params.row.outcome_key) {
+        const stored = renderStoredOffer(params.row);
+        if (!stored) throw new Error("beauty_movement_outcome_mismatch");
+        // A prior protocol is immutable evidence. Do not reinterpret an old
+        // reading with the new affinity table during replay or confirmation.
+        if (params.row.outcome_protocol_version !== BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION) return stored;
         if (
             params.row.outcome_key !== resolved.outcomeKey ||
             params.row.outcome_protocol_version !== resolved.protocolVersion ||

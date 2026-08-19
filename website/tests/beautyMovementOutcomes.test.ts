@@ -32,6 +32,7 @@ test("resolver is deterministic, order-independent, and rejects incomplete readi
     });
     assert.equal(first.outcomeKey, second.outcomeKey);
     assert.deepEqual(first.scores, second.scores);
+    assert.match(first.rationale, /Filler|Harmonia|afinidade|Empate/);
     assert.throws(
         () => resolveBeautyMovementOutcome({ palette: "conexao", selections: { beleza: selections.beleza, movimento: selections.movimento } }),
         /beauty_movement_outcome_requires_three_cards/,
@@ -46,7 +47,14 @@ test("the generated matrix covers all current palettes and all four commercial o
         assert.deepEqual([...outcomes].sort(), [...BEAUTY_MOVEMENT_OUTCOME_KEYS].sort(), palette);
     }
     const counts = Object.fromEntries(BEAUTY_MOVEMENT_OUTCOME_KEYS.map((key) => [key, matrix.filter((entry) => entry.outcomeKey === key).length]));
-    assert.ok(Math.max(...Object.values(counts)) - Math.min(...Object.values(counts)) <= 24, JSON.stringify(counts));
+    assert.ok(Math.max(...Object.values(counts)) - Math.min(...Object.values(counts)) <= 10, JSON.stringify(counts));
+    assert.ok(matrix.every((entry) => entry.rationale.length > 20), "every combination needs an editorial rationale");
+    const ties = matrix.filter((entry) => {
+        const winner = entry.scores.find((score) => score.outcomeKey === entry.outcomeKey)!;
+        return entry.scores.filter((score) => score.score === winner.score).length > 1;
+    });
+    assert.equal(ties.length, 1, "only the intentionally relational/luminosity tie remains");
+    assert.match(ties[0]!.rationale, /Empate/);
 });
 
 test("structured offers preserve only the supplied commercial quantities and prices", () => {

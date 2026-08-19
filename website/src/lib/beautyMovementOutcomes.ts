@@ -13,7 +13,12 @@ import {
  * Protocol version for the card-to-offer contract. Bump this when the
  * commercial catalog, affinity table, scoring or tie-break rule changes.
  */
-export const BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION = "beauty-movement-outcomes-v1" as const;
+export const BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION = "beauty-movement-outcomes-v1" as const;
+export const BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION = "beauty-movement-outcomes-v2" as const;
+export const BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS = [
+    BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION,
+    BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION,
+] as const;
 
 export const BEAUTY_MOVEMENT_OUTCOME_KEYS = [
     "elleva_upgrade",
@@ -61,13 +66,16 @@ export type BeautyMovementResolvedOutcome = {
     scores: readonly BeautyMovementOutcomeScore[];
     outcomeKey: BeautyMovementOutcomeKey;
     offer: BeautyMovementOffer;
+    rationale: string;
 };
 
 export type BeautyMovementCombination = {
     palette: BeautyMovementPalette;
     selections: Readonly<Record<BeautyMovementAct, string>>;
     cards: readonly BeautyMovementCard[];
+    scores: readonly BeautyMovementOutcomeScore[];
     outcomeKey: BeautyMovementOutcomeKey;
+    rationale: string;
 };
 
 const outcome = (key: BeautyMovementOutcomeKey): BeautyMovementOffer => {
@@ -158,8 +166,26 @@ type Synergy = {
     bonus: number;
 };
 
-const SYNERGIES: readonly Synergy[] = [
+export const BEAUTY_MOVEMENT_SYNERGIES: readonly Synergy[] = [
     { outcomeKey: "elleva_upgrade", cards: ["movimento-constancia", "celebracao-renovacao"], bonus: 3 },
+    // Potência + Renovação tells a clearer firmness/renewal story than a
+    // near-tie between Elleva and the luminosity archetype.
+    { outcomeKey: "elleva_upgrade", cards: ["movimento-potencia", "celebracao-renovacao"], bonus: 2 },
+    // Radiância + Confiança is the strongest editorial bridge to luminosity;
+    // keep it explicit so a tie never falls to the generic tie-break order.
+    { outcomeKey: "skinbooster_diamond_unlock", cards: ["beleza-radiancia", "celebracao-confianca"], bonus: 2 },
+    // Presence becomes a luminosity story when the final card is Brilho; this
+    // resolves the only three-way visual/relational tie without using palette.
+    { outcomeKey: "skinbooster_diamond_unlock", cards: ["beleza-presenca", "celebracao-brilho"], bonus: 2 },
+    // Autoria + Constância describes a self-authored, sustained ritual; it
+    // should not lose to a one-point filler/structure tie.
+    { outcomeKey: "elleva_upgrade", cards: ["beleza-autoria", "movimento-constancia"], bonus: 2 },
+    // Self-care with Potência is the small bridge to Structure & Stimulus;
+    // stronger Brilho or Renovação signals still win their own archetypes.
+    { outcomeKey: "sculptra_classic_unlock", cards: ["beleza-autocuidado", "movimento-potencia"], bonus: 2 },
+    // Autocuidado + Ritmo carries the same sustained-stimulus story without
+    // requiring the celebration card to be Impulso.
+    { outcomeKey: "sculptra_classic_unlock", cards: ["beleza-autocuidado", "movimento-ritmo"], bonus: 1 },
     { outcomeKey: "filler_double", cards: ["beleza-presenca", "movimento-sintonia"], bonus: 2 },
     { outcomeKey: "filler_double", cards: ["beleza-harmonia", "celebracao-encontro"], bonus: 2 },
     { outcomeKey: "sculptra_classic_unlock", cards: ["beleza-autoria", "movimento-potencia"], bonus: 3 },
@@ -175,6 +201,43 @@ const TIE_BREAK_ORDER: readonly BeautyMovementOutcomeKey[] = [
     "sculptra_classic_unlock",
     "skinbooster_diamond_unlock",
 ] as const;
+
+function getMatchedSynergies(
+    cards: readonly BeautyMovementCard[],
+    outcomeKey: BeautyMovementOutcomeKey,
+): readonly Synergy[] {
+    const cardIds = new Set(cards.map((card) => card.id));
+    return BEAUTY_MOVEMENT_SYNERGIES.filter(
+        (synergy) => synergy.outcomeKey === outcomeKey && cardIds.has(synergy.cards[0]) && cardIds.has(synergy.cards[1]),
+    );
+}
+
+function joinCardTitles(titles: readonly string[]): string {
+    if (titles.length <= 1) return titles[0] ?? "as cartas escolhidas";
+    if (titles.length === 2) return `${titles[0]} e ${titles[1]}`;
+    return `${titles.slice(0, -1).join(", ")} e ${titles[titles.length - 1]}`;
+}
+
+export function explainBeautyMovementOutcome(resolved: Pick<BeautyMovementResolvedOutcome, "cards" | "scores" | "outcomeKey" | "offer">): string {
+    const winner = resolved.scores.find((score) => score.outcomeKey === resolved.outcomeKey)!;
+    const tied = resolved.scores.filter((score) => score.score === winner.score);
+    const affinitySignals = resolved.cards
+        .map((card) => ({ card, score: BEAUTY_MOVEMENT_CARD_AFFINITIES[card.id]![resolved.outcomeKey] }))
+        .filter((entry) => entry.score > 0)
+        .sort((left, right) => right.score - left.score || left.card.title.localeCompare(right.card.title, "pt-BR"));
+    const signalTitles = affinitySignals.slice(0, 2).map((entry) => entry.card.title);
+    const matched = getMatchedSynergies(resolved.cards, resolved.outcomeKey);
+
+    if (tied.length > 1) {
+        const tiedTitles = tied.map((score) => BEAUTY_MOVEMENT_OFFERS[score.outcomeKey].title);
+        return `Empate entre ${joinCardTitles(tiedTitles)}; ${resolved.offer.title} vence pela ordem de desempate estável, apoiado por ${joinCardTitles(signalTitles)}.`;
+    }
+    if (matched.length > 0) {
+        const synergyTitles = matched[0]!.cards.map((cardId) => resolved.cards.find((card) => card.id === cardId)?.title ?? cardId);
+        return `${joinCardTitles(synergyTitles)} reforçam ${resolved.offer.title}; as demais afinidades mantêm a leitura coerente.`;
+    }
+    return `${joinCardTitles(signalTitles)} concentram a maior afinidade em ${resolved.offer.title}.`;
+}
 
 function sortedScores(scores: Record<BeautyMovementOutcomeKey, number>): BeautyMovementOutcomeScore[] {
     return TIE_BREAK_ORDER
@@ -205,13 +268,13 @@ export function resolveBeautyMovementOutcome(params: {
         for (const key of BEAUTY_MOVEMENT_OUTCOME_KEYS) scores[key] += affinity[key];
     }
     const cardIds = new Set(cards.map((card) => card.id));
-    for (const synergy of SYNERGIES) {
+    for (const synergy of BEAUTY_MOVEMENT_SYNERGIES) {
         if (cardIds.has(synergy.cards[0]) && cardIds.has(synergy.cards[1])) scores[synergy.outcomeKey] += synergy.bonus;
     }
     const orderedScores = sortedScores(scores);
     const winner = orderedScores[0]!;
     const selectionRecord = Object.fromEntries(BEAUTY_MOVEMENT_ACTS.map((act, index) => [act, cards[index]!.id])) as Record<BeautyMovementAct, string>;
-    return {
+    const resolved = {
         protocolVersion: BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION,
         palette: params.palette,
         selections: selectionRecord,
@@ -220,6 +283,7 @@ export function resolveBeautyMovementOutcome(params: {
         outcomeKey: winner.outcomeKey,
         offer: BEAUTY_MOVEMENT_OFFERS[winner.outcomeKey],
     };
+    return { ...resolved, rationale: explainBeautyMovementOutcome(resolved) };
 }
 
 export function enumerateBeautyMovementCombinations(): readonly BeautyMovementCombination[] {
@@ -232,7 +296,14 @@ export function enumerateBeautyMovementCombinations(): readonly BeautyMovementCo
                 for (const celebration of cardsByAct[2]!) {
                     const selections = { beleza: beauty.id, movimento: movement.id, celebracao: celebration.id } as const;
                     const resolved = resolveBeautyMovementOutcome({ palette, selections });
-                    combinations.push({ palette, selections, cards: resolved.cards, outcomeKey: resolved.outcomeKey });
+                    combinations.push({
+                        palette,
+                        selections,
+                        cards: resolved.cards,
+                        scores: resolved.scores,
+                        outcomeKey: resolved.outcomeKey,
+                        rationale: resolved.rationale,
+                    });
                 }
             }
         }
@@ -251,15 +322,28 @@ export function formatBeautyMovementCombinationMapMarkdown(): string {
         key,
         matrix.filter((entry) => entry.outcomeKey === key).length,
     ] as const);
+    const paletteCounts = ["radiancia", "ritmo", "conexao"].map((palette) => {
+        const entries = matrix.filter((entry) => entry.palette === palette);
+        return [
+            palette,
+            ...BEAUTY_MOVEMENT_OUTCOME_KEYS.map((key) => entries.filter((entry) => entry.outcomeKey === key).length),
+        ] as const;
+    });
     const rows = matrix.map((entry) => {
         const cardTitles = entry.cards.map((card) => card.title).join(" / ");
-        return `| ${entry.palette} | ${entry.selections.beleza} | ${entry.selections.movimento} | ${entry.selections.celebracao} | ${cardTitles} | ${entry.outcomeKey} |`;
+        const winner = entry.scores.find((score) => score.outcomeKey === entry.outcomeKey)!;
+        const runner = entry.scores.find((score) => score.outcomeKey !== entry.outcomeKey)!;
+        return `| ${entry.palette} | ${entry.selections.beleza} | ${entry.selections.movimento} | ${entry.selections.celebracao} | ${cardTitles} | ${entry.outcomeKey} | ${winner.score}–${runner.score} | ${entry.rationale} |`;
     });
     return [
         "# Matriz de combinações — Cartas da Beleza",
         "",
-        `Versão do resolver: \`${BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION}\`  `,
+        `Versão do resolver: \`${BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION}\``,
         "Resolver puro, determinístico e sem dados pessoais. A paleta escolhe o deck; não escolhe o resultado.",
+        "",
+        "## Revisão editorial",
+        "",
+        "A matriz foi revisada para que a coerência da história venha antes da igualdade matemática. Potência + Renovação reforça Firmeza & Renovação; Radiância/Presença + Confiança/Brilho reforçam Hidratação & Luminosidade; Autoria/Constância reforça continuidade; Autocuidado + Potência/Ritmo resolve a leitura de estímulo sem depender do desempate. A paleta continua enviesando o deck por semântica, mas cada paleta alcança os quatro outcomes.",
         "",
         "## Regra de desempate",
         "",
@@ -271,10 +355,16 @@ export function formatBeautyMovementCombinationMapMarkdown(): string {
         "",
         ...counts.map(([key, count]) => `- \`${key}\`: ${count}`),
         "",
+        "Distribuição por paleta (a assimetria é semântica; nenhum outcome é bloqueado):",
+        "",
+        "| Paleta | Elleva | Preenchimento | Restylane Classic + Sculptra | Skinbooster + Diamond |",
+        "| --- | ---: | ---: | ---: | ---: |",
+        ...paletteCounts.map(([palette, ...values]) => `| ${palette} | ${values.join(" | ")} |`),
+        "",
         "## Matriz completa",
         "",
-        "| Paleta | Beleza | Movimento | Celebração | Títulos | Oferta desbloqueada |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Paleta | Beleza | Movimento | Celebração | Títulos | Oferta desbloqueada | Pontuação | Justificativa editorial |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
         ...rows,
         "",
     ].join("\n");
