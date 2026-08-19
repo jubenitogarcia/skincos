@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import BeautyMovementExperience, {
     type BeautyMovementExperienceInitialState,
     type BeautyMovementReveal,
 } from "@/components/BeautyMovementExperience";
+import {
+    BEAUTY_MOVEMENT_OUTCOME_KEYS,
+    enumerateBeautyMovementCombinations,
+    resolveBeautyMovementOutcome,
+    type BeautyMovementOutcomeKey,
+} from "@/lib/beautyMovementOutcomes";
 
 const INITIAL_PREVIEW_STATE: BeautyMovementExperienceInitialState = {
     invite: {
@@ -13,20 +19,8 @@ const INITIAL_PREVIEW_STATE: BeautyMovementExperienceInitialState = {
         emailRegistered: false,
     },
     palette: "radiancia",
-    benefit: {
-        type: "free_procedure",
-        procedureName: "Lavieen",
-        discount: null,
-        displayText: "Um cuidado de renovação para celebrar seu momento.",
-        validity: "Válido até 30/09/2026.",
-        rules: "Uso pessoal e intransferível; agendamento sujeito à disponibilidade da unidade.",
-        termsVersion: "prévia local",
-    },
-    velocity: {
-        enabled: true,
-        label: "Aula-cortesia Velocity",
-        text: "Sua aula será confirmada pela equipe da unidade após o contato.",
-    },
+    offer: null,
+    velocity: null,
     reveals: [],
     confirmed: false,
     campaign: {
@@ -46,7 +40,7 @@ function cloneInitialPreviewState(): BeautyMovementExperienceInitialState {
     return {
         ...INITIAL_PREVIEW_STATE,
         invite: { ...INITIAL_PREVIEW_STATE.invite },
-        benefit: INITIAL_PREVIEW_STATE.benefit ? { ...INITIAL_PREVIEW_STATE.benefit, discount: INITIAL_PREVIEW_STATE.benefit.discount ? { ...INITIAL_PREVIEW_STATE.benefit.discount } : null } : null,
+        offer: null,
         velocity: INITIAL_PREVIEW_STATE.velocity ? { ...INITIAL_PREVIEW_STATE.velocity } : null,
         reveals: [],
         campaign: { ...INITIAL_PREVIEW_STATE.campaign },
@@ -61,6 +55,24 @@ function cloneInitialPreviewState(): BeautyMovementExperienceInitialState {
 export default function BeautyMovementLocalPreview() {
     const [state, setState] = useState<BeautyMovementExperienceInitialState>(cloneInitialPreviewState);
 
+    useEffect(() => {
+        if (process.env.NODE_ENV === "production") return;
+        const hostname = window.location.hostname;
+        if (hostname !== "localhost" && hostname !== "127.0.0.1") return;
+        const requested = new URLSearchParams(window.location.search).get("outcome") as BeautyMovementOutcomeKey | null;
+        if (!requested || !BEAUTY_MOVEMENT_OUTCOME_KEYS.includes(requested)) return;
+        const combination = enumerateBeautyMovementCombinations().find((entry) => entry.outcomeKey === requested);
+        if (!combination) return;
+        const resolved = resolveBeautyMovementOutcome({ palette: combination.palette, selections: combination.selections });
+        setState((current) => ({
+            ...current,
+            palette: combination.palette,
+            reveals: combination.cards.map((card, index) => ({ actIndex: index + 1, cardId: card.id })),
+            confirmed: true,
+            offer: resolved.offer,
+        }));
+    }, []);
+
     function reveal(actIndex: number, cardId: string) {
         const nextReveals: BeautyMovementReveal[] = [
             ...state.reveals.filter((reveal) => reveal.actIndex !== actIndex),
@@ -71,7 +83,17 @@ export default function BeautyMovementLocalPreview() {
     }
 
     function confirm() {
-        setState((current) => ({ ...current, confirmed: true }));
+        setState((current) => {
+            const selections = current.reveals.reduce<Record<string, string>>((result, reveal) => {
+                const act = ["beleza", "movimento", "celebracao"][reveal.actIndex - 1];
+                if (act) result[act] = reveal.cardId;
+                return result;
+            }, {});
+            const resolved = current.reveals.length === 3
+                ? resolveBeautyMovementOutcome({ palette: current.palette, selections })
+                : null;
+            return { ...current, confirmed: true, offer: resolved?.offer ?? current.offer ?? null };
+        });
         return { confirmed: true };
     }
 

@@ -36,14 +36,12 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /aria-busy=\{tableIsBusy \|\| undefined\}/);
     assert.match(experience, /beauty_movement_act_view/);
     assert.match(experience, /requestAnimationFrame\(animate\)/);
-    assert.match(experience, /scrollIntoView\(\{ behavior: "auto"/);
-    assert.match(experience, /function scrollToElement\(target: HTMLElement \| null, extraOffset = 0, visibleHeaderOffset\?: number\)/);
-    assert.match(experience, /const readVisibleHeaderOffset = \(\) =>/);
-    assert.match(experience, /const headerOffset =\s*visibleHeaderOffset \?\?/);
-    assert.match(experience, /target\.scrollIntoView\(\{ behavior: "auto", block: "start" \}\);\s*window\.scrollTo\(\{ top: targetTop, behavior: "auto" \}\)/);
-    assert.match(experience, /const frameTargetTop = Math\.max\(0, documentTargetTop - readVisibleHeaderOffset\(\) - extraOffset\)/);
-    assert.match(experience, /scrollToElement\(target, titlePeek, headerOffset\)/);
-    assert.match(experience, /const titlePeek =/);
+    assert.match(experience, /function animateTableScroll\(targetTop: number \| null\)/);
+    assert.match(experience, /const resolvedTargetTop = Math\.max\(0, targetTop\)/);
+    assert.match(experience, /window\.scrollTo\(0, startTop \+ \(resolvedTargetTop - startTop\) \* easeInOut\(progress\)\)/);
+    assert.doesNotMatch(experience, /scrollIntoView\(/);
+    assert.doesNotMatch(experience, /addEventListener\("(?:wheel|touchstart|pointerdown|keydown)", interruptOnUserIntent/);
+    assert.match(experience, /animateTableScroll\(getTableScrollTarget\(\)\)/);
     assert.match(experience, /function getTableScrollTarget\(\): number \| null/);
     assert.match(experience, /const deck = target\.querySelector<HTMLElement>\(`\.\$\{styles\.deckStage\}`\)/);
     assert.match(experience, /const deckBottomPadding = Math\.max\(28, Math\.round\(window\.innerHeight \* 0\.08\)\)/);
@@ -53,9 +51,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /const initialDealScrollActiveRef = useRef\(false\)/);
     assert.match(experience, /function startInitialDealScroll\(\)/);
     assert.match(experience, /window\.requestAnimationFrame\(follow\)/);
-    assert.match(experience, /function stopInitialDealScroll\(\)/);
+    assert.match(experience, /(?:function stopInitialDealScroll\(\)|const stopInitialDealScroll = useCallback\(\(\) => \{)/);
     assert.match(experience, /cancelScrollAnimation\(\);\s*stopInitialDealScroll\(\);/);
-    assert.match(experience, /scrollToElement\(target, titlePeek, headerOffset\)/);
     assert.match(experience, /prefers-reduced-motion/);
     assert.match(experience, /import \{ BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate \}/);
     assert.match(experience, /AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION\.autoAdvanceMs \/ 1_000/);
@@ -210,7 +207,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
         experience.indexOf("function handleDeckKeyDown"),
     );
     assert.match(initialDeal, /setCurrentIntroStage\("entering"\);\s*startInitialDealScroll\(\);/);
-    assert.match(initialDeal, /setCurrentHandStage\("ready"\);\s*\/\/ Let the ready-state DOM commit once before[\s\S]*window\.requestAnimationFrame\(stopInitialDealScroll\)/);
+    assert.match(initialDeal, /setCurrentHandStage\("ready"\);\s*\/\/ Let the ready-state DOM commit once before[\s\S]*window\.requestAnimationFrame\(finishDealScroll\)/);
+    assert.match(experience, /function finishDealScroll\(\)[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*scrollToTable\(\)/);
     assert.doesNotMatch(initialDeal, /addEventListener\("(?:wheel|touchstart|pointerdown|keydown)"/);
     assert.match(experience, /function handleDeckKeyDown\(event: ReactKeyboardEvent<HTMLButtonElement>\)/);
     assert.match(experience, /event\.key !== "Enter" && event\.key !== " " && event\.key !== "Spacebar"/);
@@ -264,7 +262,7 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /--bm-muted: #5d7168/i);
     assert.match(styles, /--bm-line: #c5b58f/i);
     assert.match(styles, /--bm-yellow: #e5bd31/i);
-    assert.doesNotMatch(styles, /Georgia|--bm-plum|--bm-coral|linear-gradient/i);
+    assert.doesNotMatch(styles, /Georgia|--bm-plum|--bm-coral/i);
     assert.match(styles, /\.rhythmThread \{/);
     assert.doesNotMatch(styles, /\.heroKicker/);
     assert.match(styles, /--font-beauty-movement-editorial/);
@@ -281,6 +279,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(styles, /@keyframes deckStageExpand/);
     assert.match(styles, /@keyframes deckStageCollect/);
     assert.match(styles, /@keyframes deckStageReceive/);
+    assert.match(styles, /\.tableStage\[data-hand-stage="finale"\]\[data-finale-stage="merging"\] \.deckStage[\s\S]*animation: deckStageFinaleVanish var\(--bm-finale-merge-ms\)/);
+    assert.match(styles, /@keyframes deckStageFinaleVanish[\s\S]*opacity: 0[\s\S]*filter: blur\(10px\)/);
     assert.match(styles, /@keyframes cardReturnToDeck/);
     assert.match(styles, /@keyframes cardSelectedReturnToDeck/);
     assert.match(styles, /@keyframes cardFlipToDeck/);
@@ -448,6 +448,8 @@ test("continuous experience reuses the real shell and keeps the special-card fin
     assert.match(experience, /function renderSpecialCard/);
     assert.match(experience, /type SpecialCardAction = "none" \| "confirm" \| "reopen"/);
     assert.match(experience, /function renderSpecialCard\(\s*revealed: boolean,\s*action: SpecialCardAction = "none",\s*settled = false,\s*deferRevealContent = false,/);
+    assert.match(experience, /const kind: SpecialCardKind = revealed\s*\? hasCourtesyClass\s*\? "velocity"\s*:\s*offer\s*\? "offer"/);
+    assert.match(experience, /kind === "velocity" && offer !== null/);
     assert.match(experience, /className=\{styles\.specialCardRevealAction\}/);
     assert.match(experience, /Garantir presente e confirmar presença/);
     assert.match(experience, /if \(!operationalConsent && !isLocalPreview\) return;/);

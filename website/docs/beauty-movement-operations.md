@@ -13,11 +13,14 @@ gates abaixo estejam concluídos.
 - O importador aceita exclusivamente a lista sanitizada documentada no próprio
   comando. CPF, procedimentos, histórico clínico e colunas não reconhecidas são
   rejeitados antes de qualquer escrita.
-- A paleta é o único resultado permitido de uma eventual classificação privada.
-  Nenhum dado de procedimento é enviado ao D1 ou ao navegador.
-- A condição comercial é propriedade do `reward_id` pré-configurado no convite.
-  Cartas jamais a calculam, alteram ou apresentam como prêmio. O catálogo
-  privado também valida o procedimento contra um snapshot canônico do CRM.
+- A paleta apenas escolhe o deck editorial; ela não escolhe nem pré-reserva a
+  oferta. Nenhum dado pessoal, procedimento ou histórico clínico é enviado ao
+  D1 ou ao navegador para decidir o resultado.
+- A condição comercial moderna é propriedade do resolver determinístico das
+  três cartas. `reward_id` é opcional na importação e só é lido para manter
+  compatibilidade com convites legados; nunca é aceito do navegador como
+  autoridade. O resultado persistido inclui `outcome_key`, versão do protocolo
+  e snapshot estruturado da oferta.
 
 ## Infraestrutura exigida antes de staging
 
@@ -29,7 +32,7 @@ gates abaixo estejam concluídos.
 3. Configurar `BEAUTY_MOVEMENT_ALLOWED_ORIGINS` com a origem exata do ambiente.
 4. Declarar `migrations_dir = "migrations/beauty-movement"` na binding dedicada
    e aplicar as migrations `0001_initial.sql`, `0002_rewards.sql` e
-   `0003_reward_integrity.sql` pelo mecanismo oficial do Wrangler. O helper
+   `0003_reward_integrity.sql` e `0004_card_outcomes.sql` pelo mecanismo oficial do Wrangler. O helper
    local executa `wrangler d1 migrations apply --local`; nunca aplique os SQLs
    manualmente em sequência, pois a segunda migration possui alterações
    aditivas. Registrar checkpoint/export e validar schema. Rollback operacional
@@ -43,7 +46,7 @@ worktree. Sem `--apply`, ele só valida e produz contagens redigidas.
 
 ```text
 npm run beauty-movement:import -- --dry-run --input <caminho-privado>
-  --reward-catalog <json-privado> --procedure-catalog <json-privado>
+  [--reward-catalog <json-privado> --procedure-catalog <json-privado>]
   --campaign <id> --campaign-config <json-privado>
   --campaign-ends-at <ISO-8601>
 ```
@@ -128,8 +131,9 @@ repita a carga sem inspecionar o resumo privado.
       comerciais aprovados para a planilha sanitizada.
 - [ ] Catálogo privado de recompensas aprovado por família, com procedimento
       canônico, tipo de desconto e `approvedAt`.
-- [ ] CSV sanitizado referencia apenas `reward_id` e `velocity_benefit`; nenhum
-      procedimento, CPF ou histórico clínico foi incluído.
+- [ ] CSV sanitizado pode omitir `reward_id`; quando presente, ele é tratado
+      apenas como compatibilidade. Nenhum procedimento, CPF ou histórico clínico
+      foi incluído.
 - [ ] Gate de privacidade concluído para qualquer origem de paleta baseada em
       dados pré-existentes.
 - [ ] Migration e smoke com convites sintéticos concluídos em staging.
