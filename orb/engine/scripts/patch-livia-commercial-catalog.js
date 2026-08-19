@@ -7,6 +7,8 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  CRM_COMMERCIAL_CATALOG_AUTH_TYPE,
+  CRM_COMMERCIAL_CATALOG_CREDENTIAL,
   CRM_COMMERCIAL_CATALOG_PATH,
   CRM_COMMERCIAL_CATALOG_SCHEMA_VERSION,
   CRM_COMMERCIAL_CATALOG_TOOL_ID,
@@ -100,14 +102,11 @@ const CONTEXT_CODE = [
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function nodeByName(workflow, name) { return workflow.nodes.find((node) => node.name === name); }
 
-function resolveCrmBearerCredential() {
-  const metaPath = path.join(__dirname, '..', 'workflows', 'meta-ads-publish.current.json');
-  if (!fs.existsSync(metaPath)) throw new Error('CRM bearer credential source artifact is missing.');
-  const metaWorkflow = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-  const fetchNode = metaWorkflow.nodes.find((node) => node.name === 'Fetch CRM Offer Context');
-  const credential = fetchNode?.credentials?.httpBearerAuth;
-  if (!credential?.id || !credential?.name) throw new Error('Existing CRM bearer credential could not be resolved from the Meta Ads adapter.');
-  return { id: credential.id, name: credential.name };
+function resolveCrmHeaderCredential() {
+  // Keep this explicit: deriving the credential from the Meta Ads workflow was
+  // both cross-workflow coupling and the source of the unsupported Bearer
+  // shape. The credential is provisioned in n8n as an httpHeaderAuth record.
+  return { ...CRM_COMMERCIAL_CATALOG_CREDENTIAL };
 }
 
 function cleanAgentText(value) {
@@ -189,13 +188,13 @@ function createCatalogTool(credential) {
       method: 'GET',
       url: `={{ '${CRM_COMMERCIAL_CATALOG_URL}?units=' + encodeURIComponent($("${CONTEXT_NODE_NAME}").first().json.crmCatalogUnits.map((unit) => unit.crmUnit).join(',')) }}`,
       authentication: 'genericCredentialType',
-      genericAuthType: 'httpBearerAuth',
+      genericAuthType: CRM_COMMERCIAL_CATALOG_AUTH_TYPE,
       sendQuery: false,
       sendHeaders: false,
       sendBody: false,
       options: { timeout: 20000 },
     },
-    credentials: { httpBearerAuth: credential },
+    credentials: { [CRM_COMMERCIAL_CATALOG_AUTH_TYPE]: credential },
   };
 }
 
@@ -225,7 +224,8 @@ function validate(workflow) {
   if (context.type !== 'n8n-nodes-base.code' || !String(context.parameters?.jsCode || '').includes('Get Credential Tokens') || !String(context.parameters?.jsCode || '').includes('barra-shopping-sul') || !String(context.parameters?.jsCode || '').includes('novo-hamburgo')) {
     throw new Error('Livia CRM catalog context is not deterministic or token-backed.');
   }
-  if (tool.type !== '@n8n/n8n-nodes-langchain.toolHttpRequest' || tool.parameters?.method !== 'GET' || tool.parameters?.authentication !== 'genericCredentialType' || tool.parameters?.genericAuthType !== 'httpBearerAuth' || tool.parameters?.sendBody !== false || !tool.credentials?.httpBearerAuth?.id || !String(tool.parameters?.url || '').includes(CRM_COMMERCIAL_CATALOG_PATH)) {
+  const credential = tool.credentials?.[CRM_COMMERCIAL_CATALOG_AUTH_TYPE];
+  if (tool.type !== '@n8n/n8n-nodes-langchain.toolHttpRequest' || tool.parameters?.method !== 'GET' || tool.parameters?.authentication !== 'genericCredentialType' || tool.parameters?.genericAuthType !== CRM_COMMERCIAL_CATALOG_AUTH_TYPE || tool.parameters?.sendBody !== false || !credential?.id || credential.id !== CRM_COMMERCIAL_CATALOG_CREDENTIAL.id || credential.name !== CRM_COMMERCIAL_CATALOG_CREDENTIAL.name || tool.credentials?.httpBearerAuth || !String(tool.parameters?.url || '').includes(CRM_COMMERCIAL_CATALOG_PATH)) {
     throw new Error('Livia CRM Commercial Catalog tool configuration is incomplete.');
   }
   if (/\$fromAI|placeholderDefinitions|\{unit\}/i.test(JSON.stringify(tool.parameters || {}))) throw new Error('CRM catalog tool must not expose a model-controlled unit placeholder.');
@@ -263,7 +263,7 @@ function patchWorkflow(workflow) {
   const candidate = clone(workflow);
   if (candidate?.id !== WORKFLOW_ID) throw new Error('Unexpected Livia workflow id.');
   if (!Array.isArray(candidate.nodes)) throw new Error('Livia workflow nodes are missing.');
-  const credential = resolveCrmBearerCredential();
+  const credential = resolveCrmHeaderCredential();
 
   candidate.nodes = candidate.nodes.filter((entry) => entry.name !== 'Knowledge' && entry.type !== 'n8n-nodes-base.googleSheetsTool' && entry.name !== CONTEXT_NODE_NAME && entry.id !== CONTEXT_NODE_ID && entry.name !== CRM_COMMERCIAL_CATALOG_TOOL_NAME && entry.id !== CRM_COMMERCIAL_CATALOG_TOOL_ID);
   candidate.nodes.push(createContextNode(), createCatalogTool(credential));

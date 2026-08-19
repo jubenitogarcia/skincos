@@ -10,6 +10,14 @@ const CRM_COMMERCIAL_CATALOG_UNIT_QUERY_URL = `${CRM_COMMERCIAL_CATALOG_URL}?uni
 const CRM_COMMERCIAL_CATALOG_SCHEMA_VERSION = 'crm-commercial-catalog/v1';
 const CRM_COMMERCIAL_CATALOG_TOOL_NAME = 'CRM Commercial Catalog';
 const CRM_COMMERCIAL_CATALOG_TOOL_ID = 'crm-commercial-catalog';
+// n8n's LangChain toolHttpRequest does not implement httpBearerAuth. The
+// existing CRM credential stores the bearer value as an Authorization header,
+// which is the supported generic credential shape for this node type.
+const CRM_COMMERCIAL_CATALOG_AUTH_TYPE = 'httpHeaderAuth';
+const CRM_COMMERCIAL_CATALOG_CREDENTIAL = Object.freeze({
+  id: 'metaPublishCrmOfferContextHeader',
+  name: 'Meta Ads Publish - CRM Offer Context Header',
+});
 const CRM_COMMERCIAL_CATALOG_UNITS = Object.freeze({
   bss: 'barra-shopping-sul',
   nh: 'novo-hamburgo',
@@ -23,5 +31,7 @@ module.exports = {
   CRM_COMMERCIAL_CATALOG_SCHEMA_VERSION,
   CRM_COMMERCIAL_CATALOG_TOOL_NAME,
   CRM_COMMERCIAL_CATALOG_TOOL_ID,
+  CRM_COMMERCIAL_CATALOG_AUTH_TYPE,
+  CRM_COMMERCIAL_CATALOG_CREDENTIAL,
   CRM_COMMERCIAL_CATALOG_UNITS,
 };
