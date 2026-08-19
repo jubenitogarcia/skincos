@@ -4,6 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const {
+  CRM_COMMERCIAL_CATALOG_AUTH_TYPE,
+  CRM_COMMERCIAL_CATALOG_CREDENTIAL,
+} = require('../scripts/lib/crm-commercial-catalog-contract');
 const { patchWorkflow, validate } = require('../scripts/patch-livia-commercial-catalog');
 
 const workflowPath = path.join(__dirname, '..', 'workflows', 'livia', 'livia.current.json');
@@ -31,7 +35,9 @@ test('Livia receives one deterministic read-only CRM catalog tool and no legacy 
   assert.match(tool.parameters.url, /\/api\/atendimento\/internal\/commercial\/catalog\?units=/);
   assert.match(tool.parameters.url, /Prepare Livia CRM Catalog Context/);
   assert.doesNotMatch(JSON.stringify(tool.parameters), /\$fromAI|placeholderDefinitions|\{unit\}/i);
-  assert.deepEqual(tool.credentials.httpBearerAuth, { id: '4r0IbVgjAaSOQREF', name: 'Bearer Auth account' });
+  assert.equal(tool.parameters.genericAuthType, CRM_COMMERCIAL_CATALOG_AUTH_TYPE);
+  assert.deepEqual(tool.credentials[CRM_COMMERCIAL_CATALOG_AUTH_TYPE], CRM_COMMERCIAL_CATALOG_CREDENTIAL);
+  assert.equal(tool.credentials.httpBearerAuth, undefined);
   assert.match(context.parameters.jsCode, /Get Credential Tokens/);
   assert.match(context.parameters.jsCode, /bss.*barra-shopping-sul/s);
   assert.match(context.parameters.jsCode, /nh.*novo-hamburgo/s);
@@ -57,6 +63,14 @@ test('Livia commercial catalog patch is idempotent', () => {
   const once = patchWorkflow(fixture());
   const twice = patchWorkflow(once);
   assert.deepEqual(twice, once);
+});
+
+test('Livia commercial catalog validator rejects the unsupported Bearer auth shape', () => {
+  const candidate = patchWorkflow(fixture());
+  const tool = candidate.nodes.find((node) => node.name === 'CRM Commercial Catalog');
+  tool.parameters.genericAuthType = 'httpBearerAuth';
+  tool.credentials = { httpBearerAuth: { id: '4r0IbVgjAaSOQREF', name: 'Bearer Auth account' } };
+  assert.throws(() => validate(candidate), /configuration is incomplete/);
 });
 
 test('Livia commercial guard preserves the live visual assertion return envelope', () => {

@@ -35,9 +35,10 @@ isolados manualmente: o construtor inclui, como unidade atômica de candidato,
 o catálogo comercial oficial CRM read-only, as marcas Drive por fonte, o
 preflight do Token Vault, o contrato de alt text, o contrato de carrossel
 Facebook e o pin/runtime semanticamente idempotente. O patch comercial valida
-que a tool usa GET/Bearer sem placeholder, que `bss` e `nh` são derivados de
-`Get Credential Tokens`, que Documents permanece editorial e que `crmPricing`
-falha fechado fora de `crm|none`.
+que a tool usa GET com `httpHeaderAuth` suportado pelo `toolHttpRequest`, sem
+placeholder, que `bss` e `nh` são derivados de `Get Credential Tokens`, que
+Documents permanece editorial e que `crmPricing` falha fechado fora de
+`crm|none`.
 
 ```bash
 sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/prepare-livia-production-candidate.js \
