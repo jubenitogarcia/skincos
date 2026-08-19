@@ -30,7 +30,7 @@ import type {
     BeautyMovementRewardType,
 } from "@/lib/beautyMovementRewards";
 import { BEAUTY_MOVEMENT_MOTION, createBeautyMovementMotionGate } from "@/lib/beautyMovementMotion";
-import type { BeautyMovementOffer } from "@/lib/beautyMovementOutcomes";
+import type { BeautyMovementOffer, BeautyMovementOutcomeKey } from "@/lib/beautyMovementOutcomes";
 import styles from "./BeautyMovementExperience.module.css";
 
 export type BeautyMovementBenefit = {
@@ -151,6 +151,42 @@ type ProgressMotion = {
     to: ProgressRect;
     key: number;
 };
+
+type BeautyMovementOfferPresentation = {
+    descriptor: string;
+    offerText: string;
+    conditionText?: string;
+};
+
+const BEAUTY_MOVEMENT_OFFER_PRESENTATIONS: Record<BeautyMovementOutcomeKey, BeautyMovementOfferPresentation> = {
+    elleva_upgrade: {
+        descriptor: "Bioestimulação potencializada",
+        offerText: "Adquira Elleva 210 mg pelo valor do Elleva 150 mg.",
+    },
+    filler_double: {
+        descriptor: "Dobradinha de preenchimento",
+        offerText: "Adquira 2 mL e receba 4 mL.",
+    },
+    sculptra_classic_unlock: {
+        descriptor: "Restylane Classic + Sculptra",
+        offerText: "Adquira 1 mL de Restylane Classic e desbloqueie Sculptra por R$ 1.699.",
+        conditionText: "Condição: aquisição de 1 mL de Restylane Classic.",
+    },
+    skinbooster_diamond_unlock: {
+        descriptor: "Skinbooster + Diamond",
+        offerText: "Adquira 1 mL de Restylane Skinbooster e desbloqueie Diamond por R$ 899.",
+        conditionText: "Condição: aquisição de 1 mL de Restylane Skinbooster.",
+    },
+};
+
+function formatBeautyMovementPrice(price: BeautyMovementOffer["referencePrice"]): string | null {
+    if (!price) return null;
+    return new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: price.currency,
+        maximumFractionDigits: 0,
+    }).format(price.amount);
+}
 
 // Keep the intro/prompt compact while preserving enough room for the deck to
 // cross the lower edge of the surface without being visually detached from the copy.
@@ -1506,7 +1542,7 @@ export default function BeautyMovementExperience({
             kind === "velocity"
                 ? "AULA-CORTESIA"
                 : kind === "offer"
-                  ? offer?.shortLabel || "CONDIÇÃO DESBLOQUEADA"
+                  ? "COMBINAÇÃO DESBLOQUEADA"
                 : kind === "discount"
                   ? "CONDIÇÃO ESPECIAL"
                   : kind === "free_procedure"
@@ -1532,6 +1568,12 @@ export default function BeautyMovementExperience({
             ? primaryWhatsappLabel
             : `${primaryWhatsappLabel} no WhatsApp`;
         const revealContentClass = deferRevealContent || showRevealAction ? styles.specialCardRevealContent : undefined;
+        const offerPresentation = kind === "offer" && offer ? BEAUTY_MOVEMENT_OFFER_PRESENTATIONS[offer.outcomeKey] : null;
+        const selectedConcepts = revealed && kind === "offer" ? reading.map((line) => line.title) : [];
+        const selectedConceptsLabel = selectedConcepts.join(" · ");
+        const referencePrice = offerPresentation && offer ? formatBeautyMovementPrice(offer.referencePrice) : null;
+        const unlockedPrice = offerPresentation && offer ? formatBeautyMovementPrice(offer.unlockedPrice) : null;
+        const campaignConditions = revealed ? initialState.campaign.conditionsText?.trim() : null;
 
         return (
             <article
@@ -1578,19 +1620,57 @@ export default function BeautyMovementExperience({
                             <i />
                         </span>
                     </div>
-                    <div className={`${styles.specialCardFace} ${styles.specialCardFront}`} aria-hidden={!revealed}>
+                    <div
+                        className={`${styles.specialCardFace} ${styles.specialCardFront} ${kind === "offer" ? styles.specialCardFrontOffer : ""}`.trim()}
+                        aria-hidden={!revealed}
+                    >
+                        {selectedConcepts.length === 3 ? (
+                            <div className={styles.specialCardSelection} aria-label={`Suas três escolhas: ${selectedConceptsLabel}`}>
+                                <span className={styles.specialCardSelectionLabel}>SUAS TRÊS ESCOLHAS</span>
+                                <span className={styles.specialCardConcepts}>{selectedConceptsLabel}</span>
+                                <span className={styles.specialCardTransition}>se encontraram.</span>
+                            </div>
+                        ) : null}
                         <span className={styles.specialCardKind}>{kindLabel}</span>
                         <span className={styles.specialCardIllustration} aria-hidden="true">
                             <BeautyMovementCardIllustration cardId={iconId} />
                         </span>
                         <strong>{title}</strong>
-                        <span className={styles.specialCardCopy}>{description}</span>
+                        {offerPresentation ? (
+                            <>
+                                <span className={styles.specialCardOfferDescriptor}>{offerPresentation.descriptor}</span>
+                                <span className={`${styles.specialCardCopy} ${styles.specialCardOfferCopy}`}>{offerPresentation.offerText}</span>
+                                {offerPresentation.conditionText ? (
+                                    <span className={styles.specialCardOfferCondition}>{offerPresentation.conditionText}</span>
+                                ) : null}
+                                {referencePrice && unlockedPrice ? (
+                                    <span className={styles.specialCardPriceBlock} aria-label={`Preço anterior ${referencePrice}; preço especial ${unlockedPrice}`}>
+                                        <span>
+                                            <small>De</small>
+                                            <s>{referencePrice}</s>
+                                        </span>
+                                        <span>
+                                            <small>Por</small>
+                                            <strong>{unlockedPrice}</strong>
+                                        </span>
+                                    </span>
+                                ) : null}
+                            </>
+                        ) : (
+                            <span className={styles.specialCardCopy}>{description}</span>
+                        )}
                         {revealed
                             ? renderWhatsappAction(
                                 `${styles.primaryButton} ${styles.specialCardWhatsappAction}`,
                                 specialCardWhatsappLabel,
                             )
                             : null}
+                        {campaignConditions ? (
+                            <details className={styles.specialCardConditions}>
+                                <summary>{initialState.campaign.conditionsLabel?.trim() || "Condições da campanha"}</summary>
+                                <p>{campaignConditions}</p>
+                            </details>
+                        ) : null}
                         {revealed && shareStatus ? <span className={styles.specialCardCopy} role="status">{shareStatus}</span> : null}
                     </div>
                 </div>
