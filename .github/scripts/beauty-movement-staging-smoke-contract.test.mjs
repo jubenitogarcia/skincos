@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -41,4 +42,17 @@ test("importer only widens private runtime custody inside GitHub Actions", () =>
     assert.match(importer, /RUNNER_TEMP/);
     assert.match(importer, /BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT/);
     assert.match(importer, /isWithin\(REPOSITORY_ROOT, resolved\)/);
+});
+
+test("deployment and browser journey shell remains syntactically valid", () => {
+    const step = workflow.match(
+        /      - name: Deploy temporary staging candidate and run authenticated browser journey[\s\S]*?(?=\n      - name:)/,
+    )?.[0] ?? "";
+    const runBlock = step.match(/\n        run: \|\n([\s\S]*)/)?.[1] ?? "";
+    assert.notEqual(runBlock, "", "deployment step must contain a run block");
+    const script = runBlock
+        .split("\n")
+        .map((line) => (line.startsWith("          ") ? line.slice(10) : line))
+        .join("\n");
+    execFileSync("bash", ["-n"], { input: script, encoding: "utf8" });
 });
