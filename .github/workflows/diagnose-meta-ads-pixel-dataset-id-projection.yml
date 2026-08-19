@@ -1,0 +1,158 @@
+name: Diagnose Meta Ads Pixel Dataset ID Projection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meta-ads-pixel-dataset-id-projection-diagnostic-staging
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main'
+    name: Read the Pixel-filtered AdsDataset ID projection without deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: staging
+    steps:
+      - name: Classify the ID-only Pixel-filtered AdsDataset response
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
+          META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
+          META_ADS_ACCOUNT_ID: ${{ vars.META_ADS_ACCOUNT_ID }}
+          META_ADS_API_VERSION: ${{ vars.META_ADS_API_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const pixelId = String(process.env.META_PIXEL_ID || '').trim();
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
+
+          class DiagnosticFailure extends Error {
+            constructor(code) {
+              super(code);
+              this.code = code;
+            }
+          }
+
+          const fail = (code) => {
+            throw new DiagnosticFailure(code);
+          };
+          const numericId = (value) => {
+            const normalized = String(value || '').trim().replace(/^act_/, '');
+            return /^\d{5,30}$/.test(normalized) ? normalized : '';
+          };
+          const safeCodes = new Set([
+            'pixel_dataset_match',
+            'pixel_dataset_absent',
+            'pixel_dataset_ambiguous',
+            'pixel_dataset_mismatch',
+            'pixel_dataset_denied',
+            'pixel_dataset_unavailable',
+            'pixel_dataset_parameter_contract',
+            'pixel_dataset_response_contract',
+            'pixel_dataset_response_shape',
+            'pixel_dataset_account_contract',
+            'pixel_dataset_account_denied',
+            'pixel_dataset_account_unavailable',
+          ]);
+
+          const graphGet = async (path, query) => {
+            const url = new URL(`https://graph.facebook.com/${apiVersion}/${path}`);
+            for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
+            let response;
+            try {
+              response = await fetch(url, {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store',
+                redirect: 'error',
+                signal: AbortSignal.timeout(12_000),
+              });
+            } catch {
+              return { state: 'unavailable' };
+            }
+            if (!response || response.status === 408 || response.status === 429 || response.status >= 500) {
+              return { state: 'unavailable' };
+            }
+            let payload;
+            try {
+              payload = await response.json();
+            } catch {
+              return { state: 'response_shape' };
+            }
+            if (payload?.error?.is_transient === true) return { state: 'unavailable' };
+            if (!response.ok || payload?.error) {
+              const graphErrorCode = Number(payload?.error?.code);
+              const denied =
+                response.status === 401 ||
+                response.status === 403 ||
+                graphErrorCode === 10 ||
+                graphErrorCode === 102 ||
+                graphErrorCode === 190 ||
+                graphErrorCode === 200;
+              if (denied) return { state: 'denied' };
+              if (graphErrorCode === 100) return { state: 'parameter_contract' };
+              return { state: 'response_contract' };
+            }
+            return { state: 'ok', payload };
+          };
+
+          const main = async () => {
+            if (
+              !token ||
+              !/^\d{5,30}$/.test(pixelId) ||
+              !/^\d{5,30}$/.test(accountId) ||
+              !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)
+            ) {
+              fail('pixel_dataset_response_contract');
+            }
+
+            const accountResult = await graphGet(`act_${accountId}`, { fields: 'id,business{id}' });
+            if (accountResult.state === 'denied') fail('pixel_dataset_account_denied');
+            if (accountResult.state === 'unavailable') fail('pixel_dataset_account_unavailable');
+            if (accountResult.state !== 'ok') fail('pixel_dataset_account_contract');
+            if (numericId(accountResult.payload?.id) !== accountId) fail('pixel_dataset_account_contract');
+            const businessId = numericId(accountResult.payload?.business?.id);
+            if (!businessId) fail('pixel_dataset_account_contract');
+
+            // This is intentionally a different, projection-only probe from the
+            // prior fields=id,dataset_id diagnostic. It asks only for the stable
+            // node id while retaining the SDK-declared id_filter parameter.
+            const datasetResult = await graphGet(`${businessId}/ads_dataset`, {
+              fields: 'id',
+              id_filter: pixelId,
+            });
+            if (datasetResult.state === 'denied') fail('pixel_dataset_denied');
+            if (datasetResult.state === 'unavailable') fail('pixel_dataset_unavailable');
+            if (datasetResult.state === 'parameter_contract') fail('pixel_dataset_parameter_contract');
+            if (datasetResult.state === 'response_contract') fail('pixel_dataset_response_contract');
+            if (datasetResult.state !== 'ok') fail('pixel_dataset_response_shape');
+
+            const datasets = datasetResult.payload;
+            if (!Array.isArray(datasets?.data)) fail('pixel_dataset_response_shape');
+            if (String(datasets?.paging?.next ?? '').trim() !== '') fail('pixel_dataset_ambiguous');
+            if (datasets.data.length === 0) fail('pixel_dataset_absent');
+            if (datasets.data.length > 1) fail('pixel_dataset_ambiguous');
+
+            const datasetId = numericId(datasets.data[0]?.id);
+            if (!datasetId) fail('pixel_dataset_response_shape');
+            if (datasetId !== pixelId) fail('pixel_dataset_mismatch');
+            process.stdout.write('pixel_dataset_match\n');
+          };
+
+          try {
+            await main();
+          } catch (error) {
+            const code = error instanceof DiagnosticFailure && safeCodes.has(error.code)
+              ? error.code
+              : 'pixel_dataset_response_contract';
+            console.error(`Meta Ads Pixel Dataset ID projection diagnostic: ${code}`);
+            process.exitCode = 1;
+          }
+          NODE
