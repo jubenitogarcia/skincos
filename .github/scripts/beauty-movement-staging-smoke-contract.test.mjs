@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -23,6 +24,8 @@ test("smoke consumes secrets in-process and closes the staging gate", () => {
     assert.match(workflow, /Initialize private runner paths/);
     assert.match(workflow, /smoke_root="\$\{RUNNER_TEMP\}\/beauty-movement-staging-smoke"/);
     assert.match(workflow, /set -euo pipefail/);
+    assert.match(workflow, /node --input-type=commonjs -e/);
+    assert.doesNotMatch(workflow, /node -e\s/);
     assert.doesNotMatch(workflow, /set -x/);
     assert.doesNotMatch(workflow, /upload-artifact/);
     assert.match(workflow, /staging-smoke-disabled-probe/);
@@ -41,4 +44,17 @@ test("importer only widens private runtime custody inside GitHub Actions", () =>
     assert.match(importer, /RUNNER_TEMP/);
     assert.match(importer, /BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT/);
     assert.match(importer, /isWithin\(REPOSITORY_ROOT, resolved\)/);
+});
+
+test("deployment and browser journey shell remains syntactically valid", () => {
+    const step = workflow.match(
+        /      - name: Deploy temporary staging candidate and run authenticated browser journey[\s\S]*?(?=\n      - name:)/,
+    )?.[0] ?? "";
+    const runBlock = step.match(/\n        run: \|\n([\s\S]*)/)?.[1] ?? "";
+    assert.notEqual(runBlock, "", "deployment step must contain a run block");
+    const script = runBlock
+        .split("\n")
+        .map((line) => (line.startsWith("          ") ? line.slice(10) : line))
+        .join("\n");
+    execFileSync("bash", ["-n"], { input: script, encoding: "utf8" });
 });
