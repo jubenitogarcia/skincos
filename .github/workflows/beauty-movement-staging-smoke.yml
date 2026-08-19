@@ -50,6 +50,32 @@ jobs:
             echo "OUTPUT_DIR=${smoke_root}/output"
           } >> "${GITHUB_ENV}"
 
+      - name: Acquire Website staging coordination lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: 'release:website'
+          module: beauty-movement
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/website-lease.json
+
+      - name: Acquire staging D1 coordination lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: 'global:staging-d1'
+          module: beauty-movement
+          source_sha: ${{ inputs.release_sha }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
+
       - name: Validate staging-only source and credentials
         shell: bash
         run: |
@@ -71,6 +97,32 @@ jobs:
           # The target is fixed by this workflow: there is no environment or
           # database input that could redirect the run to production.
           grep -q 'database_name = "espacofacial-beauty-movement-staging"' website/wrangler.toml || { echo 'staging D1 binding is missing'; exit 1; }
+
+      - name: Check coordination leases before staging D1 inspection
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/website-lease.json
+          resource: 'release:website'
+          module: beauty-movement
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Check staging D1 lease before inspection
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
+          resource: 'global:staging-d1'
+          module: beauty-movement
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
         env:
           BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
           BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
@@ -183,6 +235,32 @@ jobs:
           fs.writeFileSync(statePath, JSON.stringify({ version: 1, campaignId, incumbentVersion: incumbent, candidateMessage: `beauty-movement-staging-smoke:${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_RUN_ATTEMPT}`, mutationStarted: false }, null, 2), { mode: 0o600, flag: 'wx' });
           NODE
 
+      - name: Recheck coordination leases before fixture activation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/website-lease.json
+          resource: 'release:website'
+          module: beauty-movement
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Recheck staging D1 lease before fixture activation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
+          resource: 'global:staging-d1'
+          module: beauty-movement
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
       - name: Import and activate only the run-scoped fixture
         working-directory: website
         shell: bash
@@ -214,6 +292,19 @@ jobs:
           if (!payload?.success || Number(payload.meta?.changes ?? 0) !== 1) throw new Error('beauty_movement_fixture_activation_failed');
           NODE
 
+      - name: Recheck Website staging lease before Worker deployment
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/website-lease.json
+          resource: 'release:website'
+          module: beauty-movement
+          source_sha: ${{ inputs.release_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
       - name: Deploy temporary staging candidate and run authenticated browser journey
         working-directory: website
         shell: bash
@@ -230,6 +321,7 @@ jobs:
           state.mutationStarted = true;
           fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
           NODE
+
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" node scripts/assert-production-snapshot.mjs
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" npx opennextjs-cloudflare build
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" \
@@ -419,3 +511,23 @@ jobs:
           done
           [[ "${inactive_code}" == "503" ]] || { echo "staging campaign API is not inactive after cleanup (HTTP ${inactive_code})"; cleanup_failed=1; }
           [[ "${cleanup_failed}" == 0 ]] || exit 1
+
+      - name: Release Website staging coordination lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/website-lease.json
+
+      - name: Release staging D1 coordination lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
