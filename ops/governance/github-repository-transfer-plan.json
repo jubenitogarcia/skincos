@@ -26,7 +26,7 @@
     {"slug": "skincos-security", "purpose": "Rulesets, secret governance and incident review", "permission": "maintain"}
   ],
   "codeownersBlueprint": [
-    {"paths": ["/.github/", "/.githooks/", "/ops/", "/scripts/", "/docs/", "/orb/", "/db/"], "team": "skincos-platform"},
+    {"paths": ["/.github/", "/.githooks/", "/ops/", "/scripts/", "/docs/", "/orb/", "/db/", "/skills/"], "team": "skincos-platform"},
     {"paths": ["/crm/", "/api/", "/backend/", "/frontend/", "/identity/", "/service/", "/booking/", "/integration/", "/messaging/"], "team": "skincos-crm"},
     {"paths": ["/finance/"], "team": "skincos-finance"},
     {"paths": ["/workforce/"], "team": "skincos-workforce"},
