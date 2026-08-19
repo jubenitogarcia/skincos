@@ -20,6 +20,8 @@ test("smoke consumes secrets in-process and closes the staging gate", () => {
     assert.match(workflow, /BEAUTY_MOVEMENT_TOKEN_HMAC_KEY:/);
     assert.match(workflow, /BEAUTY_MOVEMENT_PII_KEY:/);
     assert.match(workflow, /BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT:/);
+    assert.match(workflow, /Initialize private runner paths/);
+    assert.match(workflow, /smoke_root="\$\{RUNNER_TEMP\}\/beauty-movement-staging-smoke"/);
     assert.match(workflow, /set -euo pipefail/);
     assert.doesNotMatch(workflow, /set -x/);
     assert.doesNotMatch(workflow, /upload-artifact/);

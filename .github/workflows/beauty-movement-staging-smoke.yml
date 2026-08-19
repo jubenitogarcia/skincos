@@ -28,9 +28,6 @@ jobs:
       STAGING_WORKER_NAME: espacofacial-site-staging
       RELEASE_SHA: ${{ inputs.release_sha }}
       CAMPAIGN_ID: bm-stg-smoke-${{ github.run_id }}-${{ github.run_attempt }}
-      STATE_FILE: ${{ runner.temp }}/beauty-movement-staging-smoke/state.json
-      FIXTURE_DIR: ${{ runner.temp }}/beauty-movement-staging-smoke/fixture
-      OUTPUT_DIR: ${{ runner.temp }}/beauty-movement-staging-smoke/output
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
@@ -40,6 +37,17 @@ jobs:
         with:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 0
+
+      - name: Initialize private runner paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root="${RUNNER_TEMP}/beauty-movement-staging-smoke"
+          {
+            echo "STATE_FILE=${smoke_root}/state.json"
+            echo "FIXTURE_DIR=${smoke_root}/fixture"
+            echo "OUTPUT_DIR=${smoke_root}/output"
+          } >> "${GITHUB_ENV}"
 
       - name: Validate staging-only source and credentials
         shell: bash
