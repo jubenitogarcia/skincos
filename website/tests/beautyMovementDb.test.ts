@@ -366,17 +366,20 @@ test("beauty movement does not create token limiter rows after an IP has been bl
     assert.equal(fixture.db.rateLimits.size, rowsWhenBlocked);
 });
 
-test("beauty movement keeps legacy courtesy WhatsApp only when no structured reward exists", async () => {
+test("beauty movement selects the courtesy WhatsApp message from velocity entitlement", async () => {
     const fixture = await makeFixture();
     fixture.db.invite.reward_id = null;
     fixture.db.invite.benefit_status = "evento_condicao_comercial";
+    fixture.db.invite.velocity_benefit = "none";
     const result = await exchangeBeautyMovementInvite(
         { token: fixture.token, origin: ORIGIN, ip: "203.0.113.19", nowMs: NOW },
         options(fixture.db),
     );
     assert.equal(result.ok, true);
     if (!result.ok) return;
-    fixture.db.invite.benefit_status = "aula_cortesia_evento";
+    assert.equal(result.state.campaign.whatsappMessage, "Olá, quero confirmar a condição do meu convite.");
+    fixture.db.invite.velocity_benefit = "aula_cortesia_evento";
+    fixture.db.invite.confirmed_at_ms = NOW;
     const legacy = await exchangeBeautyMovementInvite(
         { token: fixture.token, origin: ORIGIN, ip: "203.0.113.20", nowMs: NOW },
         options(fixture.db),
@@ -419,7 +422,10 @@ test("beauty movement enforces ordered immutable cards and confirms the configur
     });
     assert.equal(confirmed.state.invite.emailRegistered, true);
     assert.match(confirmed.state.campaign.conditionsText ?? "", /Confirmação posterior de turma/);
-    assert.match(confirmed.state.campaign.conditionsText ?? "", /Uso pessoal e intransferível/);
+    assert.match(confirmed.state.campaign.conditionsText ?? "", /Sua combinação desbloqueou Elleva 210 mg/);
+    assert.match(confirmed.state.campaign.conditionsText ?? "", /A elegibilidade clínica depende de avaliação profissional/);
+    assert.doesNotMatch(confirmed.state.campaign.conditionsText ?? "", /Uso pessoal e intransferível/);
+    assert.equal(confirmed.state.campaign.whatsappMessage, "Olá, quero confirmar minha aula-cortesia.");
     assert.equal(JSON.stringify(confirmed.state).includes("ana+event@example.com"), false);
 
     const replay = await confirmBeautyMovementInvite({
@@ -454,8 +460,13 @@ test("beauty movement preserves a prior v1 outcome instead of reinterpreting it 
         assert.equal(reveal.ok, true);
     }
 
+    const storedOffer = {
+        ...getBeautyMovementOffer("filler_double"),
+        title: "Harmonia arquivada",
+        commercialText: "A condição arquivada desta leitura permanece válida.",
+    };
     fixture.db.invite.outcome_key = "filler_double";
-    fixture.db.invite.outcome_snapshot_json = JSON.stringify(getBeautyMovementOffer("filler_double"));
+    fixture.db.invite.outcome_snapshot_json = JSON.stringify(storedOffer);
     fixture.db.invite.outcome_protocol_version = BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION;
 
     const confirmed = await confirmBeautyMovementInvite(
@@ -464,8 +475,35 @@ test("beauty movement preserves a prior v1 outcome instead of reinterpreting it 
     );
     assert.equal(confirmed.ok, true);
     if (!confirmed.ok) return;
-    assert.deepEqual(confirmed.state.offer, getBeautyMovementOffer("filler_double"));
+    assert.deepEqual(confirmed.state.offer, storedOffer);
     assert.equal(fixture.db.invite.outcome_protocol_version, BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION);
+});
+
+test("beauty movement rejects an incompatible or incomplete persisted outcome snapshot", async () => {
+    for (const snapshot of [
+        JSON.stringify(getBeautyMovementOffer("elleva_upgrade")),
+        JSON.stringify({ outcomeKey: "filler_double", title: "incompleto" }),
+    ]) {
+        const fixture = await makeFixture();
+        const exchange = await exchangeBeautyMovementInvite({ token: fixture.token, origin: ORIGIN, ip: "203.0.113.13", nowMs: NOW }, options(fixture.db));
+        assert.equal(exchange.ok, true);
+        if (!exchange.ok) continue;
+        for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
+            const reveal = await revealBeautyMovementCard(
+                { sessionToken: exchange.sessionToken, actIndex, cardId, origin: ORIGIN, ip: "203.0.113.13" },
+                options(fixture.db),
+            );
+            assert.equal(reveal.ok, true);
+        }
+        fixture.db.invite.outcome_key = "filler_double";
+        fixture.db.invite.outcome_snapshot_json = snapshot;
+        fixture.db.invite.outcome_protocol_version = BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION;
+        const confirmed = await confirmBeautyMovementInvite(
+            { sessionToken: exchange.sessionToken, email: null, operationalConsent: true, origin: ORIGIN, ip: "203.0.113.13" },
+            options(fixture.db),
+        );
+        assert.deepEqual(confirmed, { ok: false, error: "campaign_unavailable" });
+    }
 });
 
 test("beauty movement reveals a configured discount only after confirmation and keeps Velocity optional", async () => {

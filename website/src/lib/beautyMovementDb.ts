@@ -20,6 +20,7 @@ import type {
     BeautyMovementVelocityBenefit,
 } from "@/lib/beautyMovementRewards";
 import {
+    BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION,
     BEAUTY_MOVEMENT_OUTCOME_KEYS,
     BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION,
     BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS,
@@ -557,14 +558,57 @@ function renderReward(row: InviteRow): BeautyMovementPublicReward | null {
     };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+    return typeof value === "string" && value.trim().length > 0;
+}
+
+function isStoredOfferProduct(value: unknown): boolean {
+    if (!isRecord(value)) return false;
+    return isNonEmptyString(value.productId)
+        && isNonEmptyString(value.productName)
+        && typeof value.quantity === "number"
+        && Number.isFinite(value.quantity)
+        && value.quantity > 0
+        && (value.unit === "mg" || value.unit === "mL" || value.unit === "condition");
+}
+
+function isStoredOfferPrice(value: unknown): boolean {
+    if (value === null) return true;
+    if (!isRecord(value)) return false;
+    return typeof value.amount === "number"
+        && Number.isFinite(value.amount)
+        && value.amount >= 0
+        && value.currency === "BRL";
+}
+
+function isStoredOfferSnapshot(value: unknown, outcomeKey: BeautyMovementOutcomeKey): value is BeautyMovementOffer {
+    if (!isRecord(value) || value.outcomeKey !== outcomeKey) return false;
+    return isNonEmptyString(value.title)
+        && isNonEmptyString(value.shortLabel)
+        && isStoredOfferProduct(value.trigger)
+        && isStoredOfferProduct(value.benefit)
+        && isStoredOfferPrice(value.referencePrice)
+        && isStoredOfferPrice(value.unlockedPrice)
+        && isNonEmptyString(value.commercialText)
+        && Array.isArray(value.externalRules)
+        && value.externalRules.every((rule) => typeof rule === "string");
+}
+
 function renderStoredOffer(row: InviteRow): BeautyMovementOffer | null {
     if (!row.outcome_key || !BEAUTY_MOVEMENT_OUTCOME_KEYS.includes(row.outcome_key)) return null;
     if (!BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS.includes(row.outcome_protocol_version as (typeof BEAUTY_MOVEMENT_SUPPORTED_OUTCOME_PROTOCOL_VERSIONS)[number])) return null;
-    const offer = getBeautyMovementOffer(row.outcome_key);
-    if (!row.outcome_snapshot_json) return offer;
+    if (!row.outcome_snapshot_json) {
+        return row.outcome_protocol_version === BEAUTY_MOVEMENT_LEGACY_OUTCOME_PROTOCOL_VERSION
+            ? getBeautyMovementOffer(row.outcome_key)
+            : null;
+    }
     try {
         const snapshot = JSON.parse(row.outcome_snapshot_json) as unknown;
-        return JSON.stringify(snapshot) === JSON.stringify(offer) ? offer : null;
+        return isStoredOfferSnapshot(snapshot, row.outcome_key) ? snapshot : null;
     } catch {
         return null;
     }
@@ -634,13 +678,17 @@ async function publicState(params: {
     if (confirmed && params.row.outcome_key && !offer) return null;
     const reward = confirmed && !offer && !params.row.outcome_key ? configuredReward : null;
     const conditionsParts = confirmed
-        ? [
-            cleanText(params.row.campaign_conditions_text, 1600),
-            offer?.commercialText ?? "",
-            ...(offer?.externalRules ?? []),
-            reward?.validity ?? cleanText(params.row.benefit_validity, 300),
-            reward?.rules ?? cleanText(params.row.benefit_rules, 1200),
-        ].filter(Boolean)
+        ? offer
+            ? [
+                cleanText(params.row.campaign_conditions_text, 1600),
+                offer.commercialText,
+                ...offer.externalRules,
+            ].filter(Boolean)
+            : [
+                cleanText(params.row.campaign_conditions_text, 1600),
+                reward?.validity ?? cleanText(params.row.benefit_validity, 300),
+                reward?.rules ?? cleanText(params.row.benefit_rules, 1200),
+            ].filter(Boolean)
         : [];
     return {
         invite: {
@@ -658,7 +706,7 @@ async function publicState(params: {
         confirmed,
         campaign: {
             ...campaignView,
-            whatsappMessage: !offer && params.row.benefit_status === "aula_cortesia_evento" && !params.row.reward_id
+            whatsappMessage: confirmed && params.row.velocity_benefit === "aula_cortesia_evento"
                 ? whatsappMessageCourtesy
                 : whatsappMessageCommercial,
             conditionsText: conditionsParts.length ? conditionsParts.join("\n\n") : null,

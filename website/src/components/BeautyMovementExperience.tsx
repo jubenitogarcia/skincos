@@ -1516,13 +1516,13 @@ export default function BeautyMovementExperience({
         const showRevealAction = action !== "none";
         const offer = initialState.offer ?? null;
         const kind: SpecialCardKind = revealed
-            ? offer
-                ? "offer"
-                : hasCourtesyClass
-                  ? "velocity"
-                : initialState.benefit?.type === "discount"
-                  ? "discount"
-                  : initialState.benefit?.type === "free_procedure"
+            ? hasCourtesyClass
+                ? "velocity"
+                : offer
+                  ? "offer"
+                  : initialState.benefit?.type === "discount"
+                    ? "discount"
+                    : initialState.benefit?.type === "free_procedure"
                     ? "free_procedure"
                     : "reserved"
             : "reserved";
@@ -1569,7 +1569,9 @@ export default function BeautyMovementExperience({
             : `${primaryWhatsappLabel} no WhatsApp`;
         const revealContentClass = deferRevealContent || showRevealAction ? styles.specialCardRevealContent : undefined;
         const offerPresentation = kind === "offer" && offer ? BEAUTY_MOVEMENT_OFFER_PRESENTATIONS[offer.outcomeKey] : null;
-        const selectedConcepts = revealed && kind === "offer" ? reading.map((line) => line.title) : [];
+        const selectedConcepts = revealed && (kind === "offer" || (kind === "velocity" && offer !== null))
+            ? reading.map((line) => line.title)
+            : [];
         const selectedConceptsLabel = selectedConcepts.join(" · ");
         const referencePrice = offerPresentation && offer ? formatBeautyMovementPrice(offer.referencePrice) : null;
         const unlockedPrice = offerPresentation && offer ? formatBeautyMovementPrice(offer.unlockedPrice) : null;
