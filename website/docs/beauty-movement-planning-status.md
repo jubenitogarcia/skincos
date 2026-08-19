@@ -26,9 +26,13 @@ marca parceira.
 - Ao fim, as cartas retornam ao baralho e a confirmação, seguida do resultado,
   aparece inline. Não há modal e não há botão “Ver minha leitura”. O refresh
   restaura confirmação ou resultado conforme o estado persistido.
-- O benefício é reservado previamente por `reward_id`, independente das cartas.
-  A leitura apenas dá forma editorial à experiência; ela não sorteia nem indica
-  cuidados.
+- **Decisão superseded pela especificação de combinações:** as três cartas
+  persistidas resolvem, de forma determinística e auditável, uma das quatro
+  ofertas comerciais. `reward_id` não é autoridade para convites modernos; ele
+  permanece somente como leitura de compatibilidade durante a migração.
+- A leitura é promocional e editorial, não clínica: a interface diz “Sua
+  combinação desbloqueou…” e mantém a elegibilidade clínica dependente de
+  avaliação profissional.
 - O Story é 9:16, usa a linguagem ilustrada das cartas e não inclui nome,
   contato, token, condição ou benefício individual.
 
@@ -39,7 +43,7 @@ marca parceira.
 | Fluxo visual | conforme | Prévia de produção local, gerada de cópia nativa sincronizada do worktree atual; baralho clicável, mãos sucessivas, timer de 5 s e resultado inline. |
 | Header/Footer e unidade | conforme | Componentes canônicos reutilizados; `fixedUnitSlug="novo-hamburgo"` nas duas rotas. |
 | Acessibilidade de interação | conforme localmente | Progresso usa alvo mínimo de 44 px no mobile; grades de cartas são grupos nomeados, sem semântica de lista inválida. |
-| Benefícios | conforme no contrato | `reward_id` é validado contra catálogo privado, paleta e procedimento canônico; D1 protege a combinação por trigger. |
+| Ofertas | motor v1 implementado localmente | Afinidades explícitas, desempate estável e matriz completa em `docs/beauty-movement-combination-map.md`; D1 persiste `outcome_key` somente após três revelações. |
 | Privacidade | conforme localmente | preview é sintético; URLs, analytics e Story não recebem benefício, paleta, token ou contato. |
 | Migrations | conforme localmente | executor usa `wrangler d1 migrations apply --local`; duas execuções consecutivas foram idempotentes. |
 | Importação/relatório | conforme localmente | dry-run completo, importação de duas linhas sintéticas e relatório privado sem cartas individuais. |
