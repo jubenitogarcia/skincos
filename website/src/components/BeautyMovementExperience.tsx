@@ -103,6 +103,12 @@ export type BeautyMovementConfirmationCommit =
     | void
     | {
           confirmed?: boolean;
+          /**
+           * The server/local resolver's result is returned with the commit so
+           * the result modal never renders from the pre-confirmation props
+           * while the parent state update is still being scheduled.
+           */
+          offer?: BeautyMovementOffer | null;
       };
 
 export type BeautyMovementTrackingParams = Record<string, string | number | boolean | null | undefined> &
@@ -319,6 +325,7 @@ export default function BeautyMovementExperience({
     const [confirmationAttempted, setConfirmationAttempted] = useState(false);
     const [revealPendingCardId, setRevealPendingCardId] = useState<string | null>(null);
     const [isConfirming, setIsConfirming] = useState(false);
+    const [confirmedOffer, setConfirmedOffer] = useState<BeautyMovementOffer | null>(initialState.offer ?? null);
     const [actionError, setActionError] = useState<string | null>(null);
     const [shareStatus, setShareStatus] = useState<string | null>(null);
     const [finaleStage, setFinaleStage] = useState<FinaleStage>(() =>
@@ -442,6 +449,10 @@ export default function BeautyMovementExperience({
             setIsSpecialCardModalOpen(true);
         }
     }, [initialState.confirmed]);
+
+    useEffect(() => {
+        if (initialState.offer) setConfirmedOffer(initialState.offer);
+    }, [initialState.offer]);
 
     useEffect(() => {
         if (openedRef.current) return;
@@ -1339,11 +1350,12 @@ export default function BeautyMovementExperience({
         confirmInFlightRef.current = true;
         setIsConfirming(true);
         try {
-            await onConfirm?.({
+            const commit = await onConfirm?.({
                 email: null,
                 operationalConsent: true,
             });
             if (!mountedRef.current) return;
+            if (commit && "offer" in commit) setConfirmedOffer(commit.offer ?? null);
             setConfirmed(true);
             setCurrentFinaleStage("result");
             setIsSpecialCardModalOpen(true);
@@ -1514,7 +1526,7 @@ export default function BeautyMovementExperience({
         deferRevealContent = false,
     ) {
         const showRevealAction = action !== "none";
-        const offer = initialState.offer ?? null;
+        const offer = initialState.offer ?? confirmedOffer;
         const kind: SpecialCardKind = revealed
             ? hasCourtesyClass
                 ? "velocity"
