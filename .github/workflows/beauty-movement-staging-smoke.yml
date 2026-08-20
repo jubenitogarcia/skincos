@@ -375,8 +375,8 @@ jobs:
           token="${invite_url##*#c=}"
           [[ "${token}" =~ ^[A-Za-z0-9_-]{40,180}$ ]] || { echo 'synthetic invite token shape invalid'; exit 1; }
           SMOKE_INVITE_TOKEN="${token}" node --input-type=module <<'NODE'
-          const fs = require('node:fs');
-          const { chromium } = require('playwright');
+          import fs from 'node:fs';
+          import { chromium } from 'playwright';
           const base = process.env.SMOKE_URL;
           const token = process.env.SMOKE_INVITE_TOKEN;
           const browser = await chromium.launch({ headless: true });
