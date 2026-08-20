@@ -14,6 +14,7 @@ const TOKEN_KEY = `test-token-hmac-${"0".repeat(16)}`;
 const PII_KEY = "0".repeat(64);
 const NOW = Date.parse("2026-08-01T12:00:00Z");
 const EXPIRES = "2026-08-31T23:59:00Z";
+const EXPIRES_MS = Date.parse(EXPIRES);
 
 const PROCEDURES = [
     { procedureId: "lavieen", procedureName: "Lavieen" },
@@ -117,6 +118,73 @@ test("beauty movement import validates only the sanitised private-list schema", 
     if (!duplicate.ok) assert.equal(duplicate.issues.some((entry) => entry.code === "duplicate_whatsapp"), true);
 });
 
+test("compact Velocity sheet rows accept the sheet columns and optional duplicate email", async () => {
+    const csv = [
+        "NOME,TELEFONE,EMAIL,PRÊMIO",
+        "Ana Silva,51999991234,shared@example.com,Velocity",
+        "Bea Souza,51999991235,shared@example.com,Velocity",
+    ].join("\n");
+    const validation = validateBeautyMovementImport({
+        csv,
+        nowMs: NOW,
+        defaultExpiresAtMs: EXPIRES_MS,
+    });
+    assert.equal(validation.ok, true);
+    if (!validation.ok) return;
+    assert.deepEqual(validation.rows.map((row) => row.inviteRef), ["velocity-0002", "velocity-0003"]);
+    assert.equal(validation.rows.every((row) => row.palette === "radiancia"), true);
+    assert.equal(validation.rows.every((row) => row.velocityBenefit === "aula_cortesia_evento"), true);
+    assert.equal(validation.rows.every((row) => row.expiresAtMs === EXPIRES_MS), true);
+    assert.equal(validation.rows.every((row) => row.inviteStatus === "active"), true);
+    assert.equal(validation.rows.every((row) => row.rewardId === null), true);
+
+    const plan = await prepareBeautyMovementImport({
+        csv,
+        campaignId: "nh-velocity",
+        campaignConfig: validCampaignConfig(),
+        campaignEndsAtMs: EXPIRES_MS,
+        tokenHmacKey: TOKEN_KEY,
+        piiKey: PII_KEY,
+        nowMs: NOW,
+    });
+    assert.equal(plan.invites.length, 2);
+    assert.equal(plan.deliveryRows.length, 2);
+    assert.equal(plan.invites.every((invite) => invite.velocityBenefit === "aula_cortesia_evento"), true);
+    assert.equal(plan.invites.every((invite) => invite.rewardId === null), true);
+    assert.equal(plan.deliveryRows.every((row) => row.inviteUrl.startsWith("https://espacofacial.com/beleza-em-movimento#c=")), true);
+});
+
+test("compact Velocity imports also accept only name and WhatsApp", () => {
+    const validation = validateBeautyMovementImport({
+        csv: [
+            "NOME,TELEFONE",
+            "Ana Silva,51999991234",
+        ].join("\n"),
+        nowMs: NOW,
+        defaultExpiresAtMs: EXPIRES_MS,
+    });
+    assert.equal(validation.ok, true);
+    if (validation.ok) assert.equal(validation.rows[0]?.velocityBenefit, "aula_cortesia_evento");
+});
+
+test("compact Velocity imports fail closed without campaign expiry or with another prize", () => {
+    const csv = [
+        "nome,telefone,premio",
+        "Ana Silva,51999991234,Velocity",
+    ].join("\n");
+    const withoutExpiry = validateBeautyMovementImport({ csv, nowMs: NOW });
+    assert.equal(withoutExpiry.ok, false);
+    if (!withoutExpiry.ok) assert.equal(withoutExpiry.issues.some((entry) => entry.code === "compact_expiry_unavailable"), true);
+
+    const unsupported = validateBeautyMovementImport({
+        csv: csv.replace("Velocity", "Preenchimento"),
+        nowMs: NOW,
+        defaultExpiresAtMs: EXPIRES_MS,
+    });
+    assert.equal(unsupported.ok, false);
+    if (!unsupported.ok) assert.equal(unsupported.issues.some((entry) => entry.code === "unsupported_prize"), true);
+});
+
 test("modern imports may omit reward_id and defer the commercial outcome to the card resolver", async () => {
     const csv = [
         "invite_ref,name,whatsapp,email,palette,velocity_benefit,expires_at",
@@ -178,6 +246,8 @@ test("beauty movement import writes encrypted D1 rows and reserves raw delivery 
     assert.match(sql, /SELECT status FROM bm_campaigns WHERE id = excluded\.campaign_id\) = 'draft'/);
 
     const deliveryCsv = serializeBeautyMovementDeliveryCsv(plan.deliveryRows);
+    assert.match(deliveryCsv, /^name,invite_ref,whatsapp,invite_url\n/);
+    assert.equal(deliveryCsv.includes("Ana Silva"), true);
     assert.equal(deliveryCsv.includes("+5551999991234"), true);
     assert.equal(deliveryCsv.includes(inviteUrl), true);
 });
