@@ -10,9 +10,12 @@ gates abaixo estejam concluídos.
   `C:\CodexRuntime\operator\admin\skincos\beauty-movement\` (ou equivalente
   privado no ambiente de release). Não copie CSV, URLs de entrega, CPF, histórico
   ou relatórios para este repositório.
-- O importador aceita exclusivamente a lista sanitizada documentada no próprio
-  comando. CPF, procedimentos, histórico clínico e colunas não reconhecidas são
-  rejeitados antes de qualquer escrita.
+- Para a lista de aula-cortesia Velocity, o importador aceita o formato mínimo
+  `NOME,TELEFONE`; `EMAIL` e `PRÊMIO` são opcionais (`PRÊMIO`, quando presente,
+  deve ser `Velocity`). Ele deriva os campos técnicos do convite a partir da
+  campanha aprovada; não é necessário pré-preencher identificador, paleta,
+  expiração ou status. CPF, procedimentos, histórico clínico e colunas não
+  reconhecidas são rejeitados antes de qualquer escrita.
 - A paleta apenas escolhe o deck editorial; ela não escolhe nem pré-reserva a
   oferta. Nenhum dado pessoal, procedimento ou histórico clínico é enviado ao
   D1 ou ao navegador para decidir o resultado.
@@ -131,9 +134,12 @@ repita a carga sem inspecionar o resumo privado.
       comerciais aprovados para a planilha sanitizada.
 - [ ] Catálogo privado de recompensas aprovado por família, com procedimento
       canônico, tipo de desconto e `approvedAt`.
-- [ ] CSV sanitizado pode omitir `reward_id`; quando presente, ele é tratado
-      apenas como compatibilidade. Nenhum procedimento, CPF ou histórico clínico
-      foi incluído.
+- [ ] CSV Velocity contém somente nome e WhatsApp, com e-mail/prêmio opcionais;
+      quando presente, o prêmio é `Velocity`. `reward_id` e demais campos
+      técnicos são derivados pelo importador. Nenhum procedimento, CPF ou
+      histórico clínico foi incluído.
+- [ ] O CSV privado de entrega gerado contém nome, telefone e URL opaca para o
+      envio manual no WhatsApp; ele permanece fora do repositório.
 - [ ] Gate de privacidade concluído para qualquer origem de paleta baseada em
       dados pré-existentes.
 - [ ] Migration e smoke com convites sintéticos concluídos em staging.
