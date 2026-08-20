@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "defaultRisk": "low",
+  "levels": {},
+  "surfaces": [],
+  "languageRules": [],
+  "dependencyPatterns": [],
+  "sharedContractPatterns": [],
+  "productionSensitivePatterns": [],
+  "securitySensitivePatterns": [],
+  "classificationRules": []
+}

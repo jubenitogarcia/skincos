@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 2,
+  "cases": [
+    {
+      "name": "documentation",
+      "files": ["docs/guide.md", "TASKS.md"],
+      "expect": {
+        "risk": "low",
+        "surfaces": ["documentation"],
+        "languages": ["markdown"],
+        "dependencies_changed": false,
+        "shared_contracts_changed": false,
+        "production_sensitive": false,
+        "security_sensitive": false,
+        "status": "classified"
+      }
+    },
+    {
+      "name": "localized website typescript",
+      "files": ["website\\src\\components\\Header.tsx"],
+      "expect": {
+        "risk": "medium",
+        "surfaces": ["website"],
+        "languages": ["typescript"],
+        "dependencies_changed": false,
+        "shared_contracts_changed": false,
+        "production_sensitive": true,
+        "security_sensitive": false,
+        "status": "classified"
+      }
+    },
+    {
+      "name": "rename keeps the sensitive destination and source",
+      "files": [
+        {
+          "status": "R100",
+          "oldPath": "docs/legacy-session.md",
+          "newPath": "crm/api/auth/session.ts"
+        }
+      ],
+      "expect": {
+        "risk": "high",
+        "surfaces": ["documentation", "timekeeping"],
+        "languages": ["markdown", "typescript"],
+        "dependencies_changed": false,
+        "shared_contracts_changed": false,
+        "production_sensitive": true,
+        "security_sensitive": true,
+        "status": "classified",
+        "classified_files": ["crm/api/auth/session.ts", "docs/legacy-session.md"]
+      }
+    },
+    {
+      "name": "copy records dependency and shared contract impact",
+      "files": [
+        {
+          "status": "C100",
+          "oldPath": "website/src/package.json",
+          "newPath": "shared/identity-contract/package.json"
+        }
+      ],
+      "expect": {
+        "risk": "medium",
+        "surfaces": ["shared-contracts", "website"],
+        "languages": ["json"],
+        "dependencies_changed": true,
+        "shared_contracts_changed": true,
+        "production_sensitive": true,
+        "security_sensitive": false,
+        "status": "classified",
+        "classified_files": ["shared/identity-contract/package.json", "website/src/package.json"]
+      }
+    },
+    {
+      "name": "critical destructive production path",
+      "files": ["ops/production-delete-user.sql"],
+      "expect": {
+        "risk": "critical",
+        "surfaces": ["unclassified"],
+        "languages": ["sql"],
+        "dependencies_changed": false,
+        "shared_contracts_changed": false,
+        "production_sensitive": true,
+        "security_sensitive": true,
+        "status": "classified"
+      }
+    },
+    {
+      "name": "known surface with unknown language",
+      "files": ["website/assets/logo.bin"],
+      "expect": {
+        "risk": "medium",
+        "surfaces": ["website"],
+        "languages": ["unknown"],
+        "dependencies_changed": false,
+        "shared_contracts_changed": false,
+        "production_sensitive": true,
+        "security_sensitive": false,
+        "status": "classified"
+      }
+    }
+  ]
+}

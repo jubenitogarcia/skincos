@@ -1,6 +1,200 @@
 import crypto from "node:crypto";
 
 const RISK_ORDER = Object.freeze({ low: 0, medium: 1, high: 2, critical: 3 });
+const RISK_LEVELS = Object.freeze(Object.keys(RISK_ORDER));
+const CHANGE_STATUS = /^(A|C|D|M|R|T|U|X|B)(\d{0,3})?$/;
+const MAX_PATH_LENGTH = 4096;
+const MAX_POLICY_PATTERN_LENGTH = 4096;
+
+const FALLBACK_REQUIRED_CHECKS = Object.freeze([
+  "diff-check",
+  "focal-validation",
+  "rollback-plan",
+  "exceptional-stop",
+]);
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertString(value, name, { allowEmpty = false, maxLength = 4096 } = {}) {
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (!allowEmpty && value.trim() === "") throw new Error(`${name} must not be empty`);
+  if (value.length > maxLength) throw new Error(`${name} is too long`);
+  if ([...value].some((character) => {
+    const code = character.codePointAt(0);
+    return code === 0 || code < 0x20 || code === 0x7f;
+  })) throw new Error(`${name} contains a control character`);
+}
+
+export function normalizeRepositoryPath(value, name = "path") {
+  assertString(value, name, { maxLength: MAX_PATH_LENGTH });
+  let normalized = value.normalize("NFC").replaceAll("\\", "/");
+  if (normalized.startsWith("/") || normalized.startsWith("//") || /^[A-Za-z]:/.test(normalized)) {
+    throw new Error(`${name} must be repository-relative`);
+  }
+  while (normalized.startsWith("./")) normalized = normalized.slice(2);
+  if (!normalized || normalized === ".") throw new Error(`${name} must identify a file`);
+  const segments = normalized.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new Error(`${name} contains an ambiguous path segment`);
+  }
+  return segments.join("/");
+}
+
+function validatePolicyPattern(value, name) {
+  assertString(value, name, { maxLength: MAX_POLICY_PATTERN_LENGTH });
+  const normalized = value.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized) || normalized.includes("//")) {
+    throw new Error(`${name} must be a repository-relative glob`);
+  }
+  const segments = normalized.split("/");
+  if (segments.some((segment) => segment === ".." || segment === ".")) {
+    throw new Error(`${name} contains an unsafe path segment`);
+  }
+  let braceDepth = 0;
+  for (const character of normalized) {
+    if (character === "{") braceDepth += 1;
+    if (character === "}") {
+      braceDepth -= 1;
+      if (braceDepth < 0) throw new Error(`${name} contains an unbalanced brace`);
+    }
+  }
+  if (braceDepth !== 0) throw new Error(`${name} contains an unbalanced brace`);
+  return normalized;
+}
+
+function validateStringArray(value, name, { allowEmpty = true } = {}) {
+  if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
+  if (!allowEmpty && value.length === 0) throw new Error(`${name} must not be empty`);
+  const normalized = value.map((entry, index) => {
+    assertString(entry, `${name}[${index}]`, { maxLength: 512 });
+    return entry.trim();
+  });
+  if (new Set(normalized).size !== normalized.length) throw new Error(`${name} must not contain duplicates`);
+  return normalized;
+}
+
+function validatePatternList(value, name) {
+  if (!Array.isArray(value) || value.length === 0) throw new Error(`${name} must be a non-empty array`);
+  const normalized = value.map((entry, index) => validatePolicyPattern(entry, `${name}[${index}]`));
+  if (new Set(normalized).size !== normalized.length) throw new Error(`${name} must not contain duplicates`);
+  return normalized;
+}
+
+function validateRuleList(value, name, { requireId = false } = {}) {
+  if (!Array.isArray(value) || value.length === 0) throw new Error(`${name} must be a non-empty array`);
+  const ids = new Set();
+  return value.map((rule, index) => {
+    if (!isRecord(rule)) throw new Error(`${name}[${index}] must be an object`);
+    const id = rule.id;
+    if (requireId) {
+      assertString(id, `${name}[${index}].id`, { maxLength: 128 });
+      if (!/^[a-z][a-z0-9-]*$/.test(id)) throw new Error(`${name}[${index}].id is invalid`);
+      if (ids.has(id)) throw new Error(`${name} contains duplicate id: ${id}`);
+      ids.add(id);
+    }
+    validatePatternList(rule.patterns, `${name}[${index}].patterns`);
+    return rule;
+  });
+}
+
+export function validateRiskPolicy(policy) {
+  if (!isRecord(policy)) throw new Error("risk policy must be an object");
+  if (policy.schemaVersion !== 2) throw new Error("risk policy schemaVersion must be 2");
+  if (!RISK_LEVELS.includes(policy.defaultRisk)) throw new Error("risk policy defaultRisk is invalid");
+  if (!isRecord(policy.levels)) throw new Error("risk policy levels must be an object");
+  for (const level of RISK_LEVELS) {
+    const definition = policy.levels[level];
+    if (!isRecord(definition)) throw new Error(`risk policy level is missing: ${level}`);
+    assertString(definition.label, `risk policy levels.${level}.label`, { maxLength: 128 });
+    validateStringArray(definition.requiredChecks, `risk policy levels.${level}.requiredChecks`);
+    validateStringArray(definition.skippedChecks, `risk policy levels.${level}.skippedChecks`);
+  }
+  for (const level of Object.keys(policy.levels)) {
+    if (!RISK_LEVELS.includes(level)) throw new Error(`risk policy contains unknown level: ${level}`);
+  }
+
+  validateRuleList(policy.surfaces, "risk policy surfaces", { requireId: true });
+  for (const [index, surface] of policy.surfaces.entries()) {
+    if (typeof surface.releaseInput !== "boolean") throw new Error(`risk policy surfaces[${index}].releaseInput must be boolean`);
+  }
+  validateRuleList(policy.languageRules, "risk policy languageRules", { requireId: true });
+  validateRuleList(policy.classificationRules, "risk policy classificationRules");
+  for (const [index, rule] of policy.classificationRules.entries()) {
+    if (!RISK_LEVELS.includes(rule.risk)) throw new Error(`risk policy classificationRules[${index}].risk is invalid`);
+    assertString(rule.reason, `risk policy classificationRules[${index}].reason`, { maxLength: 512 });
+  }
+  for (const [key, label] of [
+    ["dependencyPatterns", "dependencyPatterns"],
+    ["sharedContractPatterns", "sharedContractPatterns"],
+    ["productionSensitivePatterns", "productionSensitivePatterns"],
+    ["securitySensitivePatterns", "securitySensitivePatterns"],
+  ]) validatePatternList(policy[key], `risk policy ${label}`);
+  if (policy.releaseSharedInputs !== undefined) validateStringArray(policy.releaseSharedInputs, "risk policy releaseSharedInputs");
+  return policy;
+}
+
+function normalizeChangeStatus(value, name) {
+  assertString(value, name, { maxLength: 4 });
+  const match = value.trim().toUpperCase().match(CHANGE_STATUS);
+  if (!match) throw new Error(`${name} is invalid`);
+  return { code: match[1], score: match[2] || null };
+}
+
+function rawChangePaths(entry, code, index) {
+  if (Array.isArray(entry.paths)) return entry.paths;
+  if (code === "R" || code === "C") {
+    return [entry.oldPath ?? entry.from, entry.newPath ?? entry.to];
+  }
+  return [entry.path ?? entry.newPath ?? entry.to ?? entry.oldPath ?? entry.from];
+}
+
+export function normalizeChangedFiles(files) {
+  if (!Array.isArray(files)) throw new Error("changed files must be an array");
+  const unique = new Map();
+  files.forEach((entry, index) => {
+    const objectEntry = isRecord(entry) ? entry : { path: entry };
+    const { code, score } = normalizeChangeStatus(objectEntry.status ?? "M", `changed files[${index}].status`);
+    const paths = rawChangePaths(objectEntry, code, index);
+    if (!Array.isArray(paths) || paths.length !== (code === "R" || code === "C" ? 2 : 1)) {
+      throw new Error(`changed files[${index}] has an indeterminate path shape`);
+    }
+    if (paths.some((value) => typeof value !== "string" || value.trim() === "")) {
+      throw new Error(`changed files[${index}] has an indeterminate path shape`);
+    }
+    const normalizedPaths = paths.map((value, pathIndex) => normalizeRepositoryPath(value, `changed files[${index}].paths[${pathIndex}]`));
+    if ((code === "R" || code === "C") && normalizedPaths[0] === normalizedPaths[1]) {
+      throw new Error(`changed files[${index}] rename/copy paths must differ`);
+    }
+    const normalized = { status: code, score, paths: normalizedPaths };
+    const key = `${code}:${score ?? ""}:${normalizedPaths.join("\u0000")}`;
+    unique.set(key, normalized);
+  });
+  return [...unique.values()].sort((left, right) => {
+    const leftKey = `${left.paths[0]}\u0000${left.paths[1] ?? ""}\u0000${left.status}`;
+    const rightKey = `${right.paths[0]}\u0000${right.paths[1] ?? ""}\u0000${right.status}`;
+    return leftKey.localeCompare(rightKey);
+  });
+}
+
+export function parseGitNameStatus(output) {
+  if (typeof output !== "string") throw new Error("git name-status output must be a string");
+  if (output === "") return [];
+  const tokens = output.split("\u0000");
+  if (tokens.at(-1) === "") tokens.pop();
+  if (tokens.some((token) => token === "")) throw new Error("git name-status output contains an empty path token");
+  const entries = [];
+  for (let index = 0; index < tokens.length;) {
+    const status = normalizeChangeStatus(tokens[index], `git name-status entry ${index}`);
+    index += 1;
+    const pathCount = status.code === "R" || status.code === "C" ? 2 : 1;
+    if (index + pathCount > tokens.length) throw new Error("git name-status output is truncated");
+    entries.push({ status: tokens[index - 1], paths: tokens.slice(index, index + pathCount) });
+    index += pathCount;
+  }
+  return normalizeChangedFiles(entries);
+}
 
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -61,12 +255,82 @@ export function matchesAny(path, patterns = []) {
   return patterns.some((pattern) => expandBraces(pattern).some((expanded) => globMatch(path, expanded)));
 }
 
+function matchesAnyPath(file, patterns) {
+  return matchesAny(file, patterns) || matchesAny(file.toLowerCase(), patterns.map((pattern) => pattern.toLowerCase()));
+}
+
+function collectPathEntries(changes) {
+  const paths = new Map();
+  for (const change of changes) {
+    for (const file of change.paths) {
+      if (!paths.has(file)) paths.set(file, new Set());
+      paths.get(file).add(change.status);
+    }
+  }
+  return [...paths.keys()].sort().map((file) => ({ file, statuses: [...paths.get(file)].sort() }));
+}
+
+function classifyLanguage(policy, file) {
+  const languages = policy.languageRules
+    .filter((rule) => matchesAnyPath(file, rule.patterns))
+    .map((rule) => rule.id);
+  return languages.length ? languages : ["unknown"];
+}
+
+function criticalChecks(policy) {
+  try {
+    validateRiskPolicy(policy);
+    return [...policy.levels.critical.requiredChecks];
+  } catch {
+    return [...FALLBACK_REQUIRED_CHECKS];
+  }
+}
+
+function failureText(value) {
+  const normalized = String(value ?? "classification failed").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  return (normalized || "classification failed").slice(0, 240);
+}
+
+function safeFailureCode(value) {
+  const normalized = String(value ?? "classification_failed").trim().toLowerCase();
+  return /^[a-z][a-z0-9._-]{0,63}$/.test(normalized) ? normalized : "classification_failed";
+}
+
+export function buildClassificationFallback({ policy = null, code = "classification_failed", reason = "classification failed" } = {}) {
+  const fallback = {
+    active: true,
+    code: safeFailureCode(code),
+    reason: failureText(reason),
+  };
+  return {
+    schemaVersion: 2,
+    risk: "critical",
+    surfaces: ["unclassified"],
+    affectedSurfaces: ["unclassified"],
+    languages: ["unknown"],
+    dependencies_changed: true,
+    shared_contracts_changed: true,
+    production_sensitive: true,
+    security_sensitive: true,
+    status: "fallback",
+    classification_status: "failed",
+    fallback,
+    requiredChecks: criticalChecks(policy),
+    skippedChecks: [],
+    pathClassifications: [],
+    rationale: `Classification failed closed (${fallback.code}); no change is eligible for the low-risk lane.`,
+  };
+}
+
 export function classifyFiles(policy, files) {
-  const normalizedFiles = [...new Set(files.filter(Boolean).map((file) => file.replaceAll("\\", "/")))].sort();
+  validateRiskPolicy(policy);
+  const changes = normalizeChangedFiles(files);
+  const normalizedEntries = collectPathEntries(changes);
+  const normalizedFiles = normalizedEntries.map((entry) => entry.file);
   const matches = normalizedFiles.map((file) => {
-    const matchingRules = policy.classificationRules.filter((rule) => matchesAny(file, rule.patterns));
+    const matchingRules = policy.classificationRules.filter((rule) => matchesAnyPath(file, rule.patterns));
     const matchedRule = matchingRules.sort((left, right) => RISK_ORDER[right.risk] - RISK_ORDER[left.risk])[0];
-    const surfaces = policy.surfaces.filter((surface) => matchesAny(file, surface.patterns)).map((surface) => surface.id);
+    const surfaces = policy.surfaces.filter((surface) => matchesAnyPath(file, surface.patterns)).map((surface) => surface.id);
     return {
       file,
       risk: matchedRule?.risk ?? policy.defaultRisk,
@@ -76,13 +340,28 @@ export function classifyFiles(policy, files) {
   });
   const risk = matches.reduce((current, entry) => RISK_ORDER[entry.risk] > RISK_ORDER[current] ? entry.risk : current, "low");
   const surfaces = [...new Set(matches.flatMap((entry) => entry.surfaces))].sort();
+  const languages = [...new Set(normalizedFiles.flatMap((file) => classifyLanguage(policy, file)))].sort();
+  const dependenciesChanged = normalizedFiles.some((file) => matchesAnyPath(file, policy.dependencyPatterns));
+  const sharedContractsChanged = normalizedFiles.some((file) => matchesAnyPath(file, policy.sharedContractPatterns));
+  const productionSensitive = normalizedFiles.some((file) => matchesAnyPath(file, policy.productionSensitivePatterns));
+  const securitySensitive = normalizedFiles.some((file) => matchesAnyPath(file, policy.securitySensitivePatterns));
   const level = policy.levels[risk];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     risk,
+    surfaces,
+    // Kept for existing workflow consumers until they migrate to `surfaces`.
     affectedSurfaces: surfaces,
-    requiredChecks: level.requiredChecks,
-    skippedChecks: level.skippedChecks,
+    languages,
+    dependencies_changed: dependenciesChanged,
+    shared_contracts_changed: sharedContractsChanged,
+    production_sensitive: productionSensitive,
+    security_sensitive: securitySensitive,
+    status: "classified",
+    classification_status: "ok",
+    fallback: null,
+    requiredChecks: [...level.requiredChecks],
+    skippedChecks: [...level.skippedChecks],
     pathClassifications: matches,
     rationale: matches.length
       ? `Highest affected risk is ${risk}; checks are selected from the versioned policy for the actual changed paths.`
