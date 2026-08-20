@@ -1949,7 +1949,7 @@ test('candidate reconciliation refuses duplicate pending ad-set matches without 
   assert.equal(db.operations.get(operationKey).status, 'reconciliation_required');
 });
 
-test('candidate reconciliation closes a campaign-only ambiguous seed when no ad set was accepted', async () => {
+test('candidate reconciliation closes a campaign-only ambiguous seed when no ad set was accepted despite campaign status drift', async () => {
   const db = new SeedDb();
   const graph = new FakeGraph();
   const operationKey = 'meta-ads-staging-seed:reconcile-campaign-only-001';
@@ -1990,7 +1990,7 @@ test('candidate reconciliation closes a campaign-only ambiguous seed when no ad 
       buying_type: 'AUCTION',
       special_ad_categories: [],
       is_adset_budget_sharing_enabled: false,
-      status: 'PAUSED',
+      status: 'ACTIVE',
     },
   });
 
@@ -2003,32 +2003,22 @@ test('candidate reconciliation closes a campaign-only ambiguous seed when no ad 
   assert.equal(JSON.stringify(body).includes(campaignId), false);
 });
 
-test('candidate reconciliation classifies campaign readback drift without Graph writes or sensitive output', async () => {
+test('candidate reconciliation requires exact campaign identity and name without Graph writes or sensitive output', async () => {
   const cases = [
     {
       name: 'malformed',
       campaignResponse: { name: 'opaque', status: 'PAUSED', objective: 'OUTCOME_LEADS' },
-      error: 'meta_ads_publish_staging_seed_graph_campaign_contract_malformed',
+      error: 'meta_ads_publish_staging_seed_reconciliation_required',
     },
     {
       name: 'identity',
       campaignResponse: { id: 'not-numeric', name: 'opaque', status: 'PAUSED', objective: 'OUTCOME_LEADS' },
-      error: 'meta_ads_publish_staging_seed_graph_campaign_contract_malformed',
+      error: 'meta_ads_publish_staging_seed_reconciliation_required',
     },
     {
       name: 'name',
       campaignPatch: { name: '[unexpected-campaign-name]' },
-      error: 'meta_ads_publish_staging_seed_graph_campaign_name_mismatch',
-    },
-    {
-      name: 'status',
-      campaignPatch: { status: 'ACTIVE' },
-      error: 'meta_ads_publish_staging_seed_graph_campaign_status_mismatch',
-    },
-    {
-      name: 'objective',
-      campaignPatch: { objective: 'OUTCOME_SALES' },
-      error: 'meta_ads_publish_staging_seed_graph_campaign_objective_mismatch',
+      error: 'meta_ads_publish_staging_seed_reconciliation_required',
     },
   ];
 
