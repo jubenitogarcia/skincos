@@ -122,9 +122,9 @@ test("source ad-set delivery diagnostic is manual, staging-read-only, and no-mut
   assert.match(workflow, /environment: staging/);
   assert.match(workflow, /META_ADS_ACCESS_TOKEN: \$\{\{ secrets\.META_ADS_ACCESS_TOKEN \}\}/);
   assert.match(workflow, /META_PIXEL_ID: \$\{\{ secrets\.META_PIXEL_ID \}\}/);
-  assert.match(workflow, /META_ADS_ACCOUNT_ID: \$\{\{ vars\.META_ADS_ACCOUNT_ID \}\}/);
+  assert.match(workflow, /META_ADS_ACCOUNT_ID: \$\{\{ secrets\.META_ADS_ACCOUNT_ID \}\}/);
   assert.match(workflow, /META_ADS_API_VERSION: \$\{\{ vars\.META_ADS_API_VERSION \}\}/);
-  assert.match(workflow, /add-mask::\$META_ADS_ACCOUNT_ID/);
+  assert.doesNotMatch(workflow, /META_ADS_ACCOUNT_ID: \$\{\{ vars\.META_ADS_ACCOUNT_ID \}\}/);
   assert.match(workflow, /delivery_estimate/);
   assert.match(workflow, /optimization_goal/);
   assert.match(workflow, /promoted_object/);
