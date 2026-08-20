@@ -607,7 +607,22 @@ test("merge:main is a fail-closed GitHub mutation authority", () => {
   assert.match(read("scripts/codex-global-coordination-workflow.mjs"), /admission paths are not bound/);
   assert.match(script, /\/pulls\/\$\{pullNumber\}\/merge/);
   assert.match(workflow, /pull_request_target/);
-  assert.match(workflow, /ref: \$\{\{ github\.ref \}\}/);
+  assert.match(workflow, /permissions: \{\}/);
+  assert.match(workflow, /Reject untrusted manual dispatch refs/);
+  assert.match(workflow, /github\.ref != 'refs\/heads\/main'/);
+  assert.match(workflow, /merge-authority:\n    if: \$\{\{ github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main' \}\}/);
+  assert.match(workflow, /ref: refs\/heads\/main/);
+  assert.doesNotMatch(workflow, /ref: \$\{\{ github\.ref \}\}/);
+  const signalJob = jobBlock(workflow, "authority-signal");
+  const mergeJob = jobBlock(workflow, "merge-authority");
+  assert.doesNotMatch(signalJob, /contents: write|secrets\./);
+  assert.match(mergeJob, /needs: authority-signal/);
+  assert.match(mergeJob, /contents: write/);
+  assert.match(mergeJob, /SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET/);
+  assert.ok(
+    workflow.indexOf("ref: refs/heads/main") < workflow.indexOf("SKINCOS_GLOBAL_COORDINATION_SHARED_SECRET:"),
+    "trusted main checkout must precede coordination secret injection",
+  );
   assert.match(workflow, /state=failure/);
   assert.match(workflow, /run-name: Merge PR #\$\{\{ inputs\.pull_number \}\} through merge:main/);
   assert.match(workflow, /GH_TOKEN: \$\{\{ github\.token \}\}/);
