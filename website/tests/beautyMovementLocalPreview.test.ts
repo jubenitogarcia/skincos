@@ -25,6 +25,9 @@ test("local preview is synthetic, blocks production, and cannot open the real Wh
     assert.match(experience, /Prévia local: a abertura do WhatsApp foi simulada\./);
     assert.match(experience, /BEAUTY_MOVEMENT_OFFER_PRESENTATIONS/);
     assert.match(experience, /Suas três escolhas/);
+    assert.match(experience, /const \[confirmedOffer, setConfirmedOffer\]/);
+    assert.match(experience, /if \(commit && "offer" in commit\) setConfirmedOffer\(commit\.offer \?\? null\)/);
+    assert.match(experience, /const offer = initialState\.offer \?\? confirmedOffer/);
     assert.match(experience, /Bioestimulação potencializada/);
     assert.match(experience, /Adquira 2 mL e receba 4 mL\./);
     assert.match(experience, /Adquira 1 mL de Restylane Classic e desbloqueie Sculptra por R\$ 1\.699\./);
@@ -33,4 +36,5 @@ test("local preview is synthetic, blocks production, and cannot open the real Wh
     assert.match(styles, /\.specialCardFrontOffer \{/);
     assert.match(styles, /\.specialCardPriceBlock \{/);
     assert.match(styles, /\.specialCardConditions\[open\] \{/);
+    assert.match(preview, /return \{ confirmed: true, offer \}/);
 });
