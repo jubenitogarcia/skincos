@@ -384,14 +384,23 @@ jobs:
           const page = await context.newPage();
           const consoleErrors = [];
           const whatsappRequests = [];
+          const bootstrapResponses = [];
           let revealRequests = 0;
           page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
           page.on('pageerror', (error) => consoleErrors.push(error.message));
+          page.on('response', (response) => {
+            const url = new URL(response.url());
+            if (url.pathname.startsWith('/api/beleza-em-movimento/')) bootstrapResponses.push(`${response.request().method()} ${url.pathname} ${response.status()}`);
+          });
           page.on('request', (request) => {
             if (request.url().includes('/api/beleza-em-movimento/reveal') && request.method() === 'POST') revealRequests += 1;
             if (/^https:\/\/(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com)\//i.test(request.url())) whatsappRequests.push(request.url());
           });
           await page.goto(`${base}/beleza-em-movimento#c=${encodeURIComponent(token)}`, { waitUntil: 'domcontentloaded' });
+          await page.waitForTimeout(1000);
+          if (await page.getByRole('button', { name: /Clique no baralho para começar a sua leitura/i }).count() === 0) {
+            throw new Error(`beauty_movement_browser_bootstrap_missing:url=${new URL(page.url()).pathname}:responses=${bootstrapResponses.join('|') || 'none'}`);
+          }
           const reveal = async (actLabel) => {
             const card = page.getByRole('button', { name: new RegExp(`Revelar carta 1 de ${actLabel}`, 'i') });
             await card.waitFor({ state: 'visible', timeout: 30000 });
