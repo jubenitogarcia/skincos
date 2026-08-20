@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "defaultRisk": "medium",
   "levels": {
     "low": {
@@ -31,7 +31,12 @@
     },
     {
       "id": "codex-baseline",
-      "patterns": [".codex/**", "skills/**", "scripts/codex-*.mjs", "scripts/tests/codex-*.mjs", "scripts/codex-*.sh", "scripts/*codex*.ps1", "ops/codex/**", "ops/governance/**"],
+      "patterns": [".codex/**", "skills/**", "scripts/codex-*.mjs", "scripts/tests/codex-*.mjs", "scripts/tests/fixtures/codex-*", "scripts/codex-*.sh", "scripts/*codex*.ps1", "ops/codex/**", "ops/governance/**"],
+      "releaseInput": true
+    },
+    {
+      "id": "shared-contracts",
+      "patterns": ["shared/**", "**/*contract*"],
       "releaseInput": true
     },
     {
@@ -60,6 +65,95 @@
       "releaseInput": true
     }
   ],
+  "languageRules": [
+    { "id": "typescript", "patterns": ["**/*.ts", "**/*.tsx"] },
+    { "id": "javascript", "patterns": ["**/*.js", "**/*.cjs", "**/*.mjs", "**/*.jsx"] },
+    { "id": "python", "patterns": ["**/*.py"] },
+    { "id": "shell", "patterns": ["**/*.sh", "**/*.bash"] },
+    { "id": "json", "patterns": ["**/*.json", "**/*.jsonc"] },
+    { "id": "yaml", "patterns": ["**/*.yml", "**/*.yaml"] },
+    { "id": "toml", "patterns": ["**/*.toml"] },
+    { "id": "sql", "patterns": ["**/*.sql"] },
+    { "id": "css", "patterns": ["**/*.css", "**/*.scss"] },
+    { "id": "html", "patterns": ["**/*.html", "**/*.htm"] },
+    { "id": "markdown", "patterns": ["**/*.md", "**/*.mdx"] },
+    { "id": "graphql", "patterns": ["**/*.graphql", "**/*.gql"] },
+    { "id": "go", "patterns": ["**/*.go"] },
+    { "id": "rust", "patterns": ["**/*.rs"] },
+    { "id": "java", "patterns": ["**/*.java"] },
+    { "id": "kotlin", "patterns": ["**/*.kt", "**/*.kts"] },
+    { "id": "swift", "patterns": ["**/*.swift"] }
+  ],
+  "dependencyPatterns": [
+    "**/package.json",
+    "**/package-lock.json",
+    "**/pnpm-lock.yaml",
+    "**/yarn.lock",
+    "**/requirements*.txt",
+    "**/pyproject.toml",
+    "**/poetry.lock",
+    "**/Cargo.toml",
+    "**/Cargo.lock",
+    "**/go.mod",
+    "**/go.sum"
+  ],
+  "sharedContractPatterns": [
+    "shared/**",
+    "**/*contract*",
+    "ops/codex/**",
+    "ops/governance/**",
+    ".github/governance/**",
+    "scripts/codex-autonomy-lib.mjs",
+    "scripts/codex-risk-classifier.mjs"
+  ],
+  "productionSensitivePatterns": [
+    ".github/workflows/**",
+    ".github/actions/**",
+    "api/**",
+    "crm/api/**",
+    "workforce/**",
+    "website/**",
+    "booking/**",
+    "platform/**",
+    "ops/runtime/**",
+    "orb/**",
+    "messaging/**",
+    "service/**",
+    "ads/meta/**",
+    "social/**",
+    "**/migrations/**",
+    "**/wrangler*.toml",
+    "**/worker*.{js,mjs,ts}",
+    "**/*tracking*",
+    "**/*integration*",
+    "**/*webhook*",
+    "**/*production-delete*",
+    "**/*real-data*",
+    "**/*financial-ledger*"
+  ],
+  "securitySensitivePatterns": [
+    "**/auth/**",
+    "**/*auth*",
+    "**/*session*",
+    "**/*permission*",
+    "**/*secret*",
+    "**/*credential*",
+    "**/*token*",
+    "**/*password*",
+    "**/*security*",
+    "**/*csrf*",
+    "**/*crypto*",
+    "**/*private*key*",
+    ".github/workflows/**",
+    ".github/scripts/**",
+    "ops/governance/**",
+    "platform/security/**",
+    "**/migrations/**",
+    "**/*credential-exposure*",
+    "**/*real-data*",
+    "**/*destructive*",
+    "**/*production-delete*"
+  ],
   "classificationRules": [
     {
       "risk": "critical",
@@ -69,7 +163,7 @@
     {
       "risk": "high",
       "reason": "Authentication, sessions, permissions, secrets, migrations, payment, deployment, workflow, Worker, database, tracking, or externally integrated surface changed and needs a focal check plus rollback.",
-      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/migrations/**", "**/*migration*", ".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "platform/**", "ops/runtime/**", "website/**/api/**", "ops/cloudflare/**", "ops/governance/**", "scripts/codex-global-coordination*.mjs", "scripts/tests/codex-global-coordination*.mjs", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**"]
+      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*token*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/migrations/**", "**/*migration*", ".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "platform/**", "ops/runtime/**", "website/**/api/**", "ops/cloudflare/**", "ops/governance/**", "scripts/codex-global-coordination*.mjs", "scripts/tests/codex-global-coordination*.mjs", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**", "**/*tracking*", "**/*integration*", "**/*webhook*"]
     },
     {
       "risk": "medium",
