@@ -77,3 +77,18 @@ test("routine planning resolves an immutable bounded diff without a full-history
   assert.match(workflow, /--base \"\$BASE_SHA\" --head \"\$HEAD_SHA\"/);
   assert.doesNotMatch(workflow, /fetch-depth:\s+0/);
 });
+
+test("Cloudflare governance validation is explicitly non-publishing", () => {
+  const policy = JSON.parse(fs.readFileSync(
+    path.resolve(import.meta.dirname, "../governance/cloudflare-single-writer-policy.json"),
+    "utf8",
+  ));
+  const entry = policy.nonPublishingWorkflows.find(
+    (candidate) => candidate.workflow === ".github/workflows/architecture-governance.yml",
+  );
+  assert.ok(entry);
+  assert.deepEqual(entry.requiredMarkers, [
+    "validate-cloudflare-single-writer.mjs",
+    "validate-cloudflare-single-writer.test.mjs",
+  ]);
+});
