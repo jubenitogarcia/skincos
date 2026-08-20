@@ -87,14 +87,16 @@ produto.
 | Medida | Antes (#1542) | Depois (PR de documentação #1535) |
 | --- | ---: | ---: |
 | workflows/check runs iniciados | 26 check runs | 20 check runs |
-| critical path CI/SAST | 222 s | 226 s (amostra parcial; segurança global residual) |
+| critical path CI/SAST | 222 s | 221 s (head `727922ae`; amostra parcial; segurança global residual) |
 | required aggregate incluindo autoridade | 304 s | gate em 22 s; autoridade é executada somente após a medição do PR |
 | suites explicitamente não relacionadas | não separado na baseline | Ponto, Finance, Influencer Intelligence, Staging, Cloudflare e Global architecture foram omitidos |
 | checkout/install/build repetidos | não instrumentado | nenhum CodeQL, Website build ou E2E foi iniciado para o docs-only; segurança global ainda instalou/analisou superfícies sem relação |
 | revalidações por avanço de `main` | não instrumentado | a branch ainda precisou de uma atualização de base; o shadow registra a decisão, sem bypass |
 
-Na amostra #1555, o critical path observado foi `226 s`
-(`05:28:31Z--05:32:17Z`), portanto ainda não atingiu 60--120 s. Esse número é
+Na primeira execução da amostra #1555, o critical path foi `226 s`
+(`05:28:31Z--05:32:17Z`). Após a atualização final para
+`main@9f28f947`, o head `727922ae` fechou em `221 s`
+(`06:18:49Z--06:22:30Z`); portanto ainda não atingiu 60--120 s. Esse número é
 deliberadamente reportado como adoção parcial: o workflow antigo de segurança
 executou Dependency Audit JS/TS, Pip Audit, Bandit, Semgrep e Gitleaks mesmo
 para documentação, pois a otimização de #1528/#1549 permanece bloqueada por
