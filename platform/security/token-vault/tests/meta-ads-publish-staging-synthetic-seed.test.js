@@ -1781,7 +1781,11 @@ test('staging seed seals a configured Page only after the System User assignment
   assert.equal(seededAdsets.length, 2);
   const sourceAdsets = seededAdsets.filter((resource) => resource.body?.promoted_object);
   assert.equal(sourceAdsets.length, 1);
-  assert.equal(sourceAdsets[0].body.promoted_object.offline_conversion_data_set_id, PIXEL_ID);
+  assert.deepEqual(sourceAdsets[0].body.promoted_object, {
+    pixel_id: PIXEL_ID,
+    custom_event_type: 'LEAD',
+  });
+  assert.equal(Object.hasOwn(sourceAdsets[0].body.promoted_object, 'offline_conversion_data_set_id'), false);
   assert.ok(graph.calls.every((call) => call.path !== 'me/accounts'));
   assert.equal(db.tokens.length, 2);
   assert.equal(db.operations.get(operationKey).status, 'sealed');

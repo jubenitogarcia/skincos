@@ -172,6 +172,11 @@
     },
     {
       "risk": "low",
+      "reason": "A presentation-only asset or explicitly local UI component path changed without an elevated security, dependency, contract, or production marker.",
+      "patterns": ["**/*.css", "**/*.scss", "**/*.html", "crm/console/**/*.component.ts", "crm/console/**/*.component.tsx", "crm/console/**/*.component.jsx", "crm/console/**/*.story.tsx", "crm/console/**/*.stories.tsx", "crm/console/**/*.story.jsx", "crm/console/**/*.stories.jsx", "crm/console/**/components/**/*.tsx", "crm/console/**/components/**/*.jsx", "crm/console/**/ui/**/*.tsx", "crm/console/**/ui/**/*.jsx", "crm/console/**/layout/**/*.tsx", "crm/console/**/layout/**/*.jsx"]
+    },
+    {
+      "risk": "low",
       "reason": "Documentation, issue/ledger, or static project guidance changed without an executable surface.",
       "patterns": ["**/*.md", "docs/**", "TASKS.md", "DECISIONS.md", "CODEX_CONTEXT.md", "ops/project-orchestration/**", "docs/project-state/**"]
     }
