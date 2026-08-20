@@ -248,6 +248,13 @@ const STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES = Object.freeze({
   datasetAmbiguous: 'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
   landingOrMediaUnavailable: 'meta_ads_publish_staging_seed_landing_or_media_unavailable',
 });
+const STAGING_SYNTHETIC_SEED_GRAPH_CREATE_STAGES = Object.freeze({
+  campaign: 'campaign',
+  source_adset: 'source_adset',
+  target_adset: 'target_adset',
+  source_creative: 'source_creative',
+  source_ad: 'source_ad',
+});
 const STAGING_SYNTHETIC_SEED_ADSET_FIELDS = [
   'id',
   'name',
@@ -1784,6 +1791,17 @@ function stagingSyntheticSeedFailureResponse(error, requestId) {
     'meta_ads_publish_staging_seed_graph_campaign_name_mismatch',
     'meta_ads_publish_staging_seed_graph_campaign_status_mismatch',
     'meta_ads_publish_staging_seed_graph_campaign_objective_mismatch',
+    'meta_ads_publish_staging_seed_graph_campaign_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_campaign_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_source_adset_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_source_adset_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_target_adset_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_target_adset_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_source_creative_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_source_creative_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_source_ad_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_source_ad_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_resource_contract_invalid',
     'meta_ads_publish_staging_seed_graph_contract_invalid',
     'meta_ads_publish_staging_seed_failed',
   ]);
@@ -2779,7 +2797,10 @@ async function createStagingSyntheticSeedGraphResource({ key, name, operation, s
     }
     state.resources[key].pending = false;
     await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
-    throw error;
+    throw stagingSyntheticSeedFailure(
+      stagingSyntheticSeedGraphCreateFailureCode(key, normalized),
+      409,
+    );
   }
   const id = normalizeStagingSyntheticSeedCreatedId(created, key);
   state.resources[key] = { id, name, pending: false, owned_by_operation: true };
@@ -2789,6 +2810,13 @@ async function createStagingSyntheticSeedGraphResource({ key, name, operation, s
   await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
   const value = await read(id);
   return { id, value };
+}
+
+function stagingSyntheticSeedGraphCreateFailureCode(key, normalized) {
+  const stage = STAGING_SYNTHETIC_SEED_GRAPH_CREATE_STAGES[key];
+  if (!stage) return 'meta_ads_publish_staging_seed_graph_resource_contract_invalid';
+  const suffix = normalized?.classification === 'auth' ? 'access_denied' : 'contract_invalid';
+  return `meta_ads_publish_staging_seed_graph_${stage}_create_${suffix}`;
 }
 
 async function seedGraphCreate(auth, path, body, context) {

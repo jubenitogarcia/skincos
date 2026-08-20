@@ -315,10 +315,11 @@ class SeedDb {
 }
 
 class FakeGraph {
-  constructor({ ambiguousCreatePath = '', readFailures = {}, readResponses = {} } = {}) {
+  constructor({ ambiguousCreatePath = '', readFailures = {}, readResponses = {}, writeFailures = {} } = {}) {
     this.ambiguousCreatePath = ambiguousCreatePath;
     this.readFailures = new Map(Object.entries(readFailures));
     this.readResponses = new Map(Object.entries(readResponses));
+    this.writeFailures = new Map(Object.entries(writeFailures));
     this.calls = [];
     this.postCalls = [];
     this.resources = new Map();
@@ -350,6 +351,13 @@ class FakeGraph {
 
     this.postCalls.push(path);
     const body = JSON.parse(init.body || '{}');
+    const writeFailure = this.writeFailures.get(path);
+    if (writeFailure) {
+      return graphResponse(
+        { error: { message: 'synthetic write rejected', code: writeFailure.code || 100 } },
+        writeFailure.status ?? 400,
+      );
+    }
     if (this.resources.has(path) && body.status === 'ARCHIVED') {
       const resource = this.resources.get(path);
       resource.body = { ...resource.body, status: 'ARCHIVED' };
@@ -1814,6 +1822,39 @@ test('an ambiguous synthetic POST is never retried and leaves the operation fail
   assert.equal(db.operations.get(operationKey).status, 'reconciliation_required');
   assert.equal(JSON.stringify(body).includes(SOURCE_ACCESS_TOKEN), false);
   assert.equal(JSON.stringify(body).includes(ACCOUNT_ID), false);
+});
+
+test('staging seed classifies permanent Graph resource writes by fixed stage without exposing the Graph error', async () => {
+  const cases = [
+    {
+      name: 'contract',
+      failure: { status: 400, code: 100 },
+      error: 'meta_ads_publish_staging_seed_graph_source_adset_create_contract_invalid',
+    },
+    {
+      name: 'auth',
+      failure: { status: 403, code: 10 },
+      error: 'meta_ads_publish_staging_seed_graph_source_adset_create_access_denied',
+    },
+  ];
+
+  for (const scenario of cases) {
+    const db = new SeedDb();
+    const graph = new FakeGraph({
+      writeFailures: { [`act_${ACCOUNT_ID}/adsets`]: scenario.failure },
+    });
+    const operationKey = `meta-ads-staging-seed:resource-write-${scenario.name}-001`;
+    const response = await seed({ db, graph, operationKey });
+    const body = await response.json();
+
+    assert.equal(response.status, 409, scenario.name);
+    assert.equal(body.error, scenario.error, scenario.name);
+    assert.equal(db.tokens.length, 0, scenario.name);
+    assert.equal(db.operations.get(operationKey).status, 'rolled_back', scenario.name);
+    assert.equal(JSON.stringify(body).includes(SOURCE_ACCESS_TOKEN), false, scenario.name);
+    assert.equal(JSON.stringify(body).includes(ACCOUNT_ID), false, scenario.name);
+    assert.equal(JSON.stringify(body).includes('synthetic write rejected'), false, scenario.name);
+  }
 });
 
 test('candidate reconciliation resolves one exact pending ad set and archives only the owned lineage', async () => {
