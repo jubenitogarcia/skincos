@@ -110,6 +110,20 @@ test("dependency, shared-contract, and security signals cannot remain medium", (
   }
 });
 
+test("Inventory routes are high and sensitive while nearby non-route code is not overclassified", () => {
+  const routeReport = classifyFiles(policy, ["inventory/src/routes/admin.js"]);
+  assert.equal(routeReport.risk, "high");
+  assert.equal(routeReport.production_sensitive, true);
+  assert.equal(routeReport.security_sensitive, true);
+  assert.equal(routeReport.pathClassifications[0].risk, "high");
+
+  const nonRouteReport = classifyFiles(policy, ["inventory/src/index.js"]);
+  assert.equal(nonRouteReport.risk, "medium");
+  assert.equal(nonRouteReport.production_sensitive, false);
+  assert.equal(nonRouteReport.security_sensitive, false);
+  assert.equal(nonRouteReport.pathClassifications[0].risk, "medium");
+});
+
 test("the fallback report is complete, conservative, and sanitized", () => {
   const report = buildClassificationFallback({
     policy,
