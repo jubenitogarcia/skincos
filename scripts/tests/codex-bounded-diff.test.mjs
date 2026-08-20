@@ -45,6 +45,39 @@ function shallowRemoteFixture() {
   return { cwd: clone, base: source.base, head: source.head, source: source.cwd };
 }
 
+function shallowPullRequestMergeFixture() {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-bounded-pr-merge-"));
+  git(repo, "init", "-q");
+  git(repo, "config", "user.email", "test@example.invalid");
+  git(repo, "config", "user.name", "bounded-diff-test");
+  fs.writeFileSync(path.join(repo, "base.txt"), "base\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "base");
+  git(repo, "branch", "-M", "main");
+  fs.writeFileSync(path.join(repo, "main.txt"), "main\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "main");
+  const base = git(repo, "rev-parse", "HEAD");
+  git(repo, "branch", "feature");
+  git(repo, "switch", "feature");
+  fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "feature");
+  const head = git(repo, "rev-parse", "HEAD");
+  git(repo, "switch", "main");
+  git(repo, "merge", "--no-ff", "feature", "-m", "merge pull request");
+
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-bounded-pr-origin-"));
+  git(repo, "init", "--bare", remote);
+  git(repo, "remote", "add", "origin", remote);
+  git(repo, "push", "-q", "origin", "main");
+  const clone = fs.mkdtempSync(path.join(os.tmpdir(), "skincos-bounded-pr-clone-"));
+  execFileSync("git", ["clone", "-q", "--depth=2", "--branch", "main", `file://${remote}`, clone], {
+    env: isolatedGitEnvironment,
+  });
+  return { cwd: clone, base, head };
+}
+
 function run(fixtureData, ...args) {
   return execFileSync(process.execPath, [script, ...args], {
     cwd: fixtureData.cwd,
@@ -66,6 +99,14 @@ test("fetches a missing base from origin in a shallow checkout", () => {
   const output = run(data, "--base", data.base, "--head", data.head);
   assert.match(output, new RegExp(`base=${data.base}`));
   assert.match(output, /used_fallback=false/);
+});
+
+test("deepens a shallow PR merge checkout until base and head have a merge base", () => {
+  const data = shallowPullRequestMergeFixture();
+  const output = run(data, "--base", data.base, "--head", data.head);
+  assert.match(output, new RegExp(`base=${data.base}`));
+  assert.match(output, new RegExp(`head=${data.head}`));
+  assert.match(output, new RegExp(`merge_base=${data.base}`));
 });
 
 test("accepts a synchronized force-pushed head by immutable SHA", () => {

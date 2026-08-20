@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${SKINCOS_SKIP_VERIFY:-0}" == "1" ]]; then
+  echo "[skincos] verify:changed skipped by SKINCOS_SKIP_VERIFY=1; CI remains authoritative."
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "$REPO_ROOT" ]] || exit 0
+
+if ! git diff --cached --quiet --exit-code; then
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/.githooks/verify-common"
+  skincos_invoke_verify_changed "$REPO_ROOT" --staged
+fi
