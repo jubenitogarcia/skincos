@@ -4,6 +4,11 @@ import fs from "node:fs";
 
 const SHA = /^[0-9a-f]{40}$/i;
 const DIFF_FILTER = "ACDMRTUXB";
+// A shallow PR merge checkout can contain both immutable endpoints while
+// hiding their common ancestor behind the shallow boundary. Deepen only as
+// far as needed to resolve that ancestor; never widen a routine check to a
+// full-history fetch.
+const MERGE_BASE_DEPTH_STEPS = [32, 128, 512];
 
 function argument(name, fallback = "") {
   const index = process.argv.indexOf(name);
@@ -35,6 +40,37 @@ function fetchCommit(value, label) {
   if (!commitExists(value)) throw new Error(`fetched ${label} is not available as a commit`);
 }
 
+function mergeBase(base, head) {
+  try {
+    return git("merge-base", base, head);
+  } catch {
+    return "";
+  }
+}
+
+function ensureMergeBase(base, head) {
+  let resolved = mergeBase(base, head);
+  if (resolved) return resolved;
+
+  for (const depth of MERGE_BASE_DEPTH_STEPS) {
+    for (const endpoint of [base, head]) {
+      try {
+        // Refresh the shallow boundary for each immutable endpoint. A PR
+        // merge ref commonly makes both endpoints present but shallow, so
+        // commitExists() alone is not enough to prove a usable diff range.
+        git("fetch", "--no-tags", `--depth=${depth}`, "origin", endpoint);
+      } catch {
+        // The next endpoint/depth may still provide enough ancestry. If none
+        // does, fail closed below with the exact immutable range.
+      }
+    }
+    resolved = mergeBase(base, head);
+    if (resolved) return resolved;
+  }
+
+  throw new Error(`unable to resolve merge base for bounded range ${base}...${head}`);
+}
+
 function fallbackBase() {
   try {
     const value = git("rev-parse", "HEAD^");
@@ -64,6 +100,7 @@ if (!base) throw new Error("no valid immutable base SHA and no local parent fall
 
 if (usedFallback) fetchCommit(base, "fallback base");
 fetchCommit(head, "head");
+const resolvedMergeBase = ensureMergeBase(base, head);
 try {
   git("diff", "--check", base, head);
 } catch {
@@ -77,7 +114,7 @@ const filesOutput = argument("--files-output");
 const changedFiles = git("-c", "diff.renames=false", "diff", "--name-only", `--diff-filter=${DIFF_FILTER}`, base, head)
   .split(/\r?\n/).filter(Boolean);
 if (filesOutput) fs.writeFileSync(filesOutput, changedFiles.length ? `${changedFiles.join("\n")}\n` : "");
-const lines = [`base=${base}`, `head=${head}`, `used_fallback=${usedFallback}`];
+const lines = [`base=${base}`, `head=${head}`, `merge_base=${resolvedMergeBase}`, `used_fallback=${usedFallback}`];
 if (filesOutput) lines.push(`files_file=${filesOutput}`);
 if (output) fs.appendFileSync(output, `${lines.join("\n")}\n`);
 else process.stdout.write(`${lines.join("\n")}\n`);
