@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+skincos_invoke_verify_changed() {
+  local repo_root="$1"
+  shift
+  local hook_args=("$@")
+
+  if command -v powershell.exe >/dev/null 2>&1; then
+    local project_root
+    local invoker
+    if command -v cygpath >/dev/null 2>&1; then
+      project_root="$(cygpath -w "$repo_root")"
+      invoker="$(cygpath -w "$repo_root/scripts/invoke-skincos-wsl.ps1")"
+    else
+      project_root="$(wslpath -w "$repo_root" 2>/dev/null || printf '%s' "$repo_root")"
+      invoker="$(wslpath -w "$repo_root/scripts/invoke-skincos-wsl.ps1" 2>/dev/null || printf '%s' "$repo_root/scripts/invoke-skincos-wsl.ps1")"
+    fi
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$invoker" -ProjectRoot "$project_root" -NpmScript verify:changed -Argument "${hook_args[@]}"
+    return
+  fi
+
+  npm run verify:changed -- "${hook_args[@]}"
+}

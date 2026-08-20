@@ -134,8 +134,10 @@ em fail-closed (`reconciliation_required`).
 
 `POST .../config/staging-exercise` funciona exclusivamente no Worker staging.
 Ele seleciona uma única fixture sintética autorizada, prova a reconciliação
-GET-POST-GET do evento Website/dataset offline e restaura o snapshot antes de
-retornar `reconciled_and_rolled_back`.
+GET-POST-GET do evento Website e restaura o snapshot antes de retornar
+`reconciled_and_rolled_back`. Um perfil explicitamente offline pode exigir
+também `offline_conversion_data_set_id`; isso não é inferido nem acrescentado
+ao fixture Website.
 
 Quando a autoridade legada de staging está vazia, o caminho canônico não
 adivinha nem importa configuração de produção. Antes de derivar o plano, o
@@ -157,10 +159,13 @@ unidade, prova pela relação limitada de Páginas atribuídas ao System User um
 única associação elegível e confirma o mesmo par Página+Instagram por leitura
 direta. Os pares devem ser distintos. Os seletores não são bindings do Worker
 e não entram no `--secrets-file`, artefato, log ou output do workflow. O Vault
-exige então uma conta/pixel, os dois pares Página+Instagram provados e, no
-contrato de convergência atual, usa a identidade do Pixel já provado como
-`offline_conversion_data_set_id`; não enumera edges legados ou o edge Business
-de AdsDataset para inferir outro identificador. Cria somente recursos `PAUSED`
+exige então uma conta/pixel e os dois pares Página+Instagram provados. No
+contrato de convergência atual, a identidade do Pixel já provado é retida como
+fato privado do Dataset convergente, mas o `promoted_object` do fixture Website
+envia somente `pixel_id` e `custom_event_type`; o campo
+`offline_conversion_data_set_id` só é emitido quando o perfil é explicitamente
+offline. O fluxo não enumera edges legados ou o edge Business de AdsDataset
+para inferir outro identificador. Cria somente recursos `PAUSED`
 nomeados para staging e
 sela duas credenciais internas cifradas. Não seleciona campanhas, conjuntos ou
 anúncios comerciais, nem torna o token Meta um binding do Worker.

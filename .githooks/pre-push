@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "${REPO_ROOT:-}" ]]; then
+  exit 0
+fi
+push_input="$(cat)"
+if [[ "${SKINCOS_SKIP_VERIFY:-0}" != "1" && -n "${push_input:-}" ]]; then
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/.githooks/verify-common"
+  skincos_invoke_verify_changed "$REPO_ROOT" --push <<<"$push_input"
+elif [[ "${SKINCOS_SKIP_VERIFY:-0}" == "1" ]]; then
+  echo "[skincos] verify:changed skipped by SKINCOS_SKIP_VERIFY=1; CI remains authoritative."
+fi
+
 # Auto-deploy Insumos Worker when pushing updates to `main`.
 #
 # Opt-ins/outs:
@@ -16,10 +29,6 @@ if [[ "${SKINCOS_SKIP_DEPLOY:-}" == "1" || "${SKINCOS_AUTO_DEPLOY:-0}" != "1" ]]
   exit 0
 fi
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-if [[ -z "${REPO_ROOT:-}" ]]; then
-  exit 0
-fi
 cd "$REPO_ROOT"
 
 should_deploy=0
@@ -43,7 +52,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   if [[ "${SKINCOS_AUTO_MIGRATE:-0}" == "1" ]] && echo "$changed" | grep -qE '^inventory/migrations/'; then
     should_migrate=1
   fi
-done
+done <<<"$push_input"
 
 if [[ "$should_deploy" != "1" ]]; then
   exit 0

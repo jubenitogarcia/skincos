@@ -567,6 +567,17 @@ function enableDerivedStagingLineage(graph) {
   graph.ads.set('723456791', ad('723456791', TARGET_ADSET_ID, '823456791', RAW_URL_TAGS));
 }
 
+function markSeededStagingLineage(db) {
+  const sourceRow = db.tokens.find((row) => row.id === 'facebook_a_source');
+  const targetRow = db.tokens.find((row) => row.id === 'facebook_b_target');
+  const sourceMetadata = JSON.parse(sourceRow.metadata_json);
+  const targetMetadata = JSON.parse(targetRow.metadata_json);
+  sourceMetadata.meta_ads_publish.source_adset_id = SOURCE_ADSET_ID;
+  targetMetadata.meta_ads_publish.source_config_token_id = 'facebook_a_source';
+  sourceRow.metadata_json = JSON.stringify(sourceMetadata);
+  targetRow.metadata_json = JSON.stringify(targetMetadata);
+}
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
@@ -703,6 +714,11 @@ test('autonomous bootstrap derivation keeps the manifest private and applies onl
   const db = new BootstrapDb();
   const graph = new BootstrapGraph();
   enableDerivedStagingLineage(graph);
+  // A modern converged Pixel/Dataset Website fixture must not require the
+  // offline promoted-object field. Keep the Dataset identity as a private
+  // discovery fact, but exercise the actual Website contract independently.
+  delete graph.adsets.get(SOURCE_ADSET_ID).promoted_object.offline_conversion_data_set_id;
+  markSeededStagingLineage(db);
   const state = new Map();
   const { env, decryptToken, encryptToken } = bootstrapContext({ db, graph, state });
   env.ENVIRONMENT = 'staging';
@@ -748,7 +764,9 @@ test('autonomous bootstrap derivation keeps the manifest private and applies onl
   assert.equal(appliedPayload.website_fixture_count, 2);
   const targetConfig = JSON.parse(db.tokens.find((row) => row.id === 'facebook_b_target').metadata_json).meta_ads_publish;
   assert.equal(targetConfig.tracking_contract.url_tags, RAW_URL_TAGS);
-  assert.equal(targetConfig.tracking_profiles[targetConfig.tracking_contract.profile_ref].staging_synthetic_fixture, true);
+  const targetProfile = targetConfig.tracking_profiles[targetConfig.tracking_contract.profile_ref];
+  assert.equal(targetProfile.staging_synthetic_fixture, true);
+  assert.equal(targetProfile.offline_event_dataset_requirement, 'not_required');
   assert.deepEqual(graph.adsets.get(TARGET_ADSET_ID).promoted_object, graph.targetBefore.promoted_object);
 
   const callsBeforeReplay = graph.calls.length;
@@ -775,6 +793,7 @@ test('autonomous bootstrap derivation rejects digest, authority and source ambig
   const db = new BootstrapDb();
   const graph = new BootstrapGraph();
   enableDerivedStagingLineage(graph);
+  markSeededStagingLineage(db);
   const state = new Map();
   const { env, decryptToken, encryptToken } = bootstrapContext({ db, graph, state });
   env.ENVIRONMENT = 'staging';
@@ -809,6 +828,7 @@ test('autonomous bootstrap derivation rejects digest, authority and source ambig
   const contractDb = new BootstrapDb();
   const contractGraph = new BootstrapGraph();
   enableDerivedStagingLineage(contractGraph);
+  markSeededStagingLineage(contractDb);
   const contractState = new Map();
   const contract = bootstrapContext({ db: contractDb, graph: contractGraph, state: contractState });
   contract.env.ENVIRONMENT = 'staging';
@@ -862,6 +882,7 @@ test('autonomous bootstrap derivation rejects digest, authority and source ambig
   const revisionDb = new BootstrapDb();
   const revisionGraph = new BootstrapGraph();
   enableDerivedStagingLineage(revisionGraph);
+  markSeededStagingLineage(revisionDb);
   const revisionState = new Map();
   const revision = bootstrapContext({ db: revisionDb, graph: revisionGraph, state: revisionState });
   revision.env.ENVIRONMENT = 'staging';
