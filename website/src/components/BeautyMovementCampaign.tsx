@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import BeautyMovementExperience, {
   type BeautyMovementConfirmationInput,
+  type BeautyMovementConfirmationCommit,
   type BeautyMovementExperienceInitialState,
   type BeautyMovementReveal,
 } from "@/components/BeautyMovementExperience";
@@ -103,12 +104,13 @@ export default function BeautyMovementCampaign() {
     return { reveals: nextState.reveals };
   }
 
-  async function confirmInvite(input: BeautyMovementConfirmationInput): Promise<void> {
+  async function confirmInvite(input: BeautyMovementConfirmationInput): Promise<BeautyMovementConfirmationCommit> {
     const nextState = await requestCampaignState("/api/beleza-em-movimento/confirm", {
       method: "POST",
       body: JSON.stringify(input),
     });
     setState(nextState);
+    return { confirmed: nextState.confirmed, offer: nextState.offer ?? null };
   }
 
   if (!state) {

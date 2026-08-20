@@ -1404,13 +1404,64 @@ jobs:
           if (!valid) throw new Error(`staging synthetic-seed source attestation failed: ${response.status} ${error}`);
           NODE
 
+      - name: Reconcile any durably ambiguous staging synthetic seed before a new write
+        # A prior candidate may have been accepted by Graph after the runner
+        # lost its response. The recovery route proves the exact pending ad-set
+        # under the same candidate bearer and archives only that owned lineage.
+        # It never creates a seed, activates traffic, or emits resource IDs.
+        id: staging_synthetic_seed_reconciliation
+        if: inputs.operation == 'deploy' && inputs.target == 'staging' && steps.candidate_staging_synthetic_seed_attestation.outcome == 'success'
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
+          META_ADS_ACCOUNT_ID: ${{ inputs.target == 'staging' && vars.META_ADS_ACCOUNT_ID || '' }}
+          META_ADS_API_VERSION: ${{ inputs.target == 'staging' && vars.META_ADS_API_VERSION || '' }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const preview = String(process.env.TOKEN_VAULT_CANDIDATE_PREVIEW_URL || '').replace(/\/$/, '');
+          const seedFile = String(process.env.TOKEN_VAULT_STAGING_SYNTHETIC_SEED_FILE || '');
+          const accessToken = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
+          if (!/^https:\/\/(?:[a-z0-9-]+\.)+workers\.dev$/.test(preview) || !seedFile || !accessToken || !/^\d{5,30}$/.test(accountId) || !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)) {
+            throw new Error('staging synthetic-seed reconciliation custody is invalid');
+          }
+          const seedToken = fs.readFileSync(seedFile, 'utf8').trim();
+          if (!/^[A-Za-z0-9_-]{64,}$/.test(seedToken)) throw new Error('staging synthetic-seed reconciliation bearer is unavailable');
+          const response = await fetch(`${preview}/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/reconcile`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${seedToken}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({ access_token: accessToken, account_id: accountId, api_version: apiVersion }),
+            cache: 'no-store',
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          const error = /^[a-z0-9_:-]{1,120}$/i.test(String(payload?.error || '')) ? String(payload.error) : 'unknown';
+          const status = String(payload?.operation_status || '');
+          const valid = response.ok && payload?.ok === true &&
+            Object.keys(payload).every((key) => new Set(['ok', 'reconciled', 'operation_status', 'contract_version', 'requestId']).has(key)) &&
+            (status === 'not_required' || status === 'rolled_back') &&
+            typeof payload?.reconciled === 'boolean' &&
+            String(payload?.contract_version || '') === 'meta-ads-tracking-v20/staging-synthetic-seed/v2' &&
+            typeof payload?.requestId === 'string';
+          if (!valid) throw new Error(`staging synthetic-seed reconciliation failed: ${response.status} ${error}`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `reconciliation_status=${status}\n`);
+          NODE
+
       - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate
         # This is deliberately before candidate config authentication and plan
         # derivation: an empty legacy authority has no prior target from which
         # to derive. The generated bearer has no role outside these two seed
         # endpoints and the Meta source inputs never enter a Worker binding.
         id: candidate_staging_synthetic_seed
-        if: inputs.operation == 'deploy' && inputs.target == 'staging' && steps.candidate_staging_synthetic_seed_attestation.outcome == 'success'
+        if: inputs.operation == 'deploy' && inputs.target == 'staging' && steps.candidate_staging_synthetic_seed_attestation.outcome == 'success' && steps.staging_synthetic_seed_reconciliation.outcome == 'success'
         env:
           META_ADS_ACCESS_TOKEN: ${{ inputs.target == 'staging' && secrets.META_ADS_ACCESS_TOKEN || '' }}
           META_PIXEL_ID: ${{ inputs.target == 'staging' && secrets.META_PIXEL_ID || '' }}

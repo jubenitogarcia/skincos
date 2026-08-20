@@ -12,6 +12,7 @@ grep -F -- "readonly UNIT_DEST='/etc/systemd/system'" "$INSTALLER" >/dev/null
 grep -F -- "readonly DATA_BACKUP_ROOT='/var/backups/skincos/clientes/production-source-sync'" "$INSTALLER" >/dev/null
 grep -F -- 'systemctl enable "$TIMER"' "$INSTALLER" >/dev/null
 grep -F -- 'immediate_run=false' "$INSTALLER" >/dev/null
+grep -F -- "setfacl -m 'u:skincos:--x,g::---,m::--x' /var/backups/skincos" "$INSTALLER" >/dev/null
 grep -F -- 'crm-atendimento-source-sync.service' "$TIMER" >/dev/null
 if grep -Eq 'systemctl (start|restart) (crm\.service|crm-jobs\.service|orb\.service|cloudflare)' "$INSTALLER"; then
   echo 'source-sync installer must not restart shared services' >&2
@@ -25,5 +26,6 @@ grep -F -- 'DATABASE_URL' "$UNIT" >/dev/null
 grep -F -- 'Environment=CRM_ATENDIMENTO_SOURCE_SYNC_TARGET=production' "$UNIT" >/dev/null
 grep -F -- 'UnsetEnvironment=' "$UNIT" >/dev/null
 grep -F -- 'ProtectSystem=strict' "$UNIT" >/dev/null
+grep -F -- 'ReadWritePaths=__BACKUP_ROOT__ __LOG_ROOT__/crm-atendimento-source-sync' "$UNIT" >/dev/null
 
 echo 'PASS: Atendimento source-sync installer and units are isolated and fail-closed.'

@@ -7,6 +7,7 @@ import {
     assertAtendimentoSourceSyncDatabaseUrl,
     assertPrivateSourceCredentialPath,
     atendimentoSourceFingerprint,
+    buildAtendimentoSourceSyncPgDumpEnvironment,
     runAtendimentoSourceSync,
 } from '../sourceSync.js'
 
@@ -66,6 +67,30 @@ test('accepts only the dedicated migrator database contract', () => {
         { code: 'ATENDIMENTO_SOURCE_SYNC_DATABASE_URL_UNSAFE' },
     )
     assert.throws(() => assertPrivateSourceCredentialPath('/tmp/google-sa.json'), { code: 'ATENDIMENTO_SOURCE_SYNC_SOURCE_CREDENTIAL_UNSAFE' })
+})
+
+test('does not pass empty PostgreSQL service-file variables to pg_dump', () => {
+    const environment = buildAtendimentoSourceSyncPgDumpEnvironment({
+        baseEnv: {
+            PGSERVICE: '',
+            PGSERVICEFILE: '',
+            PGSYSCONFDIR: '/untrusted/config',
+            PGPASSFILE: '/untrusted/passfile',
+            SOURCE_SYNC_TEST_FLAG: 'preserved',
+        },
+        host: '127.0.0.1',
+        port: '5432',
+        database: 'skincos_clientes_production',
+        user: 'skincos_clientes_migrator_login',
+        password: 'synthetic-password',
+    })
+    assert.equal(environment.PGSERVICE, undefined)
+    assert.equal(environment.PGSERVICEFILE, undefined)
+    assert.equal(environment.PGSYSCONFDIR, undefined)
+    assert.equal(environment.PGPASSFILE, undefined)
+    assert.equal(environment.PGDATABASE, 'skincos_clientes_production')
+    assert.equal(environment.PGUSER, 'skincos_clientes_migrator_login')
+    assert.equal(environment.SOURCE_SYNC_TEST_FLAG, 'preserved')
 })
 
 test('rejects a read-only or mismatched production identity before source work', () => {

@@ -83,18 +83,17 @@ export default function BeautyMovementLocalPreview() {
     }
 
     function confirm() {
-        setState((current) => {
-            const selections = current.reveals.reduce<Record<string, string>>((result, reveal) => {
-                const act = ["beleza", "movimento", "celebracao"][reveal.actIndex - 1];
-                if (act) result[act] = reveal.cardId;
-                return result;
-            }, {});
-            const resolved = current.reveals.length === 3
-                ? resolveBeautyMovementOutcome({ palette: current.palette, selections })
-                : null;
-            return { ...current, confirmed: true, offer: resolved?.offer ?? current.offer ?? null };
-        });
-        return { confirmed: true };
+        const selections = state.reveals.reduce<Record<string, string>>((result, reveal) => {
+            const act = ["beleza", "movimento", "celebracao"][reveal.actIndex - 1];
+            if (act) result[act] = reveal.cardId;
+            return result;
+        }, {});
+        const resolved = state.reveals.length === 3
+            ? resolveBeautyMovementOutcome({ palette: state.palette, selections })
+            : null;
+        const offer = resolved?.offer ?? state.offer ?? null;
+        setState((current) => ({ ...current, confirmed: true, offer }));
+        return { confirmed: true, offer };
     }
 
     return (

@@ -17,6 +17,7 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 - `POST /internal/token-vault/v1/meta-ads-publish/config/bootstrap/rollback`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/attest`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/attest-appsecret-proof`
+- `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/reconcile`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/rollback`
 - `POST /internal/token-vault/v1/meta-ads-publish/config/staging-exercise`
@@ -28,7 +29,7 @@ O bearer restrito `TOKEN_VAULT_META_ADS_CONFIG_TOKEN` só pode consultar
 bootstrap governados, o rollback desse bootstrap e o exercício de staging. Ele
 não lista/altera tokens, não cria runs e não publica anúncios.
 O bearer efêmero distinto `TOKEN_VAULT_META_ADS_STAGING_SEED_TOKEN` só alcança
-os quatro endpoints de atestação, prova de `appsecret_proof`, seed e rollback sintéticos, exclusivamente no
+os cinco endpoints de atestação, prova de `appsecret_proof`, reconciliação, seed e rollback sintéticos, exclusivamente no
 Worker staging; ele não ganha as permissões do bearer de configuração,
 operacional ou administrativo.
 O endpoint de analytics exige o secret separado
@@ -172,9 +173,11 @@ delimitadas, não toca D1 nem tráfego, e devolve apenas
 `appsecret_proof_verified` ou um código sanitizado. Ele não cria, copia nem
 revela `META_APP_SECRET`.
 
-O endpoint responde apenas `sealed` ou `not_required` e uma identidade opaca
-de operação. Se qualquer passo subsequente falhar antes do tráfego, ou se a
-compensação de staging for acionada, `POST .../staging-synthetic-seed/rollback`
+As rotas de seed respondem apenas `sealed` ou `not_required` e uma identidade
+opaca de operação; a rota separada de reconciliação responde somente
+`not_required` ou `rolled_back`, sem identidade de operação. Se qualquer passo
+subsequente falhar antes do tráfego, ou se a compensação de staging for acionada,
+`POST .../staging-synthetic-seed/rollback`
 usa a mesma capacidade efêmera para arquivar exclusivamente os objetos de
 entrega marcados e desativar as credenciais seladas. Um `AdCreative` já
 desanexado não possui estado de arquivamento documentado: ele fica inerte,

@@ -278,7 +278,7 @@ jobs:
             --procedure-catalog "${FIXTURE_DIR}/procedures.json" \
             --campaign "${CAMPAIGN_ID}" \
             --confirm-campaign "${CAMPAIGN_ID}" \
-            --campaign-ends-at "$(node -e "const fs=require('fs'); const csv=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).at(-1).split(','); process.stdout.write(csv[7])" "${FIXTURE_DIR}/invites.csv")" \
+            --campaign-ends-at "$(node --input-type=commonjs -e "const fs=require('fs'); const csv=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).at(-1).split(','); process.stdout.write(csv[7])" "${FIXTURE_DIR}/invites.csv")" \
             --campaign-config "${FIXTURE_DIR}/campaign.json" \
             --database "${STAGING_D1_DATABASE}" \
             --config wrangler.toml \
@@ -313,7 +313,7 @@ jobs:
         run: |
           set -euo pipefail
           state="${STATE_FILE}"
-          candidate_message="$(node -e "const s=require('fs').readFileSync(process.argv[1],'utf8'); process.stdout.write(JSON.parse(s).candidateMessage)" "${state}")"
+          candidate_message="$(node --input-type=commonjs -e "const s=require('fs').readFileSync(process.argv[1],'utf8'); process.stdout.write(JSON.parse(s).candidateMessage)" "${state}")"
           node - "${state}" <<'NODE'
           const fs = require('node:fs');
           const statePath = process.argv[2];
@@ -345,7 +345,7 @@ jobs:
             sleep 5
           done
           [[ "${candidate_version}" =~ ^[0-9a-f-]{36}$ ]] || { echo 'temporary staging candidate identity was not attested'; exit 1; }
-          incumbent_version="$(node -e "const s=require('fs').readFileSync(process.argv[1],'utf8'); process.stdout.write(JSON.parse(s).incumbentVersion)" "${state}")"
+          incumbent_version="$(node --input-type=commonjs -e "const s=require('fs').readFileSync(process.argv[1],'utf8'); process.stdout.write(JSON.parse(s).incumbentVersion)" "${state}")"
           [[ "${candidate_version}" != "${incumbent_version}" ]] || { echo 'temporary candidate equals incumbent'; exit 1; }
           node - "${state}" "${candidate_version}" <<'NODE'
           const fs = require('node:fs');
@@ -375,8 +375,8 @@ jobs:
           token="${invite_url##*#c=}"
           [[ "${token}" =~ ^[A-Za-z0-9_-]{40,180}$ ]] || { echo 'synthetic invite token shape invalid'; exit 1; }
           SMOKE_INVITE_TOKEN="${token}" node --input-type=module <<'NODE'
-          const fs = require('node:fs');
-          const { chromium } = require('playwright');
+          import fs from 'node:fs';
+          import { chromium } from 'playwright';
           const base = process.env.SMOKE_URL;
           const token = process.env.SMOKE_INVITE_TOKEN;
           const browser = await chromium.launch({ headless: true });
@@ -472,7 +472,7 @@ jobs:
             cleanup_failed=1
           fi
           if [[ -f "${STATE_FILE}" ]]; then
-            incumbent_version="$(node -e "const s=require('fs').readFileSync(process.argv[1],'utf8'); process.stdout.write(JSON.parse(s).incumbentVersion || '')" "${STATE_FILE}")"
+            incumbent_version="$(node --input-type=commonjs -e "const s=require('fs').readFileSync(process.argv[1],'utf8'); process.stdout.write(JSON.parse(s).incumbentVersion || '')" "${STATE_FILE}")"
             if [[ "${incumbent_version}" =~ ^[0-9a-f-]{36}$ ]]; then
               current_json="$RUNNER_TEMP/beauty-movement-staging-smoke/current.json"
               npx --yes wrangler@4.112.0 deployments list --config wrangler.toml --env staging --json >"${current_json}" || cleanup_failed=1
