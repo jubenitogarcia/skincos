@@ -111,6 +111,7 @@
     ".github/actions/**",
     "api/**",
     "crm/api/**",
+    "inventory/src/routes/**",
     "workforce/**",
     "website/**",
     "booking/**",
@@ -148,6 +149,7 @@
     ".github/scripts/**",
     "ops/governance/**",
     "platform/security/**",
+    "inventory/src/routes/**",
     "**/migrations/**",
     "**/*credential-exposure*",
     "**/*real-data*",
@@ -162,8 +164,8 @@
     },
     {
       "risk": "high",
-      "reason": "Authentication, sessions, permissions, secrets, migrations, payment, deployment, workflow, Worker, database, tracking, or externally integrated surface changed and needs a focal check plus rollback.",
-      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*token*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/migrations/**", "**/*migration*", ".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "platform/**", "ops/runtime/**", "website/**/api/**", "ops/cloudflare/**", "ops/governance/**", "scripts/codex-global-coordination*.mjs", "scripts/tests/codex-global-coordination*.mjs", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**", "**/*tracking*", "**/*integration*", "**/*webhook*"]
+      "reason": "Authentication, sessions, permissions, secrets, migrations, payment, deployment, workflow, Worker, database, tracking, externally integrated, or Inventory route surface changed and needs a focal check plus rollback.",
+      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*token*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/migrations/**", "**/*migration*", ".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "inventory/src/routes/**", "platform/**", "ops/runtime/**", "website/**/api/**", "ops/cloudflare/**", "ops/governance/**", "scripts/codex-global-coordination*.mjs", "scripts/tests/codex-global-coordination*.mjs", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**", "**/*tracking*", "**/*integration*", "**/*webhook*"]
     },
     {
       "risk": "medium",
