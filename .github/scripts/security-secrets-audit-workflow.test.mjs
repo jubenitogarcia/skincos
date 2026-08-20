@@ -15,6 +15,9 @@ test("workflow keeps PR Gitleaks mandatory and reserves full scans for main, sch
   assert.match(workflow, /gitleaks\/gitleaks-action@/);
   assert.match(workflow, /gitleaks git --redact --exit-code=2/);
   assert.match(workflow, /--log-opts="--all"/);
+  const fullHistoryGitleaks = workflow.split("Run full Gitleaks history scan for broad-risk PRs and main", 2)[1] || "";
+  assert.match(fullHistoryGitleaks, /if:\s+\$\{\{\s*needs\.scope\.outputs\.full_scan\s*==\s*'true'\s*\}\}/);
+  assert.doesNotMatch(fullHistoryGitleaks, /github\.event_name/);
   assert.match(workflow, /fetch-depth:\s+2/);
   assert.match(workflow, /codex-bounded-diff\.mjs/);
   assert.match(workflow, /git fetch --no-tags --unshallow origin/);
