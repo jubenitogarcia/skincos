@@ -386,20 +386,46 @@ jobs:
           const whatsappRequests = [];
           const bootstrapResponses = [];
           let revealRequests = 0;
+          let staticFailures = 0;
+          const staticResponses = [];
           page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
           page.on('pageerror', (error) => consoleErrors.push(error.message));
           page.on('response', (response) => {
             const url = new URL(response.url());
             if (url.pathname.startsWith('/api/beleza-em-movimento/')) bootstrapResponses.push(`${response.request().method()} ${url.pathname} ${response.status()}`);
+            if (url.pathname.startsWith('/_next/static/')) {
+              const status = response.status();
+              if (status >= 400) staticFailures += 1;
+              staticResponses.push(`${response.request().method()} ${url.pathname.split('/').slice(-1)[0]} ${status}`);
+            }
           });
           page.on('request', (request) => {
             if (request.url().includes('/api/beleza-em-movimento/reveal') && request.method() === 'POST') revealRequests += 1;
             if (/^https:\/\/(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com)\//i.test(request.url())) whatsappRequests.push(request.url());
           });
           await page.goto(`${base}/beleza-em-movimento#c=${encodeURIComponent(token)}`, { waitUntil: 'domcontentloaded' });
-          await page.waitForTimeout(1000);
+          await page.waitForFunction(() => (
+            document.querySelector('button[aria-label*="Clique no baralho"]') !== null ||
+            window.location.pathname !== '/beleza-em-movimento'
+          ), { timeout: 30000 });
           if (await page.getByRole('button', { name: /Clique no baralho para começar a sua leitura/i }).count() === 0) {
-            throw new Error(`beauty_movement_browser_bootstrap_missing:url=${new URL(page.url()).pathname}:responses=${bootstrapResponses.join('|') || 'none'}`);
+            const diagnostics = await page.evaluate(() => {
+              let inviteStorage = { present: false, length: 0 };
+              try {
+                const value = window.sessionStorage.getItem('ef:beauty-movement:invite');
+                inviteStorage = { present: Boolean(value), length: value?.length ?? 0 };
+              } catch {
+                inviteStorage = { present: false, length: -1 };
+              }
+              return {
+                readyState: document.readyState,
+                pathname: window.location.pathname,
+                inviteStorage,
+                statusPageCount: document.querySelectorAll('[aria-busy="true"]').length,
+                deckButtonCount: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
+              };
+            });
+            throw new Error(`beauty_movement_browser_bootstrap_missing:${JSON.stringify({ ...diagnostics, responses: bootstrapResponses, staticFailures, staticResponses: staticResponses.slice(-12), consoleErrorCount: consoleErrors.length })}`);
           }
           const reveal = async (actLabel) => {
             const card = page.getByRole('button', { name: new RegExp(`Revelar carta 1 de ${actLabel}`, 'i') });
