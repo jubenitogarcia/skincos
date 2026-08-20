@@ -6,18 +6,47 @@ on:
     paths:
       - "crm/console/**"
       - "crm/api/**"
-      - ".github/workflows/escala-ui-e2e.yml"
+      - "workforce/**"
+      - "shared/**"
+      - "platform/**"
+      - "api/**"
+      - "ops/**"
+      - ".github/**"
+      - "scripts/github-actions/**"
   push:
     branches: [main]
     paths:
       - "crm/console/**"
       - "crm/api/**"
-      - ".github/workflows/escala-ui-e2e.yml"
+      - "workforce/**"
+      - "shared/**"
+      - "platform/**"
+      - "api/**"
+      - "ops/**"
+      - ".github/**"
+      - "scripts/github-actions/**"
   workflow_dispatch: {}
 
 jobs:
+  scope:
+    name: Scope Escala E2E closure
+    runs-on: ubuntu-latest
+    outputs:
+      run_escala_e2e: ${{ steps.scope.outputs.run_escala_e2e }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/github-actions/affected-crm-validation-scope.mjs
+
   e2e:
     name: Escala UI E2E
+    needs: scope
+    if: ${{ needs.scope.outputs.run_escala_e2e == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

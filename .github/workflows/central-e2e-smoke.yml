@@ -5,22 +5,52 @@ on:
     branches: [main]
     paths:
       - "crm/console/**"
-      - "modules/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/central-e2e-smoke.yml"
+      - "crm/api/**"
+      - "api/**"
+      - "shared/**"
+      - "platform/**"
+      - "workforce/**"
+      - "ops/**"
+      - "**/package*.json"
+      - "**/package-lock.json"
+      - ".github/**"
+      - "scripts/github-actions/**"
   pull_request:
     paths:
       - "crm/console/**"
-      - "modules/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/central-e2e-smoke.yml"
+      - "crm/api/**"
+      - "api/**"
+      - "shared/**"
+      - "platform/**"
+      - "workforce/**"
+      - "ops/**"
+      - "**/package*.json"
+      - "**/package-lock.json"
+      - ".github/**"
+      - "scripts/github-actions/**"
   workflow_dispatch: {}
 
 jobs:
+  scope:
+    name: Scope Central E2E closure
+    runs-on: ubuntu-latest
+    outputs:
+      run_central_e2e: ${{ steps.scope.outputs.run_central_e2e }}
+      central_tests: ${{ steps.scope.outputs.central_tests }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/github-actions/affected-crm-validation-scope.mjs
+
   e2e:
     name: Central E2E Smoke
+    needs: scope
+    if: ${{ needs.scope.outputs.run_central_e2e == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -64,11 +94,18 @@ jobs:
 
       - name: Run Playwright smoke
         env:
+          CI: "true"
           E2E_BASE_URL: http://127.0.0.1:5173
+          E2E_TEST_PATHS: ${{ needs.scope.outputs.central_tests }}
         run: |
           set -euxo pipefail
           cd crm/console
-          npm run test:e2e
+          if [[ "$E2E_TEST_PATHS" == "__FULL__" ]]; then
+            RUN_ESCALA_E2E_IN_CI=1 RUN_ATENDIMENTO_E2E_IN_CI=1 npm run test:e2e
+          else
+            read -r -a tests <<< "$E2E_TEST_PATHS"
+            npx playwright test "${tests[@]}"
+          fi
 
       - name: Stop frontend
         if: always()
