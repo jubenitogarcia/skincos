@@ -150,3 +150,54 @@ o lote de convites. Preserve registros pelo período da campanha + 90 dias e só
 então execute a eliminação ou anonimização aprovada. O rollback de Worker usa a
 versão anterior comprovada; ele não substitui a preservação de dados da
 campanha.
+
+## Gate oficial de produção
+
+A ativação real não deve ser feita pelo deploy genérico nem por um comando local
+que altere a flag. O fluxo oficial é o workflow versionado
+`.github/workflows/beauty-movement-production-activation.yml`, executado com
+`release_sha` exato e o `staging_run_id` que produziu a evidência de promoção do
+mesmo SHA. O workflow rejeita SHA divergente, D1/Worker fora de produção,
+migrations pendentes, campanha já existente, campanha ativa concorrente e ausência
+de qualquer um dos dois secrets do Worker. Ele não executa `wrangler secret
+put`: a presença é verificada por nome e os valores são preservados.
+
+### Custódia do pacote real
+
+O runner hospedado não enxerga `C:\CodexRuntime\...` do operador. Para a
+execução oficial, materialize os arquivos como secrets protegidos do GitHub
+Environment `production`, sem incluí-los em inputs, artefatos públicos, issues,
+logs ou commits:
+
+- `BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV` — CSV sanitizado;
+- `BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON` — copy, datas, condições e CTA;
+- `BEAUTY_MOVEMENT_PRODUCTION_REWARDS_JSON` e
+  `BEAUTY_MOVEMENT_PRODUCTION_PROCEDURES_JSON` — opcionais, mas sempre em par
+  quando `reward_id` legado for usado.
+
+Os secrets de pacote são escritos somente em arquivos `0600` dentro de
+`RUNNER_TEMP`, validados pelo `beauty-movement:import --dry-run` e removidos
+com o runner. Seus valores nunca são impressos. Se esses secrets ainda não
+existirem no Environment, o workflow falha antes de qualquer escrita remota;
+não há fallback para caminho local, chat ou outro checkout.
+
+### Sequência e compensação
+
+1. A promoção reutiliza a cadeia `preview → staging → production` e verifica a
+   migration `0004_card_outcomes.sql` e as colunas/índice de outcomes em D1.
+2. O pacote é importado como `draft`; um readback confirma o identificador novo
+   e a quantidade de convites antes de qualquer deploy.
+3. O workflow captura a versão Worker incumbente, compila o SHA promovido,
+   publica a mesma fonte com `BEAUTY_MOVEMENT_ENABLED=true` e exige
+   `x-app-build` igual ao SHA antes de ativar a campanha.
+4. Uma campanha sintética isolada é criada para o smoke de navegador. A jornada
+   faz três revelações, confirmação, reload, readback do `outcome_key`, snapshot,
+   protocolo e timestamp, e verifica zero chamadas WhatsApp/erros de console.
+5. A fixture sintética é revogada/desabilitada sempre. Se qualquer etapa não
+   puder ser atestada, a campanha real desta execução é desabilitada e o Worker
+   volta somente para a versão incumbente capturada; nenhum dado preexistente é
+   apagado.
+
+Em sucesso, a campanha real permanece ativa durante a janela aprovada e a flag
+continua explicitamente habilitada apenas na versão atestada. Em falha, o estado
+terminal esperado é `BEAUTY_MOVEMENT_ENABLED=false` e API `503`.
