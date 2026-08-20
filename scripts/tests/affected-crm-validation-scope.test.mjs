@@ -109,6 +109,9 @@ test("the three workflows consume this focused scope and preserve manual/full tr
   const scope = read("scripts/github-actions/affected-crm-validation-scope.mjs");
   for (const workflow of [codeql, central, escala]) {
     assert.match(workflow, /affected-crm-validation-scope\.mjs/);
+    assert.match(workflow, /fetch-depth:\s+2/);
+    assert.match(workflow, /codex-bounded-diff\.mjs/);
+    assert.match(workflow, /--base "\$BASE_SHA" --head "\$HEAD_SHA"/);
     assert.match(workflow, /workflow_dispatch:/);
   }
   assert.match(codeql, /schedule:/);

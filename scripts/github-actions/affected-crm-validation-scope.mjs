@@ -127,8 +127,15 @@ function classify(files, { event = "pull_request" } = {}) {
   const focusedModuleChange = changed.length > 0 && changed.every((file) => isUsers(file) || isEscala(file));
   const unknownCrmChange = crm && changed.some((file) => !isUsers(file) && !isEscala(file));
   const full = scheduledOrManual || workflowChanged || sharedOrElevated || elevated || critical || unknownCrmChange;
-  const js = !docsOnly && (full || changed.some(isJavaScript));
-  const python = !docsOnly && (full || changed.some(isPython));
+  const hasJavaScript = changed.some(isJavaScript);
+  const hasPython = changed.some(isPython);
+  // A high-risk dependency manifest still belongs to its actual language
+  // closure. Broadening both CodeQL languages is reserved for shared,
+  // workflow, critical, or otherwise language-unknown changes; a Python-only
+  // requirements update must not install or analyze JavaScript by ritual.
+  const broadLanguageClosure = full && (workflowChanged || sharedOrElevated || critical || (!hasJavaScript && !hasPython));
+  const js = !docsOnly && (hasJavaScript || broadLanguageClosure);
+  const python = !docsOnly && (hasPython || broadLanguageClosure);
   const website = !docsOnly && (full || changed.some(isWebsite));
   const users = !full && changed.some(isUsers);
   const escala = !full && changed.some(isEscala);

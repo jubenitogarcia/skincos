@@ -79,12 +79,27 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 0
+          fetch-depth: 2
+      - id: bounded-diff
+        name: Prepare bounded immutable diff
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/codex-bounded-diff.mjs \
+            --base "${PR_BASE_SHA:-$BEFORE_SHA}" \
+            --head "${PR_HEAD_SHA:-$HEAD_SHA}" \
+            --output "$GITHUB_OUTPUT"
       - id: scope
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
-        run: node scripts/github-actions/affected-crm-validation-scope.mjs
+          BASE_SHA: ${{ steps.bounded-diff.outputs.base }}
+          HEAD_SHA: ${{ steps.bounded-diff.outputs.head }}
+        run: node scripts/github-actions/affected-crm-validation-scope.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
 
   analyze-javascript:
     name: Analyze (javascript)
