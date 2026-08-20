@@ -220,6 +220,17 @@
       }
     },
     {
+      "id": "beauty-movement-production-activation",
+      "workflow": ".github/workflows/beauty-movement-production-activation.yml",
+      "concurrencyPrefix": "beauty-movement-production-activation",
+      "publishes": ["Worker:espacofacial-site-beauty-movement-activation"],
+      "resources": ["Beauty Movement production Worker flag and D1 activation", "espacofacial-beauty-movement production D1"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "BEAUTY_MOVEMENT_TOKEN_HMAC_KEY", "BEAUTY_MOVEMENT_PII_KEY", "BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV", "BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON"],
+      "migrationPaths": ["website/migrations/beauty-movement"],
+      "environments": ["production"],
+      "promotion": {"stagingSupported": true}
+    },
+    {
       "id": "global-coordination-plane",
       "workflow": ".github/workflows/deploy-global-coordinator.yml",
       "concurrencyPrefix": "global-coordinator-writer-",

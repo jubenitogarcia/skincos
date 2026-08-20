@@ -384,14 +384,23 @@ jobs:
           const page = await context.newPage();
           const consoleErrors = [];
           const whatsappRequests = [];
+          const bootstrapResponses = [];
           let revealRequests = 0;
           page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
           page.on('pageerror', (error) => consoleErrors.push(error.message));
+          page.on('response', (response) => {
+            const url = new URL(response.url());
+            if (url.pathname.startsWith('/api/beleza-em-movimento/')) bootstrapResponses.push(`${response.request().method()} ${url.pathname} ${response.status()}`);
+          });
           page.on('request', (request) => {
             if (request.url().includes('/api/beleza-em-movimento/reveal') && request.method() === 'POST') revealRequests += 1;
             if (/^https:\/\/(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com)\//i.test(request.url())) whatsappRequests.push(request.url());
           });
           await page.goto(`${base}/beleza-em-movimento#c=${encodeURIComponent(token)}`, { waitUntil: 'domcontentloaded' });
+          await page.waitForTimeout(1000);
+          if (await page.getByRole('button', { name: /Clique no baralho para começar a sua leitura/i }).count() === 0) {
+            throw new Error(`beauty_movement_browser_bootstrap_missing:url=${new URL(page.url()).pathname}:responses=${bootstrapResponses.join('|') || 'none'}`);
+          }
           const reveal = async (actLabel) => {
             const card = page.getByRole('button', { name: new RegExp(`Revelar carta 1 de ${actLabel}`, 'i') });
             await card.waitFor({ state: 'visible', timeout: 30000 });
@@ -529,3 +538,30 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
+
+      - name: Write Beauty Movement staging promotion evidence
+        if: ${{ success() }}
+        shell: bash
+        env:
+          PROMOTION_UNIT: beauty-movement-production-activation
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ inputs.release_sha }}
+          PROMOTION_EVIDENCE_FILE: ${{ runner.temp }}/beauty-movement-staging-smoke/promotion-evidence.json
+        run: |
+          set -euo pipefail
+          tree="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")"
+          digest="$(PROMOTION_UNIT="${PROMOTION_UNIT}" PROMOTION_SOURCE_SHA="${PROMOTION_SOURCE_SHA}" node .github/scripts/promotion-evidence.mjs digest)"
+          PROMOTION_SOURCE_TREE="${tree}" \
+          PROMOTION_RELEASE_INPUT_DIGEST="${digest}" \
+          PROMOTION_DEPENDENCY_CLOSURE_DIGEST="${digest}" \
+          node .github/scripts/promotion-evidence.mjs write "${PROMOTION_EVIDENCE_FILE}" >/dev/null
+          test -s "${PROMOTION_EVIDENCE_FILE}"
+
+      - name: Upload Beauty Movement staging promotion evidence
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-beauty-movement-production-activation
+          path: ${{ runner.temp }}/beauty-movement-staging-smoke/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error
