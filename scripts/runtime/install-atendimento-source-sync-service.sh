@@ -96,7 +96,7 @@ coordination_proof="${COORDINATION_PROOF_FILE:-${SKINCOS_GLOBAL_COORDINATION_PRO
 coordination_acquired=0
 coordination_owned=0
 
-for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/sed /usr/bin/systemd-analyze /usr/bin/mktemp /usr/bin/install /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/date /usr/bin/cp /usr/bin/stat /usr/bin/systemctl /usr/bin/test /usr/bin/bash; do
+for command_path in /usr/bin/sudo /usr/bin/env /usr/bin/sed /usr/bin/systemd-analyze /usr/bin/mktemp /usr/bin/install /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir /usr/bin/date /usr/bin/cp /usr/bin/stat /usr/bin/systemctl /usr/bin/setfacl /usr/bin/test /usr/bin/bash; do
   [[ -x "$command_path" ]] || { echo "Missing $command_path" >&2; exit 1; }
 done
 [[ -f "$UNIT_SRC" && -f "$TIMER_SRC" && -f "$RUNNER" ]] || {
@@ -178,6 +178,8 @@ stamp="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)"
 run_sudo_clean /usr/bin/install -d -m 0700 -o root -g root "$BACKUP_ROOT"
 run_sudo_clean /usr/bin/install -d -m 0770 -o root -g skincos "$DATA_BACKUP_ROOT"
 run_sudo_clean /usr/bin/install -d -m 0750 -o skincos -g skincos "$LOG_ROOT/crm-atendimento-source-sync"
+run_sudo_clean /usr/bin/test -d /var/backups/skincos || { echo 'Native backup parent is unavailable.' >&2; exit 78; }
+run_sudo_clean /usr/bin/setfacl -m 'u:skincos:--x,g::---,m::--x' /var/backups/skincos
 for pair in "$SERVICE:$rendered_service" "$TIMER:$rendered_timer"; do
   unit_name="${pair%%:*}"
   rendered_path="${pair#*:}"
