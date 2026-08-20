@@ -390,7 +390,7 @@ test.describe('atendimento', () => {
     await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('Desempenho por doutor')
     await expect(page.getByTestId('atendimento-conversion-distribution').locator(':scope > .rounded-xl')).toHaveCount(0)
     await expect(page.getByTestId('atendimento-conversion-distribution').locator(':scope > .relative')).toHaveCSS('height', '432px')
-    const metricLabels = ['Limite Superior', 'Limite Inferior', 'Linha Corte', 'Intervalo', 'Meta', 'Média', 'Mediana']
+    const metricLabels = ['Limite Superior diário', 'Limite Inferior diário', 'Linha Corte diária', 'Intervalo diário', 'Meta', 'Média diária', 'Mediana diária']
     const metricBounds = await Promise.all(metricLabels.map(async (label) => {
       const metric = page.getByText(label, { exact: true })
       await expect(metric).toHaveCount(1)
@@ -413,7 +413,7 @@ test.describe('atendimento', () => {
     await expect(metricGrid.locator('svg.lucide-info')).toHaveCount(0)
     await expect(metricGrid).not.toContainText('Faixas e níveis')
     await expect(page.getByTestId('atendimento-multiplier-distribution-trigger')).toHaveCount(0)
-    const metricTitleBox = await page.getByText('Limite Superior', { exact: true }).boundingBox()
+    const metricTitleBox = await page.getByText('Limite Superior diário', { exact: true }).boundingBox()
     const metricValue = page.getByTestId('atendimento-metric-value-upperLimit')
     const metricValueBox = await metricValue.boundingBox()
     expect(metricTitleBox).not.toBeNull()
@@ -442,7 +442,7 @@ test.describe('atendimento', () => {
     })
     expect(dailyMetricTooltipBox.width / dailyMetricTooltipBox.height).toBeGreaterThanOrEqual(0.5)
     expect(dailyMetricTooltipBox.width / dailyMetricTooltipBox.height).toBeLessThanOrEqual(2)
-    await page.getByText('Intervalo', { exact: true }).hover()
+    await page.getByText('Intervalo diário', { exact: true }).hover()
     const intervalTooltip = page.getByRole('tooltip').filter({ hasText: 'Multiplicador por homogeneidade' })
     await expect(intervalTooltip).toContainText('Desvio Padrão')
     await expect(intervalTooltip).toContainText('Multiplicador Otimizado')

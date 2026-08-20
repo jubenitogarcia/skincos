@@ -1,0 +1,193 @@
+name: Diagnose Meta Ads Source Ad Set Delivery Contract
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meta-ads-source-adset-delivery-diagnostic-staging
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main'
+    name: Read the source ad-set delivery contract without deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: staging
+    steps:
+      - name: Classify the source ad-set delivery estimate
+        env:
+          META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
+          META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
+          META_ADS_ACCOUNT_ID: ${{ secrets.META_ADS_ACCOUNT_ID }}
+          META_ADS_API_VERSION: ${{ vars.META_ADS_API_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token = String(process.env.META_ADS_ACCESS_TOKEN || '');
+          const pixelId = String(process.env.META_PIXEL_ID || '').trim();
+          const accountId = String(process.env.META_ADS_ACCOUNT_ID || '').trim().replace(/^act_/, '');
+          const apiVersion = String(process.env.META_ADS_API_VERSION || '').trim();
+
+          class DiagnosticFailure extends Error {
+            constructor(code) {
+              super(code);
+              this.code = code;
+            }
+          }
+
+          const fail = (code) => {
+            throw new DiagnosticFailure(code);
+          };
+          const safeCodes = new Set([
+            'source_adset_delivery_estimate_match',
+            'source_adset_delivery_estimate_denied',
+            'source_adset_delivery_estimate_unavailable',
+            'source_adset_delivery_estimate_malformed',
+            'source_adset_promoted_object_contract',
+            'source_adset_optimization_goal_contract',
+            'source_adset_targeting_contract',
+            'source_adset_delivery_estimate_contract',
+          ]);
+          const numericId = (value) => {
+            const normalized = String(value || '').trim().replace(/^act_/, '');
+            return /^\d{5,30}$/.test(normalized) ? normalized : '';
+          };
+
+          const graphGet = async (path, query) => {
+            const url = new URL(`https://graph.facebook.com/${apiVersion}/${path}`);
+            for (const [key, value] of Object.entries(query)) {
+              if (value !== undefined) url.searchParams.set(key, String(value));
+            }
+            let response;
+            try {
+              response = await fetch(url, {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store',
+                redirect: 'error',
+                signal: AbortSignal.timeout(12_000),
+              });
+            } catch {
+              return { state: 'unavailable' };
+            }
+            if (!response || response.status === 408 || response.status === 429 || response.status >= 500) {
+              return { state: 'unavailable' };
+            }
+            let payload;
+            try {
+              payload = await response.json();
+            } catch {
+              return { state: 'malformed' };
+            }
+            if (payload?.error?.is_transient === true) return { state: 'unavailable' };
+            if (!response.ok || payload?.error) {
+              const graphErrorCode = Number(payload?.error?.code);
+              const denied =
+                response.status === 401 ||
+                response.status === 403 ||
+                graphErrorCode === 10 ||
+                graphErrorCode === 102 ||
+                graphErrorCode === 190 ||
+                graphErrorCode === 200;
+              return { state: denied ? 'denied' : 'contract' };
+            }
+            return { state: 'ok', payload };
+          };
+
+          const isDeliveryEstimateShape = (payload) => {
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+            if (Object.prototype.hasOwnProperty.call(payload, 'estimate_ready')) return true;
+            if (Object.prototype.hasOwnProperty.call(payload, 'targeting_optimization_types')) return true;
+            return Boolean(payload.data && typeof payload.data === 'object');
+          };
+
+          const probe = (query) => graphGet(`act_${accountId}/delivery_estimate`, query);
+          const baseTargeting = JSON.stringify({ geo_locations: { countries: ['BR'] } });
+          const promotedObject = JSON.stringify({ pixel_id: pixelId, custom_event_type: 'LEAD' });
+          const fields = 'estimate_ready,targeting_optimization_types';
+
+          const main = async () => {
+            if (
+              !token ||
+              !numericId(pixelId) ||
+              !numericId(accountId) ||
+              !/^v(?:2[5-9]|[3-9][0-9])\.0$/.test(apiVersion)
+            ) {
+              fail('source_adset_delivery_estimate_contract');
+            }
+
+            const exact = await probe({
+              fields,
+              optimization_goal: 'OFFSITE_CONVERSIONS',
+              promoted_object: promotedObject,
+              targeting_spec: baseTargeting,
+            });
+            if (exact.state === 'ok') {
+              if (!isDeliveryEstimateShape(exact.payload)) fail('source_adset_delivery_estimate_malformed');
+              fail('source_adset_delivery_estimate_match');
+            }
+            if (exact.state === 'denied') fail('source_adset_delivery_estimate_denied');
+            if (exact.state === 'unavailable') fail('source_adset_delivery_estimate_unavailable');
+            if (exact.state === 'malformed') fail('source_adset_delivery_estimate_malformed');
+
+            // The remaining probes are bounded GET-only controls. They never
+            // create or update an ad set; they only separate the fields accepted
+            // by the account delivery-estimate edge.
+            const withoutPromotedObject = await probe({
+              fields,
+              optimization_goal: 'OFFSITE_CONVERSIONS',
+              targeting_spec: baseTargeting,
+            });
+            if (withoutPromotedObject.state === 'ok' && isDeliveryEstimateShape(withoutPromotedObject.payload)) {
+              fail('source_adset_promoted_object_contract');
+            }
+            if (withoutPromotedObject.state === 'denied') fail('source_adset_delivery_estimate_denied');
+            if (withoutPromotedObject.state === 'unavailable') fail('source_adset_delivery_estimate_unavailable');
+            if (withoutPromotedObject.state === 'malformed') fail('source_adset_delivery_estimate_malformed');
+
+            const alternateOptimization = await probe({
+              fields,
+              optimization_goal: 'LEAD_GENERATION',
+              promoted_object: promotedObject,
+              targeting_spec: baseTargeting,
+            });
+            if (alternateOptimization.state === 'ok' && isDeliveryEstimateShape(alternateOptimization.payload)) {
+              fail('source_adset_optimization_goal_contract');
+            }
+            if (alternateOptimization.state === 'denied') fail('source_adset_delivery_estimate_denied');
+            if (alternateOptimization.state === 'unavailable') fail('source_adset_delivery_estimate_unavailable');
+            if (alternateOptimization.state === 'malformed') fail('source_adset_delivery_estimate_malformed');
+
+            const targetingBaseline = await probe({
+              fields,
+              optimization_goal: 'LINK_CLICKS',
+              targeting_spec: baseTargeting,
+            });
+            if (targetingBaseline.state === 'ok' && isDeliveryEstimateShape(targetingBaseline.payload)) {
+              fail('source_adset_delivery_estimate_contract');
+            }
+            if (targetingBaseline.state === 'denied') fail('source_adset_delivery_estimate_denied');
+            if (targetingBaseline.state === 'unavailable') fail('source_adset_delivery_estimate_unavailable');
+            if (targetingBaseline.state === 'malformed') fail('source_adset_delivery_estimate_malformed');
+            fail('source_adset_targeting_contract');
+          };
+
+          try {
+            await main();
+          } catch (error) {
+            const code = error instanceof DiagnosticFailure && safeCodes.has(error.code)
+              ? error.code
+              : 'source_adset_delivery_estimate_contract';
+            if (code === 'source_adset_delivery_estimate_match') {
+              process.stdout.write(`${code}\n`);
+            } else {
+              console.error(`Meta Ads source ad-set delivery diagnostic: ${code}`);
+              process.exitCode = 1;
+            }
+          }
+          NODE
