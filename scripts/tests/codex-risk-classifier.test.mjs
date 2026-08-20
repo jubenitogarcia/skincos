@@ -106,6 +106,7 @@ test("dependency, shared-contract, and security signals cannot remain medium", (
   ]) {
     const report = classifyFiles(policy, files);
     assert.equal(report.risk, "high", files.join(","));
+    assert.equal(report.pathClassifications[0].risk, "high", files.join(","));
   }
 });
 

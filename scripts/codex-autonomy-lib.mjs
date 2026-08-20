@@ -331,9 +331,19 @@ export function classifyFiles(policy, files) {
     const matchingRules = policy.classificationRules.filter((rule) => matchesAnyPath(file, rule.patterns));
     const matchedRule = matchingRules.sort((left, right) => RISK_ORDER[right.risk] - RISK_ORDER[left.risk])[0];
     const surfaces = policy.surfaces.filter((surface) => matchesAnyPath(file, surface.patterns)).map((surface) => surface.id);
+    const fileDependenciesChanged = matchesAnyPath(file, policy.dependencyPatterns);
+    const fileSharedContractsChanged = matchesAnyPath(file, policy.sharedContractPatterns);
+    const fileSecuritySensitive = matchesAnyPath(file, policy.securitySensitivePatterns);
+    let fileRisk = matchedRule?.risk ?? policy.defaultRisk;
+    // Keep per-file and aggregate risk conservative. A consumer must not be
+    // able to downgrade a dependency, shared contract, or security path by
+    // reading pathClassifications instead of the aggregate report.
+    if (fileDependenciesChanged || fileSharedContractsChanged || fileSecuritySensitive) {
+      fileRisk = RISK_ORDER[fileRisk] < RISK_ORDER.high ? "high" : fileRisk;
+    }
     return {
       file,
-      risk: matchedRule?.risk ?? policy.defaultRisk,
+      risk: fileRisk,
       reason: matchedRule?.reason ?? "No higher-risk path rule matched; the default implementation risk applies.",
       surfaces: surfaces.length ? surfaces : ["unclassified"]
     };
@@ -345,13 +355,6 @@ export function classifyFiles(policy, files) {
   const sharedContractsChanged = normalizedFiles.some((file) => matchesAnyPath(file, policy.sharedContractPatterns));
   const productionSensitive = normalizedFiles.some((file) => matchesAnyPath(file, policy.productionSensitivePatterns));
   const securitySensitive = normalizedFiles.some((file) => matchesAnyPath(file, policy.securitySensitivePatterns));
-  // These signals are policy-level closure indicators.  Keep CRITICAL paths
-  // critical, but never let a dependency, shared-contract, or security
-  // surface be downgraded to the default MEDIUM risk merely because a path
-  // rule has not been added yet.
-  if (dependenciesChanged || sharedContractsChanged || securitySensitive) {
-    risk = RISK_ORDER[risk] < RISK_ORDER.high ? "high" : risk;
-  }
   const level = policy.levels[risk];
   return {
     schemaVersion: 2,
