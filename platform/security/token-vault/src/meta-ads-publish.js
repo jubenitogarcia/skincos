@@ -1779,6 +1779,11 @@ function stagingSyntheticSeedFailureResponse(error, requestId) {
     'meta_ads_publish_staging_seed_graph_page_ambiguous',
     'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
     'meta_ads_publish_staging_seed_landing_or_media_unavailable',
+    'meta_ads_publish_staging_seed_graph_campaign_contract_malformed',
+    'meta_ads_publish_staging_seed_graph_campaign_identity_mismatch',
+    'meta_ads_publish_staging_seed_graph_campaign_name_mismatch',
+    'meta_ads_publish_staging_seed_graph_campaign_status_mismatch',
+    'meta_ads_publish_staging_seed_graph_campaign_objective_mismatch',
     'meta_ads_publish_staging_seed_graph_contract_invalid',
     'meta_ads_publish_staging_seed_failed',
   ]);
@@ -2175,7 +2180,7 @@ async function resolveStagingSyntheticSeedPendingResources({ env, operation, sta
   if (!/^\d{5,30}$/.test(campaignId) || !campaignName) {
     throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
   }
-  await readStagingSyntheticSeedCampaign(auth, campaignId, campaignName, context);
+  await readStagingSyntheticSeedReconciliationCampaign(auth, campaignId, campaignName, context);
 
   const pendingKeys = ['source_adset', 'target_adset'].filter((key) => (
     asObject(resources[key]).pending === true
@@ -2826,13 +2831,50 @@ async function readStagingSyntheticSeedCampaign(auth, campaignId, expectedName, 
     { method: 'GET' }, auth, context,
   );
   const campaign = asObject(result.body);
-  if (
-    normalizeStagingSyntheticSeedGraphId(campaign.id, 'campaign_id') !== campaignId ||
-    clean(campaign.name) !== expectedName ||
-    clean(campaign.status).toUpperCase() !== 'PAUSED' ||
-    clean(campaign.objective).toUpperCase() !== 'OUTCOME_LEADS'
-  ) {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_contract_invalid', 409);
+  let actualId;
+  try {
+    actualId = normalizeStagingSyntheticSeedGraphId(campaign.id, 'campaign_id');
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_contract_malformed', 409);
+  }
+  if (actualId !== campaignId) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_identity_mismatch', 409);
+  }
+  if (!clean(campaign.name)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_contract_malformed', 409);
+  }
+  if (clean(campaign.name) !== expectedName) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_name_mismatch', 409);
+  }
+  if (!clean(campaign.status)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_contract_malformed', 409);
+  }
+  if (clean(campaign.status).toUpperCase() !== 'PAUSED') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_status_mismatch', 409);
+  }
+  if (!clean(campaign.objective)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_contract_malformed', 409);
+  }
+  if (clean(campaign.objective).toUpperCase() !== 'OUTCOME_LEADS') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_objective_mismatch', 409);
+  }
+  return campaign;
+}
+
+async function readStagingSyntheticSeedReconciliationCampaign(auth, campaignId, expectedName, context) {
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, campaignId, { fields: 'id,name,status' }),
+    { method: 'GET' }, auth, context,
+  );
+  const campaign = asObject(result.body);
+  let actualId;
+  try {
+    actualId = normalizeStagingSyntheticSeedGraphId(campaign.id, 'reconcile_campaign_id');
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  if (actualId !== campaignId || clean(campaign.name) !== expectedName || !clean(campaign.status)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
   }
   return campaign;
 }
