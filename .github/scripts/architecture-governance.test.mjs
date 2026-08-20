@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import {
   buildArchitectureGovernancePlan,
   buildFullArchitectureGovernancePlan,
 } from "./architecture-governance.mjs";
+
+const workflow = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../workflows/architecture-governance.yml"),
+  "utf8",
+);
 
 function report(files, risk = "medium", affectedSurfaces = []) {
   return {
@@ -62,4 +69,11 @@ test("manual and scheduled execution use the complete matrix without a change re
   const plan = buildFullArchitectureGovernancePlan("scheduled execution");
   assert.equal(plan.full, true);
   assert.deepEqual(plan.jobs, ["minimum", "global", "ponto", "influencer", "cloudflare", "staging", "finance"]);
+});
+
+test("routine planning resolves an immutable bounded diff without a full-history checkout", () => {
+  assert.match(workflow, /fetch-depth:\s+2/);
+  assert.match(workflow, /codex-bounded-diff\.mjs/);
+  assert.match(workflow, /--base \"\$BASE_SHA\" --head \"\$HEAD_SHA\"/);
+  assert.doesNotMatch(workflow, /fetch-depth:\s+0/);
 });
