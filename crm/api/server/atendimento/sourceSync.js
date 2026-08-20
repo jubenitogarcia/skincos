@@ -170,9 +170,11 @@ function safeReferencePart(value) {
 }
 
 async function runProcess(command, args, envOverrides = {}) {
+    const childEnvironment = { ...process.env, ...envOverrides }
+    for (const key of ['PGSERVICE', 'PGSERVICEFILE', 'PGSYSCONFDIR', 'PGPASSFILE']) delete childEnvironment[key]
     await new Promise((resolve, reject) => {
         const child = spawn(command, args, {
-            env: { ...process.env, ...envOverrides },
+            env: childEnvironment,
             stdio: ['ignore', 'ignore', 'pipe'],
         })
         let stderr = ''
@@ -185,6 +187,31 @@ async function runProcess(command, args, envOverrides = {}) {
             reject(error)
         })
     })
+}
+
+export function buildAtendimentoSourceSyncPgDumpEnvironment({
+    baseEnv = process.env,
+    host = '127.0.0.1',
+    port = '5432',
+    database,
+    user,
+    password,
+} = {}) {
+    const childEnvironment = {
+        ...baseEnv,
+        PGHOST: String(host || '127.0.0.1'),
+        PGHOSTADDR: String(host || '127.0.0.1'),
+        PGPORT: String(port || '5432'),
+        PGDATABASE: database,
+        PGUSER: user,
+        PGPASSWORD: password,
+        PGSSLMODE: 'require',
+        PGAPPNAME: 'crm-atendimento-source-sync',
+        PGCONNECT_TIMEOUT: '10',
+        PGOPTIONS: '',
+    }
+    for (const key of ['PGSERVICE', 'PGSERVICEFILE', 'PGSYSCONFDIR', 'PGPASSFILE']) delete childEnvironment[key]
+    return childEnvironment
 }
 
 async function sha256File(filePath) {
@@ -219,21 +246,13 @@ export async function createAtendimentoSourceSyncBackup({
             '--schema=crm_atendimento',
             `--file=${partialPath}`,
             `--dbname=${identity.database}`,
-        ], {
-            PGHOST: String(parsed.hostname || '127.0.0.1'),
-            PGHOSTADDR: String(parsed.hostname || '127.0.0.1'),
-            PGPORT: String(parsed.port || '5432'),
-            PGDATABASE: identity.database,
-            PGUSER: identity.user,
-            PGPASSWORD: decodeURIComponent(parsed.password || ''),
-            PGSSLMODE: 'require',
-            PGAPPNAME: 'crm-atendimento-source-sync',
-            PGCONNECT_TIMEOUT: '10',
-            PGSERVICE: '',
-            PGSERVICEFILE: '',
-            PGPASSFILE: '',
-            PGOPTIONS: '',
-        })
+        ], buildAtendimentoSourceSyncPgDumpEnvironment({
+            host: parsed.hostname,
+            port: parsed.port,
+            database: identity.database,
+            user: identity.user,
+            password: decodeURIComponent(parsed.password || ''),
+        }))
         const stat = await fs.stat(partialPath)
         if (!stat.isFile() || stat.size <= 0) throw syncError('ATENDIMENTO_SOURCE_SYNC_BACKUP_EMPTY', 503)
         await fs.rename(partialPath, outputPath)
