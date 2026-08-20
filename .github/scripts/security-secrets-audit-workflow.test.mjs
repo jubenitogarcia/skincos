@@ -15,7 +15,9 @@ test("workflow keeps PR Gitleaks mandatory and reserves full scans for main, sch
   assert.match(workflow, /gitleaks\/gitleaks-action@/);
   assert.match(workflow, /gitleaks git --redact --exit-code=2/);
   assert.match(workflow, /--log-opts="--all"/);
-  assert.match(workflow, /fetch-depth:\s+0/);
+  assert.match(workflow, /fetch-depth:\s+2/);
+  assert.match(workflow, /codex-bounded-diff\.mjs/);
+  assert.match(workflow, /git fetch --no-tags --unshallow origin/);
   assert.match(workflow, /needs: scope/);
   assert.match(workflow, /PR diff-aware; full elsewhere/);
   assert.doesNotMatch(workflow, /continue-on-error:\s*true/);
@@ -25,7 +27,7 @@ test("workflow keeps PR Gitleaks mandatory and reserves full scans for main, sch
 });
 
 test("low-risk documentation does not activate dependency or SAST scans", () => {
-  const report = classifyFiles(policy, ["docs/security-audit-notes.md"]);
+  const report = classifyFiles(policy, ["docs/audit-notes.md"]);
   const scope = buildSecurityAuditScope({ eventName: "pull_request", risk: report.risk, changedFiles: report.pathClassifications.map(({ file }) => file) });
   assert.equal(report.risk, "low");
   assert.equal(scope.fullScan, false);
