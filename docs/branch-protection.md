@@ -84,3 +84,7 @@ for instalada e lida de volta.
   desativado e use somente `global-merge-authority.yml`; a manutenção de PR
   pode atualizar uma branch quando possui `merge:main`, mas não pode integrar
   a PR.
+- `codex-keep-prs-mergeable` admite somente PRs explicitamente prontas
+  (`draft: false`) para lease, `updateBranch` e dispatch da autoridade. Drafts
+  ou estado de prontidão desconhecido não consomem `merge:main` nem provocam
+  reexecução de checks; PRs prontas continuam sujeitas ao strict/up-to-date.
