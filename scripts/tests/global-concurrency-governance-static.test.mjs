@@ -83,6 +83,7 @@ test("Token Vault has one immutable Worker and D1 publisher with explicit tracki
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_CONFIG_TOKEN"));
   assert.ok(tokenVaultUnit.secrets.includes("TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST"));
   assert.ok(tokenVaultUnit.secrets.includes("META_ADS_ACCESS_TOKEN"));
+  assert.ok(tokenVaultUnit.secrets.includes("META_ADS_ACCOUNT_ID"));
   assert.ok(tokenVaultUnit.secrets.includes("META_PIXEL_ID"));
   assert.ok(tokenVaultUnit.secrets.includes("novohamburgo_page_id"));
   assert.ok(tokenVaultUnit.secrets.includes("barrashopppingsul_page_id"));
