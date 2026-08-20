@@ -230,7 +230,7 @@ test('configured worker secrets must remain pairwise distinct', async () => {
   assert.equal((await response.json()).error, 'invalid_worker_secret_configuration');
 });
 
-test('Meta Ads staging seed bearer is staging-only, pairwise distinct, and exclusive to its four POST routes', async () => {
+test('Meta Ads staging seed bearer is staging-only, pairwise distinct, and exclusive to its five POST routes', async () => {
   const disabledDb = new FakeDb();
   const disabledEnvironment = env(disabledDb);
   disabledEnvironment.ENVIRONMENT = 'production';
@@ -276,6 +276,9 @@ test('Meta Ads staging seed bearer is staging-only, pairwise distinct, and exclu
     new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/attest-appsecret-proof', {
       headers: metaAdsStagingSeedAuthHeaders(),
     }),
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config/staging-synthetic-seed/reconcile', {
+      headers: metaAdsStagingSeedAuthHeaders(),
+    }),
   ]) {
     const response = await handleRequest(request, environment);
     assert.equal(response.status, 403);
@@ -285,6 +288,7 @@ test('Meta Ads staging seed bearer is staging-only, pairwise distinct, and exclu
   for (const pathname of [
     '/v1/meta-ads-publish/config/staging-synthetic-seed/attest',
     '/v1/meta-ads-publish/config/staging-synthetic-seed/attest-appsecret-proof',
+    '/v1/meta-ads-publish/config/staging-synthetic-seed/reconcile',
     '/v1/meta-ads-publish/config/staging-synthetic-seed',
     '/v1/meta-ads-publish/config/staging-synthetic-seed/rollback',
   ]) {
@@ -303,6 +307,7 @@ test('Meta Ads staging seed bearer is staging-only, pairwise distinct, and exclu
   for (const pathname of [
     '/v1/meta-ads-publish/config/staging-synthetic-seed/attest',
     '/v1/meta-ads-publish/config/staging-synthetic-seed/attest-appsecret-proof',
+    '/v1/meta-ads-publish/config/staging-synthetic-seed/reconcile',
     '/v1/meta-ads-publish/config/staging-synthetic-seed',
     '/v1/meta-ads-publish/config/staging-synthetic-seed/rollback',
   ]) {
