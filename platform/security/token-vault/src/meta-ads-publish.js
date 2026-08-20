@@ -248,6 +248,13 @@ const STAGING_SYNTHETIC_SEED_ATTESTATION_FAILURES = Object.freeze({
   datasetAmbiguous: 'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
   landingOrMediaUnavailable: 'meta_ads_publish_staging_seed_landing_or_media_unavailable',
 });
+const STAGING_SYNTHETIC_SEED_GRAPH_CREATE_STAGES = Object.freeze({
+  campaign: 'campaign',
+  source_adset: 'source_adset',
+  target_adset: 'target_adset',
+  source_creative: 'source_creative',
+  source_ad: 'source_ad',
+});
 const STAGING_SYNTHETIC_SEED_ADSET_FIELDS = [
   'id',
   'name',
@@ -1779,6 +1786,22 @@ function stagingSyntheticSeedFailureResponse(error, requestId) {
     'meta_ads_publish_staging_seed_graph_page_ambiguous',
     'meta_ads_publish_staging_seed_graph_dataset_ambiguous',
     'meta_ads_publish_staging_seed_landing_or_media_unavailable',
+    'meta_ads_publish_staging_seed_graph_campaign_contract_malformed',
+    'meta_ads_publish_staging_seed_graph_campaign_identity_mismatch',
+    'meta_ads_publish_staging_seed_graph_campaign_name_mismatch',
+    'meta_ads_publish_staging_seed_graph_campaign_status_mismatch',
+    'meta_ads_publish_staging_seed_graph_campaign_objective_mismatch',
+    'meta_ads_publish_staging_seed_graph_campaign_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_campaign_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_source_adset_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_source_adset_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_target_adset_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_target_adset_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_source_creative_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_source_creative_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_source_ad_create_access_denied',
+    'meta_ads_publish_staging_seed_graph_source_ad_create_contract_invalid',
+    'meta_ads_publish_staging_seed_graph_resource_contract_invalid',
     'meta_ads_publish_staging_seed_graph_contract_invalid',
     'meta_ads_publish_staging_seed_failed',
   ]);
@@ -2175,7 +2198,7 @@ async function resolveStagingSyntheticSeedPendingResources({ env, operation, sta
   if (!/^\d{5,30}$/.test(campaignId) || !campaignName) {
     throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
   }
-  await readStagingSyntheticSeedCampaign(auth, campaignId, campaignName, context);
+  await readStagingSyntheticSeedReconciliationCampaign(auth, campaignId, campaignName, context);
 
   const pendingKeys = ['source_adset', 'target_adset'].filter((key) => (
     asObject(resources[key]).pending === true
@@ -2652,7 +2675,6 @@ async function createStagingSyntheticSeedResources({ input, auth, facts, operati
       promoted_object: {
         pixel_id: input.pixelId,
         custom_event_type: 'LEAD',
-        offline_conversion_data_set_id: facts.dataset_id,
       },
     }, context),
     read: (id) => readStagingSyntheticSeedAdset(auth, id, campaign.id, `${marker} Source Ad Set`, context),
@@ -2774,7 +2796,10 @@ async function createStagingSyntheticSeedGraphResource({ key, name, operation, s
     }
     state.resources[key].pending = false;
     await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
-    throw error;
+    throw stagingSyntheticSeedFailure(
+      stagingSyntheticSeedGraphCreateFailureCode(key, normalized),
+      409,
+    );
   }
   const id = normalizeStagingSyntheticSeedCreatedId(created, key);
   state.resources[key] = { id, name, pending: false, owned_by_operation: true };
@@ -2784,6 +2809,13 @@ async function createStagingSyntheticSeedGraphResource({ key, name, operation, s
   await persistStagingSyntheticSeedState({ env: context.env, operation, state, status: 'creating', encryptToken, context });
   const value = await read(id);
   return { id, value };
+}
+
+function stagingSyntheticSeedGraphCreateFailureCode(key, normalized) {
+  const stage = STAGING_SYNTHETIC_SEED_GRAPH_CREATE_STAGES[key];
+  if (!stage) return 'meta_ads_publish_staging_seed_graph_resource_contract_invalid';
+  const suffix = normalized?.classification === 'auth' ? 'access_denied' : 'contract_invalid';
+  return `meta_ads_publish_staging_seed_graph_${stage}_create_${suffix}`;
 }
 
 async function seedGraphCreate(auth, path, body, context) {
@@ -2826,13 +2858,50 @@ async function readStagingSyntheticSeedCampaign(auth, campaignId, expectedName, 
     { method: 'GET' }, auth, context,
   );
   const campaign = asObject(result.body);
-  if (
-    normalizeStagingSyntheticSeedGraphId(campaign.id, 'campaign_id') !== campaignId ||
-    clean(campaign.name) !== expectedName ||
-    clean(campaign.status).toUpperCase() !== 'PAUSED' ||
-    clean(campaign.objective).toUpperCase() !== 'OUTCOME_LEADS'
-  ) {
-    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_contract_invalid', 409);
+  let actualId;
+  try {
+    actualId = normalizeStagingSyntheticSeedGraphId(campaign.id, 'campaign_id');
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_contract_malformed', 409);
+  }
+  if (actualId !== campaignId) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_identity_mismatch', 409);
+  }
+  if (!clean(campaign.name)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_contract_malformed', 409);
+  }
+  if (clean(campaign.name) !== expectedName) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_name_mismatch', 409);
+  }
+  if (!clean(campaign.status)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_contract_malformed', 409);
+  }
+  if (clean(campaign.status).toUpperCase() !== 'PAUSED') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_status_mismatch', 409);
+  }
+  if (!clean(campaign.objective)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_contract_malformed', 409);
+  }
+  if (clean(campaign.objective).toUpperCase() !== 'OUTCOME_LEADS') {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_campaign_objective_mismatch', 409);
+  }
+  return campaign;
+}
+
+async function readStagingSyntheticSeedReconciliationCampaign(auth, campaignId, expectedName, context) {
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, campaignId, { fields: 'id,name,status' }),
+    { method: 'GET' }, auth, context,
+  );
+  const campaign = asObject(result.body);
+  let actualId;
+  try {
+    actualId = normalizeStagingSyntheticSeedGraphId(campaign.id, 'reconcile_campaign_id');
+  } catch {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
+  }
+  if (actualId !== campaignId || clean(campaign.name) !== expectedName || !clean(campaign.status)) {
+    throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_reconciliation_required', 409);
   }
   return campaign;
 }
@@ -2860,14 +2929,13 @@ function assertStagingSyntheticSeedAdsetContract({ input, source, target }) {
     const sourcePromoted = asObject(source.promoted_object);
     if (
       normalizeNumericId(sourcePromoted.pixel_id, 'staging_seed_source_pixel_id') !== input.pixelId ||
-      !safeTrackingEnum(sourcePromoted.custom_event_type) ||
-      !normalizeNumericId(sourcePromoted.offline_conversion_data_set_id, 'staging_seed_source_dataset_id')
+      !safeTrackingEnum(sourcePromoted.custom_event_type)
     ) {
       throw new Error('source_tracking_missing');
     }
     assertWebsiteTrackingCompatibility(source, target, {
       website_event_requirement: 'required',
-      offline_event_dataset_requirement: 'required',
+      offline_event_dataset_requirement: 'not_required',
     });
   } catch {
     throw stagingSyntheticSeedFailure('meta_ads_publish_staging_seed_graph_contract_invalid', 409);
@@ -3451,6 +3519,13 @@ async function deriveWebsiteBootstrapEntry({
   staging,
 }) {
   const targetConfig = asObject(targetAuth.config);
+  if (
+    staging &&
+    clean(targetConfig.source_adset_id) &&
+    clean(targetConfig.source_adset_id) === clean(targetConfig.adset_id)
+  ) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_staging_source_row_excluded', 409);
+  }
   // A target-declared tag fragment is an authority fact, not a candidate
   // preference. Validate it before examining any potential source so a bad
   // target value can never make another source look acceptable by fallback.
@@ -3465,6 +3540,12 @@ async function deriveWebsiteBootstrapEntry({
     staging,
     targetCanonicalUrlTags,
   });
+  if (
+    staging &&
+    clean(asObject(source.sourceAuth?.config).adset_id) === clean(asObject(targetAuth.config).adset_id)
+  ) {
+    throw bootstrapFailure('meta_ads_publish_bootstrap_derive_staging_source_row_excluded', 409);
+  }
   const entry = {
     config_token_id: targetAuth.tokenId,
     destination_type: 'website',
@@ -4453,14 +4534,15 @@ export async function exerciseStagingMetaAdsTrackingFixture({ request, env, requ
     };
     const ensured = await ensureAdsetConversionContract(stagingExerciseEnsureBody(fixture), ensureContext);
     snapshotId = clean(ensured?.snapshot_id);
+    const offlineEventDatasetRequired = fixture.offlineEventDatasetRequirement === 'required';
     if (
       ensured?.status !== 'reconciled' ||
       ensured?.graph_mutation !== 'promoted_object_updated' ||
       !snapshotId ||
       ensured?.website_event?.configured !== true ||
       ensured?.website_event?.required !== true ||
-      ensured?.offline_event_dataset?.configured !== true ||
-      ensured?.offline_event_dataset?.required !== true
+      ensured?.offline_event_dataset?.configured !== offlineEventDatasetRequired ||
+      ensured?.offline_event_dataset?.required !== offlineEventDatasetRequired
     ) {
       throw stagingExerciseFailure('staging_tracking_fixture_not_reconciled', 409);
     }
@@ -4554,8 +4636,7 @@ function resolveStagingTrackingFixture(rows) {
       normalizeDestinationKind(config.destination_type) !== 'website' ||
       contract.destination_kind !== 'website' ||
       contract.staging_synthetic_fixture !== true ||
-      contract.website_event_requirement !== 'required' ||
-      contract.offline_event_dataset_requirement !== 'required'
+      contract.website_event_requirement !== 'required'
     ) {
       continue;
     }
@@ -4569,6 +4650,7 @@ function resolveStagingTrackingFixture(rows) {
       apiVersion: normalizeApiVersion(config.api_version || 'v25.0'),
       adsetId: targetAdsetId,
       profileRef: contract.profile_ref,
+      offlineEventDatasetRequirement: contract.offline_event_dataset_requirement,
     });
   }
   if (candidates.length !== 1) {
@@ -5335,6 +5417,7 @@ async function resolveLegacyBootstrapSourceAuth(entry, targetAuth, context) {
   let sourceAdsetId = clean(entry.sourceAdsetId);
   let sourceAccountId = targetAuth.accountId;
   const sourceConfigTokenId = clean(entry.sourceConfigTokenId);
+  let sourceLineageMarker = '';
   if (sourceConfigTokenId) {
     if (!CONFIG_WRITER_TOKEN_ID_PATTERN.test(sourceConfigTokenId)) {
       throw bootstrapFailure('meta_ads_publish_bootstrap_source_invalid', 400);
@@ -5350,6 +5433,7 @@ async function resolveLegacyBootstrapSourceAuth(entry, targetAuth, context) {
     try {
       sourceAdsetId = normalizeNumericId(config.adset_id, 'bootstrap_source_adset_id');
       sourceAccountId = normalizeNumericId(config.account_id, 'bootstrap_source_account_id');
+      if (clean(config.source_adset_id) === sourceAdsetId) sourceLineageMarker = sourceAdsetId;
     } catch {
       throw bootstrapFailure('meta_ads_publish_bootstrap_legacy_config_invalid', 409);
     }
@@ -5362,6 +5446,7 @@ async function resolveLegacyBootstrapSourceAuth(entry, targetAuth, context) {
       ...asObject(targetAuth.config),
       adset_id: sourceAdsetId,
       account_id: sourceAccountId,
+      ...(sourceLineageMarker ? { source_adset_id: sourceLineageMarker } : {}),
     },
   };
 }
@@ -5380,6 +5465,7 @@ function buildBootstrapTrackingProfile({ sourceAuth, sourceAdset, targetAuth, ta
     source.optimization_goal,
   );
   const offlineRequired = Boolean(clean(asObject(source.promoted_object).offline_conversion_data_set_id));
+  const sourceIsSeedSource = clean(asObject(sourceAuth.config).source_adset_id) === clean(asObject(sourceAuth.config).adset_id);
   const profile = {
     profile_ref: bootstrapProfileRef(targetAuth.tokenId),
     source_adset_id: sourceAuth.config.adset_id,
@@ -5391,7 +5477,7 @@ function buildBootstrapTrackingProfile({ sourceAuth, sourceAdset, targetAuth, ta
     if (
       sourceAuth.config.adset_id === targetAuth.config.adset_id ||
       profile.website_event_requirement !== 'required' ||
-      profile.offline_event_dataset_requirement !== 'required'
+      (!offlineRequired && !sourceIsSeedSource)
     ) {
       throw bootstrapFailure('meta_ads_publish_bootstrap_staging_fixture_invalid', 409);
     }
@@ -8811,8 +8897,7 @@ function normalizeTrackingContract(value, profilesValue = {}, targetAdsetId = ''
   const stagingSyntheticFixture = profileConfigured &&
     profile.staging_synthetic_fixture === true &&
     sourceAdsetId !== clean(targetAdsetId) &&
-    websiteRequirement === 'required' &&
-    offlineRequirement === 'required';
+    websiteRequirement === 'required';
   const productionUrlTagsReadbackFixtureConfigured = profileConfigured &&
     hasValidProductionUrlTagsReadbackFixture(source.production_url_tags_readback_fixture);
   return {

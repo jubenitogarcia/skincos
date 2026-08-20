@@ -315,10 +315,11 @@ class SeedDb {
 }
 
 class FakeGraph {
-  constructor({ ambiguousCreatePath = '', readFailures = {}, readResponses = {} } = {}) {
+  constructor({ ambiguousCreatePath = '', readFailures = {}, readResponses = {}, writeFailures = {} } = {}) {
     this.ambiguousCreatePath = ambiguousCreatePath;
     this.readFailures = new Map(Object.entries(readFailures));
     this.readResponses = new Map(Object.entries(readResponses));
+    this.writeFailures = new Map(Object.entries(writeFailures));
     this.calls = [];
     this.postCalls = [];
     this.resources = new Map();
@@ -350,6 +351,13 @@ class FakeGraph {
 
     this.postCalls.push(path);
     const body = JSON.parse(init.body || '{}');
+    const writeFailure = this.writeFailures.get(path);
+    if (writeFailure) {
+      return graphResponse(
+        { error: { message: 'synthetic write rejected', code: writeFailure.code || 100 } },
+        writeFailure.status ?? 400,
+      );
+    }
     if (this.resources.has(path) && body.status === 'ARCHIVED') {
       const resource = this.resources.get(path);
       resource.body = { ...resource.body, status: 'ARCHIVED' };
@@ -649,6 +657,58 @@ async function reconcile({ db, graph, env = {}, requestOverrides = {} }) {
     encryptToken: encrypt,
     writeAudit: async () => {},
   });
+}
+
+async function campaignContractReconciliationFixture({ campaignPatch = {}, campaignResponse = null } = {}) {
+  const db = new SeedDb();
+  const graph = new FakeGraph();
+  const operationKey = 'meta-ads-staging-seed:reconcile-campaign-contract-001';
+  const campaignId = '23800000000000051';
+  const marker = 'e'.repeat(64);
+  const campaignName = `[SKINCOS-STAGING-V20:${marker.slice(0, 24)}] Campaign`;
+  const state = {
+    contract: 'meta-ads-tracking-v20/staging-synthetic-seed/v2',
+    phase: 'reconciliation_required',
+    reconciliation_required: true,
+    input: { operation_key: operationKey, account_id: ACCOUNT_ID, pixel_id: PIXEL_ID, api_version: 'v25.0' },
+    marker,
+    url_tags: 'skincos_staging_v20=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+    credential_ids: {
+      source: `staging.meta-ads.source.${marker.slice(0, 32)}`,
+      target: `staging.meta-ads.target.${marker.slice(0, 32)}`,
+    },
+    credentials_sealed: false,
+    facts: {},
+    resources: {
+      campaign: { id: campaignId, name: campaignName, pending: false, owned_by_operation: true },
+      source_adset: { name: `${marker} Source Ad Set`, pending: true, owned_by_operation: false },
+      target_adset: { name: `${marker} Target Ad Set`, pending: true, owned_by_operation: false },
+    },
+  };
+  db.operations.set(operationKey, {
+    id: 'reconcile-operation-id-campaign-contract',
+    operation_key: operationKey,
+    request_hash: 'reconcile-request-hash-campaign-contract',
+    status: 'reconciliation_required',
+    state_ciphertext: await encrypt(JSON.stringify(state)),
+    summary_json: JSON.stringify({ phase: 'reconciliation_required', reconciliation_required: true }),
+    updated_at: new Date().toISOString(),
+  });
+  graph.resources.set(campaignId, {
+    id: campaignId,
+    kind: 'campaign',
+    body: {
+      name: campaignName,
+      objective: 'OUTCOME_LEADS',
+      buying_type: 'AUCTION',
+      special_ad_categories: [],
+      is_adset_budget_sharing_enabled: false,
+      status: 'PAUSED',
+      ...campaignPatch,
+    },
+  });
+  if (campaignResponse) graph.readResponses.set(campaignId, { body: campaignResponse });
+  return { db, graph, campaignId };
 }
 
 async function pendingSeedState(operationKey) {
@@ -1721,7 +1781,11 @@ test('staging seed seals a configured Page only after the System User assignment
   assert.equal(seededAdsets.length, 2);
   const sourceAdsets = seededAdsets.filter((resource) => resource.body?.promoted_object);
   assert.equal(sourceAdsets.length, 1);
-  assert.equal(sourceAdsets[0].body.promoted_object.offline_conversion_data_set_id, PIXEL_ID);
+  assert.deepEqual(sourceAdsets[0].body.promoted_object, {
+    pixel_id: PIXEL_ID,
+    custom_event_type: 'LEAD',
+  });
+  assert.equal(Object.hasOwn(sourceAdsets[0].body.promoted_object, 'offline_conversion_data_set_id'), false);
   assert.ok(graph.calls.every((call) => call.path !== 'me/accounts'));
   assert.equal(db.tokens.length, 2);
   assert.equal(db.operations.get(operationKey).status, 'sealed');
@@ -1762,6 +1826,39 @@ test('an ambiguous synthetic POST is never retried and leaves the operation fail
   assert.equal(db.operations.get(operationKey).status, 'reconciliation_required');
   assert.equal(JSON.stringify(body).includes(SOURCE_ACCESS_TOKEN), false);
   assert.equal(JSON.stringify(body).includes(ACCOUNT_ID), false);
+});
+
+test('staging seed classifies permanent Graph resource writes by fixed stage without exposing the Graph error', async () => {
+  const cases = [
+    {
+      name: 'contract',
+      failure: { status: 400, code: 100 },
+      error: 'meta_ads_publish_staging_seed_graph_source_adset_create_contract_invalid',
+    },
+    {
+      name: 'auth',
+      failure: { status: 403, code: 10 },
+      error: 'meta_ads_publish_staging_seed_graph_source_adset_create_access_denied',
+    },
+  ];
+
+  for (const scenario of cases) {
+    const db = new SeedDb();
+    const graph = new FakeGraph({
+      writeFailures: { [`act_${ACCOUNT_ID}/adsets`]: scenario.failure },
+    });
+    const operationKey = `meta-ads-staging-seed:resource-write-${scenario.name}-001`;
+    const response = await seed({ db, graph, operationKey });
+    const body = await response.json();
+
+    assert.equal(response.status, 409, scenario.name);
+    assert.equal(body.error, scenario.error, scenario.name);
+    assert.equal(db.tokens.length, 0, scenario.name);
+    assert.equal(db.operations.get(operationKey).status, 'rolled_back', scenario.name);
+    assert.equal(JSON.stringify(body).includes(SOURCE_ACCESS_TOKEN), false, scenario.name);
+    assert.equal(JSON.stringify(body).includes(ACCOUNT_ID), false, scenario.name);
+    assert.equal(JSON.stringify(body).includes('synthetic write rejected'), false, scenario.name);
+  }
 });
 
 test('candidate reconciliation resolves one exact pending ad set and archives only the owned lineage', async () => {
@@ -1897,7 +1994,7 @@ test('candidate reconciliation refuses duplicate pending ad-set matches without 
   assert.equal(db.operations.get(operationKey).status, 'reconciliation_required');
 });
 
-test('candidate reconciliation closes a campaign-only ambiguous seed when no ad set was accepted', async () => {
+test('candidate reconciliation closes a campaign-only ambiguous seed when no ad set was accepted despite campaign status drift', async () => {
   const db = new SeedDb();
   const graph = new FakeGraph();
   const operationKey = 'meta-ads-staging-seed:reconcile-campaign-only-001';
@@ -1938,7 +2035,7 @@ test('candidate reconciliation closes a campaign-only ambiguous seed when no ad 
       buying_type: 'AUCTION',
       special_ad_categories: [],
       is_adset_budget_sharing_enabled: false,
-      status: 'PAUSED',
+      status: 'ACTIVE',
     },
   });
 
@@ -1949,6 +2046,38 @@ test('candidate reconciliation closes a campaign-only ambiguous seed when no ad 
   assert.deepEqual(graph.postCalls, [campaignId]);
   assert.equal(db.operations.get(operationKey).status, 'rolled_back');
   assert.equal(JSON.stringify(body).includes(campaignId), false);
+});
+
+test('candidate reconciliation requires exact campaign identity and name without Graph writes or sensitive output', async () => {
+  const cases = [
+    {
+      name: 'malformed',
+      campaignResponse: { name: 'opaque', status: 'PAUSED', objective: 'OUTCOME_LEADS' },
+      error: 'meta_ads_publish_staging_seed_reconciliation_required',
+    },
+    {
+      name: 'identity',
+      campaignResponse: { id: 'not-numeric', name: 'opaque', status: 'PAUSED', objective: 'OUTCOME_LEADS' },
+      error: 'meta_ads_publish_staging_seed_reconciliation_required',
+    },
+    {
+      name: 'name',
+      campaignPatch: { name: '[unexpected-campaign-name]' },
+      error: 'meta_ads_publish_staging_seed_reconciliation_required',
+    },
+  ];
+
+  for (const scenario of cases) {
+    const { db, graph } = await campaignContractReconciliationFixture(scenario);
+    const response = await reconcile({ db, graph });
+    const body = await response.json();
+    assert.equal(response.status, 409, scenario.name);
+    assert.equal(body.error, scenario.error, scenario.name);
+    assert.equal(graph.postCalls.length, 0, scenario.name);
+    assert.equal(db.operations.get('meta-ads-staging-seed:reconcile-campaign-contract-001').status, 'reconciliation_required', scenario.name);
+    assert.equal(JSON.stringify(body).includes(SOURCE_ACCESS_TOKEN), false, scenario.name);
+    assert.equal(JSON.stringify(body).includes(ACCOUNT_ID), false, scenario.name);
+  }
 });
 
 test('rollback rejects a drifted seeded authority before it mutates Graph delivery or D1 credentials', async () => {
