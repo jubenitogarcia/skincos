@@ -44,6 +44,7 @@ jobs:
             const candidates = pulls.filter((pr) => {
               if (pr.head?.repo?.full_name !== `${owner}/${repo}`) return false;
               if (!String(pr.head?.ref || "").startsWith("codex/")) return false;
+              if (pr.draft !== false) return false;
               return String(pr.user?.login || "") === "jubenitogarcia";
             });
             let needsMaintenance = false;
@@ -217,7 +218,7 @@ jobs:
             async function dispatchMergeAuthorityIfEligible(pr) {
               const labels = new Set((pr.labels || []).map((label) => String(label?.name || '')));
               const authorityOnlyBlock = pr.mergeable_state === 'blocked' && await authoritySignalIsOnlyBlock(pr);
-              if (pr.draft === true || !['clean', 'blocked'].includes(String(pr.mergeable_state || '')) || (pr.mergeable_state === 'blocked' && !authorityOnlyBlock) || !labels.has(LABELS.enabled.name)) return;
+              if (pr.draft !== false || !['clean', 'blocked'].includes(String(pr.mergeable_state || '')) || (pr.mergeable_state === 'blocked' && !authorityOnlyBlock) || !labels.has(LABELS.enabled.name)) return;
               const activeStatuses = new Set(['queued', 'in_progress', 'waiting', 'requested']);
               let runs = [];
               try {
@@ -294,10 +295,11 @@ jobs:
               if (pr.head?.repo?.full_name !== `${owner}/${repo}`) return false;
               if (!String(pr.head?.ref || "").startsWith("codex/")) return false;
               if (String(pr.user?.login || "") !== "jubenitogarcia") return false;
+              if (pr.draft !== false) return false;
               return true;
             }).slice(0, 50);
 
-            core.info(`Found ${candidates.length} open codex PR(s) to evaluate.`);
+            core.info(`Found ${candidates.length} ready open codex PR(s) to evaluate.`);
 
             for (const pr of candidates) {
               const prNumber = pr.number;
