@@ -25,6 +25,10 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   );
   const attestation = section(
     "      - name: Attest the isolated staging Meta Ads synthetic source on the immutable candidate",
+    "      - name: Reconcile any durably ambiguous staging synthetic seed before a new write",
+  );
+  const reconciliation = section(
+    "      - name: Reconcile any durably ambiguous staging synthetic seed before a new write",
     "      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate",
   );
   const seed = section(
@@ -147,9 +151,18 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   assert.match(attestation, /AbortSignal\.timeout\(30_000\)/);
   assert.doesNotMatch(attestation, /GITHUB_OUTPUT|console\.log|process\.stdout\.write/);
 
+  assert.match(reconciliation, /id: staging_synthetic_seed_reconciliation/);
+  assert.match(reconciliation, /staging-synthetic-seed\/reconcile/);
+  assert.match(reconciliation, /body: JSON\.stringify\(\{ access_token: accessToken, account_id: accountId, api_version: apiVersion \}\)/);
+  assert.match(reconciliation, /operation_status/);
+  assert.match(reconciliation, /status === 'not_required' \|\| status === 'rolled_back'/);
+  assert.match(reconciliation, /appendFileSync\(process\.env\.GITHUB_OUTPUT, `reconciliation_status=/);
+  assert.doesNotMatch(reconciliation, /META_PIXEL_ID|destination_page_ids|META_ADS_NOVOHAMBURGO_PAGE_ID|META_ADS_BARRASHOPPPINGSUL_PAGE_ID/);
+  assert.doesNotMatch(reconciliation, /console\.log|process\.stdout\.write/);
+
   assert.match(
     seed,
-    /if: inputs\.operation == 'deploy' && inputs\.target == 'staging' && steps\.candidate_staging_synthetic_seed_attestation\.outcome == 'success'/,
+    /if: inputs\.operation == 'deploy' && inputs\.target == 'staging' && steps\.candidate_staging_synthetic_seed_attestation\.outcome == 'success' && steps\.staging_synthetic_seed_reconciliation\.outcome == 'success'/,
   );
   assert.match(
     seed,
@@ -227,6 +240,9 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   const seedAt = workflow.indexOf(
     "      - name: Seal the isolated staging Meta Ads synthetic seed on the immutable candidate",
   );
+  const reconciliationAt = workflow.indexOf(
+    "      - name: Reconcile any durably ambiguous staging synthetic seed before a new write",
+  );
   const configAt = workflow.indexOf(
     "      - name: Verify immutable Token Vault candidate config bearer before traffic",
   );
@@ -239,6 +255,8 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   assert.ok(
     uploadAt < attestationAt &&
       attestationAt < seedAt &&
+      attestationAt < reconciliationAt &&
+      reconciliationAt < seedAt &&
       seedAt < configAt &&
       configAt < planAt &&
       planAt < trafficAt,
@@ -282,6 +300,7 @@ test("staging synthetic seed is candidate-scoped, ordered before derivation, and
   assert.doesNotMatch(compensationRollback, /TOKEN_VAULT_STAGING_BASE_URL/);
   const sourceScopes = [
     attestation,
+    reconciliation,
     seed,
     pretrafficRollback,
     activationLeaseRollback,
