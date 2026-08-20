@@ -92,19 +92,37 @@ aleatório, concurso ou sorteio.
   de privacidade: `[PENDENTE]`.
 - CPF e histórico de procedimentos: fora do D1, frontend, URL, relatório e
   analytics; nenhum dado bruto deve ser carregado (**consolidado no plano**).
-- Campos do convite: `invite_ref`, nome, WhatsApp, e-mail já vinculado na lista,
-  paleta, `velocity_benefit`, expiração e status do convite. `reward_id` é
-  opcional e legado; o procedimento, desconto e condições vêm da oferta
-  resolvida pelas cartas.
+- Para a lista da aula-cortesia Velocity, a fonte operacional pode conter apenas
+  nome e WhatsApp. E-mail e prêmio são opcionais; quando o prêmio vier, deve ser
+  `Velocity`. O importador gera o identificador opaco do convite, usa a validade
+  da campanha, marca o convite como ativo e mantém uma paleta técnica somente
+  para montar o baralho. A paleta não decide o prêmio. `reward_id` permanece nulo
+  até uma lista comercial posterior.
 - Consentimento: aceite operacional separado de qualquer marketing futuro;
   redação jurídica final: `[PENDENTE]`.
 - Retenção após encerramento + 90 dias: `[PENDENTE — eliminação / anonimização]`.
 
 ## 8. Pacote privado de importação
 
-O CSV sanitizado deve permanecer fora do repositório e conter somente os
-seguintes cabeçalhos permitidos (**contrato técnico consolidado; arquivo real
-continua pendente**):
+O CSV sanitizado deve permanecer fora do repositório. Para a lista Velocity, o
+formato mínimo aceito é:
+
+```text
+NOME,TELEFONE
+```
+
+`EMAIL` e `PRÊMIO` podem ser omitidos ou ficar vazios; o WhatsApp é o canal de
+contato e a chave operacional do convite. Quando informado, o valor de
+`PRÊMIO` deve ser `Velocity` (ou `aula_cortesia_evento`). O importador deriva internamente `invite_ref`,
+`expires_at`, `invite_status=active`, `palette=radiancia` e
+`velocity_benefit=aula_cortesia_evento` a partir da campanha aprovada. E-mails
+repetidos não bloqueiam a carga porque não identificam o convite.
+
+O arquivo privado de entrega gerado pelo importador contém `name`, `invite_ref`,
+`whatsapp` e `invite_url`, para permitir o envio manual da mensagem pelo
+WhatsApp. Ele continua fora do repositório e não é exposto ao navegador.
+
+Para listas comerciais futuras, o formato técnico completo continua disponível:
 
 ```text
 invite_ref,name,whatsapp,email,palette,velocity_benefit,expires_at,invite_status
