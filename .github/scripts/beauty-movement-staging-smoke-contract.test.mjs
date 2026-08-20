@@ -34,6 +34,10 @@ test("smoke consumes secrets in-process and closes the staging gate", () => {
     assert.match(workflow, /invite_status = 'revoked'/);
     assert.match(workflow, /status = 'disabled'/);
     assert.match(workflow, /rollback/);
+    const browserModule = workflow.match(/SMOKE_INVITE_TOKEN="\$\{token\}" node --input-type=module <<'NODE'[\s\S]*?\n          NODE/)?.[0] ?? "";
+    assert.match(browserModule, /import fs from ['"]node:fs['"]/);
+    assert.match(browserModule, /import \{ chromium \} from ['"]playwright['"]/);
+    assert.doesNotMatch(browserModule, /require\(/);
     const validationStep = workflow.match(/      - name: Validate staging-only source and credentials[\s\S]*?(?=\n      - name:)/)?.[0] ?? "";
     assert.match(validationStep, /BEAUTY_MOVEMENT_TOKEN_HMAC_KEY:\s*\$\{\{ secrets\.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY \}\}/);
     assert.match(validationStep, /BEAUTY_MOVEMENT_PII_KEY:\s*\$\{\{ secrets\.BEAUTY_MOVEMENT_PII_KEY \}\}/);
