@@ -338,13 +338,20 @@ export function classifyFiles(policy, files) {
       surfaces: surfaces.length ? surfaces : ["unclassified"]
     };
   });
-  const risk = matches.reduce((current, entry) => RISK_ORDER[entry.risk] > RISK_ORDER[current] ? entry.risk : current, "low");
+  let risk = matches.reduce((current, entry) => RISK_ORDER[entry.risk] > RISK_ORDER[current] ? entry.risk : current, "low");
   const surfaces = [...new Set(matches.flatMap((entry) => entry.surfaces))].sort();
   const languages = [...new Set(normalizedFiles.flatMap((file) => classifyLanguage(policy, file)))].sort();
   const dependenciesChanged = normalizedFiles.some((file) => matchesAnyPath(file, policy.dependencyPatterns));
   const sharedContractsChanged = normalizedFiles.some((file) => matchesAnyPath(file, policy.sharedContractPatterns));
   const productionSensitive = normalizedFiles.some((file) => matchesAnyPath(file, policy.productionSensitivePatterns));
   const securitySensitive = normalizedFiles.some((file) => matchesAnyPath(file, policy.securitySensitivePatterns));
+  // These signals are policy-level closure indicators.  Keep CRITICAL paths
+  // critical, but never let a dependency, shared-contract, or security
+  // surface be downgraded to the default MEDIUM risk merely because a path
+  // rule has not been added yet.
+  if (dependenciesChanged || sharedContractsChanged || securitySensitive) {
+    risk = RISK_ORDER[risk] < RISK_ORDER.high ? "high" : risk;
+  }
   const level = policy.levels[risk];
   return {
     schemaVersion: 2,

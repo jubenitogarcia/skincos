@@ -60,7 +60,7 @@
         }
       ],
       "expect": {
-        "risk": "medium",
+        "risk": "high",
         "surfaces": ["shared-contracts", "website"],
         "languages": ["json"],
         "dependencies_changed": true,

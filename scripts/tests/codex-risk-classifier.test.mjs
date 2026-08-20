@@ -98,6 +98,17 @@ test("workflow, tracking, and dependency changes expose conservative indicators"
   assert.ok(report.surfaces.includes("github-governance"));
 });
 
+test("dependency, shared-contract, and security signals cannot remain medium", () => {
+  for (const files of [
+    ["crm/console/package.json"],
+    ["shared/identity-runtime/index.ts"],
+    ["crm/console/securityPolicy.ts"],
+  ]) {
+    const report = classifyFiles(policy, files);
+    assert.equal(report.risk, "high", files.join(","));
+  }
+});
+
 test("the fallback report is complete, conservative, and sanitized", () => {
   const report = buildClassificationFallback({
     policy,
