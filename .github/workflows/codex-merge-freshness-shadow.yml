@@ -1,0 +1,81 @@
+name: Codex merge freshness shadow
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      previous_main_sha:
+        description: Previously validated main SHA
+        required: true
+        type: string
+      current_main_sha:
+        description: Current main SHA
+        required: true
+        type: string
+
+concurrency:
+  group: codex-merge-freshness-shadow
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  shadow:
+    name: Shadow freshness admission (read-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - name: Collect open Codex PR heads (read-only)
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          PR_LIST_PATH: ${{ runner.temp }}/merge-freshness-prs.json
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              base: "main",
+              per_page: 100,
+            });
+            const candidates = pulls
+              .filter((pr) => pr.head?.repo?.full_name === `${owner}/${repo}`)
+              .filter((pr) => String(pr.head?.ref || "").startsWith("codex/"))
+              .map((pr) => ({
+                number: pr.number,
+                title: pr.title,
+                baseSha: pr.base?.sha,
+                headSha: pr.head?.sha,
+              }));
+            require("fs").writeFileSync(process.env.PR_LIST_PATH, `${JSON.stringify(candidates)}\n`);
+            core.info(`Collected ${candidates.length} open Codex PR(s) for shadow analysis.`);
+      - name: Classify bounded main advance and PR closures
+        env:
+          PREVIOUS_MAIN_SHA: ${{ github.event_name == 'push' && github.event.before || inputs.previous_main_sha }}
+          CURRENT_MAIN_SHA: ${{ github.event_name == 'push' && github.sha || inputs.current_main_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/codex-merge-freshness-shadow.mjs \
+            --previous-main "$PREVIOUS_MAIN_SHA" \
+            --current-main "$CURRENT_MAIN_SHA" \
+            --prs-file "$RUNNER_TEMP/merge-freshness-prs.json" \
+            --output merge-freshness-shadow.json
+          cat merge-freshness-shadow.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: merge-freshness-shadow-${{ github.run_id }}
+          path: merge-freshness-shadow.json
+          if-no-files-found: error
+          retention-days: 30
