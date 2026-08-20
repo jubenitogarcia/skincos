@@ -33,7 +33,7 @@ jobs:
     name: Require exact preview and staging promotion
     uses: ./.github/workflows/promotion-gate.yml
     with:
-      unit: public-website-release
+      unit: beauty-movement-production-activation
       target: production
       release_sha: ${{ inputs.release_sha }}
       staging_run_id: ${{ inputs.staging_run_id }}
@@ -135,6 +135,32 @@ jobs:
           chmod 600 "${STATE_FILE}"
           unset PRODUCTION_INVITES_CSV PRODUCTION_CAMPAIGN_JSON PRODUCTION_REWARDS_JSON PRODUCTION_PROCEDURES_JSON
           echo 'Private production package materialized in runner-only storage.'
+
+      - name: Acquire Website production coordination lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: 'release:website'
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/beauty-movement-production-activation/website-lease.json
+
+      - name: Check Website production coordination lease before remote inspection
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/beauty-movement-production-activation/website-lease.json
+          resource: 'release:website'
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
       - name: Validate campaign package without exposing it
         working-directory: website
@@ -245,6 +271,7 @@ jobs:
           GITHUB_ACTIONS: 'true'
         run: |
           set -euo pipefail
+          test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
           args=(--apply --remote --input "${PACKAGE_DIR}/invites.csv" --campaign "${CAMPAIGN_ID}" --confirm-campaign "${CAMPAIGN_ID}" --campaign-ends-at "${CAMPAIGN_ENDS_AT}" --campaign-config "${PACKAGE_DIR}/campaign.json" --database "${PRODUCTION_D1_DATABASE}" --config wrangler.toml --out-dir "${OUTPUT_DIR}")
           if [[ -f "${PACKAGE_DIR}/rewards.json" ]]; then
             args+=(--reward-catalog "${PACKAGE_DIR}/rewards.json" --procedure-catalog "${PACKAGE_DIR}/procedures.json")
@@ -277,6 +304,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" node scripts/assert-production-snapshot.mjs
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" npx opennextjs-cloudflare build
           node - "${STATE_FILE}" <<'NODE'
@@ -322,6 +350,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
           activation_sql="UPDATE bm_campaigns SET status = 'active', updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE id = '${CAMPAIGN_ID}' AND status = 'draft';"
           npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${activation_sql}" --json > "${ACTIVATION_ROOT}/activation.json"
           node - "${ACTIVATION_ROOT}/activation.json" "${STATE_FILE}" <<'NODE'
@@ -394,6 +423,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
           npm run beauty-movement:import -- --apply --remote \
             --input "${SMOKE_ROOT}/invites.csv" --campaign "${SMOKE_CAMPAIGN_ID}" --confirm-campaign "${SMOKE_CAMPAIGN_ID}" \
             --campaign-ends-at "$(cat "${SMOKE_ROOT}/ends-at.txt")" --campaign-config "${SMOKE_ROOT}/campaign.json" \
@@ -540,6 +570,16 @@ jobs:
             [[ "${inactive:-}" == 503 ]] || { echo "production campaign is not inactive after compensation (HTTP ${inactive:-unknown})"; cleanup_failed=1; }
           fi
           [[ "${cleanup_failed}" == 0 ]] || exit 1
+
+      - name: Release Website production coordination lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/beauty-movement-production-activation/website-lease.json
 
       - name: Publish redacted activation evidence
         if: ${{ success() }}
