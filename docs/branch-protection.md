@@ -42,6 +42,31 @@ revalidação do lease. Não adicionar bypass humano para compensar a limitaçã
 Depois de provisionar a autoridade compatível, reaplicar o ruleset completo e
 confirmar o readback antes de remover este blocker.
 
+## Shadow de freshness e dependency closure
+
+O workflow `Codex merge freshness shadow` observa cada avanço de `main` e os PRs
+Codex abertos usando o classificador canônico de impacto. Ele produz um artefato
+com a closure da mudança de `main`, a closure de cada PR e uma decisão de
+`shadow-reuse-candidate` ou `revalidate-required`.
+
+Esse workflow é deliberadamente somente leitura: não atualiza branches, não
+publica status required, não altera rulesets e não faz merge. Mesmo quando duas
+closures são disjuntas, o campo `strict_up_to_date_still_required` permanece
+`true`; o resultado é evidência para uma futura fila nativa/actor compatível, não
+um bypass da regra atual.
+
+Quando a classificação falha, contém `unclassified`, shared contracts,
+dependências, produção ou segurança, o resultado é `revalidate-required`.
+Assim, a medição da reutilização potencial é fail-closed e não transforma uma
+alteração de alto risco em fast lane.
+
+No repositório pessoal atual, o ruleset não aceita a integração GitHub Actions
+como actor de bypass. Por isso não foi alterado `Require branches to be up to
+date`, `merge_group`, `global-merge-authority` ou qualquer check obrigatório.
+Após a migração para uma Organization/App compatível, a evidência desse shadow
+deve ser usada para avaliar merge queue nativa; até lá, a mutação continua
+serializada pela autoridade global.
+
 O endpoint REST de merge recebe um SHA condicional da HEAD da PR, mas não um
 compare-and-swap do SHA-base de `main`. A autoridade agora faz readback do
 commit squash, dos parents, da PR e da ponta de `main` depois da mutação; isso

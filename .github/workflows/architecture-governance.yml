@@ -1,76 +1,197 @@
 name: Architecture governance
 
 on:
-  pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/workflows/codex-autonomy-gate.yml"
-      - ".github/workflows/**"
+  pull_request: {}
   push:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "ops/project-orchestration/**"
-      - "docs/project-state/**"
-      - ".codex/**"
-      - "skills/**"
-      - "ops/codex/**"
-      - "scripts/codex-*.mjs"
-      - "scripts/tests/codex-*.mjs"
-      - "scripts/codex-*.sh"
-      - "scripts/*codex*.ps1"
-      - ".github/workflows/codex-autonomy-gate.yml"
-      - ".github/workflows/**"
+  workflow_dispatch: {}
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
 
 jobs:
-  validate:
+  plan:
+    name: Plan architecture governance scope
+    runs-on: ubuntu-latest
+    outputs:
+      minimum: ${{ steps.select.outputs.minimum }}
+      global: ${{ steps.select.outputs.global }}
+      ponto: ${{ steps.select.outputs.ponto }}
+      influencer: ${{ steps.select.outputs.influencer }}
+      cloudflare: ${{ steps.select.outputs.cloudflare }}
+      staging: ${{ steps.select.outputs.staging }}
+      finance: ${{ steps.select.outputs.finance }}
+      full: ${{ steps.select.outputs.full }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - id: bounded-diff
+        name: Prepare bounded immutable diff
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/codex-bounded-diff.mjs \
+            --base "${PR_BASE_SHA:-$BEFORE_SHA}" \
+            --head "${PR_HEAD_SHA:-$HEAD_SHA}" \
+            --output "$GITHUB_OUTPUT"
+      - id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ steps.bounded-diff.outputs.base }}
+          HEAD_SHA: ${{ steps.bounded-diff.outputs.head }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            node .github/scripts/architecture-governance.mjs --full --output governance-plan.json
+          else
+            node scripts/codex-risk-classifier.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --output risk-report.json
+            node .github/scripts/architecture-governance.mjs --report risk-report.json --output governance-plan.json
+          fi
+          cat governance-plan.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: architecture-governance-plan-${{ github.run_id }}
+          path: governance-plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  minimum-boundaries:
+    name: Minimum governance and boundary contracts
+    needs: plan
+    if: ${{ needs.plan.outputs.minimum == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - run: node .github/scripts/validate-github-governance.mjs
+      - run: node .github/scripts/validate-domain-boundaries.mjs
+
+  global-closure:
+    name: Global architecture closure
+    needs: plan
+    if: ${{ needs.plan.outputs.global == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
       - run: node .github/scripts/validate-architecture.mjs
-      - run: node .github/scripts/validate-github-governance.mjs
       - name: Validate GitHub Organization transfer plan
         run: node .github/scripts/validate-github-repository-transfer.mjs
       - run: node .github/scripts/validate-deploy-topology.mjs
-      - run: node .github/scripts/validate-cloudflare-single-writer.mjs
       - name: Validate dependency closures
         run: node .github/scripts/validate-dependency-closures.mjs
       - name: Test dependency closure validator
         run: node --test .github/scripts/validate-dependency-closures.test.mjs
       - run: node .github/scripts/validate-progressive-release.mjs
+      - name: Validate module catalog, maturity and dependency graph
+        run: node .github/scripts/validate-module-catalog.mjs && node .github/scripts/validate-module-maturity.mjs
+
+  ponto:
+    name: Ponto architecture contracts
+    needs: plan
+    if: ${{ needs.plan.outputs.ponto == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
       - name: Test private Ponto Core baseline publisher
         run: node --test .github/scripts/ponto-core-baseline-publisher.test.mjs
       - name: Test Ponto Core staging predecessor attestation
         run: node --test .github/scripts/ponto-core-staging-precondition.test.mjs
       - name: Test Ponto cancelled Core rollback guard
         run: node --test .github/scripts/ponto-cancelled-core-before-mutation.test.mjs .github/scripts/ponto-automatic-rollback-safety.test.mjs
-      - name: Validate module catalog, maturity and dependency graph
-        run: node .github/scripts/validate-module-catalog.mjs && node .github/scripts/validate-module-maturity.mjs
-      - name: Validate domain import boundaries
-        run: node .github/scripts/validate-domain-boundaries.mjs
+
+  influencer:
+    name: Influencer Intelligence architecture contracts
+    needs: plan
+    if: ${{ needs.plan.outputs.influencer == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
       - name: Test Influencer Intelligence contracts, providers and snapshots
-        run: node --test social/influencer-intelligence/tests/contracts.test.mjs social/influencer-intelligence/tests/registry.test.mjs social/influencer-intelligence/tests/providers.test.mjs social/influencer-intelligence/tests/provider-router-contract.test.mjs social/influencer-intelligence/tests/architecture.test.mjs social/influencer-intelligence/tests/data-model.test.mjs social/influencer-intelligence/tests/snapshots.test.mjs social/influencer-intelligence/tests/analytics.test.mjs social/influencer-intelligence/tests/scoring.test.mjs social/influencer-intelligence/tests/scheduler.test.mjs social/influencer-intelligence/tests/mcp-readonly.test.mjs social/influencer-intelligence/tests/mcp-runtime.test.mjs social/influencer-intelligence/tests/read-service-runtime.test.mjs social/influencer-intelligence/tests/runtime-registration.test.mjs social/influencer-intelligence/tests/skill.test.mjs social/influencer-intelligence/tests/calibration.test.mjs social/influencer-intelligence/tests/external-provider-gap-analysis.test.mjs social/influencer-intelligence/tests/migration-runner.test.mjs
-      - name: Validate reproducible staging manifest
-        run: node .github/scripts/validate-staging-manifest.mjs
-      - name: Validate staging bootstrap safety guards
-        run: node .github/scripts/validate-staging-scripts.mjs
-      - name: Validate staging PostgreSQL role template
-        run: node .github/scripts/validate-staging-postgres.mjs
-      - name: Validate external observability catalog
-        run: node scripts/observability/validate-catalog.mjs
-      - name: Validate Finance synthetic canary policy
-        run: node .github/scripts/validate-finance-canary-policy.mjs
+        run: node --test social/influencer-intelligence/tests/*.test.mjs
+
+  cloudflare:
+    name: Cloudflare single-writer contracts
+    needs: plan
+    if: ${{ needs.plan.outputs.cloudflare == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - run: node .github/scripts/validate-cloudflare-single-writer.mjs
+      - run: node --test .github/scripts/validate-cloudflare-single-writer.test.mjs
+
+  staging:
+    name: Staging architecture contracts
+    needs: plan
+    if: ${{ needs.plan.outputs.staging == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - run: node .github/scripts/validate-staging-manifest.mjs
+      - run: node .github/scripts/validate-staging-scripts.mjs
+      - run: node .github/scripts/validate-staging-postgres.mjs
+
+  finance:
+    name: Finance architecture contracts
+    needs: plan
+    if: ${{ needs.plan.outputs.finance == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - run: node .github/scripts/validate-finance-canary-policy.mjs
+
+  architecture-governance:
+    name: Architecture governance aggregate
+    if: ${{ always() }}
+    needs: [plan, minimum-boundaries, global-closure, ponto, influencer, cloudflare, staging, finance]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the planner and every selected contract job to complete
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          MINIMUM_RESULT: ${{ needs.minimum-boundaries.result }}
+          GLOBAL_RESULT: ${{ needs.global-closure.result }}
+          PONTO_RESULT: ${{ needs.ponto.result }}
+          INFLUENCER_RESULT: ${{ needs.influencer.result }}
+          CLOUDFLARE_RESULT: ${{ needs.cloudflare.result }}
+          STAGING_RESULT: ${{ needs.staging.result }}
+          FINANCE_RESULT: ${{ needs.finance.result }}
+        run: |
+          set -euo pipefail
+          [[ "$PLAN_RESULT" == "success" ]] || { echo "architecture governance planner did not complete: $PLAN_RESULT"; exit 1; }
+          for result in "$MINIMUM_RESULT" "$GLOBAL_RESULT" "$PONTO_RESULT" "$INFLUENCER_RESULT" "$CLOUDFLARE_RESULT" "$STAGING_RESULT" "$FINANCE_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "selected architecture governance job failed or was cancelled: $result"; exit 1 ;;
+            esac
+          done
+          echo "Architecture governance aggregate gate passed."
