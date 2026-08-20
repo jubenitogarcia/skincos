@@ -72,12 +72,6 @@ function collectPushLines(lines) {
   return lines.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map(parsePushRef);
 }
 
-function addUntracked(changes) {
-  const output = runGit(["ls-files", "--others", "--exclude-standard", "-z"]);
-  const paths = output.split("\0").filter(Boolean);
-  return changes.concat(paths.map((file) => ({ status: "A", path: file })));
-}
-
 function collectChanges() {
   const explicitFiles = repeatedArgument("--file");
   if (explicitFiles.length) {
@@ -118,7 +112,10 @@ function collectChanges() {
     return { changes: normalizeChangedFiles(changes), diffSpecs, source: "pre-push refs" };
   }
 
-  const changes = addUntracked(diffOutput(["HEAD"]));
+  // Untracked trees can contain node_modules, browser caches, or local
+  // evidence. They are intentionally validated only after staging; scanning
+  // them here would make the manual command unexpectedly recursive.
+  const changes = diffOutput(["HEAD"]);
   return { changes: normalizeChangedFiles(changes), diffSpecs: [{ label: "working tree", args: ["HEAD"] }], source: "working tree" };
 }
 
