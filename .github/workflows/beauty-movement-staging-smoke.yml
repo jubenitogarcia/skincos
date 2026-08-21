@@ -127,6 +127,13 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
 
+      - name: Apply pending Beauty Movement migrations in staging
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 migrations apply "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging
+
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -155,24 +162,11 @@ jobs:
           const endsAt = new Date(now + 24 * 60 * 60 * 1000).toISOString();
           const write = (name, value) => fs.writeFileSync(path.join(fixtureDir, name), value, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
           write('invites.csv', [
-            'invite_ref,name,whatsapp,email,palette,reward_id,velocity_benefit,expires_at,invite_status',
-            `synthetic-${campaignId},Beauty Movement Smoke,5511999999999,,radiancia,rad-lavieen-free,none,${endsAt},active`,
+            'NOME,TELEFONE,PRÊMIO',
+            'Beauty Movement Smoke,5511999999999,Preenchimento',
             '',
           ].join('\n'));
-          write('rewards.json', JSON.stringify([{
-            rewardId: 'rad-lavieen-free',
-            family: 'radiancia',
-            type: 'free_procedure',
-            procedureId: 'lavieen',
-            procedureName: 'Lavieen',
-            discount: null,
-            displayText: 'Um cuidado de renovação para celebrar seu momento.',
-            validity: 'Válida somente para este smoke sintético.',
-            rules: 'Fixture sintética; elegibilidade clínica depende de avaliação profissional.',
-            termsVersion: 'smoke-v1',
-            approvedAt: new Date(now).toISOString(),
-          }], null, 2));
-          write('procedures.json', JSON.stringify([{ procedureId: 'lavieen', procedureName: 'Lavieen' }], null, 2));
+          write('ends-at.txt', endsAt);
           write('campaign.json', JSON.stringify({
             title: 'Beauty Movement staging smoke',
             description: 'Fixture sintética não destinada a publicação.',
@@ -190,7 +184,7 @@ jobs:
           }, null, 2));
           NODE
 
-      - name: Validate applied 0004 schema and inactive incumbent
+      - name: Validate applied invite-assignment schema and inactive incumbent
         working-directory: website
         shell: bash
         run: |
@@ -199,14 +193,15 @@ jobs:
           npx --yes wrangler@4.112.0 d1 migrations list "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging >"${migration_output}" 2>&1
           grep -q 'No migrations to apply' "${migration_output}" || { echo 'staging reports unapplied migrations'; exit 1; }
           ! grep -q '0004_card_outcomes.sql' "${migration_output}" || { echo '0004_card_outcomes.sql is still pending'; exit 1; }
+          ! grep -q '0005_invite_assignments.sql' "${migration_output}" || { echo '0005_invite_assignments.sql is still pending'; exit 1; }
           schema_json="$RUNNER_TEMP/beauty-movement-staging-smoke/schema.json"
-          schema_sql="SELECT (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_key') AS outcome_key, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_snapshot_json') AS outcome_snapshot_json, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_protocol_version') AS outcome_protocol_version, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_resolved_at_ms') AS outcome_resolved_at_ms, (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bm_invites_campaign_outcome') AS outcome_index;"
+          schema_sql="SELECT (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_key') AS outcome_key, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_snapshot_json') AS outcome_snapshot_json, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_protocol_version') AS outcome_protocol_version, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_resolved_at_ms') AS outcome_resolved_at_ms, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='assigned_outcome_key') AS assigned_outcome_key, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='assignment_protocol_version') AS assignment_protocol_version, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='planned_card_selections_json') AS planned_card_selections_json, (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bm_invites_campaign_outcome') AS outcome_index, (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bm_invites_campaign_assignment') AS assignment_index;"
           npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${schema_sql}" --json >"${schema_json}"
           node - "${schema_json}" <<'NODE'
           const fs = require('node:fs');
           const rows = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results ?? [];
           const row = rows[0];
-          if (!row || Object.values(row).some((value) => Number(value) !== 1)) throw new Error('beauty_movement_0004_schema_invalid');
+          if (!row || Object.values(row).some((value) => Number(value) !== 1)) throw new Error('beauty_movement_invite_assignment_schema_invalid');
           NODE
           status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
             -H "origin: ${STAGING_URL}" -H 'content-type: application/json' \
@@ -274,11 +269,9 @@ jobs:
           npm run beauty-movement:import -- \
             --apply --remote \
             --input "${FIXTURE_DIR}/invites.csv" \
-            --reward-catalog "${FIXTURE_DIR}/rewards.json" \
-            --procedure-catalog "${FIXTURE_DIR}/procedures.json" \
             --campaign "${CAMPAIGN_ID}" \
             --confirm-campaign "${CAMPAIGN_ID}" \
-            --campaign-ends-at "$(node --input-type=commonjs -e "const fs=require('fs'); const csv=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).at(-1).split(','); process.stdout.write(csv[7])" "${FIXTURE_DIR}/invites.csv")" \
+            --campaign-ends-at "$(cat "${FIXTURE_DIR}/ends-at.txt")" \
             --campaign-config "${FIXTURE_DIR}/campaign.json" \
             --database "${STAGING_D1_DATABASE}" \
             --config wrangler.toml \
@@ -324,8 +317,31 @@ jobs:
 
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" node scripts/assert-production-snapshot.mjs
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" npx opennextjs-cloudflare build
+          # Keep the private overlay beside the checked-out website so Wrangler
+          # resolves the relative OpenNext entrypoint from the website root.
+          activation_config="${PWD}/.beauty-movement-wrangler-enabled.toml"
+          trap 'rm -f "${activation_config}"' EXIT
+          node - "${activation_config}" <<'NODE'
+          const fs = require('node:fs');
+          const output = process.argv[2];
+          const input = fs.readFileSync('wrangler.toml', 'utf8');
+          const marker = '[env.staging.vars]';
+          const start = input.indexOf(marker);
+          if (start < 0) throw new Error('beauty_movement_staging_vars_section_missing');
+          const nextSection = input.indexOf('\n[', start + marker.length);
+          const end = nextSection < 0 ? input.length : nextSection;
+          const section = input.slice(start, end);
+          if (!/^BEAUTY_MOVEMENT_ENABLED\s*=\s*"false"\s*$/m.test(section)) {
+            throw new Error('beauty_movement_staging_default_flag_changed');
+          }
+          const enabled = section.replace(
+            /^(BEAUTY_MOVEMENT_ENABLED\s*=\s*)"false"\s*$/m,
+            '$1"true"',
+          );
+          fs.writeFileSync(output, `${input.slice(0, start)}${enabled}${input.slice(end)}`, { mode: 0o600 });
+          NODE
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" \
-            npx --yes wrangler@4.112.0 deploy --config wrangler.toml --env staging --keep-vars \
+            npx --yes wrangler@4.112.0 deploy --config "${activation_config}" --env staging --keep-vars \
             --var 'BEAUTY_MOVEMENT_ENABLED:true' --message "${candidate_message}"
           deployments="$RUNNER_TEMP/beauty-movement-staging-smoke/candidate.json"
           candidate_version=''
@@ -374,6 +390,26 @@ jobs:
           ' "${OUTPUT_DIR}")"
           token="${invite_url##*#c=}"
           [[ "${token}" =~ ^[A-Za-z0-9_-]{40,180}$ ]] || { echo 'synthetic invite token shape invalid'; exit 1; }
+          invite_ref="$(node --input-type=commonjs -e '
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const directory = process.argv[1];
+          const file = fs.readdirSync(directory).find((name) => name.endsWith("-delivery.csv"));
+          if (!file) throw new Error("beauty_movement_delivery_missing");
+          const row = fs.readFileSync(path.join(directory, file), "utf8").trim().split(/\r?\n/)[1];
+          const cells = row.match(/("(?:[^"]|"")*"|[^,]*)/g)?.filter((cell) => cell !== "") ?? [];
+          const value = cells[1]?.replace(/^"|"$/g, "").replace(/""/g, "\"");
+          if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(value ?? "")) throw new Error("beauty_movement_delivery_ref_invalid");
+          process.stdout.write(value);
+          ' "${OUTPUT_DIR}")"
+          [[ "${invite_ref}" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$ ]] || { echo 'synthetic invite reference shape invalid'; exit 1; }
+          node - "${state}" "${invite_ref}" <<'NODE'
+          const fs = require('node:fs');
+          const [statePath, inviteRef] = process.argv.slice(2);
+          const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          state.inviteRef = inviteRef;
+          fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
           SMOKE_INVITE_TOKEN="${token}" node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import { chromium } from 'playwright';
@@ -384,14 +420,49 @@ jobs:
           const page = await context.newPage();
           const consoleErrors = [];
           const whatsappRequests = [];
+          const bootstrapResponses = [];
           let revealRequests = 0;
+          let staticFailures = 0;
+          const staticResponses = [];
           page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
           page.on('pageerror', (error) => consoleErrors.push(error.message));
+          page.on('response', (response) => {
+            const url = new URL(response.url());
+            if (url.pathname.startsWith('/api/beleza-em-movimento/')) bootstrapResponses.push(`${response.request().method()} ${url.pathname} ${response.status()}`);
+            if (url.pathname.startsWith('/_next/static/')) {
+              const status = response.status();
+              if (status >= 400) staticFailures += 1;
+              staticResponses.push(`${response.request().method()} ${url.pathname.split('/').slice(-1)[0]} ${status}`);
+            }
+          });
           page.on('request', (request) => {
             if (request.url().includes('/api/beleza-em-movimento/reveal') && request.method() === 'POST') revealRequests += 1;
             if (/^https:\/\/(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com)\//i.test(request.url())) whatsappRequests.push(request.url());
           });
           await page.goto(`${base}/beleza-em-movimento#c=${encodeURIComponent(token)}`, { waitUntil: 'domcontentloaded' });
+          await page.waitForFunction(() => (
+            document.querySelector('button[aria-label*="Clique no baralho"]') !== null ||
+            window.location.pathname !== '/beleza-em-movimento'
+          ), { timeout: 30000 });
+          if (await page.getByRole('button', { name: /Clique no baralho para começar a sua leitura/i }).count() === 0) {
+            const diagnostics = await page.evaluate(() => {
+              let inviteStorage = { present: false, length: 0 };
+              try {
+                const value = window.sessionStorage.getItem('ef:beauty-movement:invite');
+                inviteStorage = { present: Boolean(value), length: value?.length ?? 0 };
+              } catch {
+                inviteStorage = { present: false, length: -1 };
+              }
+              return {
+                readyState: document.readyState,
+                pathname: window.location.pathname,
+                inviteStorage,
+                statusPageCount: document.querySelectorAll('[aria-busy="true"]').length,
+                deckButtonCount: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
+              };
+            });
+            throw new Error(`beauty_movement_browser_bootstrap_missing:${JSON.stringify({ ...diagnostics, responses: bootstrapResponses, staticFailures, staticResponses: staticResponses.slice(-12), consoleErrorCount: consoleErrors.length })}`);
+          }
           const reveal = async (actLabel) => {
             const card = page.getByRole('button', { name: new RegExp(`Revelar carta 1 de ${actLabel}`, 'i') });
             await card.waitFor({ state: 'visible', timeout: 30000 });
@@ -429,7 +500,8 @@ jobs:
         run: |
           set -euo pipefail
           readback="$RUNNER_TEMP/beauty-movement-staging-smoke/readback.json"
-          readback_sql="SELECT c.status AS campaign_status, i.invite_status, i.confirmed_at_ms, i.outcome_key, i.outcome_protocol_version, i.outcome_resolved_at_ms, length(i.outcome_snapshot_json) AS outcome_snapshot_length, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_campaigns c INNER JOIN bm_invites i ON i.campaign_id = c.id WHERE c.id = '${CAMPAIGN_ID}' AND i.external_ref = 'synthetic-${CAMPAIGN_ID}';"
+          invite_ref="$(node --input-type=commonjs -e 'const fs=require("node:fs"); const state=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const value=state.inviteRef; if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(value ?? "")) throw new Error("beauty_movement_delivery_ref_invalid"); process.stdout.write(value);' "${STATE_FILE}")"
+          readback_sql="SELECT c.status AS campaign_status, i.invite_status, i.confirmed_at_ms, i.outcome_key, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.assigned_outcome_key, i.assignment_protocol_version, length(i.outcome_snapshot_json) AS outcome_snapshot_length, length(i.planned_card_selections_json) AS planned_card_selections_length, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_campaigns c INNER JOIN bm_invites i ON i.campaign_id = c.id WHERE c.id = '${CAMPAIGN_ID}' AND i.external_ref = '${invite_ref}';"
           npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${readback_sql}" --json >"${readback}"
           node - "${readback}" "${RUNNER_TEMP}/beauty-movement-staging-smoke/browser.json" <<'NODE'
           const fs = require('node:fs');
@@ -437,9 +509,9 @@ jobs:
           const row = JSON.parse(fs.readFileSync(readbackPath, 'utf8'))?.[0]?.results?.[0];
           const browser = JSON.parse(fs.readFileSync(browserPath, 'utf8'));
           const outcomes = new Set(['elleva_upgrade', 'filler_double', 'sculptra_classic_unlock', 'skinbooster_diamond_unlock']);
-          if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || !outcomes.has(row.outcome_key) || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_persisted_readback_invalid');
+          if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || row.outcome_key !== 'filler_double' || row.assigned_outcome_key !== 'filler_double' || row.assignment_protocol_version !== 'beauty-movement-invite-assignments-v1' || !outcomes.has(row.outcome_key) || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.planned_card_selections_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_persisted_readback_invalid');
           if (browser.browser !== true || browser.reloadStable !== true || browser.revealRequests !== 3 || browser.whatsappRequests !== 0 || browser.consoleErrors !== 0) throw new Error('beauty_movement_browser_evidence_invalid');
-          fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-staging-smoke/evidence.json`, `${JSON.stringify({ campaignStatus: row.campaign_status, inviteStatus: row.invite_status, confirmed: true, revealCount: Number(row.reveal_count), outcomeKey: row.outcome_key, outcomeProtocolVersion: row.outcome_protocol_version, outcomeSnapshotPresent: true, outcomeResolved: true, browserReloadStable: true, whatsappRequests: 0, consoleErrors: 0 }, null, 2)}\n`, { mode: 0o600 });
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-staging-smoke/evidence.json`, `${JSON.stringify({ campaignStatus: row.campaign_status, inviteStatus: row.invite_status, confirmed: true, revealCount: Number(row.reveal_count), outcomeKey: row.outcome_key, assignedOutcomeKey: row.assigned_outcome_key, assignmentProtocolVersion: row.assignment_protocol_version, outcomeProtocolVersion: row.outcome_protocol_version, outcomeSnapshotPresent: true, plannedCardSelectionsPresent: true, outcomeResolved: true, browserReloadStable: true, whatsappRequests: 0, consoleErrors: 0 }, null, 2)}\n`, { mode: 0o600 });
           console.log(`staging persisted smoke passed: outcome=${row.outcome_key} reveals=${row.reveal_count} browserReloadStable=true`);
           NODE
 
@@ -529,3 +601,30 @@ jobs:
           shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
           key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
           proof_file: ${{ runner.temp }}/beauty-movement-staging-smoke/d1-lease.json
+
+      - name: Write Beauty Movement staging promotion evidence
+        if: ${{ success() }}
+        shell: bash
+        env:
+          PROMOTION_UNIT: beauty-movement-production-activation
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ inputs.release_sha }}
+          PROMOTION_EVIDENCE_FILE: ${{ runner.temp }}/beauty-movement-staging-smoke/promotion-evidence.json
+        run: |
+          set -euo pipefail
+          tree="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")"
+          digest="$(PROMOTION_UNIT="${PROMOTION_UNIT}" PROMOTION_SOURCE_SHA="${PROMOTION_SOURCE_SHA}" node .github/scripts/promotion-evidence.mjs digest)"
+          PROMOTION_SOURCE_TREE="${tree}" \
+          PROMOTION_RELEASE_INPUT_DIGEST="${digest}" \
+          PROMOTION_DEPENDENCY_CLOSURE_DIGEST="${digest}" \
+          node .github/scripts/promotion-evidence.mjs write "${PROMOTION_EVIDENCE_FILE}" >/dev/null
+          test -s "${PROMOTION_EVIDENCE_FILE}"
+
+      - name: Upload Beauty Movement staging promotion evidence
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-beauty-movement-production-activation
+          path: ${{ runner.temp }}/beauty-movement-staging-smoke/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error

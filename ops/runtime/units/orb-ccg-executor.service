@@ -16,6 +16,8 @@ Environment=CCG_EXECUTOR_LIVE_ENABLED=0
 EnvironmentFile=-__CONFIG_ROOT__/orb.env
 EnvironmentFile=-__CONFIG_ROOT__/orb-business.env
 EnvironmentFile=-__CONFIG_ROOT__/orb-runtime-paths.env
+EnvironmentFile=-__CONFIG_ROOT__/orb-ccg-executor.env
+ExecStartPre=/usr/bin/grep -Eq ^CCG_EXECUTOR_AUTH_TOKEN=.{32,}$ __CONFIG_ROOT__/orb-ccg-executor.env
 ExecStart=/usr/bin/node campaign-creative-executor/server.js
 Restart=always
 RestartSec=10

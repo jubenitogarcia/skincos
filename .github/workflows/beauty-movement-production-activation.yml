@@ -1,0 +1,636 @@
+name: Beauty Movement controlled production activation
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact website SHA already validated in staging
+        required: true
+        type: string
+      staging_run_id:
+        description: Successful staging website promotion run for this SHA
+        required: true
+        type: string
+      campaign_id:
+        description: New production campaign id (must not already exist)
+        required: true
+        type: string
+      campaign_ends_at:
+        description: Approved campaign end in ISO-8601
+        required: true
+        type: string
+
+concurrency:
+  group: beauty-movement-production-activation
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  promotion:
+    name: Require exact preview and staging promotion
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: beauty-movement-production-activation
+      target: production
+      release_sha: ${{ inputs.release_sha }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+      staging_supported: true
+
+  activate:
+    name: Import, activate and smoke production campaign
+    needs: promotion
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    env:
+      RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+      CAMPAIGN_ID: ${{ inputs.campaign_id }}
+      CAMPAIGN_ENDS_AT: ${{ inputs.campaign_ends_at }}
+      PRODUCTION_URL: https://espacofacial.com
+      PRODUCTION_D1_DATABASE: espacofacial-beauty-movement
+      PRODUCTION_WORKER_NAME: espacofacial-site
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
+      BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
+
+    steps:
+      - name: Checkout the exact promoted source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Setup Node and install the exact website dependencies
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install website dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Guard immutable production scope and private package
+        shell: bash
+        env:
+          PRODUCTION_INVITES_CSV: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV }}
+          PRODUCTION_CAMPAIGN_JSON: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON }}
+          PRODUCTION_REWARDS_JSON: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_REWARDS_JSON }}
+          PRODUCTION_PROCEDURES_JSON: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_PROCEDURES_JSON }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == "jubenitogarcia/skincos" ]] || { echo 'unexpected repository'; exit 1; }
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
+          [[ "${RELEASE_SHA}" == "$(git rev-parse --verify HEAD)" ]] || { echo 'checked out SHA differs from promotion SHA'; exit 1; }
+          [[ "${CAMPAIGN_ID}" =~ ^[a-z0-9][a-z0-9_-]{2,79}$ ]] || { echo 'campaign_id shape is invalid'; exit 1; }
+          [[ "${CAMPAIGN_ENDS_AT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,3})?)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] || { echo 'campaign_ends_at must be ISO-8601'; exit 1; }
+          [[ "${PRODUCTION_URL}" == "https://espacofacial.com" ]] || { echo 'production URL guard failed'; exit 1; }
+          [[ "${PRODUCTION_D1_DATABASE}" == "espacofacial-beauty-movement" ]] || { echo 'production D1 guard failed'; exit 1; }
+          [[ "${PRODUCTION_WORKER_NAME}" == "espacofacial-site" ]] || { echo 'production Worker guard failed'; exit 1; }
+          for required in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID BEAUTY_MOVEMENT_TOKEN_HMAC_KEY BEAUTY_MOVEMENT_PII_KEY PRODUCTION_INVITES_CSV PRODUCTION_CAMPAIGN_JSON; do
+            [[ -n "${!required:-}" ]] || { echo "required production custody is unavailable: ${required}"; exit 1; }
+          done
+          if [[ -n "${PRODUCTION_REWARDS_JSON:-}" ]] || [[ -n "${PRODUCTION_PROCEDURES_JSON:-}" ]]; then
+            [[ -n "${PRODUCTION_REWARDS_JSON:-}" && -n "${PRODUCTION_PROCEDURES_JSON:-}" ]] || { echo 'reward and procedure custody must be supplied together'; exit 1; }
+          fi
+          grep -q 'name = "espacofacial-site"' website/wrangler.toml || { echo 'production Worker binding is missing'; exit 1; }
+          grep -q 'database_name = "espacofacial-beauty-movement"' website/wrangler.toml || { echo 'production D1 binding is missing'; exit 1; }
+          grep -q 'BEAUTY_MOVEMENT_ENABLED = "false"' website/wrangler.toml || { echo 'production default must remain disabled'; exit 1; }
+
+      - name: Initialize private activation state
+        shell: bash
+        env:
+          PRODUCTION_INVITES_CSV: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV }}
+          PRODUCTION_CAMPAIGN_JSON: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON }}
+          PRODUCTION_REWARDS_JSON: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_REWARDS_JSON }}
+          PRODUCTION_PROCEDURES_JSON: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_PROCEDURES_JSON }}
+        run: |
+          set -euo pipefail
+          umask 077
+          root="${RUNNER_TEMP}/beauty-movement-production-activation"
+          state_file="${root}/state.json"
+          mkdir -p "${root}/package" "${root}/output"
+          {
+            echo "ACTIVATION_ROOT=${root}"
+            echo "PACKAGE_DIR=${root}/package"
+            echo "OUTPUT_DIR=${root}/output"
+            echo "STATE_FILE=${root}/state.json"
+            echo "INCUMBENT_FILE=${root}/incumbent.json"
+            echo "HEADERS_FILE=${root}/headers.txt"
+          } >> "${GITHUB_ENV}"
+          printf '%s' "${PRODUCTION_INVITES_CSV}" > "${root}/package/invites.csv"
+          printf '%s' "${PRODUCTION_CAMPAIGN_JSON}" > "${root}/package/campaign.json"
+          if [[ -n "${PRODUCTION_REWARDS_JSON:-}" ]]; then printf '%s' "${PRODUCTION_REWARDS_JSON}" > "${root}/package/rewards.json"; fi
+          if [[ -n "${PRODUCTION_PROCEDURES_JSON:-}" ]]; then printf '%s' "${PRODUCTION_PROCEDURES_JSON}" > "${root}/package/procedures.json"; fi
+          chmod 600 "${root}/package"/*
+          printf '%s\n' '{"version":1,"campaignImported":false,"campaignActivated":false,"workerMutated":false,"smokeImported":false,"smokeActivated":false,"success":false}' > "${state_file}"
+          chmod 600 "${state_file}"
+          unset PRODUCTION_INVITES_CSV PRODUCTION_CAMPAIGN_JSON PRODUCTION_REWARDS_JSON PRODUCTION_PROCEDURES_JSON
+          echo 'Private production package materialized in runner-only storage.'
+
+      - name: Acquire Website production coordination lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: 'true'
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: 'release:website'
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          proof_file: ${{ runner.temp }}/beauty-movement-production-activation/website-lease.json
+
+      - name: Check Website production coordination lease before remote inspection
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: 'true'
+          proof_file: ${{ runner.temp }}/beauty-movement-production-activation/website-lease.json
+          resource: 'release:website'
+          module: website
+          source_sha: ${{ needs.promotion.outputs.source_sha }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+
+      - name: Validate campaign package without exposing it
+        working-directory: website
+        shell: bash
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-production-activation
+          GITHUB_ACTIONS: 'true'
+        run: |
+          set -euo pipefail
+          args=(--dry-run --input "${PACKAGE_DIR}/invites.csv" --campaign "${CAMPAIGN_ID}" --campaign-config "${PACKAGE_DIR}/campaign.json" --campaign-ends-at "${CAMPAIGN_ENDS_AT}")
+          if [[ -f "${PACKAGE_DIR}/rewards.json" ]]; then
+            args+=(--reward-catalog "${PACKAGE_DIR}/rewards.json" --procedure-catalog "${PACKAGE_DIR}/procedures.json")
+          fi
+          npm run --silent beauty-movement:import -- "${args[@]}" > "${ACTIVATION_ROOT}/package-validation.json"
+          node - "${ACTIVATION_ROOT}/package-validation.json" <<'NODE'
+          const fs = require('node:fs');
+          const result = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (result.mode !== 'dry_run' || result.preflight !== 'complete' || result.ok !== true || Number(result.acceptedRows) < 1) {
+            throw new Error('beauty_movement_production_package_invalid');
+          }
+          NODE
+
+      - name: Verify production secrets and inactive incumbent
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_file="${ACTIVATION_ROOT}/worker-secret-names.json"
+          npx --yes wrangler@4.112.0 secret list --name "${PRODUCTION_WORKER_NAME}" --config wrangler.toml --format json > "${secret_file}"
+          node - "${secret_file}" <<'NODE'
+          const fs = require('node:fs');
+          const entries = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const names = new Set((Array.isArray(entries) ? entries : []).map((entry) => String(entry.name || '')));
+          for (const required of ['BEAUTY_MOVEMENT_TOKEN_HMAC_KEY', 'BEAUTY_MOVEMENT_PII_KEY']) {
+            if (!names.has(required)) throw new Error(`production Worker secret is missing: ${required}`);
+          }
+          NODE
+          status="$(curl -sS -o "${ACTIVATION_ROOT}/disabled-probe.json" -w '%{http_code}' -X POST \
+            -H "origin: ${PRODUCTION_URL}" -H 'content-type: application/json' \
+            --data '{"token":"production-activation-disabled-probe"}' \
+            "${PRODUCTION_URL}/api/beleza-em-movimento/session" || true)"
+          [[ "${status}" == "503" ]] || { echo "production campaign is not disabled before activation (HTTP ${status})"; exit 1; }
+
+      - name: Apply pending Beauty Movement migrations in production
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 migrations apply "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml
+
+      - name: Validate production invite-assignment schema before mutation
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          migrations="${ACTIVATION_ROOT}/production-migrations.txt"
+          npx --yes wrangler@4.112.0 d1 migrations list "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml > "${migrations}" 2>&1
+          grep -q 'No migrations to apply' "${migrations}" || { echo 'production reports unapplied migrations'; exit 1; }
+          ! grep -q '0004_card_outcomes.sql' "${migrations}" || { echo '0004_card_outcomes.sql is still pending'; exit 1; }
+          ! grep -q '0005_invite_assignments.sql' "${migrations}" || { echo '0005_invite_assignments.sql is still pending'; exit 1; }
+          schema_sql="SELECT (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_key') AS outcome_key, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_snapshot_json') AS outcome_snapshot_json, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_protocol_version') AS outcome_protocol_version, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_resolved_at_ms') AS outcome_resolved_at_ms, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='assigned_outcome_key') AS assigned_outcome_key, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='assignment_protocol_version') AS assignment_protocol_version, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='planned_card_selections_json') AS planned_card_selections_json, (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bm_invites_campaign_outcome') AS outcome_index, (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bm_invites_campaign_assignment') AS assignment_index;"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${schema_sql}" --json > "${ACTIVATION_ROOT}/production-schema.json"
+          node - "${ACTIVATION_ROOT}/production-schema.json" <<'NODE'
+          const fs = require('node:fs');
+          const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
+          if (!row || Object.values(row).some((value) => Number(value) !== 1)) throw new Error('beauty_movement_production_invite_assignment_schema_invalid');
+          NODE
+
+      - name: Capture exact production Worker incumbent
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 deployments list --config wrangler.toml --json > "${INCUMBENT_FILE}"
+          node - "${INCUMBENT_FILE}" "${STATE_FILE}" <<'NODE'
+          const fs = require('node:fs');
+          const [deploymentsPath, statePath] = process.argv.slice(2);
+          const deployments = JSON.parse(fs.readFileSync(deploymentsPath, 'utf8'));
+          const candidates = deployments
+            .flatMap((deployment) => (deployment.versions ?? []).map((version) => ({ deployment, version })))
+            .filter(({ version }) => Number(version.percentage) === 100 && /^[0-9a-f-]{36}$/i.test(version.version_id))
+            .sort((left, right) => String(right.deployment.created_on ?? '').localeCompare(String(left.deployment.created_on ?? '')));
+          const incumbent = candidates[0]?.version?.version_id;
+          if (!incumbent) throw new Error('beauty_movement_production_incumbent_missing');
+          const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          state.incumbentVersion = incumbent;
+          fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Confirm campaign id is new before any D1 write
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          active_query="SELECT COUNT(*) AS count FROM bm_campaigns WHERE status = 'active' AND ends_at_ms > (CAST(strftime('%s','now') AS INTEGER) * 1000);"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${active_query}" --json > "${ACTIVATION_ROOT}/active-campaign-count.json"
+          node - "${ACTIVATION_ROOT}/active-campaign-count.json" <<'NODE'
+          const fs = require('node:fs');
+          const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
+          if (!row || Number(row.count) !== 0) throw new Error('beauty_movement_active_campaign_already_present');
+          NODE
+          query="SELECT COUNT(*) AS count FROM bm_campaigns WHERE id = '${CAMPAIGN_ID}';"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${query}" --json > "${ACTIVATION_ROOT}/campaign-exists.json"
+          node - "${ACTIVATION_ROOT}/campaign-exists.json" <<'NODE'
+          const fs = require('node:fs');
+          const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
+          if (!row || Number(row.count) !== 0) throw new Error('beauty_movement_campaign_id_already_exists');
+          NODE
+
+      - name: Import the approved production campaign as draft
+        id: import_campaign
+        working-directory: website
+        shell: bash
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-production-activation
+          GITHUB_ACTIONS: 'true'
+        run: |
+          set -euo pipefail
+          test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
+          args=(--apply --remote --input "${PACKAGE_DIR}/invites.csv" --campaign "${CAMPAIGN_ID}" --confirm-campaign "${CAMPAIGN_ID}" --campaign-ends-at "${CAMPAIGN_ENDS_AT}" --campaign-config "${PACKAGE_DIR}/campaign.json" --database "${PRODUCTION_D1_DATABASE}" --config wrangler.toml --out-dir "${OUTPUT_DIR}")
+          if [[ -f "${PACKAGE_DIR}/rewards.json" ]]; then
+            args+=(--reward-catalog "${PACKAGE_DIR}/rewards.json" --procedure-catalog "${PACKAGE_DIR}/procedures.json")
+          fi
+          npm run --silent beauty-movement:import -- "${args[@]}" > "${ACTIVATION_ROOT}/import-summary.json"
+          node - "${STATE_FILE}" <<'NODE'
+          const fs = require('node:fs');
+          const path = process.argv[2];
+          const state = JSON.parse(fs.readFileSync(path, 'utf8'));
+          state.campaignImported = true;
+          fs.writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Read back draft before Worker mutation
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="SELECT status, ends_at_ms, (SELECT COUNT(*) FROM bm_invites WHERE campaign_id = '${CAMPAIGN_ID}') AS invite_count FROM bm_campaigns WHERE id = '${CAMPAIGN_ID}';"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${query}" --json > "${ACTIVATION_ROOT}/draft-readback.json"
+          node - "${ACTIVATION_ROOT}/draft-readback.json" <<'NODE'
+          const fs = require('node:fs');
+          const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
+          if (!row || row.status !== 'draft' || Number(row.invite_count) < 1 || Number(row.ends_at_ms) <= Date.now()) throw new Error('beauty_movement_draft_readback_invalid');
+          NODE
+
+      - name: Build and deploy exact candidate with flag enabled
+        id: deploy_candidate
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
+          NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" node scripts/assert-production-snapshot.mjs
+          NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" npx opennextjs-cloudflare build
+          # Keep the private overlay beside the checked-out website so Wrangler
+          # resolves the relative OpenNext entrypoint from the website root.
+          activation_config="${PWD}/.beauty-movement-wrangler-enabled.toml"
+          trap 'rm -f "${activation_config}"' EXIT
+          node - "${activation_config}" <<'NODE'
+          const fs = require('node:fs');
+          const output = process.argv[2];
+          const input = fs.readFileSync('wrangler.toml', 'utf8');
+          const marker = '[vars]';
+          const start = input.indexOf(marker);
+          if (start < 0) throw new Error('beauty_movement_production_vars_section_missing');
+          const nextSection = input.indexOf('\n[', start + marker.length);
+          const end = nextSection < 0 ? input.length : nextSection;
+          const section = input.slice(start, end);
+          if (!/^BEAUTY_MOVEMENT_ENABLED\s*=\s*"false"\s*$/m.test(section)) {
+            throw new Error('beauty_movement_production_default_flag_changed');
+          }
+          const enabled = section.replace(
+            /^(BEAUTY_MOVEMENT_ENABLED\s*=\s*)"false"\s*$/m,
+            '$1"true"',
+          );
+          fs.writeFileSync(output, `${input.slice(0, start)}${enabled}${input.slice(end)}`, { mode: 0o600 });
+          NODE
+          node - "${STATE_FILE}" <<'NODE'
+          const fs = require('node:fs');
+          const path = process.argv[2];
+          const state = JSON.parse(fs.readFileSync(path, 'utf8'));
+          state.workerMutated = true;
+          fs.writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" \
+            npx --yes wrangler@4.112.0 deploy --config "${activation_config}" --keep-vars \
+            --var 'BEAUTY_MOVEMENT_ENABLED:true' --message "beauty-movement-production-activation:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+          deployments="${ACTIVATION_ROOT}/candidate.json"
+          npx --yes wrangler@4.112.0 deployments list --config wrangler.toml --json > "${deployments}"
+          node - "${deployments}" "${STATE_FILE}" "${RELEASE_SHA}" <<'NODE'
+          const fs = require('node:fs');
+          const [deploymentsPath, statePath, releaseSha] = process.argv.slice(2);
+          const deployments = JSON.parse(fs.readFileSync(deploymentsPath, 'utf8'));
+          const expectedMessage = `beauty-movement-production-activation:${releaseSha}:${process.env.GITHUB_RUN_ID}`;
+          const candidate = deployments
+            .filter((deployment) => deployment.annotations?.['workers/message'] === expectedMessage)
+            .flatMap((deployment) => deployment.versions ?? [])
+            .find((version) => Number(version.percentage) === 100 && /^[0-9a-f-]{36}$/i.test(version.version_id));
+          if (!candidate || candidate.version_id === JSON.parse(fs.readFileSync(statePath, 'utf8')).incumbentVersion) throw new Error('beauty_movement_candidate_version_unattested');
+          const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          state.candidateVersion = candidate.version_id;
+          fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          for attempt in $(seq 1 12); do
+            curl -fsS -D "${HEADERS_FILE}" -o "${ACTIVATION_ROOT}/campaign-page.html" "${PRODUCTION_URL}/beleza-em-movimento" && break || true
+            sleep 5
+          done
+          node - "${HEADERS_FILE}" "${RELEASE_SHA}" <<'NODE'
+          const fs = require('node:fs');
+          const headers = fs.readFileSync(process.argv[2], 'utf8').split(/\r?\n/);
+          const expected = process.argv[3];
+          const value = headers.find((line) => /^x-app-build:/i.test(line))?.split(':').slice(1).join(':').trim();
+          if (value !== expected) throw new Error('beauty_movement_production_build_attestation_failed');
+          NODE
+
+      - name: Activate campaign only after exact build attestation
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
+          activation_sql="UPDATE bm_campaigns SET status = 'active', updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE id = '${CAMPAIGN_ID}' AND status = 'draft';"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${activation_sql}" --json > "${ACTIVATION_ROOT}/activation.json"
+          node - "${ACTIVATION_ROOT}/activation.json" "${STATE_FILE}" <<'NODE'
+          const fs = require('node:fs');
+          const [resultPath, statePath] = process.argv.slice(2);
+          const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'))?.[0];
+          if (!result?.success || Number(result.meta?.changes ?? 0) !== 1) throw new Error('beauty_movement_campaign_activation_failed');
+          const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          state.campaignActivated = true;
+          fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Read back active campaign before production smoke
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="SELECT status, ends_at_ms, (SELECT COUNT(*) FROM bm_invites WHERE campaign_id = '${CAMPAIGN_ID}') AS invite_count FROM bm_campaigns WHERE id = '${CAMPAIGN_ID}';"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${query}" --json > "${ACTIVATION_ROOT}/active-readback.json"
+          node - "${ACTIVATION_ROOT}/active-readback.json" <<'NODE'
+          const fs = require('node:fs');
+          const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
+          if (!row || row.status !== 'active' || Number(row.invite_count) < 1 || Number(row.ends_at_ms) <= Date.now()) throw new Error('beauty_movement_active_readback_invalid');
+          NODE
+
+      - name: Create isolated synthetic production smoke fixture
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_id="bm-prod-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          smoke_root="${ACTIVATION_ROOT}/smoke"
+          mkdir -p "${smoke_root}"
+          {
+            echo "SMOKE_CAMPAIGN_ID=${smoke_id}"
+            echo "SMOKE_ROOT=${smoke_root}"
+          } >> "${GITHUB_ENV}"
+          node - "${smoke_root}" "${smoke_id}" <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const [root, campaignId] = process.argv.slice(2);
+          const now = Date.now();
+          const ends = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+          const write = (name, value) => fs.writeFileSync(path.join(root, name), value, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+          write('invites.csv', ['NOME,TELEFONE,PRÊMIO', 'Beauty Movement QA,5511999990000,Preenchimento', ''].join('\n'));
+          write('campaign.json', JSON.stringify({
+            title: 'Beauty Movement production smoke',
+            description: 'Fixture sintética privada; não é campanha pública.',
+            invitationTitle: 'Convite sintético', invitationText: 'Smoke controlado.', partnerName: 'Synthetic QA',
+            whatsappMessageCourtesy: 'Synthetic QA courtesy', whatsappMessageCommercial: 'Synthetic QA commercial',
+            whatsappLabel: 'Falar com a equipe', conditionsLabel: 'Condições', conditionsText: 'Fixture sintética.',
+            velocityBenefitLabel: 'Benefício sintético', velocityBenefitText: 'Nenhuma comunicação externa.', startsAt: new Date(now - 60000).toISOString(),
+          }, null, 2));
+          fs.writeFileSync(path.join(root, 'ends-at.txt'), ends, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+          NODE
+          node - "${STATE_FILE}" <<'NODE'
+          const fs = require('node:fs');
+          const path = process.argv[2];
+          const state = JSON.parse(fs.readFileSync(path, 'utf8'));
+          state.smokeImported = false;
+          state.smokeActivated = false;
+          fs.writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Import and activate synthetic production smoke fixture
+        working-directory: website
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-production-activation
+          GITHUB_ACTIONS: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
+          npm run --silent beauty-movement:import -- --apply --remote \
+            --input "${SMOKE_ROOT}/invites.csv" --campaign "${SMOKE_CAMPAIGN_ID}" --confirm-campaign "${SMOKE_CAMPAIGN_ID}" \
+            --campaign-ends-at "$(cat "${SMOKE_ROOT}/ends-at.txt")" --campaign-config "${SMOKE_ROOT}/campaign.json" \
+            --database "${PRODUCTION_D1_DATABASE}" --config wrangler.toml --out-dir "${OUTPUT_DIR}" > "${SMOKE_ROOT}/import-summary.json"
+          activation_sql="UPDATE bm_campaigns SET status = 'active', updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE id = '${SMOKE_CAMPAIGN_ID}' AND status = 'draft';"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${activation_sql}" --json > "${SMOKE_ROOT}/activation.json"
+          node - "${SMOKE_ROOT}/activation.json" "${STATE_FILE}" <<'NODE'
+          const fs = require('node:fs');
+          const [resultPath, statePath] = process.argv.slice(2);
+          const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'))?.[0];
+          if (!result?.success || Number(result.meta?.changes ?? 0) !== 1) throw new Error('beauty_movement_smoke_activation_failed');
+          const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          state.smokeImported = true;
+          state.smokeActivated = true;
+          fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Install production smoke browser
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright install --with-deps chromium >/dev/null
+          echo 'Production smoke browser dependency is ready.'
+
+      - name: Run controlled production browser journey and persisted readback
+        working-directory: website
+        shell: bash
+        env:
+          SMOKE_URL: https://espacofacial.com
+        run: |
+          set -euo pipefail
+          invite_url="$(node --input-type=commonjs -e '
+          const fs=require("fs"), path=require("path");
+          const dir=process.argv[1]; const file=fs.readdirSync(dir).find((name)=>name.endsWith("-delivery.csv"));
+          if (!file) throw new Error("beauty_movement_smoke_delivery_missing");
+          const row=fs.readFileSync(path.join(dir,file),"utf8").trim().split(/\r?\n/)[1];
+          const cells=row.match(/("(?:[^"]|"")*"|[^,]*)/g)?.filter((cell)=>cell!=="")??[];
+          const value=cells.at(-1)?.replace(/^"|"$/g,"").replace(/""/g,String.fromCharCode(34));
+          if (!value) throw new Error("beauty_movement_smoke_delivery_invalid"); process.stdout.write(value);
+          ' "${OUTPUT_DIR}")"
+          token="${invite_url##*#c=}"
+          [[ "${token}" =~ ^[A-Za-z0-9_-]{40,180}$ ]] || { echo 'synthetic invite token shape invalid'; exit 1; }
+          SMOKE_INVITE_TOKEN="${token}" SMOKE_CAMPAIGN_ID="${SMOKE_CAMPAIGN_ID}" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { chromium } from 'playwright';
+          const base = process.env.SMOKE_URL;
+          const token = process.env.SMOKE_INVITE_TOKEN;
+          const browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext();
+          const page = await context.newPage();
+          const errors = []; const whatsapp = []; let reveals = 0;
+          page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+          page.on('pageerror', (error) => errors.push(error.message));
+          page.on('request', (request) => {
+            if (request.url().includes('/api/beleza-em-movimento/reveal') && request.method() === 'POST') reveals += 1;
+            if (/^https:\/\/(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com)\//i.test(request.url())) whatsapp.push(request.url());
+          });
+          await page.goto(`${base}/beleza-em-movimento#c=${encodeURIComponent(token)}`, { waitUntil: 'domcontentloaded' });
+          const reveal = async (act) => {
+            const card = page.getByRole('button', { name: new RegExp(`Revelar carta 1 de ${act}`, 'i') });
+            await card.waitFor({ state: 'visible', timeout: 30000 }); await card.click();
+            await page.locator('button[aria-pressed="true"]').waitFor({ state: 'visible', timeout: 10000 }); await page.waitForTimeout(5600);
+          };
+          await page.getByRole('button', { name: /Clique no baralho para começar a sua leitura/i }).click();
+          await reveal('Beleza'); await reveal('Movimento'); await reveal('Celebração');
+          await page.getByRole('heading', { name: /Garanta seu presente e confirme presença/i }).waitFor({ state: 'visible', timeout: 30000 });
+          await page.getByRole('checkbox').check(); await page.getByRole('button', { name: /Garantir presente e confirmar presença/i }).click();
+          const special = page.locator('article[aria-label^="Carta especial:"]'); await special.waitFor({ state: 'visible', timeout: 30000 });
+          const first = await special.innerText();
+          if (!/combinação|Elleva|Preenchimento|Restylane|Skinbooster|Diamond|Sculptra/i.test(first)) throw new Error('beauty_movement_production_offer_missing');
+          const beforeReload = reveals; await page.reload({ waitUntil: 'domcontentloaded' }); await special.waitFor({ state: 'visible', timeout: 30000 });
+          const second = await special.innerText();
+          if (first !== second || beforeReload !== 3 || reveals !== 3 || whatsapp.length !== 0 || errors.length !== 0) throw new Error('beauty_movement_production_browser_evidence_invalid');
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-production-activation/browser.json`, `${JSON.stringify({ browser: true, revealRequests: reveals, reloadStable: true, whatsappRequests: 0, consoleErrors: 0, outcomeVisible: true }, null, 2)}\n`, { mode: 0o600 });
+          await browser.close();
+          NODE
+          readback_sql="SELECT c.status AS campaign_status, i.invite_status, i.confirmed_at_ms, i.outcome_key, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.assigned_outcome_key, i.assignment_protocol_version, length(i.outcome_snapshot_json) AS outcome_snapshot_length, length(i.planned_card_selections_json) AS planned_card_selections_length, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_campaigns c INNER JOIN bm_invites i ON i.campaign_id = c.id WHERE c.id = '${SMOKE_CAMPAIGN_ID}' AND i.external_ref = 'velocity-0002';"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${readback_sql}" --json > "${SMOKE_ROOT}/readback.json"
+          node - "${SMOKE_ROOT}/readback.json" "${RUNNER_TEMP}/beauty-movement-production-activation/browser.json" <<'NODE'
+          const fs = require('node:fs');
+          const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
+          const browser = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+          const outcomes = new Set(['elleva_upgrade', 'filler_double', 'sculptra_classic_unlock', 'skinbooster_diamond_unlock']);
+          if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || row.outcome_key !== 'filler_double' || row.assigned_outcome_key !== 'filler_double' || row.assignment_protocol_version !== 'beauty-movement-invite-assignments-v1' || !outcomes.has(row.outcome_key) || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.planned_card_selections_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_production_readback_invalid');
+          if (browser.browser !== true || browser.reloadStable !== true || browser.revealRequests !== 3 || browser.whatsappRequests !== 0 || browser.consoleErrors !== 0) throw new Error('beauty_movement_production_browser_invalid');
+          console.log(`production persisted smoke passed: outcome=${row.outcome_key} reveals=${row.reveal_count} browserReloadStable=true`);
+          NODE
+
+      - name: Mark activation successful
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - "${STATE_FILE}" <<'NODE'
+          const fs = require('node:fs');
+          const path = process.argv[2];
+          const state = JSON.parse(fs.readFileSync(path, 'utf8'));
+          if (!state.campaignActivated || !state.workerMutated || !state.smokeActivated) throw new Error('beauty_movement_activation_state_incomplete');
+          state.success = true;
+          fs.writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          echo 'ACTIVATION_SUCCESS=true' >> "${GITHUB_ENV}"
+          echo 'Production campaign activation and controlled smoke passed; flag remains explicitly enabled for the approved window.'
+
+      - name: Always revoke synthetic fixture and compensate failed activation
+        if: ${{ always() }}
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup_failed=0
+          activation_root="${ACTIVATION_ROOT:-${RUNNER_TEMP}/beauty-movement-production-activation}"
+          state='{}'
+          if [[ -f "${STATE_FILE:-}" ]]; then state="$(cat "${STATE_FILE}")"; fi
+          smoke_id="${SMOKE_CAMPAIGN_ID:-}"
+          if [[ -n "${smoke_id}" ]]; then
+            cleanup_sql="UPDATE bm_invites SET invite_status = 'revoked', updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE campaign_id = '${smoke_id}'; UPDATE bm_campaigns SET status = 'disabled', updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE id = '${smoke_id}' AND status IN ('draft','active');"
+            if ! npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${cleanup_sql}" --json > "${activation_root}/smoke-cleanup.json"; then cleanup_failed=1; fi
+          fi
+          success="$(node --input-type=commonjs -e 'const fs=require("fs"); const p=process.argv[1]; process.stdout.write(fs.existsSync(p) && JSON.parse(fs.readFileSync(p,"utf8")).success === true ? "true" : "false")' "${STATE_FILE:-}")"
+          # A cleanup failure after an apparent smoke success is also unsafe:
+          # compensate the campaign and Worker rather than leaving a fixture
+          # or a partially attested candidate online.
+          if [[ "${cleanup_failed}" != 0 ]]; then success=false; fi
+          if [[ "${success}" != true ]]; then
+            campaign_id="${CAMPAIGN_ID:-}"
+            if [[ -n "${campaign_id}" ]] && node --input-type=commonjs -e 'const fs=require("fs"); const p=process.argv[1]; process.exit(fs.existsSync(p) && JSON.parse(fs.readFileSync(p,"utf8")).campaignImported ? 0 : 1)' "${STATE_FILE:-}"; then
+              cleanup_sql="UPDATE bm_invites SET invite_status = 'revoked', updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE campaign_id = '${campaign_id}'; UPDATE bm_campaigns SET status = 'disabled', updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE id = '${campaign_id}' AND status IN ('draft','active');"
+              if ! npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${cleanup_sql}" --json > "${activation_root}/campaign-cleanup.json"; then cleanup_failed=1; fi
+            fi
+            incumbent="$(node --input-type=commonjs -e 'const fs=require("fs"); const p=process.argv[1]; process.stdout.write(fs.existsSync(p) ? String(JSON.parse(fs.readFileSync(p,"utf8")).incumbentVersion || "") : "")' "${STATE_FILE:-}")"
+            worker_mutated="$(node --input-type=commonjs -e 'const fs=require("fs"); const p=process.argv[1]; process.stdout.write(fs.existsSync(p) && JSON.parse(fs.readFileSync(p,"utf8")).workerMutated ? "true" : "false")' "${STATE_FILE:-}")"
+            if [[ "${worker_mutated}" == true && "${incumbent}" =~ ^[0-9a-f-]{36}$ ]]; then
+              if ! npx --yes wrangler@4.112.0 rollback "${incumbent}" --config wrangler.toml --yes --message "beauty-movement-production-activation:restore-incumbent" >/dev/null 2>&1; then cleanup_failed=1; fi
+            elif [[ "${worker_mutated}" == true ]]; then
+              echo 'production incumbent identity unavailable; refusing unowned rollback' >&2
+              cleanup_failed=1
+            fi
+            for attempt in $(seq 1 12); do
+              inactive="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "origin: ${PRODUCTION_URL}" -H 'content-type: application/json' --data '{"token":"production-activation-disabled-probe"}' "${PRODUCTION_URL}/api/beleza-em-movimento/session" || true)"
+              [[ "${inactive}" == 503 ]] && break
+              sleep 5
+            done
+            [[ "${inactive:-}" == 503 ]] || { echo "production campaign is not inactive after compensation (HTTP ${inactive:-unknown})"; cleanup_failed=1; }
+          fi
+          [[ "${cleanup_failed}" == 0 ]] || exit 1
+
+      - name: Release Website production coordination lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: 'true'
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/beauty-movement-production-activation/website-lease.json
+
+      - name: Publish redacted activation evidence
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - "${STATE_FILE}" "${RELEASE_SHA}" "${CAMPAIGN_ID}" <<'NODE'
+          const fs = require('node:fs');
+          const [statePath, releaseSha, campaignId] = process.argv.slice(2);
+          const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          if (state.success !== true) throw new Error('activation evidence state is not successful');
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-production-activation/evidence.json`, `${JSON.stringify({ releaseSha, campaignId, candidateVersion: state.candidateVersion, campaignActivated: true, syntheticFixtureRevoked: true, browserSmoke: 'passed', persistedOutcome: 'present', flag: 'true' }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          cat "${ACTIVATION_ROOT}/evidence.json" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload redacted activation evidence
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beauty-movement-production-activation-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/beauty-movement-production-activation/evidence.json
+          retention-days: 14
+          if-no-files-found: error

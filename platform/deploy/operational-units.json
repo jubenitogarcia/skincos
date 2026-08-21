@@ -102,7 +102,7 @@
       "concurrencyPrefix": "deploy-token-vault-",
       "publishes": ["Worker:skincos-token-vault", "Worker:skincos-token-vault-staging"],
       "resources": ["Token Vault Worker", "skincos-token-vault D1", "skincos-token-vault-staging D1", "Token Vault route and auth bindings", "Governed Meta Ads staging synthetic source and appsecret-proof attestations, seed, bootstrap derivation, rollback journal and paused creative fixture"],
-      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "TOKEN_VAULT_API_TOKEN", "TOKEN_VAULT_N8N_API_TOKEN", "TOKEN_VAULT_ANALYTICS_API_TOKEN", "TOKEN_VAULT_ENCRYPTION_KEY", "TOKEN_VAULT_META_ADS_CONFIG_TOKEN", "TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST", "META_ADS_ACCESS_TOKEN", "META_PIXEL_ID", "novohamburgo_page_id", "barrashopppingsul_page_id"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "TOKEN_VAULT_API_TOKEN", "TOKEN_VAULT_N8N_API_TOKEN", "TOKEN_VAULT_ANALYTICS_API_TOKEN", "TOKEN_VAULT_ENCRYPTION_KEY", "TOKEN_VAULT_META_ADS_CONFIG_TOKEN", "TOKEN_VAULT_META_ADS_BOOTSTRAP_MANIFEST", "META_ADS_ACCESS_TOKEN", "META_ADS_ACCOUNT_ID", "META_PIXEL_ID", "novohamburgo_page_id", "barrashopppingsul_page_id"],
       "migrationPaths": ["platform/security/token-vault/migrations"],
       "environments": ["preview", "staging", "production"],
       "promotion": {
@@ -218,6 +218,17 @@
         "featureFlagDefault": "disabled",
         "incumbentRestoreRequired": true
       }
+    },
+    {
+      "id": "beauty-movement-production-activation",
+      "workflow": ".github/workflows/beauty-movement-production-activation.yml",
+      "concurrencyPrefix": "beauty-movement-production-activation",
+      "publishes": ["Worker:espacofacial-site-beauty-movement-activation"],
+      "resources": ["Beauty Movement production Worker flag and D1 activation", "espacofacial-beauty-movement production D1"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "BEAUTY_MOVEMENT_TOKEN_HMAC_KEY", "BEAUTY_MOVEMENT_PII_KEY", "BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV", "BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON"],
+      "migrationPaths": ["website/migrations/beauty-movement"],
+      "environments": ["production"],
+      "promotion": {"stagingSupported": true}
     },
     {
       "id": "global-coordination-plane",

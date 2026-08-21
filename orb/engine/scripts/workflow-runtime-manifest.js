@@ -75,6 +75,8 @@ function defaultEntrypoints(releaseRoot) {
     'scripts/livia/build-platform-job-graph.js',
     'scripts/livia/verify-published-artifacts.js',
     'scripts/livia/publish-progress-ledger.js',
+    'scripts/livia/publication-lock.js',
+    'scripts/livia/release-publication-lock.js',
     'scripts/livia/validate-publish-token-health.js',
   ].map((relativePath) => ({ relativePath, absolutePath: path.join(releaseRoot, relativePath) }));
 }

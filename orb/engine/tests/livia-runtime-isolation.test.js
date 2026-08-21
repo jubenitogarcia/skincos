@@ -29,6 +29,7 @@ function fixture() {
       commandNode('Verify Published Artifacts', `={{ node '/mnt/c/CodexRuntime/operator/admin/skincos/livia-verify-provider-copy-drift-wrapper.js' --verifier '${RELEASE_ROOT}/scripts/livia/verify-published-artifacts.js' --payload - }}`),
       commandNode('Record Publish Progress', pinned('publish-progress-ledger.js')),
       commandNode('Validate Publish Token Health', pinned('validate-publish-token-health.js')),
+      commandNode('Cleanup Temp Files', '={{ (() => { return `node <<\'NODE\'\nNODE`; })() }}'),
       { name: 'BQ - Seed Publish State', type: 'n8n-nodes-base.code', parameters: { jsCode: 'const resumeBySemanticKey = new Map(); const completedSemanticJobKeys = new Set();' } },
       { name: 'Process HTTP Publish Result', type: 'n8n-nodes-base.code', parameters: { jsCode: 'const row = { semanticJobKey: str(source.semanticJobKey, "") };' } },
     ],
@@ -58,4 +59,10 @@ test('runtime isolation reconciles a stale publish-history identity under a writ
   assert.match(source, /LOCK TABLE n8n_runtime\.workflow_publish_history IN SHARE ROW EXCLUSIVE MODE/);
   assert.match(source, /pg_get_serial_sequence\('n8n_runtime\.workflow_publish_history', 'id'\)::regclass/);
   assert.match(source, /COALESCE\(MAX\(id\), 0\)/);
+});
+
+test('runtime isolation accepts every pinned Livia manifest entrypoint', () => {
+  const source = fs.readFileSync(APPLIER, 'utf8');
+  assert.match(source, /entrypoints\.length !== 8/);
+  assert.doesNotMatch(source, /entrypoints\.length !== 6/);
 });

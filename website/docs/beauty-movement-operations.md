@@ -10,17 +10,22 @@ gates abaixo estejam concluídos.
   `C:\CodexRuntime\operator\admin\skincos\beauty-movement\` (ou equivalente
   privado no ambiente de release). Não copie CSV, URLs de entrega, CPF, histórico
   ou relatórios para este repositório.
-- O importador aceita exclusivamente a lista sanitizada documentada no próprio
-  comando. CPF, procedimentos, histórico clínico e colunas não reconhecidas são
+- Para a lista final, o importador aceita o formato mínimo `NOME,TELEFONE` e as
+  colunas opcionais `EMAIL,PRÊMIO`. Quando `PRÊMIO` está presente, ele é a
+  atribuição autoritativa do convite: `Velocity` representa a aula-cortesia e os
+  quatro rótulos comerciais canônicos representam a oferta correspondente.
+  Não é necessário pré-preencher identificador, paleta, expiração ou status.
+  CPF, procedimentos, histórico clínico e colunas não reconhecidas são
   rejeitados antes de qualquer escrita.
 - A paleta apenas escolhe o deck editorial; ela não escolhe nem pré-reserva a
   oferta. Nenhum dado pessoal, procedimento ou histórico clínico é enviado ao
   D1 ou ao navegador para decidir o resultado.
-- A condição comercial moderna é propriedade do resolver determinístico das
-  três cartas. `reward_id` é opcional na importação e só é lido para manter
-  compatibilidade com convites legados; nunca é aceito do navegador como
-  autoridade. O resultado persistido inclui `outcome_key`, versão do protocolo
-  e snapshot estruturado da oferta.
+- Para convites da lista final, a condição/prêmio é propriedade da atribuição
+  privada do convite. As três cartas são uma leitura simbólica pré-configurada;
+  qualquer clique válido mantém a mesma promessa e o servidor persiste o
+  outcome atribuído. `reward_id` é opcional e só mantém compatibilidade com
+  convites legados. O resultado persistido inclui `outcome_key`, versão do
+  protocolo e snapshot estruturado da oferta.
 
 ## Infraestrutura exigida antes de staging
 
@@ -32,7 +37,8 @@ gates abaixo estejam concluídos.
 3. Configurar `BEAUTY_MOVEMENT_ALLOWED_ORIGINS` com a origem exata do ambiente.
 4. Declarar `migrations_dir = "migrations/beauty-movement"` na binding dedicada
    e aplicar as migrations `0001_initial.sql`, `0002_rewards.sql` e
-   `0003_reward_integrity.sql` e `0004_card_outcomes.sql` pelo mecanismo oficial do Wrangler. O helper
+   `0003_reward_integrity.sql`, `0004_card_outcomes.sql` e
+   `0005_invite_assignments.sql` pelo mecanismo oficial do Wrangler. O helper
    local executa `wrangler d1 migrations apply --local`; nunca aplique os SQLs
    manualmente em sequência, pois a segunda migration possui alterações
    aditivas. Registrar checkpoint/export e validar schema. Rollback operacional
@@ -131,9 +137,12 @@ repita a carga sem inspecionar o resumo privado.
       comerciais aprovados para a planilha sanitizada.
 - [ ] Catálogo privado de recompensas aprovado por família, com procedimento
       canônico, tipo de desconto e `approvedAt`.
-- [ ] CSV sanitizado pode omitir `reward_id`; quando presente, ele é tratado
-      apenas como compatibilidade. Nenhum procedimento, CPF ou histórico clínico
-      foi incluído.
+- [ ] CSV Velocity contém somente nome e WhatsApp, com e-mail/prêmio opcionais;
+      quando presente, o prêmio é `Velocity`. `reward_id` e demais campos
+      técnicos são derivados pelo importador. Nenhum procedimento, CPF ou
+      histórico clínico foi incluído.
+- [ ] O CSV privado de entrega gerado contém nome, telefone e URL opaca para o
+      envio manual no WhatsApp; ele permanece fora do repositório.
 - [ ] Gate de privacidade concluído para qualquer origem de paleta baseada em
       dados pré-existentes.
 - [ ] Migration e smoke com convites sintéticos concluídos em staging.
@@ -150,3 +159,55 @@ o lote de convites. Preserve registros pelo período da campanha + 90 dias e só
 então execute a eliminação ou anonimização aprovada. O rollback de Worker usa a
 versão anterior comprovada; ele não substitui a preservação de dados da
 campanha.
+
+## Gate oficial de produção
+
+A ativação real não deve ser feita pelo deploy genérico nem por um comando local
+que altere a flag. O fluxo oficial é o workflow versionado
+`.github/workflows/beauty-movement-production-activation.yml`, executado com
+`release_sha` exato e o `staging_run_id` que produziu a evidência de promoção do
+mesmo SHA. O workflow rejeita SHA divergente, D1/Worker fora de produção,
+migrations pendentes, campanha já existente, campanha ativa concorrente e ausência
+de qualquer um dos dois secrets do Worker. Ele não executa `wrangler secret
+put`: a presença é verificada por nome e os valores são preservados.
+
+### Custódia do pacote real
+
+O runner hospedado não enxerga `C:\CodexRuntime\...` do operador. Para a
+execução oficial, materialize os arquivos como secrets protegidos do GitHub
+Environment `production`, sem incluí-los em inputs, artefatos públicos, issues,
+logs ou commits:
+
+- `BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV` — CSV sanitizado;
+- `BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON` — copy, datas, condições e CTA;
+- `BEAUTY_MOVEMENT_PRODUCTION_REWARDS_JSON` e
+  `BEAUTY_MOVEMENT_PRODUCTION_PROCEDURES_JSON` — opcionais, mas sempre em par
+  quando `reward_id` legado for usado.
+
+Os secrets de pacote são escritos somente em arquivos `0600` dentro de
+`RUNNER_TEMP`, validados pelo `beauty-movement:import --dry-run` e removidos
+com o runner. Seus valores nunca são impressos. Se esses secrets ainda não
+existirem no Environment, o workflow falha antes de qualquer escrita remota;
+não há fallback para caminho local, chat ou outro checkout.
+
+### Sequência e compensação
+
+1. A promoção reutiliza a cadeia `preview → staging → production` e verifica as
+   migrations `0004_card_outcomes.sql` e `0005_invite_assignments.sql`,
+   incluindo as colunas/índices de outcomes e da atribuição autoritativa em D1.
+2. O pacote é importado como `draft`; um readback confirma o identificador novo
+   e a quantidade de convites antes de qualquer deploy.
+3. O workflow captura a versão Worker incumbente, compila o SHA promovido,
+   publica a mesma fonte com `BEAUTY_MOVEMENT_ENABLED=true` e exige
+   `x-app-build` igual ao SHA antes de ativar a campanha.
+4. Uma campanha sintética isolada é criada para o smoke de navegador. A jornada
+   faz três revelações, confirmação, reload, readback do `outcome_key`, snapshot,
+   protocolo e timestamp, e verifica zero chamadas WhatsApp/erros de console.
+5. A fixture sintética é revogada/desabilitada sempre. Se qualquer etapa não
+   puder ser atestada, a campanha real desta execução é desabilitada e o Worker
+   volta somente para a versão incumbente capturada; nenhum dado preexistente é
+   apagado.
+
+Em sucesso, a campanha real permanece ativa durante a janela aprovada e a flag
+continua explicitamente habilitada apenas na versão atestada. Em falha, o estado
+terminal esperado é `BEAUTY_MOVEMENT_ENABLED=false` e API `503`.

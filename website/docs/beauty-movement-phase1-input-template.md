@@ -58,10 +58,11 @@ evidência da unidade no site; não fecham os valores específicos da ação.
 
 ## 5. Benefícios e condições
 
-As três cartas definem uma oferta por meio do resolver determinístico
-`beautyMovementOutcomes.ts` (**decisão vigente**). A matriz completa e o
-desempate estão em `docs/beauty-movement-combination-map.md`; o catálogo abaixo
-documenta apenas as quatro ofertas comerciais aprovadas.
+Para convites sem atribuição (legado), as três cartas definem uma oferta por
+meio do resolver determinístico `beautyMovementOutcomes.ts`. Na lista final, o
+campo `PRÊMIO` atribui o resultado antes da leitura: as cartas são simbólicas e
+qualquer triplet válido preserva a oferta atribuída. A matriz completa continua
+documentando o catálogo e fornece as combinações simbólicas auditáveis.
 
 | Resultado | Oferta estruturada | Texto comercial | Preços fornecidos | Regras externas | Estado |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -92,19 +93,36 @@ aleatório, concurso ou sorteio.
   de privacidade: `[PENDENTE]`.
 - CPF e histórico de procedimentos: fora do D1, frontend, URL, relatório e
   analytics; nenhum dado bruto deve ser carregado (**consolidado no plano**).
-- Campos do convite: `invite_ref`, nome, WhatsApp, e-mail já vinculado na lista,
-  paleta, `velocity_benefit`, expiração e status do convite. `reward_id` é
-  opcional e legado; o procedimento, desconto e condições vêm da oferta
-  resolvida pelas cartas.
+- Para a lista final, a fonte operacional pode conter nome, WhatsApp, e-mail
+  opcional e `PRÊMIO`. Os cinco rótulos canônicos são aceitos; o importador gera
+  o identificador opaco, usa a validade da campanha, marca o convite como ativo
+  e mantém uma paleta técnica somente para montar o baralho. A paleta e os
+  cliques não alteram a atribuição. `reward_id` permanece opcional.
 - Consentimento: aceite operacional separado de qualquer marketing futuro;
   redação jurídica final: `[PENDENTE]`.
 - Retenção após encerramento + 90 dias: `[PENDENTE — eliminação / anonimização]`.
 
 ## 8. Pacote privado de importação
 
-O CSV sanitizado deve permanecer fora do repositório e conter somente os
-seguintes cabeçalhos permitidos (**contrato técnico consolidado; arquivo real
-continua pendente**):
+O CSV sanitizado deve permanecer fora do repositório. Para a lista Velocity, o
+formato mínimo aceito é:
+
+```text
+NOME,TELEFONE
+```
+
+`EMAIL` é opcional; o WhatsApp é o canal de contato e a chave operacional do
+convite. Quando informado, `PRÊMIO` deve ser `Velocity` ou um dos quatro
+rótulos comerciais canônicos. O importador deriva internamente `invite_ref`,
+`expires_at`, `invite_status=active`, `palette=radiancia` e
+`velocity_benefit=aula_cortesia_evento` a partir da campanha aprovada. E-mails
+repetidos não bloqueiam a carga porque não identificam o convite.
+
+O arquivo privado de entrega gerado pelo importador contém `name`, `invite_ref`,
+`whatsapp` e `invite_url`, para permitir o envio manual da mensagem pelo
+WhatsApp. Ele continua fora do repositório e não é exposto ao navegador.
+
+Para listas comerciais futuras, o formato técnico completo continua disponível:
 
 ```text
 invite_ref,name,whatsapp,email,palette,velocity_benefit,expires_at,invite_status

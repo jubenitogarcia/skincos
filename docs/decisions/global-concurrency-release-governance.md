@@ -95,6 +95,16 @@ permanece pending em conflito compatível com espera; a segunda adquire
 Actions `concurrency` é apenas scheduler. A prova remota, o status obrigatório e
 a revalidação imediatamente antes da mutação são a autoridade técnica.
 
+O `workflow_dispatch` da autoridade de merge é admitido somente em
+`refs/heads/main`. O guard inicial não recebe `contents:write` nem secrets de
+coordenação; qualquer outra ref falha fechada. O job privilegiado depende desse
+guard, faz checkout explícito de `refs/heads/main` e só então recebe o token de
+escrita e a custódia de coordenação. Assim, o dispatcher não executa a
+implementação de uma ref arbitrária antes da injeção de autoridade; lease,
+`expected_head_sha`, checks obrigatórios e readback continuam no mesmo script
+canônico. O job privilegiado, portanto, não faz checkout nem executa a
+implementação de uma ref arbitrária antes da injeção de autoridade.
+
 O ruleset versionado acrescenta a regra `update`, limita o merge a `squash` e
 declara o GitHub Actions integration actor como único bypass técnico do update
 rule. O validador rejeita qualquer workflow adicional que contenha uma mutação

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const runtimePaths = require('../lib/runtime-paths');
+const { heartbeat } = require('./publication-lock');
 
 const LEDGER_DIR = path.join(runtimePaths.runtimeHome, 'state', 'livia-publish-ledger');
 const SENSITIVE_KEY = /(access[_-]?token|authorization|api[_-]?key|client[_-]?secret|password|cookie|credential)/i;
@@ -107,6 +108,13 @@ function recordOne(value) {
   ledger.completed = completed;
   ledger.updatedAt = new Date().toISOString();
   writeLedger(filePath, ledger);
+  const executionId = str(record.executionId);
+  if (executionId) {
+    const lease = heartbeat(executionId);
+    if (!lease.ok) {
+      throw new Error('Livia publication lock was lost before the next outbound job; stopping fail-closed.');
+    }
+  }
   return { recorded: true, key: context.key, completedCount: completed.length, semanticJobKey };
 }
 
@@ -116,7 +124,10 @@ function main() {
     if (!source.includes('semanticJobKey') || !source.includes('filter((entry) => str(asObject(entry).semanticJobKey) !== semanticJobKey)')) {
       throw new Error('Livia ledger resume contract is not semantic-key based.');
     }
-    process.stdout.write(`${JSON.stringify({ ok: true, resumeIdentity: 'semanticJobKey', legacyIndexOnlyResume: false })}\n`);
+    if (!source.includes('heartbeat(executionId)')) {
+      throw new Error('Livia ledger must refresh the publication lease after accepted provider responses.');
+    }
+    process.stdout.write(`${JSON.stringify({ ok: true, resumeIdentity: 'semanticJobKey', legacyIndexOnlyResume: false, publicationLeaseHeartbeat: true })}\n`);
     return;
   }
   const payload = readPayload();

@@ -11,6 +11,11 @@ import {
     type BeautyMovementValidatedReward,
     type BeautyMovementVelocityBenefit,
 } from "@/lib/beautyMovementRewards";
+import {
+    getBeautyMovementOffer,
+    selectBeautyMovementPlannedSelections,
+} from "@/lib/beautyMovementOutcomes";
+import type { BeautyMovementOutcomeKey } from "@/lib/beautyMovementOutcomes";
 
 export type {
     BeautyMovementCanonicalProcedure,
@@ -23,12 +28,19 @@ export type {
 
 export const BEAUTY_MOVEMENT_PALETTES = ["radiancia", "ritmo", "conexao"] as const;
 /**
- * These values are retained for the legacy invitation columns. Modern
- * invitations leave the commercial outcome empty until the three cards are
- * persisted and resolved by the server-side combination engine.
+ * The compact sheet is the audience and its approved prize. The palette is an
+ * internal deck-selection detail; it must never become a second commercial
+ * decision or override the spreadsheet assignment.
+ */
+export const BEAUTY_MOVEMENT_COMPACT_VELOCITY_PALETTE = "radiancia" as const;
+/**
+ * These values are retained for legacy invitation columns. New sheet
+ * invitations persist an explicit assignment protocol; only unassigned legacy
+ * rows use the card-derived combination engine.
  */
 export const BEAUTY_MOVEMENT_BENEFIT_STATUSES = ["aula_cortesia_evento", "evento_condicao_comercial"] as const;
 export const BEAUTY_MOVEMENT_INVITE_STATUSES = ["active", "revoked"] as const;
+export const BEAUTY_MOVEMENT_ASSIGNMENT_PROTOCOL_VERSION = "beauty-movement-invite-assignments-v1" as const;
 
 export type BeautyMovementPalette = (typeof BEAUTY_MOVEMENT_PALETTES)[number];
 export type BeautyMovementBenefitStatus = (typeof BEAUTY_MOVEMENT_BENEFIT_STATUSES)[number];
@@ -43,8 +55,16 @@ const REQUIRED_HEADERS = [
     "expires_at",
 ] as const;
 
-const OPTIONAL_HEADERS = ["email", "invite_status", "reward_id"] as const;
+const COMPACT_VELOCITY_REQUIRED_HEADERS = ["name", "whatsapp"] as const;
+const OPTIONAL_HEADERS = ["email", "invite_status", "reward_id", "prize"] as const;
 const ALLOWED_HEADERS = new Set<string>([...REQUIRED_HEADERS, ...OPTIONAL_HEADERS]);
+const HEADER_ALIASES: Readonly<Record<string, string>> = {
+    nome: "name",
+    telefone: "whatsapp",
+    telefone_whatsapp: "whatsapp",
+    premio: "prize",
+    recompensa: "prize",
+};
 const FORBIDDEN_HEADERS = new Set([
     "cpf",
     "cpf_cnpj",
@@ -90,12 +110,14 @@ export type BeautyMovementImportIssueCode =
     | "reward_not_found"
     | "reward_family_mismatch"
     | "invalid_velocity_benefit"
+    | "unsupported_prize"
     | "invalid_invite_status"
     | "invalid_text"
     | "invalid_expiry"
     | "expired_invite"
     | "campaign_expiry_before_invite"
     | "missing_reward_catalog"
+    | "compact_expiry_unavailable"
     | "prohibited_sensitive_value";
 
 export type BeautyMovementImportIssue = {
@@ -106,11 +128,15 @@ export type BeautyMovementImportIssue = {
 
 export type BeautyMovementImportRow = {
     inviteRef: string;
+    sourceFormat: "full" | "compact_velocity";
     name: string;
     whatsapp: string;
     email: string | null;
     palette: BeautyMovementPalette;
     rewardId: string | null;
+    /** Spreadsheet prize authority. Null means the invite is the Velocity courtesy outcome. */
+    assignedOutcomeKey: BeautyMovementOutcomeKey | null;
+    prizeAssigned: boolean;
     velocityBenefit: BeautyMovementVelocityBenefit;
     expiresAtMs: number;
     inviteStatus: BeautyMovementInviteStatus;
@@ -165,6 +191,9 @@ export type BeautyMovementPreparedInvite = {
     contactMask: string;
     palette: BeautyMovementPalette;
     rewardId: string | null;
+    assignedOutcomeKey: BeautyMovementOutcomeKey | null;
+    assignmentProtocolVersion: typeof BEAUTY_MOVEMENT_ASSIGNMENT_PROTOCOL_VERSION | null;
+    plannedCardSelectionsJson: string;
     velocityBenefit: BeautyMovementVelocityBenefit;
     benefitStatus: BeautyMovementBenefitStatus;
     benefitText: string;
@@ -176,6 +205,7 @@ export type BeautyMovementPreparedInvite = {
 };
 
 export type BeautyMovementDeliveryRow = {
+    name: string;
     inviteRef: string;
     whatsapp: string;
     inviteUrl: string;
@@ -313,6 +343,31 @@ function asAllowed<T extends readonly string[]>(value: string, allowed: T): T[nu
     return (allowed as readonly string[]).includes(value) ? value as T[number] : null;
 }
 
+const PRIZE_OUTCOME_ALIASES: Readonly<Record<string, BeautyMovementOutcomeKey>> = {
+    firmeza_renovacao: "elleva_upgrade",
+    elleva: "elleva_upgrade",
+    harmonia_definicao: "filler_double",
+    preenchimento: "filler_double",
+    estrutura_estimulo: "sculptra_classic_unlock",
+    restylane_classic_sculptra: "sculptra_classic_unlock",
+    hidratacao_luminosidade: "skinbooster_diamond_unlock",
+    restylane_skinbooster_diamond: "skinbooster_diamond_unlock",
+};
+
+function normalizePrize(value: string): BeautyMovementOutcomeKey | null | undefined {
+    const normalized = value
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    if (!normalized || ["velocity", "aula_cortesia_velocity", "aula_cortesia_de_velocity", "aula_cortesia_evento"].includes(normalized)) {
+        return null;
+    }
+    return PRIZE_OUTCOME_ALIASES[normalized];
+}
+
 function scanRecordDelimiter(line: string, delimiter: string): number {
     let quotes = false;
     let count = 0;
@@ -398,6 +453,8 @@ export function validateBeautyMovementImport(params: {
     csv: string;
     rewardCatalog?: readonly BeautyMovementRewardCatalogEntry[];
     nowMs?: number;
+    /** Required when the compact Velocity source omits its derived expiry. */
+    defaultExpiresAtMs?: number;
 }): BeautyMovementImportValidation {
     const delimiter = detectDelimiter(params.csv);
     const parsed = parseDelimited(params.csv, delimiter);
@@ -412,7 +469,10 @@ export function validateBeautyMovementImport(params: {
     }
 
     const rawHeaders = parsed.rows[0];
-    const headers = rawHeaders.map(normalizedHeader);
+    const headers = rawHeaders.map((header) => {
+        const normalized = normalizedHeader(header);
+        return HEADER_ALIASES[normalized] ?? normalized;
+    });
     const issues: BeautyMovementImportIssue[] = [];
     const headerIndex = new Map<string, number>();
     for (const [index, header] of headers.entries()) {
@@ -435,7 +495,15 @@ export function validateBeautyMovementImport(params: {
         headerIndex.set(header, index);
     }
 
-    for (const header of REQUIRED_HEADERS) {
+    const isCompactVelocity = COMPACT_VELOCITY_REQUIRED_HEADERS.every((header) => headerIndex.has(header)) &&
+        !headerIndex.has("invite_ref") &&
+        !headerIndex.has("palette") &&
+        !headerIndex.has("velocity_benefit") &&
+        !headerIndex.has("expires_at") &&
+        !headerIndex.has("invite_status") &&
+        !headerIndex.has("reward_id");
+    const requiredHeaders = isCompactVelocity ? COMPACT_VELOCITY_REQUIRED_HEADERS : REQUIRED_HEADERS;
+    for (const header of requiredHeaders) {
         if (!headerIndex.has(header)) issues.push(issue(1, header, "missing_header"));
     }
     if (issues.length) {
@@ -459,7 +527,6 @@ export function validateBeautyMovementImport(params: {
     const importRows: BeautyMovementImportRow[] = [];
     const inviteRefs = new Set<string>();
     const phones = new Set<string>();
-    const emails = new Set<string>();
     let sourceRowCount = 0;
 
     for (let index = 1; index < parsed.rows.length; index += 1) {
@@ -471,9 +538,14 @@ export function validateBeautyMovementImport(params: {
             issues.push(issue(rowNumber, null, "column_count_mismatch"));
             continue;
         }
-        const value = (header: string) => sourceRow[headerIndex.get(header)!] ?? "";
+        const value = (header: string) => {
+            const columnIndex = headerIndex.get(header);
+            return columnIndex === undefined ? "" : sourceRow[columnIndex] ?? "";
+        };
 
-        const inviteRef = cleanText(value("invite_ref"), 120);
+        const inviteRef = isCompactVelocity
+            ? `velocity-${String(rowNumber).padStart(4, "0")}`
+            : cleanText(value("invite_ref"), 120);
         if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(inviteRef)) {
             issues.push(issue(rowNumber, "invite_ref", inviteRef ? "invalid_invite_ref" : "required_value_missing"));
         } else if (containsProhibitedSensitiveValue(inviteRef)) {
@@ -487,7 +559,12 @@ export function validateBeautyMovementImport(params: {
         }
 
         const name = cleanText(value("name"), 160);
-        if (name.split(/\s+/).filter((part) => part.length >= 2).length < 2) {
+        // A single-word civil name is valid input for an invitation list. Keep
+        // the minimum meaningful length/sensitive-value checks, but do not
+        // invent a surname or reject a real invite solely because the sheet
+        // contains one name token.
+        const nameTokens = name.split(/\s+/).filter((part) => part.length >= 2);
+        if (name.length < 2 || nameTokens.length === 0) {
             issues.push(issue(rowNumber, "name", name ? "invalid_name" : "required_value_missing"));
         }
         if (name && containsProhibitedSensitiveValue(name)) {
@@ -507,13 +584,11 @@ export function validateBeautyMovementImport(params: {
         const email = normalizeEmail(rawEmail);
         if (rawEmail.trim() && !email) {
             issues.push(issue(rowNumber, "email", "invalid_email"));
-        } else if (email && emails.has(email)) {
-            issues.push(issue(rowNumber, "email", "duplicate_email"));
-        } else if (email) {
-            emails.add(email);
         }
 
-        const palette = asAllowed(cleanText(value("palette"), 40).toLowerCase(), BEAUTY_MOVEMENT_PALETTES);
+        const palette = isCompactVelocity
+            ? BEAUTY_MOVEMENT_COMPACT_VELOCITY_PALETTE
+            : asAllowed(cleanText(value("palette"), 40).toLowerCase(), BEAUTY_MOVEMENT_PALETTES);
         if (!palette) issues.push(issue(rowNumber, "palette", value("palette").trim() ? "invalid_palette" : "required_value_missing"));
 
         const rawRewardId = value("reward_id").trim();
@@ -527,27 +602,58 @@ export function validateBeautyMovementImport(params: {
             issues.push(issue(rowNumber, "reward_id", "reward_family_mismatch"));
         }
 
-        const velocityBenefit = asAllowed(
-            cleanText(value("velocity_benefit"), 40).toLowerCase(),
-            ["none", "aula_cortesia_evento"] as const,
-        );
-        if (!velocityBenefit) {
-            issues.push(issue(
-                rowNumber,
-                "velocity_benefit",
-                value("velocity_benefit").trim() ? "invalid_velocity_benefit" : "required_value_missing",
-            ));
+        const rawPrize = cleanText(value("prize"), 80);
+        const assignedOutcomeKey = rawPrize ? normalizePrize(rawPrize) : null;
+        if (rawPrize && assignedOutcomeKey === undefined) {
+            issues.push(issue(rowNumber, "prize", "unsupported_prize"));
+        }
+        let velocityBenefit: BeautyMovementVelocityBenefit | null;
+        if (isCompactVelocity) {
+            // The compact sheet is now the canonical invite source: Velocity
+            // rows receive the courtesy entitlement, while each commercial
+            // prize is an explicit server-side assignment.
+            velocityBenefit = assignedOutcomeKey === null ? "aula_cortesia_evento" : "none";
+        } else {
+            velocityBenefit = asAllowed(
+                cleanText(value("velocity_benefit"), 40).toLowerCase(),
+                ["none", "aula_cortesia_evento"] as const,
+            );
+            if (assignedOutcomeKey !== null && assignedOutcomeKey !== undefined) {
+                // The sheet is authoritative for a prepared invite. A stale
+                // legacy courtesy flag must never turn a commercial prize into
+                // a mixed entitlement.
+                velocityBenefit = "none";
+            } else if (assignedOutcomeKey === null && rawPrize) {
+                velocityBenefit = "aula_cortesia_evento";
+            }
+            if (!velocityBenefit) {
+                issues.push(issue(
+                    rowNumber,
+                    "velocity_benefit",
+                    value("velocity_benefit").trim() ? "invalid_velocity_benefit" : "required_value_missing",
+                ));
+            }
         }
 
-        const inviteStatus = asAllowed(
-            cleanText(value("invite_status"), 32).toLowerCase() || "active",
-            BEAUTY_MOVEMENT_INVITE_STATUSES,
-        );
+        const inviteStatus = isCompactVelocity
+            ? "active" as const
+            : asAllowed(
+                cleanText(value("invite_status"), 32).toLowerCase() || "active",
+                BEAUTY_MOVEMENT_INVITE_STATUSES,
+            );
         if (!inviteStatus) issues.push(issue(rowNumber, "invite_status", "invalid_invite_status"));
 
-        const expiresAtMs = parseStrictIsoDate(value("expires_at"));
+        const expiresAtMs = isCompactVelocity
+            ? Number.isFinite(params.defaultExpiresAtMs) ? params.defaultExpiresAtMs! : null
+            : parseStrictIsoDate(value("expires_at"));
         if (expiresAtMs === null) {
-            issues.push(issue(rowNumber, "expires_at", value("expires_at").trim() ? "invalid_expiry" : "required_value_missing"));
+            issues.push(issue(
+                rowNumber,
+                "expires_at",
+                isCompactVelocity
+                    ? "compact_expiry_unavailable"
+                    : value("expires_at").trim() ? "invalid_expiry" : "required_value_missing",
+            ));
         } else if (inviteStatus === "active" && expiresAtMs <= nowMs) {
             issues.push(issue(rowNumber, "expires_at", "expired_invite"));
         }
@@ -559,17 +665,21 @@ export function validateBeautyMovementImport(params: {
             (rawEmail.trim() === "" || email) &&
             palette &&
             (!rewardId || reward) &&
+            assignedOutcomeKey !== undefined &&
             velocityBenefit &&
             inviteStatus &&
             expiresAtMs !== null
         ) {
             importRows.push({
                 inviteRef,
+                sourceFormat: isCompactVelocity ? "compact_velocity" : "full",
                 name,
                 whatsapp,
                 email,
                 palette,
                 rewardId,
+                assignedOutcomeKey,
+                prizeAssigned: isCompactVelocity || Boolean(rawPrize),
                 velocityBenefit,
                 expiresAtMs,
                 inviteStatus,
@@ -632,7 +742,12 @@ export async function prepareBeautyMovementImport(params: {
         ? validateBeautyMovementRewardCatalog({ catalog: params.rewardCatalog, procedureCatalog: params.procedureCatalog ?? [] })
         : [];
     const rewardById = new Map(rewards.map((reward) => [reward.rewardId, reward]));
-    const validation = validateBeautyMovementImport({ csv: params.csv, rewardCatalog: rewards, nowMs });
+    const validation = validateBeautyMovementImport({
+        csv: params.csv,
+        rewardCatalog: rewards,
+        nowMs,
+        defaultExpiresAtMs: params.campaignEndsAtMs,
+    });
     if (!validation.ok) {
         throw new Error(`beauty_movement_import_invalid:${validation.issues.map((entry) => entry.code).join(",")}`);
     }
@@ -646,12 +761,18 @@ export async function prepareBeautyMovementImport(params: {
     const deliveryRows: BeautyMovementDeliveryRow[] = [];
 
     for (const row of validation.rows) {
+        const inviteRef = row.sourceFormat === "compact_velocity"
+            ? `velocity-${await hashBeautyMovementInviteToken({
+                secret: params.tokenHmacKey,
+                token: `velocity-${campaignId}-${row.whatsapp.replace(/\D/g, "")}`,
+            })}`
+            : row.inviteRef;
         const reward = row.rewardId ? rewardById.get(row.rewardId) ?? null : null;
         if (row.rewardId && !reward) throw new Error("beauty_movement_reward_not_found");
         const token = await deriveBeautyMovementInviteToken({
             secret: params.tokenHmacKey,
             campaignId,
-            inviteRef: row.inviteRef,
+            inviteRef,
         });
         const inviteTokenHmac = await hashBeautyMovementInviteToken({ secret: params.tokenHmacKey, token });
         const encrypted = await encryptBeautyMovementPersonalData({
@@ -659,21 +780,32 @@ export async function prepareBeautyMovementImport(params: {
             whatsapp: row.whatsapp,
             email: row.email,
         }, params.piiKey);
+        const plannedCardSelections = selectBeautyMovementPlannedSelections({
+            palette: row.palette,
+            outcomeKey: row.prizeAssigned ? row.assignedOutcomeKey : null,
+        });
         invites.push({
             id: crypto.randomUUID(),
-            inviteRef: row.inviteRef,
+            inviteRef,
             inviteTokenHmac,
             personalDataCiphertext: encrypted.ciphertext,
             personalDataIv: encrypted.iv,
             contactMask: maskBeautyMovementContact(row.whatsapp, row.email),
             palette: row.palette,
             rewardId: reward?.rewardId ?? null,
+            assignedOutcomeKey: row.assignedOutcomeKey,
+            assignmentProtocolVersion: row.prizeAssigned ? BEAUTY_MOVEMENT_ASSIGNMENT_PROTOCOL_VERSION : null,
+            plannedCardSelectionsJson: JSON.stringify(plannedCardSelections),
             velocityBenefit: row.velocityBenefit,
             // Legacy columns remain populated during the additive migration so
             // old reports/readers fail closed instead of losing the approved
             // condition while the structured reward join is rolled out.
             benefitStatus: reward ? "evento_condicao_comercial" : row.velocityBenefit === "aula_cortesia_evento" ? "aula_cortesia_evento" : "evento_condicao_comercial",
-            benefitText: reward?.displayText ?? "Sua combinação será determinada pelas três cartas.",
+            benefitText: reward?.displayText ?? (row.prizeAssigned
+                ? row.assignedOutcomeKey
+                    ? getBeautyMovementOffer(row.assignedOutcomeKey).commercialText
+                    : "Sua combinação desbloqueou a aula-cortesia Velocity."
+                : "Sua combinação será determinada pelas três cartas."),
             benefitValidity: reward?.validity ?? "Definida após a confirmação da leitura.",
             benefitRules: reward?.rules ?? "A elegibilidade clínica depende de avaliação profissional.",
             termsVersion: reward?.termsVersion ?? "beauty-movement-outcomes-v1",
@@ -681,7 +813,8 @@ export async function prepareBeautyMovementImport(params: {
             inviteStatus: row.inviteStatus,
         });
         deliveryRows.push({
-            inviteRef: row.inviteRef,
+            name: row.name,
+            inviteRef,
             whatsapp: row.whatsapp,
             inviteUrl: buildInviteUrl(inviteUrlBase, token),
         });
@@ -776,12 +909,14 @@ export function buildBeautyMovementImportSql(plan: BeautyMovementPreparedImport)
                 id, campaign_id, external_ref, invite_token_hmac,
                 personal_data_version, personal_data_ciphertext, personal_data_iv, contact_mask,
                 palette, reward_id, velocity_benefit,
+                assigned_outcome_key, assignment_protocol_version, planned_card_selections_json,
                 benefit_status, benefit_text, benefit_validity, benefit_rules, terms_version,
                 invite_status, expires_at_ms, created_at_ms, updated_at_ms
             ) VALUES (
                 ${escapeSql(invite.id)}, ${escapeSql(plan.campaignId)}, ${escapeSql(invite.inviteRef)}, ${escapeSql(invite.inviteTokenHmac)},
                 1, ${escapeSql(invite.personalDataCiphertext)}, ${escapeSql(invite.personalDataIv)}, ${escapeSql(invite.contactMask)},
                 ${escapeSql(invite.palette)}, ${invite.rewardId ? escapeSql(invite.rewardId) : "NULL"}, ${escapeSql(invite.velocityBenefit)},
+                ${invite.assignedOutcomeKey ? escapeSql(invite.assignedOutcomeKey) : "NULL"}, ${invite.assignmentProtocolVersion ? escapeSql(invite.assignmentProtocolVersion) : "NULL"}, ${escapeSql(invite.plannedCardSelectionsJson)},
                 ${escapeSql(invite.benefitStatus)}, ${escapeSql(invite.benefitText)}, ${escapeSql(invite.benefitValidity)}, ${escapeSql(invite.benefitRules)}, ${escapeSql(invite.termsVersion)},
                 ${escapeSql(invite.inviteStatus)}, ${invite.expiresAtMs}, ${plan.createdAtMs}, ${plan.createdAtMs}
             ) ON CONFLICT(campaign_id, external_ref) DO UPDATE SET
@@ -792,6 +927,9 @@ export function buildBeautyMovementImportSql(plan: BeautyMovementPreparedImport)
                 palette = excluded.palette,
                 reward_id = excluded.reward_id,
                 velocity_benefit = excluded.velocity_benefit,
+                assigned_outcome_key = excluded.assigned_outcome_key,
+                assignment_protocol_version = excluded.assignment_protocol_version,
+                planned_card_selections_json = excluded.planned_card_selections_json,
                 benefit_status = excluded.benefit_status,
                 benefit_text = excluded.benefit_text,
                 benefit_validity = excluded.benefit_validity,
@@ -830,9 +968,9 @@ function csvCell(value: string): string {
 }
 
 export function serializeBeautyMovementDeliveryCsv(rows: readonly BeautyMovementDeliveryRow[]): string {
-    const output = ["invite_ref,whatsapp,invite_url"];
+    const output = ["name,invite_ref,whatsapp,invite_url"];
     for (const row of rows) {
-        output.push([row.inviteRef, row.whatsapp, row.inviteUrl].map(csvCell).join(","));
+        output.push([row.name, row.inviteRef, row.whatsapp, row.inviteUrl].map(csvCell).join(","));
     }
     return `${output.join("\n")}\n`;
 }
