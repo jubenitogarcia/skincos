@@ -174,7 +174,7 @@ jobs:
           if [[ -f "${PACKAGE_DIR}/rewards.json" ]]; then
             args+=(--reward-catalog "${PACKAGE_DIR}/rewards.json" --procedure-catalog "${PACKAGE_DIR}/procedures.json")
           fi
-          npm run beauty-movement:import -- "${args[@]}" > "${ACTIVATION_ROOT}/package-validation.json"
+          npm run --silent beauty-movement:import -- "${args[@]}" > "${ACTIVATION_ROOT}/package-validation.json"
           node - "${ACTIVATION_ROOT}/package-validation.json" <<'NODE'
           const fs = require('node:fs');
           const result = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -284,7 +284,7 @@ jobs:
           if [[ -f "${PACKAGE_DIR}/rewards.json" ]]; then
             args+=(--reward-catalog "${PACKAGE_DIR}/rewards.json" --procedure-catalog "${PACKAGE_DIR}/procedures.json")
           fi
-          npm run beauty-movement:import -- "${args[@]}" > "${ACTIVATION_ROOT}/import-summary.json"
+          npm run --silent beauty-movement:import -- "${args[@]}" > "${ACTIVATION_ROOT}/import-summary.json"
           node - "${STATE_FILE}" <<'NODE'
           const fs = require('node:fs');
           const path = process.argv[2];
@@ -452,7 +452,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
-          npm run beauty-movement:import -- --apply --remote \
+          npm run --silent beauty-movement:import -- --apply --remote \
             --input "${SMOKE_ROOT}/invites.csv" --campaign "${SMOKE_CAMPAIGN_ID}" --confirm-campaign "${SMOKE_CAMPAIGN_ID}" \
             --campaign-ends-at "$(cat "${SMOKE_ROOT}/ends-at.txt")" --campaign-config "${SMOKE_ROOT}/campaign.json" \
             --database "${PRODUCTION_D1_DATABASE}" --config wrangler.toml --out-dir "${OUTPUT_DIR}" > "${SMOKE_ROOT}/import-summary.json"
