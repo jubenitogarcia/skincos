@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const SYNTHETIC_PROVIDER_ID = 'fixture-provider';
 
 const {
   ALL_FIXTURE_NAMES,
@@ -427,7 +428,8 @@ test('generated CCG-90 dry-run remains simulated and the final return is a CONTE
   const prepared = await runCodeNode(nodeByName.get('CCG-90 Prepare Evidence & Package Brief'), data);
   const execution = prepared.json.production_execution_results;
   assert.equal(execution.mode, 'DRY_RUN');
-  assert.equal(execution.jobs[0].provider_id, 'mock');
+  assert.equal(execution.jobs[0].provider_id, SYNTHETIC_PROVIDER_ID);
+  assert.match(execution.jobs[0].provider_id, /^fixture-provider$/);
   assert.equal(execution.jobs[0].cost.amount, 0);
   assert.match(execution.jobs[0].artifact_uri, /^mock:\/\//);
   assert.match(prepared.json.content_package_brief.execution.jobs[0].artifacts[0].uri, /^mock:\/\//);
@@ -461,6 +463,11 @@ test('CCG-80 policy and normalizer dispatch the executor contract into CCG-90', 
     request_hash: 'request-policy-normalizer',
     idempotency_key: 'idempotency-policy-normalizer',
   };
+  assert.match(ids.run_id, /^run-/);
+  assert.match(ids.production_id, /^production-/);
+  assert.match(ids.content_id, /^content-/);
+  assert.match(ids.request_hash, /^request-/);
+  assert.match(ids.idempotency_key, /^idempotency-/);
   const data = {
     production_request: { ...ids, mode: 'DRY_RUN', publish_allowed: false, publish_requested: false },
     ccg_context: { ...ids, mode: 'DRY_RUN' },
