@@ -16,6 +16,7 @@ const BUILD_GRAPH_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 
 const VERIFY_PUBLISHED_ARTIFACTS_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'verify-published-artifacts.js');
 const PUBLISH_PROGRESS_LEDGER_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'publish-progress-ledger.js');
 const VALIDATE_PUBLISH_TOKEN_HEALTH_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'validate-publish-token-health.js');
+const PUBLICATION_LOCK_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'publication-lock.js');
 const BUILD_GRAPH_REPLAY_SOURCE = path.join(runtimePaths.repoRoot, 'compose2-current.js');
 const VERIFIER_ENV_KEYS = new Set(['TOKEN_VAULT_BASE_URL', 'TOKEN_VAULT_N8N_API_TOKEN']);
 const VERIFIER_ENV_FILES = [
@@ -617,7 +618,7 @@ function validateWorkflow() {
   const buildGraphScript = fs.existsSync(BUILD_GRAPH_SCRIPT)
     ? fs.readFileSync(BUILD_GRAPH_SCRIPT, 'utf8')
     : '';
-  const pinnedSidecars = ['Process Media Asset', 'BQ - Build Platform Job Graph', 'Verify Published Artifacts', 'Record Publish Progress', 'Validate Publish Token Health'];
+  const pinnedSidecars = ['Process Media Asset', 'BQ - Build Platform Job Graph', 'Verify Published Artifacts', 'Record Publish Progress', 'Validate Publish Token Health', 'Release Livia Publication Lock'];
   for (const name of pinnedSidecars) {
     const commandValue = String(nodeByName.get(name)?.parameters?.command || '');
     if (/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/.test(commandValue)) {
@@ -723,6 +724,24 @@ function validateWorkflow() {
     errors.push('build-platform-job-graph.js must request IMAGE for Threads carousel children and CAROUSEL for the parent.');
   }
   const prepareHttpCode = String(nodeByName.get('Prepare HTTP Publish Request')?.parameters?.jsCode || '');
+  const httpNode = nodeByName.get('HTTP Request');
+  const prepareHttpNode = nodeByName.get('Prepare HTTP Publish Request');
+  if (httpNode?.retryOnFail !== false || Object.prototype.hasOwnProperty.call(httpNode || {}, 'maxTries')) {
+    errors.push('HTTP Request must not retry mutating social operations automatically.');
+  }
+  if (prepareHttpNode?.retryOnFail !== false) {
+    errors.push('Prepare HTTP Publish Request must not retry the outbound queue transition automatically.');
+  }
+  const publicationWindowCode = String(nodeByName.get('Assert Livia Publication Window')?.parameters?.jsCode || '');
+  if (!publicationWindowCode.includes('livia_publication_lock_v1') || !publicationWindowCode.includes("fs.openSync(publicationLockPath, 'wx'")) {
+    errors.push('Assert Livia Publication Window must atomically acquire the Livia publication lease.');
+  }
+  if (!String(nodeByName.get('Release Livia Publication Lock')?.parameters?.command || '').includes('release-publication-lock.js')) {
+    errors.push('Release Livia Publication Lock must call the pinned immutable helper.');
+  }
+  if (!(workflow.connections['Cleanup Temp Files']?.main?.[0] || []).some((edge) => edge.node === 'Release Livia Publication Lock')) {
+    errors.push('Cleanup Temp Files must release the Livia publication lease.');
+  }
   if (!prepareHttpCode.includes('JSON.stringify(ids)') || !prepareHttpCode.includes('source.platform')) {
     errors.push('Prepare HTTP Publish Request must serialize Threads carousel children as a JSON array.');
   }
@@ -755,6 +774,9 @@ function validateWorkflow() {
   if (!String(nodeByName.get('Process HTTP Publish Result')?.parameters?.jsCode || '').includes('compactResumeRecord')) {
     errors.push('Process HTTP Publish Result must emit a sanitized durable progress record.');
   }
+  if (!String(nodeByName.get('Process HTTP Publish Result')?.parameters?.jsCode || '').includes('executionId: str(execId')) {
+    errors.push('Process HTTP Publish Result must carry the execution lease owner into the progress ledger.');
+  }
   if (!String(nodeByName.get('Process HTTP Publish Result')?.parameters?.jsCode || '').includes('facebook_static_photo_already_posted_recovery')) {
     errors.push('Process HTTP Publish Result must recover already-published Facebook static photos without duplication.');
   }
@@ -764,7 +786,14 @@ function validateWorkflow() {
   for (const required of ['livia-publish-ledger', 'codexDryRun === true', 'semanticJobKey', "'__group__'"]) {
     if (!progressScript.includes(required)) errors.push(`publish-progress-ledger.js must preserve safe resume semantics (${required}).`);
   }
-  for (const name of ['Verify Published Artifacts', 'Attach Verified Publish Artifacts', 'Switch Final Dry Run', 'Prepare Drive Publication Marks', 'Update File', 'Collect Drive Publication Marks', 'Assert Drive Published', 'Cleanup Temp Files']) {
+  if (!progressScript.includes('heartbeat(executionId)')) {
+    errors.push('publish-progress-ledger.js must refresh the execution lease after accepted provider responses.');
+  }
+  const publicationLockScript = fs.existsSync(PUBLICATION_LOCK_SCRIPT) ? fs.readFileSync(PUBLICATION_LOCK_SCRIPT, 'utf8') : '';
+  for (const required of ['livia-publication-lock.v1', "openSync(filePath, 'wx'", 'owner_mismatch_or_missing']) {
+    if (!publicationLockScript.includes(required)) errors.push(`publication-lock.js must enforce the lease contract (${required}).`);
+  }
+  for (const name of ['Verify Published Artifacts', 'Attach Verified Publish Artifacts', 'Switch Final Dry Run', 'Prepare Drive Publication Marks', 'Update File', 'Collect Drive Publication Marks', 'Assert Drive Published', 'Cleanup Temp Files', 'Release Livia Publication Lock']) {
     if (!nodeByName.has(name)) errors.push(`Missing node: ${name}`);
   }
   if (nodeByName.has('Merge Drive Result and Context')) {

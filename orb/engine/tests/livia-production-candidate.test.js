@@ -30,6 +30,7 @@ test('production candidate builder applies every Livia fail-closed patch as one 
     'notification-contract',
     'ai-reel-cover-generation',
     'runtime-isolation',
+    'publish-idempotency',
   ]);
   assert.equal(nodes.has('Merge Drive Result and Context'), false);
   assert.equal(nodes.has('Prepare Drive Publication Marks'), true);
@@ -53,7 +54,16 @@ test('production candidate builder applies every Livia fail-closed patch as one 
   assert.match(nodes.get('Prepare Media Items').parameters.jsCode, /firstReadyGroup/);
   assert.match(nodes.get('Assert Livia Publication Window').parameters.jsCode, /_liviaBuildJobGraphPayloadFile/);
   assert.match(nodes.get('Assert Livia Publication Window').parameters.jsCode, /fs\.renameSync/);
+  assert.match(nodes.get('Assert Livia Publication Window').parameters.jsCode, /livia_publication_lock_v1/);
+  assert.match(nodes.get('Assert Livia Publication Window').parameters.jsCode, /fs\.openSync\(publicationLockPath, 'wx'/);
   assert.doesNotMatch(nodes.get('Assert Livia Publication Window').parameters.jsCode, /process\.pid/);
+  assert.equal(nodes.get('HTTP Request').retryOnFail, false);
+  assert.equal(nodes.get('HTTP Request').maxTries, undefined);
+  assert.equal(nodes.get('Prepare HTTP Publish Request').retryOnFail, false);
+  assert.match(nodes.get('Process HTTP Publish Result').parameters.jsCode, /executionId: str\(execId/);
+  assert.equal(nodes.get('Release Livia Publication Lock').type, 'n8n-nodes-base.executeCommand');
+  assert.match(nodes.get('Release Livia Publication Lock').parameters.command, new RegExp(`${releaseRoot}/scripts/livia/release-publication-lock\\.js`));
+  assert.ok(workflow.connections['Cleanup Temp Files'].main[0].some((edge) => edge.node === 'Release Livia Publication Lock'));
   assert.match(nodes.get('BQ - Build Platform Job Graph').parameters.command, /--payload-file/);
   assert.doesNotMatch(nodes.get('BQ - Build Platform Job Graph').parameters.command, /JSON\.stringify\(payload\)/);
   assert.match(nodes.get('Cleanup Temp Files').parameters.command, /env -u NODE_OPTIONS node <<'NODE'/);
