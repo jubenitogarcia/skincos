@@ -31,26 +31,32 @@ const pythonManifest = /(^|\/)(requirements(?:\.[^/]+)?\.txt|requirements\.unifi
 const pythonSource = /\.py$/;
 const semgrepSource = /\.(?:c|cc|cpp|cxx|go|java|js|jsx|mjs|cjs|php|py|rb|rs|swift|ts|tsx)$/;
 
-// These are security-audit safety overrides, not a replacement for the
-// versioned Codex risk classifier. They keep security-sensitive paths broad
-// when a path is not yet represented by a high-risk policy rule.
-const sensitivePath = /(^|\/)(\.github\/(?:workflows|scripts)|.*(?:auth|session|permission|secret|credential|tracking|migration|worker|wrangler)[^/]*)(\/|$)/i;
-
-export function buildSecurityAuditScope({ eventName, risk, changedFiles }) {
-  if (!RISK_LEVELS.has(risk)) throw new Error(`Unsupported risk '${risk}'`);
+export function buildSecurityAuditScope({ eventName, riskReport, changedFiles }) {
+  if (!riskReport || typeof riskReport !== "object" || Array.isArray(riskReport)) {
+    throw new Error("Canonical risk classification report is required");
+  }
+  if (riskReport.classification_status !== "ok") {
+    throw new Error(`Canonical risk classification is not valid: ${riskReport.classification_status ?? "missing status"}`);
+  }
+  const { risk, security_sensitive: securitySensitive } = riskReport;
+  if (!RISK_LEVELS.has(risk)) throw new Error(`Unsupported canonical risk '${risk}'`);
+  if (typeof securitySensitive !== "boolean") {
+    throw new Error("Canonical risk classification is missing security_sensitive");
+  }
   const files = normalizeFiles(changedFiles);
-  const sensitivePathChanged = matches(files, sensitivePath);
+  const securitySensitiveChanged = securitySensitive;
   const fullScan = FULL_SCAN_EVENTS.has(eventName)
     || risk === "high"
     || risk === "critical"
-    || sensitivePathChanged;
+    || securitySensitiveChanged;
 
   const scope = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     eventName,
     risk,
+    classificationStatus: riskReport.classification_status,
     changedFiles: files,
-    sensitivePathChanged,
+    securitySensitiveChanged,
     fullScan,
     npmAudit: fullScan || matches(files, npmManifest),
     trivy: fullScan || matches(files, dependencyManifest),
@@ -67,7 +73,7 @@ function writeOutputs(scope) {
   if (!process.env.GITHUB_OUTPUT) return;
   const lines = [
     ["risk", scope.risk],
-    ["sensitive_path_changed", scope.sensitivePathChanged],
+    ["security_sensitive_changed", scope.securitySensitiveChanged],
     ["full_scan", scope.fullScan],
     ["npm_audit", scope.npmAudit],
     ["trivy", scope.trivy],
@@ -85,7 +91,7 @@ function main() {
   const riskReport = JSON.parse(fs.readFileSync(riskReportPath, "utf8"));
   const scope = buildSecurityAuditScope({
     eventName: argument("--event", process.env.GITHUB_EVENT_NAME || ""),
-    risk: riskReport.risk,
+    riskReport,
     changedFiles: readLines(changedFilesPath),
   });
   writeOutputs(scope);
