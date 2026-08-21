@@ -55,6 +55,7 @@
         ".github/workflows/promotion-gate.yml",
         ".github/workflows/ponto-orchestrator-gate.yml",
         ".github/scripts/ponto-*.mjs",
+        ".github/scripts/ponto-*.sh",
         ".github/scripts/validate-progressive-release.mjs",
         ".github/scripts/workers_smoke.py"
       ],
@@ -69,6 +70,7 @@
         ".github/workflows/ponto-orchestrator-gate.yml",
         ".github/scripts/core-*.mjs",
         ".github/scripts/ponto-*.mjs",
+        ".github/scripts/ponto-*.sh",
         ".github/scripts/workers_smoke.py"
       ],
       "sharedInputs": true
