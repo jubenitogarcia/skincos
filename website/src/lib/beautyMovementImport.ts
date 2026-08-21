@@ -11,6 +11,11 @@ import {
     type BeautyMovementValidatedReward,
     type BeautyMovementVelocityBenefit,
 } from "@/lib/beautyMovementRewards";
+import {
+    getBeautyMovementOffer,
+    selectBeautyMovementPlannedSelections,
+} from "@/lib/beautyMovementOutcomes";
+import type { BeautyMovementOutcomeKey } from "@/lib/beautyMovementOutcomes";
 
 export type {
     BeautyMovementCanonicalProcedure,
@@ -23,18 +28,19 @@ export type {
 
 export const BEAUTY_MOVEMENT_PALETTES = ["radiancia", "ritmo", "conexao"] as const;
 /**
- * The compact Velocity source only describes the audience and its approved
- * prize. The palette is an internal deck-selection detail in that mode; it
- * must not become a second commercial decision made by the spreadsheet.
+ * The compact sheet is the audience and its approved prize. The palette is an
+ * internal deck-selection detail; it must never become a second commercial
+ * decision or override the spreadsheet assignment.
  */
 export const BEAUTY_MOVEMENT_COMPACT_VELOCITY_PALETTE = "radiancia" as const;
 /**
- * These values are retained for the legacy invitation columns. Modern
- * invitations leave the commercial outcome empty until the three cards are
- * persisted and resolved by the server-side combination engine.
+ * These values are retained for legacy invitation columns. New sheet
+ * invitations persist an explicit assignment protocol; only unassigned legacy
+ * rows use the card-derived combination engine.
  */
 export const BEAUTY_MOVEMENT_BENEFIT_STATUSES = ["aula_cortesia_evento", "evento_condicao_comercial"] as const;
 export const BEAUTY_MOVEMENT_INVITE_STATUSES = ["active", "revoked"] as const;
+export const BEAUTY_MOVEMENT_ASSIGNMENT_PROTOCOL_VERSION = "beauty-movement-invite-assignments-v1" as const;
 
 export type BeautyMovementPalette = (typeof BEAUTY_MOVEMENT_PALETTES)[number];
 export type BeautyMovementBenefitStatus = (typeof BEAUTY_MOVEMENT_BENEFIT_STATUSES)[number];
@@ -128,6 +134,9 @@ export type BeautyMovementImportRow = {
     email: string | null;
     palette: BeautyMovementPalette;
     rewardId: string | null;
+    /** Spreadsheet prize authority. Null means the invite is the Velocity courtesy outcome. */
+    assignedOutcomeKey: BeautyMovementOutcomeKey | null;
+    prizeAssigned: boolean;
     velocityBenefit: BeautyMovementVelocityBenefit;
     expiresAtMs: number;
     inviteStatus: BeautyMovementInviteStatus;
@@ -182,6 +191,9 @@ export type BeautyMovementPreparedInvite = {
     contactMask: string;
     palette: BeautyMovementPalette;
     rewardId: string | null;
+    assignedOutcomeKey: BeautyMovementOutcomeKey | null;
+    assignmentProtocolVersion: typeof BEAUTY_MOVEMENT_ASSIGNMENT_PROTOCOL_VERSION | null;
+    plannedCardSelectionsJson: string;
     velocityBenefit: BeautyMovementVelocityBenefit;
     benefitStatus: BeautyMovementBenefitStatus;
     benefitText: string;
@@ -329,6 +341,31 @@ export function validateBeautyMovementCampaignConfig(value: unknown): BeautyMove
 
 function asAllowed<T extends readonly string[]>(value: string, allowed: T): T[number] | null {
     return (allowed as readonly string[]).includes(value) ? value as T[number] : null;
+}
+
+const PRIZE_OUTCOME_ALIASES: Readonly<Record<string, BeautyMovementOutcomeKey>> = {
+    firmeza_renovacao: "elleva_upgrade",
+    elleva: "elleva_upgrade",
+    harmonia_definicao: "filler_double",
+    preenchimento: "filler_double",
+    estrutura_estimulo: "sculptra_classic_unlock",
+    restylane_classic_sculptra: "sculptra_classic_unlock",
+    hidratacao_luminosidade: "skinbooster_diamond_unlock",
+    restylane_skinbooster_diamond: "skinbooster_diamond_unlock",
+};
+
+function normalizePrize(value: string): BeautyMovementOutcomeKey | null | undefined {
+    const normalized = value
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    if (!normalized || ["velocity", "aula_cortesia_velocity", "aula_cortesia_de_velocity", "aula_cortesia_evento"].includes(normalized)) {
+        return null;
+    }
+    return PRIZE_OUTCOME_ALIASES[normalized];
 }
 
 function scanRecordDelimiter(line: string, delimiter: string): number {
@@ -560,25 +597,30 @@ export function validateBeautyMovementImport(params: {
             issues.push(issue(rowNumber, "reward_id", "reward_family_mismatch"));
         }
 
+        const rawPrize = cleanText(value("prize"), 80);
+        const assignedOutcomeKey = rawPrize ? normalizePrize(rawPrize) : null;
+        if (rawPrize && assignedOutcomeKey === undefined) {
+            issues.push(issue(rowNumber, "prize", "unsupported_prize"));
+        }
         let velocityBenefit: BeautyMovementVelocityBenefit | null;
         if (isCompactVelocity) {
-            const prize = cleanText(value("prize"), 80)
-                .toLowerCase()
-                .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "")
-                .replace(/[^a-z0-9]+/g, "_")
-                .replace(/^_+|_+$/g, "");
-            if (!prize || ["velocity", "aula_cortesia_velocity", "aula_cortesia_de_velocity", "aula_cortesia_evento"].includes(prize)) {
-                velocityBenefit = "aula_cortesia_evento";
-            } else {
-                velocityBenefit = null;
-                issues.push(issue(rowNumber, "prize", "unsupported_prize"));
-            }
+            // The compact sheet is now the canonical invite source: Velocity
+            // rows receive the courtesy entitlement, while each commercial
+            // prize is an explicit server-side assignment.
+            velocityBenefit = assignedOutcomeKey === null ? "aula_cortesia_evento" : "none";
         } else {
             velocityBenefit = asAllowed(
                 cleanText(value("velocity_benefit"), 40).toLowerCase(),
                 ["none", "aula_cortesia_evento"] as const,
             );
+            if (assignedOutcomeKey !== null && assignedOutcomeKey !== undefined) {
+                // The sheet is authoritative for a prepared invite. A stale
+                // legacy courtesy flag must never turn a commercial prize into
+                // a mixed entitlement.
+                velocityBenefit = "none";
+            } else if (assignedOutcomeKey === null && rawPrize) {
+                velocityBenefit = "aula_cortesia_evento";
+            }
             if (!velocityBenefit) {
                 issues.push(issue(
                     rowNumber,
@@ -618,6 +660,7 @@ export function validateBeautyMovementImport(params: {
             (rawEmail.trim() === "" || email) &&
             palette &&
             (!rewardId || reward) &&
+            assignedOutcomeKey !== undefined &&
             velocityBenefit &&
             inviteStatus &&
             expiresAtMs !== null
@@ -630,6 +673,8 @@ export function validateBeautyMovementImport(params: {
                 email,
                 palette,
                 rewardId,
+                assignedOutcomeKey,
+                prizeAssigned: isCompactVelocity || Boolean(rawPrize),
                 velocityBenefit,
                 expiresAtMs,
                 inviteStatus,
@@ -730,6 +775,10 @@ export async function prepareBeautyMovementImport(params: {
             whatsapp: row.whatsapp,
             email: row.email,
         }, params.piiKey);
+        const plannedCardSelections = selectBeautyMovementPlannedSelections({
+            palette: row.palette,
+            outcomeKey: row.prizeAssigned ? row.assignedOutcomeKey : null,
+        });
         invites.push({
             id: crypto.randomUUID(),
             inviteRef,
@@ -739,12 +788,19 @@ export async function prepareBeautyMovementImport(params: {
             contactMask: maskBeautyMovementContact(row.whatsapp, row.email),
             palette: row.palette,
             rewardId: reward?.rewardId ?? null,
+            assignedOutcomeKey: row.assignedOutcomeKey,
+            assignmentProtocolVersion: row.prizeAssigned ? BEAUTY_MOVEMENT_ASSIGNMENT_PROTOCOL_VERSION : null,
+            plannedCardSelectionsJson: JSON.stringify(plannedCardSelections),
             velocityBenefit: row.velocityBenefit,
             // Legacy columns remain populated during the additive migration so
             // old reports/readers fail closed instead of losing the approved
             // condition while the structured reward join is rolled out.
             benefitStatus: reward ? "evento_condicao_comercial" : row.velocityBenefit === "aula_cortesia_evento" ? "aula_cortesia_evento" : "evento_condicao_comercial",
-            benefitText: reward?.displayText ?? "Sua combinação será determinada pelas três cartas.",
+            benefitText: reward?.displayText ?? (row.prizeAssigned
+                ? row.assignedOutcomeKey
+                    ? getBeautyMovementOffer(row.assignedOutcomeKey).commercialText
+                    : "Sua combinação desbloqueou a aula-cortesia Velocity."
+                : "Sua combinação será determinada pelas três cartas."),
             benefitValidity: reward?.validity ?? "Definida após a confirmação da leitura.",
             benefitRules: reward?.rules ?? "A elegibilidade clínica depende de avaliação profissional.",
             termsVersion: reward?.termsVersion ?? "beauty-movement-outcomes-v1",
@@ -848,12 +904,14 @@ export function buildBeautyMovementImportSql(plan: BeautyMovementPreparedImport)
                 id, campaign_id, external_ref, invite_token_hmac,
                 personal_data_version, personal_data_ciphertext, personal_data_iv, contact_mask,
                 palette, reward_id, velocity_benefit,
+                assigned_outcome_key, assignment_protocol_version, planned_card_selections_json,
                 benefit_status, benefit_text, benefit_validity, benefit_rules, terms_version,
                 invite_status, expires_at_ms, created_at_ms, updated_at_ms
             ) VALUES (
                 ${escapeSql(invite.id)}, ${escapeSql(plan.campaignId)}, ${escapeSql(invite.inviteRef)}, ${escapeSql(invite.inviteTokenHmac)},
                 1, ${escapeSql(invite.personalDataCiphertext)}, ${escapeSql(invite.personalDataIv)}, ${escapeSql(invite.contactMask)},
                 ${escapeSql(invite.palette)}, ${invite.rewardId ? escapeSql(invite.rewardId) : "NULL"}, ${escapeSql(invite.velocityBenefit)},
+                ${invite.assignedOutcomeKey ? escapeSql(invite.assignedOutcomeKey) : "NULL"}, ${invite.assignmentProtocolVersion ? escapeSql(invite.assignmentProtocolVersion) : "NULL"}, ${escapeSql(invite.plannedCardSelectionsJson)},
                 ${escapeSql(invite.benefitStatus)}, ${escapeSql(invite.benefitText)}, ${escapeSql(invite.benefitValidity)}, ${escapeSql(invite.benefitRules)}, ${escapeSql(invite.termsVersion)},
                 ${escapeSql(invite.inviteStatus)}, ${invite.expiresAtMs}, ${plan.createdAtMs}, ${plan.createdAtMs}
             ) ON CONFLICT(campaign_id, external_ref) DO UPDATE SET
@@ -864,6 +922,9 @@ export function buildBeautyMovementImportSql(plan: BeautyMovementPreparedImport)
                 palette = excluded.palette,
                 reward_id = excluded.reward_id,
                 velocity_benefit = excluded.velocity_benefit,
+                assigned_outcome_key = excluded.assigned_outcome_key,
+                assignment_protocol_version = excluded.assignment_protocol_version,
+                planned_card_selections_json = excluded.planned_card_selections_json,
                 benefit_status = excluded.benefit_status,
                 benefit_text = excluded.benefit_text,
                 benefit_validity = excluded.benefit_validity,

@@ -58,10 +58,11 @@ evidência da unidade no site; não fecham os valores específicos da ação.
 
 ## 5. Benefícios e condições
 
-As três cartas definem uma oferta por meio do resolver determinístico
-`beautyMovementOutcomes.ts` (**decisão vigente**). A matriz completa e o
-desempate estão em `docs/beauty-movement-combination-map.md`; o catálogo abaixo
-documenta apenas as quatro ofertas comerciais aprovadas.
+Para convites sem atribuição (legado), as três cartas definem uma oferta por
+meio do resolver determinístico `beautyMovementOutcomes.ts`. Na lista final, o
+campo `PRÊMIO` atribui o resultado antes da leitura: as cartas são simbólicas e
+qualquer triplet válido preserva a oferta atribuída. A matriz completa continua
+documentando o catálogo e fornece as combinações simbólicas auditáveis.
 
 | Resultado | Oferta estruturada | Texto comercial | Preços fornecidos | Regras externas | Estado |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -92,12 +93,11 @@ aleatório, concurso ou sorteio.
   de privacidade: `[PENDENTE]`.
 - CPF e histórico de procedimentos: fora do D1, frontend, URL, relatório e
   analytics; nenhum dado bruto deve ser carregado (**consolidado no plano**).
-- Para a lista da aula-cortesia Velocity, a fonte operacional pode conter apenas
-  nome e WhatsApp. E-mail e prêmio são opcionais; quando o prêmio vier, deve ser
-  `Velocity`. O importador gera o identificador opaco do convite, usa a validade
-  da campanha, marca o convite como ativo e mantém uma paleta técnica somente
-  para montar o baralho. A paleta não decide o prêmio. `reward_id` permanece nulo
-  até uma lista comercial posterior.
+- Para a lista final, a fonte operacional pode conter nome, WhatsApp, e-mail
+  opcional e `PRÊMIO`. Os cinco rótulos canônicos são aceitos; o importador gera
+  o identificador opaco, usa a validade da campanha, marca o convite como ativo
+  e mantém uma paleta técnica somente para montar o baralho. A paleta e os
+  cliques não alteram a atribuição. `reward_id` permanece opcional.
 - Consentimento: aceite operacional separado de qualquer marketing futuro;
   redação jurídica final: `[PENDENTE]`.
 - Retenção após encerramento + 90 dias: `[PENDENTE — eliminação / anonimização]`.
@@ -111,9 +111,9 @@ formato mínimo aceito é:
 NOME,TELEFONE
 ```
 
-`EMAIL` e `PRÊMIO` podem ser omitidos ou ficar vazios; o WhatsApp é o canal de
-contato e a chave operacional do convite. Quando informado, o valor de
-`PRÊMIO` deve ser `Velocity` (ou `aula_cortesia_evento`). O importador deriva internamente `invite_ref`,
+`EMAIL` é opcional; o WhatsApp é o canal de contato e a chave operacional do
+convite. Quando informado, `PRÊMIO` deve ser `Velocity` ou um dos quatro
+rótulos comerciais canônicos. O importador deriva internamente `invite_ref`,
 `expires_at`, `invite_status=active`, `palette=radiancia` e
 `velocity_benefit=aula_cortesia_evento` a partir da campanha aprovada. E-mails
 repetidos não bloqueiam a carga porque não identificam o convite.
