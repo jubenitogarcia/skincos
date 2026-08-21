@@ -487,6 +487,12 @@ test("invite assignment is authoritative even when symbolic cards resolve elsewh
 test("assigned Velocity invites never manufacture a commercial outcome", async () => {
     const fixture = await makeFixture();
     fixture.db.invite.reward_id = null;
+    fixture.db.invite.reward_type = null;
+    fixture.db.invite.reward_procedure_name = null;
+    fixture.db.invite.reward_display_text = null;
+    fixture.db.invite.reward_validity = null;
+    fixture.db.invite.reward_rules = null;
+    fixture.db.invite.reward_terms_version = null;
     fixture.db.invite.velocity_benefit = "aula_cortesia_evento";
     fixture.db.invite.assigned_outcome_key = null;
     fixture.db.invite.assignment_protocol_version = "beauty-movement-invite-assignments-v1";

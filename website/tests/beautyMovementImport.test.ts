@@ -216,7 +216,7 @@ test("assigned commercial compact imports persist a deterministic symbolic tripl
     assert.equal(plan.invites[0]?.assignedOutcomeKey, "sculptra_classic_unlock");
     assert.equal(plan.invites[0]?.assignmentProtocolVersion, "beauty-movement-invite-assignments-v1");
     assert.deepEqual(JSON.parse(plan.invites[0]!.plannedCardSelectionsJson), {
-        beleza: "beleza-autoria",
+        beleza: "beleza-autocuidado",
         movimento: "movimento-potencia",
         celebracao: "celebracao-confianca",
     });
