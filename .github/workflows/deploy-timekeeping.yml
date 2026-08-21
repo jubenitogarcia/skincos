@@ -953,9 +953,15 @@ jobs:
           if [[ "$TARGET" == rollback ]]; then
             workforce/timekeeping/node_modules/.bin/wrangler rollback "$TIMEKEEPING_INCUMBENT_VERSION_ID" --yes --message "ponto:rollback:$RELEASE_SHA" --config workforce/timekeeping/wrangler.toml
           elif [[ "$incumbent" == 0 ]]; then
-            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/timekeeping-version-deploy.ndjson" workforce/timekeeping/node_modules/.bin/wrangler versions deploy "$TIMEKEEPING_CANDIDATE_VERSION_ID@100%" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config workforce/timekeeping/wrangler.toml "${env_args[@]}"
+            bash .github/scripts/ponto-wrangler-deploy.sh \
+              "$RUNNER_TEMP/timekeeping-version-deploy.ndjson" \
+              workforce/timekeeping/node_modules/.bin/wrangler versions deploy "$TIMEKEEPING_CANDIDATE_VERSION_ID@100%" \
+                --yes --message "ponto:$TARGET:$RELEASE_SHA" --config workforce/timekeeping/wrangler.toml "${env_args[@]}"
           else
-            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/timekeeping-version-deploy.ndjson" workforce/timekeeping/node_modules/.bin/wrangler versions deploy "$TIMEKEEPING_INCUMBENT_VERSION_ID@100%" "$TIMEKEEPING_CANDIDATE_VERSION_ID@0%" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config workforce/timekeeping/wrangler.toml "${env_args[@]}"
+            bash .github/scripts/ponto-wrangler-deploy.sh \
+              "$RUNNER_TEMP/timekeeping-version-deploy.ndjson" \
+              workforce/timekeeping/node_modules/.bin/wrangler versions deploy "$TIMEKEEPING_INCUMBENT_VERSION_ID@100%" "$TIMEKEEPING_CANDIDATE_VERSION_ID@0%" \
+                --yes --message "ponto:$TARGET:$RELEASE_SHA" --config workforce/timekeeping/wrangler.toml "${env_args[@]}"
           fi
           if [[ "$TARGET" == rollback ]]; then
             workforce/timekeeping/node_modules/.bin/wrangler deployments status --json --config workforce/timekeeping/wrangler.toml "${env_args[@]}" > "$RUNNER_TEMP/timekeeping-deployment.json"
