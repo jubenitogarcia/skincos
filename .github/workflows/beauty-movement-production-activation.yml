@@ -344,7 +344,7 @@ jobs:
           NODE
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" \
             npx --yes wrangler@4.112.0 deploy --config "${activation_config}" --keep-vars \
-            --message "beauty-movement-production-activation:${RELEASE_SHA}:${GITHUB_RUN_ID}"
+            --var 'BEAUTY_MOVEMENT_ENABLED:true' --message "beauty-movement-production-activation:${RELEASE_SHA}:${GITHUB_RUN_ID}"
           deployments="${ACTIVATION_ROOT}/candidate.json"
           npx --yes wrangler@4.112.0 deployments list --config wrangler.toml --json > "${deployments}"
           node - "${deployments}" "${STATE_FILE}" "${RELEASE_SHA}" <<'NODE'

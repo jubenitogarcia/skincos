@@ -339,7 +339,7 @@ jobs:
           NODE
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" \
             npx --yes wrangler@4.112.0 deploy --config "${activation_config}" --env staging --keep-vars \
-            --message "${candidate_message}"
+            --var 'BEAUTY_MOVEMENT_ENABLED:true' --message "${candidate_message}"
           deployments="$RUNNER_TEMP/beauty-movement-staging-smoke/candidate.json"
           candidate_version=''
           for attempt in $(seq 1 12); do
