@@ -21,7 +21,7 @@ function jsonResponse(response, statusCode, value) {
 }
 
 function authMatches(request, token) {
-  if (!token) return true;
+  if (!token) return false;
   const value = text(request.headers.authorization);
   return value === `Bearer ${token}`;
 }
