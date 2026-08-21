@@ -10,20 +10,22 @@ gates abaixo estejam concluídos.
   `C:\CodexRuntime\operator\admin\skincos\beauty-movement\` (ou equivalente
   privado no ambiente de release). Não copie CSV, URLs de entrega, CPF, histórico
   ou relatórios para este repositório.
-- Para a lista de aula-cortesia Velocity, o importador aceita o formato mínimo
-  `NOME,TELEFONE`; `EMAIL` e `PRÊMIO` são opcionais (`PRÊMIO`, quando presente,
-  deve ser `Velocity`). Ele deriva os campos técnicos do convite a partir da
-  campanha aprovada; não é necessário pré-preencher identificador, paleta,
-  expiração ou status. CPF, procedimentos, histórico clínico e colunas não
-  reconhecidas são rejeitados antes de qualquer escrita.
+- Para a lista final, o importador aceita o formato mínimo `NOME,TELEFONE` e as
+  colunas opcionais `EMAIL,PRÊMIO`. Quando `PRÊMIO` está presente, ele é a
+  atribuição autoritativa do convite: `Velocity` representa a aula-cortesia e os
+  quatro rótulos comerciais canônicos representam a oferta correspondente.
+  Não é necessário pré-preencher identificador, paleta, expiração ou status.
+  CPF, procedimentos, histórico clínico e colunas não reconhecidas são
+  rejeitados antes de qualquer escrita.
 - A paleta apenas escolhe o deck editorial; ela não escolhe nem pré-reserva a
   oferta. Nenhum dado pessoal, procedimento ou histórico clínico é enviado ao
   D1 ou ao navegador para decidir o resultado.
-- A condição comercial moderna é propriedade do resolver determinístico das
-  três cartas. `reward_id` é opcional na importação e só é lido para manter
-  compatibilidade com convites legados; nunca é aceito do navegador como
-  autoridade. O resultado persistido inclui `outcome_key`, versão do protocolo
-  e snapshot estruturado da oferta.
+- Para convites da lista final, a condição/prêmio é propriedade da atribuição
+  privada do convite. As três cartas são uma leitura simbólica pré-configurada;
+  qualquer clique válido mantém a mesma promessa e o servidor persiste o
+  outcome atribuído. `reward_id` é opcional e só mantém compatibilidade com
+  convites legados. O resultado persistido inclui `outcome_key`, versão do
+  protocolo e snapshot estruturado da oferta.
 
 ## Infraestrutura exigida antes de staging
 
@@ -35,7 +37,8 @@ gates abaixo estejam concluídos.
 3. Configurar `BEAUTY_MOVEMENT_ALLOWED_ORIGINS` com a origem exata do ambiente.
 4. Declarar `migrations_dir = "migrations/beauty-movement"` na binding dedicada
    e aplicar as migrations `0001_initial.sql`, `0002_rewards.sql` e
-   `0003_reward_integrity.sql` e `0004_card_outcomes.sql` pelo mecanismo oficial do Wrangler. O helper
+   `0003_reward_integrity.sql`, `0004_card_outcomes.sql` e
+   `0005_invite_assignments.sql` pelo mecanismo oficial do Wrangler. O helper
    local executa `wrangler d1 migrations apply --local`; nunca aplique os SQLs
    manualmente em sequência, pois a segunda migration possui alterações
    aditivas. Registrar checkpoint/export e validar schema. Rollback operacional

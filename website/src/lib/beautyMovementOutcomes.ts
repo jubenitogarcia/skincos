@@ -315,6 +315,39 @@ export function getBeautyMovementOffer(outcomeKey: BeautyMovementOutcomeKey): Be
     return BEAUTY_MOVEMENT_OFFERS[outcomeKey];
 }
 
+/**
+ * Selects one stable, reviewable card triplet for an invite assignment.
+ *
+ * The triplet is an audit/display aid only: the invite assignment remains the
+ * server-side authority, so a visitor may still click any valid card without
+ * changing the guaranteed prize. Keeping this mapping deterministic lets an
+ * import report show which symbolic reading was prepared for each outcome
+ * without using a person's identity or any random source.
+ */
+export function selectBeautyMovementPlannedSelections(params: {
+    palette: BeautyMovementPalette;
+    outcomeKey: BeautyMovementOutcomeKey | null;
+}): BeautyMovementSelections {
+    const firstCards = BEAUTY_MOVEMENT_ACTS.map((act) => getBeautyMovementCardsForAct(params.palette, act)[0]);
+    if (firstCards.some((card) => !card)) throw new Error("beauty_movement_planned_cards_unavailable");
+    if (params.outcomeKey === null) {
+        return Object.fromEntries(BEAUTY_MOVEMENT_ACTS.map((act, index) => [act, firstCards[index]!.id])) as BeautyMovementSelections;
+    }
+
+    const cardsByAct = BEAUTY_MOVEMENT_ACTS.map((act) => getBeautyMovementCardsForAct(params.palette, act));
+    for (const beleza of cardsByAct[0]!) {
+        for (const movimento of cardsByAct[1]!) {
+            for (const celebracao of cardsByAct[2]!) {
+                const selections = { beleza: beleza.id, movimento: movimento.id, celebracao: celebracao.id } as const;
+                if (resolveBeautyMovementOutcome({ palette: params.palette, selections }).outcomeKey === params.outcomeKey) {
+                    return selections;
+                }
+            }
+        }
+    }
+    throw new Error("beauty_movement_planned_outcome_unreachable");
+}
+
 /** Stable, review-friendly artifact used to audit every reachable combination. */
 export function formatBeautyMovementCombinationMapMarkdown(): string {
     const matrix = enumerateBeautyMovementCombinations();

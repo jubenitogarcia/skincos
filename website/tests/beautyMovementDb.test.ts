@@ -446,6 +446,92 @@ test("beauty movement enforces ordered immutable cards and confirms the configur
     assert.equal(stored.email, "ana+event@example.com");
 });
 
+test("invite assignment is authoritative even when symbolic cards resolve elsewhere", async () => {
+    const fixture = await makeFixture();
+    fixture.db.invite.reward_id = null;
+    fixture.db.invite.velocity_benefit = "none";
+    fixture.db.invite.assigned_outcome_key = "filler_double";
+    fixture.db.invite.assignment_protocol_version = "beauty-movement-invite-assignments-v1";
+    const exchange = await exchangeBeautyMovementInvite({
+        token: fixture.token,
+        origin: ORIGIN,
+        ip: "203.0.113.71",
+        nowMs: NOW,
+    }, options(fixture.db));
+    assert.equal(exchange.ok, true);
+    if (!exchange.ok) return;
+    // This triplet is an Elleva reading under the legacy affinity resolver;
+    // the prepared invite must still reveal its assigned commercial offer.
+    for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
+        const reveal = await revealBeautyMovementCard({
+            sessionToken: exchange.sessionToken,
+            actIndex,
+            cardId,
+            origin: ORIGIN,
+            ip: "203.0.113.71",
+        }, options(fixture.db));
+        assert.equal(reveal.ok, true);
+    }
+    const confirmed = await confirmBeautyMovementInvite({
+        sessionToken: exchange.sessionToken,
+        operationalConsent: true,
+        origin: ORIGIN,
+        ip: "203.0.113.71",
+    }, options(fixture.db));
+    assert.equal(confirmed.ok, true);
+    if (!confirmed.ok) return;
+    assert.deepEqual(confirmed.state.offer, getBeautyMovementOffer("filler_double"));
+    assert.equal(fixture.db.invite.outcome_key, "filler_double");
+});
+
+test("assigned Velocity invites never manufacture a commercial outcome", async () => {
+    const fixture = await makeFixture();
+    fixture.db.invite.reward_id = null;
+    fixture.db.invite.reward_type = null;
+    fixture.db.invite.reward_procedure_name = null;
+    fixture.db.invite.reward_display_text = null;
+    fixture.db.invite.reward_validity = null;
+    fixture.db.invite.reward_rules = null;
+    fixture.db.invite.reward_terms_version = null;
+    fixture.db.invite.velocity_benefit = "aula_cortesia_evento";
+    fixture.db.invite.assigned_outcome_key = null;
+    fixture.db.invite.assignment_protocol_version = "beauty-movement-invite-assignments-v1";
+    const exchange = await exchangeBeautyMovementInvite({
+        token: fixture.token,
+        origin: ORIGIN,
+        ip: "203.0.113.72",
+        nowMs: NOW,
+    }, options(fixture.db));
+    assert.equal(exchange.ok, true);
+    if (!exchange.ok) return;
+    for (const [actIndex, cardId] of [[1, "beleza-presenca"], [2, "movimento-potencia"], [3, "celebracao-renovacao"]] as const) {
+        const reveal = await revealBeautyMovementCard({
+            sessionToken: exchange.sessionToken,
+            actIndex,
+            cardId,
+            origin: ORIGIN,
+            ip: "203.0.113.72",
+        }, options(fixture.db));
+        assert.equal(reveal.ok, true);
+    }
+    const confirmed = await confirmBeautyMovementInvite({
+        sessionToken: exchange.sessionToken,
+        operationalConsent: true,
+        origin: ORIGIN,
+        ip: "203.0.113.72",
+    }, options(fixture.db));
+    assert.equal(confirmed.ok, true);
+    if (!confirmed.ok) return;
+    assert.equal(confirmed.state.offer, null);
+    assert.equal(confirmed.state.benefit, null);
+    assert.deepEqual(confirmed.state.velocity, {
+        enabled: true,
+        label: "Aula-cortesia Velocity",
+        text: "A equipe confirmará a turma e os detalhes operacionais.",
+    });
+    assert.equal(fixture.db.invite.outcome_key, null);
+});
+
 test("beauty movement preserves a prior v1 outcome instead of reinterpreting it with v2 affinities", async () => {
     const fixture = await makeFixture();
     const exchange = await exchangeBeautyMovementInvite({ token: fixture.token, origin: ORIGIN, ip: "203.0.113.12", nowMs: NOW }, options(fixture.db));
