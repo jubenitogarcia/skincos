@@ -190,51 +190,65 @@ test("compact Velocity imports fail closed without campaign expiry or with anoth
 });
 
 test("CLI dry-run forwards campaign expiry to compact Velocity validation", async () => {
-    await mkdtemp(path.join(tmpdir(), "beauty-movement-cli-test-")).then(async (directory) => {
-        const inputPath = path.join(directory, "invites.csv");
-        const campaignPath = path.join(directory, "campaign.json");
-        const endsAt = "2099-12-31T23:59:00Z";
-        const campaign = {
-            title: "Teste sintético",
-            description: "Fixture sintética do importador.",
-            invitationTitle: "Convite sintético",
-            invitationText: "Texto sintético.",
-            partnerName: "Synthetic QA",
-            whatsappMessageCourtesy: "Mensagem sintética.",
-            whatsappMessageCommercial: "Mensagem comercial sintética.",
-            whatsappLabel: "Falar com a equipe",
-            conditionsLabel: "Condições",
-            conditionsText: "Condições sintéticas.",
-            velocityBenefitLabel: "Aula sintética",
-            velocityBenefitText: "Benefício sintético.",
-        };
+    const privateRoot = await mkdtemp(path.join(tmpdir(), "beauty-movement-private-"));
+    try {
+        await mkdtemp(path.join(privateRoot, "beauty-movement-cli-test-")).then(async (directory) => {
+            const inputPath = path.join(directory, "invites.csv");
+            const campaignPath = path.join(directory, "campaign.json");
+            const endsAt = "2099-12-31T23:59:00Z";
+            const campaign = {
+                title: "Teste sintético",
+                description: "Fixture sintética do importador.",
+                invitationTitle: "Convite sintético",
+                invitationText: "Texto sintético.",
+                partnerName: "Synthetic QA",
+                whatsappMessageCourtesy: "Mensagem sintética.",
+                whatsappMessageCommercial: "Mensagem comercial sintética.",
+                whatsappLabel: "Falar com a equipe",
+                conditionsLabel: "Condições",
+                conditionsText: "Condições sintéticas.",
+                velocityBenefitLabel: "Aula sintética",
+                velocityBenefitText: "Benefício sintético.",
+            };
 
-        try {
-            await writeFile(inputPath, "NOME,TELEFONE\nSynthetic Guest,5511999990000\n", "utf8");
-            await writeFile(campaignPath, JSON.stringify(campaign), "utf8");
-            const result = spawnSync(
-                process.execPath,
-                [
-                    "--import", "tsx",
-                    "scripts/beauty-movement-import.ts",
-                    "--dry-run",
-                    "--input", inputPath,
-                    "--campaign", `cli-test-${randomUUID().slice(0, 8)}`,
-                    "--campaign-config", campaignPath,
-                    "--campaign-ends-at", endsAt,
-                ],
-                { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" },
-            );
-            assert.equal(result.error, undefined, result.error?.message);
-            assert.equal(result.status, 0, result.stderr);
-            const summary = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
-            assert.equal(summary.mode, "dry_run");
-            assert.equal(summary.preflight, "complete");
-            assert.equal(summary.acceptedRows, 1);
-        } finally {
-            await rm(directory, { recursive: true, force: true });
-        }
-    });
+            try {
+                await writeFile(inputPath, "NOME,TELEFONE\nSynthetic Guest,5511999990000\n", "utf8");
+                await writeFile(campaignPath, JSON.stringify(campaign), "utf8");
+                const result = spawnSync(
+                    process.execPath,
+                    [
+                        "--import", "tsx",
+                        "scripts/beauty-movement-import.ts",
+                        "--dry-run",
+                        "--input", inputPath,
+                        "--campaign", `cli-test-${randomUUID().slice(0, 8)}`,
+                        "--campaign-config", campaignPath,
+                        "--campaign-ends-at", endsAt,
+                    ],
+                    {
+                        cwd: path.resolve(import.meta.dirname, ".."),
+                        encoding: "utf8",
+                        env: {
+                            ...process.env,
+                            GITHUB_ACTIONS: "true",
+                            RUNNER_TEMP: tmpdir(),
+                            BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: privateRoot,
+                        },
+                    },
+                );
+                assert.equal(result.error, undefined, result.error?.message);
+                assert.equal(result.status, 0, result.stderr);
+                const summary = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+                assert.equal(summary.mode, "dry_run");
+                assert.equal(summary.preflight, "complete");
+                assert.equal(summary.acceptedRows, 1);
+            } finally {
+                await rm(directory, { recursive: true, force: true });
+            }
+        });
+    } finally {
+        await rm(privateRoot, { recursive: true, force: true });
+    }
 });
 
 test("modern imports may omit reward_id and defer the commercial outcome to the card resolver", async () => {
