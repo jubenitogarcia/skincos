@@ -116,7 +116,7 @@ npm run dev:server
 ```bash
 # Verificar instâncias
 curl -X GET http://localhost:8080/instance/fetchInstances \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11"
+  -H "apikey: YOUR_EVOLUTION_API_KEY"
 
 # Resultado: 3 instâncias conectadas (state: open)
 ```
