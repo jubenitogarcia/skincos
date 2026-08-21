@@ -203,7 +203,7 @@ jobs:
             "${PRODUCTION_URL}/api/beleza-em-movimento/session" || true)"
           [[ "${status}" == "503" ]] || { echo "production campaign is not disabled before activation (HTTP ${status})"; exit 1; }
 
-      - name: Validate production 0004 schema before mutation
+      - name: Validate production invite-assignment schema before mutation
         working-directory: website
         shell: bash
         run: |
@@ -212,12 +212,13 @@ jobs:
           npx --yes wrangler@4.112.0 d1 migrations list "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml > "${migrations}" 2>&1
           grep -q 'No migrations to apply' "${migrations}" || { echo 'production reports unapplied migrations'; exit 1; }
           ! grep -q '0004_card_outcomes.sql' "${migrations}" || { echo '0004_card_outcomes.sql is still pending'; exit 1; }
-          schema_sql="SELECT (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_key') AS outcome_key, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_snapshot_json') AS outcome_snapshot_json, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_protocol_version') AS outcome_protocol_version, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_resolved_at_ms') AS outcome_resolved_at_ms, (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bm_invites_campaign_outcome') AS outcome_index;"
+          ! grep -q '0005_invite_assignments.sql' "${migrations}" || { echo '0005_invite_assignments.sql is still pending'; exit 1; }
+          schema_sql="SELECT (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_key') AS outcome_key, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_snapshot_json') AS outcome_snapshot_json, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_protocol_version') AS outcome_protocol_version, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='outcome_resolved_at_ms') AS outcome_resolved_at_ms, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='assigned_outcome_key') AS assigned_outcome_key, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='assignment_protocol_version') AS assignment_protocol_version, (SELECT COUNT(*) FROM pragma_table_info('bm_invites') WHERE name='planned_card_selections_json') AS planned_card_selections_json, (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bm_invites_campaign_outcome') AS outcome_index, (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bm_invites_campaign_assignment') AS assignment_index;"
           npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${schema_sql}" --json > "${ACTIVATION_ROOT}/production-schema.json"
           node - "${ACTIVATION_ROOT}/production-schema.json" <<'NODE'
           const fs = require('node:fs');
           const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
-          if (!row || Object.values(row).some((value) => Number(value) !== 1)) throw new Error('beauty_movement_production_0004_schema_invalid');
+          if (!row || Object.values(row).some((value) => Number(value) !== 1)) throw new Error('beauty_movement_production_invite_assignment_schema_invalid');
           NODE
 
       - name: Capture exact production Worker incumbent
@@ -394,7 +395,7 @@ jobs:
           const now = Date.now();
           const ends = new Date(now + 24 * 60 * 60 * 1000).toISOString();
           const write = (name, value) => fs.writeFileSync(path.join(root, name), value, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-          write('invites.csv', ['invite_ref,name,whatsapp,email,palette,velocity_benefit,expires_at,invite_status', `synthetic-${campaignId},Beauty Movement QA,5511999990000,,radiancia,none,${ends},active`, ''].join('\n'));
+          write('invites.csv', ['NOME,TELEFONE,PRÊMIO', 'Beauty Movement QA,5511999990000,Preenchimento', ''].join('\n'));
           write('campaign.json', JSON.stringify({
             title: 'Beauty Movement production smoke',
             description: 'Fixture sintética privada; não é campanha pública.',
@@ -500,14 +501,14 @@ jobs:
           fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-production-activation/browser.json`, `${JSON.stringify({ browser: true, revealRequests: reveals, reloadStable: true, whatsappRequests: 0, consoleErrors: 0, outcomeVisible: true }, null, 2)}\n`, { mode: 0o600 });
           await browser.close();
           NODE
-          readback_sql="SELECT c.status AS campaign_status, i.invite_status, i.confirmed_at_ms, i.outcome_key, i.outcome_protocol_version, i.outcome_resolved_at_ms, length(i.outcome_snapshot_json) AS outcome_snapshot_length, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_campaigns c INNER JOIN bm_invites i ON i.campaign_id = c.id WHERE c.id = '${SMOKE_CAMPAIGN_ID}' AND i.external_ref = 'synthetic-${SMOKE_CAMPAIGN_ID}';"
+          readback_sql="SELECT c.status AS campaign_status, i.invite_status, i.confirmed_at_ms, i.outcome_key, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.assigned_outcome_key, i.assignment_protocol_version, length(i.outcome_snapshot_json) AS outcome_snapshot_length, length(i.planned_card_selections_json) AS planned_card_selections_length, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_campaigns c INNER JOIN bm_invites i ON i.campaign_id = c.id WHERE c.id = '${SMOKE_CAMPAIGN_ID}' AND i.external_ref = 'velocity-0002';"
           npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${readback_sql}" --json > "${SMOKE_ROOT}/readback.json"
           node - "${SMOKE_ROOT}/readback.json" "${RUNNER_TEMP}/beauty-movement-production-activation/browser.json" <<'NODE'
           const fs = require('node:fs');
           const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
           const browser = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
           const outcomes = new Set(['elleva_upgrade', 'filler_double', 'sculptra_classic_unlock', 'skinbooster_diamond_unlock']);
-          if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || !outcomes.has(row.outcome_key) || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_production_readback_invalid');
+          if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || row.outcome_key !== 'filler_double' || row.assigned_outcome_key !== 'filler_double' || row.assignment_protocol_version !== 'beauty-movement-invite-assignments-v1' || !outcomes.has(row.outcome_key) || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.planned_card_selections_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_production_readback_invalid');
           if (browser.browser !== true || browser.reloadStable !== true || browser.revealRequests !== 3 || browser.whatsappRequests !== 0 || browser.consoleErrors !== 0) throw new Error('beauty_movement_production_browser_invalid');
           console.log(`production persisted smoke passed: outcome=${row.outcome_key} reveals=${row.reveal_count} browserReloadStable=true`);
           NODE
