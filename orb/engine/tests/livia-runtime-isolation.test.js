@@ -60,3 +60,9 @@ test('runtime isolation reconciles a stale publish-history identity under a writ
   assert.match(source, /pg_get_serial_sequence\('n8n_runtime\.workflow_publish_history', 'id'\)::regclass/);
   assert.match(source, /COALESCE\(MAX\(id\), 0\)/);
 });
+
+test('runtime isolation accepts every pinned Livia manifest entrypoint', () => {
+  const source = fs.readFileSync(APPLIER, 'utf8');
+  assert.match(source, /entrypoints\.length !== 8/);
+  assert.doesNotMatch(source, /entrypoints\.length !== 6/);
+});
