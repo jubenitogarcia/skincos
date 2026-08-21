@@ -22,14 +22,14 @@ A instância **whatsapp-final** que estava conectada foi perdida quando o banco 
 
 ### Opção 1: Conectar via QR Code no Manager
 1. Acesse: http://localhost:8080/manager
-2. Use a API Key: `429683C4C977415CAAFCCE10F7D57E11`
+2. Use a API Key: `YOUR_EVOLUTION_API_KEY`
 3. Clique na instância **whatsapp-final**
 4. Escaneie o QR Code com seu WhatsApp
 
 ### Opção 2: Obter QR Code via API
 ```bash
 curl -X GET "http://localhost:8080/instance/connect/whatsapp-final" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11"
+  -H "apikey: YOUR_EVOLUTION_API_KEY"
 ```
 
 ---
@@ -78,7 +78,7 @@ curl http://localhost:8080
 
 ```bash
 curl -X GET "http://localhost:8080/instance/fetchInstances" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11"
+  -H "apikey: YOUR_EVOLUTION_API_KEY"
 ```
 
 ---
@@ -89,7 +89,7 @@ curl -X GET "http://localhost:8080/instance/fetchInstances" \
 
 ```bash
 curl -X GET "http://localhost:8080/instance/connectionState/whatsapp-final" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11"
+  -H "apikey: YOUR_EVOLUTION_API_KEY"
 ```
 
 ### Enviar mensagem de teste
@@ -97,7 +97,7 @@ curl -X GET "http://localhost:8080/instance/connectionState/whatsapp-final" \
 ```bash
 curl -X POST "http://localhost:8080/message/sendText/whatsapp-final" \
   -H "Content-Type: application/json" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11" \
+  -H "apikey: YOUR_EVOLUTION_API_KEY" \
   -d '{
     "number": "5551995103563",
     "text": "Mensagem de teste!"
@@ -108,21 +108,21 @@ curl -X POST "http://localhost:8080/message/sendText/whatsapp-final" \
 
 ```bash
 curl -X DELETE "http://localhost:8080/instance/logout/whatsapp-final" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11"
+  -H "apikey: YOUR_EVOLUTION_API_KEY"
 ```
 
 ### Deletar instância
 
 ```bash
 curl -X DELETE "http://localhost:8080/instance/delete/whatsapp-final" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11"
+  -H "apikey: YOUR_EVOLUTION_API_KEY"
 ```
 
 ---
 
 ## 🔑 Credenciais
 
-- **API Key**: `429683C4C977415CAAFCCE10F7D57E11`
+- **API Key**: `YOUR_EVOLUTION_API_KEY`
 - **URL Base**: `http://localhost:8080`
 - **Instância WhatsApp**: `whatsapp-final`
 - **Número**: `5551995103563`
@@ -155,7 +155,7 @@ UPDATE "Instance" SET name = 'novo-nome' WHERE name = 'whatsapp-final';
 ```bash
 curl -X POST "http://localhost:8080/instance/create" \
   -H "Content-Type: application/json" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11" \
+  -H "apikey: YOUR_EVOLUTION_API_KEY" \
   -d '{
     "instanceName": "novo-nome",
     "qrcode": true,
@@ -186,7 +186,7 @@ node dist/main
 ```bash
 # Reconecte gerando novo QR Code
 curl -X GET "http://localhost:8080/instance/connect/whatsapp-final" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11"
+  -H "apikey: YOUR_EVOLUTION_API_KEY"
 ```
 
 ### Atualizar Evolution API

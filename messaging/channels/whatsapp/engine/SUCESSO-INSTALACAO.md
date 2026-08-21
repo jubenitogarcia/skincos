@@ -12,7 +12,7 @@ A Evolution API foi instalada localmente e está **FUNCIONANDO PERFEITAMENTE**!
 - **Porta**: 8080
 - **URL**: http://localhost:8080
 - **Versão**: 2.3.4
-- **API Key**: `429683C4C977415CAAFCCE10F7D57E11`
+- **API Key**: `YOUR_EVOLUTION_API_KEY`
 
 ## 🚀 Como Iniciar
 
@@ -45,7 +45,7 @@ O QR Code aparece automaticamente nos logs quando você inicia a API!
 # Criar nova instância
 curl -X POST http://localhost:8080/instance/create \
   -H "Content-Type: application/json" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11" \
+  -H "apikey: YOUR_EVOLUTION_API_KEY" \
   -d '{
     "instanceName": "seu-numero",
     "qrcode": true,
@@ -54,14 +54,14 @@ curl -X POST http://localhost:8080/instance/create \
 
 # Obter QR Code
 curl -X GET "http://localhost:8080/instance/connect/seu-numero" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11"
+  -H "apikey: YOUR_EVOLUTION_API_KEY"
 ```
 
 ### Opção 3: Manager Web
 
 Acesse: http://localhost:8080/manager
 
-- API Key: `429683C4C977415CAAFCCE10F7D57E11`
+- API Key: `YOUR_EVOLUTION_API_KEY`
 
 ## 📋 Instância Atual
 
@@ -77,7 +77,7 @@ curl -s http://localhost:8080/ | jq '.'
 ### Listar Instâncias
 ```bash
 curl -s -X GET "http://localhost:8080/instance/fetchInstances" \
-  -H "apikey: 429683C4C977415CAAFCCE10F7D57E11" | jq '.'
+  -H "apikey: YOUR_EVOLUTION_API_KEY" | jq '.'
 ```
 
 ### Parar API
