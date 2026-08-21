@@ -272,7 +272,14 @@ async function main(): Promise<void> {
         }
     }
 
-    const validation = validateBeautyMovementImport({ csv, rewardCatalog: validatedRewards });
+    const campaignEndsAtMs = options.campaignEndsAt
+        ? parseCampaignEndsAt(options.campaignEndsAt)
+        : undefined;
+    const validation = validateBeautyMovementImport({
+        csv,
+        rewardCatalog: validatedRewards,
+        defaultExpiresAtMs: campaignEndsAtMs,
+    });
     if (!validation.ok) {
         // This JSON is intentionally aggregate-only: no path, contact, token or row detail.
         console.log(JSON.stringify({ mode: options.dryRun ? "dry_run" : "dry_run_default", ...summarizeBeautyMovementImport(validation) }));
