@@ -559,7 +559,12 @@ export function validateBeautyMovementImport(params: {
         }
 
         const name = cleanText(value("name"), 160);
-        if (name.split(/\s+/).filter((part) => part.length >= 2).length < 2) {
+        // A single-word civil name is valid input for an invitation list. Keep
+        // the minimum meaningful length/sensitive-value checks, but do not
+        // invent a surname or reject a real invite solely because the sheet
+        // contains one name token.
+        const nameTokens = name.split(/\s+/).filter((part) => part.length >= 2);
+        if (name.length < 2 || nameTokens.length === 0) {
             issues.push(issue(rowNumber, "name", name ? "invalid_name" : "required_value_missing"));
         }
         if (name && containsProhibitedSensitiveValue(name)) {

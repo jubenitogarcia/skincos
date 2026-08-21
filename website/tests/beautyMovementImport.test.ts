@@ -200,6 +200,16 @@ test("compact invite imports fail closed without campaign expiry and map canonic
     if (!unknown.ok) assert.equal(unknown.issues.some((entry) => entry.code === "unsupported_prize"), true);
 });
 
+test("compact invite imports accept a valid single-word name without inventing a surname", () => {
+    const validation = validateBeautyMovementImport({
+        csv: ["name,whatsapp,prize", "Lia,51999991234,Velocity", ""].join("\n"),
+        nowMs: NOW,
+        defaultExpiresAtMs: NOW + 24 * 60 * 60 * 1000,
+    });
+    assert.equal(validation.ok, true);
+    if (validation.ok) assert.equal(validation.rows[0]?.name, "Lia");
+});
+
 test("assigned commercial compact imports persist a deterministic symbolic triplet", async () => {
     const plan = await prepareBeautyMovementImport({
         csv: [
