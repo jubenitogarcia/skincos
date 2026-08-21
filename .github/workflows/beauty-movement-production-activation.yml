@@ -116,6 +116,7 @@ jobs:
           set -euo pipefail
           umask 077
           root="${RUNNER_TEMP}/beauty-movement-production-activation"
+          state_file="${root}/state.json"
           mkdir -p "${root}/package" "${root}/output"
           {
             echo "ACTIVATION_ROOT=${root}"
@@ -130,8 +131,8 @@ jobs:
           if [[ -n "${PRODUCTION_REWARDS_JSON:-}" ]]; then printf '%s' "${PRODUCTION_REWARDS_JSON}" > "${root}/package/rewards.json"; fi
           if [[ -n "${PRODUCTION_PROCEDURES_JSON:-}" ]]; then printf '%s' "${PRODUCTION_PROCEDURES_JSON}" > "${root}/package/procedures.json"; fi
           chmod 600 "${root}/package"/*
-          printf '%s\n' '{"version":1,"campaignImported":false,"campaignActivated":false,"workerMutated":false,"smokeImported":false,"smokeActivated":false,"success":false}' > "${STATE_FILE}"
-          chmod 600 "${STATE_FILE}"
+          printf '%s\n' '{"version":1,"campaignImported":false,"campaignActivated":false,"workerMutated":false,"smokeImported":false,"smokeActivated":false,"success":false}' > "${state_file}"
+          chmod 600 "${state_file}"
           unset PRODUCTION_INVITES_CSV PRODUCTION_CAMPAIGN_JSON PRODUCTION_REWARDS_JSON PRODUCTION_PROCEDURES_JSON
           echo 'Private production package materialized in runner-only storage.'
 
