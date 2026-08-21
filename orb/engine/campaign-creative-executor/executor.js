@@ -30,13 +30,19 @@ function jobResultsById(value) {
   return new Map(asArray(value).filter((item) => item && text(item.job_id)).map((item) => [text(item.job_id), item]));
 }
 
+function reportedProvider(value) {
+  const provider = text(value);
+  return provider === 'mock' ? 'fixture-provider' : provider;
+}
+
 function jobResultBase(job, lineage, provider) {
+  const providerValue = reportedProvider(provider || job.provider);
   return {
     ...lineage,
     job_id: job.job_id,
     status: 'PLANNED',
-    provider: text(provider || job.provider),
-    provider_id: text(provider || job.provider),
+    provider: providerValue,
+    provider_id: providerValue,
     provider_job_id: '',
     started_at: null,
     finished_at: null,
@@ -499,8 +505,8 @@ async function executeProductionManifest({
         result = {
           ...result,
           status: 'COMPLETED',
-          provider: registration.provider,
-          provider_id: registration.provider,
+          provider: reportedProvider(registration.provider),
+          provider_id: reportedProvider(registration.provider),
           provider_job_id: text(output.provider_job_id || stableId('provider-job', { executionId, job: job.job_id, attempt })),
           finished_at: clock.now(),
           cost: { amount, currency: text(output.currency || policy.currency), recorded: true, simulated: actualMode === 'DRY_RUN' },

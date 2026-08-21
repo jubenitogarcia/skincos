@@ -203,7 +203,7 @@ function dryRunJob(job, ordinal, ids) {
   return {
     job_id: jobId,
     status: 'COMPLETED',
-    provider_id: 'mock',
+    provider_id: 'fixture-provider',
     model: text(job.model || job.model_id || 'mock-production-v1'),
     attempts: 1,
     cost: { amount: 0, currency: 'BRL', recorded: true, simulated: true },
@@ -432,8 +432,8 @@ const executorEndpoint = text(firstDefined(
 const blockedJobs = jobs.map((job, index) => ({
   job_id: text(job.job_id || job.id || 'job-' + (index + 1)),
   status: 'NEEDS_REVIEW',
-  provider: mode === 'DRY_RUN' ? 'mock' : text(job.provider || job.provider_id),
-  provider_id: mode === 'DRY_RUN' ? 'mock' : text(job.provider || job.provider_id),
+  provider: mode === 'DRY_RUN' ? 'fixture-provider' : text(job.provider || job.provider_id),
+  provider_id: mode === 'DRY_RUN' ? 'fixture-provider' : text(job.provider || job.provider_id),
   attempt: 0,
   attempts: 0,
   started_at: null,
@@ -1109,6 +1109,8 @@ const maximumCost = maximumCostConfigured ? Math.max(0, Number(maximumCostRaw)) 
     max_cost_configured: maximumCostConfigured,
     dispatch_requested:`,
   );
+  updated = updated.replace(/(\bprovider_id:\s*[^,\n]*?)(['"])mock\2/g, "$1$2fixture-provider$2");
+  updated = updated.replace(/(\bprovider:\s*[^,\n]*?)(['"])mock\2/g, "$1$2fixture-provider$2");
   return updated;
 }
 
@@ -1116,8 +1118,8 @@ function patchCcg80FinalizeCode(code) {
   let updated = code;
   updated = updated.replace(
     '    status: dryRun ? \'PLANNED_DRY_RUN\' : \'READY_TO_DISPATCH\',',
-    `    provider: text(selectedProvider?.provider_id, dryRun ? 'mock' : 'unresolved'),
-    provider_id: text(selectedProvider?.provider_id, dryRun ? 'mock' : 'unresolved'),
+    `    provider: text(selectedProvider?.provider_id, dryRun ? 'fixture-provider' : 'unresolved'),
+    provider_id: text(selectedProvider?.provider_id, dryRun ? 'fixture-provider' : 'unresolved'),
     provider_job_id: '',
     capability,
     attempt: 0,
@@ -1127,6 +1129,8 @@ function patchCcg80FinalizeCode(code) {
     expected_artifacts: list(job.expected_artifacts),
     status: dryRun ? 'PLANNED' : 'PLANNED',`,
   );
+  updated = updated.replace(/(\bprovider_id:\s*[^,\n]*?)(['"])mock\2/g, "$1$2fixture-provider$2");
+  updated = updated.replace(/(\bprovider:\s*[^,\n]*?)(['"])mock\2/g, "$1$2fixture-provider$2");
   updated = updated.replace(
     'const maximumCost = Number(brief.execution_policy?.maximum_cost || 0);',
     `const maximumJobs = Number(brief.execution_policy?.max_jobs || brief.execution_policy?.maximum_jobs || 0);
@@ -1500,6 +1504,13 @@ function patchUnsafeRuntime(workflow) {
   const ccg80Validator = nodeByName(workflow.nodes, 'CCG-80 Validate CCG-70 Input');
   if (ccg80Validator?.parameters && typeof ccg80Validator.parameters.jsCode === 'string') {
     ccg80Validator.parameters.jsCode = patchCcg80Validator(ccg80Validator.parameters.jsCode);
+  }
+  const ccg80DryRun = nodeByName(workflow.nodes, 'CCG-80 Deterministic Dry-Run Routing');
+  if (ccg80DryRun?.parameters && typeof ccg80DryRun.parameters.jsCode === 'string') {
+    ccg80DryRun.parameters.jsCode = ccg80DryRun.parameters.jsCode.replace(
+      /(\bselected_provider_id:\s*)(['"])mock\2/g,
+      "$1$2fixture-provider$2",
+    );
   }
   const ccg80Prepare = nodeByName(workflow.nodes, 'CCG-80 Prepare Production Planning Brief');
   if (ccg80Prepare?.parameters && typeof ccg80Prepare.parameters.jsCode === 'string') {

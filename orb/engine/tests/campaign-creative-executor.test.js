@@ -98,14 +98,14 @@ class DivergentArtifactStore extends MemoryArtifactStore {
   }
 }
 
-test('executor mock completes static image without external calls or inline artifacts', async () => {
+test('executor dry-run reports a synthetic provider without external calls or inline artifacts', async () => {
   const result = await executeProductionManifest({
     manifest: manifest([job('static-001', 'image_generation')]),
     mode: 'DRY_RUN',
   });
   assert.equal(result.status, 'COMPLETED');
   assert.equal(result.jobs[0].status, 'COMPLETED');
-  assert.equal(result.jobs[0].provider, 'mock');
+  assert.equal(result.jobs[0].provider, 'fixture-provider');
   assert.match(result.jobs[0].artifact_uri, /^mock:\/\//);
   assert.match(result.jobs[0].sha256, /^[a-f0-9]{64}$/);
   assert.deepEqual(result.external_calls, []);
@@ -372,6 +372,7 @@ test('executor HTTP route keeps DRY_RUN in memory and exposes a pollable result'
   const { server } = createServer({
     registry: createDefaultRegistry(),
     liveEnabled: false,
+    authToken: 'test-token',
     liveExecutionStore: new InMemoryExecutionStore(),
     dryRunExecutionStore: new InMemoryExecutionStore(),
     liveArtifactStore: new MemoryArtifactStore(),
@@ -380,15 +381,23 @@ test('executor HTTP route keeps DRY_RUN in memory and exposes a pollable result'
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
     const address = server.address();
-    const response = await fetch(`http://127.0.0.1:${address.port}/v1/production-manifests`, {
+    const unauthenticated = await fetch(`http://127.0.0.1:${address.port}/v1/production-manifests`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(unauthenticated.status, 401);
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/production-manifests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer test-token' },
       body: JSON.stringify({ manifest: manifest([job('http-static-001', 'image_generation')]), mode: 'DRY_RUN', request_context: { ...IDS, mode: 'DRY_RUN' } }),
     });
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.production_execution_results.status, 'COMPLETED');
-    const poll = await fetch(`http://127.0.0.1:${address.port}/v1/production-manifests/${encodeURIComponent(body.execution_id)}`);
+    const poll = await fetch(`http://127.0.0.1:${address.port}/v1/production-manifests/${encodeURIComponent(body.execution_id)}`, {
+      headers: { authorization: 'Bearer test-token' },
+    });
     assert.equal(poll.status, 200);
     const polled = await poll.json();
     assert.equal(polled.production_execution_results.jobs[0].status, 'COMPLETED');
