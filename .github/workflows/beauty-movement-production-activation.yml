@@ -315,6 +315,26 @@ jobs:
           test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" node scripts/assert-production-snapshot.mjs
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" npx opennextjs-cloudflare build
+          activation_config="${ACTIVATION_ROOT}/wrangler-enabled.toml"
+          node - "${activation_config}" <<'NODE'
+          const fs = require('node:fs');
+          const output = process.argv[2];
+          const input = fs.readFileSync('wrangler.toml', 'utf8');
+          const marker = '[vars]';
+          const start = input.indexOf(marker);
+          if (start < 0) throw new Error('beauty_movement_production_vars_section_missing');
+          const nextSection = input.indexOf('\n[', start + marker.length);
+          const end = nextSection < 0 ? input.length : nextSection;
+          const section = input.slice(start, end);
+          if (!/^BEAUTY_MOVEMENT_ENABLED\s*=\s*"false"\s*$/m.test(section)) {
+            throw new Error('beauty_movement_production_default_flag_changed');
+          }
+          const enabled = section.replace(
+            /^(BEAUTY_MOVEMENT_ENABLED\s*=\s*)"false"\s*$/m,
+            '$1"true"',
+          );
+          fs.writeFileSync(output, `${input.slice(0, start)}${enabled}${input.slice(end)}`, { mode: 0o600 });
+          NODE
           node - "${STATE_FILE}" <<'NODE'
           const fs = require('node:fs');
           const path = process.argv[2];
@@ -323,7 +343,7 @@ jobs:
           fs.writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
           NODE
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" \
-            npx --yes wrangler@4.112.0 deploy --config wrangler.toml --keep-vars \
+            npx --yes wrangler@4.112.0 deploy --config "${activation_config}" --keep-vars \
             --var 'BEAUTY_MOVEMENT_ENABLED:true' --message "beauty-movement-production-activation:${RELEASE_SHA}:${GITHUB_RUN_ID}"
           deployments="${ACTIVATION_ROOT}/candidate.json"
           npx --yes wrangler@4.112.0 deployments list --config wrangler.toml --json > "${deployments}"

@@ -47,7 +47,7 @@ test("private package and remote secret custody are fail-closed without logging 
 
 test("schema, draft readback, build attestation, browser journey and persisted outcome are required", () => {
   assert.match(workflow, /0004_card_outcomes\.sql/);
-  assert.match(workflow, /beauty_movement_production_0004_schema_invalid/);
+  assert.match(workflow, /beauty_movement_production_invite_assignment_schema_invalid/);
   assert.match(workflow, /status !== 'draft'/);
   assert.match(workflow, /beauty_movement_active_readback_invalid/);
   assert.match(workflow, /beauty_movement_active_campaign_already_present/);
