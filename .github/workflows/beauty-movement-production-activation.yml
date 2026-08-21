@@ -203,6 +203,13 @@ jobs:
             "${PRODUCTION_URL}/api/beleza-em-movimento/session" || true)"
           [[ "${status}" == "503" ]] || { echo "production campaign is not disabled before activation (HTTP ${status})"; exit 1; }
 
+      - name: Apply pending Beauty Movement migrations in production
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 migrations apply "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml
+
       - name: Validate production invite-assignment schema before mutation
         working-directory: website
         shell: bash
