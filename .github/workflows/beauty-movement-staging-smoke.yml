@@ -317,9 +317,29 @@ jobs:
 
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" node scripts/assert-production-snapshot.mjs
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" npx opennextjs-cloudflare build
+          activation_config="${RUNNER_TEMP}/beauty-movement-staging-smoke/wrangler-enabled.toml"
+          node - "${activation_config}" <<'NODE'
+          const fs = require('node:fs');
+          const output = process.argv[2];
+          const input = fs.readFileSync('wrangler.toml', 'utf8');
+          const marker = '[env.staging.vars]';
+          const start = input.indexOf(marker);
+          if (start < 0) throw new Error('beauty_movement_staging_vars_section_missing');
+          const nextSection = input.indexOf('\n[', start + marker.length);
+          const end = nextSection < 0 ? input.length : nextSection;
+          const section = input.slice(start, end);
+          if (!/^BEAUTY_MOVEMENT_ENABLED\s*=\s*"false"\s*$/m.test(section)) {
+            throw new Error('beauty_movement_staging_default_flag_changed');
+          }
+          const enabled = section.replace(
+            /^(BEAUTY_MOVEMENT_ENABLED\s*=\s*)"false"\s*$/m,
+            '$1"true"',
+          );
+          fs.writeFileSync(output, `${input.slice(0, start)}${enabled}${input.slice(end)}`, { mode: 0o600 });
+          NODE
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" \
-            npx --yes wrangler@4.112.0 deploy --config wrangler.toml --env staging --keep-vars \
-            --var 'BEAUTY_MOVEMENT_ENABLED:true' --message "${candidate_message}"
+            npx --yes wrangler@4.112.0 deploy --config "${activation_config}" --env staging --keep-vars \
+            --message "${candidate_message}"
           deployments="$RUNNER_TEMP/beauty-movement-staging-smoke/candidate.json"
           candidate_version=''
           for attempt in $(seq 1 12); do
