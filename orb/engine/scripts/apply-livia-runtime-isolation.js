@@ -37,7 +37,7 @@ function assertPrecreatedManifest(manifestPath, candidate) {
   if (manifest.workflowSha256 !== stableHash({ nodes: candidate.nodes, connections: candidate.connections })) {
     fail('Precreated workflow runtime manifest does not match the candidate workflow hash.');
   }
-  if (!Array.isArray(manifest.entrypoints) || manifest.entrypoints.length !== 6 || manifest.entrypoints.some((entry) => !/^[a-f0-9]{64}$/.test(String(entry?.sha256 || '')))) {
+  if (!Array.isArray(manifest.entrypoints) || manifest.entrypoints.length !== 8 || manifest.entrypoints.some((entry) => !/^[a-f0-9]{64}$/.test(String(entry?.sha256 || '')))) {
     fail('Precreated workflow runtime manifest has an invalid entrypoint hash contract.');
   }
 }
