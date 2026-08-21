@@ -391,7 +391,10 @@ jobs:
           [[ "$candidate" =~ ^[0-9a-fA-F-]{36}$ && "$candidate" != "$IDENTITY_INCUMBENT_VERSION_ID" ]] || { echo 'Invalid staging Identity candidate'; exit 1; }
           echo "IDENTITY_CANDIDATE_VERSION_ID=$candidate" >> "$GITHUB_ENV"
           touch "$RUNNER_TEMP/identity-mutation-started"
-          WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/identity-staging-deploy.ndjson" inventory/node_modules/.bin/wrangler versions deploy "$candidate@100%" --yes --config inventory/wrangler.toml --env staging --message "ponto:staging:$RELEASE_SHA"
+          bash .github/scripts/ponto-wrangler-deploy.sh \
+            "$RUNNER_TEMP/identity-staging-deploy.ndjson" \
+            inventory/node_modules/.bin/wrangler versions deploy "$candidate@100%" \
+              --yes --config inventory/wrangler.toml --env staging --message "ponto:staging:$RELEASE_SHA"
           PONTO_EXPECTED_WRANGLER_ENV=staging node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/identity-staging-deploy.ndjson" version-deploy skincos-insumos-staging >/dev/null
           deployment="$(node -e "const fs=require('fs');const r=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).map(JSON.parse).filter(x=>x.type==='version-deploy').at(-1);process.stdout.write(String(r?.deployment_id||r?.id||''))" "$RUNNER_TEMP/identity-staging-deploy.ndjson")"
           [[ "$deployment" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid staging Identity deployment'; exit 1; }
@@ -891,11 +894,13 @@ jobs:
               echo "CORE_STAGING_CANDIDATE_VERSION_ID=$candidate_id" >> "$GITHUB_ENV"
               touch "$RUNNER_TEMP/core-staging-mutation-started"
               deploy_output="$RUNNER_TEMP/core-staging-deploy.ndjson"
-              WRANGLER_OUTPUT_FILE_PATH="$deploy_output" api/node_modules/.bin/wrangler versions deploy "$candidate_id@100%" \
-                --yes \
-                --config api/wrangler.ponto.toml \
-                --env staging \
-                --message "ponto:staging:$RELEASE_SHA"
+              bash .github/scripts/ponto-wrangler-deploy.sh \
+                "$deploy_output" \
+                api/node_modules/.bin/wrangler versions deploy "$candidate_id@100%" \
+                  --yes \
+                  --config api/wrangler.ponto.toml \
+                  --env staging \
+                  --message "ponto:staging:$RELEASE_SHA"
               PONTO_EXPECTED_WRANGLER_ENV=staging node .github/scripts/ponto-wrangler-output.mjs "$deploy_output" version-deploy skincos-ponto-core-staging > "$RUNNER_TEMP/core-staging-deploy.txt"
               deployment_id="$(node - "$deploy_output" <<'NODE'
           const fs = require("fs");
@@ -1298,9 +1303,15 @@ jobs:
           if [[ "$TARGET" == rollback ]]; then
             api/node_modules/.bin/wrangler rollback "$CORE_INCUMBENT_VERSION_ID" --yes --message "ponto:rollback:$RELEASE_SHA" --config "$PONTO_CORE_CONFIG"
           elif [[ "$candidate" == 100 ]]; then
-            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/core-version-deploy.ndjson" api/node_modules/.bin/wrangler versions deploy "$CORE_CANDIDATE_VERSION_ID@100%" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config "$PONTO_CORE_CONFIG"
+            bash .github/scripts/ponto-wrangler-deploy.sh \
+              "$RUNNER_TEMP/core-version-deploy.ndjson" \
+              api/node_modules/.bin/wrangler versions deploy "$CORE_CANDIDATE_VERSION_ID@100%" \
+                --yes --message "ponto:$TARGET:$RELEASE_SHA" --config "$PONTO_CORE_CONFIG"
           else
-            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/core-version-deploy.ndjson" api/node_modules/.bin/wrangler versions deploy "$CORE_INCUMBENT_VERSION_ID@${incumbent}%" "$CORE_CANDIDATE_VERSION_ID@${candidate}%" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config "$PONTO_CORE_CONFIG"
+            bash .github/scripts/ponto-wrangler-deploy.sh \
+              "$RUNNER_TEMP/core-version-deploy.ndjson" \
+              api/node_modules/.bin/wrangler versions deploy "$CORE_INCUMBENT_VERSION_ID@${incumbent}%" "$CORE_CANDIDATE_VERSION_ID@${candidate}%" \
+                --yes --message "ponto:$TARGET:$RELEASE_SHA" --config "$PONTO_CORE_CONFIG"
           fi
           if [[ "$TARGET" == rollback ]]; then
             api/node_modules/.bin/wrangler deployments status --json --config "$PONTO_CORE_CONFIG" > "$RUNNER_TEMP/core-deployment.json"
@@ -1747,7 +1758,10 @@ jobs:
             )"
           else
             if [[ "$candidate" == 100 ]]; then versions=("$IDENTITY_CANDIDATE_VERSION_ID@100%"); else versions=("$IDENTITY_INCUMBENT_VERSION_ID@100%" "$IDENTITY_CANDIDATE_VERSION_ID@0%"); fi
-            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/identity-version-deploy.ndjson" inventory/node_modules/.bin/wrangler versions deploy "${versions[@]}" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config inventory/wrangler.toml
+            bash .github/scripts/ponto-wrangler-deploy.sh \
+              "$RUNNER_TEMP/identity-version-deploy.ndjson" \
+              inventory/node_modules/.bin/wrangler versions deploy "${versions[@]}" \
+                --yes --message "ponto:$TARGET:$RELEASE_SHA" --config inventory/wrangler.toml
             PONTO_EXPECTED_WRANGLER_ENV=production node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/identity-version-deploy.ndjson" version-deploy skincos-insumos >/dev/null
             deployment="$(node -e "const fs=require('fs');const r=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).map(JSON.parse).filter(x=>x.type==='version-deploy').at(-1);process.stdout.write(String(r?.deployment_id||r?.id||''))" "$RUNNER_TEMP/identity-version-deploy.ndjson")"
           fi
