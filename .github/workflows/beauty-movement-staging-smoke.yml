@@ -367,6 +367,26 @@ jobs:
           ' "${OUTPUT_DIR}")"
           token="${invite_url##*#c=}"
           [[ "${token}" =~ ^[A-Za-z0-9_-]{40,180}$ ]] || { echo 'synthetic invite token shape invalid'; exit 1; }
+          invite_ref="$(node --input-type=commonjs -e '
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const directory = process.argv[1];
+          const file = fs.readdirSync(directory).find((name) => name.endsWith("-delivery.csv"));
+          if (!file) throw new Error("beauty_movement_delivery_missing");
+          const row = fs.readFileSync(path.join(directory, file), "utf8").trim().split(/\r?\n/)[1];
+          const cells = row.match(/("(?:[^"]|"")*"|[^,]*)/g)?.filter((cell) => cell !== "") ?? [];
+          const value = cells[1]?.replace(/^"|"$/g, "").replace(/""/g, "\"");
+          if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(value ?? "")) throw new Error("beauty_movement_delivery_ref_invalid");
+          process.stdout.write(value);
+          ' "${OUTPUT_DIR}")"
+          [[ "${invite_ref}" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$ ]] || { echo 'synthetic invite reference shape invalid'; exit 1; }
+          node - "${state}" "${invite_ref}" <<'NODE'
+          const fs = require('node:fs');
+          const [statePath, inviteRef] = process.argv.slice(2);
+          const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          state.inviteRef = inviteRef;
+          fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+          NODE
           SMOKE_INVITE_TOKEN="${token}" node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import { chromium } from 'playwright';
@@ -457,7 +477,8 @@ jobs:
         run: |
           set -euo pipefail
           readback="$RUNNER_TEMP/beauty-movement-staging-smoke/readback.json"
-          readback_sql="SELECT c.status AS campaign_status, i.invite_status, i.confirmed_at_ms, i.outcome_key, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.assigned_outcome_key, i.assignment_protocol_version, length(i.outcome_snapshot_json) AS outcome_snapshot_length, length(i.planned_card_selections_json) AS planned_card_selections_length, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_campaigns c INNER JOIN bm_invites i ON i.campaign_id = c.id WHERE c.id = '${CAMPAIGN_ID}' AND i.external_ref = 'velocity-0002';"
+          invite_ref="$(node --input-type=commonjs -e 'const fs=require("node:fs"); const state=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const value=state.inviteRef; if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(value ?? "")) throw new Error("beauty_movement_delivery_ref_invalid"); process.stdout.write(value);' "${STATE_FILE}")"
+          readback_sql="SELECT c.status AS campaign_status, i.invite_status, i.confirmed_at_ms, i.outcome_key, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.assigned_outcome_key, i.assignment_protocol_version, length(i.outcome_snapshot_json) AS outcome_snapshot_length, length(i.planned_card_selections_json) AS planned_card_selections_length, (SELECT COUNT(*) FROM bm_card_reveals r WHERE r.invite_id = i.id) AS reveal_count FROM bm_campaigns c INNER JOIN bm_invites i ON i.campaign_id = c.id WHERE c.id = '${CAMPAIGN_ID}' AND i.external_ref = '${invite_ref}';"
           npx --yes wrangler@4.112.0 d1 execute "${STAGING_D1_DATABASE}" --remote --config wrangler.toml --env staging --command "${readback_sql}" --json >"${readback}"
           node - "${readback}" "${RUNNER_TEMP}/beauty-movement-staging-smoke/browser.json" <<'NODE'
           const fs = require('node:fs');
