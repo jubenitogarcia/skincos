@@ -171,7 +171,7 @@ test("compact Velocity imports also accept only name and WhatsApp", () => {
     if (validation.ok) assert.equal(validation.rows[0]?.velocityBenefit, "aula_cortesia_evento");
 });
 
-test("compact Velocity imports fail closed without campaign expiry or with another prize", () => {
+test("compact invite imports fail closed without campaign expiry and map canonical prizes", async () => {
     const csv = [
         "nome,telefone,premio",
         "Ana Silva,51999991234,Velocity",
@@ -180,13 +180,50 @@ test("compact Velocity imports fail closed without campaign expiry or with anoth
     assert.equal(withoutExpiry.ok, false);
     if (!withoutExpiry.ok) assert.equal(withoutExpiry.issues.some((entry) => entry.code === "compact_expiry_unavailable"), true);
 
-    const unsupported = validateBeautyMovementImport({
+    const commercial = validateBeautyMovementImport({
         csv: csv.replace("Velocity", "Preenchimento"),
         nowMs: NOW,
         defaultExpiresAtMs: EXPIRES_MS,
     });
-    assert.equal(unsupported.ok, false);
-    if (!unsupported.ok) assert.equal(unsupported.issues.some((entry) => entry.code === "unsupported_prize"), true);
+    assert.equal(commercial.ok, true);
+    if (commercial.ok) {
+        assert.equal(commercial.rows[0]?.assignedOutcomeKey, "filler_double");
+        assert.equal(commercial.rows[0]?.velocityBenefit, "none");
+    }
+
+    const unknown = validateBeautyMovementImport({
+        csv: csv.replace("Velocity", "Premio desconhecido"),
+        nowMs: NOW,
+        defaultExpiresAtMs: EXPIRES_MS,
+    });
+    assert.equal(unknown.ok, false);
+    if (!unknown.ok) assert.equal(unknown.issues.some((entry) => entry.code === "unsupported_prize"), true);
+});
+
+test("assigned commercial compact imports persist a deterministic symbolic triplet", async () => {
+    const plan = await prepareBeautyMovementImport({
+        csv: [
+            "NOME,TELEFONE,PRÊMIO",
+            "Ana Silva,51999991234,Estrutura & Estímulo",
+        ].join("\n"),
+        campaignId: "nh-assigned",
+        campaignConfig: validCampaignConfig(),
+        campaignEndsAtMs: EXPIRES_MS,
+        tokenHmacKey: TOKEN_KEY,
+        piiKey: PII_KEY,
+        nowMs: NOW,
+    });
+    assert.equal(plan.invites[0]?.assignedOutcomeKey, "sculptra_classic_unlock");
+    assert.equal(plan.invites[0]?.assignmentProtocolVersion, "beauty-movement-invite-assignments-v1");
+    assert.deepEqual(JSON.parse(plan.invites[0]!.plannedCardSelectionsJson), {
+        beleza: "beleza-autoria",
+        movimento: "movimento-potencia",
+        celebracao: "celebracao-confianca",
+    });
+    const sql = buildBeautyMovementImportSql(plan);
+    assert.match(sql, /assigned_outcome_key, assignment_protocol_version, planned_card_selections_json/);
+    assert.match(sql, /sculptra_classic_unlock/);
+    assert.match(sql, /beauty-movement-invite-assignments-v1/);
 });
 
 test("CLI dry-run forwards campaign expiry to compact Velocity validation", async () => {
@@ -382,4 +419,8 @@ test("D1 migrations preserve the structured reward-to-palette invariant", async 
     assert.match(outcomeMigration, /outcome_key/);
     assert.match(outcomeMigration, /outcome_snapshot_json/);
     assert.match(outcomeMigration, /outcome_protocol_version/);
+    const assignmentMigration = await readFile(new URL("../migrations/beauty-movement/0005_invite_assignments.sql", import.meta.url), "utf8");
+    assert.match(assignmentMigration, /assigned_outcome_key/);
+    assert.match(assignmentMigration, /assignment_protocol_version/);
+    assert.match(assignmentMigration, /planned_card_selections_json/);
 });

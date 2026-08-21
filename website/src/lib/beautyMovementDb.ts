@@ -13,7 +13,12 @@ import {
     type BeautyMovementEncryptedPersonalData,
 } from "@/lib/beautyMovementSecurity";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
-import type { BeautyMovementBenefitStatus, BeautyMovementInviteStatus, BeautyMovementPalette } from "@/lib/beautyMovementImport";
+import {
+    BEAUTY_MOVEMENT_ASSIGNMENT_PROTOCOL_VERSION,
+    type BeautyMovementBenefitStatus,
+    type BeautyMovementInviteStatus,
+    type BeautyMovementPalette,
+} from "@/lib/beautyMovementImport";
 import type {
     BeautyMovementDiscountKind,
     BeautyMovementRewardType,
@@ -94,6 +99,9 @@ type InviteRow = CampaignRow & {
     contact_mask: string;
     palette: BeautyMovementPalette;
     reward_id: string | null;
+    assigned_outcome_key: BeautyMovementOutcomeKey | null;
+    assignment_protocol_version: string | null;
+    planned_card_selections_json: string | null;
     outcome_key: BeautyMovementOutcomeKey | null;
     outcome_snapshot_json: string | null;
     outcome_protocol_version: string | null;
@@ -447,7 +455,8 @@ async function findInviteByTokenHash(db: BeautyMovementD1, tokenHash: string): P
             `SELECT
                 i.id AS invite_id, i.invite_status, i.expires_at_ms AS invite_expires_at_ms,
                 i.personal_data_version, i.personal_data_ciphertext, i.personal_data_iv, i.contact_mask,
-                i.palette, i.reward_id, i.outcome_key, i.outcome_snapshot_json, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.velocity_benefit,
+                i.palette, i.reward_id, i.assigned_outcome_key, i.assignment_protocol_version, i.planned_card_selections_json,
+                i.outcome_key, i.outcome_snapshot_json, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.velocity_benefit,
                 i.benefit_status, i.benefit_text, i.benefit_validity, i.benefit_rules, i.terms_version,
                 r.reward_type, r.procedure_name AS reward_procedure_name,
                 r.discount_kind AS reward_discount_kind, r.discount_value AS reward_discount_value,
@@ -481,7 +490,8 @@ async function findSessionByTokenHash(db: BeautyMovementD1, tokenHash: string): 
                 s.id AS session_id, s.expires_at_ms AS session_expires_at_ms, s.revoked_at_ms AS session_revoked_at_ms,
                 i.id AS invite_id, i.invite_status, i.expires_at_ms AS invite_expires_at_ms,
                 i.personal_data_version, i.personal_data_ciphertext, i.personal_data_iv, i.contact_mask,
-                i.palette, i.reward_id, i.outcome_key, i.outcome_snapshot_json, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.velocity_benefit,
+                i.palette, i.reward_id, i.assigned_outcome_key, i.assignment_protocol_version, i.planned_card_selections_json,
+                i.outcome_key, i.outcome_snapshot_json, i.outcome_protocol_version, i.outcome_resolved_at_ms, i.velocity_benefit,
                 i.benefit_status, i.benefit_text, i.benefit_validity, i.benefit_rules, i.terms_version,
                 r.reward_type, r.procedure_name AS reward_procedure_name,
                 r.discount_kind AS reward_discount_kind, r.discount_value AS reward_discount_value,
@@ -621,6 +631,48 @@ async function resolveAndPersistOutcome(params: {
     nowMs: number;
 }): Promise<BeautyMovementOffer | null> {
     if (params.reveals.length !== 3) return null;
+    const hasInviteAssignment = params.row.assignment_protocol_version === BEAUTY_MOVEMENT_ASSIGNMENT_PROTOCOL_VERSION;
+    if (hasInviteAssignment) {
+        const assignedOutcomeKey = params.row.assigned_outcome_key;
+        if (assignedOutcomeKey !== null && !BEAUTY_MOVEMENT_OUTCOME_KEYS.includes(assignedOutcomeKey)) {
+            throw new Error("beauty_movement_assigned_outcome_invalid");
+        }
+        // Velocity is a guaranteed courtesy outcome, not a commercial offer.
+        // Never let the symbolic cards manufacture a commercial result for it.
+        if (assignedOutcomeKey === null) {
+            if (params.row.outcome_key !== null) throw new Error("beauty_movement_outcome_mismatch");
+            return null;
+        }
+
+        const assignedOffer = getBeautyMovementOffer(assignedOutcomeKey);
+        const assignedSnapshot = JSON.stringify(assignedOffer);
+        if (params.row.outcome_key !== null) {
+            const stored = renderStoredOffer(params.row);
+            if (!stored || params.row.outcome_key !== assignedOutcomeKey) {
+                throw new Error("beauty_movement_outcome_mismatch");
+            }
+            // Assignment authority is immutable. A previously persisted
+            // snapshot may use an older commercial protocol, but it must still
+            // belong to the assigned outcome and remain structurally valid.
+            return stored;
+        }
+        await params.db
+            .prepare(
+                `UPDATE bm_invites
+                 SET outcome_key = COALESCE(outcome_key, ?),
+                     outcome_snapshot_json = COALESCE(outcome_snapshot_json, ?),
+                     outcome_protocol_version = COALESCE(outcome_protocol_version, ?),
+                     outcome_resolved_at_ms = COALESCE(outcome_resolved_at_ms, ?),
+                     updated_at_ms = ?
+                 WHERE id = ? AND outcome_key IS NULL`,
+            )
+            .bind(assignedOutcomeKey, assignedSnapshot, BEAUTY_MOVEMENT_OUTCOME_PROTOCOL_VERSION, params.nowMs, params.nowMs, params.row.invite_id)
+            .run();
+        return assignedOffer;
+    }
+
+    // Legacy invitations without the assignment protocol retain their
+    // historical card-derived behavior for backwards compatibility.
     const selections = {
         beleza: params.reveals.find((reveal) => reveal.act_index === 1)?.card_id,
         movimento: params.reveals.find((reveal) => reveal.act_index === 2)?.card_id,
