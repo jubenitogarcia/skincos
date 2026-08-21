@@ -192,8 +192,9 @@ não há fallback para caminho local, chat ou outro checkout.
 
 ### Sequência e compensação
 
-1. A promoção reutiliza a cadeia `preview → staging → production` e verifica a
-   migration `0004_card_outcomes.sql` e as colunas/índice de outcomes em D1.
+1. A promoção reutiliza a cadeia `preview → staging → production` e verifica as
+   migrations `0004_card_outcomes.sql` e `0005_invite_assignments.sql`,
+   incluindo as colunas/índices de outcomes e da atribuição autoritativa em D1.
 2. O pacote é importado como `draft`; um readback confirma o identificador novo
    e a quantidade de convites antes de qualquer deploy.
 3. O workflow captura a versão Worker incumbente, compila o SHA promovido,
