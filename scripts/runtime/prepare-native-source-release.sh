@@ -339,6 +339,7 @@ sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/patch-livia-schedule-cadence.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-today-first-selection.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-job-graph-payload-file.js" \
+  "$DESTINATION/orb/engine/scripts/patch-livia-publish-idempotency.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-notification-contract.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-ai-reel-covers.js" \
   "$DESTINATION/orb/engine/scripts/patch-livia-runtime-isolation.js" \
@@ -357,6 +358,8 @@ sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/livia/build-platform-job-graph.js" \
   "$DESTINATION/orb/engine/scripts/livia/verify-published-artifacts.js" \
   "$DESTINATION/orb/engine/scripts/livia/publish-progress-ledger.js" \
+  "$DESTINATION/orb/engine/scripts/livia/publication-lock.js" \
+  "$DESTINATION/orb/engine/scripts/livia/release-publication-lock.js" \
   "$DESTINATION/orb/engine/scripts/livia/validate-publish-token-health.js"
 # The Meta Ads Publish preflight also runs as postgres for peer authentication.
 # Its source comparison reads the immutable workflow export and all Code-node

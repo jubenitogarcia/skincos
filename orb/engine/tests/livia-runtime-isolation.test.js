@@ -29,6 +29,7 @@ function fixture() {
       commandNode('Verify Published Artifacts', `={{ node '/mnt/c/CodexRuntime/operator/admin/skincos/livia-verify-provider-copy-drift-wrapper.js' --verifier '${RELEASE_ROOT}/scripts/livia/verify-published-artifacts.js' --payload - }}`),
       commandNode('Record Publish Progress', pinned('publish-progress-ledger.js')),
       commandNode('Validate Publish Token Health', pinned('validate-publish-token-health.js')),
+      commandNode('Cleanup Temp Files', '={{ (() => { return `node <<\'NODE\'\nNODE`; })() }}'),
       { name: 'BQ - Seed Publish State', type: 'n8n-nodes-base.code', parameters: { jsCode: 'const resumeBySemanticKey = new Map(); const completedSemanticJobKeys = new Set();' } },
       { name: 'Process HTTP Publish Result', type: 'n8n-nodes-base.code', parameters: { jsCode: 'const row = { semanticJobKey: str(source.semanticJobKey, "") };' } },
     ],
