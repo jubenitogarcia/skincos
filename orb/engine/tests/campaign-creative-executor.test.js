@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 const {
   AdapterRegistry,
@@ -31,6 +33,11 @@ function job(jobId, capability, extra = {}) {
     ...extra,
   };
 }
+
+test('example environment never contains CCG executor authentication material', () => {
+  const envExample = fs.readFileSync(path.join(__dirname, '..', '.env.example'), 'utf8');
+  assert.doesNotMatch(envExample, /^CCG_EXECUTOR_AUTH_TOKEN=/m);
+});
 
 function manifest(jobs, extra = {}) {
   const maxJobs = Math.max(1, jobs.length);
