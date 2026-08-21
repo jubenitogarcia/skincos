@@ -123,6 +123,7 @@ function validateStructure() {
     'Prepare Drive Publication Marks',
     'Collect Drive Publication Marks',
     'Assert Drive Published',
+    'Release Livia Publication Lock',
   ]) {
     assert(names.has(name), `Missing node: ${name}`);
   }
@@ -308,6 +309,7 @@ function validateContracts() {
   const switchOutput = String(getNode('Switch Publish Route')?.parameters?.output || '');
   const prepareHttp = codeOf('Prepare HTTP Publish Request');
   const processHttp = codeOf('Process HTTP Publish Result');
+  const publicationWindow = codeOf('Assert Livia Publication Window');
   const collect = codeOf('Collect Publish Results');
   const tokenHealthCommand = commandOf('Validate Publish Token Health');
   const verifyCommand = commandOf('Verify Published Artifacts');
@@ -321,6 +323,8 @@ function validateContracts() {
   const writeFileName = String(getNode('Write File')?.parameters?.fileName || '');
   const finalDryRunOutput = String(getNode('Switch Final Dry Run')?.parameters?.output || '');
   const httpParameters = getNode('HTTP Request')?.parameters || {};
+  const httpNode = getNode('HTTP Request');
+  const prepareHttpNode = getNode('Prepare HTTP Publish Request');
   const httpUrl = String(httpParameters.url || '');
   const httpJsonBody = String(httpParameters.jsonBody || '');
   const notifyPhone = String(getNode('Inform Success (1)')?.parameters?.remoteJid || '');
@@ -425,6 +429,12 @@ function validateContracts() {
   assert(httpUrl.includes('/v1/social-publish/operations'), 'HTTP Request must route real social publishing through the Token Vault gateway');
   assert(httpJsonBody.includes('platform: $json.platform'), 'HTTP Request gateway payload must retain the target platform');
   assert(httpJsonBody.includes('unit: $json.unit'), 'HTTP Request gateway payload must retain the target unit');
+  assert(httpNode?.retryOnFail === false && !Object.prototype.hasOwnProperty.call(httpNode || {}, 'maxTries'), 'HTTP Request must not retry mutating social operations automatically.');
+  assert(prepareHttpNode?.retryOnFail === false, 'Prepare HTTP Publish Request must not retry the outbound queue transition automatically.');
+  assert(publicationWindow.includes('livia_publication_lock_v1') && publicationWindow.includes("fs.openSync(publicationLockPath, 'wx'"), 'Assert Livia Publication Window must atomically acquire the Livia publication lease.');
+  assert(typeOf('Release Livia Publication Lock') === 'n8n-nodes-base.executeCommand', 'Release Livia Publication Lock must be an Execute Command node.');
+  assert(commandOf('Release Livia Publication Lock').includes('release-publication-lock.js'), 'Release Livia Publication Lock must call the immutable helper.');
+  assert(connectionExists('Cleanup Temp Files', 'Release Livia Publication Lock'), 'Cleanup Temp Files must release the Livia publication lease.');
 
   if (hasCompactBuildQueue) {
     assert(prepareHttp.includes('runPrepareRequestLifecycle'), 'Prepare HTTP Publish Request must reuse runPrepareRequestLifecycle');
@@ -453,11 +463,13 @@ function validateContracts() {
   assert(processHttp.includes('id: simulatedRemoteId'), 'Codex dry-run response body must include a synthetic Graph-compatible ID');
   assert(processHttp.includes('compactResumeRecord'), 'Process HTTP Publish Result must emit a sanitized durable progress record');
   assert(processHttp.includes('semanticJobKey: str(source.semanticJobKey'), 'Process HTTP Publish Result must preserve semanticJobKey in durable progress records');
+  assert(processHttp.includes('executionId: str(execId'), 'Process HTTP Publish Result must carry the execution lease owner into the progress ledger');
   assert(processHttp.includes('facebook_static_photo_already_posted_recovery'), 'Process HTTP Publish Result must recover an already-published Facebook static photo without duplicating it');
   assert(codeOf('BQ - Seed Publish State').includes('resumeBySemanticKey'), 'BQ - Seed Publish State must restore durable completed jobs by semantic identity');
   assert(codeOf('BQ - Seed Publish State').includes('completedSemanticJobKeys'), 'BQ - Seed Publish State must not use sequential indexes as durable resume keys');
   assert(codeOf('BQ - Validate Job Graph').includes('resumeCompleted: asArray(payload.resumeCompleted)'), 'BQ - Validate Job Graph must preserve durable completed jobs');
   assert(commandOf('Record Publish Progress').includes('publish-progress-ledger.js'), 'Record Publish Progress must call the private runtime ledger script');
+  assert(fs.readFileSync(path.join(__dirname, 'livia', 'publish-progress-ledger.js'), 'utf8').includes('heartbeat(executionId)'), 'Publish progress ledger must refresh the execution lease after accepted provider responses');
   assert(!codeOf('BQ - Seed Publish State').includes('completedRunIndexes'), 'BQ - Seed Publish State must not use publishRunIndex as a durable resume identity');
   assert(collect.includes('buildFinalCollectorRows'), 'Collect Publish Results must reuse buildFinalCollectorRows');
   assert(collect.includes('buildPublishVerificationTargets'), 'Collect Publish Results must produce provider verification targets');

@@ -160,6 +160,18 @@ problemática, o checkpoint e logs para diagnóstico.
 
 ## Retenção e retomada
 
+### Exclusão de execução concorrente
+
+O candidato também protege a janela de publicação com um lease atômico em
+`/var/lib/skincos-runtime/orb/state/livia-publication.lock`. O nó `Assert Livia
+Publication Window` adquire o lease antes do grafo outbound; uma segunda
+execução falha fechada antes do gateway. Cada resposta aceita atualiza o lease
+através do ledger semântico e o cleanup libera o arquivo ao final. O lease tem
+expiração de duas horas para recuperar uma execução interrompida, sem apagar o
+ledger nem repetir uma publicação ambígua. O nó `HTTP Request` permanece sem
+retentativa automática porque o POST social pode ter sido aceito mesmo quando a
+resposta se perde.
+
 Antes de qualquer cleanup, rode:
 
 ```bash
