@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -189,8 +190,7 @@ test("compact Velocity imports fail closed without campaign expiry or with anoth
 });
 
 test("CLI dry-run forwards campaign expiry to compact Velocity validation", async () => {
-    const privateRoot = "/mnt/c/CodexRuntime/operator/admin/skincos/beauty-movement";
-    await mkdtemp(path.join(privateRoot, "beauty-movement-cli-test-")).then(async (directory) => {
+    await mkdtemp(path.join(tmpdir(), "beauty-movement-cli-test-")).then(async (directory) => {
         const inputPath = path.join(directory, "invites.csv");
         const campaignPath = path.join(directory, "campaign.json");
         const endsAt = "2099-12-31T23:59:00Z";
