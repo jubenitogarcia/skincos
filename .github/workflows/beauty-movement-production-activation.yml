@@ -315,7 +315,10 @@ jobs:
           test -f "${RUNNER_TEMP}/beauty-movement-production-activation/website-lease.json"
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" node scripts/assert-production-snapshot.mjs
           NEXT_PUBLIC_BUILD_SHA="${RELEASE_SHA}" NEXT_PUBLIC_BUILD_TIME="${GITHUB_RUN_ID}" npx opennextjs-cloudflare build
-          activation_config="${ACTIVATION_ROOT}/wrangler-enabled.toml"
+          # Keep the private overlay beside the checked-out website so Wrangler
+          # resolves the relative OpenNext entrypoint from the website root.
+          activation_config="${PWD}/.beauty-movement-wrangler-enabled.toml"
+          trap 'rm -f "${activation_config}"' EXIT
           node - "${activation_config}" <<'NODE'
           const fs = require('node:fs');
           const output = process.argv[2];
