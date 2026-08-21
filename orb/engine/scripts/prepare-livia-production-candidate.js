@@ -14,6 +14,7 @@ const { patchWorkflow: patchTokenVaultPreflight } = require('./patch-livia-token
 const { patchWorkflow: patchAccessibilityContract } = require('./patch-livia-accessibility-contract');
 const { patchWorkflow: patchFacebookCarouselContract } = require('./patch-livia-facebook-carousel-contract');
 const { patchWorkflow: patchJobGraphPayloadFile } = require('./patch-livia-job-graph-payload-file');
+const { patchWorkflow: patchPublishIdempotency } = require('./patch-livia-publish-idempotency');
 const { patchWorkflow: patchScheduleCadence } = require('./patch-livia-schedule-cadence');
 const { patchWorkflow: patchTodayFirstSelection } = require('./patch-livia-today-first-selection');
 const { patchWorkflow: patchNotificationContract, validate: validateNotificationContract } = require('./patch-livia-notification-contract');
@@ -54,6 +55,7 @@ function buildCandidate(workflow, releaseRoot) {
   validateAiReelCovers(candidate);
   const semanticResumeNodes = patchResumeIdentity(candidate);
   const runtimeNodes = pinRuntimeIsolation(candidate, releaseRoot);
+  candidate = patchPublishIdempotency(candidate, releaseRoot);
 
   return {
     workflow: candidate,
@@ -72,6 +74,7 @@ function buildCandidate(workflow, releaseRoot) {
         'notification-contract',
         'ai-reel-cover-generation',
         'runtime-isolation',
+        'publish-idempotency',
       ],
       runtimeNodes,
       semanticResumeNodes,
