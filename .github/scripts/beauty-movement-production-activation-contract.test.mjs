@@ -60,6 +60,9 @@ test("schema, draft readback, build attestation, browser journey and persisted o
   assert.match(workflow, /outcome_protocol_version/);
   assert.match(workflow, /beauty-movement-outcomes-v2/);
   assert.match(workflow, /outcome_snapshot_length/);
+  assert.match(workflow, /delivery-meta\.json/);
+  assert.match(workflow, /i\.external_ref = '\$\{invite_ref\}'/);
+  assert.doesNotMatch(workflow, /i\.external_ref = 'velocity-0002'/);
 });
 
 test("failed or incomplete activation compensates only run-scoped data and restores the attested incumbent", () => {
