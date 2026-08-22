@@ -290,6 +290,20 @@ test("private signing custody is never persisted or inherited by direct rollback
   assert.doesNotMatch(drillScript, /createCapabilityCheck|capabilityExternalId/);
 });
 
+test("Core production candidate selection has Cloudflare custody before querying deployments", () => {
+  const core = fs.readFileSync(
+    new URL("../workflows/deploy-core-workers.yml", import.meta.url),
+    "utf8",
+  );
+  const start = core.indexOf("- name: Test and select the route-isolated Ponto Core candidate");
+  const end = core.indexOf("\n      - name: Resolve incumbent Core version", start);
+  assert.ok(start >= 0 && end > start, "Ponto Core candidate selection step must remain present");
+  const step = core.slice(start, end);
+  assert.match(step, /env:\s*\n\s+CLOUDFLARE_API_TOKEN:\s+\$\{\{\s*secrets\.CLOUDFLARE_API_TOKEN\s*\}\}/);
+  assert.match(step, /CLOUDFLARE_ACCOUNT_ID:\s+\$\{\{\s*secrets\.CLOUDFLARE_ACCOUNT_ID\s*\}\}/);
+  assert.match(step, /wrangler deployments status --name skincos-api --json/);
+});
+
 test("current Pages and Ponto mutators are fenced from legacy repository controls", () => {
   const readWorkflow = (name) => fs.readFileSync(
     new URL(`../workflows/${name}`, import.meta.url),
