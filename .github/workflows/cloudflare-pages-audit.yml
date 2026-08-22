@@ -55,6 +55,10 @@ jobs:
             env_vars=env_cfg.get("env_vars") or {}
             keys=sorted(env_vars.keys())
             print(f"{env} env var keys ({len(keys)}):", ", ".join(keys) if keys else "(none)")
+            for name in ("PONTO_API_TARGET", "PONTO_PROXY_TOKEN", "PONTO_ACTOR_HMAC_KEY"):
+              binding=env_vars.get(name)
+              binding_type=binding.get("type") if isinstance(binding, dict) else None
+              print(f"{env} {name} binding type:", binding_type or "absent")
           PY
 
       - name: Check required env vars (presence only)
