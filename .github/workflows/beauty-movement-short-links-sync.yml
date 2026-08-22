@@ -1,0 +1,280 @@
+name: Beauty Movement short-link sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact website SHA currently serving the active campaign
+        required: true
+        type: string
+      campaign_id:
+        description: Active production campaign whose links are being handed off
+        required: true
+        type: string
+      campaign_ends_at:
+        description: Campaign expiry used to validate the private source package
+        required: true
+        type: string
+      expected_input_sha256:
+        description: SHA-256 of the approved private invites CSV
+        required: true
+        type: string
+
+concurrency:
+  group: beauty-movement-short-links-${{ inputs.campaign_id }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  staging-contract:
+    name: Staging-equivalent short-link contract gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install exact website dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Validate short-link contract with synthetic rows only
+        working-directory: website
+        run: node --experimental-test-module-mocks --import tsx --test tests/beautyMovementShortLinks.test.ts
+
+  production-sync:
+    name: Apply private redirects and attest live resolution
+    needs: staging-contract
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    permissions:
+      actions: write
+      contents: read
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      CAMPAIGN_ID: ${{ inputs.campaign_id }}
+      CAMPAIGN_ENDS_AT: ${{ inputs.campaign_ends_at }}
+      EXPECTED_INPUT_SHA256: ${{ inputs.expected_input_sha256 }}
+      WORKFLOW_SHA: ${{ github.sha }}
+      PRODUCTION_URL: https://espacofacial.com
+      PRODUCTION_D1_DATABASE: espacofacial-beauty-movement
+      BOOKING_D1_DATABASE: espacofacial-booking
+      PRODUCTION_WORKER_NAME: espacofacial-site
+      BOOKING_WORKER_CONFIG: wrangler.toml
+
+    steps:
+      - name: Checkout source and verify serving logic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install exact website dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Guard release, route and private runtime scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == "jubenitogarcia/skincos" ]] || { echo 'unexpected repository'; exit 1; }
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
+          [[ "${WORKFLOW_SHA}" == "$(git rev-parse --verify HEAD)" ]] || { echo 'checked out SHA differs from workflow SHA'; exit 1; }
+          git cat-file -e "${RELEASE_SHA}:website/src/lib/beautyMovementImport.ts" || { echo 'release source does not contain the importer'; exit 1; }
+          git cat-file -e "${RELEASE_SHA}:website/src/app/BelezaEmMovimento/page.tsx" || { echo 'release source does not contain the canonical campaign route'; exit 1; }
+          git diff --quiet "${RELEASE_SHA}" -- website/src/lib/beautyMovementImport.ts website/src/lib/beautyMovementSecurity.ts website/src/lib/beautyMovementOutcomes.ts || { echo 'token derivation source differs from the serving release'; exit 1; }
+          [[ "${CAMPAIGN_ID}" =~ ^[a-z0-9][a-z0-9_-]{2,79}$ ]] || { echo 'campaign_id shape is invalid'; exit 1; }
+          [[ "${CAMPAIGN_ENDS_AT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,3})?)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] || { echo 'campaign_ends_at must be ISO-8601'; exit 1; }
+          [[ "${EXPECTED_INPUT_SHA256}" =~ ^[0-9a-f]{64}$ ]] || { echo 'expected_input_sha256 must be a lowercase SHA-256'; exit 1; }
+          [[ "${PRODUCTION_URL}" == "https://espacofacial.com" ]] || { echo 'production URL guard failed'; exit 1; }
+          [[ "${BOOKING_D1_DATABASE}" == "espacofacial-booking" ]] || { echo 'booking D1 guard failed'; exit 1; }
+          export SHORT_LINK_ROOT="${RUNNER_TEMP}/beauty-movement-short-links"
+          mkdir -p "${SHORT_LINK_ROOT}"
+          {
+            echo "SHORT_LINK_ROOT=${SHORT_LINK_ROOT}"
+            echo "DELIVERY_INPUT=${SHORT_LINK_ROOT}/invites.csv"
+            echo "DELIVERY_CAMPAIGN=${SHORT_LINK_ROOT}/campaign.json"
+            echo "DELIVERY_OUTPUT=${SHORT_LINK_ROOT}/delivery.csv"
+            echo "DELIVERY_SUMMARY=${SHORT_LINK_ROOT}/delivery-summary.json"
+            echo "DELIVERY_ATTESTATION=${SHORT_LINK_ROOT}/delivery-attestation.json"
+            echo "SHORT_OUTPUT=${SHORT_LINK_ROOT}/short-delivery.csv"
+            echo "SHORT_SQL=${SHORT_LINK_ROOT}/short-links.sql"
+            echo "SHORT_CONFLICTS=${SHORT_LINK_ROOT}/short-links-conflicts.sql"
+            echo "SHORT_READBACK=${SHORT_LINK_ROOT}/short-links-readback.sql"
+            echo "SHORT_ATTESTATION=${SHORT_LINK_ROOT}/short-links-attestation.json"
+            echo "SHORT_SUMMARY=${SHORT_LINK_ROOT}/short-links-summary.json"
+            echo "D1_CONFLICT_READBACK=${SHORT_LINK_ROOT}/d1-conflict-readback.json"
+            echo "D1_APPLY_READBACK=${SHORT_LINK_ROOT}/d1-apply-readback.json"
+            echo "D1_FINAL_READBACK=${SHORT_LINK_ROOT}/d1-final-readback.json"
+            echo "LIVE_HEADERS=${SHORT_LINK_ROOT}/live-headers.txt"
+            echo "SHORT_PROBE_HEADERS=${SHORT_LINK_ROOT}/short-probe-headers.txt"
+          } >> "${GITHUB_ENV}"
+
+      - name: Materialize private source package in runner-only storage
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
+          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
+          PRODUCTION_INVITES_CSV: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV }}
+          PRODUCTION_CAMPAIGN_JSON: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for required in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID BEAUTY_MOVEMENT_TOKEN_HMAC_KEY BEAUTY_MOVEMENT_PII_KEY PRODUCTION_INVITES_CSV PRODUCTION_CAMPAIGN_JSON; do
+            [[ -n "${!required:-}" ]] || { echo "required production custody is unavailable: ${required}"; exit 1; }
+          done
+          printf '%s' "${PRODUCTION_INVITES_CSV}" > "${DELIVERY_INPUT}"
+          printf '%s' "${PRODUCTION_CAMPAIGN_JSON}" > "${DELIVERY_CAMPAIGN}"
+          chmod 600 "${DELIVERY_INPUT}" "${DELIVERY_CAMPAIGN}"
+          echo 'Private source package materialized in runner-only storage.'
+
+      - name: Prove the requested website release is live
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl -fsS -D "${LIVE_HEADERS}" -o /dev/null -w '%{http_code}' "${PRODUCTION_URL}/BelezaEmMovimento")"
+          [[ "${status}" == "200" ]] || { echo "canonical campaign route is not ready (HTTP ${status})"; exit 1; }
+          live_sha="$(awk 'BEGIN{IGNORECASE=1} /^x-app-build:/ {gsub(/[\r ]/, "", $2); print tolower($2); exit}' "${LIVE_HEADERS}")"
+          [[ "${live_sha}" == "${RELEASE_SHA}" ]] || { echo 'live website build differs from requested release_sha'; exit 1; }
+
+      - name: Derive canonical delivery and private short-link plan
+        working-directory: website
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-short-links
+          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
+          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
+          GITHUB_ACTIONS: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent beauty-movement:export-delivery -- \
+            --input "${DELIVERY_INPUT}" \
+            --campaign "${CAMPAIGN_ID}" \
+            --campaign-config "${DELIVERY_CAMPAIGN}" \
+            --campaign-ends-at "${CAMPAIGN_ENDS_AT}" \
+            --out "${DELIVERY_OUTPUT}" \
+            --attestation "${DELIVERY_ATTESTATION}" \
+            > "${DELIVERY_SUMMARY}"
+          node - "${DELIVERY_SUMMARY}" "${EXPECTED_INPUT_SHA256}" <<'NODE'
+          const fs = require('node:fs');
+          const [summaryPath, expectedSha] = process.argv.slice(2);
+          const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+          if (summary.mode !== 'delivery_export' || summary.inputSha256 !== expectedSha || summary.sourceRows !== summary.acceptedRows || summary.acceptedRows < 1) throw new Error('beauty_movement_delivery_export_attestation_invalid');
+          NODE
+          npm run --silent beauty-movement:prepare-short-links -- \
+            --input "${DELIVERY_OUTPUT}" \
+            --out "${SHORT_OUTPUT}" \
+            --sql "${SHORT_SQL}" \
+            --conflicts "${SHORT_CONFLICTS}" \
+            --readback "${SHORT_READBACK}" \
+            --attestation "${SHORT_ATTESTATION}" \
+            --campaign "${CAMPAIGN_ID}" \
+            > "${SHORT_SUMMARY}"
+          chmod 600 "${DELIVERY_OUTPUT}" "${DELIVERY_SUMMARY}" "${DELIVERY_ATTESTATION}" "${SHORT_OUTPUT}" "${SHORT_SQL}" "${SHORT_CONFLICTS}" "${SHORT_READBACK}" "${SHORT_ATTESTATION}" "${SHORT_SUMMARY}"
+
+      - name: Fail closed on existing manual or divergent mappings
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_CONFLICTS}" --json > "${D1_CONFLICT_READBACK}"
+          node - "${D1_CONFLICT_READBACK}" "${SHORT_ATTESTATION}" <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const [readbackPath, attestationPath] = process.argv.slice(2);
+          const payload = JSON.parse(fs.readFileSync(readbackPath, 'utf8'));
+          const rows = payload.flatMap((entry) => Array.isArray(entry?.results) ? entry.results : []);
+          const attestation = JSON.parse(fs.readFileSync(attestationPath, 'utf8'));
+          const expected = attestation.mappingHashes ?? {};
+          for (const row of rows) {
+            const expectedHash = expected[row.slug_path];
+            const actualHash = crypto.createHash('sha256').update(String(row.destination_url), 'utf8').digest('hex');
+            if (!expectedHash || row.site_host !== 'esfa.co' || row.source !== 'beauty_movement_short_links_v1' || Number(row.active) !== 1 || actualHash !== expectedHash) throw new Error('beauty_movement_short_links_existing_mapping_conflict');
+          }
+          NODE
+
+      - name: Apply private short-link mappings to the booking D1
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_SQL}" --json > "${D1_APPLY_READBACK}"
+
+      - name: Verify every mapping and one live redirect
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_READBACK}" --json > "${D1_FINAL_READBACK}"
+          node - "${D1_FINAL_READBACK}" "${SHORT_ATTESTATION}" <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const [readbackPath, attestationPath] = process.argv.slice(2);
+          const payload = JSON.parse(fs.readFileSync(readbackPath, 'utf8'));
+          const rows = payload.flatMap((entry) => Array.isArray(entry?.results) ? entry.results : []);
+          const attestation = JSON.parse(fs.readFileSync(attestationPath, 'utf8'));
+          const expected = attestation.mappingHashes ?? {};
+          if (rows.length !== Number(attestation.count)) throw new Error('beauty_movement_short_links_count_mismatch');
+          for (const row of rows) {
+            const expectedHash = expected[row.slug_path];
+            const actualHash = crypto.createHash('sha256').update(String(row.destination_url), 'utf8').digest('hex');
+            if (!expectedHash || row.site_host !== 'esfa.co' || row.source !== 'beauty_movement_short_links_v1' || Number(row.active) !== 1 || actualHash !== expectedHash) throw new Error('beauty_movement_short_links_readback_mismatch');
+          }
+          NODE
+          probe_url="$(node - "${SHORT_OUTPUT}" <<'NODE'
+          const fs = require('node:fs');
+          const lines = fs.readFileSync(process.argv[2], 'utf8').trim().split(/\r?\n/);
+          const match = lines[1]?.match(/"(https:\/\/esfa\.co\/[^"\r\n]+)"$/);
+          if (!match) throw new Error('beauty_movement_short_links_probe_unavailable');
+          process.stdout.write(match[1]);
+          NODE
+          )"
+          status="$(curl -fsS -D "${SHORT_PROBE_HEADERS}" -o /dev/null -w '%{http_code}' "${probe_url}")"
+          [[ "${status}" == "301" ]] || { echo 'short-link Worker did not return HTTP 301'; exit 1; }
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[ ]*/, ""); gsub(/[\r]/, ""); print; exit}' "${SHORT_PROBE_HEADERS}")"
+          [[ "${location}" == https://espacofacial.com/BelezaEmMovimento#c=* ]] || { echo 'short-link destination is not the canonical campaign route'; exit 1; }
+
+      - name: Upload the private corrected delivery list
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beauty-movement-short-delivery-${{ inputs.campaign_id }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/beauty-movement-short-links/short-delivery.csv
+            ${{ runner.temp }}/beauty-movement-short-links/short-links-summary.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove runner-local private material
+        if: ${{ always() }}
+        shell: bash
+        run: rm -rf -- "${SHORT_LINK_ROOT:-${RUNNER_TEMP}/beauty-movement-short-links}"
