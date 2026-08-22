@@ -515,22 +515,25 @@ jobs:
           const browser = await chromium.launch({ headless: true });
           const context = await browser.newContext();
           const page = await context.newPage();
-          const errors = []; const whatsapp = []; const apiResponses = []; const mutationResponses = []; const failedRequests = []; let reveals = 0;
+          const errors = []; const whatsapp = []; const apiResponses = []; const mutationResponses = []; const failedRequests = []; const responseRecords = new Map(); let reveals = 0;
           page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
           page.on('pageerror', (error) => errors.push(error.message));
           page.on('requestfailed', (request) => {
             const url = new URL(request.url());
             if (url.pathname.startsWith('/api/beleza-em-movimento/')) failedRequests.push(`${request.method()} ${url.pathname}`);
           });
-          page.on('response', async (response) => {
+          const summarizeApiResponse = async (response) => {
             const url = new URL(response.url());
-            if (!url.pathname.startsWith('/api/beleza-em-movimento/')) return;
             const entry = { method: response.request().method(), path: url.pathname, status: response.status() };
             let payload = null;
             try { payload = await response.json(); } catch { /* non-JSON responses are represented by status only */ }
-            const safe = { ...entry, ok: payload?.ok === true, error: typeof payload?.error === 'string' ? payload.error : null };
-            apiResponses.push(safe);
-            if (entry.method === 'POST' && /\/reveal$|\/confirm$/.test(entry.path)) mutationResponses.push(safe);
+            return { ...entry, ok: payload?.ok === true, error: typeof payload?.error === 'string' ? payload.error : null };
+          };
+          page.on('response', (response) => {
+            const url = new URL(response.url());
+            if (!url.pathname.startsWith('/api/beleza-em-movimento/')) return;
+            const record = summarizeApiResponse(response).then((safe) => { apiResponses.push(safe); return safe; });
+            responseRecords.set(response, record);
           });
           page.on('request', (request) => {
             if (request.url().includes('/api/beleza-em-movimento/reveal') && request.method() === 'POST') reveals += 1;
@@ -550,9 +553,22 @@ jobs:
             }));
             throw new Error(`beauty_movement_production_browser_bootstrap_missing:${JSON.stringify({ ...diagnostics, bootstrapReady, apiResponses: apiResponses.slice(-20), failedRequests: failedRequests.slice(-12), consoleErrorCount: errors.length })}`);
           }
+          const waitForMutationResponse = async (path, trigger) => {
+            const responsePromise = page.waitForResponse((response) => {
+              const url = new URL(response.url());
+              return response.request().method() === 'POST' && url.pathname === path;
+            }, { timeout: 30000 });
+            await trigger();
+            const response = await responsePromise;
+            const mutation = await (responseRecords.get(response) ?? summarizeApiResponse(response));
+            if (!responseRecords.has(response)) apiResponses.push(mutation);
+            mutationResponses.push(mutation);
+            return mutation;
+          };
           const reveal = async (act) => {
             const card = page.getByRole('button', { name: new RegExp(`Revelar carta 1 de ${act}`, 'i') });
-            await card.waitFor({ state: 'visible', timeout: 30000 }); await card.click();
+            await card.waitFor({ state: 'visible', timeout: 30000 });
+            const mutation = await waitForMutationResponse('/api/beleza-em-movimento/reveal', () => card.click());
             try {
               await page.locator('button[aria-pressed="true"]').waitFor({ state: 'visible', timeout: 30000 });
             } catch {
@@ -564,7 +580,6 @@ jobs:
               }));
               throw new Error(`beauty_movement_production_browser_reveal_missing:${JSON.stringify({ act, ...diagnostics, mutationResponses: mutationResponses.slice(-12), failedRequests: failedRequests.slice(-12), consoleErrorCount: errors.length })}`);
             }
-            const mutation = mutationResponses.at(-1);
             if (!mutation || mutation.path !== '/api/beleza-em-movimento/reveal' || mutation.status < 200 || mutation.status >= 300 || mutation.ok !== true) {
               throw new Error(`beauty_movement_production_reveal_response_invalid:${JSON.stringify({ act, mutationResponses: mutationResponses.slice(-12), failedRequests: failedRequests.slice(-12) })}`);
             }
@@ -573,8 +588,8 @@ jobs:
           await page.getByRole('button', { name: /Clique no baralho para começar a sua leitura/i }).click();
           await reveal('Beleza'); await reveal('Movimento'); await reveal('Celebração');
           await page.getByRole('heading', { name: /Garanta seu presente e confirme presença/i }).waitFor({ state: 'visible', timeout: 30000 });
-          await page.getByRole('checkbox').check(); await page.getByRole('button', { name: /Garantir presente e confirmar presença/i }).click();
-          const confirmation = mutationResponses.at(-1);
+          await page.getByRole('checkbox').check();
+          const confirmation = await waitForMutationResponse('/api/beleza-em-movimento/confirm', () => page.getByRole('button', { name: /Garantir presente e confirmar presença/i }).click());
           if (!confirmation || confirmation.path !== '/api/beleza-em-movimento/confirm' || confirmation.status < 200 || confirmation.status >= 300 || confirmation.ok !== true) {
             throw new Error(`beauty_movement_production_confirm_response_invalid:${JSON.stringify({ mutationResponses: mutationResponses.slice(-12), failedRequests: failedRequests.slice(-12) })}`);
           }
