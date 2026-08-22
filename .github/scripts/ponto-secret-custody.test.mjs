@@ -191,6 +191,23 @@ test("Pages root derivation passes private paths through explicit environment va
   assert.match(step, /unset PONTO_ROOT_ATTESTATION_KEY_SHARED PONTO_IDEMPOTENCY_KEY/);
 });
 
+test("Pages production repair converts drifted Ponto target metadata to a secret binding", () => {
+  const source = workflow("cloudflare-pages-sync-ponto.yml");
+  const repairStart = source.indexOf("- name: Repair production Ponto target binding when metadata drifted");
+  const deriveStart = source.indexOf("- name: Derive and provision environment-scoped Ponto Pages keys");
+  const repair = source.slice(repairStart, deriveStart);
+  assert.ok(repairStart >= 0 && deriveStart > repairStart);
+  assert.match(repair, /if: \$\{\{ inputs\.target == 'production' \}\}/);
+  assert.match(repair, /PONTO_API_TARGET: \$\{\{ secrets\.PONTO_API_TARGET \}\}/);
+  assert.match(repair, /Production Ponto Pages project identity differs from policy/);
+  assert.match(repair, /PONTO_API_TARGET.*pages secret put/);
+  assert.match(repair, /binding\?\.type !== "secret_text"/);
+  assert.match(repair, /targetBindingRepair/);
+  assert.match(repair, /mutationStarted = true/);
+  assert.match(source, /const previousJournal = fs\.existsSync\(process\.argv\[3\]\)/);
+  assert.match(source, /mutationStarted: previousJournal\.mutationStarted === true/);
+});
+
 test("Ponto REST run provenance accepts canonical parent or immutable release path representations", () => {
   for (const name of [
     "cloudflare-pages-sync-ponto.yml",
