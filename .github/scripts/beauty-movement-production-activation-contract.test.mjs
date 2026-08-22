@@ -55,6 +55,13 @@ test("schema, draft readback, build attestation, browser journey and persisted o
   assert.match(workflow, /beauty_movement_production_build_attestation_failed/);
   assert.match(workflow, /chromium/);
   assert.match(workflow, /revealRequests/);
+  assert.match(workflow, /mutationResponses/);
+  assert.match(workflow, /failedRequests/);
+  assert.match(workflow, /beauty_movement_production_browser_reveal_missing/);
+  assert.match(workflow, /beauty_movement_production_reveal_response_invalid/);
+  assert.match(workflow, /beauty_movement_production_confirm_response_invalid/);
+  assert.match(workflow, /timeout: 60000/);
+  assert.match(workflow, /timeout: 30000/);
   assert.match(workflow, /reloadStable/);
   assert.match(workflow, /whatsappRequests/);
   assert.match(workflow, /outcome_protocol_version/);
