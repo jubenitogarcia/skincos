@@ -23,3 +23,13 @@ test("esfa redirect target retains destination defaults without an incoming quer
         "https://espacofacial.com/agendamento?unit=novo-hamburgo&utm_campaign=aniver7anos",
     );
 });
+
+test("esfa redirect target preserves the private invite fragment while merging attribution", () => {
+    assert.equal(
+        resolveEsfaRedirectTarget(
+            "https://espacofacial.com/BelezaEmMovimento#c=opaque_token_123456789012345678901234567890123456",
+            "?utm_source=whatsapp&utm_campaign=beauty-movement",
+        ),
+        "https://espacofacial.com/BelezaEmMovimento?utm_source=whatsapp&utm_campaign=beauty-movement#c=opaque_token_123456789012345678901234567890123456",
+    );
+});

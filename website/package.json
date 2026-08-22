@@ -18,6 +18,7 @@
     "custom-urls:migrate:esfa": "tsx scripts/migrate-esfa-redirects.ts",
     "beauty-movement:import": "tsx scripts/beauty-movement-import.ts",
     "beauty-movement:export-delivery": "tsx scripts/beauty-movement-delivery-export.ts",
+    "beauty-movement:prepare-short-links": "tsx scripts/beauty-movement-short-links.ts",
     "beauty-movement:report": "tsx scripts/beauty-movement-report.ts",
     "beauty-movement:migrate:local": "tsx scripts/beauty-movement-migrate-local.ts",
     "tracking:governance": "node scripts/audit-tracking-governance.mjs",

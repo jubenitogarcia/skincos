@@ -155,7 +155,7 @@ test("compact Velocity sheet rows accept the sheet columns and optional duplicat
     assert.equal(plan.deliveryRows.length, 2);
     assert.equal(plan.invites.every((invite) => invite.velocityBenefit === "aula_cortesia_evento"), true);
     assert.equal(plan.invites.every((invite) => invite.rewardId === null), true);
-    assert.equal(plan.deliveryRows.every((row) => row.inviteUrl.startsWith("https://espacofacial.com/beleza-em-movimento#c=")), true);
+    assert.equal(plan.deliveryRows.every((row) => row.inviteUrl.startsWith("https://espacofacial.com/BelezaEmMovimento#c=")), true);
 });
 
 test("compact Velocity imports also accept only name and WhatsApp", () => {
@@ -341,7 +341,7 @@ test("beauty movement import writes encrypted D1 rows and reserves raw delivery 
     const token = inviteUrl.slice(inviteUrl.indexOf("#c=") + 3);
     const sql = buildBeautyMovementImportSql(plan);
 
-    assert.equal(inviteUrl.startsWith("https://espacofacial.com/beleza-em-movimento#c="), true);
+    assert.equal(inviteUrl.startsWith("https://espacofacial.com/BelezaEmMovimento#c="), true);
     assert.equal(sql.includes("Ana Silva"), false);
     assert.equal(sql.includes("ana@example.com"), false);
     assert.equal(sql.includes("+5551999991234"), false);
