@@ -418,7 +418,9 @@ jobs:
           {
             echo "SMOKE_CAMPAIGN_ID=${smoke_id}"
             echo "SMOKE_ROOT=${smoke_root}"
+            echo "SMOKE_OUTPUT_DIR=${smoke_root}/output"
           } >> "${GITHUB_ENV}"
+          mkdir -p "${smoke_root}/output"
           node - "${smoke_root}" "${smoke_id}" <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
@@ -458,7 +460,7 @@ jobs:
           npm run --silent beauty-movement:import -- --apply --remote \
             --input "${SMOKE_ROOT}/invites.csv" --campaign "${SMOKE_CAMPAIGN_ID}" --confirm-campaign "${SMOKE_CAMPAIGN_ID}" \
             --campaign-ends-at "$(cat "${SMOKE_ROOT}/ends-at.txt")" --campaign-config "${SMOKE_ROOT}/campaign.json" \
-            --database "${PRODUCTION_D1_DATABASE}" --config wrangler.toml --out-dir "${OUTPUT_DIR}" > "${SMOKE_ROOT}/import-summary.json"
+            --database "${PRODUCTION_D1_DATABASE}" --config wrangler.toml --out-dir "${SMOKE_OUTPUT_DIR}" > "${SMOKE_ROOT}/import-summary.json"
           activation_sql="UPDATE bm_campaigns SET status = 'active', updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE id = '${SMOKE_CAMPAIGN_ID}' AND status = 'draft';"
           npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${activation_sql}" --json > "${SMOKE_ROOT}/activation.json"
           node - "${SMOKE_ROOT}/activation.json" "${STATE_FILE}" <<'NODE'
@@ -488,7 +490,7 @@ jobs:
         run: |
           set -euo pipefail
           delivery_meta="${SMOKE_ROOT}/delivery-meta.json"
-          node - "${OUTPUT_DIR}" "${delivery_meta}" <<'NODE'
+          node - "${SMOKE_OUTPUT_DIR}" "${delivery_meta}" <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
           const [dir, output] = process.argv.slice(2);
@@ -515,29 +517,90 @@ jobs:
           const browser = await chromium.launch({ headless: true });
           const context = await browser.newContext();
           const page = await context.newPage();
-          const errors = []; const whatsapp = []; let reveals = 0;
+          const errors = []; const whatsapp = []; const apiResponses = []; const mutationResponses = []; const failedRequests = []; const responseRecords = new Map(); let reveals = 0;
           page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
           page.on('pageerror', (error) => errors.push(error.message));
+          page.on('requestfailed', (request) => {
+            const url = new URL(request.url());
+            if (url.pathname.startsWith('/api/beleza-em-movimento/')) failedRequests.push(`${request.method()} ${url.pathname}`);
+          });
+          const summarizeApiResponse = async (response) => {
+            const url = new URL(response.url());
+            const entry = { method: response.request().method(), path: url.pathname, status: response.status() };
+            let payload = null;
+            try { payload = await response.json(); } catch { /* non-JSON responses are represented by status only */ }
+            return { ...entry, ok: payload?.ok === true, error: typeof payload?.error === 'string' ? payload.error : null };
+          };
+          page.on('response', (response) => {
+            const url = new URL(response.url());
+            if (!url.pathname.startsWith('/api/beleza-em-movimento/')) return;
+            const record = summarizeApiResponse(response).then((safe) => { apiResponses.push(safe); return safe; });
+            responseRecords.set(response, record);
+          });
           page.on('request', (request) => {
             if (request.url().includes('/api/beleza-em-movimento/reveal') && request.method() === 'POST') reveals += 1;
             if (/^https:\/\/(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com)\//i.test(request.url())) whatsapp.push(request.url());
           });
           await page.goto(`${base}/beleza-em-movimento#c=${encodeURIComponent(token)}`, { waitUntil: 'domcontentloaded' });
+          const bootstrapReady = await page.waitForFunction(() => (
+            document.querySelector('button[aria-label*="Clique no baralho"]') !== null ||
+            window.location.pathname !== '/beleza-em-movimento'
+          ), { timeout: 60000 }).then(() => true).catch(() => false);
+          if (await page.getByRole('button', { name: /Clique no baralho para começar a sua leitura/i }).count() === 0) {
+            const diagnostics = await page.evaluate(() => ({
+              readyState: document.readyState,
+              pathname: window.location.pathname,
+              statusPageCount: document.querySelectorAll('[aria-busy="true"]').length,
+              deckButtonCount: document.querySelectorAll('button[aria-label*="Clique no baralho"]').length,
+            }));
+            throw new Error(`beauty_movement_production_browser_bootstrap_missing:${JSON.stringify({ ...diagnostics, bootstrapReady, apiResponses: apiResponses.slice(-20), failedRequests: failedRequests.slice(-12), consoleErrorCount: errors.length })}`);
+          }
+          const waitForMutationResponse = async (path, trigger) => {
+            const responsePromise = page.waitForResponse((response) => {
+              const url = new URL(response.url());
+              return response.request().method() === 'POST' && url.pathname === path;
+            }, { timeout: 30000 });
+            await trigger();
+            const response = await responsePromise;
+            const mutation = await (responseRecords.get(response) ?? summarizeApiResponse(response));
+            if (!responseRecords.has(response)) apiResponses.push(mutation);
+            mutationResponses.push(mutation);
+            return mutation;
+          };
           const reveal = async (act) => {
             const card = page.getByRole('button', { name: new RegExp(`Revelar carta 1 de ${act}`, 'i') });
-            await card.waitFor({ state: 'visible', timeout: 30000 }); await card.click();
-            await page.locator('button[aria-pressed="true"]').waitFor({ state: 'visible', timeout: 10000 }); await page.waitForTimeout(5600);
+            await card.waitFor({ state: 'visible', timeout: 30000 });
+            const mutation = await waitForMutationResponse('/api/beleza-em-movimento/reveal', () => card.click());
+            try {
+              await page.locator('button[aria-pressed="true"]').waitFor({ state: 'visible', timeout: 30000 });
+            } catch {
+              const diagnostics = await page.evaluate(() => ({
+                pathname: window.location.pathname,
+                statusPageCount: document.querySelectorAll('[aria-busy="true"]').length,
+                actionErrorCount: document.querySelectorAll('[role="alert"]').length,
+                selectedCardCount: document.querySelectorAll('button[aria-pressed="true"]').length,
+              }));
+              throw new Error(`beauty_movement_production_browser_reveal_missing:${JSON.stringify({ act, ...diagnostics, mutationResponses: mutationResponses.slice(-12), failedRequests: failedRequests.slice(-12), consoleErrorCount: errors.length })}`);
+            }
+            if (!mutation || mutation.path !== '/api/beleza-em-movimento/reveal' || mutation.status < 200 || mutation.status >= 300 || mutation.ok !== true) {
+              throw new Error(`beauty_movement_production_reveal_response_invalid:${JSON.stringify({ act, mutationResponses: mutationResponses.slice(-12), failedRequests: failedRequests.slice(-12) })}`);
+            }
+            await page.waitForTimeout(5600);
           };
           await page.getByRole('button', { name: /Clique no baralho para começar a sua leitura/i }).click();
           await reveal('Beleza'); await reveal('Movimento'); await reveal('Celebração');
           await page.getByRole('heading', { name: /Garanta seu presente e confirme presença/i }).waitFor({ state: 'visible', timeout: 30000 });
-          await page.getByRole('checkbox').check(); await page.getByRole('button', { name: /Garantir presente e confirmar presença/i }).click();
+          await page.getByRole('checkbox').check();
+          const confirmation = await waitForMutationResponse('/api/beleza-em-movimento/confirm', () => page.getByRole('button', { name: /Garantir presente e confirmar presença/i }).click());
+          if (!confirmation || confirmation.path !== '/api/beleza-em-movimento/confirm' || confirmation.status < 200 || confirmation.status >= 300 || confirmation.ok !== true) {
+            throw new Error(`beauty_movement_production_confirm_response_invalid:${JSON.stringify({ mutationResponses: mutationResponses.slice(-12), failedRequests: failedRequests.slice(-12) })}`);
+          }
           const special = page.locator('article[aria-label^="Carta especial:"]'); await special.waitFor({ state: 'visible', timeout: 30000 });
           const first = await special.innerText();
           if (!/combinação|Elleva|Preenchimento|Restylane|Skinbooster|Diamond|Sculptra/i.test(first)) throw new Error('beauty_movement_production_offer_missing');
           const beforeReload = reveals; await page.reload({ waitUntil: 'domcontentloaded' }); await special.waitFor({ state: 'visible', timeout: 30000 });
           const second = await special.innerText();
-          if (first !== second || beforeReload !== 3 || reveals !== 3 || whatsapp.length !== 0 || errors.length !== 0) throw new Error('beauty_movement_production_browser_evidence_invalid');
+          if (first !== second || beforeReload !== 3 || reveals !== 3 || whatsapp.length !== 0 || errors.length !== 0) throw new Error(`beauty_movement_production_browser_evidence_invalid:${JSON.stringify({ beforeReload, reveals, whatsappRequests: whatsapp.length, consoleErrors: errors.length, apiResponses: apiResponses.slice(-20), failedRequests: failedRequests.slice(-12) })}`);
           fs.writeFileSync(`${process.env.RUNNER_TEMP}/beauty-movement-production-activation/browser.json`, `${JSON.stringify({ browser: true, revealRequests: reveals, reloadStable: true, whatsappRequests: 0, consoleErrors: 0, outcomeVisible: true }, null, 2)}\n`, { mode: 0o600 });
           await browser.close();
           NODE
@@ -548,7 +611,7 @@ jobs:
           const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
           const browser = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
           const outcomes = new Set(['elleva_upgrade', 'filler_double', 'sculptra_classic_unlock', 'skinbooster_diamond_unlock']);
-          if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || row.outcome_key !== 'filler_double' || row.assigned_outcome_key !== 'filler_double' || row.assignment_protocol_version !== 'beauty-movement-invite-assignments-v1' || !outcomes.has(row.outcome_key) || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.planned_card_selections_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_production_readback_invalid');
+          if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || !outcomes.has(row.assigned_outcome_key) || row.outcome_key !== row.assigned_outcome_key || row.assignment_protocol_version !== 'beauty-movement-invite-assignments-v1' || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.planned_card_selections_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_production_readback_invalid');
           if (browser.browser !== true || browser.reloadStable !== true || browser.revealRequests !== 3 || browser.whatsappRequests !== 0 || browser.consoleErrors !== 0) throw new Error('beauty_movement_production_browser_invalid');
           console.log(`production persisted smoke passed: outcome=${row.outcome_key} reveals=${row.reveal_count} browserReloadStable=true`);
           NODE
