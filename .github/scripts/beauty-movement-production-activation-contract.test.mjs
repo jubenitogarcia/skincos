@@ -56,6 +56,9 @@ test("schema, draft readback, build attestation, browser journey and persisted o
   assert.match(workflow, /chromium/);
   assert.match(workflow, /revealRequests/);
   assert.match(workflow, /mutationResponses/);
+  assert.match(workflow, /responseRecords/);
+  assert.match(workflow, /waitForMutationResponse/);
+  assert.match(workflow, /page\.waitForResponse/);
   assert.match(workflow, /failedRequests/);
   assert.match(workflow, /beauty_movement_production_browser_reveal_missing/);
   assert.match(workflow, /beauty_movement_production_reveal_response_invalid/);
