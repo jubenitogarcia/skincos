@@ -70,6 +70,7 @@ const unsignedBaseline = (state = "maintenance") => ({
     passed: true,
     state,
     ready: state === "active",
+    gatewayAffinityBridge: false,
     crmStatus: 200,
     identityStatus: 200,
     observation: "external-production",
