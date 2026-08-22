@@ -1,7 +1,13 @@
 name: Ponto progressive release watchdog
-run-name: Ponto watchdog source=${{ github.event.workflow_run.id }}
+run-name: Ponto watchdog source=${{ inputs.coordinator_run_id || github.event.workflow_run.id }}
 
 on:
+  workflow_dispatch:
+    inputs:
+      coordinator_run_id:
+        description: Exact completed Ponto coordinator run that requires recovery
+        required: true
+        type: string
   workflow_run:
     workflows: ["Ponto progressive release"]
     types: [completed]
@@ -31,6 +37,7 @@ jobs:
         id: context
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_WATCHDOG_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id || '' }}
           PONTO_WATCHDOG_CONTEXT_FILE: ${{ runner.temp }}/ponto-watchdog/context.json
         run: |
           set -euo pipefail
@@ -39,7 +46,7 @@ jobs:
       - name: Upload sanitized watchdog context
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ponto-watchdog-context-${{ github.event.workflow_run.id }}-${{ github.run_id }}
+          name: ponto-watchdog-context-${{ inputs.coordinator_run_id || github.event.workflow_run.id }}-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-watchdog/context.json
           retention-days: 90
           if-no-files-found: error

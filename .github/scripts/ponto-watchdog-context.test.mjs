@@ -62,6 +62,17 @@ test("watchdog accepts only an exact failed first-attempt coordinator from main"
   assert.equal(context.releaseSha, sha);
 });
 
+test("watchdog accepts an explicit manual recovery target without a workflow_run event", async () => {
+  const context = await validateWatchdogContext(input({
+    event: {},
+    manualCoordinatorRunId: "99",
+  }));
+  assert.equal(context.coordinatorRunId, "99");
+  assert.equal(context.stage, "staging");
+  assert.equal(context.target, "staging");
+  assert.equal(context.requiresClose, true);
+});
+
 test("watchdog maps a failed bootstrap coordinator to the production fail-close target", async () => {
   const bootstrapRun = {
     ...run,
