@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { evaluateProductionHealth } from "./ponto-production-health.mjs";
 
 const [mode, file] = process.argv.slice(2);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -76,6 +77,7 @@ const validate = (baseline) => {
     baseline.health?.ready === (initialState === "active"),
     "baseline initial readiness is inconsistent with module state",
   );
+  assert(typeof baseline.health?.gatewayAffinityBridge === "boolean", "baseline gateway affinity bridge attestation is missing");
   assert(baseline.credentialsIncluded === false && baseline.piiIncluded === false, "baseline privacy attestation is invalid");
   const { sha256, ...unsigned } = baseline;
   assert(/^[0-9a-f]{64}$/.test(String(sha256 || "")) && digest(unsigned) === sha256, "baseline digest differs");
@@ -172,27 +174,9 @@ if (mode === "capture") {
     headers: { accept: "application/json", ...accessHeaders },
   });
   const health = await healthResponse.json().catch(() => null);
-  const dependencies = health?.dependencies && typeof health.dependencies === "object" ? Object.entries(health.dependencies) : [];
-  const hasDependencyContract = dependencies.length > 0;
-  const dependencyContractSafe = !hasDependencyContract || (
-    health?.ok === false
-    && health?.ready === false
-    && health?.dependencies?.module_control?.state === "unavailable"
-    && health?.dependencies?.module_control?.reason === "MODULE_MAINTENANCE"
-    && dependencies.every(([name, dependency]) => name === "module_control" || dependency?.required !== true || dependency?.state === "healthy")
-  );
-  const activeReady = healthResponse.status === 200
-    && health?.availability?.state === "active"
-    && health?.ok === true
-    && health?.ready === true
-    && hasDependencyContract
-    && health?.dependencies?.module_control?.state === "healthy"
-    && dependencies.every(([, dependency]) => dependency?.required !== true || dependency?.state === "healthy");
-  const maintenanceOnly = healthResponse.status === 200
-    && health?.availability?.state === "maintenance"
-    && dependencyContractSafe;
-  assert(activeReady || maintenanceOnly, "external Ponto initial health is not valid active or maintenance");
-  const initialState = activeReady ? "active" : "maintenance";
+  const healthAssessment = evaluateProductionHealth(healthResponse.status, health);
+  assert(healthAssessment.passed, "external Ponto initial health is not valid active or maintenance");
+  const initialState = healthAssessment.state;
   const identityResponse = await fetch("https://api.skincos.com.br/insumos/health", {
     redirect: "manual",
     signal: AbortSignal.timeout(15_000),
@@ -257,7 +241,8 @@ if (mode === "capture") {
     health: {
       passed: true,
       state: initialState,
-      ready: activeReady,
+      ready: healthAssessment.ready,
+      gatewayAffinityBridge: healthAssessment.gatewayAffinityBridge,
       changedAt: String(health?.availability?.changedAt || ""),
       crmStatus: healthResponse.status,
       identityStatus: identityResponse.status,
