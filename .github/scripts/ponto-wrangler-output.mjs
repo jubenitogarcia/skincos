@@ -1,5 +1,11 @@
 import fs from "node:fs";
 
+const TOP_LEVEL_PRODUCTION_WORKERS = new Set([
+  "skincos-insumos",
+  "skincos-ponto-core",
+  "skincos-timekeeping",
+]);
+
 const [file, expectedType, expectedName] = process.argv.slice(2);
 if (!file || !expectedType || !expectedName) {
   throw new Error("usage: ponto-wrangler-output.mjs <ndjson-file> <entry-type> <worker-or-project>");
@@ -25,7 +31,7 @@ const missingEnvironmentAllowed = !actualEnvironment && (
   || (
     expectedType === "version-upload"
     && expectedEnvironment === "production"
-    && expectedName === "skincos-timekeeping"
+    && TOP_LEVEL_PRODUCTION_WORKERS.has(expectedName)
   )
 );
 if (expectedEnvironment && actualEnvironment !== expectedEnvironment && !missingEnvironmentAllowed) {
