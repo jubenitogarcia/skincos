@@ -1068,7 +1068,7 @@ jobs:
           if-no-files-found: error
 
   ponto-progressive-release:
-    needs: progressive
+    needs: [coordination, progressive]
     if: ${{ github.run_attempt == 1 && inputs.release_scope == 'ponto' && contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
