@@ -570,11 +570,11 @@ jobs:
           NODE
             fi
           fi
-          if [[ "$RELEASE_SCOPE" == general && "$DEPLOY_TARGET" == production ]]; then
-            # Production already owns PONTO_API_TARGET as a Pages secret. Do
-            # not redeclare that binding as a plaintext variable in a general
-            # deployment; leaving the remote secret untouched preserves the
-            # independently fenced Ponto surface.
+          if [[ "$DEPLOY_TARGET" == production || "$DEPLOY_TARGET" == pilot || "$DEPLOY_TARGET" == canary ]]; then
+            # Production Pages already owns PONTO_API_TARGET as a secret. Do
+            # not redeclare that binding as a plaintext variable during a
+            # production, pilot, or canary release; leaving the remote secret
+            # untouched preserves the independently governed Ponto surface.
             sed -i '/^PONTO_API_TARGET[[:space:]]*=/d' wrangler.toml
           fi
           node - wrangler.toml "$MODULE_CONTROL_KV_ID" <<'NODE'
