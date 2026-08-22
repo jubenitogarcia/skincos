@@ -93,6 +93,7 @@ async function findActivePeerCoordinator({
 
 export async function validateWatchdogContext({
   event,
+  manualCoordinatorRunId,
   repository,
   repositoryId,
   token,
@@ -124,11 +125,17 @@ export async function validateWatchdogContext({
     return response.json();
   });
   const eventRun = event?.workflow_run;
-  if (!Number.isInteger(eventRun?.id)) throw new Error("workflow_run event is absent");
+  const manualRunId = String(manualCoordinatorRunId || "").trim();
+  const eventRunId = Number.isInteger(eventRun?.id) ? String(eventRun.id) : "";
+  const coordinatorRunId = manualRunId || eventRunId;
+  const manualRecovery = Boolean(manualRunId);
+  if (!/^[1-9][0-9]*$/.test(coordinatorRunId)) {
+    throw new Error("workflow_run event or manual coordinator run is absent");
+  }
   const [workflow, run, jobs] = await Promise.all([
     request(`/repos/${repository}/actions/workflows/ponto-progressive-release.yml`),
-    request(`/repos/${repository}/actions/runs/${eventRun.id}`),
-    request(`/repos/${repository}/actions/runs/${eventRun.id}/jobs?per_page=100`),
+    request(`/repos/${repository}/actions/runs/${coordinatorRunId}`),
+    request(`/repos/${repository}/actions/runs/${coordinatorRunId}/jobs?per_page=100`),
   ]);
   const match = TITLE.exec(String(run?.display_title || ""));
   const sourceMatchesRelease = sourceMatchesImmutableRelease(
@@ -137,7 +144,7 @@ export async function validateWatchdogContext({
     assertReleaseSource,
   );
   const runAttempt = Number(run?.run_attempt);
-  const eventAttempt = Number(eventRun?.run_attempt);
+  const eventAttempt = manualRecovery ? runAttempt : Number(eventRun?.run_attempt);
   const unauthorizedReplay = Number.isInteger(runAttempt) && runAttempt > 1;
   const validConclusion = unauthorizedReplay
     ? typeof run?.conclusion === "string" && run.conclusion.length > 0
@@ -149,7 +156,7 @@ export async function validateWatchdogContext({
     )
     || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
     || !Number.isInteger(workflow?.id)
-    || run?.id !== eventRun.id
+    || String(run?.id || "") !== coordinatorRunId
     || run?.workflow_id !== workflow.id
     || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run?.path)
     || run?.status !== "completed"
@@ -166,11 +173,13 @@ export async function validateWatchdogContext({
     || !match
     || String(run.id) !== match[3]
     || !sourceMatchesRelease
-    || eventRun.workflow_id !== workflow.id
-    || eventRun.path !== run.path
-    || eventRun.head_sha !== run.head_sha
     || eventAttempt !== runAttempt
-    || eventRun.conclusion !== run.conclusion
+    || (!manualRecovery && (
+      eventRun.workflow_id !== workflow.id
+      || eventRun.path !== run.path
+      || eventRun.head_sha !== run.head_sha
+      || eventRun.conclusion !== run.conclusion
+    ))
   ) throw new Error("failed coordinator provenance is invalid");
   const stage = match[1];
   // Only an entered orchestrate job can acquire the composite release lease or
@@ -228,6 +237,7 @@ if (invokedPath === import.meta.url) {
   const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
   const context = await validateWatchdogContext({
     event,
+    manualCoordinatorRunId: process.env.PONTO_WATCHDOG_COORDINATOR_RUN_ID,
     repository: process.env.GITHUB_REPOSITORY,
     repositoryId: process.env.GITHUB_REPOSITORY_ID,
     token: process.env.GH_TOKEN,
