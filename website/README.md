@@ -122,6 +122,11 @@ Observação operacional:
 - Quando mudar short links já migrados, rode/siga o workflow oficial de deploy do site para aplicar `npm run custom-urls:migrate:esfa -- --apply --remote`.
 - Validar só `espacofacial.com` não cobre `esfa.co`; cheque os dois domínios.
 
+Links personalizados da campanha Beauty Movement:
+- A rota canônica é `https://espacofacial.com/BelezaEmMovimento`; a rota minúscula anterior continua compatível para convites já distribuídos.
+- O workflow `.github/workflows/beauty-movement-short-links-sync.yml` deriva o atalho `https://esfa.co/<últimos-5>/BelezaEmMovimento` a partir do CSV privado, verifica colisões e grava somente redirects gerenciados no D1.
+- O workflow falha fechado diante de slug manual/divergente, publica a lista curta como artefato privado de retenção curta e valida um redirect real antes de concluir.
+
 ## Checklist de release
 
 Antes do PR:

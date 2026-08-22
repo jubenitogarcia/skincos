@@ -146,7 +146,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   var shouldScrub = false;
   try {
     var pathname = window.location.pathname.replace(/\\/+$/, "") || "/";
-    if (pathname !== "/beleza-em-movimento") return;
+    var normalizedPathname = pathname.toLowerCase();
+    if (normalizedPathname !== "/beleza-em-movimento" && normalizedPathname !== "/belezaemmovimento") return;
     var fragment = window.location.hash.slice(1);
     if (!fragment) return;
     var params = new URLSearchParams(fragment);

@@ -756,7 +756,7 @@ export async function prepareBeautyMovementImport(params: {
     }
 
     const inputSha256 = await sha256Hex(params.csv);
-    const inviteUrlBase = params.inviteUrlBase ?? "https://espacofacial.com/beleza-em-movimento";
+    const inviteUrlBase = params.inviteUrlBase ?? "https://espacofacial.com/BelezaEmMovimento";
     const invites: BeautyMovementPreparedInvite[] = [];
     const deliveryRows: BeautyMovementDeliveryRow[] = [];
 

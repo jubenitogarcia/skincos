@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function BeautyMovementPage() {
+export default function BeautyMovementCanonicalPage() {
   return (
     <>
       <Header preferredUnitSlug="novo-hamburgo" fixedUnitSlug="novo-hamburgo" scrollAware />
