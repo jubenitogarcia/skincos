@@ -210,3 +210,14 @@ test("Timekeeping release receives the coordinator proof before global mutation"
   assert.match(release, /needs\.coordination\.outputs\.global_coordinator_url/);
   assert.match(release, /needs\.coordination\.outputs\.global_proof_b64/);
 });
+
+test("CRM Pages production mutation declares and consumes its coordination dependency", () => {
+  const workflow = fs.readFileSync(new URL("../workflows/deploy-crm-pages.yml", import.meta.url), "utf8");
+  const releaseStart = workflow.indexOf("\n  ponto-progressive-release:");
+  const coordinationReleaseStart = workflow.indexOf("\n  global-coordination-release:", releaseStart);
+  assert.ok(releaseStart >= 0 && coordinationReleaseStart > releaseStart);
+  const release = workflow.slice(releaseStart, coordinationReleaseStart);
+  assert.match(release, /needs: \[coordination, progressive\]/);
+  assert.match(release, /needs\.coordination\.outputs\.global_coordinator_url/);
+  assert.match(release, /needs\.coordination\.outputs\.global_proof_b64/);
+});
