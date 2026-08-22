@@ -60,6 +60,9 @@ test("schema, draft readback, build attestation, browser journey and persisted o
   assert.match(workflow, /waitForMutationResponse/);
   assert.match(workflow, /page\.waitForResponse/);
   assert.match(workflow, /failedRequests/);
+  assert.match(workflow, /SMOKE_OUTPUT_DIR/);
+  assert.match(workflow, /--out-dir "\$\{SMOKE_OUTPUT_DIR\}"/);
+  assert.match(workflow, /row\.outcome_key !== row\.assigned_outcome_key/);
   assert.match(workflow, /beauty_movement_production_browser_reveal_missing/);
   assert.match(workflow, /beauty_movement_production_reveal_response_invalid/);
   assert.match(workflow, /beauty_movement_production_confirm_response_invalid/);

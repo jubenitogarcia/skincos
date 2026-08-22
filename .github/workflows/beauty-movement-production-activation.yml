@@ -418,7 +418,9 @@ jobs:
           {
             echo "SMOKE_CAMPAIGN_ID=${smoke_id}"
             echo "SMOKE_ROOT=${smoke_root}"
+            echo "SMOKE_OUTPUT_DIR=${smoke_root}/output"
           } >> "${GITHUB_ENV}"
+          mkdir -p "${smoke_root}/output"
           node - "${smoke_root}" "${smoke_id}" <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
@@ -458,7 +460,7 @@ jobs:
           npm run --silent beauty-movement:import -- --apply --remote \
             --input "${SMOKE_ROOT}/invites.csv" --campaign "${SMOKE_CAMPAIGN_ID}" --confirm-campaign "${SMOKE_CAMPAIGN_ID}" \
             --campaign-ends-at "$(cat "${SMOKE_ROOT}/ends-at.txt")" --campaign-config "${SMOKE_ROOT}/campaign.json" \
-            --database "${PRODUCTION_D1_DATABASE}" --config wrangler.toml --out-dir "${OUTPUT_DIR}" > "${SMOKE_ROOT}/import-summary.json"
+            --database "${PRODUCTION_D1_DATABASE}" --config wrangler.toml --out-dir "${SMOKE_OUTPUT_DIR}" > "${SMOKE_ROOT}/import-summary.json"
           activation_sql="UPDATE bm_campaigns SET status = 'active', updated_at_ms = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE id = '${SMOKE_CAMPAIGN_ID}' AND status = 'draft';"
           npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${activation_sql}" --json > "${SMOKE_ROOT}/activation.json"
           node - "${SMOKE_ROOT}/activation.json" "${STATE_FILE}" <<'NODE'
@@ -488,7 +490,7 @@ jobs:
         run: |
           set -euo pipefail
           delivery_meta="${SMOKE_ROOT}/delivery-meta.json"
-          node - "${OUTPUT_DIR}" "${delivery_meta}" <<'NODE'
+          node - "${SMOKE_OUTPUT_DIR}" "${delivery_meta}" <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
           const [dir, output] = process.argv.slice(2);
@@ -609,7 +611,7 @@ jobs:
           const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
           const browser = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
           const outcomes = new Set(['elleva_upgrade', 'filler_double', 'sculptra_classic_unlock', 'skinbooster_diamond_unlock']);
-          if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || row.outcome_key !== 'filler_double' || row.assigned_outcome_key !== 'filler_double' || row.assignment_protocol_version !== 'beauty-movement-invite-assignments-v1' || !outcomes.has(row.outcome_key) || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.planned_card_selections_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_production_readback_invalid');
+          if (!row || row.campaign_status !== 'active' || row.invite_status !== 'active' || row.confirmed_at_ms === null || !outcomes.has(row.assigned_outcome_key) || row.outcome_key !== row.assigned_outcome_key || row.assignment_protocol_version !== 'beauty-movement-invite-assignments-v1' || row.outcome_protocol_version !== 'beauty-movement-outcomes-v2' || Number(row.outcome_resolved_at_ms) <= 0 || Number(row.outcome_snapshot_length) <= 0 || Number(row.planned_card_selections_length) <= 0 || Number(row.reveal_count) !== 3) throw new Error('beauty_movement_production_readback_invalid');
           if (browser.browser !== true || browser.reloadStable !== true || browser.revealRequests !== 3 || browser.whatsappRequests !== 0 || browser.consoleErrors !== 0) throw new Error('beauty_movement_production_browser_invalid');
           console.log(`production persisted smoke passed: outcome=${row.outcome_key} reveals=${row.reveal_count} browserReloadStable=true`);
           NODE
