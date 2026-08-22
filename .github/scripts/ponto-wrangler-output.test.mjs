@@ -8,19 +8,21 @@ import test from "node:test";
 const script = path.resolve(import.meta.dirname, "ponto-wrangler-output.mjs");
 const uuid = "11111111-1111-4111-8111-111111111111";
 
-test("accepts a top-level production version upload without a repeated Wrangler environment", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wrangler-output-"));
-  const file = path.join(dir, "output.ndjson");
-  fs.writeFileSync(file, [
-    JSON.stringify({ type: "wrangler-session", version: 1 }),
-    JSON.stringify({ type: "version-upload", version: 1, worker_name: "skincos-timekeeping", version_id: uuid }),
-    "",
-  ].join("\n"));
-  const result = spawnSync(process.execPath, [script, file, "version-upload", "skincos-timekeeping"], {
-    encoding: "utf8",
-    env: { ...process.env, PONTO_EXPECTED_WRANGLER_ENV: "production" },
-  });
-  assert.equal(result.status, 0, result.stderr);
+test("accepts top-level production version uploads for every canonical Ponto Worker", () => {
+  for (const workerName of ["skincos-insumos", "skincos-ponto-core", "skincos-timekeeping"]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wrangler-output-"));
+    const file = path.join(dir, "output.ndjson");
+    fs.writeFileSync(file, [
+      JSON.stringify({ type: "wrangler-session", version: 1 }),
+      JSON.stringify({ type: "version-upload", version: 1, worker_name: workerName, version_id: uuid }),
+      "",
+    ].join("\n"));
+    const result = spawnSync(process.execPath, [script, file, "version-upload", workerName], {
+      encoding: "utf8",
+      env: { ...process.env, PONTO_EXPECTED_WRANGLER_ENV: "production" },
+    });
+    assert.equal(result.status, 0, `${workerName}: ${result.stderr}`);
+  }
 });
 
 test("rejects a staging version upload without its Wrangler environment", () => {
