@@ -25,15 +25,22 @@ test("export derives from protected custody and does not mutate D1 or deploy", (
     "BEAUTY_MOVEMENT_PII_KEY",
     "PRODUCTION_INVITES_CSV",
     "PRODUCTION_CAMPAIGN_JSON",
+    "PRODUCTION_REWARDS_JSON",
+    "PRODUCTION_PROCEDURES_JSON",
   ]) assert.match(workflow, new RegExp(name));
   assert.match(workflow, /beauty-movement:export-delivery/);
   assert.match(workflow, /d1 execute .*--remote/);
-  assert.match(workflow, /SELECT status, ends_at_ms/);
+  assert.match(workflow, /SELECT c\.status, c\.ends_at_ms/);
   assert.doesNotMatch(workflow, /--apply/);
   assert.doesNotMatch(workflow, /d1 migrations apply/);
   assert.doesNotMatch(workflow, /wrangler deploy/);
   assert.match(workflow, /x-app-build/);
   assert.match(workflow, /active_invite_count/);
+  assert.match(workflow, /import_input_sha256/);
+  assert.match(workflow, /token_hmac_attestation/);
+  assert.match(workflow, /secret list --name/);
+  assert.match(workflow, /workerSecretNamesAttested/);
+  assert.doesNotMatch(workflow, /env:\n\s+CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}[\s\S]*?Install exact website dependencies/);
   assert.match(workflow, /actions\/upload-artifact/);
   assert.match(workflow, /retention-days: 1/);
   assert.match(workflow, /delivery\.csv/);
@@ -46,6 +53,8 @@ test("script stdout is aggregate-only and the output is private", () => {
   assert.match(script, /inputSha256/);
   assert.match(script, /outputSha256/);
   assert.match(script, /outputBytes/);
+  assert.match(script, /--attestation/);
+  assert.match(script, /inviteTokenHmacs/);
   assert.doesNotMatch(script, /console\.log\([^\n]*(inviteUrl|whatsapp|tokenHmacKey|deliveryRows)/i);
   assert.doesNotMatch(script, /console\.log\([^\n]*\bname\b/i);
 });

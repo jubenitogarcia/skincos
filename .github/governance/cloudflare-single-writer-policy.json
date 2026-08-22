@@ -43,7 +43,8 @@
       "reason": "Reads the active Beauty Movement campaign from D1 and derives a private delivery artifact; it has no Cloudflare mutation or deploy authority.",
       "requiredMarkers": [
         "beauty-movement:export-delivery",
-        "SELECT status, ends_at_ms",
+        "SELECT c.status, c.ends_at_ms",
+        "invite_token_hmac",
         "Upload private delivery artifact"
       ]
     }

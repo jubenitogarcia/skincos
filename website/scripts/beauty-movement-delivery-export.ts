@@ -7,6 +7,10 @@ import {
     serializeBeautyMovementDeliveryCsv,
     validateBeautyMovementCampaignConfig,
 } from "../src/lib/beautyMovementImport";
+import type {
+    BeautyMovementCanonicalProcedure,
+    BeautyMovementRewardCatalogEntry,
+} from "../src/lib/beautyMovementRewards";
 
 const WEBSITE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPOSITORY_ROOT = path.resolve(WEBSITE_ROOT, "..");
@@ -17,6 +21,9 @@ type ParsedArguments = {
     campaignConfig: string;
     campaignEndsAt: string;
     output: string;
+    attestation: string;
+    rewardCatalog: string | null;
+    procedureCatalog: string | null;
 };
 
 function valueAfter(args: string[], flag: string): string {
@@ -29,7 +36,16 @@ function valueAfter(args: string[], flag: string): string {
 }
 
 function parseArguments(args: string[]): ParsedArguments {
-    const known = new Set(["--input", "--campaign", "--campaign-config", "--campaign-ends-at", "--out"]);
+    const known = new Set([
+        "--input",
+        "--campaign",
+        "--campaign-config",
+        "--campaign-ends-at",
+        "--out",
+        "--attestation",
+        "--reward-catalog",
+        "--procedure-catalog",
+    ]);
     for (const arg of args) {
         if (arg.startsWith("--") && !known.has(arg)) throw new Error("beauty_movement_unknown_argument");
     }
@@ -39,6 +55,9 @@ function parseArguments(args: string[]): ParsedArguments {
         campaignConfig: valueAfter(args, "--campaign-config"),
         campaignEndsAt: valueAfter(args, "--campaign-ends-at"),
         output: valueAfter(args, "--out"),
+        attestation: valueAfter(args, "--attestation"),
+        rewardCatalog: args.includes("--reward-catalog") ? valueAfter(args, "--reward-catalog") : null,
+        procedureCatalog: args.includes("--procedure-catalog") ? valueAfter(args, "--procedure-catalog") : null,
     };
 }
 
@@ -95,15 +114,30 @@ async function readJson(filePath: string): Promise<unknown> {
     }
 }
 
+async function readOptionalJson<T>(filePath: string | null, unavailableCode: string): Promise<T[] | undefined> {
+    if (!filePath) return undefined;
+    const value = await readJson(filePath);
+    if (!Array.isArray(value)) throw new Error(unavailableCode);
+    return value as T[];
+}
+
 async function main(): Promise<void> {
     const options = parseArguments(process.argv.slice(2));
     const inputPath = privatePath(options.input, "input");
     const campaignConfigPath = privatePath(options.campaignConfig, "input");
     const outputPath = privatePath(options.output, "output");
+    const attestationPath = privatePath(options.attestation, "output");
+    if ((options.rewardCatalog && !options.procedureCatalog) || (!options.rewardCatalog && options.procedureCatalog)) {
+        throw new Error("beauty_movement_reward_catalog_pair_required");
+    }
+    const rewardCatalogPath = options.rewardCatalog ? privatePath(options.rewardCatalog, "input") : null;
+    const procedureCatalogPath = options.procedureCatalog ? privatePath(options.procedureCatalog, "input") : null;
     const csv = await readFile(inputPath, "utf8").catch(() => {
         throw new Error("beauty_movement_input_unavailable");
     });
     const campaignConfig = validateBeautyMovementCampaignConfig(await readJson(campaignConfigPath));
+    const rewardCatalog = await readOptionalJson<BeautyMovementRewardCatalogEntry>(rewardCatalogPath, "beauty_movement_reward_catalog_unavailable");
+    const procedureCatalog = await readOptionalJson<BeautyMovementCanonicalProcedure>(procedureCatalogPath, "beauty_movement_procedure_catalog_unavailable");
     const tokenHmacKey = (process.env.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY ?? "").trim();
     const piiKey = (process.env.BEAUTY_MOVEMENT_PII_KEY ?? "").trim();
     if (!tokenHmacKey || !piiKey) throw new Error("beauty_movement_export_keys_unavailable");
@@ -114,8 +148,8 @@ async function main(): Promise<void> {
         campaignId: options.campaign,
         campaignConfig,
         campaignEndsAtMs,
-        rewardCatalog: [],
-        procedureCatalog: [],
+        rewardCatalog,
+        procedureCatalog,
         tokenHmacKey,
         piiKey,
     });
@@ -132,6 +166,18 @@ async function main(): Promise<void> {
         await writeFile(outputPath, deliveryCsv, { encoding: "utf8", mode: 0o600, flag: "wx" });
     } catch {
         throw new Error("beauty_movement_delivery_output_unavailable");
+    }
+    try {
+        // The attestation is runner-private and is consumed only by the
+        // read-only D1 comparison. It contains hashes, never raw token values.
+        await writeFile(attestationPath, `${JSON.stringify({
+            version: 1,
+            campaignId: plan.campaignId,
+            inputSha256: plan.inputSha256,
+            inviteTokenHmacs: plan.invites.map((invite) => invite.inviteTokenHmac).sort(),
+        })}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    } catch {
+        throw new Error("beauty_movement_delivery_attestation_unavailable");
     }
 
     // This is the only stdout contract. It is intentionally aggregate-only:
