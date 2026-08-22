@@ -37,6 +37,15 @@
         "SELECT",
         "PILOT_COHORT_IDENTITY_INVALID"
       ]
+    },
+    {
+      "workflow": ".github/workflows/beauty-movement-delivery-export.yml",
+      "reason": "Reads the active Beauty Movement campaign from D1 and derives a private delivery artifact; it has no Cloudflare mutation or deploy authority.",
+      "requiredMarkers": [
+        "beauty-movement:export-delivery",
+        "SELECT status, ends_at_ms",
+        "Upload private delivery artifact"
+      ]
     }
   ],
   "coordinationGroups": [
