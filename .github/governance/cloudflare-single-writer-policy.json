@@ -185,7 +185,8 @@
         ".github/workflows/sync-website-cloudflare-security.yml",
         ".github/workflows/website-instagram-sync.yml",
         ".github/workflows/beauty-movement-staging-smoke.yml",
-        ".github/workflows/beauty-movement-production-activation.yml"
+        ".github/workflows/beauty-movement-production-activation.yml",
+        ".github/workflows/beauty-movement-short-links-sync.yml"
       ],
       "automaticDeploymentsRequired": false
     },

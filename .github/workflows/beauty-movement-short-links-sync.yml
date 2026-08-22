@@ -51,6 +51,19 @@ jobs:
         working-directory: website
         run: npm ci
 
+      - name: Acquire Website production coordination lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+
       - name: Validate short-link contract with synthetic rows only
         working-directory: website
         run: node --experimental-test-module-mocks --import tsx --test tests/beautyMovementShortLinks.test.ts
@@ -203,6 +216,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -f "${RUNNER_TEMP}/skincos-global-coordination-website.json"
           npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_CONFLICTS}" --json > "${D1_CONFLICT_READBACK}"
           node - "${D1_CONFLICT_READBACK}" "${SHORT_ATTESTATION}" <<'NODE'
           const crypto = require('node:crypto');
@@ -218,6 +232,19 @@ jobs:
             if (!expectedHash || row.site_host !== 'esfa.co' || row.source !== 'beauty_movement_short_links_v1' || Number(row.active) !== 1 || actualHash !== expectedHash) throw new Error('beauty_movement_short_links_existing_mapping_conflict');
           }
           NODE
+
+      - name: Recheck Website production coordination lease before D1 mutation
+        uses: ./.github/actions/global-coordination-check
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
 
       - name: Apply private short-link mappings to the booking D1
         working-directory: website
@@ -277,4 +304,22 @@ jobs:
       - name: Remove runner-local private material
         if: ${{ always() }}
         shell: bash
-        run: rm -rf -- "${SHORT_LINK_ROOT:-${RUNNER_TEMP}/beauty-movement-short-links}"
+        run: |
+          if [ -f "${RUNNER_TEMP}/skincos-global-coordination-website.json" ]; then
+            echo 'coordination lease release is handled by the final action step'
+          fi
+          rm -rf -- "${SHORT_LINK_ROOT:-${RUNNER_TEMP}/beauty-movement-short-links}"
+
+      - name: Release Website production coordination lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_PRODUCTION_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
