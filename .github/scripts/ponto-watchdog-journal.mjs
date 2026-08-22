@@ -36,7 +36,7 @@ const SURFACES = Object.freeze({
   identityWorkforce: {
     workflowPath: ".github/workflows/deploy-core-workers.yml",
     titlePrefix: (stage, sha, runId) =>
-      `Core inventory ${stage} team=true ${sha} orchestrator=${runId}`,
+      `Core inventory ${stage} team=${stage === "staging" ? "true" : "false"} ${sha} orchestrator=${runId}`,
     runFile: "runs/identity.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-identity-workforce-${stage}-${sha}`, "surfaces/identity"],

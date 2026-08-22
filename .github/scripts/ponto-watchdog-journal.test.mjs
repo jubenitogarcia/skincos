@@ -136,6 +136,40 @@ test("watchdog reconstructs exact surface run files and a bounded artifact manif
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, "runs/core.json"), "utf8")).runId, "12");
 });
 
+test("watchdog matches the production inventory child with unified team disabled", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-watchdog-production-identity-"));
+  const child = run(
+    10,
+    "deploy-core-workers.yml",
+    `Core inventory pilot team=false ${sha} orchestrator=99 nonce=${"1".repeat(32)}`,
+  );
+  anchor(root, "identity.json", "deploy-core-workers.yml", 502, 10);
+  const report = await reconstructWatchdogJournal({
+    repository,
+    coordinatorRunId: "99",
+    releaseSha: sha,
+    stage: "pilot",
+    artifactRoot: root,
+    request: scopedRequest([child]),
+  });
+  assert.equal(report.passed, true);
+  assert.deepEqual(report.unresolved, []);
+  assert.deepEqual(report.downloads, [
+    {
+      surface: "identityWorkforce",
+      runId: "10",
+      artifact: `ponto-surface-identity-workforce-pilot-${sha}`,
+      destination: "surfaces/identity",
+    },
+    {
+      surface: "identityWorkforce",
+      runId: "10",
+      artifact: `ponto-mutation-identity-workforce-pilot-${sha}`,
+      destination: "mutations/identity",
+    },
+  ]);
+});
+
 test("watchdog fails closed on an exact-title child that lacks journal or signed capability", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-watchdog-spoof-"));
   const title = `Timekeeping production ${sha} orchestrator=99 nonce=${"1".repeat(32)}`;
