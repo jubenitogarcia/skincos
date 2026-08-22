@@ -356,10 +356,10 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
     /name: Attest remote Ponto Pages values before Ponto deployment[\s\S]*?if: \$\{\{ inputs\.release_scope == 'ponto'/,
     "Ponto remote values must be gated to governed Ponto releases",
   );
-  assert.match(sharedPages, /if \[\[ "\$RELEASE_SCOPE" == general && "\$DEPLOY_TARGET" == production \]\]; then/);
+  assert.match(sharedPages, /if \[\[ "\$DEPLOY_TARGET" == production \|\| "\$DEPLOY_TARGET" == pilot \|\| "\$DEPLOY_TARGET" == canary \]\]; then/);
   assert.ok(
     sharedPages.includes("sed -i '/^PONTO_API_TARGET[[:space:]]*=/d' wrangler.toml"),
-    "general production Pages releases must preserve the existing Ponto secret binding",
+    "production, pilot, and canary Pages releases must preserve the existing Ponto secret binding",
   );
   for (const name of [
     "CRM_GENERAL_PAGES_PROJECT",
