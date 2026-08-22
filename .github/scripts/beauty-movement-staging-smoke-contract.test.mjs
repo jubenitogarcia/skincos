@@ -33,6 +33,12 @@ test("smoke consumes secrets in-process and closes the staging gate", () => {
     assert.match(workflow, /beauty_movement_delivery_ref_invalid/);
     assert.match(workflow, /i\.external_ref = '\$\{invite_ref\}'/);
     assert.doesNotMatch(workflow, /i\.external_ref = 'velocity-0002'/);
+    assert.match(workflow, /bootstrapReady/);
+    assert.match(workflow, /mutationResponses/);
+    assert.match(workflow, /failedRequests/);
+    assert.match(workflow, /beauty_movement_browser_reveal_missing/);
+    assert.match(workflow, /timeout: 60000/);
+    assert.match(workflow, /timeout: 30000/);
     assert.match(workflow, /inactive_code.*503/s);
     assert.match(workflow, /if:\s*\$\{\{ always\(\) \}\}/);
     assert.match(workflow, /invite_status = 'revoked'/);
