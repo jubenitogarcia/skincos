@@ -809,7 +809,7 @@ function MetricGroupContent({
     )
   }
 
-  const renderNode = (node: AtendimentoMetricHierarchyNode, depth = 0, index = 0): React.ReactNode => {
+  const renderNode = (node: AtendimentoMetricHierarchyNode, depth = 0): React.ReactNode => {
     const row = rowsByKey.get(node.key)
     if (!row) return null
     const children = (node.children || []).filter((child) => rowsByKey.has(child.key))
@@ -817,13 +817,19 @@ function MetricGroupContent({
       .map((child) => rowsByKey.get(child.key))
       .filter((child): child is AtendimentoMetricGroupRow => Boolean(child))
     return (
-      <div key={node.key} className={`min-w-0 ${horizontal && nodes.length === 7 ? (index < 4 ? 'md:col-span-3' : 'md:col-span-4') : ''}`}>
+      <div key={node.key} className="min-w-0">
         {renderRow(row, depth > 0, componentRows)}
       </div>
     )
   }
 
-  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'mx-auto w-full max-w-5xl grid-cols-1 sm:grid-cols-2 md:grid-cols-12' : 'gap-1.5'}`}>{nodes.map((node, index) => renderNode(node, 0, index))}</div>
+  const gridClassName = horizontal
+    ? nodes.length === 7
+      ? 'mx-auto w-full max-w-5xl grid-cols-1 sm:grid-cols-2 md:grid-cols-7'
+      : 'mx-auto w-full max-w-5xl grid-cols-1 sm:grid-cols-2 md:grid-cols-12'
+    : 'gap-1.5'
+
+  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${gridClassName}`} data-testid={horizontal ? 'atendimento-conversion-metrics-grid' : undefined}>{nodes.map((node) => renderNode(node))}</div>
 }
 
 function MetricTile({
@@ -1033,19 +1039,19 @@ const CONVERSION_METRIC_DEFINITIONS = [
   { key: 'rankedDoctorTotal', label: 'Total ranqueável', description: 'Subconjunto do período filtrado usado no ranking médico.', calculation: 'Soma do valor realizado dos injetores ativos elegíveis na unidade dentro do período.', usage: 'Permanece disponível internamente para auditoria de consistência do total do período.' },
   { key: 'periodAttendanceTotal', label: 'Total', description: 'Faturamento total do período filtrado.', calculation: 'Soma de todos os atendimentos da unidade/período, incluindo itens fora do ranking.', usage: 'É o total principal exibido no dashboard; o CRM mantém o total ranqueável apenas como verificação interna.' },
   { key: 'eligibleDoctorCount', label: 'Doutores elegíveis', description: 'Quantidade de injetores ativos considerados no ranking.', calculation: 'Profissionais ativos com função Injetor na unidade selecionada.', usage: 'Define o universo usado em média, mediana, desvio, níveis e ranking.' },
-  { key: 'dailyGoal', label: 'Meta diária', description: 'Meta diária média do período selecionado.', calculation: 'meta_periodo / dias_trabalhados_periodo.', usage: 'Compõe 50% da linha de corte.' },
+  { key: 'dailyGoal', label: 'Meta', description: 'Meta diária média do período selecionado.', calculation: 'meta_periodo / dias_trabalhados_periodo.', usage: 'Compõe 50% da linha de corte.' },
   { key: 'periodGoal', label: 'Meta do período', description: 'Meta acumulada do período selecionado.', calculation: 'Soma das metas diárias dos dias trabalhados dentro do período.', usage: 'É a meta principal de comparação da janela filtrada.' },
   { key: 'monthOperationalDays', label: 'Dias mês', description: 'Dias trabalhados usados para diluir a meta mensal.', calculation: 'Dias operacionais do mês consolidados na agenda do CRM.', usage: 'Define a meta diária.' },
   { key: 'periodOperationalDays', label: 'Dias período', description: 'Dias trabalhados dentro do filtro ativo.', calculation: 'Dias operacionais entre início e fim do período selecionado.', usage: 'Define a meta proporcional do período.' },
-  { key: 'average', label: 'Média diária', description: 'Média da produção diária dos doutores elegíveis.', calculation: 'soma(produção_do_doutor / dias_trabalhados_do_doutor) / doutores_elegíveis.', usage: 'Compõe 30% da linha de corte e elimina a vantagem de quem trabalhou mais dias.' },
-  { key: 'median', label: 'Mediana diária', description: 'Valor central da produção diária dos doutores elegíveis.', calculation: 'Ordena as produções diárias e pega o centro; em par, média dos dois centrais.', usage: 'Compõe 20% da linha de corte e reduz distorção por extremos.' },
-  { key: 'standardDeviation', label: 'Desvio Padrão diário', description: 'Dispersão da produção diária entre doutores elegíveis.', calculation: 'Desvio padrão amostral das produções diárias.', usage: 'Multiplicado pelo fator de intervalo para definir a largura diária das faixas.' },
-  { key: 'cutLine', label: 'Linha Corte diária', description: 'Centro diário das faixas de classificação.', calculation: 'linha_corte_diária = (média_diária * 0,30) + (mediana_diária * 0,20) + (meta_diária * 0,50).', usage: 'Separa níveis 1/2 sem favorecer quem trabalhou mais dias.' },
-  { key: 'interval', label: 'Intervalo diário', description: 'Largura diária das faixas ao redor da linha de corte.', calculation: 'intervalo_diário = desvio_padrão_amostral(produção_diária) * multiplicador_otimizado.', usage: 'Define os limites inferior e superior diários.' },
+  { key: 'average', label: 'Média', description: 'Média da produção diária dos doutores elegíveis.', calculation: 'soma(produção_do_doutor / dias_trabalhados_do_doutor) / doutores_elegíveis.', usage: 'Compõe 30% da linha de corte e elimina a vantagem de quem trabalhou mais dias.' },
+  { key: 'median', label: 'Mediana', description: 'Valor central da produção diária dos doutores elegíveis.', calculation: 'Ordena as produções diárias e pega o centro; em par, média dos dois centrais.', usage: 'Compõe 20% da linha de corte e reduz distorção por extremos.' },
+  { key: 'standardDeviation', label: 'Desvio Padrão', description: 'Dispersão da produção diária entre doutores elegíveis.', calculation: 'Desvio padrão amostral das produções diárias.', usage: 'Multiplicado pelo fator de intervalo para definir a largura diária das faixas.' },
+  { key: 'cutLine', label: 'Linha Corte', description: 'Centro diário das faixas de classificação.', calculation: 'linha_corte_diária = (média_diária * 0,30) + (mediana_diária * 0,20) + (meta_diária * 0,50).', usage: 'Separa níveis 1/2 sem favorecer quem trabalhou mais dias.' },
+  { key: 'interval', label: 'Intervalo', description: 'Largura diária das faixas ao redor da linha de corte.', calculation: 'intervalo_diário = desvio_padrão_amostral(produção_diária) * multiplicador_otimizado.', usage: 'Define os limites inferior e superior diários.' },
   { key: 'intervalMultiplier', label: 'Multiplicador Otimizado', description: 'Fator aplicado ao desvio padrão e derivado da maior homogeneidade possível.', calculation: 'Avalia os breakpoints exatos entre 0 e 2; mantém o valor anterior somente dentro de um platô ótimo e, fora dele, usa o centro do maior platô ótimo.', usage: 'Redistribui os doutores entre faixas internas e externas sem alterar quem está acima ou abaixo da linha de corte.' },
   { key: 'homogeneityScore', label: 'Homogeneidade', description: 'Índice de equilíbrio entre as quatro faixas.', calculation: '1 - (4/3) × soma((proporção da faixa - 25%)²).', usage: 'Varia de 0% (concentração extrema) a 100% (quatro faixas uniformes).' },
-  { key: 'lowerLimit', label: 'Limite Inferior diário', description: 'Piso diário da faixa central.', calculation: 'linha_corte_diária - intervalo_diário.', usage: 'Abaixo dele o doutor entra no nível 0.' },
-  { key: 'upperLimit', label: 'Limite Superior diário', description: 'Teto diário da faixa central.', calculation: 'linha_corte_diária + intervalo_diário.', usage: 'Acima dele o doutor entra no nível 3.' },
+  { key: 'lowerLimit', label: 'Limite Inferior', description: 'Piso diário da faixa central.', calculation: 'linha_corte_diária - intervalo_diário.', usage: 'Abaixo dele o doutor entra no nível 0.' },
+  { key: 'upperLimit', label: 'Limite Superior', description: 'Teto diário da faixa central.', calculation: 'linha_corte_diária + intervalo_diário.', usage: 'Acima dele o doutor entra no nível 3.' },
   { key: 'level0', label: 'Nível 0', description: 'Doutores abaixo do limite inferior.', calculation: 'Conta realizado < limite_inferior.', usage: 'Entra no divisor das razões com peso 0.' },
   { key: 'level1', label: 'Nível 1', description: 'Doutores entre limite inferior e linha de corte.', calculation: 'Conta limite_inferior <= realizado < linha_corte.', usage: 'Entra no divisor das razões com peso 1.' },
   { key: 'level2', label: 'Nível 2', description: 'Doutores entre linha de corte e limite superior.', calculation: 'Conta linha_corte <= realizado <= limite_superior.', usage: 'Entra no divisor das razões com peso 2.' },
@@ -3201,7 +3207,7 @@ export function AtendimentoModule() {
             </div>
           ) : null}
           <div className="min-h-0">
-            <div className="max-h-[56vh] overflow-y-auto overflow-x-hidden" data-testid="atendimento-table-scroll" onScroll={handleAttendanceScroll}>
+            <div className="max-h-[min(68vh,42rem)] overflow-y-auto overflow-x-hidden" data-testid="atendimento-table-scroll" onScroll={handleAttendanceScroll}>
               <table data-testid="atendimento-table" className="w-full min-w-0 table-fixed caption-bottom border-separate border-spacing-0 text-sm">
                 <colgroup>
                   <col className="w-[11%]" />
