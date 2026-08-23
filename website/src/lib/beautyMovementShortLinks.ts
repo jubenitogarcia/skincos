@@ -98,8 +98,12 @@ export function prepareBeautyMovementShortLinks(params: {
         const slugPath = `/${suffix}${BEAUTY_MOVEMENT_CANONICAL_PATH}`;
         const normalizedSlugPath = `/${normalizedSuffix}${BEAUTY_MOVEMENT_CANONICAL_PATH.toLowerCase()}`;
         const destinationUrl = `https://espacofacial.com${BEAUTY_MOVEMENT_CANONICAL_PATH}#c=${token}`;
+        const tokenIdentity = createHash("sha256").update(token, "utf8").digest("hex").slice(0, 32);
         links.push({
-            id: `beauty-movement-short-v1-${campaignId}-${normalizedSuffix}`,
+            // Keep identity independent from the short suffix. A stale/manual row
+            // can reserve an old primary key without being overwritten, while the
+            // token-derived digest remains stable for future idempotent syncs.
+            id: `beauty-movement-short-v3-${campaignId}-${tokenIdentity}`,
             name: `Cartas da Beleza - ${suffix}`,
             inviteRef: row.inviteRef,
             whatsapp: row.whatsapp,
@@ -133,7 +137,10 @@ export function serializeBeautyMovementShortLinkCsv(plan: BeautyMovementShortLin
 }
 
 export function renderBeautyMovementShortLinkSql(plan: BeautyMovementShortLinkPlan): string {
-    const statements = ["BEGIN TRANSACTION;"];
+    // Wrangler's remote D1 command rejects explicit transaction control
+    // statements. Each INSERT remains idempotent through its unique slug
+    // constraint and ON CONFLICT DO NOTHING clause.
+    const statements: string[] = [];
     for (const link of plan.links) {
         statements.push(`INSERT INTO site_custom_urls (
 id, site_host, name, slug_path, destination_url, destination_host, destination_path,
@@ -145,25 +152,23 @@ ${sqlString(link.id)}, ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)}, ${sqlStrin
 ${sqlString(link.description)}, ${sqlString(link.source)}, ${sqlString(link.placement)}, NULL, NULL,
 NULL, NULL, ${sqlString(plan.campaignId)}, NULL, NULL,
 1, ${plan.createdAtMs}, ${plan.createdAtMs}
-) ON CONFLICT(id) DO NOTHING;`);
+) ON CONFLICT(site_host, slug_path) DO NOTHING;`);
     }
-    statements.push("COMMIT;");
     return `${statements.join("\n\n")}\n`;
 }
 
 export function renderBeautyMovementShortLinkConflictSql(plan: BeautyMovementShortLinkPlan): string {
-    const ids = plan.links.map((link) => sqlString(link.id)).join(", ");
     const slugs = plan.links.map((link) => sqlString(link.normalizedSlugPath)).join(", ");
     return `SELECT id, site_host, slug_path, destination_url, source, active
 FROM site_custom_urls
-WHERE id IN (${ids}) OR (site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)} AND slug_path IN (${slugs}));\n`;
+WHERE site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)} AND slug_path IN (${slugs});\n`;
 }
 
 export function renderBeautyMovementShortLinkReadbackSql(plan: BeautyMovementShortLinkPlan): string {
-    const ids = plan.links.map((link) => sqlString(link.id)).join(", ");
+    const slugs = plan.links.map((link) => sqlString(link.normalizedSlugPath)).join(", ");
     return `SELECT id, site_host, slug_path, destination_url, source, active
 FROM site_custom_urls
-WHERE id IN (${ids});\n`;
+WHERE site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)} AND slug_path IN (${slugs});\n`;
 }
 
 export function shortLinkMappingHash(entries: readonly Pick<BeautyMovementShortLink, "normalizedSlugPath" | "destinationUrl">[]): string {
