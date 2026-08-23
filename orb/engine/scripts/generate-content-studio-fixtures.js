@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+const { baseRequest } = require('../content-studio-v2/dry-run');
+const out = path.join(__dirname, '..', 'content-studio-v2', 'fixtures'); fs.mkdirSync(out, { recursive: true });
+const fixtures = { campaign_complete: baseRequest({ production_id: 'fixture-complete' }), price_missing: baseRequest({ production_id: 'fixture-price-missing', offer: {} }), price_conflicting: baseRequest({ production_id: 'fixture-price-conflicting', offer: { price: 'R$ 100' } }), claim_without_source: baseRequest({ production_id: 'fixture-claim-without-source' }), campaign_without_images: baseRequest({ production_id: 'fixture-no-images', source_assets: [], references: [] }), fast_static: baseRequest({ production_id: 'fixture-fast', production_tier: 'FAST', content_type: 'STATIC_SINGLE' }), standard_video: baseRequest({ production_id: 'fixture-standard', production_tier: 'STANDARD', content_type: 'SHORT_VIDEO' }), premium_hybrid: baseRequest({ production_id: 'fixture-premium', production_tier: 'PREMIUM', content_type: 'HYBRID' }), provider_failure: baseRequest({ production_id: 'fixture-provider-failure', content_type: 'SHORT_VIDEO' }), retry_exhausted: baseRequest({ production_id: 'fixture-retry-exhausted' }), cta_change: baseRequest({ production_id: 'fixture-cta-change', cta: 'Agende agora' }), claim_change: baseRequest({ production_id: 'fixture-claim-change', mandatory_elements: ['claim_1'] }) };
+for (const [name, value] of Object.entries(fixtures)) fs.writeFileSync(path.join(out, `${name}.json`), `${JSON.stringify(value, null, 2)}\n`);
+console.log(`Generated ${Object.keys(fixtures).length} fixtures in ${out}`);

@@ -1,5 +1,11 @@
 # TASKS
 
+## Hierarchical employee onboarding — remaining gate
+
+- [x] Merge the staging-only mail-secret sync in PR #803 and repeat the immutable preview, Workforce/Core/CRM staging pipelines plus the synthetic unit-scope journey for the approved SHA.
+- [x] Revalidate the pre-existing iCloud Mail transport for staging: the six repository `AUTH_RESET_*` secrets are present in the deployed staging Worker and a controlled password-recovery request received SMTP acceptance. Values remain secret and no worker production target was selected.
+- [ ] Repeat the authenticated CRM → Identity → Workforce → invite → activation and recovery smoke with synthetic identities only. Keep production promotion blocked until delivery, single-use expiry, session revocation and PII redaction evidence are green.
+
 ## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
 
 - [x] Domínio definitivo criado em `workforce/timekeeping` e montado no gateway.
@@ -24,6 +30,20 @@
   cleanup commits.
 - [ ] Decide whether draft PR #674 should graduate from the optional GitHub
   autonomy-broker experiment; it is isolated and not deployed.
+- [ ] Reconcile the pre-existing native `/opt/skincos/current/source` pointer
+  with the integrated MCP gateway release before attempting gateway restart or
+  WSL persistence validation; use the canonical lifecycle runbook and preserve
+  the current healthy process/release as rollback evidence.
+- [ ] Complete isolated n8n 2.31.7/2.32.5 credential-recognition, community-node,
+  MCP and rollback regression gates before any Orb upgrade decision; clean/schema
+  boots and the disabled-workflow layer are proven, while 2.31.7 remains untested
+  and no production mutation is authorized. Production n8n remains 2.8.3; an
+  unrelated native Orb release promotion/restart occurred during the audit and
+  must be reconciled separately rather than attributed to this work.
+- [ ] Resolve the isolated custom-node loader blocker (`n8n-nodes-mcp@0.1.29`
+  discovers `pkce-challenge` as a node) and reconcile the gateway release pointer
+  before reopening the n8n upgrade recommendation; current classification is
+  `UPGRADE_NAO_RECOMENDADO` / `BLOQUEADO_POR_PACOTE`.
 
 ## Done — architecture and runtime program
 

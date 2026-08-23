@@ -1,0 +1,386 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/productionRequest",
+  "title": "productionRequest",
+  "examples": [
+    {
+      "schema_version": "fixture",
+      "production_id": "fixture",
+      "content_id": "fixture",
+      "campaign_id": "fixture",
+      "content_type": "STATIC_SINGLE",
+      "production_tier": "FAST",
+      "objective": "fixture",
+      "funnel_stage": "fixture",
+      "audience": {},
+      "procedure_or_topic": "fixture",
+      "offer": {},
+      "cta": "fixture",
+      "requested_deliverables": [],
+      "source_assets": [],
+      "brand_assets": [],
+      "references": [],
+      "mandatory_elements": [],
+      "forbidden_elements": [],
+      "provider_policy": {
+        "mode": "mock",
+        "mock_provider": false,
+        "allowed_providers": [],
+        "max_cost": 0,
+        "max_jobs": 0,
+        "max_revisions": 0
+      },
+      "budget": {},
+      "dry_run": false,
+      "organizer_context": {}
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "fixture",
+      "content_id": "fixture",
+      "campaign_id": "fixture",
+      "content_type": "STATIC_SINGLE",
+      "production_tier": "FAST",
+      "objective": "fixture",
+      "funnel_stage": "fixture",
+      "audience": {},
+      "procedure_or_topic": "fixture",
+      "offer": {},
+      "cta": "fixture",
+      "requested_deliverables": [],
+      "source_assets": [],
+      "brand_assets": [],
+      "references": [],
+      "mandatory_elements": [],
+      "forbidden_elements": [],
+      "provider_policy": {
+        "mode": "mock",
+        "mock_provider": false,
+        "allowed_providers": [],
+        "max_cost": 0,
+        "max_jobs": 0,
+        "max_revisions": 0
+      },
+      "budget": {},
+      "dry_run": false,
+      "organizer_context": {}
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "production_id": {
+      "type": "string"
+    },
+    "content_id": {
+      "type": "string"
+    },
+    "campaign_id": {
+      "type": "string"
+    },
+    "source_folder_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "output_folder_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "content_type": {
+      "type": "string",
+      "enum": [
+        "STATIC_SINGLE",
+        "CAROUSEL",
+        "SHORT_VIDEO",
+        "HYBRID"
+      ]
+    },
+    "production_tier": {
+      "type": "string",
+      "enum": [
+        "FAST",
+        "STANDARD",
+        "PREMIUM"
+      ]
+    },
+    "objective": {
+      "type": "string"
+    },
+    "funnel_stage": {
+      "type": "string"
+    },
+    "audience": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "procedure_or_topic": {
+      "type": "string"
+    },
+    "offer": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "cta": {
+      "type": "string"
+    },
+    "requested_deliverables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "source_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "uri": {
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "uri"
+        ]
+      }
+    },
+    "brand_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "uri": {
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "uri"
+        ]
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "uri": {
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "uri"
+        ]
+      }
+    },
+    "mandatory_elements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden_elements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "provider_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "mock",
+            "http"
+          ]
+        },
+        "mock_provider": {
+          "type": "boolean"
+        },
+        "allowed_providers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "max_cost": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_jobs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_revisions": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "mode",
+        "mock_provider",
+        "allowed_providers",
+        "max_cost",
+        "max_jobs",
+        "max_revisions"
+      ]
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "organizer_context": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "schema_version",
+    "production_id",
+    "content_id",
+    "campaign_id",
+    "content_type",
+    "production_tier",
+    "objective",
+    "funnel_stage",
+    "audience",
+    "procedure_or_topic",
+    "offer",
+    "cta",
+    "requested_deliverables",
+    "source_assets",
+    "brand_assets",
+    "references",
+    "mandatory_elements",
+    "forbidden_elements",
+    "provider_policy",
+    "budget",
+    "dry_run",
+    "organizer_context"
+  ]
+}

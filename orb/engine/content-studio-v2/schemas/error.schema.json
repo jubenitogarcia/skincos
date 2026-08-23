@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/error",
+  "title": "error",
+  "examples": [
+    {
+      "code": "fixture",
+      "message": "fixture",
+      "retryable": false,
+      "blocking": false
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "message": "fixture",
+      "retryable": false,
+      "blocking": false
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "blocking": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "code",
+    "message",
+    "retryable",
+    "blocking"
+  ]
+}

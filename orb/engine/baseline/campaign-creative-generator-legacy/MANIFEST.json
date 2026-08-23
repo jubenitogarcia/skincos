@@ -1,0 +1,37 @@
+{
+  "captured_from": "scripts/build-campaign-creative-generator.js",
+  "files": [
+    {
+      "file": "campaign-creative-generator.00-orquestrador.json",
+      "sha256": "b920d245ee99adec70d442255b6320a703eb16e3bc8bca4e1c0c76b2cf09e4ca",
+      "bytes": 11993
+    },
+    {
+      "file": "campaign-creative-generator.01-interpretar-campanha.json",
+      "sha256": "df3b2d5f00a0300aa367dca828ba337d52e1e8e5b0b535b66be23e35cfd20ccc",
+      "bytes": 18931
+    },
+    {
+      "file": "campaign-creative-generator.02-planejar-variacoes.json",
+      "sha256": "a5fae729942896eb8ac12a0d3f4273683a06b8d4280ebee46d6f61669a46f5cd",
+      "bytes": 9985
+    },
+    {
+      "file": "campaign-creative-generator.03-gerar-1-peca.json",
+      "sha256": "9b070751f0af597457c4561593c8810b765fc851051b70a677231f0feb5c2849",
+      "bytes": 13640
+    },
+    {
+      "file": "campaign-creative-generator.04-qa-export-ledger.json",
+      "sha256": "61c995f550f9a17d03ecb54ab0ae6cfba0aa4c95b0d1dbfcb7aa030f5681240e",
+      "bytes": 15671
+    },
+    {
+      "file": "campaign-creative-generator.package.json",
+      "sha256": "416a5ac2548ae8f950bcd17d1a465edc44c5d1fa5052635c3d985f856af4cb9b",
+      "bytes": 73876
+    }
+  ],
+  "credentials": "credential references retained only as non-secret metadata",
+  "generated_at": "2026-07-23T22:18:29.774Z"
+}

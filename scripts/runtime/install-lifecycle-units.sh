@@ -83,6 +83,20 @@ units=(
   cloudflare-orb.service
   cloudflare-runtime.service
   orb-backup.service
+  orb-restart-fence.service
+)
+
+# The restart fence is intentionally not enabled: if it were pulled in at boot
+# it would conflict with orb.service.  It is started only by orb-safe-restart.
+enabled_units=(
+  orb.service
+  orb-proxy.service
+  messaging-whatsapp.service
+  crm.service
+  booking.service
+  cloudflare-orb.service
+  cloudflare-runtime.service
+  orb-backup.service
 )
 
 render_dir="$(mktemp -d)"
@@ -120,6 +134,6 @@ if [[ "$APPLY" == "1" ]]; then
     sudo -n install -m 0644 "${rendered[$index]}" "$UNIT_DEST/${units[$index]}"
   done
   sudo -n systemctl daemon-reload
-  sudo -n systemctl enable "${units[@]}" >/dev/null
+  sudo -n systemctl enable "${enabled_units[@]}" >/dev/null
   echo "Lifecycle units installed. Windows Task Scheduler exclusively owns the Orb backup schedule."
 fi
