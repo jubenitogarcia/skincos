@@ -68,6 +68,9 @@ exec sudo -n /usr/bin/env \
 
   : "${EVOLUTION_API_URL:?EVOLUTION_API_URL is required in the native WhatsApp environment}"
   : "${EVOLUTION_API_KEY:?EVOLUTION_API_KEY is required in the native WhatsApp environment}"
+  # A local adapter must never start the background Harmonia worker inherited
+  # from the native environment.
+  export HARMONIA_WORKER_ENABLED=false
 
   install -d -m 0750 -o "$LOCAL_WA_ADAPTER_RUN_AS_USER" -g "$LOCAL_WA_ADAPTER_RUN_AS_USER" \
     "$LOCAL_WA_ADAPTER_RUNTIME_HOME" "$LOCAL_WA_ADAPTER_RUNTIME_HOME/var" \
@@ -75,11 +78,27 @@ exec sudo -n /usr/bin/env \
 
   # Run a private staged copy from the WSL filesystem. The editable source
   # remains the versioned worktree; this cache avoids Windows/WSL file latency.
+  exec 9>"$LOCAL_WA_ADAPTER_RUNTIME_HOME/npm-ci.lock"
+  flock 9
   runuser -u "$LOCAL_WA_ADAPTER_RUN_AS_USER" -- rsync -a --delete --exclude node_modules \
     "$LOCAL_WA_ADAPTER_ROOT/crm/api/" "$LOCAL_WA_ADAPTER_SOURCE_HOME/"
-  if [[ ! -d "$LOCAL_WA_ADAPTER_SOURCE_HOME/node_modules/express" ]]; then
-    runuser -u "$LOCAL_WA_ADAPTER_RUN_AS_USER" -- /usr/bin/npm --prefix "$LOCAL_WA_ADAPTER_SOURCE_HOME" ci --omit=dev --no-audit --no-fund
+  package_lock_state="$LOCAL_WA_ADAPTER_RUNTIME_HOME/package-lock.sha256"
+  if [[ ! -f "$LOCAL_WA_ADAPTER_SOURCE_HOME/package-lock.json" ]]; then
+    echo "[whatsapp-local] package-lock.json ausente no espelho local." >&2
+    exit 2
   fi
+  package_lock_hash="$(sha256sum "$LOCAL_WA_ADAPTER_SOURCE_HOME/package-lock.json" | awk "{print \$1}")"
+  recorded_package_lock_hash=""
+  [[ -f "$package_lock_state" ]] && recorded_package_lock_hash="$(tr -d "\r\n" < "$package_lock_state")"
+  if [[ ! -d "$LOCAL_WA_ADAPTER_SOURCE_HOME/node_modules/express" || "$package_lock_hash" != "$recorded_package_lock_hash" ]]; then
+    runuser -u "$LOCAL_WA_ADAPTER_RUN_AS_USER" -- /usr/bin/npm --prefix "$LOCAL_WA_ADAPTER_SOURCE_HOME" ci --omit=dev --no-audit --no-fund
+    package_lock_state_tmp="${package_lock_state}.tmp.$$"
+    printf "%s\n" "$package_lock_hash" > "$package_lock_state_tmp"
+    chown "$LOCAL_WA_ADAPTER_RUN_AS_USER:$LOCAL_WA_ADAPTER_RUN_AS_USER" "$package_lock_state_tmp"
+    chmod 0640 "$package_lock_state_tmp"
+    mv -f "$package_lock_state_tmp" "$package_lock_state"
+  fi
+  flock -u 9
 
   export NODE_ENV=development
   export NO_AUTH=true
