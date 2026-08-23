@@ -155,9 +155,32 @@ type ShareNavigator = Navigator & {
 
 const STORY_WIDTH = 1080;
 const STORY_HEIGHT = 1920;
-const INITIAL_TABLE_HEIGHT = 220;
+// Keep the intro/prompt compact while preserving enough room for the deck to
+// cross the lower edge of the surface without being visually detached from the copy.
+const INITIAL_TABLE_HEIGHT = 112;
 const AUTO_ADVANCE_SECONDS = BEAUTY_MOVEMENT_MOTION.autoAdvanceMs / 1_000;
-const FINALE_HOLD_SECONDS = BEAUTY_MOVEMENT_MOTION.finaleHoldMs / 1_000;
+const INITIAL_EXPERIENCE_TITLE = "3 anos. 3 cartas.";
+const INITIAL_EXPERIENCE_SUBTITLE = "Um novo movimento para celebrar tudo o que ainda vem pela frente.";
+
+type InitialExperienceCopy = {
+    title: string;
+    subtitle: string;
+};
+
+function getInitialExperienceCopy(description?: string | null): InitialExperienceCopy {
+    const text = description?.trim();
+    const fallback = `${INITIAL_EXPERIENCE_TITLE} ${INITIAL_EXPERIENCE_SUBTITLE}`;
+    const fullText = text || fallback;
+
+    if (fullText.startsWith(`${INITIAL_EXPERIENCE_TITLE} `)) {
+        return {
+            title: INITIAL_EXPERIENCE_TITLE,
+            subtitle: fullText.slice(INITIAL_EXPERIENCE_TITLE.length).trim(),
+        };
+    }
+
+    return { title: fullText, subtitle: "" };
+}
 
 function motionDuration(durationMs: number, reducedMotion: boolean, preserveTiming = false): number {
     return reducedMotion && !preserveTiming ? 0 : durationMs;
@@ -632,8 +655,9 @@ export default function BeautyMovementExperience({
     const [finaleStage, setFinaleStage] = useState<FinaleStage>(() =>
         initialState.confirmed ? "result" : initialReadingComplete ? "confirmation" : "hidden",
     );
-    const [finaleHoldRemaining, setFinaleHoldRemaining] = useState(0);
+    const [isSpecialCardModalOpen, setIsSpecialCardModalOpen] = useState(initialState.confirmed);
     const [tableExpansionHeight, setTableExpansionHeight] = useState<number | null>(null);
+    const [tableIntroHeight, setTableIntroHeight] = useState(0);
     const [autoAdvanceActive, setAutoAdvanceActive] = useState(false);
     const [progressMotion, setProgressMotion] = useState<ProgressMotion | null>(null);
     const openedRef = useRef(false);
@@ -654,6 +678,8 @@ export default function BeautyMovementExperience({
     const progressButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const finaleRef = useRef<HTMLElement | null>(null);
     const confirmationActionRef = useRef<HTMLElement | null>(null);
+    const specialCardModalCloseRef = useRef<HTMLButtonElement | null>(null);
+    const specialCardReopenCardRef = useRef<HTMLElement | null>(null);
     const selectionsRef = useRef(selections);
     const displayedActIndexRef = useRef(displayedActIndex);
     const introStageRef = useRef(introStage);
@@ -670,6 +696,24 @@ export default function BeautyMovementExperience({
     const introTransitionGateRef = useRef(createBeautyMovementMotionGate());
     const progressMotionKeyRef = useRef(0);
 
+    const closeSpecialCardModal = useCallback(() => {
+        setIsSpecialCardModalOpen(false);
+        window.requestAnimationFrame(() => {
+            specialCardReopenCardRef.current?.focus({ preventScroll: true });
+        });
+    }, []);
+
+    const openSpecialCardModal = useCallback(() => {
+        setIsSpecialCardModalOpen(true);
+    }, []);
+
+    function handleSpecialCardReopenKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+        if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+
+        event.preventDefault();
+        openSpecialCardModal();
+    }
+
     const motionCssVariables = useMemo(
         () =>
             ({
@@ -679,20 +723,21 @@ export default function BeautyMovementExperience({
                 "--bm-hand-expand-ms": `${BEAUTY_MOVEMENT_MOTION.handExpandMs}ms`,
                 "--bm-hand-deal-ms": `${BEAUTY_MOVEMENT_MOTION.handDealMs}ms`,
                 "--bm-table-expand-height": `${tableExpansionHeight ?? INITIAL_TABLE_HEIGHT}px`,
+                "--bm-table-intro-height": `${tableIntroHeight}px`,
                 "--bm-progress-collapse-ms": `${BEAUTY_MOVEMENT_MOTION.progressCollapseMs}ms`,
+                "--bm-progress-enter-ms": `${BEAUTY_MOVEMENT_MOTION.progressEnterMs}ms`,
                 "--bm-progress-transfer-ms": `${BEAUTY_MOVEMENT_MOTION.progressTransferMs}ms`,
                 "--bm-progress-expand-ms": `${BEAUTY_MOVEMENT_MOTION.progressExpandMs}ms`,
                 "--bm-progress-total-ms": `${BEAUTY_MOVEMENT_MOTION.progressTransitionMs}ms`,
                 "--bm-finale-enter-ms": `${BEAUTY_MOVEMENT_MOTION.finaleCardsEnterMs}ms`,
                 "--bm-finale-merge-ms": `${BEAUTY_MOVEMENT_MOTION.finaleMergeMs}ms`,
                 "--bm-finale-card-merge-ms": `${BEAUTY_MOVEMENT_MOTION.finaleCardMergeMs}ms`,
-                "--bm-finale-merge-stagger-ms": `${BEAUTY_MOVEMENT_MOTION.finaleMergeStaggerMs}ms`,
                 "--bm-prompt-word-delay-ms": `${BEAUTY_MOVEMENT_MOTION.promptWordDelayMs}ms`,
                 "--bm-prompt-word-animation-ms": `${BEAUTY_MOVEMENT_MOTION.promptWordAnimationMs}ms`,
                 "--bm-prompt-exit-ms": `${BEAUTY_MOVEMENT_MOTION.promptExitBaseMs}ms`,
                 "--bm-prompt-exit-delay-ms": `${BEAUTY_MOVEMENT_MOTION.promptExitWordDelayMs}ms`,
             }) as CSSProperties,
-        [tableExpansionHeight],
+        [tableExpansionHeight, tableIntroHeight],
     );
 
     useEffect(() => {
@@ -728,6 +773,7 @@ export default function BeautyMovementExperience({
         if (initialState.confirmed) {
             setConfirmed(true);
             setCurrentFinaleStage("result");
+            setIsSpecialCardModalOpen(true);
         }
     }, [initialState.confirmed]);
 
@@ -752,7 +798,11 @@ export default function BeautyMovementExperience({
     useEffect(() => {
         if (finaleStage === "confirmation") {
             window.requestAnimationFrame(() => {
-                confirmationActionRef.current?.focus({ preventScroll: true });
+                const confirmationAction = confirmationActionRef.current;
+                const focusTarget = isLocalPreview
+                    ? confirmationAction?.querySelector<HTMLButtonElement>("button")
+                    : confirmationAction;
+                focusTarget?.focus({ preventScroll: true });
             });
             return;
         }
@@ -760,18 +810,28 @@ export default function BeautyMovementExperience({
         window.requestAnimationFrame(() => {
             finaleRef.current?.focus({ preventScroll: true });
         });
-    }, [finaleStage]);
+    }, [finaleStage, isLocalPreview]);
 
     useEffect(() => {
-        if (finaleStage !== "collecting") return;
+        if (finaleStage !== "result" || !isSpecialCardModalOpen) return;
 
-        setFinaleHoldRemaining(FINALE_HOLD_SECONDS);
-        const countdownTimer = window.setInterval(() => {
-            setFinaleHoldRemaining((current) => Math.max(0, current - 1));
-        }, 1000);
+        const previousBodyOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
 
-        return () => window.clearInterval(countdownTimer);
-    }, [finaleStage]);
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === "Escape") closeSpecialCardModal();
+        };
+        window.addEventListener("keydown", closeOnEscape);
+        const focusFrame = window.requestAnimationFrame(() => {
+            specialCardModalCloseRef.current?.focus({ preventScroll: true });
+        });
+
+        return () => {
+            window.cancelAnimationFrame(focusFrame);
+            window.removeEventListener("keydown", closeOnEscape);
+            document.body.style.overflow = previousBodyOverflow;
+        };
+    }, [closeSpecialCardModal, finaleStage, isSpecialCardModalOpen]);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -843,19 +903,45 @@ export default function BeautyMovementExperience({
         };
     }
 
-    function startProgressMotion(fromIndex: number, toIndex: number) {
+    function measureProgressTransition(fromIndex: number, toIndex: number): { from: ProgressRect; to: ProgressRect } | null {
+        const from = measureProgressButton(fromIndex);
+        const sourceButton = progressButtonRefs.current[fromIndex];
+        const targetButton = progressButtonRefs.current[toIndex];
+        const sourceItem = sourceButton?.closest("li");
+        const targetItem = targetButton?.closest("li");
+        if (!from || !sourceItem || !targetItem) return null;
+
+        const sourceWasCurrent = sourceItem.classList.contains(styles.progressItemCurrent);
+        const targetWasCurrent = targetItem.classList.contains(styles.progressItemCurrent);
+        let to: ProgressRect | null = null;
+
+        // Measure the destination in the layout it will have after React commits
+        // the new active index: the source collapses while the destination grows.
+        sourceItem.classList.remove(styles.progressItemCurrent);
+        targetItem.classList.add(styles.progressItemCurrent);
+        try {
+            to = measureProgressButton(toIndex);
+        } finally {
+            sourceItem.classList.toggle(styles.progressItemCurrent, sourceWasCurrent);
+            targetItem.classList.toggle(styles.progressItemCurrent, targetWasCurrent);
+        }
+
+        return to ? { from, to } : null;
+    }
+
+    function startProgressMotion(fromIndex: number, toIndex: number): boolean {
         if (fromIndex === toIndex || reducedMotionRef.current) {
             if (progressMotionTimerRef.current !== null) {
                 window.clearTimeout(progressMotionTimerRef.current);
                 progressMotionTimerRef.current = null;
             }
             setProgressMotion(null);
-            return;
+            return false;
         }
 
-        const from = measureProgressButton(fromIndex);
-        const to = measureProgressButton(toIndex);
-        if (!from || !to) return;
+        const measuredTransition = measureProgressTransition(fromIndex, toIndex);
+        if (!measuredTransition) return false;
+        const { from, to } = measuredTransition;
 
         if (progressMotionTimerRef.current !== null) {
             window.clearTimeout(progressMotionTimerRef.current);
@@ -870,13 +956,16 @@ export default function BeautyMovementExperience({
                 setProgressMotion(null);
             }
         }, BEAUTY_MOVEMENT_MOTION.progressTransitionMs);
+
+        return true;
     }
 
-    function setCurrentActIndex(next: number) {
+    function setCurrentActIndex(next: number): boolean {
         const previous = displayedActIndexRef.current;
-        startProgressMotion(previous, next);
+        const progressMotionStarted = startProgressMotion(previous, next);
         displayedActIndexRef.current = next;
         setDisplayedActIndex(next);
+        return progressMotionStarted;
     }
 
     function setCurrentHandStage(next: HandStage) {
@@ -1107,12 +1196,13 @@ export default function BeautyMovementExperience({
         transitionInFlightRef.current = true;
         const handToken = beginHandTransition();
         const introToken = beginIntroTransition();
+        setTableIntroHeight(0);
         setCurrentIntroStage("entering");
-        scheduleIntroTransition(introToken, promptEntryDuration(initialExperienceCopy), () => {
+        scheduleIntroTransition(introToken, promptEntryDuration(initialExperienceText), () => {
             setCurrentIntroStage("holding");
             scheduleIntroTransition(introToken, BEAUTY_MOVEMENT_MOTION.initialIntroHoldMs, () => {
                 setCurrentIntroStage("exiting");
-                scheduleIntroTransition(introToken, promptExitTransitionDuration(initialExperienceCopy), () => {
+                scheduleIntroTransition(introToken, promptExitTransitionDuration(initialExperienceText), () => {
                     setCurrentIntroStage("hidden");
                     setCurrentHandStage("prompt");
                     scheduleHandTransition(handToken, promptReadingDelay(tableDefinition.prompt, reducedMotionRef.current), () => {
@@ -1152,7 +1242,6 @@ export default function BeautyMovementExperience({
             scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.finaleCardsEnterMs, () => {
                 setCurrentFinaleStage("collecting");
                 scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.finaleHoldMs, () => {
-                    setFinaleHoldRemaining(0);
                     setCurrentFinaleStage("merging");
                     scheduleHandTransition(
                         handToken,
@@ -1161,13 +1250,18 @@ export default function BeautyMovementExperience({
                             transitionInFlightRef.current = false;
                             setCurrentHandStage("ready");
                             setCurrentFinaleStage(confirmed ? "result" : "confirmation");
+                            setIsSpecialCardModalOpen(confirmed);
                             if (confirmed) {
                                 window.requestAnimationFrame(() => {
                                     window.requestAnimationFrame(scrollToFinale);
                                 });
                             } else {
                                 window.requestAnimationFrame(() => {
-                                    confirmationActionRef.current?.focus({ preventScroll: true });
+                                    const confirmationAction = confirmationActionRef.current;
+                                    const focusTarget = isLocalPreview
+                                        ? confirmationAction?.querySelector<HTMLButtonElement>("button")
+                                        : confirmationAction;
+                                    focusTarget?.focus({ preventScroll: true });
                                 });
                             }
                         },
@@ -1190,26 +1284,32 @@ export default function BeautyMovementExperience({
         const handToken = beginHandTransition();
         setCurrentHandStage("collect");
         scheduleHandTransition(handToken, BEAUTY_MOVEMENT_MOTION.handCollectMs, () => {
-            setCurrentActIndex(nextIndex);
             setCurrentHandStage("prompt");
+            const progressMotionStarted = setCurrentActIndex(nextIndex);
             scheduleHandTransition(
                 handToken,
-                promptReadingDelay(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || "", reducedMotionRef.current),
+                progressMotionStarted ? BEAUTY_MOVEMENT_MOTION.progressTransitionMs : 0,
                 () => {
-                    setCurrentHandStage("prompt-out");
                     scheduleHandTransition(
                         handToken,
-                        promptExitTransitionDuration(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || ""),
+                        promptReadingDelay(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || "", reducedMotionRef.current),
                         () => {
-                            scheduleDealSequence(handToken, () => {
-                                transitionInFlightRef.current = false;
-                                setCurrentHandStage("ready");
-                                window.requestAnimationFrame(scrollToTable);
-                            });
+                            setCurrentHandStage("prompt-out");
+                            scheduleHandTransition(
+                                handToken,
+                                promptExitTransitionDuration(BEAUTY_MOVEMENT_ACT_DEFINITIONS[nextIndex]?.prompt || ""),
+                                () => {
+                                    scheduleDealSequence(handToken, () => {
+                                        transitionInFlightRef.current = false;
+                                        setCurrentHandStage("ready");
+                                        window.requestAnimationFrame(scrollToTable);
+                                    });
+                                },
+                            );
                         },
+                        true,
                     );
                 },
-                true,
             );
         });
     }
@@ -1281,7 +1381,7 @@ export default function BeautyMovementExperience({
                 resizeFrame = null;
                 const surface = tableSurfaceRef.current;
                 if (!surface || handStageRef.current !== "expand") return;
-                setTableExpansionHeight(Math.max(220, surface.scrollHeight));
+                setTableExpansionHeight(Math.max(INITIAL_TABLE_HEIGHT, surface.scrollHeight));
             });
         };
 
@@ -1294,6 +1394,30 @@ export default function BeautyMovementExperience({
             if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
         };
     }, [handStage]);
+
+    useEffect(() => {
+        if (introStage !== "entering" || handStage !== "waiting") return;
+
+        let measureFrame: number | null = window.requestAnimationFrame(() => {
+            measureFrame = null;
+            const surface = tableSurfaceRef.current;
+            if (!surface || surface.dataset.deckState !== "intro") return;
+
+            // The deck intentionally crosses the surface boundary. Exclude it
+            // from this one intrinsic-content measurement so later intro
+            // phases cannot measure their own overflow and grow the table
+            // repeatedly.
+            const deck = surface.querySelector<HTMLElement>(`.${styles.deckStage}`);
+            const previousDisplay = deck?.style.display;
+            if (deck) deck.style.display = "none";
+            setTableIntroHeight(Math.max(INITIAL_TABLE_HEIGHT, Math.ceil(surface.scrollHeight)));
+            if (deck) deck.style.display = previousDisplay ?? "";
+        });
+
+        return () => {
+            if (measureFrame !== null) window.cancelAnimationFrame(measureFrame);
+        };
+    }, [handStage, introStage]);
 
     useEffect(() => {
         const cancelWhenBackgrounded = () => {
@@ -1335,7 +1459,11 @@ export default function BeautyMovementExperience({
     }
 
     function handleSelectedCardAnimationEnd(event: ReactAnimationEvent<HTMLButtonElement>, actIndex: number) {
-        if (event.currentTarget !== event.target || event.animationName !== "cardLiftAndSettle") return;
+        // CSS Modules scopes keyframe names (for example, `cardLiftAndSettle__hash`),
+        // so comparing against the source name would silently ignore the event.
+        // The stage/token guards in settleReveal already make this handler idempotent
+        // and keep collect/deal animations from advancing the hand accidentally.
+        if (event.currentTarget !== event.target) return;
         const token = revealTransitionTokenRef.current;
         if (token === null) return;
         settleReveal(actIndex, token);
@@ -1392,7 +1520,7 @@ export default function BeautyMovementExperience({
         setConfirmationAttempted(true);
         setActionError(null);
 
-        if (!operationalConsent) return;
+        if (!operationalConsent && !isLocalPreview) return;
 
         confirmInFlightRef.current = true;
         setIsConfirming(true);
@@ -1404,6 +1532,7 @@ export default function BeautyMovementExperience({
             if (!mountedRef.current) return;
             setConfirmed(true);
             setCurrentFinaleStage("result");
+            setIsSpecialCardModalOpen(true);
             onTrack?.("beauty_movement_confirmed", { stage: "confirmation" });
         } catch {
             if (mountedRef.current) {
@@ -1471,9 +1600,8 @@ export default function BeautyMovementExperience({
 
     const tableAct = BEAUTY_MOVEMENT_ACTS[displayedActIndex] ?? BEAUTY_MOVEMENT_ACTS[0];
     const tableDefinition = BEAUTY_MOVEMENT_ACT_DEFINITIONS[displayedActIndex] ?? BEAUTY_MOVEMENT_ACT_DEFINITIONS[0];
-    const initialExperienceCopy =
-        initialState.campaign.description?.trim() ||
-        "3 anos. 3 cartas. Um novo movimento para celebrar tudo o que ainda vem pela frente.";
+    const initialExperienceCopy = getInitialExperienceCopy(initialState.campaign.description);
+    const initialExperienceText = [initialExperienceCopy.title, initialExperienceCopy.subtitle].filter(Boolean).join(" ");
     const tableCards = getBeautyMovementCardsForAct(initialState.palette, tableAct);
     const tableSelectedCardId = selections[tableAct];
     const tableSelected = Boolean(tableSelectedCardId);
@@ -1482,7 +1610,7 @@ export default function BeautyMovementExperience({
     const waitingForInitialDeal = handStage === "waiting" && introStage === "hidden" && finaleStage === "hidden";
     const tablePromptCopy =
         introStage !== "hidden"
-            ? { title: initialExperienceCopy, subtitle: "" }
+            ? initialExperienceCopy
             : handStage === "prompt" || handStage === "prompt-out"
               ? { title: tableDefinition.promptTitle, subtitle: tableDefinition.promptSubtitle }
               : null;
@@ -1498,6 +1626,18 @@ export default function BeautyMovementExperience({
                 : handStage === "prompt-out"
                   ? styles.tablePromptExit
                   : "";
+    const tableIsBusy =
+        introStage !== "hidden" ||
+        handStage === "prompt" ||
+        handStage === "prompt-out" ||
+        handStage === "reveal" ||
+        handStage === "collect" ||
+        handStage === "expand" ||
+        handStage === "deal" ||
+        handStage === "finale" ||
+        finaleStage === "assembling" ||
+        finaleStage === "collecting" ||
+        finaleStage === "merging";
 
     function renderCard(card: BeautyMovementCard, cardIndex: number) {
         const pendingKey = `${displayedActIndex}:${card.id}`;
@@ -1525,7 +1665,7 @@ export default function BeautyMovementExperience({
                 <span className={styles.cardInner}>
                     <span className={`${styles.cardFace} ${styles.cardFront}`}>
                         <span className={styles.cardBrandMark} aria-hidden="true">
-                            <BrandMark className={styles.cardBrandLogo} tone="light" title="" />
+                            <BrandMark className={styles.cardBrandLogo} loading="eager" tone="light" title="" />
                         </span>
                         <span className={styles.cardPrompt}>
                             {isPending ? "Guardando escolha" : tableIsUnlocked ? "Revelar carta" : "Bloqueada"}
@@ -1568,7 +1708,7 @@ export default function BeautyMovementExperience({
         );
     }
 
-    function renderSpecialCard(revealed: boolean) {
+    function renderSpecialCard(revealed: boolean, showRevealAction = false, interactive = false) {
         const kind: SpecialCardKind = revealed
             ? hasCourtesyClass
                 ? "velocity"
@@ -1619,16 +1759,46 @@ export default function BeautyMovementExperience({
 
         return (
             <article
-                className={styles.specialCard}
+                ref={interactive ? specialCardReopenCardRef : undefined}
+                className={`${styles.specialCard} ${interactive ? styles.specialCardReopenCard : ""}`.trim()}
                 data-special-state={revealed ? "revealed" : "locked"}
-                aria-label={revealed ? `Carta especial: ${title}` : "Carta especial reservada"}
+                role={interactive ? "button" : undefined}
+                tabIndex={interactive ? 0 : undefined}
+                aria-label={interactive ? "Revelar sua carta especial" : revealed ? `Carta especial: ${title}` : "Carta especial reservada"}
+                onClick={interactive ? openSpecialCardModal : undefined}
+                onKeyDown={interactive ? handleSpecialCardReopenKeyDown : undefined}
             >
                 <div className={styles.specialCardInner}>
-                    <div className={`${styles.specialCardFace} ${styles.specialCardBack}`} aria-hidden={revealed}>
-                        <BrandMark className={styles.specialCardBrand} tone="light" title="" />
+                    <div
+                        className={[
+                            styles.specialCardFace,
+                            styles.specialCardBack,
+                            showRevealAction ? styles.specialCardBackWithAction : "",
+                        ].filter(Boolean).join(" ")}
+                        aria-hidden={revealed}
+                    >
+                        <BrandMark className={styles.specialCardBrand} loading="eager" tone="light" title="" />
                         <span className={styles.specialCardBackLabel}>CARTA ESPECIAL</span>
                         <strong>A soma da sua leitura está pronta.</strong>
-                        <span>Confirme sua entrada para revelar o presente reservado.</span>
+                        <span>Confirme sua entrada para revelar a sua carta especial.</span>
+                        {showRevealAction ? (
+                            <div
+                                className={styles.specialCardRevealAction}
+                                ref={(node) => {
+                                    confirmationActionRef.current = node;
+                                }}
+                            >
+                                {actionError ? <p className={styles.specialCardRevealError} role="alert">{actionError}</p> : null}
+                                <button
+                                    className={styles.primaryButton}
+                                    type="button"
+                                    onClick={() => void handleConfirm()}
+                                    disabled={isConfirming}
+                                >
+                                    {isConfirming ? "Revelando…" : "Clique aqui para revelar sua carta especial"}
+                                </button>
+                            </div>
+                        ) : null}
                         <span className={styles.specialCardSeal} aria-hidden="true">
                             ✦
                         </span>
@@ -1775,27 +1945,26 @@ export default function BeautyMovementExperience({
     }
 
     return (
-        <main className={styles.page}>
+        <>
+        <main className={styles.page} aria-hidden={isSpecialCardModalOpen || undefined}>
             <div className={styles.backgroundOrbOne} aria-hidden="true" />
             <div className={styles.backgroundOrbTwo} aria-hidden="true" />
 
             <section className={styles.shell} aria-labelledby="beauty-movement-title">
                 <header className={styles.hero}>
+                    <h1 id="beauty-movement-title">{initialState.campaign.title?.trim() || "Beleza que se move com você."}</h1>
                     {waitingForInitialDeal ? (
                         <button
                             className={styles.heroDeckPrompt}
                             id="beauty-movement-deck-prompt"
                             type="button"
-                            onClick={scrollToTable}
-                            aria-label="Ir ao baralho e começar sua leitura"
+                            onClick={startInitialDeal}
+                            onKeyDown={handleDeckKeyDown}
+                            aria-label="Clique no baralho para começar a sua leitura"
                         >
-                            <span>Começar a leitura</span>
-                            <span className={styles.heroDeckPromptArrow} aria-hidden="true">
-                                ↓
-                            </span>
+                            Clique no baralho para começar a sua leitura
                         </button>
                     ) : null}
-                    <h1 id="beauty-movement-title">{initialState.campaign.title?.trim() || "Beleza que se move com você."}</h1>
                 </header>
 
                 <section
@@ -1807,10 +1976,13 @@ export default function BeautyMovementExperience({
                     data-hand-stage={handStage}
                     data-act-index={displayedActIndex}
                     data-finale-stage={finaleStage}
+                    aria-busy={tableIsBusy || undefined}
                     style={motionCssVariables}
                 >
-                    <div className={styles.progressRow}>
-                        <div className={styles.progressGroup}>
+                    <div
+                        className={`${styles.progressRow} ${waitingForInitialDeal ? styles.progressRowWaiting : ""}`.trim()}
+                    >
+                        <div className={styles.progressGroup} aria-hidden={waitingForInitialDeal || undefined}>
                             <ol
                                 ref={progressListRef}
                                 className={`${styles.progress} ${progressMotion ? styles.progressMotionActive : ""}`.trim()}
@@ -1836,11 +2008,21 @@ export default function BeautyMovementExperience({
                                 ) : null}
                                 {BEAUTY_MOVEMENT_ACT_DEFINITIONS.map((act, index) => {
                                     const isDone = Boolean(selections[act.id]);
-                                    const isCurrent = introStage === "hidden" && !waitingForInitialDeal && index === displayedActIndex;
+                                    const isCurrent =
+                                        finaleStage === "hidden" &&
+                                        introStage === "hidden" &&
+                                        !waitingForInitialDeal &&
+                                        index === displayedActIndex;
+                                    const isInitialCategoryEntering =
+                                        isCurrent &&
+                                        !progressMotion &&
+                                        displayedActIndex === 0 &&
+                                        (handStage === "prompt" || handStage === "prompt-out");
                                     const isLocked = !isActUnlocked(index);
                                     const isProgressSource = progressMotion?.fromIndex === index;
                                     const isProgressTarget = progressMotion?.toIndex === index;
                                     const isAdvanceReady = isCurrent && isDone && handStage === "held";
+                                    const isAutoAdvanceVisible = isCurrent && !progressMotion && autoAdvanceActive;
                                     const nextAct = BEAUTY_MOVEMENT_ACT_DEFINITIONS[index + 1];
                                     const progressActionLabel = isAdvanceReady
                                         ? index === BEAUTY_MOVEMENT_ACTS.length - 1
@@ -1853,29 +2035,39 @@ export default function BeautyMovementExperience({
                                                 styles.progressItem,
                                                 isDone ? styles.progressItemDone : "",
                                                 isCurrent && !progressMotion ? styles.progressItemCurrent : "",
+                                                isInitialCategoryEntering ? styles.progressItemEntering : "",
                                                 isProgressSource ? styles.progressItemTransferFrom : "",
                                                 isProgressTarget ? styles.progressItemTransferTo : "",
                                             ].filter(Boolean).join(" ")}
                                             key={act.id}
                                         >
-                                            <button
-                                                className={styles.progressButton}
-                                                type="button"
-                                                onClick={() => handleProgressClick(index)}
-                                                ref={(element) => {
-                                                    progressButtonRefs.current[index] = element;
-                                                }}
-                                                disabled={!isCurrent || Boolean(progressMotion)}
+                                                <button
+                                                    className={styles.progressButton}
+                                                    type="button"
+                                                    onClick={() => handleProgressClick(index)}
+                                                    ref={(element) => {
+                                                        progressButtonRefs.current[index] = element;
+                                                    }}
+                                                    disabled={!isCurrent || Boolean(progressMotion)}
                                                 aria-current={isCurrent ? "step" : undefined}
                                                 aria-label={progressActionLabel}
                                             >
                                                 <span className={styles.progressCopy}>
                                                     <strong>{act.label}</strong>
                                                 </span>
-                                                {isCurrent && !progressMotion && autoAdvanceActive ? (
-                                                    <span className={styles.autoAdvance} role="status" aria-live="polite">
+                                                {isCurrent && !progressMotion ? (
+                                                    <span
+                                                        className={`${styles.autoAdvance} ${isAutoAdvanceVisible ? styles.autoAdvanceVisible : ""}`.trim()}
+                                                        role="status"
+                                                        aria-live={isAutoAdvanceVisible ? "polite" : undefined}
+                                                        aria-hidden={isAutoAdvanceVisible ? undefined : true}
+                                                    >
                                                         <span className={styles.srOnly}>
-                                                            {nextDefinition ? "Próxima mão" : "Confirmação"} automática em {AUTO_ADVANCE_SECONDS} segundos.
+                                                            {isAutoAdvanceVisible ? (
+                                                                <>
+                                                                    {nextDefinition ? "Próxima mão" : "Confirmação"} automática em {AUTO_ADVANCE_SECONDS} segundos.
+                                                                </>
+                                                            ) : null}
                                                         </span>
                                                     </span>
                                                 ) : null}
@@ -1886,6 +2078,30 @@ export default function BeautyMovementExperience({
                             </ol>
                         </div>
 
+                    </div>
+
+                    <div
+                        ref={tableSurfaceRef}
+                        className={styles.tableSurface}
+                        data-deck-state={
+                            waitingForInitialDeal
+                                ? "waiting"
+                                : introStage !== "hidden"
+                                  ? "intro"
+                                  : handStage === "prompt" || handStage === "prompt-out"
+                                    ? "prompt"
+                                    : handStage === "expand"
+                                      ? "expanding"
+                                      : finaleStage === "confirmation" || finaleStage === "result"
+                                        ? "final"
+                                        : "ready"
+                        }
+                    >
+                        {waitingForInitialDeal ? (
+                            <span className={styles.tableDeckPromptArrow} aria-hidden="true">
+                                ↓
+                            </span>
+                        ) : null}
                         {tablePromptCopy ? (
                             <p
                                 className={`${styles.tablePrompt} ${tablePromptClassName}`.trim()}
@@ -1900,34 +2116,19 @@ export default function BeautyMovementExperience({
                                 ) : null}
                             </p>
                         ) : null}
-                    </div>
-
-                    <div
-                        ref={tableSurfaceRef}
-                        className={styles.tableSurface}
-                        data-deck-state={
-                            waitingForInitialDeal || introStage !== "hidden" || handStage === "prompt" || handStage === "prompt-out"
-                                ? "waiting"
-                                : handStage === "expand"
-                                  ? "expanding"
-                                : finaleStage === "confirmation" || finaleStage === "result"
-                                  ? "final"
-                                  : "ready"
-                        }
-                    >
                         <button
                             className={styles.deckStage}
                             type="button"
                             onClick={startInitialDeal}
                             onKeyDown={handleDeckKeyDown}
                             disabled={!waitingForInitialDeal}
-                            aria-describedby={waitingForInitialDeal ? "beauty-movement-deck-prompt" : undefined}
-                            aria-label="Clique no baralho para distribuir as cartas"
+                            aria-hidden={finaleStage !== "hidden" ? true : undefined}
+                            aria-label="Clique no baralho para começar a sua leitura"
                         >
                             <span className={`${styles.deckCard} ${styles.deckCardUnder}`} />
                             <span className={`${styles.deckCard} ${styles.deckCardMiddle}`} />
                             <span className={`${styles.deckCard} ${styles.deckCardTop}`}>
-                                <BrandMark className={styles.deckBrandLogo} tone="light" title="" />
+                                <BrandMark className={styles.deckBrandLogo} loading="eager" tone="light" title="" />
                             </span>
                         </button>
                         {finaleStage === "assembling" || finaleStage === "collecting" || finaleStage === "merging" ? (
@@ -1936,26 +2137,32 @@ export default function BeautyMovementExperience({
                                 aria-hidden="true"
                             >
                                 {reading.map(renderFinaleCard)}
+                                {finaleStage === "merging" ? (
+                                    <div className={styles.finaleSpecialCardTransform}>
+                                        {renderSpecialCard(false)}
+                                    </div>
+                                ) : null}
                             </div>
-                        ) : finaleStage === "confirmation" || finaleStage === "result" ? (
+                        ) : finaleStage === "confirmation" ? (
                             <div
                                 className={styles.specialCardStage}
                                 role="group"
-                                aria-label={finaleStage === "result" ? "Carta especial do benefício" : "Carta especial da celebração"}
+                                aria-label="Carta especial da celebração"
                             >
-                                {finaleStage === "confirmation" ? renderConfirmationAction() : null}
-                                {renderSpecialCard(finaleStage === "result")}
+                                {!isLocalPreview ? renderConfirmationAction() : null}
+                                {renderSpecialCard(false, isLocalPreview)}
+                            </div>
+                        ) : finaleStage === "result" ? (
+                            <div
+                                className={`${styles.specialCardStage} ${styles.specialCardStageReopen}`}
+                                role="group"
+                                aria-label="Carta especial do benefício"
+                            >
+                                {renderSpecialCard(false, false, !isSpecialCardModalOpen)}
                             </div>
                         ) : finaleStage === "hidden" && introStage === "hidden" && handStage !== "waiting" && handStage !== "prompt" && handStage !== "prompt-out" ? (
                             <div className={styles.cardGrid} role="group" aria-label={`Cartas da etapa ${tableDefinition.label}`}>
                                 {tableCards.map(renderCard)}
-                            </div>
-                        ) : null}
-                        {finaleStage === "collecting" ? (
-                            <div className={styles.finaleHoldStatus} role="status" aria-live="polite">
-                                <span>Leitura reunida</span>
-                                <strong>{finaleHoldRemaining}s</strong>
-                                <small>A carta especial se forma em seguida.</small>
                             </div>
                         ) : null}
                     </div>
@@ -1988,5 +2195,33 @@ export default function BeautyMovementExperience({
 
             </section>
         </main>
+            {finaleStage === "result" && isSpecialCardModalOpen ? (
+                <div
+                    className={styles.specialCardModalOverlay}
+                    role="presentation"
+                    onClick={(event) => {
+                        if (event.target === event.currentTarget) closeSpecialCardModal();
+                    }}
+                >
+                    <section
+                        className={styles.specialCardModalDialog}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Carta especial"
+                    >
+                        <button
+                            ref={specialCardModalCloseRef}
+                            className={styles.specialCardModalClose}
+                            type="button"
+                            aria-label="Fechar carta especial"
+                            onClick={closeSpecialCardModal}
+                        >
+                            ×
+                        </button>
+                        {renderSpecialCard(true)}
+                    </section>
+                </div>
+            ) : null}
+        </>
     );
 }

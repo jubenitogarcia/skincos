@@ -15,14 +15,14 @@ export const BEAUTY_MOVEMENT_MOTION = {
     /** A short settle window keeps the freshly dealt cards fully at rest before clicks are enabled. */
     handDealSettleMs: 120,
     progressCollapseMs: 220,
+    progressEnterMs: 620,
     progressTransferMs: 480,
     progressExpandMs: 260,
     progressTransitionMs: 960,
     finaleCardsEnterMs: 880,
     finaleMergeMs: 1_200,
     finaleCardMergeMs: 1_120,
-    finaleMergeStaggerMs: 40,
-    /** The third finale card has a stagger; let its last frame land before swapping the DOM. */
+    /** Let the last merge frame land before swapping the DOM. */
     finaleMergeSettleMs: 120,
     initialIntroHoldMs: 2_600,
     promptWordDelayMs: 48,
