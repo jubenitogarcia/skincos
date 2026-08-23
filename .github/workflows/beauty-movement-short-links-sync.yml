@@ -291,7 +291,39 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         shell: bash
-        run: npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_SQL}" --json > "${D1_APPLY_READBACK}"
+        run: |
+          set -euo pipefail
+          if ! npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_SQL}" --json > "${D1_APPLY_READBACK}"; then
+            node - "${D1_APPLY_READBACK}" <<'NODE'
+            const fs = require('node:fs');
+            const readbackPath = process.argv[2];
+            const raw = fs.readFileSync(readbackPath, 'utf8').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+            let payload;
+            try {
+              const jsonStart = raw.search(/[\[{]/);
+              payload = jsonStart >= 0 ? JSON.parse(raw.slice(jsonStart)) : null;
+            } catch {
+              payload = null;
+            }
+            const entries = Array.isArray(payload) ? payload : (payload ? [payload] : []);
+            const errors = entries.flatMap((entry) => Array.isArray(entry?.errors) ? entry.errors : []);
+            const topLevelError = payload && !Array.isArray(payload) && payload.error ? [payload.error] : [];
+            const diagnosticErrors = [...errors, ...topLevelError];
+            const scrub = (value) => String(value)
+              .replace(/https?:\/\/\S+/gi, '[url]')
+              .replace(/#c=[A-Za-z0-9_-]+/g, '#c=[opaque]')
+              .replace(/[A-Za-z0-9_-]{40,}/g, '[opaque]')
+              .slice(0, 240);
+            console.error(JSON.stringify({
+              code: 'beauty_movement_short_links_d1_apply_failed',
+              topLevel: Array.isArray(payload) ? 'array' : typeof payload,
+              entryKeys: entries.slice(0, 3).map((entry) => Object.keys(entry ?? {}).sort()),
+              errorKeys: diagnosticErrors.slice(0, 3).map((error) => Object.keys(error ?? {}).sort()),
+              errorMessages: diagnosticErrors.slice(0, 3).map((error) => scrub(error?.message ?? error?.text ?? error?.error ?? 'unknown')),
+            }));
+            NODE
+            exit 1
+          fi
 
       - name: Verify every mapping and one live redirect
         working-directory: website
