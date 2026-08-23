@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/qaReport",
+  "title": "qaReport",
+  "examples": [
+    {
+      "schema_version": "fixture",
+      "production_id": "fixture",
+      "results": [],
+      "status": "PASS",
+      "blocking_issues": [],
+      "recommended_fixes": [],
+      "score": 0
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "fixture",
+      "results": [],
+      "status": "PASS",
+      "blocking_issues": [],
+      "recommended_fixes": [],
+      "score": 0
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "production_id": {
+      "type": "string"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "NEEDS_REVIEW",
+        "FAIL"
+      ]
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recommended_fixes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    }
+  },
+  "required": [
+    "schema_version",
+    "production_id",
+    "results",
+    "status",
+    "blocking_issues",
+    "recommended_fixes",
+    "score"
+  ]
+}

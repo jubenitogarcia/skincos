@@ -1,0 +1,490 @@
+{
+  "id": "ccg-phase4-qa-ledger",
+  "name": "04 - QA, Export e Ledger",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Fase 4: executa QA visual quando houver imagem, decide approved/needs_review/failed e grava manifest JSON no Drive.",
+        "height": 240,
+        "width": 420
+      },
+      "id": "sticky-phase4",
+      "name": "Objetivo",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1220,
+        -360
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-phase4",
+      "name": "When clicking 'Execute workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1220,
+        80
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "execute-trigger-phase4",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1220,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "execution_mode",
+              "value": "dry_run"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "config-phase4",
+      "name": "Configuracao Fase 4",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -980,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nlet payload = {};\nif (safeString($json.generation_result_json)) payload = JSON.parse($json.generation_result_json);\nelse payload = $json || {};\nreturn [{ json: { ...payload, qa_started_at: new Date().toISOString() } }];\n"
+      },
+      "id": "normalize-generated-result",
+      "name": "Normalizar Resultado Gerado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "switch-qa-mode-dry-run",
+                    "leftValue": "={{ $json.status === \"generated\" ? \"live\" : \"dry_run\" }}",
+                    "rightValue": "dry_run",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "DryRun"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "switch-qa-mode-live",
+                    "leftValue": "={{ $json.status === \"generated\" ? \"live\" : \"dry_run\" }}",
+                    "rightValue": "live",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Live"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-qa-mode",
+      "name": "Switch Modo QA",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -460,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn [{\n  json: {\n    ...$json,\n    qa: {\n      readability_score: 0,\n      offer_consistency: 'needs_review',\n      compliance: 'needs_review',\n      format_fit: 'needs_review',\n      visual_consistency: 'needs_review',\n      notes: ['Dry-run: QA visual nao executado porque nenhuma imagem final foi gerada.'],\n    },\n    status: $json.status === 'failed' ? 'failed' : 'needs_review',\n  },\n}];\n"
+      },
+      "id": "dry-run-qa",
+      "name": "Dry Run QA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.drive_file_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "download-generated-asset",
+      "name": "Download Generated Asset",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst context = $('Normalizar Resultado Gerado').first().json || {};\nconst input = $input.first() || {};\nreturn [{ json: { ...context, downloaded_for_qa: true }, binary: input.binary || {} }];\n"
+      },
+      "id": "prepare-qa-binary",
+      "name": "Prepare QA Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Avalie a imagem final gerada e retorne SOMENTE JSON no schema exigido.\\n\\nContexto do job:\\n{{ JSON.stringify($json) }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Voce e um revisor senior de direcao de arte e compliance para Meta Ads de clinica estetica. Avalie legibilidade, excesso de texto, aderencia ao formato, fidelidade a ofertas confirmadas e compliance. Reprove promessas de resultado, antes/depois, preco inventado ou informacao ilegivel.",
+          "maxIterations": 4,
+          "passthroughBinaryImages": true
+        }
+      },
+      "id": "qa-reviewer",
+      "name": "QA Reviewer",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        320,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"qa\"\n  ],\n  \"properties\": {\n    \"qa\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"readability_score\",\n        \"offer_consistency\",\n        \"compliance\",\n        \"format_fit\",\n        \"visual_consistency\",\n        \"notes\"\n      ],\n      \"properties\": {\n        \"readability_score\": {\n          \"type\": \"number\"\n        },\n        \"offer_consistency\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"needs_review\",\n            \"fail\"\n          ]\n        },\n        \"compliance\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"needs_review\",\n            \"fail\"\n          ]\n        },\n        \"format_fit\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"needs_review\",\n            \"fail\"\n          ]\n        },\n        \"visual_consistency\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"needs_review\",\n            \"fail\"\n          ]\n        },\n        \"notes\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        }\n      }\n    }\n  }\n}",
+        "autoFix": true
+      },
+      "id": "qa-parser",
+      "name": "QA Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        320,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.2",
+          "mode": "list",
+          "cachedResultName": "gpt-5.2"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "qa-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        60,
+        360
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "d5x9D1q8y2QXDeUD",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nfunction safeArray(value) { return Array.isArray(value) ? value : []; }\nfunction unwrapAi(value) {\n  if (value && typeof value.output === 'object') return value.output;\n  if (value && typeof value.text === 'string') {\n    try { return JSON.parse(value.text); } catch {}\n  }\n  return value || {};\n}\nconst base = $('Normalizar Resultado Gerado').first().json || {};\nconst ai = unwrapAi($json);\nconst qa = ai.qa || $json.qa || {};\nconst failures = [qa.offer_consistency, qa.compliance, qa.format_fit, qa.visual_consistency].map(safeString).filter((item) => item === 'fail');\nconst review = [qa.offer_consistency, qa.compliance, qa.format_fit, qa.visual_consistency].map(safeString).filter((item) => item === 'needs_review');\nconst readability = Number(qa.readability_score || 0);\nlet status = 'approved';\nif (safeString(base.status) === 'failed' || failures.length) status = 'failed';\nelse if (review.length || readability < 70) status = 'needs_review';\nreturn [{\n  json: {\n    ...base,\n    status,\n    qa: {\n      readability_score: readability,\n      offer_consistency: safeString(qa.offer_consistency || 'needs_review'),\n      compliance: safeString(qa.compliance || 'needs_review'),\n      format_fit: safeString(qa.format_fit || 'needs_review'),\n      visual_consistency: safeString(qa.visual_consistency || 'needs_review'),\n      notes: safeArray(qa.notes),\n    },\n    qa_completed_at: new Date().toISOString(),\n  },\n}];\n"
+      },
+      "id": "finalize-qa",
+      "name": "Finalize QA Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        580,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst item = $input.first().json || {};\nconst manifest = {\n  generated_at: new Date().toISOString(),\n  campaign_name: item.campaign_name,\n  asset_id: item.asset_id,\n  format: item.format,\n  variation_key: item.variation_key,\n  status: item.status,\n  drive_file_id: item.drive_file_id,\n  preview_url: item.preview_url,\n  prompt: item.generation_prompt,\n  qa: item.qa,\n  generation: item.generation || { model: item.image_model, usage: item.usage || {} },\n};\nreturn [{\n  json: {\n    ...item,\n    manifest_file_name: `${safeString(item.asset_id || 'asset')}.campaign_manifest.json`,\n    manifest_json: JSON.stringify(manifest, null, 2),\n  },\n}];\n"
+      },
+      "id": "build-ledger",
+      "name": "Build Campaign Manifest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "createFromText",
+        "content": "={{ $json.manifest_json }}",
+        "name": "={{ $json.manifest_file_name }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.output_drive_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "upload-manifest",
+      "name": "Upload Campaign Manifest",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$(\"Build Campaign Manifest\").first().json, manifest_drive_file_id: $json.id || \"\" } }];"
+      },
+      "id": "ledger-result",
+      "name": "Ledger Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        -20
+      ]
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [
+          {
+            "node": "Configuracao Fase 4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Configuracao Fase 4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuracao Fase 4": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Resultado Gerado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Resultado Gerado": {
+      "main": [
+        [
+          {
+            "node": "Switch Modo QA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Modo QA": {
+      "main": [
+        [
+          {
+            "node": "Dry Run QA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download Generated Asset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Generated Asset": {
+      "main": [
+        [
+          {
+            "node": "Prepare QA Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare QA Binary": {
+      "main": [
+        [
+          {
+            "node": "QA Reviewer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry Run QA": {
+      "main": [
+        [
+          {
+            "node": "Build Campaign Manifest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "QA Reviewer": {
+      "main": [
+        [
+          {
+            "node": "Finalize QA Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize QA Status": {
+      "main": [
+        [
+          {
+            "node": "Build Campaign Manifest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Campaign Manifest": {
+      "main": [
+        [
+          {
+            "node": "Upload Campaign Manifest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Campaign Manifest": {
+      "main": [
+        [
+          {
+            "node": "Ledger Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "QA Reviewer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "QA Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "QA Reviewer",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "codex_generated": true,
+    "generated_by": "scripts/build-campaign-creative-generator.js"
+  }
+}

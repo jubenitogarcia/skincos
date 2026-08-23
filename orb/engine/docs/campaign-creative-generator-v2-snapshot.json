@@ -1,0 +1,14 @@
+{
+  "ccg-v2-assembly.json": "0b66279564a251b3f486d052615a8eb7c6465cad015fefadbff7e05e5aa2878c",
+  "ccg-v2-asset-factory.json": "55824a178d3ad114e3901279e5f367122082002d1fc8b09029171b763e23f569",
+  "ccg-v2-audio-factory.json": "32e47fc441e5f5d74d081585f4daa949b1ebd6522d5fc0295d88b0e427c8723f",
+  "ccg-v2-content-orchestrator.json": "e73863ed505ba2191e0b9060c579926cd95ee46e2364897510b5f8813f7f6e17",
+  "ccg-v2-error-handler.json": "dd83da38307d311a200b33137b8725fcefbb1f17098c891bc0ae42b4b85f3691",
+  "ccg-v2-finalization.json": "b249910709ca32169ef03f11b16e0a1fd04dcd0c2006937360f264b9ce9a7daa",
+  "ccg-v2-grounding.json": "fdfe8b728a3d442466fab10daa38d22c6e92e16acbe74e43a8a6def840574921",
+  "ccg-v2-preproduction.json": "30e14dbb79e93c579a1486740f37cc8bbe8d85304c140562cf2e66a7fa641037",
+  "ccg-v2-qa-package.json": "e15d81feed5e854c722b016384e812c30baba1e5fcc77883534f42b337caaadd",
+  "ccg-v2-scene-factory.json": "ca43147d4b9f95a6e1c53467fabdc7cad7f01f7df7852da1213d4ff18c65454c",
+  "ccg-v2-strategy.json": "e2df1066bd5dafc3d4e1921433d6572a2178a1ad09b5c184d42518f6ab8d0fc6",
+  "package.json": "b6a6ef64d3aaf4a98256a747ef35d6fc732882cbc0114d9f0c8f1e7e2218ea86"
+}

@@ -128,6 +128,16 @@ function errorPayload(error) {
 }
 
 function errorResponse(res, error) {
+    // Keep the client response generic, but retain the sanitized root cause in
+    // the local server log.  Without this, local-runtime gates only expose
+    // INTERNAL_ERROR and make a recurrence impossible to diagnose.
+    const request = res.req
+    console.error('[atendimento] request failed', {
+        method: request?.method || 'UNKNOWN',
+        path: request?.originalUrl || request?.url || 'UNKNOWN',
+        code: error?.code || null,
+        message: String(error?.message || error || 'ERROR'),
+    })
     const response = errorPayload(error)
     return json(res, response.status, response.body)
 }
