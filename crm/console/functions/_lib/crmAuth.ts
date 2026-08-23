@@ -9,6 +9,7 @@ export type CrmAuthUser = {
   role?: string
   allowedUnits?: string[]
   allowedModules?: string[]
+  localFocusModule?: string
 }
 
 const json = (status: number, body: any) =>
@@ -100,6 +101,7 @@ export function getLocalDevAuthUser(context: any): CrmAuthUser {
   const allowedModules =
     parseList(env.LOCAL_AUTH_ALLOWED_MODULES) ||
     parseList(env.DEV_AUTH_ALLOWED_MODULES)
+  const localFocusModule = String(env.LOCAL_CRM_FOCUS_MODULE || '').trim()
 
   return {
     id: username,
@@ -110,6 +112,9 @@ export function getLocalDevAuthUser(context: any): CrmAuthUser {
     role,
     allowedUnits,
     allowedModules: effectiveAllowedModules(role, allowedModules),
+    localFocusModule: /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(localFocusModule)
+      ? localFocusModule
+      : undefined,
   }
 }
 

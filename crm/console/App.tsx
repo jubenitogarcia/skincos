@@ -179,7 +179,7 @@ type ApiError = {
 
 type InsumosMeResponse = {
     success?: boolean
-    user?: { username?: string; displayName?: string; email?: string; role?: string; allowedUnits?: string[]; allowedModules?: string[] }
+    user?: { username?: string; displayName?: string; email?: string; role?: string; allowedUnits?: string[]; allowedModules?: string[]; localFocusModule?: string }
     csrfToken?: string
 }
 
@@ -319,8 +319,12 @@ export default function AppFunctionalNeatlab() {
 	    // confirmed flag, explicit module grant and scope grant. Keep the
 	    // generic unlocked-module policy intact for every other module.
 	    const UNLOCKED_MODULE_KEYS = useMemo(
-	        () => unlockedModuleKeys(financeEnabled ? 'finance' : DEFAULT_MODULE_KEY, isOnlineCrmRuntime(window.location.hostname)),
-	        [DEFAULT_MODULE_KEY, financeEnabled]
+	        () => unlockedModuleKeys(
+                financeEnabled ? 'finance' : DEFAULT_MODULE_KEY,
+                isOnlineCrmRuntime(window.location.hostname),
+                user?.localFocusModule || '',
+            ),
+	        [DEFAULT_MODULE_KEY, financeEnabled, user?.localFocusModule]
 	    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    React.useEffect(() => {
