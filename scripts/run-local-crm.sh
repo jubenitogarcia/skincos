@@ -10,6 +10,7 @@ INSUMOS_HELPER="$ROOT_DIR/backend/scripts/insumos.sh"
 INSUMOS_EXPORTER="$ROOT_DIR/backend/scripts/insumos-d1-export.cjs"
 INSUMOS_SEEDER="$ROOT_DIR/backend/scripts/insumos-seed.sh"
 WHATSAPP_ORCHESTRATOR_HELPER="$ROOT_DIR/scripts/run-local-whatsapp-orchestrator.sh"
+BUILD_STATE_HELPER="$ROOT_DIR/scripts/crm-local-build-state.mjs"
 
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
 if [[ -n "${CRM_VITE_PORT+x}" ]]; then
@@ -87,6 +88,11 @@ PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
 LOG_FILE="${CRM_LOG_FILE:-$ROOT_DIR/.crm-local-dev.log}"
 SNAPSHOT_DEFAULT_PATH="${CRM_INSUMOS_SNAPSHOT_DEFAULT:-$ROOT_DIR/backend/var/local/insumos-snapshot.latest.json}"
 crm_persona_runtime_init
+CRM_BUILD_LOCK_DIR="${CRM_BUILD_LOCK_DIR:-$CRM_RUNTIME_ROOT/build.lock}"
+CRM_INSUMOS_PERSIST_DIR="${CRM_INSUMOS_PERSIST_DIR:-$CRM_RUNTIME_ROOT/state/insumos}"
+CRM_TIMEKEEPING_PERSIST_DIR="${CRM_TIMEKEEPING_PERSIST_DIR:-$CRM_RUNTIME_ROOT/state/timekeeping}"
+R2_PERSIST_DIR="${R2_PERSIST_DIR:-$CRM_RUNTIME_ROOT/state/pages}"
+PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-0}"
 
 report_timestamp() {
   date +%Y%m%d-%H%M%S
@@ -257,14 +263,20 @@ terminate_pid() {
 
 stop_existing() {
   local existing_pid
+  local existing_ticks
+  local existing_runtime_id
 
   if [[ -f "$PID_FILE" ]]; then
     existing_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
-      echo "Instância anterior do CRM local detectada (PID $existing_pid). Finalizando..."
+    existing_ticks="$(cat "${PID_FILE}.start-ticks" 2>/dev/null || true)"
+    existing_runtime_id="$(cat "${PID_FILE}.runtime-id" 2>/dev/null || true)"
+    if crm_runtime_pid_identity_matches "$existing_pid" "$existing_ticks" && [[ "$existing_runtime_id" == "$CRM_RUNTIME_ID" ]]; then
+      echo "Instância anterior $CRM_RUNTIME_ID detectada (PID $existing_pid). Finalizando..."
       terminate_pid "$existing_pid"
+    elif [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+      echo "[crm-local] PID $existing_pid não possui a identidade esperada de $CRM_RUNTIME_ID; ele não será encerrado." >&2
     fi
-    rm -f "$PID_FILE"
+    rm -f "$PID_FILE" "${PID_FILE}.start-ticks" "${PID_FILE}.runtime-id"
   fi
 }
 
@@ -393,7 +405,15 @@ wait_for_crm_api() {
 }
 
 open_browser() {
-  if command -v open >/dev/null 2>&1; then
+  if [[ -n "${CRM_BROWSER_SCRIPT:-}" && -n "${CRM_BROWSER_PROFILE_DIR:-}" ]] && command -v powershell.exe >/dev/null 2>&1; then
+    local browser_script_windows
+    local browser_profile_windows
+    browser_script_windows="$(wslpath -w "$CRM_BROWSER_SCRIPT")"
+    browser_profile_windows="$(wslpath -w "$CRM_BROWSER_PROFILE_DIR")"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$browser_script_windows" \
+      -Url "$DEFAULT_URL" -ProfilePath "$browser_profile_windows" >/dev/null 2>&1 &
+    disown "$!" >/dev/null 2>&1 || true
+  elif command -v open >/dev/null 2>&1; then
     open "$DEFAULT_URL" >/dev/null 2>&1 &
     disown "$!" >/dev/null 2>&1 || true
   elif command -v xdg-open >/dev/null 2>&1; then
@@ -409,6 +429,135 @@ ensure_frontend_ready() {
   fi
 }
 
+inspect_frontend_build() {
+  node "$BUILD_STATE_HELPER" inspect --root "$ROOT_DIR" --state "$CRM_BUILD_STATE_FILE"
+}
+
+build_descriptor_field() {
+  local descriptor="$1"
+  local field="$2"
+  printf '%s' "$descriptor" | node -e '
+const fs = require("fs")
+const value = JSON.parse(fs.readFileSync(0, "utf8"))[process.argv[1]]
+if (value !== null && value !== undefined) process.stdout.write(String(value))
+' "$field"
+}
+
+recorded_build_lockfile_fingerprint() {
+  node - "$CRM_BUILD_STATE_FILE" <<'NODE'
+const fs = require('fs')
+try {
+  const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+  if (typeof value.lockfileFingerprint === 'string') process.stdout.write(value.lockfileFingerprint)
+} catch {}
+NODE
+}
+
+acquire_frontend_build_lock() {
+  local attempt=0
+  local result=""
+  local status=0
+  while (( attempt < 600 )); do
+    status=0
+    result="$(node "$BUILD_STATE_HELPER" lock-acquire --lock-dir "$CRM_BUILD_LOCK_DIR" --owner-pid "$$" --json 2>/dev/null)" || status=$?
+    if [[ "$status" == "0" ]]; then
+      CRM_BUILD_LOCK_TOKEN="$(printf '%s' "$result" | node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).owner.token)')"
+      export CRM_BUILD_LOCK_TOKEN
+      return 0
+    fi
+    if [[ "$status" != "73" ]]; then
+      echo "[crm-local] Falha ao adquirir o lock global de build." >&2
+      return "$status"
+    fi
+    if (( attempt == 0 )); then
+      echo "[crm-local] Outro runtime está preparando o mesmo build; aguardando sem iniciar um build concorrente..."
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  echo "[crm-local] Tempo limite ao aguardar o lock global de build." >&2
+  return 1
+}
+
+release_frontend_build_lock() {
+  if [[ -z "${CRM_BUILD_LOCK_TOKEN:-}" ]]; then
+    return 0
+  fi
+  node "$BUILD_STATE_HELPER" lock-release --lock-dir "$CRM_BUILD_LOCK_DIR" --token "$CRM_BUILD_LOCK_TOKEN" --json >/dev/null
+  CRM_BUILD_LOCK_TOKEN=""
+}
+
+refresh_frontend_build_fingerprints() {
+  local descriptor
+  descriptor="$(inspect_frontend_build)"
+  CRM_BUILD_INPUT_FINGERPRINT="$(build_descriptor_field "$descriptor" inputFingerprint)"
+  CRM_BUILD_LOCKFILE_FINGERPRINT="$(build_descriptor_field "$descriptor" lockfileFingerprint)"
+  CRM_BUILD_ARTIFACT_FINGERPRINT="$(build_descriptor_field "$descriptor" artifactFingerprint)"
+  CRM_BUILD_COMMIT="$CRM_TARGET_COMMIT"
+  export CRM_BUILD_INPUT_FINGERPRINT CRM_BUILD_LOCKFILE_FINGERPRINT
+  export CRM_BUILD_ARTIFACT_FINGERPRINT CRM_BUILD_COMMIT
+}
+
+prepare_frontend_artifact_locked() {
+  local descriptor
+  local state_valid
+  local current_lockfile
+  local recorded_lockfile
+  descriptor="$(inspect_frontend_build)"
+  state_valid="$(build_descriptor_field "$descriptor" stateValid)"
+  current_lockfile="$(build_descriptor_field "$descriptor" lockfileFingerprint)"
+  recorded_lockfile="$(recorded_build_lockfile_fingerprint)"
+
+  if [[ ! -d "$FRONTEND_DIR/node_modules" || "$recorded_lockfile" != "$current_lockfile" ]]; then
+    echo "[crm-local] Alinhando dependências do frontend ao lockfile atual..."
+    if ! npm --prefix "$FRONTEND_DIR" ci --no-audit --no-fund; then
+      return 1
+    fi
+  fi
+
+  if [[ "$CRM_BUILD_BEFORE_START" == "auto" && "$state_valid" == "true" ]]; then
+    echo "[crm-local] Build reutilizado: insumos e artefato permanecem idênticos."
+    refresh_frontend_build_fingerprints
+    return 0
+  fi
+
+  if [[ "$CRM_BUILD_BEFORE_START" == "0" ]]; then
+    ensure_frontend_dist_ready
+    refresh_frontend_build_fingerprints
+    return 0
+  fi
+
+  echo "[crm-local] Gerando build do frontend para os insumos atuais..."
+  if ! npm --prefix "$FRONTEND_DIR" run build; then
+    return 1
+  fi
+  if ! node "$BUILD_STATE_HELPER" state-write \
+    --state-file "$CRM_BUILD_STATE_FILE" \
+    --console-dir "$FRONTEND_DIR" \
+    --json >/dev/null; then
+    return 1
+  fi
+  refresh_frontend_build_fingerprints || return 1
+}
+
+prepare_frontend_artifact() {
+  if [[ ! -x "$BUILD_STATE_HELPER" && ! -f "$BUILD_STATE_HELPER" ]]; then
+    echo "[crm-local] Helper determinístico de build ausente: $BUILD_STATE_HELPER" >&2
+    return 1
+  fi
+  acquire_frontend_build_lock
+  local status=0
+  set +e
+  prepare_frontend_artifact_locked
+  status=$?
+  set -e
+  release_frontend_build_lock || {
+    echo "[crm-local] Não foi possível liberar o lock global de build com segurança." >&2
+    return 1
+  }
+  return "$status"
+}
+
 ensure_playwright_chromium() {
   if [[ "$CRM_GATE_STRICT" != "1" && "$CRM_SMOKE" != "1" ]]; then
     return 0
@@ -417,7 +566,7 @@ ensure_playwright_chromium() {
   echo "[crm-local] Garantindo o Chromium do Playwright para o gate local..."
   (
     cd "$FRONTEND_DIR"
-    PLAYWRIGHT_BROWSERS_PATH=0 npm exec playwright install chromium
+    PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" npm exec playwright install chromium
   )
 }
 
@@ -434,16 +583,19 @@ ensure_timekeeping_ready() {
 
 start_timekeeping_local() {
   ensure_timekeeping_ready
+  mkdir -p "$CRM_TIMEKEEPING_PERSIST_DIR"
   echo "[crm-local] Aplicando migrations locais do Timekeeping..."
   (
     cd "$TIMEKEEPING_DIR"
-    ./node_modules/.bin/wrangler d1 migrations apply skincos-timekeeping --local --config=wrangler.toml
+    ./node_modules/.bin/wrangler d1 migrations apply skincos-timekeeping --local --config=wrangler.toml \
+      --persist-to "$CRM_TIMEKEEPING_PERSIST_DIR"
   ) >>"$LOG_FILE" 2>&1
 
   echo "[crm-local] Iniciando Workforce/Timekeeping local em :$CRM_TIMEKEEPING_PORT"
   (
     cd "$TIMEKEEPING_DIR"
     ./node_modules/.bin/wrangler dev --local --port "$CRM_TIMEKEEPING_PORT" --config=wrangler.toml \
+      --persist-to "$CRM_TIMEKEEPING_PERSIST_DIR" \
       --var "PONTO_ACTOR_HMAC_KEY:$CRM_TIMEKEEPING_ACTOR_KEY" \
       --var "PONTO_IDEMPOTENCY_KEY:$CRM_TIMEKEEPING_IDEMPOTENCY_KEY" \
       --var "PONTO_TEMPLATES_KEY:$CRM_TIMEKEEPING_TEMPLATES_KEY"
@@ -465,6 +617,11 @@ ensure_frontend_dist_ready() {
 }
 
 ensure_insumos_seed_config() {
+  if [[ "${CRM_ISOLATED_RUNTIME:-0}" == "1" ]]; then
+    # Isolated runtimes pass local-only values directly to their Wrangler
+    # process. Never rewrite the immutable source tree or a shared .dev.vars.
+    return 0
+  fi
   local insumos_dev_vars="$ROOT_DIR/inventory/.dev.vars"
   if [[ ! -f "$insumos_dev_vars" && -f "$ROOT_DIR/inventory/.dev.vars.example" ]]; then
     cp "$ROOT_DIR/inventory/.dev.vars.example" "$insumos_dev_vars"
@@ -496,10 +653,11 @@ refresh_insumos_snapshot_if_needed() {
 }
 
 ensure_insumos_local_schema() {
+  mkdir -p "$CRM_INSUMOS_PERSIST_DIR"
   echo "[crm-local] Aplicando migrations locais do Insumos..."
   (
     cd "$ROOT_DIR"
-    ./backend/scripts/insumos.sh migrate --local
+    ./backend/scripts/insumos.sh migrate --local --persist-to "$CRM_INSUMOS_PERSIST_DIR"
   ) >>"$LOG_FILE" 2>&1
 }
 
@@ -517,6 +675,13 @@ start_insumos_local() {
   (
     cd "$ROOT_DIR"
     ALLOW_DEV_AUTH_BYPASS="$auth_bypass" PORT="$CRM_INSUMOS_PORT" ./backend/scripts/insumos.sh dev \
+      --persist-to "$CRM_INSUMOS_PERSIST_DIR" \
+      --var "APP_ORIGIN:http://localhost:${CRM_PAGES_PORT}" \
+      --var "APP_ORIGINS:http://localhost:${CRM_PAGES_PORT}" \
+      --var "SESSION_SECRET:skincos-${CRM_RUNTIME_ID}-local-session" \
+      --var "ALLOW_DEV_SEED:true" \
+      --var "INSUMOS_SEED_TOKEN:${CRM_INSUMOS_SEED_TOKEN}" \
+      --var "ALLOW_DEV_AUTH_BYPASS:${auth_bypass}" \
       --log-level "$CRM_LOCAL_LOG_LEVEL" \
       --show-interactive-dev-session false \
       --test-scheduled
@@ -634,17 +799,6 @@ verify_atendimento_proxy() {
 if [[ "$STOP_ONLY" == "1" ]]; then
   crm_persona_runtime_stop_manifest_owner
   stop_existing
-  stop_owned_port_listener "$CRM_VITE_PORT" "vite"
-  stop_owned_port_listener "$CRM_PAGES_PORT" "pages"
-  if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
-    stop_owned_port_listener "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
-  fi
-  if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
-    stop_owned_port_listener "$CRM_INSUMOS_PORT" "insumos"
-  fi
-  if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
-    stop_owned_port_listener "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
-  fi
   crm_persona_runtime_write_manifest stopped
   echo "CRM local finalizado."
   exit 0
@@ -661,6 +815,14 @@ case "$CRM_LOCAL_LOG_LEVEL" in
   *)
     echo "CRM_LOCAL_LOG_LEVEL inválido: $CRM_LOCAL_LOG_LEVEL" >&2
     echo "Use warn, info, debug, error ou none." >&2
+    exit 1
+    ;;
+esac
+
+case "$CRM_BUILD_BEFORE_START" in
+  0|1|auto) ;;
+  *)
+    echo "CRM_BUILD_BEFORE_START inválido: $CRM_BUILD_BEFORE_START (use 0, 1 ou auto)." >&2
     exit 1
     ;;
 esac
@@ -741,16 +903,8 @@ assert_port_free "$CRM_PAGES_PORT" "pages"
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
   assert_port_free "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
 fi
-ensure_frontend_ready
+prepare_frontend_artifact
 ensure_playwright_chromium
-
-if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
-  echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
-  npm --prefix "$FRONTEND_DIR" run build
-  crm_persona_runtime_write_build_state
-else
-  ensure_frontend_dist_ready
-fi
 
 INSUMOS_PID=""
 WHATSAPP_ORCHESTRATOR_PID=""
@@ -806,25 +960,29 @@ fi
 CRM_PID=$!
 
 echo "$$" > "$PID_FILE"
+crm_runtime_pid_start_ticks "$$" > "${PID_FILE}.start-ticks"
+printf '%s\n' "$CRM_RUNTIME_ID" > "${PID_FILE}.runtime-id"
+crm_persona_runtime_write_manifest starting
 
 cleanup() {
   if [[ -n "${CRM_PID:-}" ]]; then
-    kill "$CRM_PID" >/dev/null 2>&1 || true
+    terminate_pid "$CRM_PID"
   fi
   if [[ -n "${INSUMOS_PID:-}" ]]; then
-    kill "$INSUMOS_PID" >/dev/null 2>&1 || true
+    terminate_pid "$INSUMOS_PID"
   fi
   if [[ -n "${TIMEKEEPING_PID:-}" ]]; then
-    kill "$TIMEKEEPING_PID" >/dev/null 2>&1 || true
+    terminate_pid "$TIMEKEEPING_PID"
   fi
   if [[ -n "${WHATSAPP_ORCHESTRATOR_PID:-}" ]]; then
-    kill "$WHATSAPP_ORCHESTRATOR_PID" >/dev/null 2>&1 || true
+    terminate_pid "$WHATSAPP_ORCHESTRATOR_PID"
   fi
   if [[ -f "$PID_FILE" ]]; then
     local tracked_pid
     tracked_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
     if [[ "$tracked_pid" == "$$" ]]; then
       rm -f "$PID_FILE"
+      rm -f "${PID_FILE}.start-ticks" "${PID_FILE}.runtime-id"
     fi
   fi
   crm_persona_runtime_write_manifest stopped 2>/dev/null || true
@@ -850,8 +1008,9 @@ fi
 run_gate_smoke() {
   echo "[crm-local] Rodando gate obrigatório do shell local..."
   run_browser_smoke env \
-    PLAYWRIGHT_BROWSERS_PATH=0 \
+    PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
     CRM_URL="$DEFAULT_URL" \
+    CRM_SMOKE_MODULES="${CRM_GATE_MODULES:-}" \
     HEADED=0 \
     TIMEOUT_MS="${CRM_GATE_TIMEOUT_MS:-120000}" \
     CRM_SMOKE_REPORT_FILE="$GATE_REPORT_FILE" \
@@ -957,13 +1116,13 @@ fi
 if [[ "$CRM_SMOKE" == "1" ]]; then
   if [[ "$CRM_MODULE" == "meta-ads" ]]; then
     echo "[crm-local] Rodando smoke local do Meta Ads..."
-    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
+    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
   elif [[ "$CRM_MODULE" == "site-tracking" ]]; then
     echo "[crm-local] Rodando smoke local do Site EF..."
-    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
+    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
   else
     echo "[crm-local] Rodando smoke local padrão..."
-    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
+    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
   fi
 
   if [[ "$CRM_EXIT_AFTER_SMOKE" == "1" ]]; then

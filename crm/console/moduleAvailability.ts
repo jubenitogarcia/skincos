@@ -1,3 +1,5 @@
+import localLaunchCatalog from './modules/localLaunchCatalog.json'
+
 const ONLINE_DISABLED_MODULE_KEYS = new Set([
   'caixa',
   'faturamento',
@@ -9,24 +11,12 @@ const ONLINE_DISABLED_MODULE_KEYS = new Set([
   'unit-monitor',
 ])
 
-export const DEFAULT_UNLOCKED_MODULE_KEYS = [
-  'insumos',
-  'conversa',
-  'atendimento',
-  // Ponto is self-service for authenticated Workforce identities. Role and
-  // server authorization still constrain what each identity can do inside it.
-  'ponto',
-  'clientes',
-  'caixa',
-  'faturamento',
-  'procedimentos',
-  'unit-monitor',
-  'instagram-studio',
-  'meta-pages-review',
-  'meta-ads',
-  'site-tracking',
-  'escala-profissionais',
-] as const
+// Ponto remains self-service for authenticated Workforce identities. Role and
+// server authorization still constrain what each identity can do inside it.
+// The neutral catalog is shared with the Windows/WSL launcher discovery CLI.
+export const DEFAULT_UNLOCKED_MODULE_KEYS: readonly string[] = Object.freeze(
+  localLaunchCatalog.modules.map((entry) => entry.key),
+)
 
 export function unlockedModuleKeys(defaultModuleKey: string, isOnline: boolean): Set<string> {
   const candidates = [defaultModuleKey, ...DEFAULT_UNLOCKED_MODULE_KEYS]

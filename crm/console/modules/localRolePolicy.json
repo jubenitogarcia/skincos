@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": 1,
+  "roleAliases": {
+    "ADMIN": "GESTOR",
+    "EMPLOYEE": "CONSULTOR"
+  },
+  "launchRoles": [
+    {
+      "key": "GESTOR",
+      "label": "Gestor",
+      "access": "all"
+    },
+    {
+      "key": "CONSULTOR",
+      "label": "Consultor",
+      "access": "allowlist"
+    }
+  ],
+  "unrestrictedRoles": [
+    "GESTOR"
+  ],
+  "restrictedRoleModules": {
+    "CONSULTOR": [
+      "atendimento",
+      "ponto"
+    ]
+  },
+  "alwaysAvailableModules": [
+    "ponto"
+  ],
+  "exclusiveModuleRoles": {
+    "clientes": [
+      "GESTOR"
+    ],
+    "escala-profissionais": [
+      "GESTOR",
+      "GERENTE"
+    ]
+  },
+  "impliedModuleGrants": {
+    "procedimentos": [
+      "procedimentos",
+      "atendimento"
+    ],
+    "faturamento": [
+      "faturamento",
+      "atendimento"
+    ],
+    "conversa": [
+      "whatsapp-business",
+      "harmonia",
+      "omnichannel"
+    ],
+    "ai-automation": [
+      "ai-automation",
+      "automation",
+      "whatsapp-n8n"
+    ]
+  },
+  "allowEmptyGrantListForAuthenticatedLegacyRoles": true
+}

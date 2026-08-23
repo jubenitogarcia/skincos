@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": 1,
+  "baseDependencyIds": [
+    "crm-console",
+    "pages-functions"
+  ],
+  "modules": [
+    {
+      "key": "insumos",
+      "label": "Insumos",
+      "route": "/?module=insumos",
+      "dependencyIds": [
+        "insumos-worker"
+      ]
+    },
+    {
+      "key": "conversa",
+      "label": "Conversa",
+      "route": "/?module=conversa",
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "atendimento",
+      "label": "Atendimento",
+      "route": "/?module=atendimento",
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "ponto",
+      "label": "Ponto",
+      "route": "/?module=ponto",
+      "dependencyIds": [
+        "timekeeping-worker"
+      ]
+    },
+    {
+      "key": "clientes",
+      "label": "Clientes",
+      "route": "/?module=clientes",
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "caixa",
+      "label": "Caixa",
+      "route": "/?module=caixa",
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "faturamento",
+      "label": "Faturamento",
+      "route": "/?module=faturamento",
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "procedimentos",
+      "label": "Procedimentos",
+      "route": "/?module=procedimentos",
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "unit-monitor",
+      "label": "Unit Monitor",
+      "route": "/?module=unit-monitor",
+      "dependencyIds": [
+        "unit-monitor-gateway"
+      ]
+    },
+    {
+      "key": "instagram-studio",
+      "label": "Redes Sociais",
+      "route": "/?module=instagram-studio",
+      "dependencyIds": [
+        "social-local-pages"
+      ]
+    },
+    {
+      "key": "meta-pages-review",
+      "label": "Meta Review",
+      "route": "/?module=meta-pages-review",
+      "dependencyIds": [
+        "meta-review-local-pages"
+      ]
+    },
+    {
+      "key": "meta-ads",
+      "label": "Meta Ads",
+      "route": "/?module=meta-ads",
+      "dependencyIds": [
+        "meta-ads-local-scenario"
+      ]
+    },
+    {
+      "key": "site-tracking",
+      "label": "Site EF",
+      "route": "/?module=site-tracking",
+      "dependencyIds": [
+        "tracking-local-scenario"
+      ]
+    },
+    {
+      "key": "escala-profissionais",
+      "label": "Escala",
+      "route": "/?module=escala-profissionais",
+      "dependencyIds": [
+        "escala-local-mock"
+      ]
+    }
+  ]
+}
