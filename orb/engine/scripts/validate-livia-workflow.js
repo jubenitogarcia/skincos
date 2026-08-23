@@ -136,6 +136,7 @@ function validateStructure() {
     'BQ - Normalize Hydrated Envelope',
     'BQ - Validate Bootstrap Inputs',
     'BQ - Build Publish Context',
+    'Assert Livia Publication Window',
     'BQ - Build Platform Job Graph',
     'BQ - Validate Job Graph',
     'BQ - Seed Publish State',
@@ -170,7 +171,8 @@ function validateStructure() {
     assert(connectionExists('Hydrate Publish Context', 'BQ - Normalize Hydrated Envelope'), 'Hydrate Publish Context must feed BQ - Normalize Hydrated Envelope');
     assert(connectionExists('BQ - Normalize Hydrated Envelope', 'BQ - Validate Bootstrap Inputs'), 'BQ - Normalize Hydrated Envelope must feed BQ - Validate Bootstrap Inputs');
     assert(connectionExists('BQ - Validate Bootstrap Inputs', 'BQ - Build Publish Context'), 'BQ - Validate Bootstrap Inputs must feed BQ - Build Publish Context');
-    assert(connectionExists('BQ - Build Publish Context', 'BQ - Build Platform Job Graph'), 'BQ - Build Publish Context must feed BQ - Build Platform Job Graph');
+    assert(connectionExists('BQ - Build Publish Context', 'Assert Livia Publication Window'), 'BQ - Build Publish Context must pass through the Livia maintenance gate');
+    assert(connectionExists('Assert Livia Publication Window', 'BQ - Build Platform Job Graph'), 'Livia maintenance gate must run before BQ - Build Platform Job Graph');
     assert(connectionExists('BQ - Build Platform Job Graph', 'BQ - Validate Job Graph'), 'BQ - Build Platform Job Graph must feed BQ - Validate Job Graph');
     assert(connectionExists('BQ - Validate Job Graph', 'BQ - Seed Publish State'), 'BQ - Validate Job Graph must feed BQ - Seed Publish State');
     assert(connectionExists('BQ - Seed Publish State', 'BQ - Emit First Job'), 'BQ - Seed Publish State must feed BQ - Emit First Job');
@@ -221,6 +223,7 @@ function validateContracts() {
   const buildQueue = codeOf('Build Publish Queue');
   const bqBuildPlatformJobGraph = codeOf('BQ - Build Platform Job Graph');
   const bqBuildPlatformJobGraphCommand = commandOf('BQ - Build Platform Job Graph');
+  const publicationWindow = codeOf('Assert Livia Publication Window');
   const bqSeedPublishState = codeOf('BQ - Seed Publish State');
   const bqValidateJobGraph = codeOf('BQ - Validate Job Graph');
   const switchOutput = String(getNode('Switch Publish Route')?.parameters?.output || '');
@@ -251,6 +254,10 @@ function validateContracts() {
   const jobGraphScript = path.join(__dirname, 'livia', 'build-platform-job-graph.js');
   const jobGraphSource = fs.readFileSync(jobGraphScript, 'utf8');
   assert(jobGraphSource.includes('invalidateIncompleteCarouselResume'), 'Livia resume logic must invalidate partial Instagram carousel attempts before reusing child containers');
+  assert(publicationWindow.includes("require('fs')") || publicationWindow.includes('require("fs")'), 'Livia maintenance gate must read the native maintenance lock directly');
+  assert(publicationWindow.includes('livia-maintenance/restart.lock'), 'Livia maintenance gate must use the controlled Orb restart lock');
+  assert(publicationWindow.includes('publicação interrompida'), 'Livia maintenance gate must fail closed with a causal publication error');
+  assert(!publicationWindow.includes('$('), 'Livia maintenance gate must not use paired item lookups');
   assert(jobGraphSource.includes('groupResumeContextKey'), 'Livia resume logic must inspect group-scoped carousel container results');
   assert(jobGraphSource.includes('normalizeThreadsCarouselJob'), 'Livia job graph must keep Threads carousel child and parent request contracts distinct');
   assert(jobGraphSource.includes("request.media_type = 'IMAGE'"), 'Livia Threads carousel children must explicitly request media_type=IMAGE');
