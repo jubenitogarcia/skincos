@@ -689,6 +689,7 @@ fi
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
   start_whatsapp_orchestrator_local
   export LOCAL_WA_ORCHESTRATOR_API_TARGET="http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}"
+  export LOCAL_ATENDIMENTO_API_TARGET="$LOCAL_WA_ORCHESTRATOR_API_TARGET"
 fi
 
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then

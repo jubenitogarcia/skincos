@@ -65,12 +65,12 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
     },
   })
   const conversionDoctors = [
-    { name: 'Dra. Sintética', weekValue: 18, totalValue: 3, score: 3, position: '1ª', rank: 1, level: 3 },
-    { name: 'Dr. Prata', weekValue: 14, totalValue: 2, score: 2, position: '2ª', rank: 2, level: 2 },
-    { name: 'Dra. Bronze', weekValue: 10, totalValue: 1, score: 1, position: '3ª', rank: 3, level: 1 },
+    { name: 'Dra. Sintética', weekValue: 18, totalValue: 18, workingDays: 1, score: 3, position: '1ª', rank: 1, level: 3 },
+    { name: 'Dr. Prata', weekValue: 14, totalValue: 28, workingDays: 2, score: 2, position: '2ª', rank: 2, level: 2 },
+    { name: 'Dra. Bronze', weekValue: 10, totalValue: 40, workingDays: 4, score: 1, position: '3ª', rank: 3, level: 1 },
     ...(options.duplicateDoctorAlias
       ? [
-          { name: 'Raul Rosário Júnior', weekValue: 9, totalValue: 9, score: 1, position: '4ª', rank: 4, level: 1 },
+          { name: 'Raul Rosário Júnior', weekValue: 9, totalValue: 9, workingDays: 1, score: 1, position: '4ª', rank: 4, level: 1 },
           { name: 'Raul Júnior', weekValue: 0, totalValue: 0, score: 0, position: '5ª', rank: 5, level: 0 },
         ]
       : []),
@@ -172,7 +172,7 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
                 dailyGoal: { label: 'Meta diária', weekValue: 10, totalValue: 10 },
                 periodOperationalDays: { label: 'Dias período', weekValue: 1, totalValue: 1 },
                 eligibleDoctorCount: { label: 'Doutores elegíveis', weekValue: 3, totalValue: 3 },
-                average: { label: 'Média', weekValue: 14, totalValue: 14 },
+                average: { label: 'Média diária', weekValue: 14, totalValue: 14 },
                 median: { label: 'Mediana', weekValue: 14, totalValue: 14 },
                 standardDeviation: { label: 'Desvio padrão', weekValue: 4.31, totalValue: 4.31 },
                 cutLine: { label: 'Linha Corte', weekValue: 12, totalValue: 12 },
