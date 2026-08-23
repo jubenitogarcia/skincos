@@ -1,5 +1,5 @@
 import React from 'react'
-import { AreaChart as AreaChartIcon, BarChart3, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Maximize2, Minimize2, Plus, RefreshCw, Stethoscope, Trash2, TrendingUp, Users, type LucideIcon } from 'lucide-react'
+import { AreaChart as AreaChartIcon, BarChart3, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, Maximize2, Minimize2, Plus, RefreshCw, Stethoscope, Trash2, TrendingUp, Users, type LucideIcon } from 'lucide-react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
@@ -94,7 +94,7 @@ function chartData(slot: AtendimentoChartSlot, overview: AtendimentoOverview | n
   return rows.slice(0, slot.topN).map((item) => ({ label: item.label, value: Number(item.value || 0), count: Number(item.count || 0) }))
 }
 
-function AtendimentoChartCard({ slot, overview, professionals, onChange, onRemove, onMove, onCycleLayout, onToggleWide, onToggleCollapsed, canRemove, canMoveLeft, canMoveRight }: {
+function AtendimentoChartCard({ slot, overview, professionals, onChange, onRemove, onMove, onCycleLayout, onToggleWide, canRemove, canMoveLeft, canMoveRight }: {
   slot: AtendimentoChartSlot
   overview: AtendimentoOverview | null
   professionals: AtendimentoVisualProfessional[]
@@ -103,7 +103,6 @@ function AtendimentoChartCard({ slot, overview, professionals, onChange, onRemov
   onMove: (direction: -1 | 1) => void
   onCycleLayout: () => void
   onToggleWide: () => void
-  onToggleCollapsed: () => void
   canRemove: boolean
   canMoveLeft: boolean
   canMoveRight: boolean
@@ -134,11 +133,10 @@ function AtendimentoChartCard({ slot, overview, professionals, onChange, onRemov
             <IconOnlyAction label="Mover gráfico para a direita" description="Reorganizar a posição deste gráfico no painel." onClick={() => onMove(1)} disabled={!canMoveRight} data-testid="atendimento-chart-move-right"><ChevronRight className="h-4 w-4" /></IconOnlyAction>
             <IconOnlyAction label="Redimensionar gráfico" description="Alternar entre largura compacta, padrão e ampliada." onClick={onCycleLayout} data-testid="atendimento-chart-resize"><ChevronsUpDown className="h-4 w-4" /></IconOnlyAction>
             <IconOnlyAction label={slot.layout === 'wide' ? 'Restaurar largura do gráfico' : 'Expandir gráfico'} description={slot.layout === 'wide' ? 'Voltar para a largura padrão.' : 'Ocupar duas colunas quando houver espaço.'} onClick={onToggleWide} data-testid="atendimento-chart-expand">{slot.layout === 'wide' ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</IconOnlyAction>
-            <IconOnlyAction label={slot.collapsed ? 'Expandir conteúdo do gráfico' : 'Recolher conteúdo do gráfico'} description={slot.collapsed ? 'Exibir controles e visualização.' : 'Manter apenas o cabeçalho do gráfico.'} onClick={onToggleCollapsed} data-testid="atendimento-chart-collapse">{slot.collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconOnlyAction>
             {canRemove ? <IconOnlyAction label="Remover gráfico" description="Retirar este gráfico do painel." onClick={onRemove} tooltipAlign="right"><Trash2 className="h-4 w-4" /></IconOnlyAction> : null}
           </div>
         </div>
-        {!slot.collapsed ? <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select value={slot.presetId} onValueChange={(value) => onChange({ presetId: value as AtendimentoChartPreset, view: value === 'monthly' ? 'area' : value === 'ticket' ? 'line' : 'bar', metric: value === 'ticket' ? 'value' : slot.metric })}>
             <SelectTrigger className="h-8 min-w-[9rem] border-slate-700 bg-slate-900/70 text-xs text-slate-100"><SelectValue /></SelectTrigger>
             <SelectContent>{CHART_PRESETS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}</SelectContent>
@@ -148,22 +146,24 @@ function AtendimentoChartCard({ slot, overview, professionals, onChange, onRemov
           )}
           <Select value={view} onValueChange={(value) => onChange({ view: value as AtendimentoChartView })}><SelectTrigger className="h-8 w-28 border-slate-700 bg-slate-900/70 text-xs text-slate-100"><SelectValue /></SelectTrigger><SelectContent>{CHART_VIEWS.filter((item) => slot.presetId === 'monthly' || slot.presetId === 'ticket' || item.id !== 'area').map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}</SelectContent></Select>
           <Select value={String(slot.topN)} onValueChange={(value) => onChange({ topN: Number(value) })}><SelectTrigger className="h-8 w-24 border-slate-700 bg-slate-900/70 text-xs text-slate-100"><SelectValue /></SelectTrigger><SelectContent>{[5, 8, 10, 12].map((value) => <SelectItem key={value} value={String(value)}>Top {value}</SelectItem>)}</SelectContent></Select>
-        </div> : null}
+        </div>
       </CardHeader>
-      {!slot.collapsed ? <CardContent>
+      <CardContent>
         {data.length ? <div className="w-full" style={{ height }}><ResponsiveContainer width="100%" height="100%">
           {view === 'line' ? <LineChart data={data} margin={{ left: 0, right: 8, top: 12, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.14)" /><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => String(value).slice(0, 14)} /><YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={axisFormatter} />{tooltip}<Line type="monotone" dataKey={dataKey} stroke="#38bdf8" strokeWidth={2} dot={false} /></LineChart> : view === 'bar' ? <BarChart data={data} layout={slot.presetId === 'monthly' || slot.presetId === 'ticket' ? 'horizontal' : 'vertical'} margin={{ left: 8, right: 12, top: 12, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" />{slot.presetId === 'monthly' || slot.presetId === 'ticket' ? <><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} /><YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={axisFormatter} /></> : <><XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={axisFormatter} /><YAxis type="category" dataKey="label" width={120} tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => String(value).slice(0, 18)} /></>}{tooltip}<Bar dataKey={dataKey} fill="#38bdf8" radius={slot.presetId === 'monthly' || slot.presetId === 'ticket' ? [6, 6, 0, 0] : [0, 6, 6, 0]}>{data.map((item) => <Cell key={item.label} fill={getBarColor(item.label)} />)}</Bar></BarChart> : <AreaChart data={data} margin={{ left: 0, right: 8, top: 12, bottom: 0 }}><defs><linearGradient id={`atendimentoChartFill-${slot.presetId}-${metric}`} x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#38bdf8" stopOpacity={0.32} /><stop offset="95%" stopColor="#38bdf8" stopOpacity={0.02} /></linearGradient></defs><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} /><YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={axisFormatter} />{tooltip}<Area type="monotone" dataKey={dataKey} stroke="#38bdf8" strokeWidth={2} fill={`url(#atendimentoChartFill-${slot.presetId}-${metric})`} /></AreaChart>}
         </ResponsiveContainer></div> : <div className="rounded-2xl border border-slate-800 bg-slate-900/35 p-4 text-sm text-slate-400">Sem dados para este gráfico.</div>}
-      </CardContent> : null}
+      </CardContent>
     </Card>
   )
 }
 
-export function AtendimentoChartsPanel({ overview, professionals = [], slots, onSlotsChange }: {
+export function AtendimentoChartsPanel({ overview, professionals = [], slots, onSlotsChange, expanded, onExpandedChange }: {
   overview: AtendimentoOverview | null
   professionals?: AtendimentoVisualProfessional[]
   slots: AtendimentoChartSlot[]
   onSlotsChange: React.Dispatch<React.SetStateAction<AtendimentoChartSlot[]>>
+  expanded: boolean
+  onExpandedChange: React.Dispatch<React.SetStateAction<boolean>>
 }) {
   const updateSlot = (index: number, patch: Partial<AtendimentoChartSlot>) => onSlotsChange((prev) => prev.map((slot, current) => current === index ? { ...slot, ...patch } : slot))
   const addChart = () => onSlotsChange((prev) => prev.length >= 6 ? prev : [...prev, { presetId: 'injectors', metric: 'value', view: 'bar', topN: 5 }])
@@ -181,9 +181,12 @@ export function AtendimentoChartsPanel({ overview, professionals = [], slots, on
     updateSlot(index, { layout: layouts[(current + 1) % layouts.length] })
   }
   return (
-    <section className="space-y-3 border-t border-slate-800/70 pt-3" data-testid="atendimento-charts-panel" aria-label="Gráficos">
-      <div className="flex items-center justify-between gap-3 px-1"><h2 className="flex items-center gap-2 text-base font-semibold text-white"><AreaChartIcon className="h-5 w-5 text-emerald-300" />Gráficos</h2><div className="flex shrink-0 items-center gap-2"><IconOnlyAction label="Adicionar gráfico" description="Criar outro gráfico configurável no painel." onClick={addChart} disabled={slots.length >= 6} tooltipAlign="right" data-testid="atendimento-chart-add"><Plus className="h-4 w-4" /></IconOnlyAction><IconOnlyAction label="Resetar gráficos" description="Restaurar a seleção padrão de gráficos." onClick={resetCharts} tooltipAlign="right" data-testid="atendimento-chart-reset"><RefreshCw className="h-4 w-4" /></IconOnlyAction></div></div>
-      <div className={`grid gap-3 ${slots.length <= 1 ? 'grid-cols-1' : slots.length === 2 ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1 lg:grid-cols-2 xl:grid-cols-3'}`}>{slots.map((slot, index) => <AtendimentoChartCard key={`${index}-${slot.presetId}-${slot.metric}-${slot.view}`} slot={slot} overview={overview} professionals={professionals} onChange={(patch) => updateSlot(index, patch)} onMove={(direction) => moveSlot(index, direction)} onCycleLayout={() => cycleLayout(index)} onToggleWide={() => updateSlot(index, { layout: slot.layout === 'wide' ? 'standard' : 'wide' })} onToggleCollapsed={() => updateSlot(index, { collapsed: !slot.collapsed })} onRemove={() => onSlotsChange((prev) => prev.filter((_, current) => current !== index))} canRemove={slots.length > 1} canMoveLeft={index > 0} canMoveRight={index < slots.length - 1} />)}</div>
+    <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" data-testid="atendimento-charts-panel" aria-label="Gráficos">
+      <button type="button" className="flex w-full items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5 text-left transition hover:bg-slate-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/70" aria-expanded={expanded} aria-controls="atendimento-charts-content" data-testid="atendimento-charts-toggle" onClick={() => onExpandedChange((current) => !current)}>
+        <span className="flex min-w-0 items-center gap-2"><span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-emerald-400/25 bg-emerald-400/10 text-emerald-200" aria-hidden="true"><AreaChartIcon className="h-4 w-4" /></span><span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Gráficos</span><span className="block truncate text-[11px] text-slate-400">Séries e rankings configuráveis do período.</span></span></span>
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">{expanded ? 'Recolher' : 'Ver gráficos'}{expanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}</span>
+      </button>
+      {expanded ? <div id="atendimento-charts-content" className="space-y-3 p-3"><div className="flex justify-end gap-2"><IconOnlyAction label="Adicionar gráfico" description="Criar outro gráfico configurável no painel." onClick={addChart} disabled={slots.length >= 6} tooltipAlign="right" data-testid="atendimento-chart-add"><Plus className="h-4 w-4" /></IconOnlyAction><IconOnlyAction label="Resetar gráficos" description="Restaurar a seleção padrão de gráficos." onClick={resetCharts} tooltipAlign="right" data-testid="atendimento-chart-reset"><RefreshCw className="h-4 w-4" /></IconOnlyAction></div><div className={`grid gap-3 ${slots.length <= 1 ? 'grid-cols-1' : slots.length === 2 ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1 lg:grid-cols-2 xl:grid-cols-3'}`}>{slots.map((slot, index) => <AtendimentoChartCard key={`${index}-${slot.presetId}-${slot.metric}-${slot.view}`} slot={slot} overview={overview} professionals={professionals} onChange={(patch) => updateSlot(index, patch)} onMove={(direction) => moveSlot(index, direction)} onCycleLayout={() => cycleLayout(index)} onToggleWide={() => updateSlot(index, { layout: slot.layout === 'wide' ? 'standard' : 'wide' })} onRemove={() => onSlotsChange((prev) => prev.filter((_, current) => current !== index))} canRemove={slots.length > 1} canMoveLeft={index > 0} canMoveRight={index < slots.length - 1} />)}</div></div> : <div className="px-3 py-3 text-xs leading-relaxed text-slate-400" data-testid="atendimento-charts-collapsed">Os gráficos estão recolhidos. Abra a seção para configurar e comparar as séries do período.</div>}
     </section>
   )
 }
