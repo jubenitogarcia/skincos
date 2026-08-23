@@ -25,6 +25,7 @@ import {
 import BeautyMovementWhatsappLink from "@/components/BeautyMovementWhatsappLink";
 import BeautyMovementCardIllustration from "@/components/BeautyMovementCardIllustration";
 import BrandMark from "@/components/BrandMark";
+import { buildBeautyMovementWhatsappMessage } from "@/lib/beautyMovementWhatsapp";
 import type {
     BeautyMovementDiscountKind,
     BeautyMovementRewardType,
@@ -1377,7 +1378,11 @@ export default function BeautyMovementExperience({
         }
     }
 
-    function renderWhatsappAction(className: string, label = primaryWhatsappLabel) {
+    function renderWhatsappAction(
+        className: string,
+        label = primaryWhatsappLabel,
+        message = initialState.campaign.whatsappMessage?.trim() || "",
+    ) {
         if (isLocalPreview) {
             return (
                 <button className={className} type="button" onClick={handleWhatsappClick}>
@@ -1386,11 +1391,11 @@ export default function BeautyMovementExperience({
             );
         }
 
-        if (initialState.campaign.whatsappMessage?.trim()) {
+        if (message) {
             return (
                 <BeautyMovementWhatsappLink
                     className={className}
-                    message={initialState.campaign.whatsappMessage.trim()}
+                    message={message}
                     placement="result"
                     onClick={handleWhatsappClick}
                 >
@@ -1581,10 +1586,25 @@ export default function BeautyMovementExperience({
             : `${primaryWhatsappLabel} no WhatsApp`;
         const revealContentClass = deferRevealContent || showRevealAction ? styles.specialCardRevealContent : undefined;
         const offerPresentation = kind === "offer" && offer ? BEAUTY_MOVEMENT_OFFER_PRESENTATIONS[offer.outcomeKey] : null;
-        const selectedConcepts = revealed && (kind === "offer" || (kind === "velocity" && offer !== null))
+        const selectedConcepts = revealed
             ? reading.map((line) => line.title)
             : [];
         const selectedConceptsLabel = selectedConcepts.join(" · ");
+        const prizeLabel =
+            kind === "velocity"
+                ? velocity?.label?.trim() || "Aula-cortesia de Velocity"
+                : kind === "offer" && offer
+                  ? `${offer.title} — ${offer.commercialText}`
+                  : kind === "discount" || kind === "free_procedure"
+                    ? benefit?.displayText?.trim() || benefit?.procedureName?.trim() || "Condição especial"
+                    : "Presente reservado da campanha";
+        const specialCardWhatsappMessage = revealed
+            ? buildBeautyMovementWhatsappMessage({
+                displayName: initialState.invite.displayName,
+                selectedConcepts: selectedConceptsLabel,
+                prize: prizeLabel,
+            })
+            : null;
         const referencePrice = offerPresentation && offer ? formatBeautyMovementPrice(offer.referencePrice) : null;
         const unlockedPrice = offerPresentation && offer ? formatBeautyMovementPrice(offer.unlockedPrice) : null;
         const campaignConditions = revealed ? initialState.campaign.conditionsText?.trim() : null;
@@ -1677,6 +1697,7 @@ export default function BeautyMovementExperience({
                             ? renderWhatsappAction(
                                 `${styles.primaryButton} ${styles.specialCardWhatsappAction}`,
                                 specialCardWhatsappLabel,
+                                specialCardWhatsappMessage ?? undefined,
                             )
                             : null}
                         {campaignConditions ? (
