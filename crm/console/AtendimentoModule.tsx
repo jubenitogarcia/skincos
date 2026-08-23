@@ -777,7 +777,7 @@ function MetricGroupContent({
       </div>
     ) : undefined
     const rowContent = (
-      <div className={`flex min-w-0 items-center gap-2 ${horizontal ? 'justify-center' : ''} ${isChild ? 'py-0.5' : ''}`}>
+      <div className={`flex min-w-0 items-start gap-2 ${horizontal ? 'justify-center' : ''} ${isChild ? 'py-0.5' : ''}`}>
         {row.avatarUrl ? (
           <img
             src={row.avatarUrl}
@@ -798,8 +798,8 @@ function MetricGroupContent({
             <span className="min-w-0 truncate pr-0.5">{row.label}</span>
             {row.tooltip ? <Info className="pointer-events-none absolute -right-1 -top-1 z-10 h-2 w-2 text-slate-500" aria-hidden="true" /> : null}
           </span>
+          <span className="mt-0.5 block truncate text-[10px] font-medium leading-tight text-slate-400">{row.value}</span>
         </div>
-        <div className={`shrink-0 ${isDetail ? 'text-[10px] font-medium text-slate-400' : `text-[11px] font-semibold ${isChild ? 'text-slate-200' : 'text-white'}`}`}>{row.value}</div>
       </div>
     )
     return (
@@ -1551,7 +1551,7 @@ function ConversionDoctorBandsContent({
   const activeDoctor = chartDoctors.find((doctor) => doctor.id === activeDoctorId) || null
   const podiumDoctors = new Set(chartDoctors.filter((doctor) => doctor.rank >= 1 && doctor.rank <= 3).map((doctor) => doctor.id))
   // Recharts reserves both chart margin and axis height, so these must remain separate.
-  const chartHeightPx = 492
+  const chartHeightPx = 432
   const chartMarginTop = 18
   const chartMarginRight = 12
   const chartMarginLeft = 6
@@ -1821,7 +1821,6 @@ function ConversionDoctorBandsContent({
 
   return (
     <div className="space-y-3 pt-0.5" data-testid="atendimento-conversion-distribution">
-      <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-3">
           {detailGroups.map((group) => (
             <div key={group.key} className="min-w-0">
               <MetricGroupContent
@@ -2078,7 +2077,6 @@ function ConversionDoctorBandsContent({
               </div>
             , document.body) : null}
           </div>
-      </div>
     </div>
   )
 }
