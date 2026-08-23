@@ -165,16 +165,18 @@ function Invoke-ShortcutWsl {
 
 function Get-CrmLocalReviewRef {
     if ([string]::IsNullOrWhiteSpace($env:CRM_LOCAL_REVIEW_REF)) {
-        return "origin/main"
+        return "HEAD"
     }
     return $env:CRM_LOCAL_REVIEW_REF.Trim()
 }
 
 function Get-CrmLocalTargetCommit {
     $reviewRef = Get-CrmLocalReviewRef
-    & git -C $ProjectRoot fetch origin --prune --quiet
-    if ($LASTEXITCODE -ne 0) {
-        throw "Não foi possível atualizar as referências remotas antes de iniciar o CRM Local."
+    if ($reviewRef -match '^(origin/|refs/remotes/origin/)') {
+        & git -C $ProjectRoot fetch origin --prune --quiet
+        if ($LASTEXITCODE -ne 0) {
+            throw "Não foi possível atualizar as referências remotas antes de iniciar o CRM Local."
+        }
     }
 
     $targetCommit = (& git -C $ProjectRoot rev-parse --verify "${reviewRef}^{commit}" 2>$null | Select-Object -First 1).Trim()
@@ -182,6 +184,170 @@ function Get-CrmLocalTargetCommit {
         throw "A revisão do CRM Local não pôde ser resolvida: '$reviewRef'."
     }
     return $targetCommit.ToLowerInvariant()
+}
+
+function Get-CrmLocalSnapshotHash {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Export-CrmLocalSnapshotPatch {
+    param([Parameter(Mandatory = $true)][string]$OutputPath)
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $OutputPath) -Force | Out-Null
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
+    $process.StartInfo.FileName = 'git'
+    $process.StartInfo.Arguments = ('-C "{0}" diff --binary HEAD' -f $ProjectRoot)
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.RedirectStandardOutput = $true
+    $process.StartInfo.RedirectStandardError = $true
+    try {
+        [void]$process.Start()
+        $stream = [IO.File]::Open($OutputPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $process.StandardOutput.BaseStream.CopyTo($stream)
+        } finally {
+            $stream.Dispose()
+        }
+        $standardError = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) {
+            throw "Não foi possível ler as alterações locais do checkout '$ProjectRoot': $standardError"
+        }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+function Remove-CrmLocalSourceSnapshot {
+    param([object]$Snapshot)
+    if ($null -ne $Snapshot -and -not [string]::IsNullOrWhiteSpace([string]$Snapshot.PatchPath)) {
+        Remove-Item -LiteralPath ([string]$Snapshot.PatchPath) -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-CrmLocalSnapshotRelativePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRootPath,
+        [Parameter(Mandatory = $true)][string]$FullPath
+    )
+    $normalizedFullPath = [IO.Path]::GetFullPath($FullPath)
+    $rootPrefix = $SourceRootPath + [IO.Path]::DirectorySeparatorChar
+    if (-not $normalizedFullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Arquivo não rastreado fora do checkout no snapshot do CRM Local: '$FullPath'."
+    }
+    return $normalizedFullPath.Substring($rootPrefix.Length).Replace([char]'\', [char]'/')
+}
+
+function Get-CrmLocalSnapshotUntrackedFiles {
+    param([Parameter(Mandatory = $true)][string[]]$Entries)
+
+    $sourceRootPath = (Resolve-Path -LiteralPath $ProjectRoot).Path.TrimEnd([char]'\', [char]'/')
+    $files = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in $Entries) {
+        $relativeEntry = ([string]$entry).Trim()
+        if ([string]::IsNullOrWhiteSpace($relativeEntry)) { continue }
+
+        $candidate = Join-Path $ProjectRoot $relativeEntry.Replace('/', [IO.Path]::DirectorySeparatorChar)
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $item = Get-Item -LiteralPath $candidate -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Arquivo não rastreado com link simbólico não pode entrar no snapshot do CRM Local: '$relativeEntry'."
+            }
+            $relativeFile = Get-CrmLocalSnapshotRelativePath -SourceRootPath $sourceRootPath -FullPath $item.FullName
+            $files.Add($relativeFile)
+            continue
+        }
+
+        if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
+            throw "Arquivo não rastreado inválido no snapshot do CRM Local: '$relativeEntry'."
+        }
+
+        # Git representa checkouts aninhados não rastreados como diretórios. Eles não
+        # fazem parte da árvore do checkout acionado e não podem ser copiados para o
+        # runtime sem misturar revisões, .git e alterações de outra thread.
+        if (Test-Path -LiteralPath (Join-Path $candidate '.git')) {
+            Write-Verbose "Ignorando checkout Git aninhado fora do snapshot do CRM Local: '$relativeEntry'."
+            continue
+        }
+
+        $directoryItem = Get-Item -LiteralPath $candidate -Force
+        if (($directoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Diretório não rastreado com link simbólico não pode entrar no snapshot do CRM Local: '$relativeEntry'."
+        }
+
+        Get-ChildItem -LiteralPath $candidate -File -Recurse -Force | ForEach-Object {
+            if (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Arquivo não rastreado com link simbólico não pode entrar no snapshot do CRM Local: '$($_.FullName)'."
+            }
+            $relativeFile = Get-CrmLocalSnapshotRelativePath -SourceRootPath $sourceRootPath -FullPath $_.FullName
+            & git -C $ProjectRoot check-ignore --quiet -- $relativeFile 2>$null
+            if ($LASTEXITCODE -eq 0) { return }
+            if ($LASTEXITCODE -ne 1) { throw "Não foi possível validar o arquivo não rastreado '$relativeFile' no snapshot do CRM Local." }
+            $files.Add($relativeFile)
+        }
+    }
+    return @($files | Sort-Object -Unique)
+}
+
+function Get-CrmLocalSourceSnapshot {
+    param([Parameter(Mandatory = $true)][string]$TargetCommit)
+
+    $sourceCommit = (& git -C $ProjectRoot rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
+    if ($sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Não foi possível resolver o commit do checkout que disparou o CRM Local: '$ProjectRoot'." }
+    if ($sourceCommit -ne $TargetCommit) {
+        throw "O checkout que disparou o CRM Local ($sourceCommit) não corresponde à revisão solicitada ($TargetCommit). Use CRM_LOCAL_REVIEW_REF somente com um checkout alinhado."
+    }
+    $patchPath = Join-Path $operatorRuntimeRoot ("tmp\crm-local-snapshot-{0}.patch" -f [Guid]::NewGuid().ToString('N'))
+    Export-CrmLocalSnapshotPatch -OutputPath $patchPath
+    $patchBytes = (Get-Item -LiteralPath $patchPath).Length
+    $untrackedEntries = @(& git -C $ProjectRoot ls-files --others --exclude-standard)
+    if ($LASTEXITCODE -ne 0) { throw "Não foi possível ler os arquivos não rastreados do checkout '$ProjectRoot'." }
+    $untracked = @(Get-CrmLocalSnapshotUntrackedFiles -Entries $untrackedEntries)
+    $untrackedDigest = foreach ($relativePath in $untracked) {
+        $candidate = Join-Path $ProjectRoot $relativePath
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Arquivo não rastreado inválido no snapshot do CRM Local: '$relativePath'." }
+        "${relativePath}:$((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant())"
+    }
+    $hasChanges = $patchBytes -gt 0 -or $untracked.Count -gt 0
+    $fingerprint = if ($hasChanges) {
+        "snapshot:${TargetCommit}:$(Get-CrmLocalSnapshotHash -Value ((Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash.ToLowerInvariant() + "`n" + ($untrackedDigest -join "`n")))"
+    } else {
+        "commit:${TargetCommit}"
+    }
+    return [pscustomobject]@{
+        SourceRoot = $ProjectRoot
+        TargetCommit = $TargetCommit
+        PatchPath = $patchPath
+        Untracked = $untracked
+        HasChanges = $hasChanges
+        Fingerprint = $fingerprint
+    }
+}
+
+function Apply-CrmLocalSourceSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$DestinationRoot
+    )
+    if (-not $Snapshot.HasChanges) { return }
+    if ((Get-Item -LiteralPath $Snapshot.PatchPath).Length -gt 0) {
+        & git -C $DestinationRoot apply --whitespace=nowarn --binary $Snapshot.PatchPath
+        if ($LASTEXITCODE -ne 0) { throw "Não foi possível aplicar o snapshot local no worktree isolado '$DestinationRoot'." }
+    }
+    foreach ($relativePath in @($Snapshot.Untracked)) {
+        $from = Join-Path $Snapshot.SourceRoot $relativePath
+        $to = Join-Path $DestinationRoot $relativePath
+        New-Item -ItemType Directory -Path (Split-Path -Parent $to) -Force | Out-Null
+        Copy-Item -LiteralPath $from -Destination $to -Force
+    }
 }
 
 function Get-CrmLocalSourceBaseRoot {
@@ -197,12 +363,32 @@ function Sync-CrmLocalSourceRoot {
         [ValidateSet("Gestor", "Consultor")]
         [string]$Persona,
         [Parameter(Mandatory = $true)]
-        [string]$TargetCommit
+        [string]$TargetCommit,
+        [Parameter(Mandatory = $true)]
+        [object]$Snapshot
     )
 
     $sourceRoot = Get-CrmLocalSourceBaseRoot -Persona $Persona
     $sourceParent = Split-Path -Parent $sourceRoot
     New-Item -ItemType Directory -Path $sourceParent -Force | Out-Null
+
+    if ($Snapshot.HasChanges) {
+        $shortCommit = $TargetCommit.Substring(0, 12)
+        $shortSnapshot = $Snapshot.Fingerprint.Split(':')[-1].Substring(0, 12)
+        $snapshotRoot = "$sourceRoot-$shortCommit-$shortSnapshot"
+        if (Test-Path -LiteralPath $snapshotRoot) {
+            $snapshotRoot = "$snapshotRoot-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        }
+        & git -C $ProjectRoot worktree add --detach $snapshotRoot $TargetCommit | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Não foi possível criar o worktree isolado do snapshot do CRM Local em '$snapshotRoot'." }
+        try {
+            Apply-CrmLocalSourceSnapshot -Snapshot $Snapshot -DestinationRoot $snapshotRoot
+        } catch {
+            & git -C $ProjectRoot worktree remove --force $snapshotRoot 2>$null
+            throw
+        }
+        return $snapshotRoot
+    }
 
     if (Test-Path -LiteralPath $sourceRoot) {
         $trackedChanges = @(& git -C $sourceRoot status --porcelain --untracked-files=no)
@@ -243,14 +429,37 @@ function Resolve-CrmLocalSourceRoot {
         [string]$Persona = "Gestor"
     )
     $targetCommit = Get-CrmLocalTargetCommit
-    $manifest = Get-CrmPersonaManifest -Persona $Persona
-    if ($null -ne $manifest -and (Test-CrmWslPid -PidValue $manifest.pids.launcher)) {
-        $runningSource = Convert-WslPathToWindows -Path ([string]$manifest.worktree)
-        $runningCommit = if (Test-Path -LiteralPath $runningSource) { (& git -C $runningSource rev-parse HEAD 2>$null | Select-Object -First 1) } else { $null }
-        if ([string]$runningCommit -eq $targetCommit) { return $runningSource }
-        throw "O runtime de $Persona está ativo em outra revisão. Execute primeiro a ação principal do CRM Local para atualizá-lo."
+    $snapshot = Get-CrmLocalSourceSnapshot -TargetCommit $targetCommit
+    try {
+        $manifest = Get-CrmPersonaManifest -Persona $Persona
+        if ($null -ne $manifest -and (Test-CrmWslPid -PidValue $manifest.pids.launcher)) {
+            $runningSource = Convert-WslPathToWindows -Path ([string]$manifest.worktree)
+            $runningCommit = if (Test-Path -LiteralPath $runningSource) { (& git -C $runningSource rev-parse HEAD 2>$null | Select-Object -First 1) } else { $null }
+            if ([string]$runningCommit -eq $targetCommit) { return $runningSource }
+            throw "O runtime de $Persona está ativo em outra revisão. Execute primeiro a ação principal do CRM Local para atualizá-lo."
+        }
+        return Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $targetCommit -Snapshot $snapshot
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
     }
-    return Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $targetCommit
+}
+
+function Resolve-CrmLocalModuleSourceRoot {
+    param(
+        [ValidateSet("Gestor", "Consultor")]
+        [string]$Persona = "Gestor"
+    )
+
+    # Module-specific launchers do not own the canonical persona manifest, but
+    # they must still execute the exact source snapshot selected by this action.
+    # Never fall back to the mutable shared checkout here.
+    $targetCommit = Get-CrmLocalTargetCommit
+    $snapshot = Get-CrmLocalSourceSnapshot -TargetCommit $targetCommit
+    try {
+        return Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $targetCommit -Snapshot $snapshot
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
+    }
 }
 
 function Convert-WslPathToWindows {
@@ -310,7 +519,8 @@ function Test-CrmPersonaHealth {
 function Get-CrmPersonaDecision {
     param(
         [ValidateSet("Gestor", "Consultor")][string]$Persona,
-        [Parameter(Mandatory = $true)][string]$TargetCommit
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint
     )
     $runtimeRoot = Get-CrmPersonaRuntimeRoot -Persona $Persona
     $manifest = Get-CrmPersonaManifest -Persona $Persona
@@ -322,7 +532,7 @@ function Get-CrmPersonaDecision {
     $manifestWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "current.json")
     $buildStateWsl = Convert-WindowsPathToWsl -Path (Join-Path $runtimeRoot "build-state.json")
     $decisionRaw = & wsl.exe -d Ubuntu-24.04 -- node $policyWsl `
-        --manifest $manifestWsl --build-state $buildStateWsl --target $TargetCommit `
+        --manifest $manifestWsl --build-state $buildStateWsl --target $TargetCommit --source-fingerprint $SourceFingerprint `
         --persona $Persona.ToUpperInvariant() --pid-alive $pidAlive.ToString().ToLowerInvariant() `
         --healthy $healthy.ToString().ToLowerInvariant()
     if ($LASTEXITCODE -ne 0) { throw "Não foi possível avaliar o estado do CRM Local ($Persona)." }
@@ -342,15 +552,29 @@ function Open-CrmPersonaUrl {
     Write-Host "[crm-local] Runtime atualizado de $Persona reutilizado em $url."
 }
 
+function Open-CrmModuleUrl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Module,
+        [string]$ExtraQuery = ""
+    )
+    $url = "http://localhost:8791/?module=$Module"
+    if (-not [string]::IsNullOrWhiteSpace($ExtraQuery)) {
+        $url = "$url&$ExtraQuery"
+    }
+    Start-Process $url | Out-Null
+    Write-Host "[crm-local] Abrindo o módulo atualizado '$Module' em $url."
+}
+
 function Wait-CrmPersonaCurrent {
     param(
         [ValidateSet("Gestor", "Consultor")][string]$Persona,
         [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint,
         [int]$TimeoutSeconds = 420
     )
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        $decision = Get-CrmPersonaDecision -Persona $Persona -TargetCommit $TargetCommit
+        $decision = Get-CrmPersonaDecision -Persona $Persona -TargetCommit $TargetCommit -SourceFingerprint $SourceFingerprint
         if ($decision.Action -eq 'reuse') { return $decision }
         if ($decision.Action -notin @('wait', 'start')) { return $decision }
         Start-Sleep -Seconds 2
@@ -536,18 +760,21 @@ function Start-CrmPersonaRuntime {
     param(
         [ValidateSet("Gestor", "Consultor")][string]$Persona,
         [Parameter(Mandatory = $true)][string]$SourceRoot,
-        [Parameter(Mandatory = $true)][string]$TargetCommit
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint
     )
     $targetLiteral = Convert-ToBashLiteral -Value $TargetCommit
     if ($Persona -eq "Gestor") {
-        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh" -f `
+        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_SOURCE_FINGERPRINT={1} CRM_RUNTIME_ROOT={2} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={3} CRM_LOG_FILE={4} bash ./scripts/run-local-crm.sh" -f `
             $targetLiteral, `
+            (Convert-ToBashLiteral -Value $SourceFingerprint), `
             (Convert-ToBashLiteral -Value $crmGestorRuntimeRootWsl), `
             (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
             (Convert-ToBashLiteral -Value $crmGestorLogWsl)
     } else {
-        $command = "CRM_PERSONA=CONSULTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:8801 PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787 LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh --module ponto" -f `
+        $command = "CRM_PERSONA=CONSULTOR CRM_TARGET_COMMIT={0} CRM_SOURCE_FINGERPRINT={1} CRM_RUNTIME_ROOT={2} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:8801 PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787 LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={3} CRM_LOG_FILE={4} bash ./scripts/run-local-crm.sh --module ponto" -f `
             $targetLiteral, `
+            (Convert-ToBashLiteral -Value $SourceFingerprint), `
             (Convert-ToBashLiteral -Value $crmConsultorRuntimeRootWsl), `
             (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
             (Convert-ToBashLiteral -Value $crmConsultorLogWsl)
@@ -560,25 +787,30 @@ function Invoke-CrmPersonaAction {
         [ValidateSet("Gestor", "Consultor")][string]$Persona,
         [Parameter(Mandatory = $true)][string]$TargetCommit
     )
-    $decision = Get-CrmPersonaDecision -Persona $Persona -TargetCommit $TargetCommit
-    if ($decision.Action -eq 'reuse') {
-        Open-CrmPersonaUrl -Persona $Persona -Manifest $decision.Manifest
-        return
-    }
-    if ($decision.Action -eq 'wait') {
-        Write-Host "[crm-local] A inicialização de $Persona para o commit atual já está em andamento; aguardando."
-        $decision = Wait-CrmPersonaCurrent -Persona $Persona -TargetCommit $TargetCommit
+    $snapshot = Get-CrmLocalSourceSnapshot -TargetCommit $TargetCommit
+    try {
+        $decision = Get-CrmPersonaDecision -Persona $Persona -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
         if ($decision.Action -eq 'reuse') {
             Open-CrmPersonaUrl -Persona $Persona -Manifest $decision.Manifest
             return
         }
+        if ($decision.Action -eq 'wait') {
+            Write-Host "[crm-local] A inicialização de $Persona para o commit atual já está em andamento; aguardando."
+            $decision = Wait-CrmPersonaCurrent -Persona $Persona -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
+            if ($decision.Action -eq 'reuse') {
+                Open-CrmPersonaUrl -Persona $Persona -Manifest $decision.Manifest
+                return
+            }
+        }
+        if ($decision.Action -eq 'restart') {
+            Write-Host "[crm-local] Reiniciando ${Persona}: $($decision.Reason)."
+            Stop-CrmPersonaRuntime -Persona $Persona
+        }
+        $sourceRoot = Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $TargetCommit -Snapshot $snapshot
+        Start-CrmPersonaRuntime -Persona $Persona -SourceRoot $sourceRoot -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
     }
-    if ($decision.Action -eq 'restart') {
-        Write-Host "[crm-local] Reiniciando ${Persona}: $($decision.Reason)."
-        Stop-CrmPersonaRuntime -Persona $Persona
-    }
-    $sourceRoot = Sync-CrmLocalSourceRoot -Persona $Persona -TargetCommit $TargetCommit
-    Start-CrmPersonaRuntime -Persona $Persona -SourceRoot $sourceRoot -TargetCommit $TargetCommit
 }
 
 function Start-CrmGestorBackgroundUpdate {
@@ -602,17 +834,22 @@ function Start-CrmGestorBackgroundUpdate {
 
 function Ensure-CrmGestorForConsultor {
     param([Parameter(Mandatory = $true)][string]$TargetCommit)
-    $decision = Get-CrmPersonaDecision -Persona Gestor -TargetCommit $TargetCommit
-    if ($decision.Action -eq 'reuse') { return }
-    if ($decision.Action -eq 'wait') {
-        $decision = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit
+    $snapshot = Get-CrmLocalSourceSnapshot -TargetCommit $TargetCommit
+    try {
+        $decision = Get-CrmPersonaDecision -Persona Gestor -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
         if ($decision.Action -eq 'reuse') { return }
-    }
-    if ($decision.Action -eq 'restart') { Stop-CrmPersonaRuntime -Persona Gestor }
-    Start-CrmGestorBackgroundUpdate -TargetCommit $TargetCommit
-    $ready = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit -TimeoutSeconds 600
-    if ($ready.Action -ne 'reuse') {
-        throw "O Gestor não ficou pronto no commit $TargetCommit. Consulte '$logRoot\crm-local-gestor-action.err.log'."
+        if ($decision.Action -eq 'wait') {
+            $decision = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint
+            if ($decision.Action -eq 'reuse') { return }
+        }
+        if ($decision.Action -eq 'restart') { Stop-CrmPersonaRuntime -Persona Gestor }
+        Start-CrmGestorBackgroundUpdate -TargetCommit $TargetCommit
+        $ready = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit -SourceFingerprint $snapshot.Fingerprint -TimeoutSeconds 600
+        if ($ready.Action -ne 'reuse') {
+            throw "O Gestor não ficou pronto no commit $TargetCommit. Consulte '$logRoot\crm-local-gestor-action.err.log'."
+        }
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
     }
 }
 
@@ -713,22 +950,21 @@ function Invoke-ShortcutActionInternal {
             Stop-CrmPersonaRuntime -Persona Consultor
         }
         "CrmSiteEf" {
-            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready" -f `
-                (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
-                (Convert-ToBashLiteral -Value $crmGestorLogWsl))
+            $targetCommit = Get-CrmLocalTargetCommit
+            Invoke-CrmPersonaAction -Persona Gestor -TargetCommit $targetCommit
+            Open-CrmModuleUrl -Module "site-tracking" -ExtraQuery "metaAdsLocalScenario=connected-ready"
         }
         "CrmMetaAds" {
-            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module meta-ads" -f `
-                (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
-                (Convert-ToBashLiteral -Value $crmGestorLogWsl))
+            $targetCommit = Get-CrmLocalTargetCommit
+            Invoke-CrmPersonaAction -Persona Gestor -TargetCommit $targetCommit
+            Open-CrmModuleUrl -Module "meta-ads" -ExtraQuery "metaAdsLocalScenario=connected-ready"
         }
         "CrmFinance" {
             Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command "npm run crm:local:finance"
         }
         "CrmAtendimento" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh" -f `
+            $crmAtendimentoSourceRoot = Resolve-CrmLocalModuleSourceRoot -Persona Gestor
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmAtendimentoSourceRoot -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh" -f `
                 (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
                 (Convert-ToBashLiteral -Value $atendimentoLogWsl))
         }

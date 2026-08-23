@@ -1,0 +1,204 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/factualFoundation",
+  "title": "factualFoundation",
+  "examples": [
+    {
+      "schema_version": "fixture",
+      "production_id": "fixture",
+      "commercial_facts": {},
+      "scientific_claims": [],
+      "brand_rules": {},
+      "compliance_rules": {},
+      "evidence_registry": [],
+      "conflicts": [],
+      "missing_information": [],
+      "needs_review": false
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "fixture",
+      "commercial_facts": {},
+      "scientific_claims": [],
+      "brand_rules": {},
+      "compliance_rules": {},
+      "evidence_registry": [],
+      "conflicts": [],
+      "missing_information": [],
+      "needs_review": false
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "production_id": {
+      "type": "string"
+    },
+    "commercial_facts": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "scientific_claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "claim_id": {
+            "type": "string"
+          },
+          "technical_text": {
+            "type": "string"
+          },
+          "consumer_text": {
+            "type": "string"
+          },
+          "qualification": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "CONDITIONAL",
+              "PROHIBITED"
+            ]
+          },
+          "evidence_strength": {
+            "type": "string"
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowed_contexts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "forbidden_contexts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "claim_id",
+          "technical_text",
+          "consumer_text",
+          "qualification",
+          "status",
+          "evidence_strength",
+          "source_ids",
+          "allowed_contexts",
+          "forbidden_contexts"
+        ]
+      }
+    },
+    "brand_rules": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "compliance_rules": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "evidence_registry": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "source_type": {
+            "type": "string"
+          },
+          "locator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "excerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "PENDING",
+              "REJECTED"
+            ]
+          }
+        },
+        "required": [
+          "source_id",
+          "source_type",
+          "locator",
+          "excerpt",
+          "checksum",
+          "status"
+        ]
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "missing_information": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "needs_review": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "production_id",
+    "commercial_facts",
+    "scientific_claims",
+    "brand_rules",
+    "compliance_rules",
+    "evidence_registry",
+    "conflicts",
+    "missing_information",
+    "needs_review"
+  ]
+}
