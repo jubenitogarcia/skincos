@@ -82,6 +82,8 @@ type EscalaActor = {
 }
 
 type LocalProfessional = {
+  id?: string
+  workforceEmployeeId?: string | null
   name: string
   status: string
   units: string[]
@@ -210,6 +212,7 @@ function getEscalaLocalStore(): EscalaLocalStore {
   g.__escalaLocalStore = {
     professionals: [
       {
+        id: 'local-escala-dra-ana',
         name: 'Dra. Ana',
         status: 'Ativo',
         units: ['novo-hamburgo'],
@@ -222,6 +225,7 @@ function getEscalaLocalStore(): EscalaLocalStore {
         color: '',
       },
       {
+        id: 'local-escala-dr-lucas',
         name: 'Dr. Lucas',
         status: 'Ativo',
         units: ['novo-hamburgo', 'porto-alegre'],
@@ -234,6 +238,7 @@ function getEscalaLocalStore(): EscalaLocalStore {
         color: '',
       },
       {
+        id: 'local-escala-dra-carla',
         name: 'Dra. Carla',
         status: 'Ativo',
         units: ['porto-alegre'],
@@ -707,7 +712,11 @@ async function handleLocalEscalaRequest(
     if (store.professionals.some((prof) => prof.name === name)) {
       return done(409, { ok: false, error: 'PROFESSIONAL_ALREADY_EXISTS' })
     }
+    const professionalId = String(payload?.professionalId || '').trim() || `local-escala-${crypto.randomUUID()}`
+    const workforceEmployeeId = String(payload?.workforceEmployeeId || '').trim() || null
     store.professionals.push({
+      id: professionalId,
+      workforceEmployeeId,
       name,
       status: String(payload?.status || '').trim(),
       units: nextUnits,
@@ -719,7 +728,7 @@ async function handleLocalEscalaRequest(
       instagram: String(payload?.instagram || '').trim(),
       color: String(payload?.color || '').trim(),
     })
-    return done(200, { ok: true, source: 'local-mock' })
+    return done(200, { ok: true, data: { professionalId, workforceEmployeeId }, source: 'local-mock' })
   }
 
   if (rest === '/professionals' && method === 'PUT') {
@@ -752,7 +761,14 @@ async function handleLocalEscalaRequest(
         row.professional === currentName ? { ...row, professional: nextName } : row
       ))
     }
-    return done(200, { ok: true, source: 'local-mock' })
+    return done(200, {
+      ok: true,
+      data: {
+        professionalId: store.professionals[index].id || null,
+        workforceEmployeeId: store.professionals[index].workforceEmployeeId || payload?.workforceEmployeeId || null,
+      },
+      source: 'local-mock',
+    })
   }
 
   if (rest === '/admin/import/atendimento' && method === 'POST') {

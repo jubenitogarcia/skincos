@@ -19,5 +19,6 @@ export {
   canCreateEmployee,
   displayJobTitle,
   publicOnboarding,
+  resolveEmployeeProfile,
   validateOnboardingInput,
 } from '../../identity/policy/employeeOnboarding.js';
