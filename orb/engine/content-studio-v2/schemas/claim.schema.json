@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/claim",
+  "title": "claim",
+  "examples": [
+    {
+      "claim_id": "fixture",
+      "technical_text": "fixture",
+      "consumer_text": "fixture",
+      "qualification": "fixture",
+      "status": "APPROVED",
+      "evidence_strength": "fixture",
+      "source_ids": [],
+      "allowed_contexts": [],
+      "forbidden_contexts": []
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "technical_text": "fixture",
+      "consumer_text": "fixture",
+      "qualification": "fixture",
+      "status": "APPROVED",
+      "evidence_strength": "fixture",
+      "source_ids": [],
+      "allowed_contexts": [],
+      "forbidden_contexts": []
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "claim_id": {
+      "type": "string"
+    },
+    "technical_text": {
+      "type": "string"
+    },
+    "consumer_text": {
+      "type": "string"
+    },
+    "qualification": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "APPROVED",
+        "CONDITIONAL",
+        "PROHIBITED"
+      ]
+    },
+    "evidence_strength": {
+      "type": "string"
+    },
+    "source_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "allowed_contexts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden_contexts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "claim_id",
+    "technical_text",
+    "consumer_text",
+    "qualification",
+    "status",
+    "evidence_strength",
+    "source_ids",
+    "allowed_contexts",
+    "forbidden_contexts"
+  ]
+}
