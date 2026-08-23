@@ -137,7 +137,10 @@ export function serializeBeautyMovementShortLinkCsv(plan: BeautyMovementShortLin
 }
 
 export function renderBeautyMovementShortLinkSql(plan: BeautyMovementShortLinkPlan): string {
-    const statements = ["BEGIN TRANSACTION;"];
+    // Wrangler's remote D1 command rejects explicit transaction control
+    // statements. Each INSERT remains idempotent through its unique slug
+    // constraint and ON CONFLICT DO NOTHING clause.
+    const statements: string[] = [];
     for (const link of plan.links) {
         statements.push(`INSERT INTO site_custom_urls (
 id, site_host, name, slug_path, destination_url, destination_host, destination_path,
@@ -151,7 +154,6 @@ NULL, NULL, ${sqlString(plan.campaignId)}, NULL, NULL,
 1, ${plan.createdAtMs}, ${plan.createdAtMs}
 ) ON CONFLICT(site_host, slug_path) DO NOTHING;`);
     }
-    statements.push("COMMIT;");
     return `${statements.join("\n\n")}\n`;
 }
 
