@@ -58,6 +58,9 @@ test('onboarding status changes stay hierarchical, synchronized, audited and fai
   assert.match(statusBlock, /WORKFORCE_STATUS_PENDING/);
   assert.match(statusBlock, /failClosed: true/);
   assert.match(statusBlock, /uses_count=0/);
+  assert.match(statusBlock, /TEAM_TERMINATION_REASON_REQUIRED/);
+  assert.match(statusBlock, /terminationReasonProvided/);
+  assert.match(statusBlock, /teamUnitsVisible\(auth, onboarding\.units_json\)/);
   assert.match(admin, /IDENTITY_ONBOARDING_MANAGED/);
 });
 
@@ -73,6 +76,16 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(admin, /crm_team_operations/);
   assert.match(admin, /recordTeamTelemetry/);
   assert.match(admin, /failClosed: pendingIds\.length > 0/);
+  assert.match(admin, /TEAM_WRITE_ROLE_DENIED/);
+  assert.match(admin, /const isOnboardingRoute/);
+  assert.match(admin, /crm_team_telemetry/);
+  assert.match(admin, /const teamHistoryMatch/);
+  assert.match(admin, /after_json LIKE/);
+  assert.match(admin, /entity: 'EMPLOYEE_TEAM'/);
+  assert.match(admin, /pendingSync: pendingIds\.includes\(row\.id\)/);
+  assert.match(admin, /compensationState/);
+  assert.match(admin, /teamUnitsVisible\(auth, onboarding\.units_json\)/);
+  assert.doesNotMatch(admin, /teamUnitsVisible\(auth, onboarding\)/);
 });
 
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {
