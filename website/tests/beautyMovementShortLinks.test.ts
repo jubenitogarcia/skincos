@@ -23,7 +23,7 @@ test("short links use the final five token characters and preserve the canonical
     assert.equal(plan.links[0]?.normalizedSlugPath, "/no123/belezaemmovimento");
     assert.equal(plan.links[0]?.destinationUrl, "https://espacofacial.com/BelezaEmMovimento#c=abcdefghijklmnopqrstuvwxyzABCDEFGHijklmno123");
     assert.equal(plan.links[0]?.source, "beauty_movement_short_links_v1");
-    assert.match(plan.links[0]?.id ?? "", /^beauty-movement-short-v2-/);
+    assert.match(plan.links[0]?.id ?? "", /^beauty-movement-short-v3-[a-z0-9-]+-[0-9a-f]{32}$/);
     assert.match(renderBeautyMovementShortLinkSql(plan), /ON CONFLICT\(site_host, slug_path\) DO NOTHING/);
 });
 
