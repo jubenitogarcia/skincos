@@ -1,5 +1,11 @@
 # TASKS
 
+## Hierarchical employee onboarding — remaining gate
+
+- [x] Merge the staging-only mail-secret sync in PR #803 and repeat the immutable preview, Workforce/Core/CRM staging pipelines plus the synthetic unit-scope journey for the approved SHA.
+- [x] Revalidate the pre-existing iCloud Mail transport for staging: the six repository `AUTH_RESET_*` secrets are present in the deployed staging Worker and a controlled password-recovery request received SMTP acceptance. Values remain secret and no worker production target was selected.
+- [ ] Repeat the authenticated CRM → Identity → Workforce → invite → activation and recovery smoke with synthetic identities only. Keep production promotion blocked until delivery, single-use expiry, session revocation and PII redaction evidence are green.
+
 ## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
 
 - [x] Domínio definitivo criado em `workforce/timekeeping` e montado no gateway.
@@ -24,6 +30,35 @@
   cleanup commits.
 - [ ] Decide whether draft PR #674 should graduate from the optional GitHub
   autonomy-broker experiment; it is isolated and not deployed.
+- [ ] Reconcile the pre-existing native `/opt/skincos/current/source` pointer
+  with the integrated MCP gateway release before attempting gateway restart or
+  WSL persistence validation; use the canonical lifecycle runbook and preserve
+  the current healthy process/release as rollback evidence.
+- [ ] Complete isolated n8n 2.31.7/2.32.5 credential-recognition, community-node,
+  MCP and rollback regression gates before any Orb upgrade decision; clean/schema
+  boots and the disabled-workflow layer are proven, while 2.31.7 remains untested
+  and no production mutation is authorized. Production n8n remains 2.8.3; an
+  unrelated native Orb release promotion/restart occurred during the audit and
+  must be reconciled separately rather than attributed to this work.
+- [ ] Resolve the isolated custom-node loader blocker (`n8n-nodes-mcp@0.1.29`
+  discovers `pkce-challenge` as a node) and reconcile the gateway release pointer
+  before reopening the n8n upgrade recommendation; current classification is
+  `UPGRADE_NAO_RECOMENDADO` / `BLOQUEADO_POR_PACOTE`.
+- [ ] Complete the remaining isolated Orb/n8n qualification gates recorded in
+  `C:\CodexRuntime\operator\admin\skincos\n8n-upgrade-audit-20260728\QUALIFICATION-STAGING-20260728.md`:
+  synthetic Booking/CRM/WhatsApp/Meta/content journeys, candidate MCP OAuth
+  end-to-end, failure injection, and isolated persistence/keepalive. Current
+  decision is `BLOQUEADO`; no promotion or production update is authorized.
+- [ ] Resolve the staging qualification blocker before moving draft PR #828
+  (`https://github.com/jubenitogarcia/skincos/pull/828`) out of draft. Review the
+  fixed 2.32.5 manifest, runbooks and guarded scripts; do not run `upgrade.sh`,
+  `migrate.sh` or any live backup/restart without a new human authorization.
+- [ ] Complete remaining PR #828 gates in a truly isolated staging environment:
+  low-space and full recovery matrix, functional 11-package/Booking/CRM/
+  WhatsApp/Meta/content journeys, real n8n MCP protected resource with dynamic
+  OAuth registration and Streamable HTTP, and `SkincosWslRuntimeKeepalive` with
+  exactly four services. Do not run `wsl --shutdown` against the current Orb
+  runtime; do not move PR #828 out of draft without fresh evidence and approval.
 
 ## Done — architecture and runtime program
 

@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/evidence",
+  "title": "evidence",
+  "examples": [
+    {
+      "source_id": "fixture",
+      "source_type": "fixture",
+      "locator": "fixture",
+      "excerpt": "fixture",
+      "checksum": "fixture",
+      "status": "APPROVED"
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "source_type": "fixture",
+      "locator": "fixture",
+      "excerpt": "fixture",
+      "checksum": "fixture",
+      "status": "APPROVED"
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "source_id": {
+      "type": "string"
+    },
+    "source_type": {
+      "type": "string"
+    },
+    "locator": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "excerpt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "checksum": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "APPROVED",
+        "PENDING",
+        "REJECTED"
+      ]
+    }
+  },
+  "required": [
+    "source_id",
+    "source_type",
+    "locator",
+    "excerpt",
+    "checksum",
+    "status"
+  ]
+}

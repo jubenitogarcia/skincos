@@ -10,7 +10,15 @@ export function commitsMatch(left, right) {
   return a === b || (a.length >= 12 && b.startsWith(a)) || (b.length >= 12 && a.startsWith(b))
 }
 
-export function decideRuntimeAction({ manifest, buildState, targetCommit, persona, pidAlive, healthy }) {
+const normalizeFingerprint = (value) => String(value || '').trim().toLowerCase()
+
+export function fingerprintsMatch(left, right) {
+  const a = normalizeFingerprint(left)
+  const b = normalizeFingerprint(right)
+  return Boolean(a && b && a === b)
+}
+
+export function decideRuntimeAction({ manifest, buildState, targetCommit, sourceFingerprint, persona, pidAlive, healthy }) {
   if (!manifest || typeof manifest !== 'object') return { action: 'start', reason: 'manifest_missing' }
   if (String(manifest.persona || '').toUpperCase() !== String(persona || '').toUpperCase()) {
     return { action: 'restart', reason: 'persona_mismatch' }
@@ -24,11 +32,13 @@ export function decideRuntimeAction({ manifest, buildState, targetCommit, person
   }
 
   const builtCommit = manifest.buildCommit || buildState?.commit
-  if (state === 'ready' && commitsMatch(builtCommit, targetCommit) && healthy) {
+  const builtFingerprint = manifest.sourceFingerprint || buildState?.sourceFingerprint
+  if (state === 'ready' && commitsMatch(builtCommit, targetCommit) && fingerprintsMatch(builtFingerprint, sourceFingerprint) && healthy) {
     return { action: 'reuse', reason: 'current_runtime_ready' }
   }
 
   if (!commitsMatch(builtCommit, targetCommit)) return { action: 'restart', reason: 'commit_outdated' }
+  if (!fingerprintsMatch(builtFingerprint, sourceFingerprint)) return { action: 'restart', reason: 'source_outdated' }
   if (state !== 'ready') return { action: 'restart', reason: `state_${state || 'missing'}` }
   return { action: 'restart', reason: 'health_failed' }
 }
@@ -57,6 +67,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
     manifest: readJson(args.manifest),
     buildState: readJson(args['build-state']),
     targetCommit: args.target,
+    sourceFingerprint: args['source-fingerprint'],
     persona: args.persona,
     pidAlive: args['pid-alive'] === 'true',
     healthy: args.healthy === 'true',

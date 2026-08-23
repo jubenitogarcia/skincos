@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/assetManifest",
+  "title": "assetManifest",
+  "examples": [
+    {
+      "schema_version": "fixture",
+      "production_id": "fixture",
+      "items": [],
+      "version": "fixture",
+      "input_hash": "fixture",
+      "output_hash": "fixture"
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "fixture",
+      "items": [],
+      "version": "fixture",
+      "input_hash": "fixture",
+      "output_hash": "fixture"
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "production_id": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "version": {
+      "type": "string"
+    },
+    "input_hash": {
+      "type": "string"
+    },
+    "output_hash": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "production_id",
+    "items",
+    "version",
+    "input_hash",
+    "output_hash"
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "id": "ccg-v2-preproduction",
+  "name": "CCG-30 Preproduction",
+  "nodes": [
+    {
+      "id": "ccg-30-trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -760,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ccg-30-validate",
+      "name": "Validate contract input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.all().map((item) => item.json || {});\nif (!input.length) throw new Error('missing workflow input');\nconst first = input[0];\nlet request = first;\nif (typeof first.production_request === 'string') { try { request = JSON.parse(first.production_request); } catch (error) { throw new Error('production_request must be valid JSON'); } } else if (first.production_request && typeof first.production_request === 'object') request = first.production_request;\nif ('CCG-30' !== 'CCG-99') { const required = ['schema_version', 'production_id', 'content_id', 'campaign_id', 'content_type', 'production_tier', 'objective', 'cta', 'provider_policy', 'dry_run']; const missing = required.filter((key) => request[key] === undefined || request[key] === null || request[key] === ''); if (missing.length) throw new Error('contract validation failed: ' + missing.join(',')); if (!['STATIC_SINGLE', 'CAROUSEL', 'SHORT_VIDEO', 'HYBRID'].includes(request.content_type)) throw new Error('contract validation failed: content_type'); if (!['FAST', 'STANDARD', 'PREMIUM'].includes(request.production_tier)) throw new Error('contract validation failed: production_tier'); }\nif (request.dry_run !== true && request.provider_policy && request.provider_policy.mode === 'mock') throw new Error('provider policy mismatch');\nreturn [{ json: { ...first, ...request, ccg_module: 'CCG-30', ccg_builder_version: '2.0.0', ccg_contract_validation: 'strict-required-fields', dry_run: Boolean(request.dry_run) } }];"
+      }
+    },
+    {
+      "id": "ccg-30-result",
+      "name": "Return module result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json || {}; return [{ json: { ...item, module_status: 'DONE', module_output: 'creative_blueprint' } }];"
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate contract input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate contract input": {
+      "main": [
+        [
+          {
+            "node": "Return module result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "ccg-v2-error-handler"
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "codex_generated": true,
+    "builder_version": "2.0.0",
+    "module": "CCG-30",
+    "architecture": "standalone-module",
+    "no_publication": true
+  }
+}

@@ -34,6 +34,14 @@
 - Prefer repo evidence and live endpoints over generic assumptions.
 - If the user asks briefly ("proceda", "verifique", "publique", "corrija"),
   infer the standard Skincos flow instead of asking them to restate context.
+- Automatically use `skills/skincos-project-orchestrator` for requests to
+  retomar, continuar, revisar, auditar or define the next steps of SKINCOS,
+  including handoffs, PR/CI/deploy state and planning-versus-staging review.
+  Run its read-only state reconstruction before acting, keep its persistent
+  ledgers current, and continue the minimum safe authorized action rather than
+  ending at a report. Install the versioned source for Codex App, CLI and the
+  extension with `powershell -ExecutionPolicy Bypass -File
+  .\scripts\install-project-skill.ps1`.
 
 ## Source of Truth
 
