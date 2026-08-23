@@ -99,7 +99,10 @@ export function prepareBeautyMovementShortLinks(params: {
         const normalizedSlugPath = `/${normalizedSuffix}${BEAUTY_MOVEMENT_CANONICAL_PATH.toLowerCase()}`;
         const destinationUrl = `https://espacofacial.com${BEAUTY_MOVEMENT_CANONICAL_PATH}#c=${token}`;
         links.push({
-            id: `beauty-movement-short-v1-${campaignId}-${normalizedSuffix}`,
+            // Keep the redirect contract/source stable while moving the row identity
+            // forward. A previously reserved v1 id must never be overwritten if a
+            // stale/manual row is found under that primary key.
+            id: `beauty-movement-short-v2-${campaignId}-${normalizedSuffix}`,
             name: `Cartas da Beleza - ${suffix}`,
             inviteRef: row.inviteRef,
             whatsapp: row.whatsapp,
@@ -145,7 +148,7 @@ ${sqlString(link.id)}, ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)}, ${sqlStrin
 ${sqlString(link.description)}, ${sqlString(link.source)}, ${sqlString(link.placement)}, NULL, NULL,
 NULL, NULL, ${sqlString(plan.campaignId)}, NULL, NULL,
 1, ${plan.createdAtMs}, ${plan.createdAtMs}
-) ON CONFLICT(id) DO NOTHING;`);
+) ON CONFLICT(site_host, slug_path) DO NOTHING;`);
     }
     statements.push("COMMIT;");
     return `${statements.join("\n\n")}\n`;
@@ -160,10 +163,10 @@ WHERE id IN (${ids}) OR (site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST
 }
 
 export function renderBeautyMovementShortLinkReadbackSql(plan: BeautyMovementShortLinkPlan): string {
-    const ids = plan.links.map((link) => sqlString(link.id)).join(", ");
+    const slugs = plan.links.map((link) => sqlString(link.normalizedSlugPath)).join(", ");
     return `SELECT id, site_host, slug_path, destination_url, source, active
 FROM site_custom_urls
-WHERE id IN (${ids});\n`;
+WHERE site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)} AND slug_path IN (${slugs});\n`;
 }
 
 export function shortLinkMappingHash(entries: readonly Pick<BeautyMovementShortLink, "normalizedSlugPath" | "destinationUrl">[]): string {
