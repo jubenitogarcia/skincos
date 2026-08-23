@@ -20,11 +20,31 @@ import { cn } from "@/utils"
 
 const TOOLTIP_CURSOR_GAP = 14
 const TOOLTIP_COLLISION_PADDING = 12
+const TOOLTIP_MIN_ASPECT_RATIO = 0.5
+const TOOLTIP_MAX_ASPECT_RATIO = 2
 
-const TOOLTIP_CONTENT_CLASS = "z-[1200] w-fit max-w-72 rounded-xl border border-white/12 bg-slate-950/96 px-3 py-2 text-[11px] text-slate-50 shadow-[0_16px_36px_rgba(15,23,42,0.34)] backdrop-blur-xl"
+const TOOLTIP_CONTENT_CLASS = "z-[1200] w-fit max-w-72 max-h-[min(32rem,calc(100vh-2rem))] overflow-y-auto rounded-xl border border-white/12 bg-slate-950/96 px-3 py-2 text-[11px] text-slate-50 shadow-[0_16px_36px_rgba(15,23,42,0.34)] backdrop-blur-xl"
 
 type TooltipPoint = { x: number; y: number }
 type TooltipSize = { width: number; height: number }
+type TooltipAspectAdjustment = { minWidth?: number; minHeight?: number }
+
+function calculateTooltipAspectAdjustment(content: TooltipSize, viewport: TooltipSize): TooltipAspectAdjustment {
+  if (content.width <= 0 || content.height <= 0 || viewport.width <= 0 || viewport.height <= 0) return {}
+
+  const ratio = content.width / content.height
+  if (ratio > TOOLTIP_MAX_ASPECT_RATIO) {
+    return {
+      minHeight: Math.min(Math.ceil(content.width / TOOLTIP_MAX_ASPECT_RATIO), Math.max(0, viewport.height - TOOLTIP_COLLISION_PADDING * 2)),
+    }
+  }
+  if (ratio < TOOLTIP_MIN_ASPECT_RATIO) {
+    return {
+      minWidth: Math.min(Math.ceil(content.height * TOOLTIP_MIN_ASPECT_RATIO), Math.max(0, viewport.width - TOOLTIP_COLLISION_PADDING * 2)),
+    }
+  }
+  return {}
+}
 
 function calculateFollowCursorPosition(
   cursor: TooltipPoint,
@@ -208,15 +228,23 @@ function FollowCursorTooltipContent({
 }) {
   const contentRef = useRef<HTMLDivElement>(null)
   const [contentSize, setContentSize] = useState<TooltipSize | null>(null)
+  const [aspectAdjustment, setAspectAdjustment] = useState<TooltipAspectAdjustment>({})
 
   useLayoutEffect(() => {
     const element = contentRef.current
     if (!element) return
+    setAspectAdjustment({})
     const updateSize = () => {
       const bounds = element.getBoundingClientRect()
       setContentSize((current) => current?.width === bounds.width && current?.height === bounds.height
         ? current
         : { width: bounds.width, height: bounds.height })
+      setAspectAdjustment((current) => Object.keys(current).length
+        ? current
+        : calculateTooltipAspectAdjustment(
+          { width: bounds.width, height: bounds.height },
+          { width: window.innerWidth, height: window.innerHeight },
+        ))
     }
     updateSize()
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateSize)
@@ -242,7 +270,13 @@ function FollowCursorTooltipContent({
         TOOLTIP_CONTENT_CLASS,
         className,
       )}
-      style={{ left: `${position.left}px`, top: `${position.top}px`, visibility: contentSize ? 'visible' : 'hidden' }}
+      style={{
+        left: `${position.left}px`,
+        top: `${position.top}px`,
+        minWidth: aspectAdjustment.minWidth,
+        minHeight: aspectAdjustment.minHeight,
+        visibility: contentSize ? 'visible' : 'hidden',
+      }}
     >
       {pinned ? (
         <button
@@ -377,4 +411,5 @@ export {
   TooltipIcon,
   TooltipTruncate,
   calculateFollowCursorPosition,
+  calculateTooltipAspectAdjustment,
 }
