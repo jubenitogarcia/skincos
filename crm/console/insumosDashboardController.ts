@@ -90,11 +90,29 @@ export function resolveOverviewDateRange(args: {
   now?: Date
 }) {
   const now = args.now ?? new Date()
-  const yyyyMmDd = (value: Date) => value.toISOString().slice(0, 10)
+  const yyyyMmDd = (value: Date) => {
+    const year = value.getFullYear()
+    const month = String(value.getMonth() + 1).padStart(2, '0')
+    const day = String(value.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
 
   let de = ''
   let ate = yyyyMmDd(now)
-  let days = args.period === '7d' ? 7 : args.period === '30d' ? 30 : 365
+  let days = args.period === '7d' ? 7 : args.period === '30d' ? 30 : args.period === '1y' ? 365 : 1
+
+  if (args.period === 'currentWeek' || args.period === 'currentMonth') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    if (args.period === 'currentWeek') {
+      const mondayOffset = (start.getDay() + 6) % 7
+      start.setDate(start.getDate() - mondayOffset)
+    } else {
+      start.setDate(1)
+    }
+    de = yyyyMmDd(start)
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    days = Math.max(1, Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1)
+  }
 
   if (args.period === 'custom') {
     const deIso = dateInputToIso(args.customFrom)
