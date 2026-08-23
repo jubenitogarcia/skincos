@@ -87,6 +87,12 @@ class FakeD1 {
   first(sql, params) {
     const query = normalizeSql(sql)
 
+    if (query.startsWith('select id, name from professionals where name = ?1')) {
+      const name = String(params[0] || '')
+      const row = this.professionals.find((prof) => prof.name === name)
+      return row ? { id: row.id, name: row.name } : null
+    }
+
     if (query.startsWith('select name from professionals where name = ?1')) {
       const name = String(params[0] || '')
       const row = this.professionals.find((prof) => prof.name === name)

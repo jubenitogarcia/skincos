@@ -2270,6 +2270,9 @@ function Start-CrmInstanceRuntime {
     $module = [string]$Spec.module
     $localAuthAdmin = if ([bool]$Spec.auth.testUserAdmin) { "true" } else { "false" }
     $allowedModules = @($Spec.auth.allowedModules) -join ","
+    # Give the synthetic Gestor enough unit scope to exercise the team form.
+    # This is loopback-only preview data and does not grant production access.
+    $allowedUnits = if ($roleKey -eq 'GESTOR') { "novo-hamburgo,barra-shopping-sul" } else { "" }
     $withInsumos = if ([bool]$Spec.dependencies.insumos) { 1 } else { 0 }
     $withTimekeeping = if ([bool]$Spec.dependencies.timekeeping) { 1 } else { 0 }
     $withWhatsapp = if ([bool]$Spec.dependencies.whatsapp) { 1 } else { 0 }
@@ -2306,6 +2309,7 @@ function Start-CrmInstanceRuntime {
         "LOCAL_AUTH_EMAIL=$email",
         "LOCAL_AUTH_NAME=$displayName",
         "LOCAL_AUTH_ALLOWED_MODULES=$allowedModules",
+        "LOCAL_AUTH_ALLOWED_UNITS=$allowedUnits",
         "CRM_VITE_PORT=$([int]$Spec.ports.vite)",
         "CRM_PAGES_PORT=$([int]$Spec.ports.pages)",
         "CRM_WITH_INSUMOS=$withInsumos",
@@ -2339,6 +2343,12 @@ function Start-CrmInstanceRuntime {
         $runtimeEnv += "CRM_META_ADS_SCENARIO=$localScenario"
     }
     if ($withWhatsapp -eq 1) {
+        # The local CRM adapter also owns the isolated /api/crm admin stubs.
+        # Point Pages at this loopback target so a preview never falls through
+        # to the hosted API while exercising a worktree-only module.
+        $localCrmApiTarget = "http://127.0.0.1:$([int]$Spec.ports.whatsapp)"
+        $runtimeEnv += "CRM_API_TARGET=$localCrmApiTarget"
+        $runtimeEnv += "INSUMOS_API_TARGET=$localCrmApiTarget"
         $runtimeEnv += "UNIT_MONITOR_API_TARGET=http://127.0.0.1:$([int]$Spec.ports.whatsapp)"
     }
     Invoke-ShortcutWsl `

@@ -1152,6 +1152,38 @@ if (DEV_AUTH_ENABLED) {
         }
     }
 
+    // The unified team API is owned by the inventory Worker in the hosted
+    // environment. Keep the isolated CRM preview explicit about that boundary:
+    // the default local flag is off, but the Users and Escala shells must still
+    // receive a deterministic config response instead of falling through to a
+    // remote API or a 404. The legacy onboarding list is read-only here so the
+    // preview remains synthetic and does not pretend to provision real staff.
+    const localUnifiedTeamEnabled = ['1', 'true', 'yes'].includes(
+        String(process.env.UNIFIED_TEAM_ENABLED || '').trim().toLowerCase(),
+    )
+    app.get(['/api/crm/admin/team', '/admin/team'], async (req, res) => {
+        if (String(req.query?.mode || '') === 'config') {
+            return res.status(200).set('cache-control', 'no-store').json({
+                success: true,
+                data: {
+                    enabled: localUnifiedTeamEnabled,
+                    legacyEscalaEditor: !localUnifiedTeamEnabled,
+                },
+            })
+        }
+        if (!localUnifiedTeamEnabled) {
+            return res.status(200).set('cache-control', 'no-store').json({ success: true, data: [] })
+        }
+        return res.status(503).set('cache-control', 'no-store').json({
+            success: false,
+            error: 'LOCAL_TEAM_API_NOT_CONFIGURED',
+            code: 'LOCAL_TEAM_API_NOT_CONFIGURED',
+        })
+    })
+    app.get(['/api/crm/admin/onboarding', '/admin/onboarding'], async (_req, res) => {
+        res.status(200).set('cache-control', 'no-store').json({ success: true, data: [] })
+    })
+
     app.get('/api/crm/admin/users', async (_req, res) => {
         const store = await loadLocalCrmStore()
         res.status(200).set('cache-control', 'no-store').json({ success: true, data: store.users })
