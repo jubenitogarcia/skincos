@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/crm-local-persona-runtime.sh"
+source "$ROOT_DIR/scripts/crm-local-port-plan.sh"
 FRONTEND_DIR="$ROOT_DIR/crm/console"
 BACKEND_DIR="$ROOT_DIR/backend"
 TIMEKEEPING_DIR="$ROOT_DIR/workforce/timekeeping"
@@ -34,6 +35,9 @@ else
 fi
 CRM_VITE_PORT="${CRM_VITE_PORT:-5173}"
 CRM_PAGES_PORT="${CRM_PAGES_PORT:-8791}"
+CRM_DYNAMIC_PORT_BUNDLE="${CRM_DYNAMIC_PORT_BUNDLE:-0}"
+CRM_PORT_BUNDLE_STRIDE="${CRM_PORT_BUNDLE_STRIDE:-10}"
+CRM_PORT_BUNDLE_MAX_ATTEMPTS="${CRM_PORT_BUNDLE_MAX_ATTEMPTS:-200}"
 CRM_ROUTE="${CRM_ROUTE:-/}"
 CRM_MODULE="${CRM_MODULE:-}"
 CRM_PROFILE="${CRM_PROFILE:-realistic}"
@@ -261,8 +265,7 @@ if [[ -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
   CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "metaAdsLocalScenario" "$CRM_META_ADS_SCENARIO")"
 fi
 
-DEFAULT_URL="http://${CRM_PUBLIC_HOST}:${CRM_PAGES_PORT}${CRM_ROUTE}"
-NETWORK_URL="http://${CRM_HOST}:${CRM_PAGES_PORT}${CRM_ROUTE}"
+crm_port_plan_refresh_urls
 
 collect_descendants() {
   local parent_pid="$1"
@@ -1211,6 +1214,14 @@ case "$CRM_ALLOW_LEGACY_DEPENDENCY_MIGRATION" in
     ;;
 esac
 
+case "$CRM_DYNAMIC_PORT_BUNDLE" in
+  0|1) ;;
+  *)
+    echo "CRM_DYNAMIC_PORT_BUNDLE inválido: $CRM_DYNAMIC_PORT_BUNDLE (use 0 ou 1)." >&2
+    exit 1
+    ;;
+esac
+
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm não encontrado no PATH." >&2
   exit 1
@@ -1231,6 +1242,7 @@ crm_persona_runtime_acquire_lock || runtime_lock_status=$?
 if [[ "$runtime_lock_status" == "2" ]]; then
   echo "[crm-local] Aguardando o gate completo do runtime existente de $CRM_PERSONA..."
   if crm_persona_runtime_wait_ready 360 &&
+     crm_port_plan_hydrate_from_manifest &&
      wait_for_crm_api "http://127.0.0.1:${CRM_PAGES_PORT}/api/auth/me" 10 &&
      wait_for_http "$DEFAULT_URL" 10; then
     if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
@@ -1261,6 +1273,7 @@ bootstrap_cleanup() {
     fi
   done
   crm_persona_runtime_write_manifest failed 2>/dev/null || true
+  crm_port_plan_release_bundle_lock
   crm_persona_runtime_release_lock
 }
 trap bootstrap_cleanup EXIT
@@ -1271,6 +1284,17 @@ BROWSER_DIAGNOSTICS_LOG="${CRM_BROWSER_DIAGNOSTICS_LOG:-$(dirname "$LOG_FILE")/c
 mkdir -p "$GATE_ARTIFACT_DIR"
 
 refresh_insumos_snapshot_if_needed
+
+stop_existing
+rotate_current_log
+crm_port_plan_acquire_bundle_lock
+if [[ "$CRM_DYNAMIC_PORT_BUNDLE" == "1" ]]; then
+  crm_port_plan_select_dynamic_bundle
+else
+  select_available_vite_port
+  crm_port_plan_refresh_urls
+fi
+crm_persona_runtime_write_manifest starting
 
 echo ""
 echo "SKINCOS • Testar CRM local"
@@ -1297,10 +1321,6 @@ fi
 echo "Log: $LOG_FILE"
 echo ""
 
-stop_existing
-rotate_current_log
-select_available_vite_port
-crm_persona_runtime_write_manifest starting
 assert_port_free "$CRM_VITE_PORT" "vite"
 assert_port_free "$CRM_PAGES_PORT" "pages"
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
@@ -1395,6 +1415,7 @@ cleanup() {
     fi
   fi
   crm_persona_runtime_write_manifest stopped 2>/dev/null || true
+  crm_port_plan_release_bundle_lock
   crm_persona_runtime_release_lock
 }
 
@@ -1409,6 +1430,10 @@ if ! wait_for_http "$DEFAULT_URL" 60; then
   echo "[crm-local] O shell do CRM não respondeu em $DEFAULT_URL dentro do tempo esperado." >&2
   exit 1
 fi
+
+# All listeners are now bound and reachable. Releasing this advisory lease lets
+# another preview choose a distinct bundle based on the actual listeners.
+crm_port_plan_release_bundle_lock
 
 if [[ "$CRM_MODULE" == 'atendimento' && "$CRM_WITH_WHATSAPP" == '1' ]]; then
   verify_atendimento_proxy

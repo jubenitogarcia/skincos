@@ -62,6 +62,10 @@ test('Codex App and Windows expose stable CRM actions plus the isolated thread p
       name: 'CRM – Prévia da Thread',
       command: 'powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmThreadPreview',
     },
+    {
+      name: 'CRM – Prévia Insumos Thread',
+      command: 'powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmThreadPreview -CrmRole Gestor -CrmModule insumos',
+    },
   ])
   assert.ok(!tomlActions(environment).some(({ name }) => name === 'Local'))
   assert.doesNotMatch(environment, /CRM – Local \(Gestor\)|CRM – Consultor \(Ponto\)/)
@@ -161,16 +165,19 @@ test('CRM – Módulos consumes the canonical role field and launches only a res
   assert.match(launcher, /Invoke-CrmModuleAction -Role \$selectedRole -Module \(\[string\]\$moduleSelection\.Action\)/)
 })
 
-test('thread preview only materializes the invoking registered worktree in its own runtime and port range', () => {
+test('thread preview only materializes the invoking registered worktree and allocates its actual bundle at runtime', () => {
   assert.match(launcher, /"CrmThreadPreview"/)
   assert.match(launcher, /function Resolve-CrmThreadPreviewSourceCheckout/)
   assert.match(launcher, /não pode usar o clone compartilhado/)
   assert.match(launcher, /worktree list --porcelain/)
   assert.match(launcher, /function Get-CrmThreadPreviewSpec/)
-  assert.match(launcher, /\$crmThreadPreviewPortBase = 25000/)
+  assert.match(launcher, /\$crmThreadPreviewPreferredPortBase = 25000/)
+  assert.match(launcher, /\$crmThreadPreviewPortBundleLockPath = Join-Path \$operatorRuntimeRoot "runtime\\crm-local\\port-bundles\.lock"/)
   assert.match(launcher, /crm-thread-preview--\{0\}--\{1\}/)
   assert.match(launcher, /\$properties\.threadPreview = \$true/)
   assert.match(launcher, /function Get-CrmThreadPreviewDescriptor/)
+  assert.match(launcher, /preferredPorts = \$Spec\.ports/)
+  assert.match(launcher, /url = \$null/)
   assert.match(launcher, /sourceCheckout = \$SourceCheckout/)
   assert.match(launcher, /sourceFingerprint = \$SourceFingerprint/)
   assert.match(launcher, /A prévia '\$\(\[string\]\$Spec\.runtimeId\)' pertence a outra thread/)
@@ -187,6 +194,11 @@ test('thread preview only materializes the invoking registered worktree in its o
   assert.match(launcher, /O encerramento da prévia exige -CrmRole e -CrmModule/)
   assert.match(launcher, /\$SelectedAction -like 'Crm\*' -and \$SelectedAction -ne 'CrmThreadPreview'/)
   assert.match(launcher, /"CrmThreadPreview"\s*\{[\s\S]*?Show-CrmThreadPreviewMenu/)
+  assert.match(launcher, /"CRM_DYNAMIC_PORT_BUNDLE=\$dynamicPortBundle"/)
+  assert.match(launcher, /"CRM_PORT_BUNDLE_LOCK_FILE=\$portBundleLockWsl"/)
+  assert.match(launcher, /function Get-CrmManifestPort/)
+  assert.match(launcher, /function Get-CrmManifestPublicUri/)
+  assert.doesNotMatch(launcher, /Write-Host "\[crm-thread-preview\] URL:/)
 })
 
 test('launcher derives local auth grants from the canonical role policy', () => {
@@ -349,9 +361,15 @@ CRM_PAGES_PORT=24020 CRM_VITE_PORT=24021 CRM_WITH_INSUMOS=0 CRM_INSUMOS_PORT=240
 CRM_WITH_TIMEKEEPING=0 CRM_TIMEKEEPING_PORT=24023 CRM_WITH_WHATSAPP=1 CRM_WA_ORCHESTRATOR_PORT=24024
 CRM_PID=$$
 CRM_BROWSER_PROFILE_DIR="$CRM_RUNTIME_ROOT/browser/profile"
-R2_PERSIST_DIR="$CRM_RUNTIME_ROOT/state/pages"
-CRM_LOCAL_WA_RUNTIME_HOME="$CRM_RUNTIME_ROOT/state/whatsapp"
-crm_persona_runtime_write_manifest ready
+  R2_PERSIST_DIR="$CRM_RUNTIME_ROOT/state/pages"
+  CRM_LOCAL_WA_RUNTIME_HOME="$CRM_RUNTIME_ROOT/state/whatsapp"
+  crm_persona_runtime_write_manifest starting
+  node - "$CRM_RUNTIME_MANIFEST" <<'NODE'
+const fs = require('fs')
+const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+if (manifest.state !== 'starting' || manifest.url !== null) process.exit(2)
+NODE
+  crm_persona_runtime_write_manifest ready
 crm_persona_runtime_manifest_is_ready
 CRM_RUNTIME_CONFIG_FINGERPRINT=sha256:${'a'.repeat(64)}
 if crm_persona_runtime_manifest_is_ready; then
@@ -442,18 +460,63 @@ crm_persona_runtime_release_lock`
   assert.equal(manifest.statePaths.whatsapp, path.join(temp, 'state/whatsapp'))
 })
 
+test('thread previews skip an occupied preferred bundle and retain a coordinated dynamic lease', (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-port-plan-'))
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
+  const body = `set -euo pipefail
+CRM_DYNAMIC_PORT_BUNDLE=1
+CRM_PORT_BUNDLE_LOCK_FILE="${temp.replaceAll('\\', '/').replaceAll('"', '\\"')}/port-bundles.lock"
+CRM_PORT_BUNDLE_LOCK_TIMEOUT_SECONDS=3
+CRM_PORT_BUNDLE_STRIDE=10
+CRM_PORT_BUNDLE_MAX_ATTEMPTS=3
+CRM_RUNTIME_ROOT="${temp.replaceAll('\\', '/').replaceAll('"', '\\"')}/runtime"
+CRM_PAGES_PORT=25000
+CRM_VITE_PORT=25001
+CRM_INSUMOS_PORT=25002
+CRM_TIMEKEEPING_PORT=25003
+CRM_WA_ORCHESTRATOR_PORT=25004
+CRM_WITH_INSUMOS=1
+CRM_WITH_TIMEKEEPING=0
+CRM_WITH_WHATSAPP=0
+CRM_PUBLIC_HOST=172.18.61.30
+CRM_HOST=172.18.61.30
+CRM_ROUTE='/?module=insumos'
+crm_runtime_port_is_free() {
+  case "$1" in
+    25000|25001|25002) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+source scripts/crm-local-port-plan.sh
+crm_port_plan_acquire_bundle_lock
+test "$CRM_PORT_BUNDLE_LOCK_HELD" = 1
+crm_port_plan_select_dynamic_bundle
+test "$CRM_PAGES_PORT" = 25010
+test "$CRM_VITE_PORT" = 25011
+test "$CRM_INSUMOS_PORT" = 25012
+test "$DEFAULT_URL" = 'http://172.18.61.30:25010/?module=insumos'
+crm_port_plan_release_bundle_lock
+test "$CRM_PORT_BUNDLE_LOCK_HELD" = 0`
+  const result = runBashHarness(body)
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  assert.match(result.stderr, /Faixa preferida :25000 ocupada/)
+})
+
 test('a concurrent launch waits for the exact ready manifest before health checks or browser opening', () => {
   const lockBranch = crmRunner.match(
     /if \[\[ "\$runtime_lock_status" == "2" \]\]; then([\s\S]*?)\nfi\nif \[\[ "\$runtime_lock_status" != "0" \]\]/,
   )?.[1]
   assert.ok(lockBranch, 'runtime contention branch not found')
   const readyIndex = lockBranch.indexOf('crm_persona_runtime_wait_ready 360')
+  const hydrateIndex = lockBranch.indexOf('crm_port_plan_hydrate_from_manifest')
   const apiIndex = lockBranch.indexOf('wait_for_crm_api')
   const browserIndex = lockBranch.indexOf('open_browser')
   assert.ok(readyIndex >= 0)
-  assert.ok(apiIndex > readyIndex)
+  assert.ok(hydrateIndex > readyIndex)
+  assert.ok(apiIndex > hydrateIndex)
   assert.ok(browserIndex > apiIndex)
   assert.match(runtime, /value\.state === 'ready'/)
+  assert.match(runtime, /url: process\.env\.CRM_RUNTIME_STATE === 'ready' \? process\.env\.DEFAULT_URL : null/)
   for (const expectedField of [
     'CRM_EXPECTED_RUNTIME_ID',
     'CRM_EXPECTED_MODULE',
@@ -640,6 +703,8 @@ test('browser and Pages state remain inside the private role/module runtime', ()
   assert.match(browserLauncher, /\$privateRuntimeRoot = \[IO\.Path\]::GetFullPath\('C:\\CodexRuntime\\operator\\admin\\skincos'\)/)
   assert.match(browserLauncher, /--user-data-dir=/)
   assert.match(browserLauncher, /\$loopbackHost -notin @\('localhost', '127\.0\.0\.1', '::1'\)/)
+  assert.match(browserLauncher, /function Wait-CrmLocalReachability/)
+  assert.match(browserLauncher, /o navegador não foi aberto/)
   assert.match(crmRunner, /CRM_BROWSER_SCRIPT.*-ProfilePath "\$browser_profile_windows"/s)
   assert.match(launcher, /\$browserScriptWsl = Convert-WindowsPathToWsl -Path \(Join-Path \$SourceRoot "scripts\\open-crm-local-browser\.ps1"\)/)
   assert.match(launcher, /\[switch\]\$CrmRuntimeSuppressBrowser/)

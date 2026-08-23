@@ -117,7 +117,8 @@ $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
 $operatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 $crmLocalSourceSelectionPath = Join-Path $operatorRuntimeRoot "runtime\crm-local\active-source.json"
 $crmThreadPreviewInstanceRoot = Join-Path $operatorRuntimeRoot "runtime\crm-local\thread-previews"
-$crmThreadPreviewPortBase = 25000
+$crmThreadPreviewPreferredPortBase = 25000
+$crmThreadPreviewPortBundleLockPath = Join-Path $operatorRuntimeRoot "runtime\crm-local\port-bundles.lock"
 $tmpRoot = Join-Path $localStateRoot "tmp"
 $logRoot = Join-Path $operatorRuntimeRoot "logs"
 $wslInvoker = Join-Path $scriptRoot "invoke-skincos-wsl.ps1"
@@ -920,6 +921,48 @@ function Test-CrmHttpEndpoint {
         }
         return $true
     } catch { return $false }
+}
+
+function Get-CrmManifestPort {
+    param(
+        [Parameter(Mandatory = $true)][object]$Manifest,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if ($null -eq $Manifest.PSObject.Properties['ports'] -or $null -eq $Manifest.ports) {
+        return $null
+    }
+    $property = $Manifest.ports.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    $port = 0
+    if (-not [int]::TryParse([string]$property.Value, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+        return $null
+    }
+    return $port
+}
+
+function Get-CrmManifestPublicUri {
+    param([Parameter(Mandatory = $true)][object]$Manifest)
+    $url = [string]$Manifest.url
+    $uri = $null
+    if ([string]::IsNullOrWhiteSpace($url) -or
+        -not [Uri]::TryCreate($url, [UriKind]::Absolute, [ref]$uri) -or
+        $uri.Scheme -ne 'http' -or
+        [string]::IsNullOrWhiteSpace($uri.Host) -or
+        -not [string]::IsNullOrEmpty($uri.UserInfo)) {
+        return $null
+    }
+    return $uri
+}
+
+function New-CrmRuntimeEndpointUrl {
+    param(
+        [Parameter(Mandatory = $true)][Uri]$Uri,
+        [Parameter(Mandatory = $true)][int]$Port,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $host = $Uri.Host
+    if ($host.Contains(':')) { $host = "[$host]" }
+    return "http://${host}:$Port$Path"
 }
 
 function Test-CrmTimekeepingReadinessEndpoint {
@@ -1881,7 +1924,10 @@ function Get-CrmThreadPreviewSpec {
 
     $stride = [int]$catalog.portPlan.stride
     $offsets = $catalog.portPlan.offsets
-    $portBase = $crmThreadPreviewPortBase + ($catalogIndex * $stride)
+    # These are only the preferred starting bundle. The isolated launcher
+    # atomically selects the first complete free bundle at runtime and records
+    # the actual ports in current.json.
+    $portBase = $crmThreadPreviewPreferredPortBase + ($catalogIndex * $stride)
     $ports = [ordered]@{
         pages = $portBase + [int]$offsets.pages
         vite = $portBase + [int]$offsets.vite
@@ -1965,7 +2011,12 @@ function Write-CrmThreadPreviewDescriptor {
         runtimeId = [string]$Spec.runtimeId
         role = [string]$Spec.role
         module = [string]$Spec.module
-        url = "http://${PublicHost}:$([int]$Spec.ports.pages)/?module=$([string]$Spec.module)"
+        # The actual bundle is allocated by the detached runtime. Do not
+        # advertise a potentially occupied preferred URL before current.json
+        # records state=ready and the Windows reachability check passes.
+        preferredPorts = $Spec.ports
+        requestedHost = $PublicHost
+        url = $null
         runtimeManifest = 'current.json'
         updatedAt = (Get-Date).ToString('o')
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Get-CrmThreadPreviewDescriptorPath -Spec $Spec) -Encoding utf8
@@ -2133,26 +2184,66 @@ function Test-CrmInstanceHealth {
     if ([string]$Manifest.build.lockfileFingerprint -ne [string]$BuildDescriptor.lockfileFingerprint) { return $false }
     if ([string]$Manifest.build.artifactFingerprint -ne [string]$BuildDescriptor.artifactFingerprint) { return $false }
 
-    $pagesPort = [int]$Spec.ports.pages
-    if (-not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/api/auth/me" -Role ([string]$Spec.roleKey))) {
-        return $false
-    }
-    if (-not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/?module=$([string]$Spec.module)")) {
-        return $false
-    }
-    if ([bool]$Spec.dependencies.insumos -and
-        -not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$([int]$Spec.ports.insumos)/insumos/health")) {
-        return $false
-    }
-    if ([bool]$Spec.dependencies.timekeeping -and
-        -not (Test-CrmTimekeepingReadinessEndpoint `
-            -Url "http://127.0.0.1:$([int]$Spec.ports.timekeeping)/api/ponto/readiness" `
-            -TargetCommit ([string]$Manifest.targetCommit))) {
-        return $false
-    }
-    if ([bool]$Spec.dependencies.whatsapp -and
-        -not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$([int]$Spec.ports.whatsapp)/health")) {
-        return $false
+    if (Test-CrmThreadPreviewSpec -Spec $Spec) {
+        $runtimeUri = Get-CrmManifestPublicUri -Manifest $Manifest
+        $pagesPort = Get-CrmManifestPort -Manifest $Manifest -Name 'pages'
+        $publicHost = Resolve-CrmRuntimePublicHost -WorkingProjectRoot $ProjectRoot
+        if ($null -eq $runtimeUri -or $null -eq $pagesPort -or
+            $runtimeUri.Port -ne $pagesPort -or
+            ($runtimeUri.Host -notin @('localhost', '127.0.0.1', '::1') -and $runtimeUri.Host -ne $publicHost)) {
+            return $false
+        }
+        if (-not (Test-CrmHttpEndpoint -Url (New-CrmRuntimeEndpointUrl -Uri $runtimeUri -Port $pagesPort -Path '/api/auth/me') -Role ([string]$Spec.roleKey))) {
+            return $false
+        }
+        if (-not (Test-CrmHttpEndpoint -Url ([string]$runtimeUri.AbsoluteUri))) {
+            return $false
+        }
+        if ([bool]$Spec.dependencies.insumos) {
+            $insumosPort = Get-CrmManifestPort -Manifest $Manifest -Name 'insumos'
+            if ($null -eq $insumosPort -or
+                -not (Test-CrmHttpEndpoint -Url (New-CrmRuntimeEndpointUrl -Uri $runtimeUri -Port $insumosPort -Path '/insumos/health'))) {
+                return $false
+            }
+        }
+        if ([bool]$Spec.dependencies.timekeeping) {
+            $timekeepingPort = Get-CrmManifestPort -Manifest $Manifest -Name 'timekeeping'
+            if ($null -eq $timekeepingPort -or
+                -not (Test-CrmTimekeepingReadinessEndpoint `
+                    -Url (New-CrmRuntimeEndpointUrl -Uri $runtimeUri -Port $timekeepingPort -Path '/api/ponto/readiness') `
+                    -TargetCommit ([string]$Manifest.targetCommit))) {
+                return $false
+            }
+        }
+        if ([bool]$Spec.dependencies.whatsapp) {
+            $whatsappPort = Get-CrmManifestPort -Manifest $Manifest -Name 'whatsapp'
+            if ($null -eq $whatsappPort -or
+                -not (Test-CrmHttpEndpoint -Url (New-CrmRuntimeEndpointUrl -Uri $runtimeUri -Port $whatsappPort -Path '/health'))) {
+                return $false
+            }
+        }
+    } else {
+        $pagesPort = [int]$Spec.ports.pages
+        if (-not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/api/auth/me" -Role ([string]$Spec.roleKey))) {
+            return $false
+        }
+        if (-not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/?module=$([string]$Spec.module)")) {
+            return $false
+        }
+        if ([bool]$Spec.dependencies.insumos -and
+            -not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$([int]$Spec.ports.insumos)/insumos/health")) {
+            return $false
+        }
+        if ([bool]$Spec.dependencies.timekeeping -and
+            -not (Test-CrmTimekeepingReadinessEndpoint `
+                -Url "http://127.0.0.1:$([int]$Spec.ports.timekeeping)/api/ponto/readiness" `
+                -TargetCommit ([string]$Manifest.targetCommit))) {
+            return $false
+        }
+        if ([bool]$Spec.dependencies.whatsapp -and
+            -not (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$([int]$Spec.ports.whatsapp)/health")) {
+            return $false
+        }
     }
     return $true
 }
@@ -2227,13 +2318,21 @@ function Open-CrmInstanceUrl {
     $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
     $expectedProfile = Join-Path $runtimeRoot "browser\profile"
     $fallbackHost = Resolve-CrmRuntimePublicHost -WorkingProjectRoot $ProjectRoot
-    $fallbackUrl = "http://${fallbackHost}:$([int]$Spec.ports.pages)/?module=$([string]$Spec.module)"
+    $manifestPagesPort = Get-CrmManifestPort -Manifest $Manifest -Name 'pages'
+    if ((Test-CrmThreadPreviewSpec -Spec $Spec) -and $null -eq $manifestPagesPort) {
+        throw "O manifesto da prévia '$([string]$Spec.runtimeId)' não possui a porta Pages efetivamente alocada."
+    }
+    $expectedPagesPort = if ($null -ne $manifestPagesPort) { $manifestPagesPort } else { [int]$Spec.ports.pages }
+    $fallbackUrl = "http://${fallbackHost}:$expectedPagesPort/?module=$([string]$Spec.module)"
     $url = if (-not [string]::IsNullOrWhiteSpace([string]$Manifest.url)) { [string]$Manifest.url } else { $fallbackUrl }
-    $uri = [Uri]$url
+    $uri = Get-CrmManifestPublicUri -Manifest ([pscustomobject]@{ url = $url })
+    if ($null -eq $uri) {
+        throw "URL inválida no manifesto '$([string]$Spec.runtimeId)': '$url'."
+    }
     $publicHost = Resolve-CrmRuntimePublicHost -WorkingProjectRoot $ProjectRoot
     if ($uri.Scheme -ne "http" -or
         ($uri.Host -notin @("localhost", "127.0.0.1") -and $uri.Host -ne $publicHost) -or
-        $uri.Port -ne [int]$Spec.ports.pages) {
+        $uri.Port -ne $expectedPagesPort) {
         throw "URL inválida no manifesto '$([string]$Spec.runtimeId)': '$url'."
     }
     $sourceRoot = Convert-WslPathToWindows -Path ([string]$Manifest.worktree)
@@ -2300,6 +2399,7 @@ function Start-CrmInstanceRuntime {
     )
     $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
     $runtimeRootWsl = Convert-WindowsPathToWsl -Path $runtimeRoot
+    $portBundleLockWsl = Convert-WindowsPathToWsl -Path $crmThreadPreviewPortBundleLockPath
     $buildStateWsl = Convert-WindowsPathToWsl -Path $BuildPaths.State
     $buildLockWsl = Convert-WindowsPathToWsl -Path $BuildPaths.Lock
     $playwrightCacheWsl = Convert-WindowsPathToWsl -Path $crmPlaywrightCacheRoot
@@ -2324,6 +2424,7 @@ function Start-CrmInstanceRuntime {
     $withInsumos = if ([bool]$Spec.dependencies.insumos) { 1 } else { 0 }
     $withTimekeeping = if ([bool]$Spec.dependencies.timekeeping) { 1 } else { 0 }
     $withWhatsapp = if ([bool]$Spec.dependencies.whatsapp) { 1 } else { 0 }
+    $dynamicPortBundle = if (Test-CrmThreadPreviewSpec -Spec $Spec) { 1 } else { 0 }
     $openBrowser = if ($CrmRuntimeSuppressBrowser) { 0 } else { 1 }
     $username = "$roleLower-$module-local"
     $email = "$roleLower.$module@local.test"
@@ -2362,6 +2463,10 @@ function Start-CrmInstanceRuntime {
         "LOCAL_AUTH_ALLOWED_HOSTS=$publicHost",
         "CRM_VITE_PORT=$([int]$Spec.ports.vite)",
         "CRM_PAGES_PORT=$([int]$Spec.ports.pages)",
+        "CRM_DYNAMIC_PORT_BUNDLE=$dynamicPortBundle",
+        "CRM_PORT_BUNDLE_STRIDE=10",
+        "CRM_PORT_BUNDLE_MAX_ATTEMPTS=200",
+        "CRM_PORT_BUNDLE_LOCK_FILE=$portBundleLockWsl",
         "CRM_HOST=$publicHost",
         "CRM_PUBLIC_HOST=$publicHost",
         "CRM_BIND_HOST=0.0.0.0",
@@ -2568,7 +2673,7 @@ function Start-CrmThreadPreviewBackgroundUpdate {
     }
     Start-Process powershell.exe -ArgumentList $arguments -WindowStyle Hidden `
         -RedirectStandardOutput $outLog -RedirectStandardError $errLog | Out-Null
-    Write-Host "[crm-thread-preview] $([string]$Spec.role) / $([string]$Spec.label) iniciou em segundo plano."
+    Write-Host "[crm-thread-preview] $([string]$Spec.role) / $([string]$Spec.label) está preparando a prévia em segundo plano; a URL só será publicada após o gate de prontidão."
 }
 
 function Invoke-CrmThreadPreviewAction {
@@ -2676,7 +2781,7 @@ function Invoke-CrmThreadPreviewAction {
             -SourceFingerprint ([string]$snapshot.Fingerprint)
         Write-Host "[crm-thread-preview] Fonte: $sourceCheckout"
         Write-Host "[crm-thread-preview] Commit: $targetCommit | Snapshot: $([string]$snapshot.Fingerprint)"
-        Write-Host "[crm-thread-preview] URL: http://${publicHost}:$([int]$spec.ports.pages)/?module=$([string]$spec.module)"
+        Write-Host "[crm-thread-preview] Acompanhe o manifesto em $(Join-Path (Get-CrmInstanceRuntimeRoot -Spec $spec) 'current.json'); use somente a URL registrada quando state=ready."
     } finally {
         Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
     }
