@@ -36,6 +36,7 @@ export function useReplitAuth() {
     role: localRole,
     allowedUnits: [],
     allowedModules: [],
+    localFocusModule: undefined,
     createdAt: new Date().toISOString(),
     avatarUrl: undefined,
   }
@@ -69,6 +70,7 @@ export function useReplitAuth() {
       const displayName = String(insumosUser.displayName || insumosUser.name || insumosUser.username || insumosUser.email || '')
       const allowedUnits = Array.isArray(insumosUser.allowedUnits) ? insumosUser.allowedUnits : undefined
       const allowedModules = Array.isArray(insumosUser.allowedModules) ? insumosUser.allowedModules : undefined
+      const localFocusModule = insumosUser.localFocusModule ? String(insumosUser.localFocusModule) : undefined
 
       return {
         id: username,
@@ -79,6 +81,7 @@ export function useReplitAuth() {
         role: insumosUser.role ? String(insumosUser.role) : undefined,
         allowedUnits,
         allowedModules,
+        localFocusModule,
         createdAt: String(insumosUser.createdAt || new Date().toISOString()),
         avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
       };
