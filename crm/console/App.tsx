@@ -39,7 +39,8 @@ import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
 import { dispatchEscalaHeaderAction, subscribeEscalaHeaderState } from '@/escalaHeaderBridge'
 import type { EscalaHeaderState, EscalaHighlightMode } from '@/escalaTypes'
 import { dispatchInsumosHeaderAction, subscribeInsumosHeaderState } from '@/insumosBridge'
-import type { InsumosHeaderState, InsumosOverviewPeriod } from '@/insumosTypes'
+import type { InsumosHeaderState, InsumosOverviewPeriod, InsumosQuickOperation } from '@/insumosTypes'
+import { INSUMOS_ALL_UNITS } from '@/insumosUnitAccess'
 import { dispatchMetaAdsHeaderAction, subscribeMetaAdsHeaderState } from '@/metaAdsHeaderBridge'
 import type { MetaAdsHeaderState } from '@/metaAdsTypes'
 import { dispatchSiteTrackingHeaderAction, subscribeSiteTrackingHeaderState } from '@/siteTrackingHeaderBridge'
@@ -487,9 +488,11 @@ export default function AppFunctionalNeatlab() {
 				    const insumosUnitsForHeaderSelect = useMemo(() => {
 				        const fromApi = insumosHeaderStatus?.unidades?.length ? insumosHeaderStatus.unidades : canonicalUnitValues
 				        const out = [...new Set(fromApi)].filter((u) => String(u) !== 'custom')
-				        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
+				        if (insumosHeaderStatus?.canAggregateUnits && out.length > 1 && !out.includes(INSUMOS_ALL_UNITS)) out.unshift(INSUMOS_ALL_UNITS)
+				        if (selectedUnit && selectedUnit !== INSUMOS_ALL_UNITS && !out.includes(selectedUnit)) out.unshift(selectedUnit)
+				        if (selectedUnit === INSUMOS_ALL_UNITS && !insumosHeaderStatus?.canAggregateUnits) return out.filter((unit) => unit !== INSUMOS_ALL_UNITS)
 			        return out
-			    }, [canonicalUnitValues, insumosHeaderStatus?.unidades?.join('|'), selectedUnit])
+			    }, [canonicalUnitValues, insumosHeaderStatus?.canAggregateUnits, insumosHeaderStatus?.unidades?.join('|'), selectedUnit])
 			    const unitMonitorUnitsForHeaderSelect = useMemo(() => {
 			        const out = [...new Set(canonicalUnitValues)].filter((u) => String(u) !== 'custom')
 			        if (selectedUnit && !out.includes(selectedUnit)) out.unshift(selectedUnit)
@@ -518,12 +521,14 @@ export default function AppFunctionalNeatlab() {
 		        }
 		    })
 
-			    const formatUnitLabel = (u: string) =>
-			        String(u || '')
+			    const formatUnitLabel = (u: string) => {
+			        if (String(u || '').trim() === INSUMOS_ALL_UNITS) return 'Todas unidades'
+			        return String(u || '')
 			            .split('-')
 		            .filter(Boolean)
 		            .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
 		            .join(' ')
+			    }
 
                 const parseCurrencyInput = React.useCallback((raw: string) => {
                     if (!raw) return null
@@ -794,7 +799,50 @@ export default function AppFunctionalNeatlab() {
                         </div>
                     </div>
                     )
-                }, [applyInsumosCustomPeriod, applyInsumosMobileCustomPeriod, insumosCustomPeriodLabel, insumosLegacyPeriodLabel, insumosMobilePeriodDraft.from, insumosMobilePeriodDraft.to, insumosMobilePeriodPickerOpen, insumosOverviewPeriod, insumosPeriodDraft.from, insumosPeriodDraft.to, insumosPeriodPickerOpen, openInsumosMobilePeriodPicker, openInsumosPeriodPicker, setInsumosLegacyPeriod, setInsumosQuickPeriod])
+				}, [applyInsumosCustomPeriod, applyInsumosMobileCustomPeriod, insumosCustomPeriodLabel, insumosLegacyPeriodLabel, insumosMobilePeriodDraft.from, insumosMobilePeriodDraft.to, insumosMobilePeriodPickerOpen, insumosOverviewPeriod, insumosPeriodDraft.from, insumosPeriodDraft.to, insumosPeriodPickerOpen, openInsumosMobilePeriodPicker, openInsumosPeriodPicker, setInsumosLegacyPeriod, setInsumosQuickPeriod])
+				const renderInsumosQuickOperations = React.useCallback((compact = false) => {
+				    const disabled = selectedUnit === INSUMOS_ALL_UNITS
+				    const operations: Array<{ value: InsumosQuickOperation; label: string; tone: string; icon: string }> = [
+				        { value: 'ENTRADA', label: 'Entrada', tone: 'emerald', icon: '/icons/shortcut-entrada.svg' },
+				        { value: 'BAIXA', label: 'Saída', tone: 'rose', icon: '/icons/shortcut-saida.svg' },
+				        { value: 'TRANSFERENCIA', label: 'Transferência', tone: 'sky', icon: '/icons/shortcut-transferencia.svg' },
+				    ]
+				    const toneClasses: Record<string, string> = {
+				        emerald: 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100 hover:border-emerald-300/45 hover:bg-emerald-500/20',
+				        rose: 'border-rose-400/25 bg-rose-500/10 text-rose-100 hover:border-rose-300/45 hover:bg-rose-500/20',
+				        sky: 'border-sky-400/25 bg-sky-500/10 text-sky-100 hover:border-sky-300/45 hover:bg-sky-500/20',
+				    }
+				    return (
+				        <div
+				            className={`flex items-center gap-1 rounded-xl border border-white/10 bg-slate-950/35 p-1 ${compact ? 'w-fit' : ''}`}
+				            role="group"
+				            aria-label="Operações rápidas"
+				            data-testid="insumos-header-quick-operations"
+				        >
+				            {!compact ? <span className="px-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-200/55">Operações</span> : null}
+				            {operations.map((operation) => (
+				                <TooltipButton
+				                    key={operation.value}
+				                    label={disabled ? 'Selecione uma unidade para operar' : operation.label}
+				                    pinOnClick={false}
+				                >
+				                    <Button
+				                        size={compact ? 'icon' : 'sm'}
+				                        variant="ghost"
+				                        className={`${compact ? 'size-10 rounded-lg' : 'h-8 rounded-lg px-2.5'} gap-1.5 border ${disabled ? 'cursor-not-allowed border-white/10 bg-white/[0.03] text-white/35' : toneClasses[operation.tone]}`}
+				                        onClick={() => dispatchInsumosHeaderAction({ type: 'quick-op', value: operation.value })}
+				                        disabled={disabled}
+				                        aria-label={operation.label}
+				                        data-testid={`insumos-header-action-${operation.value.toLowerCase()}`}
+				                    >
+				                        <img src={operation.icon} alt="" aria-hidden className={compact ? 'size-6' : 'size-4'} />
+				                        {!compact ? <span className="hidden xl:inline">{operation.label}</span> : null}
+				                    </Button>
+				                </TooltipButton>
+				            ))}
+				        </div>
+				    )
+				}, [selectedUnit])
 			    const lastInsumosUnitRef = React.useRef<string | null>(null)
 			    React.useEffect(() => {
 			        if (!insumosMounted) return
@@ -1400,50 +1448,10 @@ export default function AppFunctionalNeatlab() {
 				                                                        ))}
 				                                                    </SelectContent>
 				                                                </Select>
-					                                                <div className="flex items-center gap-1 ml-2">
+				                                                <div className="flex items-center gap-1 ml-2">
                                                                     {renderInsumosPeriodControls()}
-
-						                                                    <TooltipButton label="Entrada">
-						                                                        <Button
-						                                                            size="icon"
-						                                                            variant="ghost"
-						                                                            className="h-9 w-9 rounded-md bg-emerald-500/25 text-emerald-100 hover:bg-emerald-500/35"
-					                                                            onClick={() => {
-				                                                                dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
-	                                                            }}
-			                                                            aria-label="Entrada"
-			                                                        >
-				                                                            <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
-			                                                        </Button>
-						                                                    </TooltipButton>
-						                                                    <TooltipButton label="Saída">
-						                                                        <Button
-						                                                            size="icon"
-						                                                            variant="ghost"
-						                                                            className="h-9 w-9 rounded-md bg-rose-500/30 text-rose-100 hover:bg-rose-500/40"
-					                                                            onClick={() => {
-				                                                                dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
-	                                                            }}
-			                                                            aria-label="Saída"
-			                                                        >
-				                                                            <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
-			                                                        </Button>
-						                                                    </TooltipButton>
-				                                                    <TooltipButton label="Transferência">
-				                                                        <Button
-				                                                            size="icon"
-				                                                            variant="ghost"
-				                                                            className="h-9 w-9 rounded-md bg-sky-500/30 text-sky-100 hover:bg-sky-500/40"
-				                                                            onClick={() => {
-				                                                                dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
-	                                                            }}
-			                                                            aria-label="Transferência"
-				                                                        >
-					                                                            <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
-					                                                        </Button>
-				                                                    </TooltipButton>
-					
-			                                                </div>
+				                                                    {renderInsumosQuickOperations()}
+	                                                </div>
 						                                            </>
 						                                        ) : null}
 				                                        {active === 'ponto' && pontoCanAdmin ? (
@@ -2328,48 +2336,7 @@ export default function AppFunctionalNeatlab() {
 		                                                </SelectContent>
 		                                            </Select>
 		                                        </div>
-		                                        <div className="flex items-center gap-1">
-	                                                <TooltipButton label="Entrada">
-	                                                    <Button
-	                                                        size="icon"
-	                                                        variant="ghost"
-                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-                                                        onClick={() => {
-                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
-                                                        }}
-                                                        aria-label="Entrada"
-                                                    >
-                                                    <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-11 w-11" />
-                                                    </Button>
-                                                </TooltipButton>
-                                                <TooltipButton label="Saída">
-                                                    <Button
-                                                        size="icon"
-                                                        variant="ghost"
-                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-                                                        onClick={() => {
-                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
-                                                        }}
-                                                        aria-label="Saída"
-                                                    >
-                                                    <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-11 w-11" />
-                                                    </Button>
-                                                </TooltipButton>
-                                                <TooltipButton label="Transferência">
-                                                    <Button
-                                                        size="icon"
-                                                        variant="ghost"
-                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-                                                        onClick={() => {
-                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
-                                                        }}
-                                                        aria-label="Transferência"
-                                                    >
-	                                                <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-11 w-11" />
-                                                    </Button>
-                                                </TooltipButton>
-		
-	                                        </div>
+	                                        {renderInsumosQuickOperations(true)}
 	                                    </div>
 	                                </div>
 	                            ) : null}

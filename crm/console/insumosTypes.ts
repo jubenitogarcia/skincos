@@ -303,6 +303,7 @@ export type InsumosHeaderStatus = {
   integrated: boolean | null
   unidades: string[]
   allowedUnits: string[]
+  canAggregateUnits?: boolean
 }
 
 export type InsumosHeaderStockState = {

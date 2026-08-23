@@ -29,4 +29,19 @@ describe('Insumos unit access reconciliation', () => {
       visibleUnits: ['novo-hamburgo', 'barra-shopping-sul'], selectedUnit: 'barra-shopping-sul', hasAuthorizedUnit: true,
     })
   })
+
+  it('allows the aggregate read-only view only when more than one unit is visible', () => {
+    expect(resolveInsumosUnitAccess({ role: 'GESTOR', allowedUnits: ['NH', 'BSS'], savedUnit: 'all' })).toMatchObject({
+      visibleUnits: ['novo-hamburgo', 'barra-shopping-sul'],
+      selectedUnit: 'all',
+      canAggregate: true,
+      isAllUnits: true,
+    })
+    expect(resolveInsumosUnitAccess({ role: 'GESTOR', allowedUnits: ['NH'], savedUnit: 'all' })).toMatchObject({
+      visibleUnits: ['novo-hamburgo'],
+      selectedUnit: 'novo-hamburgo',
+      canAggregate: false,
+      isAllUnits: false,
+    })
+  })
 })
