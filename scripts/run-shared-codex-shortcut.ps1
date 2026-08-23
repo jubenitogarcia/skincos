@@ -2339,6 +2339,12 @@ function Start-CrmInstanceRuntime {
         $runtimeEnv += "CRM_META_ADS_SCENARIO=$localScenario"
     }
     if ($withWhatsapp -eq 1) {
+        # The local CRM adapter also owns the isolated /api/crm admin stubs.
+        # Point Pages at this loopback target so a preview never falls through
+        # to the hosted API while exercising a worktree-only module.
+        $localCrmApiTarget = "http://127.0.0.1:$([int]$Spec.ports.whatsapp)"
+        $runtimeEnv += "CRM_API_TARGET=$localCrmApiTarget"
+        $runtimeEnv += "INSUMOS_API_TARGET=$localCrmApiTarget"
         $runtimeEnv += "UNIT_MONITOR_API_TARGET=http://127.0.0.1:$([int]$Spec.ports.whatsapp)"
     }
     Invoke-ShortcutWsl `

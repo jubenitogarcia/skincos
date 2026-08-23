@@ -14,6 +14,22 @@ test('onboarding consistency migrations are additive and keep non-operational de
   assert.doesNotMatch(workforce, /DEFAULT\s+'ACTIVE'/i);
 });
 
+test('unified team identity migration is additive and creates explicit link ledgers', async () => {
+  const inventory = await readFile(new URL('../migrations/0020_unified_team_identity.sql', import.meta.url), 'utf8');
+  const escala = await readFile(new URL('../../workforce/schedule/migrations-d1/0005_unified_employee_links.sql', import.meta.url), 'utf8');
+  const atendimento = await readFile(new URL('../../crm/api/server/atendimento/migrations/20260805_unified_workforce_identity_v1.up.sql', import.meta.url), 'utf8');
+  assert.match(inventory, /requested_username/i);
+  assert.match(inventory, /crm_employee_team/i);
+  assert.match(inventory, /crm_employee_identity_links/i);
+  assert.match(inventory, /PENDING_REVIEW/i);
+  assert.match(escala, /workforce_employee_id/i);
+  assert.match(escala, /professional_id/i);
+  assert.match(atendimento, /professional_workforce_links/i);
+  assert.doesNotMatch(inventory, /\bDROP\b/i);
+  assert.doesNotMatch(escala, /\bDROP\b/i);
+  assert.doesNotMatch(atendimento, /\bDROP\b/i);
+});
+
 test('invite activation has an audited retry boundary and does not mint a second token', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   assert.ok(admin.includes("const activationMatch = url.pathname.match(/^\\/admin\\/onboarding\\/([^/]+)\\/activate$/);"));
@@ -25,7 +41,7 @@ test('invite activation has an audited retry boundary and does not mint a second
 
 test('onboarding status changes stay hierarchical, synchronized, audited and fail closed', async () => {
   const admin = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
-  assert.ok(admin.includes("const statusMatch = url.pathname.match(/^\\/admin\\/onboarding\\/([^/]+)\\/status$/);"));
+  assert.ok(admin.includes("const statusMatch = url.pathname.match(/^\\/admin\\/(onboarding|team)\\/([^/]+)\\/status$/);"));
   const statusBlock = admin.slice(admin.indexOf('const statusMatch'), admin.indexOf("if (url.pathname === '/admin/onboarding' && request.method === 'GET')"));
   assert.match(statusBlock, /canCreateEmployee\(/);
   assert.match(statusBlock, /isValidAccountTransition\(currentStatus, nextStatus\)/);
