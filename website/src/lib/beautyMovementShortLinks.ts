@@ -156,11 +156,10 @@ NULL, NULL, ${sqlString(plan.campaignId)}, NULL, NULL,
 }
 
 export function renderBeautyMovementShortLinkConflictSql(plan: BeautyMovementShortLinkPlan): string {
-    const ids = plan.links.map((link) => sqlString(link.id)).join(", ");
     const slugs = plan.links.map((link) => sqlString(link.normalizedSlugPath)).join(", ");
     return `SELECT id, site_host, slug_path, destination_url, source, active
 FROM site_custom_urls
-WHERE id IN (${ids}) OR (site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)} AND slug_path IN (${slugs}));\n`;
+WHERE site_host = ${sqlString(BEAUTY_MOVEMENT_SHORT_LINK_HOST)} AND slug_path IN (${slugs});\n`;
 }
 
 export function renderBeautyMovementShortLinkReadbackSql(plan: BeautyMovementShortLinkPlan): string {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
     prepareBeautyMovementShortLinks,
+    renderBeautyMovementShortLinkConflictSql,
     renderBeautyMovementShortLinkSql,
     serializeBeautyMovementShortLinkCsv,
 } from "../src/lib/beautyMovementShortLinks";
@@ -25,6 +26,9 @@ test("short links use the final five token characters and preserve the canonical
     assert.equal(plan.links[0]?.source, "beauty_movement_short_links_v1");
     assert.match(plan.links[0]?.id ?? "", /^beauty-movement-short-v3-[a-z0-9-]+-[0-9a-f]{32}$/);
     assert.match(renderBeautyMovementShortLinkSql(plan), /ON CONFLICT\(site_host, slug_path\) DO NOTHING/);
+    const conflictSql = renderBeautyMovementShortLinkConflictSql(plan);
+    assert.match(conflictSql, /WHERE site_host = 'esfa\.co' AND slug_path IN/);
+    assert.equal(conflictSql.includes("id IN"), false);
 });
 
 test("short-link suffix collisions are detected case-insensitively", () => {
