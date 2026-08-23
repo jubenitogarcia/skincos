@@ -1824,3 +1824,21 @@ O workflow permanece ativo na versão histórica
 `d3f4bd2a-f11c-4bc6-9b70-33fdf0f6a9d7`, pinado ao release imutável
 `01d2b6d1f79a9017e0a87efa2a1a32f82eed219f`; o schedule diário continua
 `field: days`, 13:26, e os healthchecks local/público permanecem HTTP 200.
+
+## Orb/n8n release gate — 2026-07-31T21:12Z
+
+The official registry published stable n8n `2.32.7` after the previous
+observer run. The integrated observer was dispatched against `main` and
+completed in GitHub Actions run `30665572886` with Node.js `v22.23.1`, ten
+isolated component lockfiles, official-registry `npm ci --ignore-scripts
+--omit=optional`, and no audit transport errors. The result is
+`REJECTED_CRITICAL_DEPENDENCY_GATE`: six critical and 67 high findings overall,
+including six critical and 38 high in the n8n runtime component. The resolved
+tree still contains critical `tar` (`<=7.5.20`) and `fast-xml-parser`
+(`<=5.6.0`) advisory ranges. No functional staging, migration, service
+restart, deployment, workflow, credential, database or production action was
+started after this fail-closed result. Production remains n8n `2.8.3`. PR #828
+is closed as deferred/superseded and is not awaiting execution; issue #834
+remains the canonical upgrade-qualification record, but is not a blocker of the
+current thread. A future release watch is informational only and requires a new
+mission with concrete operational need.

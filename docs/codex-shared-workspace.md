@@ -133,6 +133,20 @@ diretos na subpasta `CRM – Módulos`: 14 módulos para Gestor e Atendimento/Po
 para Consultor. Portas, PIDs, logs, estado, autenticação e perfil de navegador
 são privados por combinação.
 
+### CRM – Prévia Usuários Equipe Thread
+
+Esta ação deve ser executada com o worktree Git registrado da thread aberto no
+Codex App. O clone compartilhado `C:\CodexShared\Projetos\skincos` é somente
+contexto e a ação falha sem fallback quando acionada nele. O launcher usa o
+script relativo do worktree atual e não aponta para outro checkout. Não execute
+`Set-Location` para o clone compartilhado antes do clique; a ação não recebe
+`threadId` e não pode inferir com segurança qual thread deve ser executada.
+
+A implementação completa validada nesta etapa está no worktree
+`C:\CodexShared\Worktrees\skincos\admin\users-production-flag-20260810`, no
+SHA `ca1e1dab`. Essa referência documenta a versão validada; ela não é usada
+como destino fixo pelo atalho.
+
 ### EF App
 
 - `Setup`

@@ -59,7 +59,7 @@
             "type": "command",
             "command": "bash -lc 'exec \"$(git rev-parse --show-toplevel)/.codex/hooks/invoke-codex-lifecycle.sh\"'",
             "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& (Join-Path ((& git rev-parse --show-toplevel).Trim()) '.codex\\hooks\\invoke-codex-lifecycle.ps1')\"",
-            "timeout": 15,
+            "timeout": 3,
             "statusMessage": "SKINCOS session-end checkpoint"
           }
         ]

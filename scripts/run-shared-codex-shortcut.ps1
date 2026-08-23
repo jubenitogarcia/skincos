@@ -24,6 +24,8 @@ param(
         "WebsiteReleaseCheck",
         "CrmLocal",
         "CrmModules",
+        "CrmThreadPreview",
+        "CrmUsersThreadPreview",
         "CrmModule",
         "CrmModuleStop",
         "CrmConsultor",
@@ -170,6 +172,24 @@ function Use-CrmLaunchSource {
     # CRM actions never inherit the calling task/worktree. They use either the
     # explicitly persisted private preview or the canonical shared source.
     $script:ProjectRoot = $script:crmLaunchProjectRoot
+}
+
+function Invoke-CrmThreadPreviewGuard {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("CrmThreadPreview", "CrmUsersThreadPreview")]
+        [string]$ActionName
+    )
+
+    $requestedRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
+    $canonicalRoot = (Resolve-Path -LiteralPath $crmCanonicalProjectRoot).Path
+    $requestedKey = [IO.Path]::GetFullPath($requestedRoot).TrimEnd([char]'\', [char]'/')
+    $canonicalKey = [IO.Path]::GetFullPath($canonicalRoot).TrimEnd([char]'\', [char]'/')
+    if ($requestedKey.Equals($canonicalKey, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$ActionName exige o worktree Git registrado da thread. O clone compartilhado '$canonicalRoot' é somente contexto; abra o worktree da thread no Codex App e execute a ação nele. Nenhum fallback será usado."
+    }
+
+    throw "$ActionName não está disponível nesta revisão antiga do launcher. Abra a thread no worktree que contém a implementação completa da prévia; a ação não reutiliza o clone compartilhado."
 }
 
 function Ensure-LocalState {
@@ -2485,7 +2505,7 @@ function Invoke-EfAppPythonMode {
 function Invoke-ShortcutActionInternal {
     param([string]$SelectedAction)
 
-    if ($SelectedAction -like 'Crm*') {
+    if ($SelectedAction -like 'Crm*' -and $SelectedAction -notin @('CrmThreadPreview', 'CrmUsersThreadPreview')) {
         Use-CrmLaunchSource
     }
 
@@ -2573,6 +2593,12 @@ function Invoke-ShortcutActionInternal {
         }
         "CrmModules" {
             Show-CrmModulesMenu
+        }
+        "CrmThreadPreview" {
+            Invoke-CrmThreadPreviewGuard -ActionName "CrmThreadPreview"
+        }
+        "CrmUsersThreadPreview" {
+            Invoke-CrmThreadPreviewGuard -ActionName "CrmUsersThreadPreview"
         }
         "CrmModule" {
             if ([string]::IsNullOrWhiteSpace($CrmRole) -or [string]::IsNullOrWhiteSpace($CrmModule)) {

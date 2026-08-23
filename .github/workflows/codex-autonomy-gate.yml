@@ -22,18 +22,28 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 0
-      - id: base
+          fetch-depth: 2
+      - id: bounded-diff
+        name: Prepare bounded immutable diff
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           base="${PR_BASE_SHA:-$BEFORE_SHA}"
-          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then base="$(git rev-parse HEAD^)"; fi
-          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          head="${PR_HEAD_SHA:-$HEAD_SHA}"
+          node scripts/codex-bounded-diff.mjs --base "$base" --head "$head" --output "$GITHUB_OUTPUT" --files-output "$RUNNER_TEMP/codex-bounded-files.txt"
       - id: risk
-        run: node scripts/codex-risk-classifier.mjs --base "${{ steps.base.outputs.sha }}" --head "$GITHUB_SHA" --output risk-report.json
+        env:
+          BOUNDED_FILES_FILE: ${{ steps.bounded-diff.outputs.files_file }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < "$BOUNDED_FILES_FILE"
+          args=()
+          for file in "${files[@]}"; do args+=(--file "$file"); done
+          node scripts/codex-risk-classifier.mjs "${args[@]}" --output risk-report.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: codex-risk-report-${{ github.run_id }}
@@ -47,7 +57,18 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 0
+          fetch-depth: 2
+      - name: Prepare bounded immutable diff
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          base="${PR_BASE_SHA:-$BEFORE_SHA}"
+          head="${PR_HEAD_SHA:-$HEAD_SHA}"
+          node scripts/codex-bounded-diff.mjs --base "$base" --head "$head"
       - name: Proportional diff check
         run: git diff --check
       - name: Baseline contract tests

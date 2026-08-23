@@ -1510,6 +1510,18 @@
         "current_state_md": "2FA1E395EE4B337C209408C8F5CFF900B3D189B9FFACF6839ABDAC2796DBFEC9",
         "evidence_ledger_json": "ACFB36D06D7C323A668D090ED22ACD69611E49804F31F71F4D3B21D18CF00A33"
       }
+    },
+    {
+      "observed_at": "2026-07-31T21:12:48Z",
+      "surface": "github-actions-isolated-n8n-release-watch",
+      "scope": "Official stable n8n 2.32.7 release eligibility",
+      "state": "candidate-rejected-critical-dependency-gate-production-unchanged",
+      "method": "GitHub Actions run 30665572886 on main; official npm registry and n8n release metadata; Node.js v22.23.1; ten isolated component lockfiles; npm ci --ignore-scripts --omit=optional; sanitized artifact download",
+      "result": "Stable n8n 2.32.7 was evaluated with no audit transport errors. The observer returned REJECTED_CRITICAL_DEPENDENCY_GATE: 6 critical and 67 high findings aggregate, including 6 critical and 38 high in runtime-n8n. The resolved tree retains tar in range <=7.5.20 and fast-xml-parser in range <=5.6.0; community n8n-nodes-mcp remains 0.1.37. Official package integrity is sha512-xA1RENa2qEHeYrU7O7hDU4fzyh30c9SGnQvVvbkO95CkKBkHY66N1S2pXERusu4rNuyJgVHPbxbC342cPEcE0A==.",
+      "limitation": "This is dependency/advisory evidence only and does not assert dynamic exploitability. The fail-closed observer intentionally did not run functional staging, migrations, production backup/restart, deployment or rollback. Production remains n8n 2.8.3; live read-only health remains 200, public MCP 404, 44 workflows with none exposed and zero running executions.",
+      "sha": "d3f2da58b5774eb3deff7769b4a44de906225852",
+      "run": 30665572886,
+      "artifact": "C:\\CodexRuntime\\operator\\admin\\skincos\\n8n-release-watch-20260731\\orb-n8n-release-watch-30665572886"
     }
   ]
 }
