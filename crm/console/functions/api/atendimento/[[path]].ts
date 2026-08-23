@@ -208,12 +208,20 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
   }
 
   const method = (request.method || 'GET').toUpperCase()
-  const upstream: Response | Error = await fetch(new Request(buildTargetUrl(targetOrigin, request.url, rest), {
+  const body = method === 'GET' || method === 'HEAD' ? undefined : request.body
+  // Node's fetch implementation requires this marker for a streamed request
+  // body, while the Pages runtime safely ignores it.
+  const upstreamInit: RequestInit & { duplex?: 'half' } = {
     method,
     headers,
-    body: method === 'GET' || method === 'HEAD' ? undefined : request.body,
+    body,
     redirect: 'manual',
-  })).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
+  }
+  if (body) {
+    upstreamInit.duplex = 'half'
+  }
+  const upstream: Response | Error = await fetch(new Request(buildTargetUrl(targetOrigin, request.url, rest), upstreamInit))
+    .catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
 
   if (upstream instanceof Error) {
     return upstreamUnavailableResponse(requestId)
