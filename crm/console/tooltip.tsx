@@ -176,7 +176,16 @@ function TooltipTrigger({
     onFocus: composeHandler(trigger.props.onFocus, (event: any) => context.openAt(cursorFromEvent(event))),
     onBlur: composeHandler(trigger.props.onBlur, () => { if (!context.pinned) context.close() }),
     onClick: composeHandler(trigger.props.onClick, (event: any) => {
-      if (shouldPinEvent(event, context.pinOnClick || pinTarget)) context.togglePinned(cursorFromEvent(event))
+      const shouldPin = shouldPinEvent(event, context.pinOnClick || pinTarget)
+      if (shouldPin) {
+        context.togglePinned(cursorFromEvent(event))
+        return
+      }
+      if (!context.pinOnClick && !context.pinned) {
+        context.close()
+        const currentTarget = event.currentTarget as HTMLElement | null
+        currentTarget?.blur?.()
+      }
     }),
   }
   return cloneElement(trigger, withProps)
