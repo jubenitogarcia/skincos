@@ -1,0 +1,454 @@
+name: Beauty Movement append team invite links
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact website SHA currently serving the active campaign
+        required: true
+        type: string
+      campaign_id:
+        description: Existing active production campaign to extend
+        required: true
+        type: string
+      campaign_ends_at:
+        description: Existing campaign expiry in ISO-8601
+        required: true
+        type: string
+      expected_extra_input_sha256:
+        description: SHA-256 of the private team CSV in the production environment
+        required: true
+        type: string
+
+concurrency:
+  group: beauty-movement-team-invite-links-${{ inputs.campaign_id }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  contract:
+    name: Validate invite and short-link contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install exact website dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Validate invite and short-link contracts with synthetic rows only
+        working-directory: website
+        run: node --experimental-test-module-mocks --import tsx --test tests/beautyMovementImport.test.ts tests/beautyMovementShortLinks.test.ts
+
+      - name: Validate this production workflow contract
+        run: node --test .github/scripts/beauty-movement-team-invite-links-contract.test.mjs
+
+  append:
+    name: Append team invites and attest final short links
+    needs: contract
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    permissions:
+      actions: write
+      contents: read
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      CAMPAIGN_ID: ${{ inputs.campaign_id }}
+      CAMPAIGN_ENDS_AT: ${{ inputs.campaign_ends_at }}
+      EXPECTED_EXTRA_INPUT_SHA256: ${{ inputs.expected_extra_input_sha256 }}
+      WORKFLOW_SHA: ${{ github.sha }}
+      PRODUCTION_URL: https://espacofacial.com
+      PRODUCTION_D1_DATABASE: espacofacial-beauty-movement
+      BOOKING_D1_DATABASE: espacofacial-booking
+      BOOKING_WORKER_CONFIG: wrangler.toml
+
+    steps:
+      - name: Checkout source and verify serving logic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install exact website dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Acquire Website production coordination lease
+        uses: ./.github/actions/global-coordination-acquire
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          enabled: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          resource: release:website
+          module: website
+          source_sha: ${{ github.sha }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
+
+      - name: Guard source, campaign and private runtime scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == "jubenitogarcia/skincos" ]] || { echo 'unexpected repository'; exit 1; }
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
+          [[ "${WORKFLOW_SHA}" == "$(git rev-parse --verify HEAD)" ]] || { echo 'checked out SHA differs from workflow SHA'; exit 1; }
+          git cat-file -e "${RELEASE_SHA}:website/src/lib/beautyMovementImport.ts" || { echo 'release source does not contain the importer'; exit 1; }
+          git cat-file -e "${RELEASE_SHA}:website/src/app/BelezaEmMovimento/page.tsx" || { echo 'release source does not contain the canonical campaign route'; exit 1; }
+          git diff --quiet "${RELEASE_SHA}" -- website/src/lib/beautyMovementImport.ts website/src/lib/beautyMovementSecurity.ts website/src/lib/beautyMovementOutcomes.ts || { echo 'serving/token source differs from the requested release'; exit 1; }
+          [[ "${CAMPAIGN_ID}" =~ ^[a-z0-9][a-z0-9_-]{2,79}$ ]] || { echo 'campaign_id shape is invalid'; exit 1; }
+          [[ "${CAMPAIGN_ENDS_AT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,3})?)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] || { echo 'campaign_ends_at must be ISO-8601'; exit 1; }
+          [[ "${EXPECTED_EXTRA_INPUT_SHA256}" =~ ^[0-9a-f]{64}$ ]] || { echo 'expected_extra_input_sha256 must be a lowercase SHA-256'; exit 1; }
+          [[ "${PRODUCTION_D1_DATABASE}" == "espacofacial-beauty-movement" ]] || { echo 'production D1 guard failed'; exit 1; }
+          [[ "${BOOKING_D1_DATABASE}" == "espacofacial-booking" ]] || { echo 'booking D1 guard failed'; exit 1; }
+          root="${RUNNER_TEMP}/beauty-movement-team-invite-links"
+          mkdir -p "${root}/package" "${root}/output"
+          {
+            echo "TEAM_ROOT=${root}"
+            echo "PACKAGE_DIR=${root}/package"
+            echo "OUTPUT_DIR=${root}/output"
+            echo "BASE_INPUT=${root}/package/base.csv"
+            echo "TEAM_INPUT=${root}/package/team.csv"
+            echo "COMBINED_INPUT=${root}/package/combined.csv"
+            echo "CAMPAIGN_CONFIG=${root}/package/campaign.json"
+            echo "PRE_READBACK=${root}/pre-readback.json"
+            echo "POST_READBACK=${root}/post-readback.json"
+            echo "TEAM_READBACK=${root}/team-readback.json"
+            echo "TEAM_QUERY=${root}/team-query.sql"
+            echo "IMPORT_SUMMARY=${root}/import-summary.json"
+            echo "DELIVERY_OUTPUT=${root}/delivery.csv"
+            echo "DELIVERY_SUMMARY=${root}/delivery-summary.json"
+            echo "DELIVERY_ATTESTATION=${root}/delivery-attestation.json"
+            echo "SHORT_OUTPUT=${root}/short-delivery.csv"
+            echo "SHORT_SQL=${root}/short-links.sql"
+            echo "SHORT_CONFLICTS=${root}/short-links-conflicts.sql"
+            echo "SHORT_READBACK_SQL=${root}/short-links-readback.sql"
+            echo "SHORT_ATTESTATION=${root}/short-links-attestation.json"
+            echo "SHORT_SUMMARY=${root}/short-links-summary.json"
+            echo "SHORT_CONFLICT_READBACK=${root}/short-conflict-readback.json"
+            echo "SHORT_APPLY_READBACK=${root}/short-apply-readback.json"
+            echo "SHORT_FINAL_READBACK=${root}/short-final-readback.json"
+            echo "TEAM_SHORT_OUTPUT=${root}/team-short-delivery.csv"
+            echo "TEAM_SUMMARY=${root}/team-summary.json"
+            echo "LIVE_HEADERS=${root}/live-headers.txt"
+            echo "SHORT_PROBE_HEADERS=${root}/short-probe-headers.txt"
+          } >> "${GITHUB_ENV}"
+
+      - name: Materialize protected source package and deduplicate the team overlay
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
+          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
+          BASE_INVITES_CSV: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_INVITES_CSV }}
+          EXTRA_INVITES_CSV: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_EXTRA_INVITES_CSV }}
+          PRODUCTION_CAMPAIGN_JSON: ${{ secrets.BEAUTY_MOVEMENT_PRODUCTION_CAMPAIGN_JSON }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for required in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID BEAUTY_MOVEMENT_TOKEN_HMAC_KEY BEAUTY_MOVEMENT_PII_KEY BASE_INVITES_CSV EXTRA_INVITES_CSV PRODUCTION_CAMPAIGN_JSON; do
+            [[ -n "${!required:-}" ]] || { echo "required production custody is unavailable: ${required}"; exit 1; }
+          done
+          printf '%s' "${PRODUCTION_CAMPAIGN_JSON}" > "${CAMPAIGN_CONFIG}"
+          BASE_INVITES_CSV="${BASE_INVITES_CSV}" EXTRA_INVITES_CSV="${EXTRA_INVITES_CSV}" EXPECTED_EXTRA_INPUT_SHA256="${EXPECTED_EXTRA_INPUT_SHA256}" TEAM_ROOT="${TEAM_ROOT}" node - <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const root = process.env.TEAM_ROOT;
+          const expected = process.env.EXPECTED_EXTRA_INPUT_SHA256;
+          const parse = (value, label) => {
+            const lines = String(value).replace(/\r/g, '').trim().split('\n').filter(Boolean);
+            if (lines.length < 2) throw new Error(`beauty_movement_${label}_empty`);
+            const unquote = (cell) => cell.trim().replace(/^"|"$/g, '').replace(/""/g, '"');
+            const rows = lines.map((line) => {
+              const cells = line.split(',').map(unquote);
+              if (cells.length !== 3 || cells.some((cell) => !cell)) throw new Error(`beauty_movement_${label}_invalid_row`);
+              return cells;
+            });
+            const header = rows.shift().map((cell) => cell.toLowerCase());
+            if (header.join(',') !== 'name,whatsapp,prize') throw new Error(`beauty_movement_${label}_invalid_header`);
+            return rows;
+          };
+          const baseRows = parse(process.env.BASE_INVITES_CSV, 'base');
+          const teamRows = parse(process.env.EXTRA_INVITES_CSV, 'extra');
+          const digits = (value) => value.replace(/\D/g, '');
+          const basePhones = new Set(baseRows.map((row) => digits(row[1])));
+          const teamPhones = new Set();
+          for (const row of teamRows) {
+            if (row[2].toLowerCase() !== 'velocity' || digits(row[1]).length < 8) throw new Error('beauty_movement_extra_not_velocity');
+            const phone = digits(row[1]);
+            if (!teamPhones.add(phone)) throw new Error('beauty_movement_extra_duplicate_whatsapp');
+          }
+          const csv = (rows) => `${['name', 'whatsapp', 'prize'].join(',')}\n${rows.map((row) => row.join(',')).join('\n')}\n`;
+          const teamCsv = csv(teamRows);
+          const newRows = teamRows.filter((row) => !basePhones.has(digits(row[1])));
+          const combinedCsv = csv([...baseRows, ...newRows]);
+          const hash = (value) => crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+          const meta = { extraRows: teamRows.length, newRows: newRows.length, extraSha256: hash(teamCsv), combinedSha256: hash(combinedCsv) };
+          if (meta.extraSha256 !== expected) throw new Error('beauty_movement_extra_input_sha256_mismatch');
+          fs.writeFileSync(process.env.BASE_INPUT, csv(baseRows), { encoding: 'utf8', mode: 0o600 });
+          fs.writeFileSync(process.env.TEAM_INPUT, teamCsv, { encoding: 'utf8', mode: 0o600 });
+          fs.writeFileSync(process.env.COMBINED_INPUT, combinedCsv, { encoding: 'utf8', mode: 0o600 });
+          fs.writeFileSync(`${root}/package/overlay-meta.json`, `${JSON.stringify(meta)}\n`, { encoding: 'utf8', mode: 0o600 });
+          console.log(JSON.stringify({ extraRows: meta.extraRows, newRows: meta.newRows, extraSha256: meta.extraSha256, combinedSha256: meta.combinedSha256 }));
+          NODE
+          chmod 600 "${CAMPAIGN_CONFIG}" "${PACKAGE_DIR}"/*.csv "${PACKAGE_DIR}"/*.json
+
+      - name: Prove the requested website release is live
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl -fsS -D "${LIVE_HEADERS}" -o /dev/null -w '%{http_code}' "${PRODUCTION_URL}/beleza-em-movimento")"
+          [[ "${status}" == "200" ]] || { echo "production campaign route is not ready (HTTP ${status})"; exit 1; }
+          live_sha="$(awk 'BEGIN{IGNORECASE=1} /^x-app-build:/ {gsub(/[\r ]/, "", $2); print tolower($2); exit}' "${LIVE_HEADERS}")"
+          [[ "${live_sha}" == "${RELEASE_SHA}" ]] || { echo 'live website build differs from requested release_sha'; exit 1; }
+
+      - name: Confirm the target campaign is active before any D1 write
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="SELECT c.id,c.status,c.ends_at_ms,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id=c.id) AS invite_count,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id=c.id AND invite_status='active') AS active_invite_count FROM bm_campaigns c WHERE c.id='${CAMPAIGN_ID}';"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${query}" --json > "${PRE_READBACK}"
+          node - "${PRE_READBACK}" "${CAMPAIGN_ID}" "${CAMPAIGN_ENDS_AT}" <<'NODE'
+          const fs = require('node:fs');
+          const [file, expectedId, expectedEnds] = process.argv.slice(2);
+          const row = JSON.parse(fs.readFileSync(file, 'utf8'))?.[0]?.results?.[0];
+          if (!row || row.id !== expectedId || row.status !== 'active' || Number(row.ends_at_ms) <= Date.now() || Number(row.ends_at_ms) !== Date.parse(expectedEnds)) throw new Error('beauty_movement_active_campaign_preflight_invalid');
+          if (Number(row.invite_count) !== Number(row.active_invite_count)) throw new Error('beauty_movement_active_campaign_has_inactive_invites');
+          console.log(JSON.stringify({ status: row.status, inviteCount: Number(row.invite_count), activeInviteCount: Number(row.active_invite_count) }));
+          NODE
+
+      - name: Append only new team invitations through the protected importer
+        id: import_team
+        working-directory: website
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-team-invite-links
+          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
+          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
+          GITHUB_ACTIONS: "true"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent beauty-movement:import -- \
+            --apply --remote \
+            --input "${COMBINED_INPUT}" \
+            --campaign "${CAMPAIGN_ID}" \
+            --confirm-campaign "${CAMPAIGN_ID}" \
+            --campaign-ends-at "${CAMPAIGN_ENDS_AT}" \
+            --campaign-config "${CAMPAIGN_CONFIG}" \
+            --database "${PRODUCTION_D1_DATABASE}" \
+            --config wrangler.toml \
+            --out-dir "${OUTPUT_DIR}" > "${IMPORT_SUMMARY}"
+          chmod 600 "${IMPORT_SUMMARY}" "${OUTPUT_DIR}"/*
+
+      - name: Derive the complete short-link plan and prove all 13 team invite refs
+        working-directory: website
+        env:
+          BEAUTY_MOVEMENT_PRIVATE_RUNTIME_ROOT: ${{ runner.temp }}/beauty-movement-team-invite-links
+          BEAUTY_MOVEMENT_TOKEN_HMAC_KEY: ${{ secrets.BEAUTY_MOVEMENT_TOKEN_HMAC_KEY }}
+          BEAUTY_MOVEMENT_PII_KEY: ${{ secrets.BEAUTY_MOVEMENT_PII_KEY }}
+          GITHUB_ACTIONS: "true"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent beauty-movement:export-delivery -- \
+            --input "${COMBINED_INPUT}" \
+            --campaign "${CAMPAIGN_ID}" \
+            --campaign-config "${CAMPAIGN_CONFIG}" \
+            --campaign-ends-at "${CAMPAIGN_ENDS_AT}" \
+            --out "${DELIVERY_OUTPUT}" \
+            --attestation "${DELIVERY_ATTESTATION}" > "${DELIVERY_SUMMARY}"
+          npm run --silent beauty-movement:prepare-short-links -- \
+            --input "${DELIVERY_OUTPUT}" \
+            --out "${SHORT_OUTPUT}" \
+            --sql "${SHORT_SQL}" \
+            --conflicts "${SHORT_CONFLICTS}" \
+            --readback "${SHORT_READBACK_SQL}" \
+            --attestation "${SHORT_ATTESTATION}" \
+            --campaign "${CAMPAIGN_ID}" > "${SHORT_SUMMARY}"
+          TEAM_INPUT="${TEAM_INPUT}" DELIVERY_OUTPUT="${DELIVERY_OUTPUT}" SHORT_OUTPUT="${SHORT_OUTPUT}" TEAM_QUERY="${TEAM_QUERY}" TEAM_SHORT_OUTPUT="${TEAM_SHORT_OUTPUT}" TEAM_SUMMARY="${TEAM_SUMMARY}" CAMPAIGN_ID="${CAMPAIGN_ID}" node - <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const parse = (file) => fs.readFileSync(file, 'utf8').replace(/\r/g, '').trim().split('\n').map((line) => line.split(',').map((cell) => cell.replace(/^"|"$/g, '').replace(/""/g, '"')));
+          const team = parse(process.env.TEAM_INPUT);
+          const teamPhones = new Set(team.slice(1).map((row) => row[1].replace(/\D/g, '')));
+          const delivery = parse(process.env.DELIVERY_OUTPUT);
+          const teamDelivery = delivery.filter((row) => teamPhones.has(row[2].replace(/\D/g, '')));
+          if (teamDelivery.length !== teamPhones.size || teamDelivery.length !== 13) throw new Error('beauty_movement_team_delivery_count_invalid');
+          const refs = [...new Set(teamDelivery.map((row) => row[1]))];
+          if (refs.length !== 13) throw new Error('beauty_movement_team_invite_ref_count_invalid');
+          const sqlString = (value) => `'${value.replace(/'/g, "''")}'`;
+          fs.writeFileSync(process.env.TEAM_QUERY, `SELECT external_ref, invite_status, expires_at_ms, confirmed_at_ms FROM bm_invites WHERE campaign_id=${sqlString(process.env.CAMPAIGN_ID)} AND external_ref IN (${refs.map(sqlString).join(',')});\n`, { encoding: 'utf8', mode: 0o600 });
+          const short = parse(process.env.SHORT_OUTPUT);
+          const teamShort = short.filter((row) => teamPhones.has(row[2].replace(/\D/g, '')));
+          if (teamShort.length !== 13 || new Set(teamShort.map((row) => row[2].replace(/\D/g, ''))).size !== 13) throw new Error('beauty_movement_team_short_link_count_invalid');
+          const output = `${short[0].join(',')}\n${teamShort.slice(0).map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(',')).join('\n')}\n`;
+          fs.writeFileSync(process.env.TEAM_SHORT_OUTPUT, output, { encoding: 'utf8', mode: 0o600 });
+          fs.writeFileSync(process.env.TEAM_SUMMARY, `${JSON.stringify({ campaignId: process.env.CAMPAIGN_ID, count: 13, sha256: crypto.createHash('sha256').update(output, 'utf8').digest('hex') })}\n`, { encoding: 'utf8', mode: 0o600 });
+          console.log(JSON.stringify({ teamRows: 13, fullDeliveryRows: delivery.length, fullShortLinkRows: short.length - 1 }));
+          NODE
+          chmod 600 "${DELIVERY_OUTPUT}" "${DELIVERY_SUMMARY}" "${DELIVERY_ATTESTATION}" "${SHORT_OUTPUT}" "${SHORT_SQL}" "${SHORT_CONFLICTS}" "${SHORT_READBACK_SQL}" "${SHORT_ATTESTATION}" "${SHORT_SUMMARY}" "${TEAM_QUERY}" "${TEAM_SHORT_OUTPUT}" "${TEAM_SUMMARY}"
+
+      - name: Read back all team invitations from production D1
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "$(<"${TEAM_QUERY}")" --json > "${TEAM_READBACK}"
+          node - "${TEAM_READBACK}" <<'NODE'
+          const fs = require('node:fs');
+          const rows = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results ?? [];
+          if (rows.length !== 13 || rows.some((row) => row.invite_status !== 'active' || Number(row.expires_at_ms) <= Date.now())) throw new Error('beauty_movement_team_invite_readback_invalid');
+          console.log(JSON.stringify({ activeTeamInvites: rows.length }));
+          NODE
+
+      - name: Fail closed on divergent existing short-link mappings
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --command "$(<"${SHORT_CONFLICTS}")" --json > "${SHORT_CONFLICT_READBACK}"
+          node - "${SHORT_CONFLICT_READBACK}" "${SHORT_ATTESTATION}" <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const raw = fs.readFileSync(process.argv[2], 'utf8').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+          const start = raw.search(/[\[{]/);
+          const payload = JSON.parse(raw.slice(start));
+          const rows = payload.flatMap((entry) => Array.isArray(entry?.results) ? entry.results : []);
+          const attestation = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+          const expected = attestation.mappingHashes ?? {};
+          const value = (row, snake, camel) => row?.[snake] ?? row?.[camel];
+          for (const row of rows) {
+            const slug = String(value(row, 'slug_path', 'slugPath') ?? '').toLowerCase();
+            const destination = String(value(row, 'destination_url', 'destinationUrl') ?? '');
+            const expectedHash = expected[value(row, 'slug_path', 'slugPath')] ?? expected[slug];
+            if (value(row, 'site_host', 'siteHost') !== 'esfa.co' || value(row, 'source', 'source') !== 'beauty_movement_short_links_v1' || Number(value(row, 'active', 'active')) !== 1 || !expectedHash || crypto.createHash('sha256').update(destination).digest('hex') !== expectedHash) throw new Error('beauty_movement_team_short_mapping_conflict');
+          }
+          console.log(JSON.stringify({ preexistingMappingsChecked: rows.length }));
+          NODE
+
+      - name: Apply idempotent short-link mappings to booking D1
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_SQL}" --json > "${SHORT_APPLY_READBACK}"
+
+      - name: Verify every mapping and a live team redirect
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --command "$(<"${SHORT_READBACK_SQL}")" --json > "${SHORT_FINAL_READBACK}"
+          node - "${SHORT_FINAL_READBACK}" "${SHORT_ATTESTATION}" <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const raw = fs.readFileSync(process.argv[2], 'utf8').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+          const start = raw.search(/[\[{]/);
+          const payload = JSON.parse(raw.slice(start));
+          const rows = payload.flatMap((entry) => Array.isArray(entry?.results) ? entry.results : []);
+          const attestation = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+          if (rows.length !== Number(attestation.count)) throw new Error('beauty_movement_team_short_link_count_mismatch');
+          const expected = attestation.mappingHashes ?? {};
+          const value = (row, snake, camel) => row?.[snake] ?? row?.[camel];
+          for (const row of rows) {
+            const slug = String(value(row, 'slug_path', 'slugPath') ?? '').toLowerCase();
+            const destination = String(value(row, 'destination_url', 'destinationUrl') ?? '');
+            if (value(row, 'site_host', 'siteHost') !== 'esfa.co' || value(row, 'source', 'source') !== 'beauty_movement_short_links_v1' || Number(value(row, 'active', 'active')) !== 1 || crypto.createHash('sha256').update(destination).digest('hex') !== (expected[value(row, 'slug_path', 'slugPath')] ?? expected[slug])) throw new Error('beauty_movement_team_short_link_readback_mismatch');
+          }
+          NODE
+          probe_url="$(node - "${TEAM_SHORT_OUTPUT}" <<'NODE'
+          const fs = require('node:fs');
+          const lines = fs.readFileSync(process.argv[2], 'utf8').trim().split(/\r?\n/);
+          const match = lines[1]?.match(/"(https:\/\/esfa\.co\/[^"\r\n]+)"$/);
+          if (!match) throw new Error('beauty_movement_team_short_probe_unavailable');
+          process.stdout.write(match[1]);
+          NODE
+          )"
+          status="$(curl -fsS -D "${SHORT_PROBE_HEADERS}" -o /dev/null -w '%{http_code}' "${probe_url}")"
+          [[ "${status}" == "301" ]] || { echo 'team short-link Worker did not return HTTP 301'; exit 1; }
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[ ]*/, ""); gsub(/[\r]/, ""); print; exit}' "${SHORT_PROBE_HEADERS}")"
+          [[ "${location}" == https://espacofacial.com/BelezaEmMovimento#c=* ]] || { echo 'team short-link destination is not the canonical campaign route'; exit 1; }
+
+      - name: Read back campaign remains active after append
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="SELECT status,ends_at_ms,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}') AS invite_count,(SELECT COUNT(*) FROM bm_invites WHERE campaign_id='${CAMPAIGN_ID}' AND invite_status='active') AS active_invite_count FROM bm_campaigns WHERE id='${CAMPAIGN_ID}';"
+          npx --yes wrangler@4.112.0 d1 execute "${PRODUCTION_D1_DATABASE}" --remote --config wrangler.toml --command "${query}" --json > "${POST_READBACK}"
+          node - "${POST_READBACK}" <<'NODE'
+          const fs = require('node:fs');
+          const row = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))?.[0]?.results?.[0];
+          if (!row || row.status !== 'active' || Number(row.ends_at_ms) <= Date.now() || Number(row.invite_count) !== Number(row.active_invite_count)) throw new Error('beauty_movement_campaign_post_readback_invalid');
+          console.log(JSON.stringify({ status: row.status, inviteCount: Number(row.invite_count), activeInviteCount: Number(row.active_invite_count) }));
+          NODE
+
+      - name: Upload the private team delivery list
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beauty-movement-team-short-delivery-${{ inputs.campaign_id }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/beauty-movement-team-invite-links/team-short-delivery.csv
+            ${{ runner.temp }}/beauty-movement-team-invite-links/team-summary.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove runner-local private material
+        if: ${{ always() }}
+        shell: bash
+        run: rm -rf -- "${TEAM_ROOT:-${RUNNER_TEMP}/beauty-movement-team-invite-links}"
+
+      - name: Release Website production coordination lease
+        if: ${{ always() }}
+        uses: ./.github/actions/global-coordination-release
+        with:
+          required: ${{ vars.SKINCOS_GLOBAL_COORDINATION_REQUIRED || 'false' }}
+          coordinator_url: ${{ vars.SKINCOS_GLOBAL_COORDINATOR_URL }}
+          shared_secret: ${{ secrets.SKINCOS_GLOBAL_COORDINATION_ACTIVE_KEY }}
+          key_id: ${{ vars.SKINCOS_GLOBAL_COORDINATION_KEY_ID }}
+          proof_file: ${{ runner.temp }}/skincos-global-coordination-website.json
