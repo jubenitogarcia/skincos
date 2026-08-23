@@ -1,0 +1,143 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/blueprint",
+  "title": "blueprint",
+  "examples": [
+    {
+      "schema_version": "fixture",
+      "production_id": "fixture",
+      "constitution_hash": "fixture",
+      "strategy": {},
+      "master_script": {},
+      "hook_variations": [],
+      "beat_map": [],
+      "visual_bible": {},
+      "audio_bible": {},
+      "scene_manifests": [],
+      "production_plan": {},
+      "prompts": [],
+      "restrictions": [],
+      "storyboard": {},
+      "lock_hash": "fixture",
+      "status": "BLUEPRINT_LOCKED"
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "fixture",
+      "constitution_hash": "fixture",
+      "strategy": {},
+      "master_script": {},
+      "hook_variations": [],
+      "beat_map": [],
+      "visual_bible": {},
+      "audio_bible": {},
+      "scene_manifests": [],
+      "production_plan": {},
+      "prompts": [],
+      "restrictions": [],
+      "storyboard": {},
+      "lock_hash": "fixture",
+      "status": "BLUEPRINT_LOCKED"
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "production_id": {
+      "type": "string"
+    },
+    "constitution_hash": {
+      "type": "string"
+    },
+    "strategy": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "master_script": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "hook_variations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "beat_map": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "visual_bible": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "audio_bible": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "scene_manifests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "production_plan": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "prompts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "restrictions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "storyboard": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "lock_hash": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "BLUEPRINT_LOCKED",
+        "NEEDS_REVIEW"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "production_id",
+    "constitution_hash",
+    "strategy",
+    "master_script",
+    "hook_variations",
+    "beat_map",
+    "visual_bible",
+    "audio_bible",
+    "scene_manifests",
+    "production_plan",
+    "prompts",
+    "restrictions",
+    "storyboard",
+    "lock_hash",
+    "status"
+  ]
+}

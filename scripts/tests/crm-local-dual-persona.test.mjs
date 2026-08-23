@@ -17,6 +17,7 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8')
 const launcher = read('scripts/run-shared-codex-shortcut.ps1')
 const crmRunner = read('scripts/run-local-crm.sh')
 const runtime = read('scripts/crm-local-persona-runtime.sh')
+const pagesRunner = read('crm/console/scripts/dev_pages.sh')
 const environment = read('.codex/environments/environment.toml')
 const installer = read('scripts/install-shared-codex-shortcuts.ps1')
 
@@ -51,8 +52,13 @@ test('preflight validates role and each shared dependency', () => {
   ]) assert.ok(launcher.includes(url), `missing ${url}`)
 })
 
+test('local Pages routes Atendimento to the isolated CRM adapter', () => {
+  assert.match(pagesRunner, /ATENDIMENTO_API_TARGET=\$\{LOCAL_WA_ORCHESTRATOR_API_TARGET\}/)
+  assert.match(pagesRunner, /must not fall back to the[\s\S]*native service on :8099/)
+})
+
 test('persona runtime records isolated manifest, lock and build state', () => {
-  for (const contract of ['CRM_RUNTIME_MANIFEST', 'CRM_RUNTIME_LOCK_DIR', 'CRM_BUILD_STATE_FILE', 'CRM_TARGET_COMMIT']) {
+  for (const contract of ['CRM_RUNTIME_MANIFEST', 'CRM_RUNTIME_LOCK_DIR', 'CRM_BUILD_STATE_FILE', 'CRM_TARGET_COMMIT', 'CRM_SOURCE_FINGERPRINT']) {
     assert.ok(runtime.includes(contract), `missing ${contract}`)
   }
   assert.match(runtime, /targetCommit: process\.env\.CRM_RUNTIME_TARGET_COMMIT/)
@@ -66,17 +72,33 @@ test('opening the browser never blocks the runtime manifest transition', () => {
   assert.match(crmRunner, /xdg-open \"\$DEFAULT_URL\" >\/dev\/null 2>&1 &/)
 })
 
-test('runtime policy reuses only a healthy build from the target commit', () => {
+test('persona helper checks a free port before starting the CRM services', () => {
+  const helper = path.join(root, 'scripts', 'crm-local-persona-runtime.sh')
+  const result = spawnSync('bash', ['-lc', `source ${JSON.stringify(helper)}; crm_runtime_port_is_free 65530`], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+})
+
+test('generic CRM launcher only falls back from its default Vite port', () => {
+  assert.match(crmRunner, /CRM_VITE_PORT_EXPLICIT=1/)
+  assert.match(crmRunner, /select_available_vite_port/)
+  assert.match(crmRunner, /Porta Vite padrão \$preferred ocupada; usando \$candidate/)
+})
+
+test('runtime policy reuses only a healthy build from the exact source snapshot', () => {
   const target = 'a'.repeat(40)
+  const sourceFingerprint = `snapshot:${target}:${'b'.repeat(64)}`
   const current = {
-    manifest: { persona: 'GESTOR', state: 'ready', targetCommit: target, buildCommit: target },
-    buildState: { commit: target }, targetCommit: target, persona: 'GESTOR', pidAlive: true, healthy: true,
+    manifest: { persona: 'GESTOR', state: 'ready', targetCommit: target, buildCommit: target, sourceFingerprint },
+    buildState: { commit: target, sourceFingerprint }, targetCommit: target, sourceFingerprint, persona: 'GESTOR', pidAlive: true, healthy: true,
   }
   assert.deepEqual(decideRuntimeAction(current), { action: 'reuse', reason: 'current_runtime_ready' })
   assert.deepEqual(decideRuntimeAction({ ...current, healthy: false }), { action: 'restart', reason: 'health_failed' })
   assert.deepEqual(decideRuntimeAction({ ...current, pidAlive: false }), { action: 'restart', reason: 'launcher_dead' })
   assert.deepEqual(decideRuntimeAction({ ...current, manifest: { ...current.manifest, buildCommit: 'b'.repeat(40) } }), {
     action: 'restart', reason: 'commit_outdated',
+  })
+  assert.deepEqual(decideRuntimeAction({ ...current, sourceFingerprint: `snapshot:${target}:${'c'.repeat(64)}` }), {
+    action: 'restart', reason: 'source_outdated',
   })
 })
 
@@ -91,13 +113,27 @@ test('runtime policy starts missing state and waits for the same target build', 
   }), { action: 'wait', reason: 'current_start_in_progress' })
 })
 
-test('launcher coordinates version checks before checkout and preserves dirty private worktrees', () => {
-  assert.match(launcher, /Get-CrmPersonaDecision -Persona \$Persona -TargetCommit \$TargetCommit/)
+test('launcher snapshots dirty worktrees and invalidates an outdated source fingerprint', () => {
+  assert.match(launcher, /Get-CrmLocalSourceSnapshot/)
+  assert.match(launcher, /Get-CrmLocalSnapshotUntrackedFiles/)
+  assert.match(launcher, /Get-CrmLocalSnapshotRelativePath/)
+  assert.match(launcher, /diff --binary HEAD/)
+  assert.match(launcher, /StandardOutput\.BaseStream\.CopyTo/)
+  assert.match(launcher, /Ignorando checkout Git aninhado fora do snapshot do CRM Local/)
+  assert.match(launcher, /check-ignore --quiet/)
+  assert.match(launcher, /CRM_SOURCE_FINGERPRINT/)
+  assert.match(launcher, /Get-CrmPersonaDecision -Persona \$Persona -TargetCommit \$TargetCommit -SourceFingerprint \$snapshot\.Fingerprint/)
   assert.match(launcher, /Stop-CrmPersonaRuntime -Persona \$Persona/)
-  assert.match(launcher, /Sync-CrmLocalSourceRoot -Persona \$Persona -TargetCommit \$TargetCommit/)
+  assert.match(launcher, /Sync-CrmLocalSourceRoot -Persona \$Persona -TargetCommit \$TargetCommit -Snapshot \$snapshot/)
   assert.match(launcher, /Worktree privado com alterações preservado/)
   assert.match(launcher, /Ensure-CrmGestorForConsultor -TargetCommit \$targetCommit/)
   assert.match(launcher, /Start-CrmGestorBackgroundUpdate/)
+})
+
+test('all CRM module shortcuts select a current snapshot before launch', () => {
+  assert.match(launcher, /"CrmSiteEf"[\s\S]*Invoke-CrmPersonaAction -Persona Gestor -TargetCommit \$targetCommit/)
+  assert.match(launcher, /"CrmMetaAds"[\s\S]*Invoke-CrmPersonaAction -Persona Gestor -TargetCommit \$targetCommit/)
+  assert.match(launcher, /"CrmAtendimento"[\s\S]*Resolve-CrmLocalModuleSourceRoot -Persona Gestor/)
 })
 
 test('a concurrent launcher reports an active runtime with a reusable status', () => {
@@ -124,13 +160,14 @@ CRM_WITH_TIMEKEEPING=1 CRM_TIMEKEEPING_PORT=8801 CRM_WITH_WHATSAPP=1 CRM_WA_ORCH
 crm_persona_runtime_write_manifest ready`
   const result = spawnSync('bash', ['-c', body, 'bash', helper], {
     encoding: 'utf8',
-    env: { ...process.env, ROOT_DIR: root, CRM_RUNTIME_ROOT: temp, CRM_PERSONA: 'GESTOR', CRM_TARGET_COMMIT: target },
+    env: { ...process.env, ROOT_DIR: root, CRM_RUNTIME_ROOT: temp, CRM_PERSONA: 'GESTOR', CRM_TARGET_COMMIT: target, CRM_SOURCE_FINGERPRINT: `commit:${target}` },
   })
   assert.equal(result.status, 0, result.stderr || result.stdout)
   const manifest = JSON.parse(fs.readFileSync(path.join(temp, 'current.json'), 'utf8'))
   assert.equal(manifest.version, 2)
   assert.equal(manifest.targetCommit, target)
   assert.equal(manifest.buildCommit, built)
+  assert.equal(manifest.sourceFingerprint, `commit:${target}`)
 })
 
 test('local smoke downgrades only the exact optional Google chart credential failure', () => {

@@ -12,6 +12,11 @@ INSUMOS_SEEDER="$ROOT_DIR/backend/scripts/insumos-seed.sh"
 WHATSAPP_ORCHESTRATOR_HELPER="$ROOT_DIR/scripts/run-local-whatsapp-orchestrator.sh"
 
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
+if [[ -n "${CRM_VITE_PORT+x}" ]]; then
+  CRM_VITE_PORT_EXPLICIT=1
+else
+  CRM_VITE_PORT_EXPLICIT=0
+fi
 CRM_VITE_PORT="${CRM_VITE_PORT:-5173}"
 CRM_PAGES_PORT="${CRM_PAGES_PORT:-8791}"
 CRM_ROUTE="${CRM_ROUTE:-/}"
@@ -149,7 +154,7 @@ while [[ $# -gt 0 ]]; do
     --profile) shift; CRM_PROFILE="$1" ;;
     --module) shift; CRM_MODULE="$1" ;;
     --crm-host) shift; CRM_HOST="$1" ;;
-    --vite-port) shift; CRM_VITE_PORT="$1" ;;
+    --vite-port) shift; CRM_VITE_PORT="$1"; CRM_VITE_PORT_EXPLICIT=1 ;;
     --pages-port) shift; CRM_PAGES_PORT="$1" ;;
     --meta-ads-scenario) shift; CRM_META_ADS_SCENARIO="$1" ;;
     --skip-build) CRM_BUILD_BEFORE_START=0 ;;
@@ -334,6 +339,28 @@ assert_port_free() {
     echo "[crm-local] Porta $port já responde no loopback por um listener externo ao WSL ($label)." >&2
   fi
   echo "Use --${label}-port para outra porta ou finalize manualmente o processo atual." >&2
+  exit 1
+}
+
+select_available_vite_port() {
+  if crm_runtime_port_is_free "$CRM_VITE_PORT"; then
+    return 0
+  fi
+  if [[ "$CRM_VITE_PORT_EXPLICIT" == "1" ]]; then
+    assert_port_free "$CRM_VITE_PORT" "vite"
+  fi
+
+  local preferred="$CRM_VITE_PORT"
+  local candidate="$preferred"
+  while (( candidate < preferred + 20 )); do
+    candidate=$((candidate + 1))
+    if crm_runtime_port_is_free "$candidate"; then
+      echo "[crm-local] Porta Vite padrão $preferred ocupada; usando $candidate." >&2
+      CRM_VITE_PORT="$candidate"
+      return 0
+    fi
+  done
+  echo "[crm-local] Nenhuma porta Vite livre encontrada entre $preferred e $((preferred + 20))." >&2
   exit 1
 }
 
@@ -635,8 +662,9 @@ echo "Log: $LOG_FILE"
 echo ""
 
 stop_existing
-crm_persona_runtime_write_manifest starting
 rotate_current_log
+select_available_vite_port
+crm_persona_runtime_write_manifest starting
 assert_port_free "$CRM_VITE_PORT" "vite"
 assert_port_free "$CRM_PAGES_PORT" "pages"
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then

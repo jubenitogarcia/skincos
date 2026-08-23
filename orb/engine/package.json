@@ -4,6 +4,8 @@
     "description": "SKINCOS Orb workflow engine and native runtime operations",
     "main": "workflow-assistant.js",
     "scripts": {
+        "test": "node tests/content-studio-v2.test.js",
+        "lint": "node --check content-studio-v2/dry-run.js && node --check content-studio-v2/adapters.js && node --check scripts/build-campaign-creative-generator-v2.js && node --check scripts/validate-campaign-creative-generator-v2.js && node --check services/renderer/index.js",
         "list": "node workflow-assistant.js list",
         "show": "node workflow-assistant.js show",
         "export": "node workflow-assistant.js export",
@@ -12,6 +14,14 @@
         "workflow:meta-ads-report:sync": "node scripts/sync-meta-ads-performance-report-workflow.js",
         "workflow:campaign-creative:build": "node scripts/build-campaign-creative-generator.js",
         "workflow:campaign-creative:validate": "node scripts/validate-campaign-creative-generator.js",
+        "workflow:campaign-creative:v2:schemas": "node scripts/generate-content-studio-schemas.js",
+        "workflow:campaign-creative:v2:build": "node scripts/generate-content-studio-schemas.js && node scripts/build-campaign-creative-generator-v2.js",
+        "workflow:campaign-creative:v2:audit": "node scripts/audit-campaign-creative-generator.js",
+        "workflow:campaign-creative:v2:validate": "node scripts/validate-campaign-creative-generator-v2.js",
+        "workflow:campaign-creative:v2:test": "node tests/content-studio-v2.test.js",
+        "workflow:campaign-creative:v2:dry-run": "node scripts/dry-run-content-studio.js",
+        "workflow:campaign-creative:v2:fixtures": "node scripts/generate-content-studio-fixtures.js",
+        "workflow:campaign-creative:v2:media-prep": "node scripts/media-prep.js",
         "cf:meta-ads-report:deploy": "wrangler deploy -c cloudflare/meta-ads-performance-report/wrangler.jsonc",
         "cf:meta-ads-report:deploy:staging": "wrangler deploy -c cloudflare/meta-ads-performance-report/wrangler.jsonc --env staging",
         "cf:meta-ads-report:migrate": "wrangler d1 execute skincos-meta-ads-performance-report --remote --file cloudflare/d1/migrations/0001_meta_ads_performance_report.sql",
@@ -51,5 +61,8 @@
     "dependencies": {
         "better-sqlite3": "^11.7.0",
         "http-proxy": "^1.18.1"
+    },
+    "devDependencies": {
+        "ajv": "^8.17.1"
     }
 }
