@@ -16,7 +16,7 @@ on:
         required: true
         default: verify
         type: choice
-        options: [verify, abort-drill]
+        options: [verify, abort-drill, evidence]
 
 concurrency:
   group: finance-synthetic-canary-staging
@@ -113,6 +113,40 @@ jobs:
           const fs = require('fs'); const decision = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
           console.log(`abort=${decision.ok ? 'false' : 'true'}`);
           NODE
+      - name: Prepare synthetic import fixture
+        if: always() && inputs.mode == 'evidence'
+        run: |
+          cat > "$RUNNER_TEMP/finance-staging-import.csv" <<'CSV'
+          data,descricao,valor,tipo
+          2026-07-24,Smoke sintético de staging,1.00,receita
+          CSV
+      - name: Stage authenticated synthetic import
+        id: import_smoke
+        if: always() && inputs.mode == 'evidence' && steps.decision.outputs.abort != 'true'
+        continue-on-error: true
+        env:
+          FINANCE_STAGING_SMOKE_ACK: "1"
+          FINANCE_SMOKE_BASE_URL: https://api-staging.skincos.com.br
+          FINANCE_SMOKE_USERNAME: finance-staging-monitor
+          FINANCE_SMOKE_PASSWORD: ${{ secrets.FINANCE_STAGING_CANARY_PASSWORD }}
+          FINANCE_SMOKE_SCOPE_ID: finance-scope-novo-hamburgo
+        run: node finance/scripts/staging-import-smoke.mjs --source generic --fixture "$RUNNER_TEMP/finance-staging-import.csv" > "$RUNNER_TEMP/import-smoke.json"
+      - name: Install UI smoke dependencies
+        if: always() && inputs.mode == 'evidence' && steps.decision.outputs.abort != 'true'
+        run: |
+          npm --prefix crm/console ci
+          npx --prefix crm/console playwright install --with-deps chromium
+      - name: Run authenticated synthetic UI smoke
+        id: ui_smoke
+        if: always() && inputs.mode == 'evidence' && steps.decision.outputs.abort != 'true'
+        continue-on-error: true
+        env:
+          FINANCE_STAGING_SMOKE_ACK: "1"
+          FINANCE_STAGING_SMOKE_USERNAME: finance-staging-monitor
+          FINANCE_STAGING_SMOKE_PASSWORD: ${{ secrets.FINANCE_STAGING_CANARY_PASSWORD }}
+          FINANCE_STAGING_EXPECTED_GRANTS: Novo Hamburgo
+          FINANCE_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/finance-staging-ui
+        run: node finance/scripts/staging-ui-smoke.mjs
       - name: Kill switch on any breached limit
         if: always() && steps.decision.outputs.abort == 'true'
         env:
@@ -145,10 +179,17 @@ jobs:
           path: |
             ${{ runner.temp }}/canary-report.json
             ${{ runner.temp }}/canary-decision.json
+            ${{ runner.temp }}/import-smoke.json
+            ${{ runner.temp }}/finance-staging-ui
           retention-days: 90
           if-no-files-found: warn
       - name: Fail promotion when a limit was breached
         if: always() && steps.decision.outputs.abort == 'true'
         run: |
           echo 'Canary stop limit breached; kill switch completed and staging baseline was restored.'
+          exit 1
+      - name: Fail evidence run when a synthetic smoke failed
+        if: always() && inputs.mode == 'evidence' && (steps.decision.outputs.abort == 'true' || steps.import_smoke.outcome != 'success' || steps.ui_smoke.outcome != 'success')
+        run: |
+          echo 'Synthetic staging evidence did not complete; baseline restoration already ran.'
           exit 1

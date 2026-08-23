@@ -20,6 +20,8 @@ const baseUrl = new URL(process.env.FINANCE_STAGING_UI_URL || `${stagingOrigin}/
 const username = String(process.env.FINANCE_STAGING_SMOKE_USERNAME || '').trim()
 const password = String(process.env.FINANCE_STAGING_SMOKE_PASSWORD || '')
 const artifactDir = process.env.FINANCE_SMOKE_ARTIFACT_DIR || path.join(os.tmpdir(), 'skincos-finance-staging-smoke')
+const expectedGrants = String(process.env.FINANCE_STAGING_EXPECTED_GRANTS || '')
+  .split(',').map((grant) => grant.trim()).filter(Boolean).sort()
 
 if (process.env.FINANCE_STAGING_SMOKE_ACK !== '1') {
   throw new Error('Defina FINANCE_STAGING_SMOKE_ACK=1 para executar o smoke autenticado de staging.')
@@ -29,6 +31,9 @@ if (baseUrl.origin !== stagingOrigin) {
 }
 if (!username || !password) {
   throw new Error('FINANCE_STAGING_SMOKE_USERNAME e FINANCE_STAGING_SMOKE_PASSWORD são obrigatórios.')
+}
+if (!expectedGrants.length) {
+  throw new Error('FINANCE_STAGING_EXPECTED_GRANTS é obrigatório e deve conter somente os grants esperados para o ator sintético.')
 }
 
 fs.mkdirSync(artifactDir, { recursive: true })
@@ -77,7 +82,7 @@ try {
     fail(`Bootstrap Financeiro autorizado falhou: ${bootstrap.status}`)
   }
   const labels = (bootstrap.body?.grants || []).map((grant) => grant.label).sort()
-  if (JSON.stringify(labels) !== JSON.stringify(['BarraShoppingSul', 'Novo Hamburgo'])) {
+  if (JSON.stringify(labels) !== JSON.stringify(expectedGrants)) {
     fail(`Grants empresariais inesperados: ${JSON.stringify(labels)}`)
   }
   if ((bootstrap.body?.grants || []).some((grant) => grant.kind === 'personal')) {
