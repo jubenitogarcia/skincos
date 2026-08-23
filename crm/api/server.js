@@ -1632,7 +1632,11 @@ if (DEV_AUTH_ENABLED) {
         }
         const requestedStatus = String(req.query?.status || 'active').trim().toUpperCase()
         const query = String(req.query?.q || '').trim().toLowerCase()
-        const data = store.team
+        const pageRaw = Number.parseInt(String(req.query?.page || ''), 10)
+        const limitRaw = Number.parseInt(String(req.query?.limit || ''), 10)
+        const page = Number.isInteger(pageRaw) && pageRaw > 0 ? Math.min(pageRaw, 10000) : 1
+        const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 50
+        const filtered = store.team
           .filter((member) => requestedStatus === 'ALL'
               ? true
               : requestedStatus === 'ACTIVE'
@@ -1641,6 +1645,9 @@ if (DEV_AUTH_ENABLED) {
           .filter((member) => !query || [member.fullName, member.username, member.corporateEmail, member.department, member.jobTitle, ...member.units]
               .some((value) => String(value || '').toLowerCase().includes(query)))
           .filter((member) => role === 'ADMIN' || localTeamUnitsVisible(session, member))
+        const total = filtered.length
+        const pages = Math.max(1, Math.ceil(total / limit))
+        const data = filtered.slice((page - 1) * limit, page * limit)
         const pendingItems = localPendingItems(data)
         // The Pages Function already authenticates and scopes this loopback
       // response. Applying the unit filter again here would make the local
@@ -1651,11 +1658,13 @@ if (DEV_AUTH_ENABLED) {
             data,
             activeOnly: requestedStatus !== 'ALL',
             status: requestedStatus,
+            pagination: { page, limit, total, pages, hasMore: page < pages },
             summary: {
-                members: data.length,
-                pendingInvites: data.filter((member) => member.accountStatus === 'INVITED').length,
-                pendingLinks: data.reduce((total, member) => total + (member.identityLinks || []).filter((link) => link.reviewStatus === 'PENDING_REVIEW').length, 0),
-                pendingProvisioning: data.filter((member) => ['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(String(member.provisioningState || '').toUpperCase())).length,
+                members: total,
+                pendingInvites: filtered.filter((member) => member.accountStatus === 'INVITED').length,
+                pendingLinks: filtered.reduce((sum, member) => sum + (member.identityLinks || []).filter((link) => link.reviewStatus === 'PENDING_REVIEW').length, 0),
+                pendingProvisioning: filtered.filter((member) => ['PROVISIONING', 'WORKFORCE_SYNCED', 'INVITE_PENDING', 'FAILED'].includes(String(member.provisioningState || '').toUpperCase())).length,
+                pendingAccountLinks: filtered.filter((member) => !member.crmAccountLinked && ['ACTIVE', 'SUSPENDED', 'TERMINATED'].includes(String(member.accountStatus || '').toUpperCase())).length,
             },
             pendingItems,
         })
