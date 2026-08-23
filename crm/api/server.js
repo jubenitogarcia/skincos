@@ -1270,6 +1270,19 @@ if (DEV_AUTH_ENABLED) {
         createdAt: link?.createdAt || null,
     })
 
+    const localPublicTeamAudit = (entry) => ({
+        id: String(entry?.id || ''),
+        timestamp: entry?.createdAt || null,
+        actor: String(entry?.actor || ''),
+        role: String(entry?.role || '').trim().toUpperCase(),
+        action: String(entry?.action || ''),
+        entity: String(entry?.entity || ''),
+        idempotencyKey: entry?.idempotencyKey || null,
+        units: String(entry?.units || ''),
+        before: entry?.before ?? null,
+        after: entry?.after ?? null,
+    })
+
     const localPublicTeamMember = (member) => ({
         id: member.id,
         fullName: member.fullName,
@@ -1445,6 +1458,7 @@ if (DEV_AUTH_ENABLED) {
             entity: 'EMPLOYEE_TEAM',
             entityId,
             actor: session?.user?.username || session?.user?.email || 'gestor-local',
+            role: normalizeRole(session?.user?.role || ''),
             createdAt: new Date().toISOString(),
             after,
         })
@@ -1639,8 +1653,7 @@ if (DEV_AUTH_ENABLED) {
         const validTransition = currentStatus === nextStatus ||
             nextStatus === 'TERMINATED' && currentStatus !== 'TERMINATED' ||
             currentStatus !== 'TERMINATED' && nextStatus === 'SUSPENDED' ||
-            currentStatus === 'SUSPENDED' && nextStatus === 'ACTIVE' ||
-            currentStatus === 'INVITED' && nextStatus === 'ACTIVE'
+            currentStatus === 'SUSPENDED' && nextStatus === 'ACTIVE'
         if (!validTransition) return res.status(409).json({ success: false, error: 'Transição de estado não permitida', code: 'ACCOUNT_STATUS_TRANSITION_DENIED' })
         member.accountStatus = nextStatus
         member.updatedAt = new Date().toISOString()
@@ -1652,6 +1665,24 @@ if (DEV_AUTH_ENABLED) {
         localTeamTelemetry(store, session, 'EMPLOYEE_TEAM_STATUS_CHANGED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(200).set('cache-control', 'no-store').json({ success: true, data: localPublicTeamMember(member) })
+    })
+    app.get(['/api/crm/admin/team/:id/history', '/admin/team/:id/history'], async (req, res) => {
+        const session = getDevSession(req) || getLocalProxySession(req)
+        const role = normalizeRole(session?.user?.role)
+        if (!['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)) return res.status(401).json({ ok: false, success: false, error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' })
+        if (!localUnifiedTeamEnabled) return res.status(404).json({ success: false, error: 'TEAM_UNIFIED_DISABLED', code: 'TEAM_UNIFIED_DISABLED' })
+        const store = await loadLocalCrmStore()
+        const id = String(req.params.id || '').trim()
+        const member = store.team.find((row) => row.id === id)
+        if (!member) return res.status(404).json({ success: false, error: 'Membro da equipe não encontrado', code: 'TEAM_MEMBER_NOT_FOUND' })
+        if (!localTeamUnitsVisible(session, member)) return res.status(403).json({ success: false, error: 'Unidade fora do escopo do gestor', code: 'TEAM_UNITS_DENIED' })
+        const parsedLimit = Number.parseInt(String(req.query?.limit || '50'), 10)
+        const limit = Math.max(1, Math.min(100, Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50))
+        const data = (Array.isArray(store.audit) ? store.audit : [])
+            .filter((entry) => String(entry?.entityId || '') === id)
+            .slice(0, limit)
+            .map(localPublicTeamAudit)
+        return res.status(200).set('cache-control', 'no-store').json({ success: true, data, summary: { count: data.length, limit } })
     })
     app.post(['/api/crm/admin/team/bulk-status', '/admin/team/bulk-status'], async (req, res) => {
         const session = requireDevAdmin(req, res)
@@ -1802,7 +1833,7 @@ if (DEV_AUTH_ENABLED) {
         member.identityLinks = [...(member.identityLinks || []), link]
         if (source === 'ESCALA' && reviewStatus === 'CONFIRMED') member.schedule = { ...member.schedule, professionalId: sourceId }
         member.updatedAt = new Date().toISOString()
-        localAudit(store, session, 'EMPLOYEE_IDENTITY_LINK_CREATED', member.id, { source, sourceId, reviewStatus, localPreview: true })
+        localAudit(store, session, 'EMPLOYEE_IDENTITY_LINK_CREATED', member.id, { onboardingId: member.id, source, sourceId, reviewStatus, localPreview: true })
         localTeamTelemetry(store, session, 'EMPLOYEE_IDENTITY_LINK_CREATED', 'SUCCESS', 1, member.units.length)
         await saveLocalCrmStore(store)
         return res.status(201).set('cache-control', 'no-store').json({ success: true, data: localPublicIdentityLink(link) })

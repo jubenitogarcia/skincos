@@ -76,6 +76,10 @@ export async function mockUsersApi(page: Page, role = 'GESTOR') {
       if (row) row.accountStatus = inviteMatch[2] === 'resend' ? 'INVITED' : 'PENDING_ACCESS'
       return send({ success: true, data: row })
     }
+    const historyMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)\/history$/)
+    if (historyMatch && request.method() === 'GET') {
+      return send({ success: true, data: [{ id: 'e2e-history-ana', timestamp: '2026-08-05T12:00:00.000Z', actor: 'users-e2e', role: 'GESTOR', action: 'EMPLOYEE_TEAM_UPDATED', after: { profile: 'INJETOR', units: ['novo-hamburgo'] } }], summary: { count: 1, limit: 50 } })
+    }
     const memberMatch = path.match(/\/api\/crm\/admin\/team\/([^/]+)$/)
     if (memberMatch && request.method() === 'PUT') {
       const body = await json(); const row = rows.find((item) => item.id === decodeURIComponent(memberMatch[1]))

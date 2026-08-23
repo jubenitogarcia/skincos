@@ -73,6 +73,13 @@ test('unified team management is explicit about RBAC, scope, idempotency and agg
   assert.match(admin, /crm_team_operations/);
   assert.match(admin, /recordTeamTelemetry/);
   assert.match(admin, /failClosed: pendingIds\.length > 0/);
+  assert.match(admin, /TEAM_WRITE_ROLE_DENIED/);
+  assert.match(admin, /const isOnboardingRoute/);
+  assert.match(admin, /crm_team_telemetry/);
+  assert.match(admin, /const teamHistoryMatch/);
+  assert.match(admin, /after_json LIKE/);
+  assert.match(admin, /teamUnitsVisible\(auth, onboarding\.units_json\)/);
+  assert.doesNotMatch(admin, /teamUnitsVisible\(auth, onboarding\)/);
 });
 
 test('team telemetry accepts only aggregate fields and cannot persist identity PII', async () => {

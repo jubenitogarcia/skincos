@@ -30,6 +30,9 @@ test.describe('Usuários e Equipe', () => {
     await expect(page.getByRole('tab', { name: 'Operação' })).toBeVisible()
     await page.getByRole('tab', { name: 'Operação' }).click()
     await expect(page.getByText('Vínculo operacional da Escala', { exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: 'Histórico' }).click()
+    await expect(page.getByRole('heading', { name: 'Histórico do cadastro' })).toBeVisible()
+    await expect(page.getByText('Cadastro atualizado', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Fechar' }).click()
 
     await page.getByRole('button', { name: 'Editar Lucas Mendes' }).click()

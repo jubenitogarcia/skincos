@@ -19,6 +19,7 @@ type ApiError = { error?: string; message?: string; code?: string }
 type RequestOptions = { method?: string; body?: unknown; csrf?: string | null; headers?: Record<string, string> }
 type TeamPendingItem = { memberId: string; kind: 'PROVISIONING' | 'IDENTITY_LINK' | 'ESCALA_LINK'; source?: string; status: string }
 type TeamSummary = { members?: number; pendingLinks?: number; pendingProvisioning?: number; pendingInvites?: number; pendingItems?: TeamPendingItem[] }
+type TeamHistoryEntry = { id: string | number; timestamp?: string | null; actor?: string; role?: string; action?: string; entity?: string; before?: Record<string, unknown> | null; after?: Record<string, unknown> | null }
 
 class RequestError extends Error {
   code?: string
@@ -134,6 +135,41 @@ function pendingItemLabel(item: TeamPendingItem) {
   return 'Vínculo da Escala'
 }
 
+function historyActionLabel(action: string) {
+  return ({
+    EMPLOYEE_TEAM_CREATED: 'Cadastro criado',
+    EMPLOYEE_TEAM_UPDATED: 'Cadastro atualizado',
+    EMPLOYEE_TEAM_STATUS_CHANGED: 'Status alterado',
+    EMPLOYEE_TEAM_BULK_STATUS_CHANGED: 'Status alterado em lote',
+    EMPLOYEE_TEAM_INVITE_RESENT: 'Convite reenviado',
+    EMPLOYEE_TEAM_INVITE_REVOKED: 'Convite revogado',
+    EMPLOYEE_ONBOARDING_STATUS_CHANGED: 'Status alterado',
+    EMPLOYEE_ONBOARDING_ACTIVATION_RETRY: 'Ativação processada',
+    EMPLOYEE_IDENTITY_LINK_CREATED: 'Vínculo operacional criado',
+  } as Record<string, string>)[String(action || '').toUpperCase()] || String(action || 'Alteração registrada')
+}
+
+function historyChange(entry: TeamHistoryEntry) {
+  const after = entry.after && typeof entry.after === 'object' ? entry.after : {}
+  const accountStatus = after.accountStatus || after.status
+  if (accountStatus) return `Conta: ${statusLabel(String(accountStatus))}`
+  const profile = after.profile || after.jobTitle
+  const units = Array.isArray(after.units) ? after.units.map((unit) => unitLabels[String(unit)] || String(unit)).join(', ') : ''
+  if (profile || units) return [profile ? `Cargo: ${String(profile)}` : '', units ? `Unidades: ${units}` : ''].filter(Boolean).join(' · ')
+  const source = after.source
+  const reviewStatus = after.reviewStatus
+  if (source || reviewStatus) return [`Vínculo: ${String(source || 'operacional')}`, reviewStatus ? String(reviewStatus) : ''].filter(Boolean).join(' · ')
+  if (after.inviteIssued) return 'Convite emitido'
+  if (after.inviteRevoked) return 'Acesso aguardando novo convite'
+  return 'Alteração registrada'
+}
+
+function historyTimestamp(timestamp?: string | null) {
+  if (!timestamp) return 'Data não informada'
+  const date = new Date(timestamp)
+  return Number.isNaN(date.getTime()) ? 'Data não informada' : date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+}
+
 export function UsersModule() {
   const [me, setMe] = React.useState<Me | null>(null)
   const [teamRows, setTeamRows] = React.useState<UnifiedTeamMember[]>([])
@@ -147,10 +183,14 @@ export function UsersModule() {
   const [form, setForm] = React.useState(initialForm)
   const [statusFilter, setStatusFilter] = React.useState('ACTIVE')
   const [searchQuery, setSearchQuery] = React.useState('')
+  const [searchInput, setSearchInput] = React.useState('')
   const [summary, setSummary] = React.useState<TeamSummary>({})
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
   const [bulkSaving, setBulkSaving] = React.useState(false)
   const [formTab, setFormTab] = React.useState('identity')
+  const [historyRows, setHistoryRows] = React.useState<TeamHistoryEntry[]>([])
+  const [historyLoading, setHistoryLoading] = React.useState(false)
+  const [historyError, setHistoryError] = React.useState('')
   const usernameWasEdited = React.useRef(false)
 
   const role = String(me?.user?.role || '').toUpperCase()
@@ -201,6 +241,35 @@ export function UsersModule() {
 
   React.useEffect(() => { void load() }, [load])
 
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setSearchQuery(searchInput), 250)
+    return () => window.clearTimeout(timer)
+  }, [searchInput])
+
+  const loadHistory = React.useCallback(async (memberId: string) => {
+    setHistoryLoading(true)
+    setHistoryError('')
+    try {
+      const result = await api<{ success?: boolean; data?: TeamHistoryEntry[] }>(`/admin/team/${encodeURIComponent(memberId)}/history`, { csrf: me?.csrfToken })
+      setHistoryRows(Array.isArray(result?.data) ? result.data : [])
+    } catch (error: any) {
+      setHistoryRows([])
+      setHistoryError(error?.message || 'O histórico está indisponível no momento.')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [me?.csrfToken])
+
+  React.useEffect(() => {
+    if (!open || !editingId || !teamConfig.enabled) {
+      setHistoryRows([])
+      setHistoryError('')
+      setHistoryLoading(false)
+      return
+    }
+    void loadHistory(editingId)
+  }, [open, editingId, teamConfig.enabled, loadHistory])
+
   const updateField = (field: keyof typeof initialForm, value: string | string[]) => setForm((current) => ({ ...current, [field]: value }))
   const toggleUnit = (unit: string) => setForm((current) => ({ ...current, units: current.units.includes(unit) ? current.units.filter((item) => item !== unit) : [...current.units, unit] }))
 
@@ -212,6 +281,8 @@ export function UsersModule() {
     setCollisionRequired(false)
     usernameWasEdited.current = false
     setFormTab('identity')
+    setHistoryRows([])
+    setHistoryError('')
     setForm({ ...initialForm, jobTitle: defaultTitle, units: defaultUnits })
     setOpen(true)
   }, [selectableTitles, selectableUnits])
@@ -222,6 +293,8 @@ export function UsersModule() {
     setCollisionRequired(false)
     usernameWasEdited.current = true
     setFormTab('identity')
+    setHistoryRows([])
+    setHistoryError('')
     setForm(emptyTeamForm(row))
     setOpen(true)
   }
@@ -433,7 +506,7 @@ export function UsersModule() {
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                   <label className="relative min-w-0 flex-1 lg:max-w-md">
                     <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-blue-100/45" aria-hidden="true" />
-                    <Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Buscar por nome, usuário, cargo ou unidade" className="pl-9" aria-label="Buscar equipe" />
+                    <Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Buscar por nome, usuário, cargo ou unidade" className="pl-9" aria-label="Buscar equipe" />
                   </label>
                   <div className="flex flex-wrap items-center gap-2">
                     <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -447,7 +520,7 @@ export function UsersModule() {
                         <SelectItem value="ALL">Todos os estados</SelectItem>
                       </SelectContent>
                     </Select>
-                    {(searchQuery || statusFilter !== 'ACTIVE') && <Button type="button" variant="ghost" size="sm" onClick={() => { setSearchQuery(''); setStatusFilter('ACTIVE') }}>Limpar</Button>}
+                    {(searchInput || searchQuery || statusFilter !== 'ACTIVE') && <Button type="button" variant="ghost" size="sm" onClick={() => { setSearchInput(''); setSearchQuery(''); setStatusFilter('ACTIVE') }}>Limpar</Button>}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -624,6 +697,7 @@ export function UsersModule() {
             <TabsList className="w-full sm:w-auto">
               <TabsTrigger value="identity">Identidade e acesso</TabsTrigger>
               <TabsTrigger value="operation" disabled={!teamConfig.enabled}>Operação</TabsTrigger>
+              <TabsTrigger value="history" disabled={!editingId}>Histórico</TabsTrigger>
             </TabsList>
 
             <TabsContent value="identity" className="mt-4 space-y-5">
@@ -647,6 +721,35 @@ export function UsersModule() {
 
             <TabsContent value="operation" className="mt-4">
               {teamConfig.enabled ? <div className="rounded-2xl border border-white/10 bg-black/20 p-4"><div className="mb-4 flex items-start gap-3"><div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-400/10 text-sky-200"><ListChecks className="size-4" aria-hidden="true" /></div><div><p className="text-sm font-semibold text-white">Vínculo operacional da Escala</p><p className="mt-1 text-xs text-blue-100/55">Agenda, função e identificação permanecem aqui; o vínculo usa o identificador do funcionário.</p></div></div><div className="grid gap-3 md:grid-cols-2"><label className="space-y-1.5 text-sm">Status na Escala<Input value={form.scheduleStatus} disabled={formReadOnly} onChange={(event) => updateField('scheduleStatus', event.target.value)} /></label><label className="space-y-1.5 text-sm">Função na Escala<Input value={form.scheduleRole} disabled={formReadOnly} onChange={(event) => updateField('scheduleRole', event.target.value)} /></label><label className="space-y-1.5 text-sm">Turno<Input value={form.scheduleShift} disabled={formReadOnly} onChange={(event) => updateField('scheduleShift', event.target.value)} /></label><label className="space-y-1.5 text-sm">Apelido<Input value={form.scheduleNickname} disabled={formReadOnly} onChange={(event) => updateField('scheduleNickname', event.target.value)} /></label><label className="space-y-1.5 text-sm">Instagram<Input value={form.scheduleInstagram} disabled={formReadOnly} onChange={(event) => updateField('scheduleInstagram', event.target.value)} /></label><label className="space-y-1.5 text-sm">Cor<Input value={form.scheduleColor} disabled={formReadOnly} onChange={(event) => updateField('scheduleColor', event.target.value)} placeholder="#6d9eeb" /></label></div></div> : <div className="rounded-2xl border border-dashed border-white/15 p-4 text-sm text-blue-100/65">O vínculo operacional aparece após a liberação da centralização.</div>}
+            </TabsContent>
+
+            <TabsContent value="history" className="mt-4">
+              <section className="rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby="team-history-title">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h3 id="team-history-title" className="text-sm font-semibold text-white">Histórico do cadastro</h3>
+                    <p className="mt-1 text-xs text-blue-100/55">Alterações, convites e vínculos registrados sem expor dados sensíveis.</p>
+                  </div>
+                  {editingId && <span className="text-xs text-blue-100/45">Mais recente primeiro</span>}
+                </div>
+                {historyLoading && <p className="text-sm text-blue-100/65">Carregando histórico…</p>}
+                {!historyLoading && historyError && <p role="status" className="text-sm text-amber-100/80">{historyError}</p>}
+                {!historyLoading && !historyError && !historyRows.length && <p className="text-sm text-blue-100/65">Nenhuma alteração registrada para este cadastro.</p>}
+                {!historyLoading && !historyError && historyRows.length > 0 && (
+                  <ol className="space-y-3" aria-label="Eventos do histórico do cadastro">
+                    {historyRows.map((entry) => (
+                      <li key={String(entry.id)} className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-white">{historyActionLabel(entry.action || '')}</span>
+                          <time className="text-xs text-blue-100/50" dateTime={entry.timestamp || undefined}>{historyTimestamp(entry.timestamp)}</time>
+                        </div>
+                        <p className="mt-1 text-xs text-blue-100/70">{historyChange(entry)}</p>
+                        <p className="mt-2 text-[11px] text-blue-100/45">Por {entry.actor || 'sistema'}{entry.role ? ` · ${entry.role}` : ''}</p>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
             </TabsContent>
           </Tabs>
 
