@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, CircleDollarSign, RefreshCw, Save, ShieldCheck, UserRoundCheck, UsersRound } from 'lucide-react'
 import { Button } from '@/button'
 import { IdentityClusterWorkspace } from './IdentityClusterWorkspace'
+import { CommercialAssistedWhatsappPanel } from './CommercialAssistedWhatsappPanel'
 import { CommercialCanaryManager } from '@/CommercialCanaryManager'
 import {
   createCommercialAction,
@@ -310,6 +311,7 @@ function ProfilePanel({ detail, units, professionals, onRefresh }: { detail: Com
     <ContactPermission key={`${profile.identityId}:${contactEligibility.permissionRevision}`} profile={profile} contactRolloutAllowed={contactRolloutAllowed} onSaved={onRefresh} />
     <ActionForm detail={detail} units={units} professionals={professionals} onSaved={onRefresh} />
     <ActionHistory actions={detail.actions} contactEligibility={contactEligibility} contactRolloutAllowed={contactRolloutAllowed} onUpdated={onRefresh} />
+    <CommercialAssistedWhatsappPanel detail={detail} onChanged={onRefresh} />
   </aside>
 }
 

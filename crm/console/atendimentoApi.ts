@@ -989,6 +989,79 @@ export type CommercialSourceOperations = {
   sources: CommercialSourceOperation[]
 }
 
+export type CommercialAssistedSafety = {
+  providerSend: false
+  automationEnabled: false
+  bulkDispatchEnabled: false
+  commercialContactWritesEnabled: false
+  externalDispatch: false
+}
+
+export type CommercialAssistedOffer = {
+  offerId: string
+  offerKey: string
+  revision: number
+  unit: string
+  title: string
+  description: string
+  priceCents: number | null
+  currency: string
+  priceQualifier: string
+  installmentCount: number | null
+  installmentValueCents: number | null
+  discountPercent: number | null
+  conditions: string
+  validityStart: string | null
+  validityEnd: string | null
+  procedures: Array<{ id: string; name: string; quantity: number; quantityUnit: string }>
+  contextHash: string
+}
+
+export type CommercialAssistedTemplate = {
+  templateId: string
+  templateKey: string
+  revision: number
+  unit: string
+  status: 'approved'
+  bodyTemplate: string
+  validFrom: string | null
+  validUntil: string | null
+  approvedAt: string | null
+}
+
+export type CommercialAssistedPreview = {
+  eligible: boolean
+  blockReason?: string
+  previewContextHash?: string
+  actionId?: string
+  unit?: string
+  recipientMasked?: string
+  offer?: CommercialAssistedOffer
+  template?: Pick<CommercialAssistedTemplate, 'templateId' | 'templateKey' | 'revision'>
+  messagePreview?: string
+  sourceFreshness?: 'healthy' | 'stale'
+  snapshotComplete?: boolean
+  permissionExpiresAt?: string | null
+  canaryValidation?: 'synthetic' | 'explicit_approved'
+  providerSend: false
+  externalDispatch: false
+  safety: CommercialAssistedSafety
+}
+
+export type CommercialAssistedAttempt = {
+  attemptId: string
+  actionId: string
+  status: 'confirmed' | 'handed_off' | string
+  recipientMasked: string
+  createdAt: string | null
+  idempotent: boolean
+  humanConfirmed?: boolean
+  dispatchResult?: 'not_dispatched'
+  providerSend: false
+  externalDispatch: false
+  safety: CommercialAssistedSafety
+}
+
 export type CommercialOverview = {
   asOf: string
   policy: CommercialPolicy
@@ -1188,6 +1261,30 @@ export function fetchCommercialDataQuality(filters: {
 
 export function fetchCommercialSourceOperations() {
   return api<CommercialSourceOperations>('/commercial/source-operations')
+}
+
+export function fetchCommercialAssistedOffers(actionId: string) {
+  return api<{ actionId: string; unit: string; offers: CommercialAssistedOffer[]; safety: CommercialAssistedSafety }>(`/commercial/assisted-whatsapp/offers?actionId=${encodeURIComponent(actionId)}`)
+}
+
+export function fetchCommercialAssistedTemplates(unit: string) {
+  return api<{ unit: string; templates: CommercialAssistedTemplate[]; safety: CommercialAssistedSafety }>(`/commercial/assisted-whatsapp/templates?unit=${encodeURIComponent(unit)}`)
+}
+
+export function previewCommercialAssistedWhatsapp(payload: { actionId: string; offerId: string; templateId: string }) {
+  return api<CommercialAssistedPreview>('/commercial/assisted-whatsapp/preview', { method: 'POST', body: payload })
+}
+
+export function confirmCommercialAssistedWhatsapp(payload: { actionId: string; offerId: string; templateId: string; previewContextHash: string; confirmation: 'CONFIRMAR_CONTATO_ASSISTIDO'; idempotencyKey: string }) {
+  return api<CommercialAssistedAttempt>('/commercial/assisted-whatsapp/confirm', { method: 'POST', body: payload, headers: { 'idempotency-key': payload.idempotencyKey } })
+}
+
+export function issueCommercialAssistedHandoff(payload: { attemptId: string; confirmation: 'CONFIRMAR_CONTATO_ASSISTIDO'; idempotencyKey: string }) {
+  return api<{ attemptId: string; handoffToken?: string; handoffAlreadyIssued?: boolean; expiresAt?: string | null; destinationMasked?: string; providerSend: false; externalDispatch: false; safety: CommercialAssistedSafety }>('/commercial/assisted-whatsapp/handoffs', { method: 'POST', body: payload, headers: { 'idempotency-key': payload.idempotencyKey } })
+}
+
+export function revealCommercialAssistedHandoff(payload: { handoffToken: string; confirmation: 'REVELAR_DESTINATARIO_ASSISTIDO'; reason: string }) {
+  return api<{ attemptId: string; destination: string; destinationMasked: string; providerSend: false; externalDispatch: false; safety: CommercialAssistedSafety }>('/commercial/assisted-whatsapp/handoffs/reveal', { method: 'POST', body: payload })
 }
 
 export function updateCommercialDataQualityFinding(id: string, payload: CommercialDataQualityFindingMutation) {

@@ -35,6 +35,10 @@ import {
     rollbackCommercialCanaryMigration,
 } from '../server/atendimento/commercialCanaryMigration.js'
 import {
+    applyCommercialAssistedMigration,
+    rollbackCommercialAssistedMigration,
+} from '../server/atendimento/commercialAssistedCommunicationMigration.js'
+import {
     applyClientIdentityMaterializationMigration,
     rollbackClientIdentityMaterializationMigration,
 } from '../server/atendimento/clientIdentityMaterializationMigration.js'
@@ -86,6 +90,9 @@ const migrations = [
     // source-quality controls. Keep it last so a clean staging bootstrap
     // cannot create a partially usable canary schema.
     { id: '20260807_commercial_canary_selector_v2', apply: applyCommercialCanaryMigration, rollback: rollbackCommercialCanaryMigration },
+    // Assisted contact evidence depends on the canary and remains inert until
+    // all server-side gates are healthy. It never enables provider dispatch.
+    { id: '20260807_commercial_assisted_whatsapp_v2', apply: applyCommercialAssistedMigration, rollback: rollbackCommercialAssistedMigration },
 ]
 
 const pool = createPgPool(databaseUrl)

@@ -3,6 +3,8 @@ import express from 'express'
 import { createAtendimentoStore, canAccessAtendimento } from './store.js'
 import { createCommercialDataQualityStore } from './commercialDataQualityStore.js'
 import { createCommercialOperationsStore } from './commercialOperationsStore.js'
+import { createCommercialAssistedCommunicationStore } from './commercialAssistedCommunicationStore.js'
+import { verifyRawWebhookSignature } from './commercialAssistedCommunication.js'
 import { createClientesSourceOperationsStore } from '../clientes/sourceOperationsStore.js'
 import { importAtendimentoFromGoogleSheet, importGerenciaFromGoogleSheet, readGerenciaChartIds } from './importer.js'
 import { atendimentoModuleUnavailable, readAtendimentoModuleControl } from './moduleControl.js'
@@ -41,6 +43,19 @@ function verifyMetaAdsOfferContextToken(req, expectedToken) {
     const authorization = String(req?.headers?.authorization || '')
     const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
     return !!expectedToken && safeEqual(token, expectedToken)
+}
+
+function commercialAssistedWebhookPath(req) {
+    return String(req?.path || '') === '/internal/commercial/assisted-whatsapp/webhook'
+}
+
+function verifyCommercialAssistedWebhook(req, secret) {
+    return verifyRawWebhookSignature({
+        rawBody: req?.rawBody,
+        timestamp: req?.headers?.['x-commercial-assisted-timestamp'],
+        signature: req?.headers?.['x-commercial-assisted-signature'],
+        secret,
+    })
 }
 
 function normalizeRole(value) {
@@ -220,7 +235,7 @@ function atendimentoClientesOnlyRuntime() {
 
 function isClientesCommercialPath(requestPath) {
     const path = String(requestPath || '')
-    return path === '/commercial' || path.startsWith('/commercial/')
+    return path === '/commercial' || path.startsWith('/commercial/') || path === '/internal/commercial/assisted-whatsapp/webhook'
 }
 
 function errorPayload(error) {
@@ -296,6 +311,17 @@ export function createAtendimentoRouter(options = {}) {
         }
         return commercialSourceOperationsStore
     }
+    let commercialAssistedStore = options.commercialAssistedStore || null
+    const getCommercialAssistedStore = () => {
+        if (!commercialAssistedStore) {
+            commercialAssistedStore = createCommercialAssistedCommunicationStore({
+                pool: options.commercialAssistedPool,
+                databaseUrl: options.databaseUrl,
+                auditHmacKey: options.commercialAssistedHmacKey,
+            })
+        }
+        return commercialAssistedStore
+    }
     const actorKey = String(
         options.actorHmacKey ||
         process.env.ATENDIMENTO_ACTOR_HMAC_KEY ||
@@ -306,6 +332,11 @@ export function createAtendimentoRouter(options = {}) {
     const metaAdsOfferContextToken = String(
         options.metaAdsOfferContextToken || process.env.META_ADS_OFFER_CONTEXT_TOKEN || '',
     ).trim()
+    const commercialAssistedWebhookSecret = String(
+        options.commercialAssistedWebhookHmacKey || process.env.COMMERCIAL_ASSISTED_WEBHOOK_HMAC_KEY || '',
+    ).trim()
+    const commercialAssistedWebhookIngressEnabled = options.commercialAssistedWebhookIngressEnabled === true ||
+        String(process.env.COMMERCIAL_ASSISTED_WEBHOOK_INGRESS_ENABLED || '').trim().toLowerCase() === 'true'
     const getDevSession = options.getDevSession || null
     const expressRouter = options.routerFactory ? options.routerFactory() : express.Router()
 
@@ -329,6 +360,23 @@ export function createAtendimentoRouter(options = {}) {
             const moduleControl = readAtendimentoModuleControl()
             if (atendimentoModuleUnavailable(moduleControl)) {
                 return json(res, 503, { ok: false, error: 'MODULE_MAINTENANCE', moduleControl })
+            }
+            if (commercialAssistedWebhookPath(req)) {
+                // Inbound events have a distinct raw-body HMAC identity, but
+                // are never allowed to bypass the isolated runtime's read-only
+                // control. Provider dispatch remains compile-time disabled.
+                if (atendimentoReadOnlyRuntime()) {
+                    return json(res, 405, { ok: false, error: 'READ_ONLY_RUNTIME' }, { allow: 'GET, HEAD, OPTIONS' })
+                }
+                if (!commercialAssistedWebhookIngressEnabled || !commercialAssistedWebhookSecret) {
+                    return json(res, 503, { ok: false, error: 'COMMERCIAL_ASSISTED_WEBHOOK_NOT_CONFIGURED' })
+                }
+                if (!verifyCommercialAssistedWebhook(req, commercialAssistedWebhookSecret)) {
+                    return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
+                }
+                req.atendimentoActor = { id: 'commercial-assisted-webhook', role: 'SERVICE' }
+                req.commercialAssistedWebhook = true
+                return next()
             }
             if (req.path === '/internal/meta-ads/offer-context') {
                 if (!metaAdsOfferContextToken) {
@@ -701,6 +749,109 @@ export function createAtendimentoRouter(options = {}) {
             // Missing schema, a pool failure or an unavailable dependency must
             // not disclose database details to the console.
             return json(res, 503, { ok: false, error: 'COMMERCIAL_SOURCE_OPERATIONS_UNAVAILABLE' })
+        }
+    })
+
+    // Assisted communication records a human-reviewed handoff only. It does
+    // not create a provider client, an outbound URI or an automatic send path.
+    expressRouter.get('/commercial/assisted-whatsapp/readiness', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            const readiness = await getCommercialAssistedStore().readiness(req.atendimentoActor)
+            return json(res, readiness.ready ? 200 : 503, { ok: readiness.ready, ...readiness })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/assisted-whatsapp/offers', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().availableOffers(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/assisted-whatsapp/templates', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().listTemplates(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/assisted-whatsapp/templates', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().createTemplate(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/assisted-whatsapp/preview', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().preview(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/assisted-whatsapp/confirm', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().confirm(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/assisted-whatsapp/handoffs', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().issueHandoff(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/commercial/assisted-whatsapp/handoffs/reveal', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            const payload = req.body && typeof req.body === 'object' ? req.body : {}
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().revealHandoff(payload.handoffToken, payload, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/commercial/assisted-whatsapp/emergency-controls', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().emergencyControls(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.put('/commercial/assisted-whatsapp/emergency-controls', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().setEmergencyControl(commercialOperationPayload(req), req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.post('/internal/commercial/assisted-whatsapp/webhook', async (req, res) => {
+        try {
+            if (!req.commercialAssistedWebhook) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
+            return json(res, 200, { ok: true, ...(await getCommercialAssistedStore().processWebhook(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
         }
     })
 
@@ -1142,6 +1293,8 @@ export const __testables = {
     isClientesCommercialPath,
     redactLocalDiagnostic,
     safeEqual,
+    commercialAssistedWebhookPath,
+    verifyCommercialAssistedWebhook,
     verifyMetaAdsOfferContextToken,
     verifySignedActor,
 }
