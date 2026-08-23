@@ -33,20 +33,15 @@ export type HeroMediaScopeBuckets = {
     globalItems: HeroMediaItem[];
 };
 
-const HERO_JULHO_2026_CAMPAIGN_ITEMS = [
-    { id: "banner-01", desktopWidth: 1733, desktopHeight: 907 },
-    { id: "banner-02", desktopWidth: 1733, desktopHeight: 907 },
-    { id: "banner-03", desktopWidth: 1731, desktopHeight: 909 },
-    { id: "banner-04", desktopWidth: 1732, desktopHeight: 908 },
-    { id: "banner-05", desktopWidth: 1733, desktopHeight: 907 },
-    { id: "banner-06", desktopWidth: 1731, desktopHeight: 908 },
-    { id: "banner-07", desktopWidth: 1733, desktopHeight: 907 },
-    { id: "banner-08", desktopWidth: 1733, desktopHeight: 907 },
-    { id: "banner-09", desktopWidth: 1733, desktopHeight: 907 },
-    { id: "banner-10", desktopWidth: 1733, desktopHeight: 907 },
-    { id: "banner-11", desktopWidth: 1733, desktopHeight: 907 },
-    { id: "banner-12", desktopWidth: 1733, desktopHeight: 907 },
-    { id: "banner-13", desktopWidth: 1734, desktopHeight: 907 },
+const HERO_AGOSTO_2026_CAMPAIGN_ITEMS = [
+    { id: "banner-01", desktopWidth: 1733, desktopHeight: 907, alt: "Preenchimento facial de 1 ml a partir de R$ 599 durante a Vitrine de 10 a 31 de agosto" },
+    { id: "banner-02", desktopWidth: 1733, desktopHeight: 907, alt: "Botox 3 regiões 40U por R$ 599 durante a Vitrine de 10 a 31 de agosto" },
+    { id: "banner-03", desktopWidth: 1733, desktopHeight: 907, alt: "Botox Full Face 70U com preenchimento facial de 1 ml por R$ 1.499" },
+    { id: "banner-04", desktopWidth: 1733, desktopHeight: 907, alt: "Laser Lavieen por R$ 399 durante a Vitrine de 10 a 31 de agosto" },
+    { id: "banner-05", desktopWidth: 1733, desktopHeight: 907, alt: "Botox Nefertiti por R$ 1.199 durante a Vitrine de 10 a 31 de agosto" },
+    { id: "banner-06", desktopWidth: 1733, desktopHeight: 907, alt: "Skinvive por R$ 599 durante a Vitrine de 10 a 31 de agosto" },
+    { id: "banner-07", desktopWidth: 1733, desktopHeight: 907, alt: "Bioestimulador de colágeno Nutriex por R$ 899 e Diamond Intense por R$ 1.299" },
+    { id: "banner-08", desktopWidth: 1733, desktopHeight: 907, alt: "Peeling de uma sessão por R$ 149 durante a Vitrine de 10 a 31 de agosto" },
 ] as const;
 
 function formatHeroAspectRatio(width: number | undefined, height: number | undefined): string | undefined {
@@ -62,15 +57,15 @@ export function getHeroMediaAspectRatio(item: HeroMediaItem | null | undefined):
     return formatHeroAspectRatio(item.width, item.height) ?? null;
 }
 
-function heroJulho2026DesktopItem(
-    item: (typeof HERO_JULHO_2026_CAMPAIGN_ITEMS)[number],
+function heroAgosto2026DesktopItem(
+    item: (typeof HERO_AGOSTO_2026_CAMPAIGN_ITEMS)[number],
     index: number,
 ): HeroMediaItem {
     return {
-        id: `julho-2026-desktop-${item.id}`,
+        id: `agosto-2026-desktop-${item.id}`,
         type: "image",
-        src: `/images/hero/campaigns/julho-2026/desktop/${item.id}.png`,
-        alt: `Banner promocional da Espaço Facial ${index + 1}`,
+        src: `/images/hero/campaigns/agosto-2026/desktop/${item.id}.png`,
+        alt: item.alt,
         width: item.desktopWidth,
         height: item.desktopHeight,
         aspectRatio: formatHeroAspectRatio(item.desktopWidth, item.desktopHeight),
@@ -78,17 +73,17 @@ function heroJulho2026DesktopItem(
     };
 }
 
-function heroJulho2026MobileItem(
-    item: (typeof HERO_JULHO_2026_CAMPAIGN_ITEMS)[number],
+function heroAgosto2026MobileItem(
+    item: (typeof HERO_AGOSTO_2026_CAMPAIGN_ITEMS)[number],
     index: number,
 ): HeroMediaItem {
-    const width = 1080;
-    const height = 1920;
+    const width = 941;
+    const height = 1672;
     return {
-        id: `julho-2026-mobile-${item.id}`,
+        id: `agosto-2026-mobile-${item.id}`,
         type: "image",
-        src: `/images/hero/campaigns/julho-2026/mobile/${item.id}.png`,
-        alt: `Banner promocional da Espaço Facial ${index + 1}`,
+        src: `/images/hero/campaigns/agosto-2026/mobile/${item.id}.png`,
+        alt: item.alt,
         width,
         height,
         aspectRatio: formatHeroAspectRatio(width, height),
@@ -96,15 +91,15 @@ function heroJulho2026MobileItem(
     };
 }
 
-export const HERO_JULHO_2026_DESKTOP_ITEMS: HeroMediaItem[] = HERO_JULHO_2026_CAMPAIGN_ITEMS.map(
-    heroJulho2026DesktopItem,
+export const HERO_AGOSTO_2026_DESKTOP_ITEMS: HeroMediaItem[] = HERO_AGOSTO_2026_CAMPAIGN_ITEMS.map(
+    heroAgosto2026DesktopItem,
 );
 
-export const HERO_JULHO_2026_MOBILE_ITEMS: HeroMediaItem[] = HERO_JULHO_2026_CAMPAIGN_ITEMS.map(heroJulho2026MobileItem);
+export const HERO_AGOSTO_2026_MOBILE_ITEMS: HeroMediaItem[] = HERO_AGOSTO_2026_CAMPAIGN_ITEMS.map(heroAgosto2026MobileItem);
 
-export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = HERO_JULHO_2026_DESKTOP_ITEMS;
+export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = HERO_AGOSTO_2026_DESKTOP_ITEMS;
 
-export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = HERO_JULHO_2026_MOBILE_ITEMS;
+export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = HERO_AGOSTO_2026_MOBILE_ITEMS;
 
 export const LOCAL_HERO_ITEMS_BY_UNIT: Partial<Record<string, HeroMediaUnitCampaign>> = {};
 
