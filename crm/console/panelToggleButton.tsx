@@ -26,7 +26,7 @@ export function PanelToggleButton({
   const label = expanded ? expandedLabel : collapsedLabel
 
   return (
-    <TooltipButton label={label}>
+    <TooltipButton label={label} pinOnClick={false}>
       <Button
         type="button"
         size="icon"
