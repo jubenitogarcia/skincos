@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/providerJob",
+  "title": "providerJob",
+  "examples": [
+    {
+      "job_id": "fixture",
+      "status": "fixture",
+      "provider": "fixture",
+      "request_id": "fixture",
+      "input_hash": "fixture",
+      "output_hash": "fixture",
+      "cost": 0,
+      "attempt": 0,
+      "error": "fixture"
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "status": "fixture",
+      "provider": "fixture",
+      "request_id": "fixture",
+      "input_hash": "fixture",
+      "output_hash": "fixture",
+      "cost": 0,
+      "attempt": 0,
+      "error": "fixture"
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "job_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "request_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "input_hash": {
+      "type": "string"
+    },
+    "output_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cost": {
+      "type": "number",
+      "minimum": 0
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "job_id",
+    "status",
+    "provider",
+    "request_id",
+    "input_hash",
+    "output_hash",
+    "cost",
+    "attempt",
+    "error"
+  ]
+}

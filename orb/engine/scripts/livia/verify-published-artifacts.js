@@ -217,12 +217,18 @@ function buildDelivery(target, response) {
   }
   if (captionReadable && !exactText(caption, expected.caption)) errors.push('caption_mismatch');
 
+  const carouselItemAltUnsupported =
+    (platform === 'instagram' || platform === 'threads') &&
+    mediaKind === 'carousel' &&
+    !submitted.altText;
   const accessibility = platform === 'facebook'
     ? { status: 'unsupported', reason: staticFacebook
       ? 'facebook_static_post_alt_text_not_available_in_current_flow'
       : 'facebook_reels_api_does_not_receive_alt_text_in_this_flow' }
     : mediaKind === 'video'
       ? { status: 'unsupported', reason: `${platform}_video_alt_text_not_supported` }
+    : carouselItemAltUnsupported
+      ? { status: 'unsupported', reason: `${platform}_carousel_item_alt_text_not_supported_by_current_api_contract` }
     : submitted.altText
       ? { status: 'accepted', reason: 'submitted_to_provider_but_not_readable_from_public_object' }
       : { status: 'failed', reason: 'alt_text_not_submitted' };

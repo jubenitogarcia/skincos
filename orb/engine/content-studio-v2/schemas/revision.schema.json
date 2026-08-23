@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://skincos.local/ccg/revision",
+  "title": "revision",
+  "examples": [
+    {
+      "revision": 1,
+      "reason": "fixture",
+      "invalidated_components": []
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "reason": "fixture",
+      "invalidated_components": []
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "reason": {
+      "type": "string"
+    },
+    "invalidated_components": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "revision",
+    "reason",
+    "invalidated_components"
+  ]
+}
