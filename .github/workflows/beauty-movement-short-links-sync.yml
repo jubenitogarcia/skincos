@@ -225,7 +225,10 @@ jobs:
           const crypto = require('node:crypto');
           const fs = require('node:fs');
           const [readbackPath, attestationPath] = process.argv.slice(2);
-          const payload = JSON.parse(fs.readFileSync(readbackPath, 'utf8'));
+          const rawReadback = fs.readFileSync(readbackPath, 'utf8').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+          const jsonStart = rawReadback.search(/[\[{]/);
+          if (jsonStart < 0) throw new Error('beauty_movement_short_links_readback_json_missing');
+          const payload = JSON.parse(rawReadback.slice(jsonStart));
           const rows = payload.flatMap((entry) => Array.isArray(entry?.results) ? entry.results : []);
           const attestation = JSON.parse(fs.readFileSync(attestationPath, 'utf8'));
           const expected = attestation.mappingHashes ?? {};
@@ -270,7 +273,10 @@ jobs:
           const crypto = require('node:crypto');
           const fs = require('node:fs');
           const [readbackPath, attestationPath] = process.argv.slice(2);
-          const payload = JSON.parse(fs.readFileSync(readbackPath, 'utf8'));
+          const rawReadback = fs.readFileSync(readbackPath, 'utf8').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+          const jsonStart = rawReadback.search(/[\[{]/);
+          if (jsonStart < 0) throw new Error('beauty_movement_short_links_readback_json_missing');
+          const payload = JSON.parse(rawReadback.slice(jsonStart));
           const rows = payload.flatMap((entry) => Array.isArray(entry?.results) ? entry.results : []);
           const attestation = JSON.parse(fs.readFileSync(attestationPath, 'utf8'));
           const expected = attestation.mappingHashes ?? {};
