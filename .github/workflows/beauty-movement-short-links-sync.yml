@@ -232,10 +232,30 @@ jobs:
           const rows = payload.flatMap((entry) => Array.isArray(entry?.results) ? entry.results : []);
           const attestation = JSON.parse(fs.readFileSync(attestationPath, 'utf8'));
           const expected = attestation.mappingHashes ?? {};
+          const stats = {
+            rows: rows.length,
+            missingExpected: 0,
+            wrongHost: 0,
+            wrongSource: 0,
+            inactive: 0,
+            destinationMismatch: 0,
+            valid: 0,
+          };
           for (const row of rows) {
             const expectedHash = expected[row.slug_path];
             const actualHash = crypto.createHash('sha256').update(String(row.destination_url), 'utf8').digest('hex');
-            if (!expectedHash || row.site_host !== 'esfa.co' || row.source !== 'beauty_movement_short_links_v1' || Number(row.active) !== 1 || actualHash !== expectedHash) throw new Error('beauty_movement_short_links_existing_mapping_conflict');
+            let invalid = false;
+            if (!expectedHash) { stats.missingExpected += 1; invalid = true; }
+            if (row.site_host !== 'esfa.co') { stats.wrongHost += 1; invalid = true; }
+            if (row.source !== 'beauty_movement_short_links_v1') { stats.wrongSource += 1; invalid = true; }
+            if (Number(row.active) !== 1) { stats.inactive += 1; invalid = true; }
+            if (expectedHash && actualHash !== expectedHash) { stats.destinationMismatch += 1; invalid = true; }
+            if (invalid) continue;
+            stats.valid += 1;
+          }
+          if (stats.rows !== stats.valid) {
+            console.error(JSON.stringify({ code: 'beauty_movement_short_links_existing_mapping_conflict', ...stats }));
+            throw new Error('beauty_movement_short_links_existing_mapping_conflict');
           }
           NODE
 
