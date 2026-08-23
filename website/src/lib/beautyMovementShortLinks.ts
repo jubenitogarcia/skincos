@@ -99,7 +99,10 @@ export function prepareBeautyMovementShortLinks(params: {
         const normalizedSlugPath = `/${normalizedSuffix}${BEAUTY_MOVEMENT_CANONICAL_PATH.toLowerCase()}`;
         const destinationUrl = `https://espacofacial.com${BEAUTY_MOVEMENT_CANONICAL_PATH}#c=${token}`;
         links.push({
-            id: `beauty-movement-short-v1-${campaignId}-${normalizedSuffix}`,
+            // Keep the redirect contract/source stable while moving the row identity
+            // forward. A previously reserved v1 id must never be overwritten if a
+            // stale/manual row is found under that primary key.
+            id: `beauty-movement-short-v2-${campaignId}-${normalizedSuffix}`,
             name: `Cartas da Beleza - ${suffix}`,
             inviteRef: row.inviteRef,
             whatsapp: row.whatsapp,
