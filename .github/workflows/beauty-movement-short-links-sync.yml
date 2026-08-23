@@ -220,7 +220,8 @@ jobs:
         run: |
           set -euo pipefail
           test -f "${RUNNER_TEMP}/skincos-global-coordination-website.json"
-          npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_CONFLICTS}" --json > "${D1_CONFLICT_READBACK}"
+          conflict_sql="$(<"${SHORT_CONFLICTS}")"
+          npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --command "${conflict_sql}" --json > "${D1_CONFLICT_READBACK}"
           node - "${D1_CONFLICT_READBACK}" "${SHORT_ATTESTATION}" <<'NODE'
           const crypto = require('node:crypto');
           const fs = require('node:fs');
@@ -300,7 +301,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --file "${SHORT_READBACK}" --json > "${D1_FINAL_READBACK}"
+          readback_sql="$(<"${SHORT_READBACK}")"
+          npx --yes wrangler@4.112.0 d1 execute "${BOOKING_D1_DATABASE}" --remote --config "${BOOKING_WORKER_CONFIG}" --command "${readback_sql}" --json > "${D1_FINAL_READBACK}"
           node - "${D1_FINAL_READBACK}" "${SHORT_ATTESTATION}" <<'NODE'
           const crypto = require('node:crypto');
           const fs = require('node:fs');
