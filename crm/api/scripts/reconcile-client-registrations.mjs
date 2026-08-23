@@ -5,6 +5,7 @@ import {
     buildClientRegistrationIdentityPlan,
     buildConfirmedGlobalIdentityComponents,
 } from '../server/atendimento/clientRegistrationIdentity.js'
+import { IDENTITY_GRAPH_LOCK_KEY } from '../server/atendimento/identityReviewWorkflow.js'
 
 const apply = process.argv.includes('--apply')
 const inputFile = String(process.env.CLIENT_REGISTRATION_CSV || '').trim()
@@ -111,7 +112,8 @@ function enrichAttendanceLinks(plan, canonicalClients) {
         .filter((item) => item.attendanceClientId)
 }
 
-async function persistPlan(client, { plan, attendanceLinks, canonicalClients, customers, sourceFile }) {
+async function persistPlan(client, { plan, sourceFile }) {
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
     await client.query(`select pg_advisory_xact_lock(hashtext('crm_atendimento.app_client_registration_reconciliation'))`)
     for (const statement of schemaStatements) await client.query(statement)
     const run = await client.query(`insert into crm_atendimento.app_registration_import_runs(source_file, summary) values($1,$2::jsonb) returning id`, [sourceFile, JSON.stringify(plan.summary)])
@@ -136,7 +138,12 @@ async function persistPlan(client, { plan, attendanceLinks, canonicalClients, cu
         on conflict(app_registration_id,caixa_customer_id) do update set method=excluded.method,confidence=excluded.confidence,
             status=case when crm_atendimento.app_registration_caixa_links.status in ('confirmed','rejected') then crm_atendimento.app_registration_caixa_links.status else excluded.status end,
             evidence=excluded.evidence,run_id=excluded.run_id,updated_at=now()`)
-    await insertJsonChunks(client, attendanceLinks.map((item) => ({
+    // Canonical clients can have changed while the CSV was being parsed.  Resolve
+    // the current target only after the shared graph lock is held.
+    const currentCanonicalClients = await client.query(`select id::text,coalesce(merged_into_id,id)::text as "resolvedId",
+        canonical_name as name,name_key as "nameKey" from crm_atendimento.canonical_clients`)
+    const persistedAttendanceLinks = enrichAttendanceLinks(plan, currentCanonicalClients.rows)
+    await insertJsonChunks(client, persistedAttendanceLinks.map((item) => ({
         app_registration_id: item.registrationId, client_id: item.attendanceClientId, method: item.method,
         confidence: item.confidence, status: item.status, evidence: item.evidence, run_id: runId,
     })), `insert into crm_atendimento.app_registration_attendance_links(
@@ -147,16 +154,25 @@ async function persistPlan(client, { plan, attendanceLinks, canonicalClients, cu
             status=case when crm_atendimento.app_registration_attendance_links.status in ('confirmed','rejected') then crm_atendimento.app_registration_attendance_links.status else excluded.status end,
             evidence=excluded.evidence,run_id=excluded.run_id,updated_at=now()`)
 
-    const existingAttendanceCaixa = await client.query(`select coalesce(c.merged_into_id,l.client_id)::text as "attendanceClientId",
+    const [persistedRegistrations, persistedCanonical, persistedCustomers, persistedRegistrationCaixa, persistedRegistrationAttendance, persistedAttendanceCaixa] = await Promise.all([
+        client.query(`select source_client_id as id,canonical_name as name from crm_atendimento.app_client_registrations`),
+        client.query(`select coalesce(merged_into_id,id)::text as id,canonical_name as name from crm_atendimento.canonical_clients`),
+        client.query(`select id::text as id,name from crm_caixa.customers`),
+        client.query(`select app_registration_id as "registrationId",caixa_customer_id::text as "caixaCustomerId",status
+            from crm_atendimento.app_registration_caixa_links`),
+        client.query(`select app_registration_id as "registrationId",client_id::text as "attendanceClientId",status
+            from crm_atendimento.app_registration_attendance_links`),
+        client.query(`select coalesce(c.merged_into_id,l.client_id)::text as "attendanceClientId",
             l.caixa_customer_id::text as "caixaCustomerId",l.status from crm_atendimento.client_caixa_links l
-        join crm_atendimento.canonical_clients c on c.id=l.client_id`)
+            join crm_atendimento.canonical_clients c on c.id=l.client_id`),
+    ])
     const components = buildConfirmedGlobalIdentityComponents({
-        registrations: plan.registrations,
-        canonicalClients: canonicalClients.map((item) => ({ id: item.resolvedId, name: item.name })),
-        caixaCustomers: customers,
-        registrationCaixaLinks: plan.registrationCaixaLinks,
-        registrationAttendanceLinks: attendanceLinks,
-        attendanceCaixaLinks: existingAttendanceCaixa.rows,
+        registrations: persistedRegistrations.rows,
+        canonicalClients: persistedCanonical.rows,
+        caixaCustomers: persistedCustomers.rows,
+        registrationCaixaLinks: persistedRegistrationCaixa.rows,
+        registrationAttendanceLinks: persistedRegistrationAttendance.rows,
+        attendanceCaixaLinks: persistedAttendanceCaixa.rows,
     })
     for (const component of components) {
         const identity = await client.query(`insert into crm_atendimento.global_client_identities(component_key,canonical_name,source_types,last_run_id)
@@ -182,7 +198,7 @@ try {
         const client = await pool.connect()
         try {
             await client.query('begin')
-            persisted = await persistPlan(client, { plan, attendanceLinks, canonicalClients: input.canonicalClients, customers: input.customers, sourceFile: inputFile })
+            persisted = await persistPlan(client, { plan, sourceFile: inputFile })
             await client.query('commit')
         } catch (error) {
             await client.query('rollback')

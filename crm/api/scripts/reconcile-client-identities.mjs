@@ -1,5 +1,6 @@
 import pg from 'pg'
 import { buildClientIdentityPlan } from '../server/atendimento/clientIdentity.js'
+import { IDENTITY_GRAPH_LOCK_KEY } from '../server/atendimento/identityReviewWorkflow.js'
 
 const apply = process.argv.includes('--apply')
 const databaseUrl = String(process.env.DATABASE_URL || '').trim()
@@ -101,6 +102,7 @@ async function insertJsonChunks(client, values, sql) {
 }
 
 async function persistPlan(client, plan) {
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
     await client.query(`select pg_advisory_xact_lock(hashtext('crm_atendimento.client_identity_reconciliation'))`)
     for (const statement of schemaStatements) await client.query(statement)
     const run = await client.query(`insert into crm_atendimento.client_identity_runs(mode, summary) values('apply', $1::jsonb) returning id`, [JSON.stringify(plan.summary)])

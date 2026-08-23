@@ -3,6 +3,7 @@ import path from 'node:path'
 import pg from 'pg'
 import { google } from 'googleapis'
 import { buildConfirmedGlobalIdentityComponents } from '../server/atendimento/clientRegistrationIdentity.js'
+import { IDENTITY_GRAPH_LOCK_KEY } from '../server/atendimento/identityReviewWorkflow.js'
 import { buildSupplementalLeadIdentityPlan, buildSupplementalLeadProfiles } from '../server/atendimento/supplementalLeadIdentity.js'
 
 const apply = process.argv.includes('--apply')
@@ -73,7 +74,8 @@ const schemaStatements = [
     `create index if not exists supplemental_lead_profile_caixa_status_idx on crm_atendimento.supplemental_lead_profile_caixa_links(status, confidence desc)`,
 ]
 
-async function persist(client, { plan, input }) {
+async function persist(client, { plan }) {
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
     await client.query(`select pg_advisory_xact_lock(hashtext('crm_atendimento.supplemental_lead_reconciliation'))`)
     for (const statement of schemaStatements) await client.query(statement)
     const run = await client.query(`insert into crm_atendimento.supplemental_lead_import_runs(source_sheet_id,summary) values($1,$2::jsonb) returning id`, [spreadsheetId, JSON.stringify(plan.summary)])
@@ -91,11 +93,34 @@ async function persist(client, { plan, input }) {
          select x.profile_id,x.caixa_customer_id::uuid,x.method,x.confidence,x.status,x.evidence,x.run_id::uuid from jsonb_to_recordset($1::jsonb) as x(profile_id text,caixa_customer_id text,method text,confidence numeric,status text,evidence jsonb,run_id text)
          on conflict(source_profile_id,caixa_customer_id) do update set method=excluded.method,confidence=excluded.confidence,status=case when crm_atendimento.supplemental_lead_profile_caixa_links.status in ('confirmed','rejected') then crm_atendimento.supplemental_lead_profile_caixa_links.status else excluded.status end,evidence=excluded.evidence,run_id=excluded.run_id,updated_at=now()`)
 
-    const [currentAppLinks, currentCaixaLinks] = await Promise.all([
+    const [currentProfiles, currentRegistrations, currentCanonical, currentCustomers,
+        currentRegistrationCaixa, currentRegistrationAttendance, currentAttendanceCaixa,
+        currentAppLinks, currentCaixaLinks] = await Promise.all([
+        client.query(`select source_profile_id as id,canonical_name as name from crm_atendimento.supplemental_lead_profiles`),
+        client.query(`select source_client_id as id,canonical_name as name from crm_atendimento.app_client_registrations`),
+        client.query(`select coalesce(merged_into_id,id)::text as id,canonical_name as name from crm_atendimento.canonical_clients`),
+        client.query(`select id::text as id,name from crm_caixa.customers`),
+        client.query(`select app_registration_id as "registrationId",caixa_customer_id::text as "caixaCustomerId",status
+            from crm_atendimento.app_registration_caixa_links`),
+        client.query(`select app_registration_id as "registrationId",client_id::text as "attendanceClientId",status
+            from crm_atendimento.app_registration_attendance_links`),
+        client.query(`select coalesce(c.merged_into_id,l.client_id)::text as "attendanceClientId",
+            l.caixa_customer_id::text as "caixaCustomerId",l.status from crm_atendimento.client_caixa_links l
+            join crm_atendimento.canonical_clients c on c.id=l.client_id`),
         client.query(`select source_profile_id as "profileId",app_registration_id as "registrationId",status from crm_atendimento.supplemental_lead_profile_app_links`),
         client.query(`select source_profile_id as "profileId",caixa_customer_id::text as "caixaCustomerId",status from crm_atendimento.supplemental_lead_profile_caixa_links`),
     ])
-    const components = buildConfirmedGlobalIdentityComponents({ registrations: input.apps, leadProfiles: plan.profiles, canonicalClients: input.canonicalClients, caixaCustomers: input.customers, registrationCaixaLinks: input.appCaixa, registrationAttendanceLinks: input.appAttendance, attendanceCaixaLinks: input.attendanceCaixa, leadProfileRegistrationLinks: currentAppLinks.rows, leadProfileCaixaLinks: currentCaixaLinks.rows })
+    const components = buildConfirmedGlobalIdentityComponents({
+        registrations: currentRegistrations.rows,
+        leadProfiles: currentProfiles.rows,
+        canonicalClients: currentCanonical.rows,
+        caixaCustomers: currentCustomers.rows,
+        registrationCaixaLinks: currentRegistrationCaixa.rows,
+        registrationAttendanceLinks: currentRegistrationAttendance.rows,
+        attendanceCaixaLinks: currentAttendanceCaixa.rows,
+        leadProfileRegistrationLinks: currentAppLinks.rows,
+        leadProfileCaixaLinks: currentCaixaLinks.rows,
+    })
     await client.query(`delete from crm_atendimento.global_client_identity_members where source_type='lead_profile'`)
     for (const component of components) {
         // This legacy column references app_registration_import_runs, not the
@@ -123,7 +148,7 @@ try {
         await fs.access(checkpointFile)
         console.error('Persisting supplemental profiles and confirmed identity components...')
         const client = await pool.connect()
-        try { await client.query('begin'); persisted = await persist(client, { plan, input }); await client.query('commit') } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
+        try { await client.query('begin'); persisted = await persist(client, { plan }); await client.query('commit') } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
     }
     await fs.mkdir(outputDirectory, { recursive: true })
     const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-')

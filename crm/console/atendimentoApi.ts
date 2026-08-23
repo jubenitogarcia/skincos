@@ -887,7 +887,11 @@ export type CommercialProfileDetail = {
 export type ClientIdentityReviewItem = {
   id: string
   type: 'attendance_name_merge' | 'attendance_caixa' | 'app_attendance' | 'app_caixa' | 'lead_app' | 'lead_caixa'
-  status: 'pending' | 'suggested' | 'ambiguous'
+  sourceId: string
+  targetId: string
+  status: 'pending' | 'suggested' | 'ambiguous' | 'confirmed' | 'rejected'
+  version: string
+  decisionState: 'resolved' | 'stale' | null
   confidence: number
   primaryName: string
   secondaryName: string
@@ -895,7 +899,34 @@ export type ClientIdentityReviewItem = {
   context: Record<string, unknown>
 }
 
-export type ClientIdentityReviewQueue = { total: number; limit: number; offset: number; items: ClientIdentityReviewItem[] }
+export type ClientIdentityReviewQueue = {
+  total: number
+  limit: number
+  offset: number
+  items: ClientIdentityReviewItem[]
+  workflow?: { writesReady: boolean }
+}
+
+export type ClientIdentityReviewDecision = {
+  id: string
+  state: 'confirmed' | 'rejected' | 'reversed'
+  sourceVersion: string
+  reversesDecisionId?: string
+}
+
+export type ClientIdentityMaterialization = {
+  id: string
+  createdAt?: string
+  summary: {
+    membersMoved?: number
+    sourceIdentityId?: string
+    targetIdentityId?: string
+    survivorIdentityId?: string
+    retiredIdentityId?: string | null
+    manualCanonicalMerge?: { sourceClientId: string; survivorClientId: string } | null
+    [key: string]: unknown
+  }
+}
 
 export function fetchCommercialOverview(filters: { asOf?: string; unit?: string; segment?: string; priority?: string; q?: string; limit?: number; offset?: number } = {}) {
   const params = new URLSearchParams()
@@ -904,11 +935,37 @@ export function fetchCommercialOverview(filters: { asOf?: string; unit?: string;
   return api<CommercialOverview>(`/commercial/overview${qs ? `?${qs}` : ''}`)
 }
 
-export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityReviewItem['type']; q?: string; limit?: number; offset?: number } = {}) {
+export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityReviewItem['type']; q?: string; limit?: number; offset?: number; includeResolved?: boolean } = {}) {
   const params = new URLSearchParams()
   Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)) })
   const qs = params.toString()
   return api<ClientIdentityReviewQueue>(`/commercial/review${qs ? `?${qs}` : ''}`)
+}
+
+export function decideClientIdentityReview(type: ClientIdentityReviewItem['type'], payload: {
+  sourceId: string
+  targetId: string
+  expectedVersion: string
+  decision: 'confirmed' | 'rejected'
+  reason: string
+  survivorClientId?: string
+}) {
+  return api<{ decision: ClientIdentityReviewDecision; materialization: ClientIdentityMaterialization }>(
+    `/commercial/review/${encodeURIComponent(type)}/decision`,
+    { method: 'POST', body: payload },
+  )
+}
+
+export function undoClientIdentityReview(type: ClientIdentityReviewItem['type'], payload: {
+  sourceId: string
+  targetId: string
+  expectedVersion: string
+  reason: string
+}) {
+  return api<{ decision: ClientIdentityReviewDecision; materialization: ClientIdentityMaterialization }>(
+    `/commercial/review/${encodeURIComponent(type)}/undo`,
+    { method: 'POST', body: payload },
+  )
 }
 
 export function fetchCommercialProfile(identityId: string, filters: { asOf?: string; unit?: string } = {}) {
