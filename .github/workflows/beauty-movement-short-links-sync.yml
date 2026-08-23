@@ -321,7 +321,7 @@ jobs:
               errorKeys: diagnosticErrors.slice(0, 3).map((error) => Object.keys(error ?? {}).sort()),
               errorMessages: diagnosticErrors.slice(0, 3).map((error) => scrub(error?.message ?? error?.text ?? error?.error ?? 'unknown')),
             }));
-            NODE
+          NODE
             exit 1
           fi
 
