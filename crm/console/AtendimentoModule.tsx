@@ -4,7 +4,9 @@ import { DragDropContext, Draggable, Droppable, type DraggableProvidedDragHandle
 import {
   AlertTriangle,
   AreaChart as AreaChartIcon,
+  ArrowDown,
   ArrowDownToLine,
+  ArrowUp,
   ArrowUpToLine,
   BarChart3,
   Calculator,
@@ -165,6 +167,8 @@ const panelClass = 'border-slate-800/80 bg-slate-950/60 shadow-[0_20px_80px_rgba
 const ATENDIMENTO_METRIC_LAYOUT_KEY = 'skincos.atendimento.layout.metrics.v2'
 const ATENDIMENTO_CHART_LAYOUT_KEY = 'skincos.atendimento.layout.charts.v3'
 const ATENDIMENTO_ANALYSIS_EXPANDED_KEY = 'skincos.atendimento.analysis.expanded.v1'
+const ATENDIMENTO_RECORDS_EXPANDED_KEY = 'skincos.atendimento.records.expanded.v1'
+const ATENDIMENTO_CHARTS_EXPANDED_KEY = 'skincos.atendimento.charts.expanded.v1'
 const ATTENDANCE_PAGE_SIZE = 50
 const DEFAULT_UNIT_LEGEND = [
   { slug: 'novo-hamburgo', name: 'Novo Hamburgo' },
@@ -209,6 +213,7 @@ type MetricTooltipSpec = {
   what: string
   calculation: string
   usage: string
+  formula?: string
   detailPresentation?: 'compact' | 'doctors' | 'interval'
   details?: Array<{
     label: string
@@ -469,13 +474,21 @@ function metricProgressClass(tone: AtendimentoMetricTone) {
 }
 
 function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
-  if (info.details?.length) {
-    const presentation = info.detailPresentation || 'compact'
-    return (
-      <div className="space-y-2 text-left">
-        <div className="max-h-[22rem] space-y-1.5 overflow-y-auto pr-1">
+  const presentation = info.detailPresentation || 'compact'
+  const formula = info.formula || info.calculation
+  const hasCurrentCalculation = info.calculation !== formula
+  return (
+    <div className="space-y-2 text-left">
+      <p className="leading-snug text-slate-300">{info.what} {info.usage}</p>
+      <div className="rounded-lg border border-slate-700/75 bg-slate-900/55 px-2 py-1.5">
+        <span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">Fórmula</span>
+        <span className="mt-0.5 block font-medium leading-snug text-slate-100">{formula}</span>
+        {hasCurrentCalculation ? <span className="mt-1 block leading-snug text-slate-400">Aplicação atual: {info.calculation}</span> : null}
+      </div>
+      {info.details?.length ? (<>
+        <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-700/75 bg-slate-900/45 pr-1">
           {info.details.map((detail) => (
-            <div key={`${detail.label}:${detail.value}`} className="rounded border border-slate-700/70 bg-slate-900/50 px-2 py-1.5">
+            <div key={`${detail.label}:${detail.value}`} className="border-b border-slate-700/60 px-2 py-1.5 last:border-b-0">
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
                   {presentation === 'doctors' && detail.isProfessional ? (
@@ -504,14 +517,7 @@ function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
             Juntos, esses componentes definem a largura das faixas: desvio padrão × multiplicador. O multiplicador é escolhido pela homogeneidade do período.
           </p>
         ) : null}
-      </div>
-    )
-  }
-  return (
-    <div className="space-y-1 text-left">
-      <div><span className="font-semibold text-slate-100">O que é:</span> {info.what}</div>
-      <div><span className="font-semibold text-slate-100">Cálculo:</span> {info.calculation}</div>
-      <div><span className="font-semibold text-slate-100">Uso:</span> {info.usage}</div>
+      </>) : null}
     </div>
   )
 }
@@ -573,12 +579,7 @@ function ConversionMultiplierDetails({
   }
   const selectedCounts = optimization.optimalPlateau?.counts || { level0: 0, level1: 0, level2: 0, level3: 0 }
   const status = CONVERSION_STATUS_COPY[optimization.statusCode || ''] || CONVERSION_STATUS_COPY.BEST_EFFORT
-  const selectedTotal = Math.max(0, selectedCounts.level0 + selectedCounts.level1 + selectedCounts.level2 + selectedCounts.level3)
   const selectedHomogeneity = Number(optimization.optimalPlateau?.homogeneityScore ?? optimization.homogeneityScore ?? 0)
-  const groupedDistribution = CONVERSION_DISTRIBUTION_GROUP_VISUAL.map((group) => ({
-    ...group,
-    count: group.levels.reduce((total, level) => total + selectedCounts[`level${level}` as keyof typeof selectedCounts], 0),
-  }))
   const calculationBasis = (
     <div className="mt-2 border-t border-slate-700/80 pt-2 text-[10px] text-slate-300">
       <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-500">Base da seleção</div>
@@ -688,38 +689,30 @@ function ConversionMultiplierDetails({
           ) : (
             <div className="rounded-xl border border-amber-400/20 bg-amber-400/8 px-3 py-4 text-xs text-amber-100">Multiplicador não aplicável para este período.</div>
           )}
-          <div className="border-t border-slate-800 pt-3">
-            <div className="grid grid-cols-2 gap-1.5" data-testid="atendimento-multiplier-distribution-groups">
-              {groupedDistribution.map((group) => {
-                const proportion = selectedTotal > 0 ? group.count / selectedTotal : 0
-                const GroupIcon = group.icon
-                return (
-                  <TooltipLabel key={group.key} label={group.label} description={`${group.label}: ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(proportion)}. ${group.levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(selectedCounts[`level${level}` as keyof typeof selectedCounts])}/${formatNumberBR(selectedTotal)}`).join(' · ')}.`}>
-                    <span className="cursor-help rounded-lg border border-slate-800 bg-slate-900/45 px-2 py-1.5">
-                      <span className={`flex items-center gap-1 ${group.tone} text-[11px] font-semibold`}>
-                        <GroupIcon className="h-3 w-3" aria-hidden="true" />
-                        <span>{group.label}: {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}</span>
-                      </span>
-                      <span className="mt-1 grid gap-0.5" data-testid={`atendimento-multiplier-group-${group.key}-levels`} aria-label={`${group.label}: ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}; ${group.levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(selectedCounts[`level${level}` as keyof typeof selectedCounts])}/${formatNumberBR(selectedTotal)}`).join('; ')}`}>
-                        {group.levels.map((level) => {
-                          const LevelIcon = CONVERSION_METRIC_ICON_BY_KEY[`level${level}` as ConversionMetricKey]
-                          const levelCount = selectedCounts[`level${level}` as keyof typeof selectedCounts]
-                          return (
-                            <span key={level} className={`flex items-center gap-1 ${group.tone} text-[10px] tabular-nums`}>
-                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-md border border-current/30 bg-slate-950/35"><LevelIcon className="h-2.5 w-2.5" /></span>
-                              <span>{conversionLevelVisual(level).label}: {formatNumberBR(levelCount)}/{formatNumberBR(selectedTotal)}</span>
-                            </span>
-                          )
-                        })}
-                      </span>
-                    </span>
-                  </TooltipLabel>
-                )
-              })}
-            </div>
-          </div>
     </div>
   )
+}
+
+function MultiplierDistributionMetric({ optimization }: { optimization: NonNullable<ConversionRankingSection['optimization']> }) {
+  const counts = optimization.optimalPlateau?.counts || { level0: 0, level1: 0, level2: 0, level3: 0 }
+  const total = Math.max(0, counts.level0 + counts.level1 + counts.level2 + counts.level3)
+  const groups = CONVERSION_DISTRIBUTION_GROUP_VISUAL.map((group) => ({
+    ...group,
+    count: group.levels.reduce((sum, level) => sum + counts[`level${level}` as keyof typeof counts], 0),
+  }))
+  const description = (
+    <div className="space-y-2">
+      <p className="leading-snug text-slate-300">Distribuição dos doutores entre os níveis definidos pelos limites e pela linha de corte. Consulte cada faixa sem alongar o detalhamento do Intervalo.</p>
+      <div className="rounded-lg border border-slate-700/75 bg-slate-900/55 px-2 py-1.5"><span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">Fórmula</span><span className="mt-0.5 block font-medium text-slate-100">proporção da faixa = doutores no nível ÷ doutores elegíveis</span></div>
+      <div className="overflow-hidden rounded-lg border border-slate-700/75 bg-slate-900/45">
+        {groups.map((group) => {
+          const proportion = total > 0 ? group.count / total : 0
+          return <div key={group.key} className="border-b border-slate-700/60 px-2 py-1.5 last:border-b-0"><div className={`font-semibold ${group.tone}`}>{group.label}: {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}</div><div className="mt-0.5 text-slate-400">{group.levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(counts[`level${level}` as keyof typeof counts])}/${formatNumberBR(total)}`).join(' · ')}</div></div>
+        })}
+      </div>
+    </div>
+  )
+  return <TooltipLabel label="Faixas e níveis" description={description} contentClassName="w-[min(26rem,calc(100vw-2rem))] max-w-none"><button type="button" className="flex min-w-[12rem] items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-slate-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60" data-testid="atendimento-multiplier-distribution-trigger"><span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${metricToneClass('violet')}`}><Divide className="h-3 w-3" /></span><span className="min-w-0"><span className="block text-[11px] font-semibold text-slate-200">Faixas e níveis</span><span className="block text-[10px] text-slate-500">{formatNumberBR(total)} doutores elegíveis</span></span><Info className="ml-auto h-3 w-3 shrink-0 text-slate-500" /></button></TooltipLabel>
 }
 
 function MetricGroupContent({
@@ -755,9 +748,10 @@ function MetricGroupContent({
         ? 'interval'
         : 'compact'
     const componentTooltip: MetricTooltipSpec | undefined = componentRows.length ? {
-      what: `Componentes usados para calcular ${row.label}.`,
+      what: `Insumos que compõem ${row.label}.`,
       calculation: row.tooltip?.calculation || row.calculation || 'Confira os valores atuais de cada insumo abaixo.',
-      usage: 'Clique no subtítulo novamente para manter esta conferência aberta.',
+      formula: row.tooltip?.formula || row.tooltip?.calculation || row.calculation,
+      usage: 'Os valores atuais aparecem reunidos abaixo.',
       detailPresentation,
       details: componentRows.map((component) => ({
         label: component.label,
@@ -769,12 +763,21 @@ function MetricGroupContent({
         isProfessional: component.key.includes(':doctor:'),
       })),
     } : undefined
-    const multiplierDescription = row.key === 'interval' && componentTooltip && multiplierOptimization ? (
-      <div className="space-y-3">
-        <MetricTooltipContent info={componentTooltip} />
-        <div className="border-t border-slate-700/80 pt-3">
-          <ConversionMultiplierDetails optimization={multiplierOptimization} />
-        </div>
+    const metricTooltipInfo: MetricTooltipSpec | undefined = row.tooltip ? {
+      ...row.tooltip,
+      formula: row.tooltip.formula || row.tooltip.calculation,
+      calculation: row.calculation || row.tooltip.calculation,
+      detailPresentation,
+      details: componentTooltip?.details,
+    } : componentTooltip
+    const metricTooltipDescription = metricTooltipInfo ? (
+      <div className="space-y-2">
+        <MetricTooltipContent info={metricTooltipInfo} />
+        {row.key === 'interval' && multiplierOptimization ? (
+          <div className="border-t border-slate-700/80 pt-3">
+            <ConversionMultiplierDetails optimization={multiplierOptimization} />
+          </div>
+        ) : null}
       </div>
     ) : undefined
     const rowContent = (
@@ -795,9 +798,9 @@ function MetricGroupContent({
           </span>
         )}
         <div className={`min-w-0 ${horizontal ? 'flex-none' : 'flex-1'}`}>
-          <span className={`inline-flex max-w-full items-center gap-1 truncate ${isDetail ? 'text-[10px] font-medium text-slate-500' : `text-[11px] ${isChild ? 'font-medium text-slate-400' : 'font-semibold text-slate-200'}`} leading-tight`}>
-            <span className="truncate">{row.label}</span>
-            {row.tooltip ? <Info className="h-2.5 w-2.5 shrink-0 text-slate-500" /> : null}
+          <span className={`relative inline-flex max-w-full overflow-visible pr-2.5 ${isDetail ? 'text-[10px] font-medium text-slate-500' : `text-[11px] ${isChild ? 'font-medium text-slate-400' : 'font-semibold text-slate-200'}`} leading-tight`}>
+            <span className="min-w-0 truncate">{row.label}</span>
+            {row.tooltip ? <Info className="pointer-events-none absolute right-0 -top-0.5 h-2 w-2 text-slate-500" /> : null}
           </span>
         </div>
         <div className={`shrink-0 ${isDetail ? 'text-[10px] font-medium text-slate-400' : `text-[11px] font-semibold ${isChild ? 'text-slate-200' : 'text-white'}`}`}>{row.value}</div>
@@ -805,23 +808,7 @@ function MetricGroupContent({
     )
     return (
       <div key={row.key} className="min-w-0">
-        <div className="min-w-0">{row.tooltip ? <MetricTooltip label={row.label} info={row.tooltip}>{rowContent}</MetricTooltip> : rowContent}</div>
-        {row.calculation ? (
-          <div className={`${horizontal ? 'mt-0.5 text-center' : 'ml-7 mt-0.5'} min-w-0 text-[9px] leading-snug text-slate-500`}>
-            {componentTooltip ? (
-              <MetricTooltip
-                label={`Componentes de ${row.label}`}
-                info={componentTooltip}
-                description={multiplierDescription}
-                contentClassName={multiplierDescription ? 'w-[min(42rem,calc(100vw-2rem))] max-w-none' : detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'max-w-[22rem]'}
-              >
-                <div className="inline-flex max-w-full cursor-help rounded-sm px-0.5 transition hover:bg-slate-800/70 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60">
-                  {row.calculation.split('=')[0].trim()}
-                </div>
-              </MetricTooltip>
-            ) : row.calculation.split('=')[0].trim()}
-          </div>
-        ) : null}
+        <div className="min-w-0">{metricTooltipInfo ? <MetricTooltip label={row.label} info={metricTooltipDescription ? undefined : metricTooltipInfo} description={metricTooltipDescription} contentClassName="w-[min(26rem,calc(100vw-2rem))] max-w-none">{rowContent}</MetricTooltip> : rowContent}</div>
       </div>
     )
   }
@@ -1112,8 +1099,8 @@ const CONVERSION_METRIC_ICON_BY_KEY: Record<ConversionMetricKey, LucideIcon> = {
   lowerRatio: Crosshair,
   innerRatio: Percent,
   outerRatio: Divide,
-  lowerSide: ArrowDownToLine,
-  upperSide: ArrowUpToLine,
+  lowerSide: ArrowDown,
+  upperSide: ArrowUp,
   centerShare: Target,
   extremesShare: Divide,
   ratioDivisor: Sigma,
@@ -1215,6 +1202,7 @@ function buildMetricTooltip(
     what: overrides?.what || definition.description,
     calculation: overrides?.calculation || formula || definition.calculation,
     usage: overrides?.usage || definition.usage,
+    formula: overrides?.formula || definition.calculation,
   }
 }
 
@@ -1437,7 +1425,6 @@ function ConversionDoctorBandsContent({
   optimization,
   detailGroups,
   isAggregate = false,
-  subtitle,
 }: {
   unitName: string
   doctors: ConversionDoctorMetric[]
@@ -1446,7 +1433,6 @@ function ConversionDoctorBandsContent({
   optimization?: ConversionRankingSection['optimization']
   detailGroups: Array<{ key: string; label: string; tooltip: MetricTooltipSpec; rows: AtendimentoMetricGroupRow[]; hierarchy?: AtendimentoMetricHierarchyNode[] }>
   isAggregate?: boolean
-  subtitle: string
 }) {
   const cutLine = Number(metrics.cutLine?.weekValue || 0)
   const interval = Number(metrics.interval?.weekValue || 0)
@@ -1840,13 +1826,6 @@ function ConversionDoctorBandsContent({
   return (
     <div className="space-y-3 pt-0.5" data-testid="atendimento-conversion-distribution">
       <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-3">
-          <div className="mb-3 flex flex-col items-center justify-center text-center">
-            <span className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border ${metricToneClass('violet')}`} aria-hidden="true">
-              <Gauge className="h-4 w-4" />
-            </span>
-            <div className="mt-1 text-sm font-semibold leading-tight text-white">Desempenho por doutor</div>
-            <div className="mt-0.5 text-[11px] leading-tight text-slate-400">{subtitle}</div>
-          </div>
           {detailGroups.map((group) => (
             <div key={group.key} className="min-w-0">
               <MetricGroupContent
@@ -1857,6 +1836,7 @@ function ConversionDoctorBandsContent({
               />
             </div>
           ))}
+          {optimization ? <div className="mt-2 flex justify-center"><MultiplierDistributionMetric optimization={optimization} /></div> : null}
           <div className="my-3 border-t border-slate-800/80" />
           <div
             ref={chartHoverRef}
@@ -2148,6 +2128,20 @@ export function AtendimentoModule() {
       return false
     }
   })
+  const [attendancesExpanded, setAttendancesExpanded] = useState(() => {
+    try {
+      return typeof window === 'undefined' || window.localStorage.getItem(ATENDIMENTO_RECORDS_EXPANDED_KEY) !== 'false'
+    } catch {
+      return true
+    }
+  })
+  const [chartsExpanded, setChartsExpanded] = useState(() => {
+    try {
+      return typeof window === 'undefined' || window.localStorage.getItem(ATENDIMENTO_CHARTS_EXPANDED_KEY) !== 'false'
+    } catch {
+      return true
+    }
+  })
   const [localMirrorStatus, setLocalMirrorStatus] = useState<AtendimentoLocalMirrorStatus | null>(null)
   const loadingMoreRowsRef = React.useRef(false)
   const conversionReportCacheRef = React.useRef(new Map<string, AtendimentoManagementConversionReport>())
@@ -2193,6 +2187,22 @@ export function AtendimentoModule() {
       // ignore localStorage errors
     }
   }, [analysisExpanded])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ATENDIMENTO_RECORDS_EXPANDED_KEY, String(attendancesExpanded))
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [attendancesExpanded])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ATENDIMENTO_CHARTS_EXPANDED_KEY, String(chartsExpanded))
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [chartsExpanded])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -2662,7 +2672,6 @@ export function AtendimentoModule() {
             optimization={conversionSection.optimization}
             detailGroups={distributionGroups}
             isAggregate={conversionSection.isAggregate || conversionSection.comparisonMetric === 'unit-score'}
-            subtitle={filters.unit === 'all' ? 'Ranking por pontos obtidos em cada unidade.' : 'Ranking, totais e faixas do período.'}
           />
         ),
       })
@@ -2978,6 +2987,12 @@ export function AtendimentoModule() {
   const openImport = useCallback(() => {
     if (canManageConsultant) setImportOpen(true)
   }, [canManageConsultant])
+  const updateLayout = useCallback((value: 'expandAll' | 'collapseAll') => {
+    const expanded = value === 'expandAll'
+    setAnalysisExpanded(expanded)
+    setAttendancesExpanded(expanded)
+    setChartsExpanded(expanded)
+  }, [])
   const updateForm = (patch: Partial<AtendimentoForm>) => setForm((prev) => ({ ...prev, ...patch }))
   const headerPeriodOperationalDays = useMemo(() => {
     const sections = managementConversionReport?.doctorRanking?.sections || []
@@ -3013,6 +3028,7 @@ export function AtendimentoModule() {
     refreshManagement: loadManagement,
     openImport,
     openReport: loadReportPreview,
+    updateLayout,
     updateFilters: updateFilter,
   })
 
@@ -3020,18 +3036,23 @@ export function AtendimentoModule() {
     <div className="atendimento-surface flex min-h-full flex-col gap-5 px-3 pb-6 pt-3 text-white sm:px-6">
       {error ? <ErrorBanner message={error} /> : null}
 
-      <section className="space-y-2" data-testid="atendimento-analysis">
+      <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" data-testid="atendimento-analysis">
         <button
           type="button"
-          className="flex w-full items-center justify-between gap-3 px-1 py-1 text-left transition hover:text-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70"
+          className="flex w-full items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5 text-left transition hover:bg-slate-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/70"
           aria-expanded={analysisExpanded}
           aria-controls="atendimento-analysis-content"
           data-testid="atendimento-analysis-toggle"
           onClick={() => setAnalysisExpanded((current) => !current)}
         >
-          <span className="min-w-0">
-            <span className="block text-sm font-semibold text-slate-100">Análise do período</span>
-            <span className="block text-[11px] text-slate-400">Ranking, metas e faixas são carregados somente quando necessários.</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${metricToneClass('violet')}`} aria-hidden="true">
+              <Gauge className="h-4 w-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-slate-100">Análise do período</span>
+              <span className="block text-[11px] text-slate-400">Desempenho por doutor: ranking, totais, metas e faixas do período — carregado somente quando necessário.</span>
+            </span>
           </span>
           <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">
             {analysisExpanded ? 'Recolher' : 'Ver análise'}
@@ -3039,7 +3060,7 @@ export function AtendimentoModule() {
           </span>
         </button>
         {analysisExpanded ? (
-      <div id="atendimento-analysis-content" className="space-y-2" data-testid="atendimento-kpis">
+      <div id="atendimento-analysis-content" className="space-y-2 p-3" data-testid="atendimento-kpis">
         {analysisLoading ? (
           <div className="rounded-xl border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs text-sky-100" role="status" data-testid="atendimento-analysis-loading">
             Carregando análise do período…
@@ -3135,14 +3156,29 @@ export function AtendimentoModule() {
         </DragDropContext>
       </div>
         ) : (
-          <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs leading-relaxed text-slate-400" data-testid="atendimento-analysis-collapsed">
+          <div className="px-3 py-3 text-xs leading-relaxed text-slate-400" data-testid="atendimento-analysis-collapsed">
             A análise detalhada está recolhida. Abra-a para calcular conversão, ranking, metas e faixas para os filtros atuais.
           </div>
         )}
       </section>
 
       <div className="grid min-h-0 flex-1 gap-4">
-        <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" aria-label="Atendimentos">
+        <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" aria-label="Atendimentos" data-testid="atendimento-records">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5 text-left transition hover:bg-slate-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/70"
+            aria-expanded={attendancesExpanded}
+            aria-controls="atendimento-records-content"
+            data-testid="atendimento-records-toggle"
+            onClick={() => setAttendancesExpanded((current) => !current)}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-sky-400/25 bg-sky-400/10 text-sky-200" aria-hidden="true"><Users className="h-4 w-4" /></span>
+              <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Atendimentos</span><span className="block truncate text-[11px] text-slate-400">Registros, pendências e valores do período.</span></span>
+            </span>
+            <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">{attendancesExpanded ? 'Recolher' : 'Ver registros'}{attendancesExpanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}</span>
+          </button>
+          {attendancesExpanded ? <div id="atendimento-records-content">
           {filters.unit === 'all' ? (
             <div className="flex items-center justify-end gap-3 border-b border-slate-800/75 px-3 py-2">
               <div className="flex flex-wrap items-center justify-end gap-1.5" data-testid="atendimento-unit-legend" aria-label="Legenda de unidades">
@@ -3459,9 +3495,12 @@ export function AtendimentoModule() {
               </table>
             </div>
           </div>
+          </div> : (
+            <div className="px-3 py-3 text-xs leading-relaxed text-slate-400" data-testid="atendimento-records-collapsed">A listagem está recolhida. Abra-a para consultar, criar ou ajustar os atendimentos do período.</div>
+          )}
         </section>
 
-        <AtendimentoChartsPanel overview={overview} professionals={references?.professionals || []} slots={chartSlots} onSlotsChange={setChartSlots} />
+        <AtendimentoChartsPanel overview={overview} professionals={references?.professionals || []} slots={chartSlots} onSlotsChange={setChartSlots} expanded={chartsExpanded} onExpandedChange={setChartsExpanded} />
       </div>
 
       <Dialog open={importOpen} onOpenChange={setImportOpen}>

@@ -391,6 +391,7 @@ export default function AppFunctionalNeatlab() {
         const [search, setSearch] = useState('')
         const [conversaHeaderState, setConversaHeaderState] = useState<ConversaHeaderState | null>(null)
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
+        const [atendimentoRefreshPending, setAtendimentoRefreshPending] = useState(false)
         const [atendimentoPeriodPickerOpen, setAtendimentoPeriodPickerOpen] = useState(false)
         const [atendimentoPeriodDraft, setAtendimentoPeriodDraft] = useState({ from: '', to: '' })
         const [escalaHeaderState, setEscalaHeaderState] = useState<EscalaHeaderState | null>(null)
@@ -603,6 +604,17 @@ export default function AppFunctionalNeatlab() {
                         setAtendimentoHeaderState(detail)
                     })
                 }, [])
+
+                const atendimentoHeaderLoading = Boolean(atendimentoHeaderState?.loading || atendimentoRefreshPending)
+                const refreshAtendimento = React.useCallback(() => {
+                    setAtendimentoRefreshPending(true)
+                    dispatchAtendimentoHeaderAction({ type: 'refresh' })
+                    window.setTimeout(() => setAtendimentoRefreshPending(false), 12000)
+                }, [])
+
+                React.useEffect(() => {
+                    if (atendimentoHeaderState?.loading) setAtendimentoRefreshPending(false)
+                }, [atendimentoHeaderState?.loading])
 
                 const dispatchConversaHeaderAction = React.useCallback((action: string) => {
                     try {
@@ -1886,25 +1898,35 @@ export default function AppFunctionalNeatlab() {
                                                         </span>
                                                     ) : null}
                                                 </div>
+                                                <TooltipButton label="Expandir tudo">
+                                                    <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]" onClick={() => dispatchAtendimentoHeaderAction({ type: 'layout', value: 'expandAll' })} aria-label="Expandir tudo" data-testid="atendimento-header-expand-all">
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M7 9l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 14l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                                    </Button>
+                                                </TooltipButton>
+                                                <TooltipButton label="Contrair tudo">
+                                                    <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]" onClick={() => dispatchAtendimentoHeaderAction({ type: 'layout', value: 'collapseAll' })} aria-label="Contrair tudo" data-testid="atendimento-header-collapse-all">
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M7 15l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 10l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                                    </Button>
+                                                </TooltipButton>
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <Button
                                                             size="icon"
                                                             variant="ghost"
                                                             className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
-                                                            onClick={() => dispatchAtendimentoHeaderAction({ type: 'refresh' })}
-                                                            disabled={atendimentoHeaderState?.loading}
+                                                            onClick={refreshAtendimento}
+                                                            disabled={atendimentoHeaderLoading}
                                                             aria-label="Atualizar Atendimento"
                                                             data-testid="atendimento-header-refresh"
                                                         >
-                                                            <RefreshCw className={`size-3.5 ${atendimentoHeaderState?.loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                                            <RefreshCw className={`size-3.5 ${atendimentoHeaderLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                                                         </Button>
                                                     </TooltipTrigger>
                                                     <TooltipContent className="max-w-72">
                                                         <div className="space-y-1">
                                                             <div className="text-[11px] font-medium leading-tight text-white">Atualizar Atendimento</div>
                                                             <div className="space-y-0.5 text-[10px] leading-snug text-slate-300/92">
-                                                                <div>Status: {atendimentoHeaderState?.loading ? 'Atualizando dados' : 'Dados carregados'}</div>
+                                                                <div>Status: {atendimentoHeaderLoading ? 'Atualizando dados' : 'Dados carregados'}</div>
                                                                 <div>Unidade: {atendimentoHeaderState?.activeUnitLabel || 'Todas unidades'}</div>
                                                                 <div>Período: {atendimentoHeaderState?.periodLabel || 'Todos os períodos'}</div>
                                                                 <div>Listagem: {Number(atendimentoHeaderState?.total || 0).toLocaleString('pt-BR')} linhas</div>
