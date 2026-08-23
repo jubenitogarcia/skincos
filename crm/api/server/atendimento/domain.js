@@ -167,6 +167,9 @@ export function consolidateConversionProfessionals(doctors = []) {
         const current = byName.get(key)
         if (current) {
             current.realized += Number(doctor?.realized || 0)
+            if (Number.isFinite(Number(doctor?.workingDays))) {
+                current.workingDays = Number(current.workingDays || 0) + Math.max(0, Number(doctor.workingDays))
+            }
             current.sourceIds.push(String(doctor?.id || '').trim())
             continue
         }
@@ -174,6 +177,9 @@ export function consolidateConversionProfessionals(doctors = []) {
             ...doctor,
             name,
             realized: Number(doctor?.realized || 0),
+            workingDays: Number.isFinite(Number(doctor?.workingDays))
+                ? Math.max(0, Number(doctor.workingDays))
+                : undefined,
             sourceIds: [String(doctor?.id || '').trim()].filter(Boolean),
         })
     }
@@ -969,16 +975,30 @@ export function calculateDoctorConversionRanking({
     tieBreakPolicy = DEFAULT_CONVERSION_TIE_BREAK_POLICY,
     unstableJumpThreshold = 0.5,
 } = {}) {
+    const hasWorkingDayNormalization = (Array.isArray(doctors) ? doctors : [])
+        .some((doctor) => Number.isFinite(Number(doctor?.workingDays)))
     const doctorRows = consolidateConversionProfessionals(doctors)
         .map((doctor) => ({
             ...doctor,
-            realized: Number(doctor?.realized || 0),
+            rawRealized: Number(doctor?.realized || 0),
+            workingDays: Number.isFinite(Number(doctor?.workingDays))
+                ? Math.max(0, Number(doctor.workingDays))
+                : null,
             name: stringifyCellValue(doctor?.name),
         }))
-        .filter((doctor) => doctor.name)
+        .filter((doctor) => doctor.name && (!hasWorkingDayNormalization || Number(doctor.workingDays || 0) > 0))
+        .map((doctor) => ({
+            ...doctor,
+            realized: hasWorkingDayNormalization
+                ? doctor.rawRealized / Number(doctor.workingDays)
+                : doctor.rawRealized,
+        }))
     const values = doctorRows.map((doctor) => doctor.realized)
     const valuesForStatistics = values
-    const rankedDoctorTotal = values.reduce((sum, value) => sum + value, 0)
+    // Keep monetary totals auditable, but use daily production for every
+    // comparative statistic and classification. This makes two doctors with
+    // the same daily output comparable even when they worked different days.
+    const rankedDoctorTotal = doctorRows.reduce((sum, doctor) => sum + Number(doctor.rawRealized || 0), 0)
     const safePeriodAttendanceTotal = Number.isFinite(Number(periodAttendanceTotal))
         ? Number(periodAttendanceTotal)
         : rankedDoctorTotal
@@ -1027,7 +1047,8 @@ export function calculateDoctorConversionRanking({
         return {
             ...doctor,
             weekValue: doctor.realized,
-            totalValue: doctor.realized,
+            totalValue: doctor.rawRealized,
+            dailyValue: doctor.realized,
             average: avg,
             median: medianValue,
             monthlyGoal: monthlyGoalValue,
@@ -1153,8 +1174,8 @@ export function calculateDoctorConversionRanking({
         },
         ratioDivisor,
         formulas: {
-            cutLine: 'linha_corte = (media_periodo * 0.30) + (mediana_periodo * 0.20) + (meta_diaria * 0.50)',
-            interval: 'intervalo = desvio_padrao_amostral(realizado_doutores) * multiplicador_intervalo_otimizado',
+            cutLine: 'linha_corte_diaria = (media_diaria_doutores * 0.30) + (mediana_diaria_doutores * 0.20) + (meta_diaria * 0.50)',
+            interval: 'intervalo_diario = desvio_padrao_amostral(realizado_diario_doutores) * multiplicador_intervalo_otimizado',
             homogeneity: 'homogeneidade = 1 - (4 / 3) * soma((proporcao_nivel - 0.25) ^ 2)',
             ratioDivisor: 'divisor = (level0 * 0) + (level1 * 1) + (level2 * 2) + (level3 * 3)',
         },
