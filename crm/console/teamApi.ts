@@ -9,6 +9,14 @@ export type UnifiedTeamConfig = {
   }
 }
 
+export type UnifiedTeamPagination = {
+  page: number
+  limit: number
+  total: number
+  pages: number
+  hasMore: boolean
+}
+
 export type UnifiedTeamMember = {
   id: string
   fullName: string
