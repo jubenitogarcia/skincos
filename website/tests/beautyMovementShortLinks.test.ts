@@ -24,7 +24,7 @@ test("short links use the final five token characters and preserve the canonical
     assert.equal(plan.links[0]?.destinationUrl, "https://espacofacial.com/BelezaEmMovimento#c=abcdefghijklmnopqrstuvwxyzABCDEFGHijklmno123");
     assert.equal(plan.links[0]?.source, "beauty_movement_short_links_v1");
     assert.match(plan.links[0]?.id ?? "", /^beauty-movement-short-v2-/);
-    assert.match(renderBeautyMovementShortLinkSql(plan), /ON CONFLICT\(id\) DO NOTHING/);
+    assert.match(renderBeautyMovementShortLinkSql(plan), /ON CONFLICT\(site_host, slug_path\) DO NOTHING/);
 });
 
 test("short-link suffix collisions are detected case-insensitively", () => {
