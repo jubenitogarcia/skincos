@@ -10,6 +10,8 @@ export type BeautyMovementActDefinition = {
     id: BeautyMovementAct;
     label: string;
     prompt: string;
+    promptTitle: string;
+    promptSubtitle: string;
     progressLabel: string;
 };
 
@@ -35,19 +37,25 @@ export const BEAUTY_MOVEMENT_ACT_DEFINITIONS: readonly BeautyMovementActDefiniti
     {
         id: "beleza",
         label: "Beleza",
-        prompt: "O que merece mais presença no seu ritual — o gesto que faz você se reconhecer no agora?",
+        prompt: "O que merece mais presença no seu ritual? O gesto que faz você se reconhecer no agora.",
+        promptTitle: "O que merece mais presença no seu ritual?",
+        promptSubtitle: "O gesto que faz você se reconhecer no agora.",
         progressLabel: "Primeira escolha",
     },
     {
         id: "movimento",
         label: "Movimento",
-        prompt: "O que sustenta o seu ritmo — a energia que transforma pequenos gestos em movimento?",
+        prompt: "O que sustenta o seu ritmo? A energia que transforma pequenos gestos em movimento.",
+        promptTitle: "O que sustenta o seu ritmo?",
+        promptSubtitle: "A energia que transforma pequenos gestos em movimento.",
         progressLabel: "Segunda escolha",
     },
     {
         id: "celebracao",
         label: "Celebração",
-        prompt: "O que você quer celebrar neste encontro — a presença, a conexão e o próximo ciclo?",
+        prompt: "O que você quer celebrar neste encontro? A presença, a conexão e o próximo ciclo.",
+        promptTitle: "O que você quer celebrar neste encontro?",
+        promptSubtitle: "A presença, a conexão e o próximo ciclo.",
         progressLabel: "Terceira escolha",
     },
 ] as const;
