@@ -140,6 +140,21 @@ test('flexible creative quality gate requires 3 images, 5 bodies, 5 titles and 5
   );
 });
 
+test('flexible creative quality gate accepts an explicit WhatsApp destination', () => {
+  const payload = {
+    name: 'Botox WhatsApp',
+    object_story_spec: { page_id: '123456789' },
+    asset_feed_spec: {
+      ...flexibleStaticFeed(),
+      link_urls: [{ website_url: 'https://api.whatsapp.com/send' }],
+      call_to_action_types: ['WHATSAPP_MESSAGE'],
+    },
+    creative_sourcing_spec: { source_url: 'https://api.whatsapp.com/send' },
+    degrees_of_freedom_spec: { creative_features_spec: requiredCreativeFeatures() },
+  };
+  assert.doesNotThrow(() => __test.validateCreativePayload(payload, 'creative:whatsapp:unit'));
+});
+
 test('video-only flexible creative accepts the labeled 9:16 contract', () => {
   const label = (prefix, index) => ({ name: `${prefix}_${index}` });
   const payload = {
@@ -266,6 +281,8 @@ test('video upload actions stay part of the gateway capability contract', () => 
 });
 
 test('adset placement readback requests effective WhatsApp and vertical placement fields', () => {
+  assert.match(__test.adsetPlacementFields, /campaign\{id,objective\}/);
+  assert.match(__test.adsetPlacementFields, /optimization_goal/);
   assert.match(__test.adsetPlacementFields, /effective_whatsapp_positions/);
   assert.match(__test.adsetPlacementFields, /effective_facebook_positions/);
   assert.match(__test.adsetPlacementFields, /effective_instagram_positions/);
@@ -372,6 +389,25 @@ test('fresh ad-image propagation is retried only for creative creation', () => {
   assert.equal(unrelatedFailure.classification, 'permanent');
   assert.equal(unrelatedFailure.retryable, false);
   assert.equal(unrelatedFailure.propagation_retry, false);
+});
+
+test('Meta generic retry-later creative failure is retried only for creative creation', () => {
+  const errorBody = {
+    error: {
+      code: 100,
+      error_subcode: 1487390,
+      error_user_msg: 'Ocorreu um erro. Tente novamente mais tarde',
+    },
+  };
+  const creativeFailure = __test.normalizeMetaError(errorBody, 400, new Headers(), 'create_creative');
+  assert.equal(creativeFailure.classification, 'transient');
+  assert.equal(creativeFailure.retryable, true);
+  assert.equal(creativeFailure.creative_retry, true);
+
+  const unrelatedFailure = __test.normalizeMetaError(errorBody, 400, new Headers(), 'get_ad');
+  assert.equal(unrelatedFailure.classification, 'permanent');
+  assert.equal(unrelatedFailure.retryable, false);
+  assert.equal(unrelatedFailure.creative_retry, false);
 });
 
 test('creative creation waits for fresh image hashes and succeeds without duplicating the operation', async () => {

@@ -6,6 +6,7 @@ const GRAPH_TIMEOUT_MS = 60 * 1000;
 const MAX_RETRY_WINDOW_MS = 5 * 60 * 1000;
 const MAX_GRAPH_ATTEMPTS = 3;
 const IMAGE_PROPAGATION_SUBCODE = 2446386;
+const CREATIVE_RETRY_SUBCODE = 1487390;
 const IMAGE_PROPAGATION_BASE_DELAY_MS = 15 * 1000;
 const MAX_AD_PAGES = 20;
 const MAX_ADS = 2000;
@@ -19,6 +20,9 @@ const CREATIVE_READ_FIELDS = Object.freeze([
 ]);
 const ADSET_PLACEMENT_FIELDS = [
   'id',
+  'campaign{id,objective}',
+  'optimization_goal',
+  'destination_type',
   'targeting{publisher_platforms,facebook_positions,instagram_positions,audience_network_positions,whatsapp_positions,effective_publisher_platforms,effective_facebook_positions,effective_instagram_positions,effective_audience_network_positions,effective_whatsapp_positions}',
 ].join(',');
 const ADSET_READ_FIELDS = [
@@ -224,7 +228,7 @@ async function getInventory({ request, env, requestId, decryptToken, writeAudit 
       placementChecks.push({
         adset_id: adsetId,
         destination_group: clean(entry && entry.destination_group),
-        targeting: await readAdsetPlacements(body, adsetId, context),
+        ...await readAdsetPlacements(body, adsetId, context),
       });
     }
     await writeAudit(env, {
@@ -676,7 +680,17 @@ async function readAdsetPlacements(body, adsetId, context) {
     auth,
     context,
   );
-  return sanitizeGraphValue(result.body && result.body.targeting);
+  const adset = asObject(result.body);
+  const campaign = asObject(adset.campaign);
+  return sanitizeGraphValue({
+    targeting: asObject(adset.targeting),
+    // This comes from the live ad set/campaign, not from a manually copied
+    // Token Vault field. Build Jobs uses it to choose a CTA the destination
+    // contract can actually stage.
+    campaign_objective: clean(campaign.objective).toUpperCase(),
+    optimization_goal: clean(adset.optimization_goal).toUpperCase(),
+    destination_type: clean(adset.destination_type).toUpperCase(),
+  });
 }
 
 async function uploadImage(body, context) {
@@ -1226,14 +1240,17 @@ function validateFlexibleCreativePayload(payload, operationKey) {
   if (videoOnly && videoRuleCount !== 2) throw failure('creative_video_only_rule_invalid');
   if (mixed && videoRuleCount !== 1) throw failure('creative_mixed_video_rule_invalid');
   const ctas = safeArray(feed.call_to_action_types).map((entry) => clean(entry).toUpperCase());
-  if (ctas.length !== 1 || ctas[0] !== 'BOOK_NOW') {
-    throw failure('creative_cta_must_be_book_now', { classification: 'permanent', http_status: 400 });
+  if (ctas.length !== 1 || !['BOOK_NOW', 'LEARN_MORE', 'WHATSAPP_MESSAGE'].includes(ctas[0])) {
+    throw failure('creative_cta_type_invalid', { classification: 'permanent', http_status: 400 });
   }
   const primaryUrl = clean(safeArray(feed.link_urls)[0]?.website_url);
   const sourceUrl = clean(asObject(payload.creative_sourcing_spec).source_url);
   let primaryParsed;
   try { primaryParsed = new URL(primaryUrl); } catch { primaryParsed = null; }
-  if (!primaryParsed || primaryParsed.protocol !== 'https:' || isWhatsAppHostname(primaryParsed.hostname) || primaryUrl !== sourceUrl) {
+  const isWhatsAppDestination = Boolean(primaryParsed && primaryParsed.protocol === 'https:' && isWhatsAppHostname(primaryParsed.hostname));
+  const isWebsiteDestination = Boolean(primaryParsed && primaryParsed.protocol === 'https:' && !isWhatsAppDestination && primaryUrl === sourceUrl);
+  if ((ctas[0] === 'WHATSAPP_MESSAGE' && !isWhatsAppDestination) ||
+      (ctas[0] !== 'WHATSAPP_MESSAGE' && !isWebsiteDestination)) {
     throw failure('creative_landing_page_invalid', { classification: 'permanent', http_status: 400 });
   }
   const freedom = asObject(payload.degrees_of_freedom_spec);
@@ -1576,14 +1593,23 @@ function normalizeMetaError(body, status, headers, action = '') {
   // subcode 2446386 (normally classified as permanent), although retrying the
   // same idempotent creative request after a short delay succeeds.
   const propagationRetry = clean(action) === 'create_creative' && code === 100 && subcode === IMAGE_PROPAGATION_SUBCODE;
-  const transient = propagationRetry || error.is_transient === true || status === 408 || status === 429 || status >= 500;
+  // Meta occasionally returns this generic creative-construction subcode while
+  // explicitly asking the caller to retry. It is safe to retry the same
+  // idempotent operation a bounded number of times; do not generalize this to
+  // other code-100 validation failures.
+  const creativeRetry = clean(action) === 'create_creative' &&
+    code === 100 &&
+    subcode === CREATIVE_RETRY_SUBCODE &&
+    /try again later|tente novamente mais tarde/i.test(clean(error.error_user_msg || error.message));
+  const transient = propagationRetry || creativeRetry || error.is_transient === true || status === 408 || status === 429 || status >= 500;
   const auth = [190, 102, 10, 200].includes(code) || status === 401 || status === 403;
-  const permanent = auth || (!propagationRetry && code === 100) || (!transient && status >= 400 && status < 500);
+  const permanent = auth || (!(propagationRetry || creativeRetry) && code === 100) || (!transient && status >= 400 && status < 500);
   return {
     message: redactText(error.error_user_msg || error.message || `Meta Graph HTTP ${status}`),
     classification: auth ? 'auth' : permanent ? 'permanent' : transient ? 'transient' : 'unknown',
     retryable: transient && !permanent,
     propagation_retry: propagationRetry,
+    creative_retry: creativeRetry,
     ambiguous: false,
     http_status: status,
     code,
