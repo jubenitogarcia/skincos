@@ -3688,8 +3688,8 @@ async function queryCommercialProfilesServerPage(pgPool, { asOf, unitSlugs, thre
                 count(*) filter (where frequent)::int as frequent_total,
                 count(*) filter (where balanced_vip)::int as balanced_vip_total,
                 count(*) filter (where reactivation_potential)::int as reactivation_potential_total,
-                count(*) filter (where cardinality(source_types) >= 2)::int as confirmed_multi_source_total,
-                count(*) filter (where cardinality(source_types) < 2)::int as unresolved_single_source_total,
+                count(*) filter (where jsonb_array_length(coalesce(source_types, '[]'::jsonb)) >= 2)::int as confirmed_multi_source_total,
+                count(*) filter (where jsonb_array_length(coalesce(source_types, '[]'::jsonb)) < 2)::int as unresolved_single_source_total,
                 coalesce(sum(lifetime_sales), 0)::numeric as lifetime_sales_total,
                 coalesce(sum(sale_count), 0)::int as sale_count_total
             from filtered
