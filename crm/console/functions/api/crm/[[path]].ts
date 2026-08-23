@@ -1,4 +1,21 @@
 import { copySetCookieHeaders, proxyRequestBody, sanitizeProxyRequestHeaders } from '../../_lib/proxy'
+import { getCrmUser, isLocalDevAuthBypassEnabled } from '../../_lib/crmAuth'
+
+function encodeBase64Url(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function isLoopbackTarget(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase()
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+  } catch {
+    return false
+  }
+}
 
 export async function onRequest(context: any): Promise<Response> {
   const request: Request = context.request
@@ -15,6 +32,19 @@ export async function onRequest(context: any): Promise<Response> {
   targetUrl.search = url.search
 
   const headers = sanitizeProxyRequestHeaders(request.headers)
+
+  // Local auth is intentionally sessionless at the Pages boundary. When the
+  // target is the loopback adapter, pass the synthetic actor explicitly so
+  // local CRUD can be exercised without creating a production-like session.
+  // Hosted/prod targets never receive this header.
+  if (isLoopbackTarget(targetOrigin) && isLocalDevAuthBypassEnabled(context)) {
+    const localUser = await getCrmUser(context)
+    if (localUser) {
+      const csrfToken = String(headers.get('x-csrf-token') || 'local-dev-csrf').trim()
+      headers.set('x-skincos-local-crm-actor', encodeBase64Url(JSON.stringify({ user: localUser, csrfToken })))
+      headers.set('x-skincos-local-crm-csrf', csrfToken)
+    }
+  }
 
   const method = (request.method || 'GET').toUpperCase()
   const body = proxyRequestBody(method, request)

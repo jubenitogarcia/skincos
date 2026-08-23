@@ -4,6 +4,7 @@
 import { resolveIdentityTables } from '../store/d1.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notifications/smtpMailer.js';
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
+import { normalizeEmployeeUsername } from '../policy/employeeOnboarding.js';
 import { normalizeAllowedUnits } from '../../shared/identity-contract/index.js';
 import { syncIdentityWorkforceStatus } from '../../shared/identity-runtime/workforce-onboarding.js';
 
@@ -262,7 +263,7 @@ export async function handleAuthRoutes({
 	        const tableHasColumn = async (tableName, columnName) => {
 	            if (!env?.DB || !tableName || !columnName) return false;
 	            const t = String(tableName);
-	            if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(t)) return false;
+            if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(t)) return false;
 	            try {
 	                const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
 	                const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
@@ -276,6 +277,7 @@ export async function handleAuthRoutes({
 	        const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
 	        const invitesHasModules = await tableHasColumn(invitesTable, 'allowed_modules_json');
 	        const invitesHasInviteeEmail = await tableHasColumn(invitesTable, 'invitee_email');
+	        const invitesHasRequestedUsername = await tableHasColumn(invitesTable, 'requested_username');
 
         const sha256Hex = async (input) => {
 	            const data = new TextEncoder().encode(String(input || ''));
@@ -606,8 +608,9 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: "INVITE_MIGRATION_REQUIRED" }), { status: 503 }, appOrigin);
                 }
 
+                const requestedUsernameColumn = invitesHasRequestedUsername ? ', requested_username' : '';
                 const invite = await env.DB.prepare(
-                    `SELECT id, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked
+                    `SELECT id, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked${requestedUsernameColumn}
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                      LIMIT 1`
@@ -642,8 +645,19 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: "EMAIL_TAKEN" }), { status: 409 }, appOrigin);
                 }
 
-                const base = suggestUsername(name, email);
-                const candidate = await ensureUniqueUsername(base);
+                const invitedUsername = invitesHasRequestedUsername ? normalizeEmployeeUsername(invite.requested_username) : '';
+                let candidate = '';
+                if (invitesHasRequestedUsername && invite.requested_username && !invitedUsername) {
+                    return withCORS(JSON.stringify({ success: false, error: "USERNAME_UNAVAILABLE" }), { status: 409 }, appOrigin);
+                }
+                if (invitedUsername) {
+                    const usernameTaken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(invitedUsername).first();
+                    if (usernameTaken) return withCORS(JSON.stringify({ success: false, error: "USERNAME_UNAVAILABLE" }), { status: 409 }, appOrigin);
+                    candidate = invitedUsername;
+                } else {
+                    const base = suggestUsername(name, email);
+                    candidate = await ensureUniqueUsername(base);
+                }
                 if (!candidate || !validateUsername(candidate)) {
                     return withCORS(JSON.stringify({ success: false, error: "USERNAME_UNAVAILABLE" }), { status: 409 }, appOrigin);
                 }
