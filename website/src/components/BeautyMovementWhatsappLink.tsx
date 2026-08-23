@@ -1,7 +1,7 @@
 "use client";
 
 import { type AnchorHTMLAttributes, type ReactNode, useMemo } from "react";
-import { buildWhatsappRedirectHref } from "@/lib/whatsappTracking";
+import { buildBeautyMovementWhatsappHref, type BeautyMovementWhatsappPlacement } from "@/lib/beautyMovementWhatsapp";
 
 type BeautyMovementWhatsappLinkProps = Omit<
   AnchorHTMLAttributes<HTMLAnchorElement>,
@@ -9,27 +9,8 @@ type BeautyMovementWhatsappLinkProps = Omit<
 > & {
   children: ReactNode;
   message: string;
-  placement: "result" | "conditions";
+  placement: BeautyMovementWhatsappPlacement;
 };
-
-function buildHref(params: {
-  message: string;
-  placement: BeautyMovementWhatsappLinkProps["placement"];
-}): string {
-  return (
-    buildWhatsappRedirectHref({
-      phone: "5551995811008",
-      text: params.message,
-      tracking: {
-        placement: `beauty_movement_${params.placement}`,
-        unitSlug: "novo-hamburgo",
-        source: "beauty-movement",
-        // The redirect identifies the campaign but never receives a location,
-        // attribution context, event id, or personal campaign state.
-      },
-    }) ?? "#"
-  );
-}
 
 /**
  * Uses the existing first-party WhatsApp redirect without invoking the generic
@@ -45,7 +26,7 @@ export default function BeautyMovementWhatsappLink({
   ...rest
 }: BeautyMovementWhatsappLinkProps) {
   const href = useMemo(
-    () => buildHref({ message, placement }),
+    () => buildBeautyMovementWhatsappHref({ message, placement }) ?? "#",
     [message, placement],
   );
 
