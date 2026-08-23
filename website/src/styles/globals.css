@@ -8701,6 +8701,27 @@ video.heroMediaEl {
     grid-template-columns: 1fr
   }
 
+  /* Keep the mobile header inside the viewport when both actions are present. */
+  .navLeft {
+    gap: 10px;
+  }
+
+  .headerActions {
+    gap: 6px;
+  }
+
+  .unitChooserBtn {
+    max-width: 128px;
+    padding: 10px 8px;
+    font-size: 11px;
+  }
+
+  .headerActions .cta--agende {
+    min-width: 116px;
+    padding: 10px 10px;
+    font-size: 11px;
+  }
+
   .doctorDirectoryCard__header {
     grid-template-columns: 1fr;
     align-items: start;
