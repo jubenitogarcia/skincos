@@ -5,6 +5,7 @@ export type CalendarCell = {
 }
 
 export type EscalaProfessional = {
+  id?: string
   name: string
   status: string
   units: string[]
@@ -15,12 +16,14 @@ export type EscalaProfessional = {
   email: string
   instagram: string
   color: string
+  workforceEmployeeId?: string | null
 }
 
 export type EscalaScheduleEntry = {
   date: string
   unit: string
   professional: string
+  professionalId?: string | null
 }
 
 export type EscalaClosedDay = {

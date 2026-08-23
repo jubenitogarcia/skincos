@@ -1,12 +1,16 @@
 import { normalizeAllowedUnits, unknownUnitScopes } from '../../shared/identity-contract/index.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CORPORATE_DOMAIN = 'espacofacial.com';
+const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,39}$/;
 
 export const EMPLOYEE_PROFILES = Object.freeze({
   GESTOR: Object.freeze({ rank: 4, modules: ['ponto', 'atendimento', 'conversa', 'finance', 'insumos'], accountStatus: 'INVITED' }),
   GERENTE: Object.freeze({ rank: 3, modules: ['ponto', 'atendimento', 'insumos'], accountStatus: 'INVITED' }),
-  SUPERVISOR: Object.freeze({ rank: 2, modules: [], accountStatus: 'PENDING_ACCESS' }),
-  INJETOR: Object.freeze({ rank: 1, modules: [], accountStatus: 'PENDING_ACCESS' }),
+  // Every active employee receives an invite and creates their own password.
+  // Ponto is the smallest non-empty scope accepted by the invite contract.
+  SUPERVISOR: Object.freeze({ rank: 2, modules: ['ponto'], accountStatus: 'INVITED' }),
+  INJETOR: Object.freeze({ rank: 1, modules: ['ponto'], accountStatus: 'INVITED' }),
   CONSULTOR: Object.freeze({ rank: 1, modules: ['atendimento'], accountStatus: 'INVITED' }),
 });
 
@@ -23,7 +27,61 @@ function key(value) {
 
 export function normalizeCorporateEmail(value) {
   const email = String(value || '').trim().toLowerCase();
+  return EMAIL_RE.test(email) && email.endsWith(`@${CORPORATE_DOMAIN}`) ? email : '';
+}
+
+export function normalizePersonalEmail(value) {
+  const email = String(value || '').trim().toLowerCase();
   return EMAIL_RE.test(email) ? email : '';
+}
+
+function normalizeNameSlug(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 40);
+}
+
+export function buildCorporateEmail(fullName) {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '';
+  const first = normalizeNameSlug(parts[0]);
+  const last = parts.length > 1 ? normalizeNameSlug(parts[parts.length - 1]) : '';
+  if (!first || (parts.length > 1 && !last)) return '';
+  return `${first}${last}@${CORPORATE_DOMAIN}`;
+}
+
+export function normalizeEmployeeUsername(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._-]+/g, '')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 40);
+  return USERNAME_RE.test(normalized) ? normalized : '';
+}
+
+export function suggestEmployeeUsername(fullName, corporateEmail = '') {
+  const local = String(corporateEmail || '').split('@')[0] || '';
+  const fromEmail = normalizeEmployeeUsername(local);
+  if (fromEmail) return fromEmail;
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  const candidate = normalizeEmployeeUsername(`${parts[0] || ''}${parts.length > 1 ? parts[parts.length - 1] : ''}`);
+  return candidate || '';
+}
+
+export function isAllowedCorporateEmail(fullName, corporateEmail) {
+  const email = normalizeCorporateEmail(corporateEmail);
+  const generated = buildCorporateEmail(fullName);
+  if (!email || !generated) return false;
+  const local = email.slice(0, email.indexOf('@'));
+  const generatedLocal = generated.slice(0, generated.indexOf('@'));
+  return local === generatedLocal || new RegExp(`^${generatedLocal}\\d+$`).test(local);
 }
 
 export function normalizePhone(value) {
@@ -44,15 +102,47 @@ export function displayJobTitle(profile) {
 
 export function validateOnboardingInput(input = {}) {
   const fullName = String(input.fullName ?? input.name ?? '').trim().replace(/\s+/g, ' ');
-  const corporateEmail = normalizeCorporateEmail(input.corporateEmail ?? input.email);
-  const personalEmail = normalizeCorporateEmail(input.personalEmail);
+  const generatedCorporateEmail = buildCorporateEmail(fullName);
+  const rawCorporateEmail = input.corporateEmail ?? input.email;
+  const hasSuppliedCorporateEmail = rawCorporateEmail !== undefined && rawCorporateEmail !== null && String(rawCorporateEmail).trim() !== '';
+  const suppliedCorporateEmail = normalizeCorporateEmail(rawCorporateEmail);
+  const corporateEmail = suppliedCorporateEmail || generatedCorporateEmail;
+  const personalEmail = normalizePersonalEmail(input.personalEmail);
   const mobilePhone = normalizePhone(input.mobilePhone ?? input.phone);
   const invalidUnits = unknownUnitScopes(input.units ?? input.allowedUnits);
   const units = normalizeAllowedUnits(input.units ?? input.allowedUnits);
   const profile = resolveEmployeeProfile(input.jobTitle ?? input.role);
   const department = String(input.department || '').trim().replace(/\s+/g, ' ').slice(0, 120);
-  if (!fullName || !corporateEmail || !personalEmail || !mobilePhone || !department || !profile || !units.length || invalidUnits.length) return null;
-  return { fullName, corporateEmail, personalEmail, mobilePhone, units, department, ...profile };
+  const suppliedUsername = input.username ?? input.requestedUsername;
+  const requestedUsername = suppliedUsername === undefined || suppliedUsername === null || String(suppliedUsername).trim() === ''
+    ? suggestEmployeeUsername(fullName, corporateEmail)
+    : normalizeEmployeeUsername(suppliedUsername);
+  if (
+    !fullName ||
+    !generatedCorporateEmail ||
+    (hasSuppliedCorporateEmail && !suppliedCorporateEmail) ||
+    !corporateEmail ||
+    !isAllowedCorporateEmail(fullName, corporateEmail) ||
+    !personalEmail ||
+    !mobilePhone ||
+    !department ||
+    !profile ||
+    !requestedUsername ||
+    !units.length ||
+    invalidUnits.length
+  ) return null;
+  return {
+    fullName,
+    corporateEmail,
+    generatedCorporateEmail,
+    corporateEmailOverridden: corporateEmail !== generatedCorporateEmail,
+    personalEmail,
+    mobilePhone,
+    requestedUsername,
+    units,
+    department,
+    ...profile,
+  };
 }
 
 export function canCreateEmployee({ actorRole, actorAllowedUnits, targetProfile, units }) {
@@ -73,6 +163,8 @@ export function publicOnboarding(row) {
     id: row.id,
     fullName: row.full_name,
     corporateEmail: row.corporate_email,
+    username: row.requested_username || null,
+    workforceEmployeeId: row.workforce_employee_id || null,
     profile: row.profile,
     jobTitle: row.job_title,
     department: row.department_name,
