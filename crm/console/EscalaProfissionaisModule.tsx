@@ -86,6 +86,20 @@ export function EscalaProfissionaisModule() {
   const { user } = useAuth()
   const roleKey = String(user?.role || '').trim().toUpperCase()
   const canAccess = roleKey === 'GESTOR' || roleKey === 'GERENTE'
+  const [unifiedTeamEnabled, setUnifiedTeamEnabled] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    void fetch('/api/crm/admin/team?mode=config', { credentials: 'include', headers: { accept: 'application/json' } })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => {
+        if (active) setUnifiedTeamEnabled(payload?.data?.enabled === true)
+      })
+      .catch(() => {
+        if (active) setUnifiedTeamEnabled(false)
+      })
+    return () => { active = false }
+  }, [user?.username])
 
   const {
     units,
@@ -1396,30 +1410,39 @@ export function EscalaProfissionaisModule() {
                 </div>
               </div>
 
-              <EscalaTeamPanel
-                activeInjectors={activeInjectors}
-                inactiveInjectors={inactiveInjectors}
-                isBulkSelectionMode={isBulkSelectionMode}
-                savingTeamMember={savingTeamMember}
-                selectedTeamMember={selectedTeamMember}
-                selectedTeamMemberDirty={selectedTeamMemberDirty}
-                selectedTeamMemberDraft={selectedTeamMemberDraft}
-                showInactiveTeamMembers={showInactiveTeamMembers}
-                teamFormMode={teamFormMode}
-                teamLoadError={teamLoadError}
-                onBeginAddTeamMember={beginAddTeamMember}
-                onBeginEditTeamMember={beginEditTeamMember}
-                onCancelBulkSelectionMode={cancelBulkSelectionMode}
-                onCloseTeamPanel={closeTeamPanel}
-                onConfirmBulkSelectionMode={confirmBulkSelectionMode}
-                onEnableBulkSelectionMode={enableBulkSelectionMode}
-                onRetryProfessionals={() => void refreshProfessionals(selectedUnit)}
-                onSaveTeamMember={() => void handleSaveTeamMember()}
-                onSelectTeamMember={selectTeamMember}
-                onToggleInactiveTeamMembers={() => setShowInactiveTeamMembers((prev) => !prev)}
-                onToggleSelectedTeamMemberOption={toggleSelectedTeamMemberOption}
-                onUpdateSelectedTeamMemberField={updateSelectedTeamMemberField}
-              />
+              {unifiedTeamEnabled ? (
+                <div className="flex flex-col gap-3 self-start rounded-2xl border border-emerald-300/20 bg-emerald-500/10 p-4 xl:w-[360px]" data-testid="escala-team-centralized">
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-100/70">Equipe centralizada</div>
+                  <div className="text-sm font-semibold text-white">Gerencie a equipe em Usuários</div>
+                  <p className="text-xs leading-relaxed text-emerald-50/75">A Escala permanece focada em agenda e alocação. Os cadastros, convites e vínculos agora ficam no módulo Usuários.</p>
+                  <a className="inline-flex items-center justify-center rounded-lg border border-emerald-200/30 bg-emerald-200/10 px-3 py-2 text-sm font-medium text-emerald-50 transition hover:bg-emerald-200/20" href="/?module=users">Abrir Usuários</a>
+                </div>
+              ) : (
+                <EscalaTeamPanel
+                  activeInjectors={activeInjectors}
+                  inactiveInjectors={inactiveInjectors}
+                  isBulkSelectionMode={isBulkSelectionMode}
+                  savingTeamMember={savingTeamMember}
+                  selectedTeamMember={selectedTeamMember}
+                  selectedTeamMemberDirty={selectedTeamMemberDirty}
+                  selectedTeamMemberDraft={selectedTeamMemberDraft}
+                  showInactiveTeamMembers={showInactiveTeamMembers}
+                  teamFormMode={teamFormMode}
+                  teamLoadError={teamLoadError}
+                  onBeginAddTeamMember={beginAddTeamMember}
+                  onBeginEditTeamMember={beginEditTeamMember}
+                  onCancelBulkSelectionMode={cancelBulkSelectionMode}
+                  onCloseTeamPanel={closeTeamPanel}
+                  onConfirmBulkSelectionMode={confirmBulkSelectionMode}
+                  onEnableBulkSelectionMode={enableBulkSelectionMode}
+                  onRetryProfessionals={() => void refreshProfessionals(selectedUnit)}
+                  onSaveTeamMember={() => void handleSaveTeamMember()}
+                  onSelectTeamMember={selectTeamMember}
+                  onToggleInactiveTeamMembers={() => setShowInactiveTeamMembers((prev) => !prev)}
+                  onToggleSelectedTeamMemberOption={toggleSelectedTeamMemberOption}
+                  onUpdateSelectedTeamMemberField={updateSelectedTeamMemberField}
+                />
+              )}
             </div>
           </CardContent>
         </Card>
