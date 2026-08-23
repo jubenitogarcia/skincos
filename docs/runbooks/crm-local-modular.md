@@ -22,15 +22,18 @@ abre diretamente o módulo Insumos como Gestor:
 ```
 
 O endereço publicado é gravado em
-`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\thread-previews\gestor\insumos\current.json`.
-Em hosts Windows sem encaminhamento de `localhost` para o WSL, o launcher
-seleciona automaticamente o IPv4 privado do WSL e valida esse host antes de
-abrir o navegador.
+`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\thread-previews\gestor\insumos\current.json` somente quando `state` é `ready`; durante a
+inicialização, `url` permanece `null` e não deve ser usado. A prévia começa
+com a faixa preferencial `25000+`, mas reserva um bundle completo de portas
+livres sob lease compartilhado e registra as portas realmente alocadas no
+mesmo manifesto. Em hosts Windows sem encaminhamento de `localhost` para o
+WSL, o launcher seleciona automaticamente o IPv4 privado do WSL e valida esse
+host pelo Windows antes de abrir o navegador.
 
 Para encerrar somente essa combinação:
 
 ```powershell
-.\scripts\run-shared-codex-shortcut.ps1 -Action CrmModuleStop -CrmRole Gestor -CrmModule insumos
+.\scripts\run-shared-codex-shortcut.ps1 -Action CrmThreadPreview -CrmRole Gestor -CrmModule insumos -CrmThreadPreviewStop
 ```
 
 Use WSL/Ubuntu-24.04 como runtime do agente e terminal integrado. PowerShell permanece como a ponte para atalhos, navegador e estado nativo do Windows.
@@ -66,7 +69,7 @@ wsl.exe -d Ubuntu-24.04 -- bash -lc "node --test scripts/crm-local-module-catalo
 
 ## Isolamento e atualização
 
-Cada combinação usa um `runtimeId` determinístico e uma faixa exclusiva de portas. O estado privado fica em:
+Cada combinação usa um `runtimeId` determinístico e uma faixa exclusiva de portas. Prévia de thread preserva apenas uma faixa preferencial: ela seleciona dinamicamente um bundle completo que não colide com listeners existentes e o serializa por lease privado. O estado privado fica em:
 
 ```text
 C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\instances\<papel>\<módulo>\

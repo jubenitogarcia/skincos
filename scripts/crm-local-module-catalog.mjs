@@ -13,6 +13,7 @@ const LAUNCHER_CONTRACT_FILES = Object.freeze([
   'scripts/run-shared-codex-shortcut.ps1',
   'scripts/run-local-crm.sh',
   'scripts/crm-local-persona-runtime.sh',
+  'scripts/crm-local-port-plan.sh',
   'scripts/crm-local-runtime-policy.mjs',
   'scripts/crm-local-build-state.mjs',
   'scripts/crm-local-module-catalog.mjs',
