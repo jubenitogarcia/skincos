@@ -96,6 +96,7 @@ O layout principal expõe seis atalhos de topo:
 - `Contexto`
 - `CRM – Local`
 - `CRM – Módulos`
+- `CRM – Prévia da Thread`
 - `EF App`
 - `Orb`
 
@@ -132,6 +133,15 @@ Permite escolher somente papel e módulo. O instalador também cria 16 atalhos
 diretos na subpasta `CRM – Módulos`: 14 módulos para Gestor e Atendimento/Ponto
 para Consultor. Portas, PIDs, logs, estado, autenticação e perfil de navegador
 são privados por combinação.
+
+### CRM – Prévia da Thread
+
+Abra o worktree da tarefa no Codex App e use esta ação para montar o seu `HEAD`
+e alterações locais não commitadas em uma fonte imutável privada. A ação se
+recusa a partir do clone compartilhado, mantém uma proveniência com branch, SHA
+e impressão do snapshot e abre o módulo em uma faixa de portas própria (`25000+`),
+sem substituir `CRM – Módulos`. Pelo mesmo menu é possível encerrar somente a
+prévia pertencente àquele worktree.
 
 ### EF App
 
