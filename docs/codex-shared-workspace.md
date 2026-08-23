@@ -42,7 +42,9 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
 3. Validar o runtime nativo do Orb:
 
    ```powershell
-   wsl.exe -d Ubuntu-24.04 -u admin -- bash -lc "/opt/skincos/current/source/scripts/runtime/manage-native-runtime.sh validate"
+   .\scripts\invoke-skincos-wsl.ps1 `
+     -ScriptPath scripts/runtime/manage-native-runtime.sh `
+     -ArgumentList validate
    ```
 
 4. Instalar os atalhos compartilhados:
@@ -55,17 +57,22 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
    `C:\ProgramData`, o instalador cai automaticamente para o Menu Iniciar do
    usuario atual em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Skincos Codex`.
 
-5. Dentro do WSL da conta, rodar o bootstrap da conta humana:
+5. No PowerShell, rodar o bootstrap da conta humana pelo gateway:
 
-   ```bash
-   cd /mnt/c/CodexShared/Projetos/skincos/orb/engine
-   bash scripts/bootstrap-imported-wsl-account.sh
+   ```powershell
+   .\scripts\invoke-skincos-wsl.ps1 `
+     -WorkingDirectory orb/engine `
+     -ScriptPath scripts/bootstrap-imported-wsl-account.sh `
+     -SkipBootstrapCheck
    ```
 
 6. Para este workspace, o GitHub CLI canônico é o do WSL. Autenticar por ele:
 
-   ```bash
-   gh auth login --web --git-protocol https --hostname github.com
+   ```powershell
+   .\scripts\invoke-skincos-wsl.ps1 `
+     -Executable gh `
+     -ArgumentList auth,login,--web,--git-protocol,https,--hostname,github.com `
+     -SkipBootstrapCheck -SkipNodeCheck -SkipNpmCheck -SkipGitCheck
    ```
 
 7. Validar o estado com o atalho ou botão `GitHub Auth Status`.
@@ -241,7 +248,8 @@ Exemplo de saída esperada:
 
 1. Rodar bootstrap, validação e instalação dos atalhos uma vez por usuário.
 2. Abrir `C:\CodexShared\Projetos\skincos` no Codex App para entender o contexto.
-3. Usar `Codex Context` ou rodar `bash ./scripts/codex-context.sh` via WSL.
+3. Usar `Codex Context` ou rodar
+   `.\scripts\invoke-skincos-wsl.ps1 -NpmScript codex:context` no PowerShell.
 4. Para qualquer tarefa paralela ou mais longa, criar um worktree por usuário/tarefa.
 5. Abrir o worktree no Codex App e trabalhar só nele.
 6. Rodar apps locais com perfil, autenticação, temporários e overrides em
@@ -272,8 +280,9 @@ compartilhado por hardcode de path.
 
 ## Sobre a integração com o Codex App
 
-Os atalhos desta pasta são operacionais: eles chamam scripts PowerShell e WSL do
-próprio workspace. Eles não dependem de um executável interno estável do Codex
+Os atalhos desta pasta são operacionais: todos começam em PowerShell e usam o
+gateway tipado `scripts/invoke-skincos-wsl.ps1` quando precisam do backend
+Linux. Eles não dependem de um executável interno estável do Codex
 App instalado no mini-PC, porque não foi encontrada uma instalação local
 canônica do aplicativo para usar como alvo suportado.
 

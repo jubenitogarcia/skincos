@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param()
 
+# WSL_BOUNDARY_EXCEPTION: validates the lifecycle anchor's process identity.
 $ErrorActionPreference = "Stop"
 $launcher = Join-Path $PSScriptRoot "start-wsl-runtime-keepalive.ps1"
 $content = Get-Content -LiteralPath $launcher -Raw

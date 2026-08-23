@@ -7,6 +7,20 @@
 - Human operator: Windows/WSL `admin`. Linux `skincos` is non-interactive and owns system services.
 - Product roots are `ads`, `api`, `booking`, `crm`, `finance`, `integration`, `inventory`, `messaging`, `orb`, `service`, `social`, `website` and `workforce`; neutral code belongs in `shared`, infrastructure in `platform`/`ops`, and executable commands in `scripts`.
 
+## Codex client and Linux backend
+
+- Codex runs natively on Windows with PowerShell as the integrated terminal.
+  Windows owns its tasks, authentication, plugins, MCPs, browser and desktop
+  integrations.
+- Git, GitHub CLI, Node LTS and Python are installed natively for general Codex
+  tooling. Windows Node/Python must not install or execute SKINCOS project
+  dependencies.
+- `Ubuntu-24.04`, operator `admin`, remains the single project toolchain for
+  Node/npm, Python environments, Playwright, Wrangler, PostgreSQL and systemd.
+  `scripts/invoke-skincos-wsl.ps1` is the supported PowerShell gateway.
+- Project `node_modules`, Python environments and build caches are Linux-owned.
+  Do not create a parallel Windows dependency tree in this checkout.
+
 ## Native runtime — validated 2026-07-15
 
 - Source release: `/opt/skincos/current/source`, an atomic link to the reviewed `main` SHA. It is populated from a Windows-created, checksum-verified archive transferred through `\\wsl$`; services never execute from DrvFS or a worktree.

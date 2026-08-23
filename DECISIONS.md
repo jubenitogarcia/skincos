@@ -1,5 +1,21 @@
 # DECISIONS
 
+## 2026-07-30 - Keep Codex native on Windows behind one typed Linux gateway
+
+- Decision: run the Codex agent natively on Windows with PowerShell as the
+  integrated terminal, while `Ubuntu-24.04` remains the application build,
+  test and operational backend.
+- Decision: install Windows Node LTS and Python for general Codex utilities but
+  prohibit Windows npm, project builds and project Python environments.
+  PowerShell actions use `scripts/invoke-skincos-wsl.ps1` with typed operations;
+  raw shell strings remain legacy-only.
+- Why: the Windows client preserves tasks, plugins, authentication, browser and
+  desktop integrations, while the existing Linux contracts remain aligned
+  with CI and production without duplicating 219 Bash scripts or systemd units.
+- Impact: operators see one PowerShell interface. WSL unavailability is a
+  fail-closed preflight error, and project dependencies/caches have a single
+  Linux owner.
+
 ## 2026-07-15 - Keep the Windows WSL anchor on a native Linux working directory
 
 - Decision: launch the single WSL keepalive client with `--cd /` and only reuse
