@@ -75,3 +75,42 @@ test('builds one global identity only from confirmed cross-source links', () => 
         sourceTypes: ['app_registration', 'attendance_client', 'caixa_customer'],
     }])
 })
+
+test('keeps app, attendance, Caixa and lead single-source components when links are unconfirmed', () => {
+    const components = buildConfirmedGlobalIdentityComponents({
+        registrations: [{ id: 'app-1', name: 'Ana App' }],
+        leadProfiles: [{ id: 'lead-1', name: 'Lia Lead' }],
+        canonicalClients: [{ id: 'attendance-1', name: 'Bia Atendimento' }],
+        caixaCustomers: [{ id: 'cash-1', name: 'Carla Caixa' }],
+        registrationCaixaLinks: [{ registrationId: 'app-1', caixaCustomerId: 'cash-1', status: 'suggested' }],
+        registrationAttendanceLinks: [{ registrationId: 'app-1', attendanceClientId: 'attendance-1', status: 'ambiguous' }],
+        leadProfileRegistrationLinks: [{ profileId: 'lead-1', registrationId: 'app-1', status: 'suggested' }],
+        leadProfileCaixaLinks: [{ profileId: 'lead-1', caixaCustomerId: 'cash-1', status: 'ambiguous' }],
+    })
+    assert.deepEqual(components, [
+        {
+            componentKey: 'app_registration:app-1',
+            preferredName: 'Ana App',
+            members: [{ sourceType: 'app_registration', sourceId: 'app-1', name: 'Ana App' }],
+            sourceTypes: ['app_registration'],
+        },
+        {
+            componentKey: 'lead_profile:lead-1',
+            preferredName: 'Lia Lead',
+            members: [{ sourceType: 'lead_profile', sourceId: 'lead-1', name: 'Lia Lead' }],
+            sourceTypes: ['lead_profile'],
+        },
+        {
+            componentKey: 'attendance_client:attendance-1',
+            preferredName: 'Bia Atendimento',
+            members: [{ sourceType: 'attendance_client', sourceId: 'attendance-1', name: 'Bia Atendimento' }],
+            sourceTypes: ['attendance_client'],
+        },
+        {
+            componentKey: 'caixa_customer:cash-1',
+            preferredName: 'Carla Caixa',
+            members: [{ sourceType: 'caixa_customer', sourceId: 'cash-1', name: 'Carla Caixa' }],
+            sourceTypes: ['caixa_customer'],
+        },
+    ])
+})

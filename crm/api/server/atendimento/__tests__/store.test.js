@@ -86,6 +86,84 @@ test('contains the normalized commercial-offer schema and refuses to treat it as
     assert.match(migration, /aliases text\[\]/i)
 })
 
+test('records auditable commercial permission and serializes contacted transitions before they write', async () => {
+    const queries = []
+    let permission = null
+    let harmoniaOptedOut = false
+    let actionUpdated = false
+    const availability = {
+        permissions: 'crm_atendimento.commercial_contact_permissions',
+        permission_events: 'crm_atendimento.commercial_contact_permission_events',
+        harmonia_contacts: 'harmonia.contacts',
+        caixa_customers: 'crm_caixa.customers',
+        app_registrations: null,
+        lead_profiles: null,
+        action_channel: true,
+    }
+    const fakePool = createFakePool([
+        (sql, params) => {
+            queries.push({ sql, params })
+            if (sql.includes("to_regclass('crm_atendimento.global_client_identities')")) {
+                return { rows: [{ identities: 'crm_atendimento.global_client_identities', members: 'crm_atendimento.global_client_identity_members', attendance_links: 'crm_atendimento.attendance_client_links', sales: 'crm_caixa.sales' }], rowCount: 1 }
+            }
+            if (sql.includes("to_regclass('crm_atendimento.commercial_contact_permissions')")) return { rows: [availability], rowCount: 1 }
+            if (sql === 'select id from crm_atendimento.global_client_identities where id = $1') return { rows: [{ id: params[0] }], rowCount: 1 }
+            if (sql.includes('from crm_atendimento.commercial_contact_permissions') && sql.includes('for update')) {
+                return { rows: permission ? [{ status: permission.status }] : [], rowCount: permission ? 1 : 0 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.commercial_contact_permissions(')) {
+                permission = { identityId: params[0], status: params[2], source: params[3], evidenceReference: params[4], expiresAt: params[5], recordedBy: params[6] }
+                return { rows: [], rowCount: 1 }
+            }
+            if (sql.startsWith('select identity_id::text as identity_id, channel, status, evidence_source')) {
+                return { rows: permission ? [{ identity_id: permission.identityId, channel: 'whatsapp', status: permission.status, evidence_source: permission.source, evidence_reference: permission.evidenceReference, expires_at: permission.expiresAt, recorded_by: permission.recordedBy, updated_at: '2026-08-04T12:00:00.000Z' }] : [], rowCount: permission ? 1 : 0 }
+            }
+            if (sql.includes('join crm_caixa.customers customer')) return { rows: [{ identity_id: 'identity-1', phone_key: '5511999999999' }], rowCount: 1 }
+            if (sql.includes('from harmonia.contacts')) return { rows: harmoniaOptedOut ? [{ phone_raw: '5511999999999', opted_out_at: '2026-08-04T12:00:00.000Z' }] : [{ phone_raw: '5511999999999', opted_out_at: null }], rowCount: 1 }
+            if (sql.includes('select id, identity_id, status from crm_atendimento.commercial_actions')) return { rows: [{ id: 'action-1', identity_id: 'identity-1', status: 'open' }], rowCount: 1 }
+            if (sql.startsWith('update crm_atendimento.commercial_actions')) {
+                actionUpdated = true
+                return { rows: [], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+    const actor = { id: 'manager-1', role: 'GESTOR' }
+
+    const recorded = await store.recordCommercialContactPermission({
+        identityId: 'identity-1',
+        status: 'granted',
+        source: 'cadastro_assinado',
+        evidenceReference: 'consentimento:registro-1',
+        expiresAt: '2030-01-02T03:04:05.000Z',
+    }, actor)
+    assert.equal(recorded.contactEligibility.status, 'eligible')
+    assert.equal(recorded.contactEligibility.expiresAt, '2030-01-02T03:04:05.000Z')
+    assert.equal(queries.some(({ sql }) => sql.startsWith('insert into crm_atendimento.commercial_contact_permission_events(')), true)
+    const permissionEvent = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.commercial_contact_permission_events('))
+    assert.equal(permissionEvent.params[7], 'manager-1')
+    const audit = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.audit_events('))
+    assert.doesNotMatch(JSON.stringify(audit.params), /5511999999999/)
+    assert.match(String(audit.params[1]), /manager-1/)
+
+    const contacted = await store.updateCommercialAction('action-1', { status: 'contacted' }, actor)
+    assert.equal(contacted.status, 'contacted')
+    assert.equal(actionUpdated, true)
+    assert.equal(queries.filter(({ sql }) => sql === 'set transaction isolation level serializable').length, 2)
+    assert.equal(queries.filter(({ sql }) => sql.includes('pg_advisory_xact_lock')).length, 2)
+    assert.equal(queries.some(({ sql }) => sql.includes('from harmonia.contacts') && sql.includes('for update')), true)
+
+    harmoniaOptedOut = true
+    actionUpdated = false
+    await assert.rejects(() => store.updateCommercialAction('action-1', { status: 'contacted' }, actor), /COMMERCIAL_CONTACT_BLOCKED/)
+    assert.equal(actionUpdated, false)
+
+    await assert.rejects(() => store.recordCommercialContactPermission({
+        identityId: 'identity-1', status: 'denied', source: 'operador', evidenceReference: 'ref-2',
+    }, { role: 'GESTOR' }), /ACTOR_IDENTITY_REQUIRED/)
+})
+
 test('initializes Atendimento schema once when concurrent reads arrive', async () => {
     let transactions = 0
     const fakePool = createFakePool([

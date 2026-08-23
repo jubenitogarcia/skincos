@@ -15,6 +15,16 @@ test('commercial recency is based only on completed attendance, never on a later
     assert.equal(profile.ticketAverage, 1666.67)
 })
 
+test('keeps a single-source profile visible without presenting it as a confirmed merge', () => {
+    const profile = buildCommercialProfile({
+        identityId: 'identity-single',
+        name: 'Cadastro isolado',
+        sourceTypes: ['lead_profile'],
+    }, { asOf: '2026-08-04' })
+
+    assert.equal(profile.identityQuality, 'unresolved_single_source')
+})
+
 test('future attendance dates do not produce a negative recency value', () => {
     assert.equal(elapsedDays('2026-12-01', '2026-07-22'), null)
     const profile = buildCommercialProfile({ lastAttendance: '2026-12-01', futureAttendanceCount: 1 }, { asOf: '2026-07-22' })

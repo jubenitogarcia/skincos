@@ -103,7 +103,11 @@ async function persist(client, { plan, input }) {
         const identity = await client.query(`insert into crm_atendimento.global_client_identities(component_key,canonical_name,source_types) values($1,$2,$3::jsonb) on conflict(component_key) do update set canonical_name=excluded.canonical_name,source_types=excluded.source_types,updated_at=now() returning id`, [component.componentKey, component.preferredName, JSON.stringify(component.sourceTypes)])
         await insertJsonChunks(client, component.members.map((member) => ({ identity_id: identity.rows[0].id, source_type: member.sourceType, source_id: member.sourceId })), `insert into crm_atendimento.global_client_identity_members(identity_id,source_type,source_id) select x.identity_id::uuid,x.source_type,x.source_id from jsonb_to_recordset($1::jsonb) as x(identity_id text,source_type text,source_id text) on conflict(source_type,source_id) do update set identity_id=excluded.identity_id,updated_at=now()`)
     }
-    await client.query(`delete from crm_atendimento.global_client_identities identity where not exists (select 1 from crm_atendimento.global_client_identity_members member where member.identity_id=identity.id)`)
+    // Do not delete source-less identities here.  A later source refresh can
+    // legitimately remove a member while an assisted commercial action,
+    // permission event or audit trail still points at the historical identity.
+    // The Clientes read model already excludes identities without members, so
+    // retaining them is non-disruptive and preserves auditability.
     return { runId, components: components.length, members: components.reduce((sum, item) => sum + item.members.length, 0) }
 }
 

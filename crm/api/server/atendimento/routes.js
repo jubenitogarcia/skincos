@@ -107,7 +107,8 @@ function isAdmin(actor) {
 }
 
 function isCommercialManager(actor) {
-    return normalizeRole(actor?.role) === 'GESTOR'
+    const role = normalizeRole(actor?.role)
+    return role === 'GESTOR' || role === 'GERENTE'
 }
 
 function isLocalRequest(req) {
@@ -307,6 +308,21 @@ export function createAtendimentoRouter(options = {}) {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
             return json(res, 200, { ok: true, ...(await store.commercialPolicy(req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.put('/commercial/contact-permissions/:identityId', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, {
+                ok: true,
+                ...(await store.recordCommercialContactPermission({
+                    ...(req.body || {}),
+                    identityId: String(req.params.identityId || ''),
+                }, req.atendimentoActor)),
+            })
         } catch (error) {
             return errorResponse(res, error)
         }
@@ -610,6 +626,7 @@ export function createAtendimentoRouter(options = {}) {
 
 export const __testables = {
     errorPayload,
+    isCommercialManager,
     isLocalRequest,
     redactLocalDiagnostic,
     safeEqual,
