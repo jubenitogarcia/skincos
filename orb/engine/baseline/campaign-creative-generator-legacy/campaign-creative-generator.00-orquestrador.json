@@ -1,0 +1,394 @@
+{
+  "id": "ccg-orchestrator-001",
+  "name": "00 - Orquestrador - Campaign Creative Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Orquestra campanha criativa multiformato: interpreta materiais, planeja variacoes, gera uma imagem por job e envia para QA/ledger.",
+        "height": 240,
+        "width": 420
+      },
+      "id": "sticky-orchestrator",
+      "name": "Objetivo",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        -320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-orchestrator",
+      "name": "When clicking 'Execute workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "campaign_name",
+              "value": "Campanha Maio"
+            },
+            {
+              "name": "source_drive_folder_id",
+              "value": "google-drive-folder-id"
+            },
+            {
+              "name": "output_drive_folder_id",
+              "value": "google-drive-folder-id"
+            },
+            {
+              "name": "execution_mode",
+              "value": "dry_run"
+            },
+            {
+              "name": "requested_formats",
+              "value": "[\"feed_3x4\",\"stories_9x16\",\"square_1x1\",\"website_banner\",\"horizontal_ad\"]"
+            },
+            {
+              "name": "variation_mode",
+              "value": "auto_all"
+            },
+            {
+              "name": "brand",
+              "value": "Espaco Facial"
+            },
+            {
+              "name": "compliance_note",
+              "value": "Avaliacao individual. Resultados variam."
+            },
+            {
+              "name": "phase_1_workflow_id",
+              "value": "ccg-phase1-interpret-campaign"
+            },
+            {
+              "name": "phase_2_workflow_id",
+              "value": "ccg-phase2-plan-variations"
+            },
+            {
+              "name": "phase_3_workflow_id",
+              "value": "ccg-phase3-generate-asset"
+            },
+            {
+              "name": "phase_4_workflow_id",
+              "value": "ccg-phase4-qa-ledger"
+            }
+          ],
+          "number": [
+            {
+              "name": "max_variations_per_format",
+              "value": 6
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "config-orchestrator",
+      "name": "Configuracao Inicial",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -880,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nfunction safeArray(value) {\n  if (Array.isArray(value)) return value;\n  const text = safeString(value);\n  if (!text) return [];\n  try { const parsed = JSON.parse(text); return Array.isArray(parsed) ? parsed : []; } catch {}\n  return text.split(',').map((item) => item.trim()).filter(Boolean);\n}\nconst cfg = $('Configuracao Inicial').first().json || {};\nconst requested_formats = safeArray(cfg.requested_formats);\nreturn [{\n  json: {\n    campaign_name: safeString(cfg.campaign_name) || 'Campanha sem nome',\n    source_drive_folder_id: safeString(cfg.source_drive_folder_id),\n    output_drive_folder_id: safeString(cfg.output_drive_folder_id),\n    execution_mode: safeString(cfg.execution_mode || 'dry_run').toLowerCase(),\n    requested_formats: requested_formats.length ? requested_formats : ['feed_3x4','stories_9x16','square_1x1','website_banner','horizontal_ad'],\n    variation_mode: safeString(cfg.variation_mode || 'auto_all'),\n    max_variations_per_format: Number(cfg.max_variations_per_format || 6),\n    brand: safeString(cfg.brand || 'Espaco Facial'),\n    compliance_note: safeString(cfg.compliance_note || 'Avaliacao individual. Resultados variam.'),\n    phase_1_workflow_id: safeString(cfg.phase_1_workflow_id),\n    phase_2_workflow_id: safeString(cfg.phase_2_workflow_id),\n    phase_3_workflow_id: safeString(cfg.phase_3_workflow_id),\n    phase_4_workflow_id: safeString(cfg.phase_4_workflow_id),\n    orchestrated_at: new Date().toISOString(),\n  },\n}];\n"
+      },
+      "id": "prepare-orchestration",
+      "name": "Preparar Orquestracao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "={{ $json.phase_1_workflow_id }}",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "campaign_payload_json": "={{ JSON.stringify($json) }}"
+          },
+          "matchingColumns": [
+            "campaign_payload_json"
+          ],
+          "schema": [
+            {
+              "id": "campaign_payload_json",
+              "displayName": "campaign_payload_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "execute-phase-1",
+      "name": "Execute Fase 1",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -380,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "={{ $(\"Preparar Orquestracao\").first().json.phase_2_workflow_id }}",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "campaign_brief_json": "={{ JSON.stringify($json) }}"
+          },
+          "matchingColumns": [
+            "campaign_brief_json"
+          ],
+          "schema": [
+            {
+              "id": "campaign_brief_json",
+              "displayName": "campaign_brief_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "execute-phase-2",
+      "name": "Execute Fase 2",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -120,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "={{ $(\"Preparar Orquestracao\").first().json.phase_3_workflow_id }}",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "generation_job_json": "={{ JSON.stringify($json) }}"
+          },
+          "matchingColumns": [
+            "generation_job_json"
+          ],
+          "schema": [
+            {
+              "id": "generation_job_json",
+              "displayName": "generation_job_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "execute-phase-3",
+      "name": "Execute Fase 3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        140,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "={{ $(\"Preparar Orquestracao\").first().json.phase_4_workflow_id }}",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "generation_result_json": "={{ JSON.stringify($json) }}"
+          },
+          "matchingColumns": [
+            "generation_result_json"
+          ],
+          "schema": [
+            {
+              "id": "generation_result_json",
+              "displayName": "generation_result_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "execute-phase-4",
+      "name": "Execute Fase 4",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        400,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst items = $input.all().map((item) => item.json || {});\nconst approved = items.filter((item) => safeString(item.status) === 'approved').length;\nconst needs_review = items.filter((item) => safeString(item.status) === 'needs_review').length;\nconst failed = items.filter((item) => safeString(item.status) === 'failed').length;\nreturn [{\n  json: {\n    campaign_name: safeString(($('Preparar Orquestracao').first().json || {}).campaign_name),\n    execution_mode: safeString(($('Preparar Orquestracao').first().json || {}).execution_mode),\n    finished_at: new Date().toISOString(),\n    summary: { total_assets: items.length, approved, needs_review, failed },\n    assets: items,\n  },\n}];\n"
+      },
+      "id": "final-report",
+      "name": "Relatorio Final da Orquestracao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [
+          {
+            "node": "Configuracao Inicial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuracao Inicial": {
+      "main": [
+        [
+          {
+            "node": "Preparar Orquestracao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Orquestracao": {
+      "main": [
+        [
+          {
+            "node": "Execute Fase 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Fase 1": {
+      "main": [
+        [
+          {
+            "node": "Execute Fase 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Fase 2": {
+      "main": [
+        [
+          {
+            "node": "Execute Fase 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Fase 3": {
+      "main": [
+        [
+          {
+            "node": "Execute Fase 4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Fase 4": {
+      "main": [
+        [
+          {
+            "node": "Relatorio Final da Orquestracao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "codex_generated": true,
+    "generated_by": "scripts/build-campaign-creative-generator.js"
+  }
+}

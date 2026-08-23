@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "production_id": "fixture-claim-without-source",
+  "content_id": "dryrun-content",
+  "campaign_id": "dryrun-campaign",
+  "source_folder_id": null,
+  "output_folder_id": null,
+  "content_type": "STATIC_SINGLE",
+  "production_tier": "FAST",
+  "objective": "gerar conteúdo de teste",
+  "funnel_stage": "consideration",
+  "audience": {
+    "segment": "fixture"
+  },
+  "procedure_or_topic": "cuidados faciais",
+  "offer": {},
+  "cta": "Saiba mais",
+  "requested_deliverables": [
+    {
+      "deliverable_id": "fixture-1",
+      "format": "9:16",
+      "usage": "ORGANIC"
+    }
+  ],
+  "source_assets": [],
+  "brand_assets": [],
+  "references": [],
+  "mandatory_elements": [],
+  "forbidden_elements": [
+    "promessa garantida"
+  ],
+  "provider_policy": {
+    "mode": "mock",
+    "mock_provider": true,
+    "allowed_providers": [
+      "mock"
+    ],
+    "max_cost": 0,
+    "max_jobs": 20,
+    "max_revisions": 2
+  },
+  "budget": {
+    "max_cost": 0
+  },
+  "dry_run": true,
+  "organizer_context": {
+    "fixture": true
+  }
+}

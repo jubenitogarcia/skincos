@@ -1,0 +1,434 @@
+{
+  "id": "ccg-phase3-generate-asset",
+  "name": "03 - Gerar 1 Peca",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Fase 3: recebe um job, monta request OpenAI Images, gera uma imagem em live ou somente manifesto em dry-run, e salva asset no Drive.",
+        "height": 240,
+        "width": 420
+      },
+      "id": "sticky-phase3",
+      "name": "Objetivo",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1220,
+        -360
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-phase3",
+      "name": "When clicking 'Execute workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1220,
+        80
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "execute-trigger-phase3",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1220,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "execution_mode",
+              "value": "dry_run"
+            },
+            {
+              "name": "image_model",
+              "value": "gpt-image-2"
+            },
+            {
+              "name": "fallback_image_models",
+              "value": "gpt-image-1.5,gpt-image-1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "config-phase3",
+      "name": "Configuracao Fase 3",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -980,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst cfg = $('Configuracao Fase 3').first().json || {};\nconst raw = safeString($json.generation_job_json) ? JSON.parse($json.generation_job_json) : ($json || {});\nconst execution_mode = safeString(raw.execution_mode || cfg.execution_mode || 'dry_run').toLowerCase();\nconst model = safeString(cfg.image_model || raw.image_model || 'gpt-image-2');\nconst fallback_models = safeString(cfg.fallback_image_models || 'gpt-image-1.5,gpt-image-1').split(',').map((item) => item.trim()).filter(Boolean);\nconst blockers = [];\nif (!safeString(raw.asset_id)) blockers.push('missing_asset_id');\nif (!safeString(raw.generation_prompt)) blockers.push('missing_generation_prompt');\nif (!safeString(raw.output_drive_folder_id)) blockers.push('missing_output_drive_folder_id');\nreturn [{\n  json: {\n    ...raw,\n    execution_mode,\n    image_model: model,\n    fallback_image_models: fallback_models,\n    generation_status: blockers.length ? 'blocked' : 'ready',\n    blockers,\n    file_name: `${safeString(raw.asset_id || 'asset')}.png`,\n  },\n}];\n"
+      },
+      "id": "normalize-generation-job",
+      "name": "Normalizar Job de Geracao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "switch-generation-mode-dry-run",
+                    "leftValue": "={{ $json.execution_mode }}",
+                    "rightValue": "dry_run",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "DryRun"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "switch-generation-mode-live",
+                    "leftValue": "={{ $json.execution_mode }}",
+                    "rightValue": "live",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Live"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-generation-mode",
+      "name": "Switch Modo Geracao",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -460,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn [{\n  json: {\n    ...$json,\n    status: $json.generation_status === 'blocked' ? 'failed' : 'dry_run_ready',\n    drive_file_id: '',\n    preview_url: '',\n    generated_asset: null,\n    generation: {\n      model: $json.image_model,\n      request: null,\n      prompt: $json.generation_prompt,\n      note: 'Dry-run: imagem nao gerada e nenhum arquivo foi enviado ao Drive.',\n    },\n  },\n}];\n"
+      },
+      "id": "dry-run-asset",
+      "name": "Dry Run Asset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst prompt = safeString($json.generation_prompt);\nreturn [{\n  json: {\n    ...$json,\n    openai_image_request: {\n      model: safeString($json.image_model || 'gpt-image-2'),\n      prompt,\n      size: safeString($json.size || '1024x1024'),\n      quality: 'high',\n      n: 1,\n      output_format: safeString($json.output_format || 'png'),\n    },\n    image_request_started_at: new Date().toISOString(),\n  },\n}];\n"
+      },
+      "id": "build-openai-image-request",
+      "name": "Build OpenAI Image Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/generations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$vars.OPENAI_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.openai_image_request) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "openai-image-generation",
+      "name": "OpenAI Image Generation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        60,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst response = $json || {};\nconst data = Array.isArray(response.data) ? response.data : [];\nconst first = data[0] || {};\nconst b64 = safeString(first.b64_json || first.image_base64 || response.b64_json);\nif (!b64) throw new Error('OpenAI Image Generation nao retornou b64_json.');\nconst context = $('Build OpenAI Image Request').first().json || {};\nreturn [{\n  json: {\n    ...context,\n    b64_json: b64,\n    revised_prompt: safeString(first.revised_prompt),\n    usage: response.usage || {},\n    image_request_completed_at: new Date().toISOString(),\n  },\n}];\n"
+      },
+      "id": "normalize-openai-image",
+      "name": "Normalize OpenAI Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst b64 = safeString($json.b64_json);\nif (!b64) throw new Error('b64_json ausente para montar binario.');\nconst buffer = Buffer.from(b64, 'base64');\nconst binaryData = await this.helpers.prepareBinaryData(buffer, safeString($json.file_name || 'generated.png'), 'image/png');\nconst json = { ...$json };\ndelete json.b64_json;\nreturn [{ json, binary: { data: binaryData } }];\n"
+      },
+      "id": "build-image-binary",
+      "name": "Build Image Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        580,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "inputDataFieldName": "data",
+        "name": "={{ $json.file_name }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.output_drive_folder_id }}",
+          "mode": "id"
+        },
+        "options": {
+          "simplifyOutput": true,
+          "propertiesUi": {
+            "propertyValues": [
+              {
+                "key": "campaign_name",
+                "value": "={{ $json.campaign_name }}"
+              },
+              {
+                "key": "asset_id",
+                "value": "={{ $json.asset_id }}"
+              },
+              {
+                "key": "format",
+                "value": "={{ $json.format }}"
+              },
+              {
+                "key": "variation_key",
+                "value": "={{ $json.variation_key }}"
+              },
+              {
+                "key": "execution_mode",
+                "value": "={{ $json.execution_mode }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "upload-generated-asset",
+      "name": "Upload Generated Asset",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        840,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst upload = $input.first().json || {};\nconst context = $('Build Image Binary').first().json || {};\nreturn [{\n  json: {\n    ...context,\n    status: 'generated',\n    drive_file_id: safeString(upload.id),\n    preview_url: safeString(upload.webViewLink || upload.webContentLink || upload.webUrl),\n    generated_asset: {\n      drive_file_id: safeString(upload.id),\n      file_name: safeString(context.file_name),\n      mime_type: 'image/png',\n    },\n  },\n}];\n"
+      },
+      "id": "live-asset-result",
+      "name": "Live Asset Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [
+          {
+            "node": "Configuracao Fase 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Configuracao Fase 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuracao Fase 3": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Job de Geracao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Job de Geracao": {
+      "main": [
+        [
+          {
+            "node": "Switch Modo Geracao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Modo Geracao": {
+      "main": [
+        [
+          {
+            "node": "Dry Run Asset",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build OpenAI Image Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build OpenAI Image Request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Image Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Image Generation": {
+      "main": [
+        [
+          {
+            "node": "Normalize OpenAI Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize OpenAI Image": {
+      "main": [
+        [
+          {
+            "node": "Build Image Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Image Binary": {
+      "main": [
+        [
+          {
+            "node": "Upload Generated Asset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Generated Asset": {
+      "main": [
+        [
+          {
+            "node": "Live Asset Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "codex_generated": true,
+    "generated_by": "scripts/build-campaign-creative-generator.js"
+  }
+}
